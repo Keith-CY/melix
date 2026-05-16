@@ -237,6 +237,18 @@ def test_audio_preprocessing_accepts_plain_local_paths_and_fills_metadata(tmp_pa
     assert prepared.chunk_count >= 1
 
 
+def test_audio_preprocessing_prepared_input_uses_slots(tmp_path: Path) -> None:
+    audio_path = tmp_path / "sample.raw"
+    audio_path.write_bytes(b"slot optimized audio")
+
+    prepared = prepare_audio_input(
+        inference_pb2.TranscribeRequest(audio_uri=str(audio_path))
+    )
+
+    assert hasattr(prepared, "__dict__") is False
+    assert prepared.decoded_text() == "slot optimized audio"
+
+
 def test_audio_preprocessing_zero_copy_uri_skips_exists_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

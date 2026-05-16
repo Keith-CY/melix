@@ -439,6 +439,7 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         let accelerationMode: Melix_Controlplane_V1_AccelerationMode
         let draftModelID: String
         let numDraftTokens: Int
+        let accelerationProfile: String
     }
 
     struct RecordedImageDefaultsApplyRequest: Equatable, Sendable {
@@ -1332,7 +1333,8 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         completionBatchSize: Int,
         accelerationMode: Melix_Controlplane_V1_AccelerationMode,
         draftModelID: String,
-        numDraftTokens: Int
+        numDraftTokens: Int,
+        accelerationProfile: String
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
         recordedActions.append("serving-defaults.apply:\(serverSessionID)")
         if let applyServingDefaultsError {
@@ -1351,7 +1353,8 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
                 completionBatchSize: completionBatchSize,
                 accelerationMode: accelerationMode,
                 draftModelID: draftModelID,
-                numDraftTokens: numDraftTokens
+                numDraftTokens: numDraftTokens,
+                accelerationProfile: accelerationProfile
             )
         )
 
@@ -1672,6 +1675,20 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         event.requestProgress.waitingRequests = waitingRequests
         event.requestProgress.restoreStage = restoreStage
         event.requestProgress.cachePressure = cachePressure
+        emit(event)
+    }
+
+    func sendBenchmarkProgress(
+        jobID: String,
+        suite: String,
+        pct: Double
+    ) {
+        var event = Melix_Controlplane_V1_ControlPlaneEvent()
+        event.eventType = "benchmark.progress"
+        event.benchProgress = Melix_Controlplane_V1_BenchmarkProgressEvent()
+        event.benchProgress.jobID = jobID
+        event.benchProgress.suite = suite
+        event.benchProgress.pct = pct
         emit(event)
     }
 

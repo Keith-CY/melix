@@ -1801,7 +1801,7 @@ public actor ModelCatalog {
             transitionReason: transitionReason,
             memoryBudgetEvidence: memoryBudgetEvidence
         )
-        return model
+        return ModelCapabilityReceipts.withReceipt(model)
     }
 
     private static func residencySummary(

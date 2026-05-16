@@ -406,6 +406,7 @@ public struct BenchRunOptions: Equatable, Sendable {
     public let preflightFitCheck: Bool
     public let allowMemoryRisk: Bool
     public let json: Bool
+    public let liveProgress: Bool
 
     public init(
         modelID: String = "",
@@ -421,7 +422,8 @@ public struct BenchRunOptions: Equatable, Sendable {
         parameters: [String: String] = [:],
         preflightFitCheck: Bool = false,
         allowMemoryRisk: Bool = false,
-        json: Bool = false
+        json: Bool = false,
+        liveProgress: Bool = true
     ) {
         self.modelID = modelID
         self.hfRepoID = hfRepoID
@@ -437,6 +439,7 @@ public struct BenchRunOptions: Equatable, Sendable {
         self.preflightFitCheck = preflightFitCheck
         self.allowMemoryRisk = allowMemoryRisk
         self.json = json
+        self.liveProgress = liveProgress
     }
 }
 
@@ -465,6 +468,7 @@ public struct BenchMatrixRunOptions: Equatable, Sendable {
     public let durationSeconds: UInt32
     public let allowLargeMatrix: Bool
     public let json: Bool
+    public let liveProgress: Bool
 
     public init(
         modelID: String = "",
@@ -482,7 +486,8 @@ public struct BenchMatrixRunOptions: Equatable, Sendable {
         requests: UInt32 = 0,
         durationSeconds: UInt32 = 0,
         allowLargeMatrix: Bool = false,
-        json: Bool = false
+        json: Bool = false,
+        liveProgress: Bool = true
     ) {
         self.modelID = modelID
         self.hfRepoID = hfRepoID
@@ -500,6 +505,7 @@ public struct BenchMatrixRunOptions: Equatable, Sendable {
         self.durationSeconds = durationSeconds
         self.allowLargeMatrix = allowLargeMatrix
         self.json = json
+        self.liveProgress = liveProgress
     }
 }
 
@@ -556,6 +562,7 @@ public struct EvalRunOptions: Equatable, Sendable {
     public let preflightFitCheck: Bool
     public let allowMemoryRisk: Bool
     public let json: Bool
+    public let liveProgress: Bool
 
     public init(
         modelID: String = "",
@@ -579,7 +586,8 @@ public struct EvalRunOptions: Equatable, Sendable {
         remoteParallelism: UInt32 = 0,
         preflightFitCheck: Bool = false,
         allowMemoryRisk: Bool = false,
-        json: Bool = false
+        json: Bool = false,
+        liveProgress: Bool = true
     ) {
         let normalizedRemoteTargets = remoteTargets
             .map { EvalRemoteTargetOptions(remoteServerID: $0.remoteServerID, remoteModelID: $0.remoteModelID) }
@@ -621,6 +629,7 @@ public struct EvalRunOptions: Equatable, Sendable {
         self.preflightFitCheck = preflightFitCheck
         self.allowMemoryRisk = allowMemoryRisk
         self.json = json
+        self.liveProgress = liveProgress
     }
 }
 
@@ -697,6 +706,290 @@ private struct PlannedEvaluationRequest: Sendable {
     let request: ControlPlaneEvaluationRequest
 }
 
+public struct MelixCLITerminalCapabilities: Equatable, Sendable {
+    public let isInteractive: Bool
+    public let supportsANSI: Bool
+
+    public init(isInteractive: Bool, supportsANSI: Bool) {
+        self.isInteractive = isInteractive
+        self.supportsANSI = supportsANSI
+    }
+
+    public static func detect(environment: [String: String]) -> MelixCLITerminalCapabilities {
+        let term = environment["TERM"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        let noColor = environment["NO_COLOR"] != nil
+        let interactive = Darwin.isatty(STDOUT_FILENO) == 1
+        return MelixCLITerminalCapabilities(
+            isInteractive: interactive,
+            supportsANSI: interactive && term.isEmpty == false && term != "dumb" && noColor == false
+        )
+    }
+}
+
+public struct MelixCLILiveRunStep: Equatable, Sendable {
+    public enum Phase: String, Sendable {
+        case pending
+        case running
+        case completed
+        case failed
+    }
+
+    public let id: String
+    public let title: String
+    public var phase: Phase
+
+    public init(id: String, title: String, phase: Phase = .pending) {
+        self.id = id
+        self.title = title
+        self.phase = phase
+    }
+}
+
+public struct MelixCLILiveRunState: Equatable, Sendable {
+    public enum Phase: String, Sendable {
+        case running
+        case completed
+        case failed
+    }
+
+    public let title: String
+    public let targetText: String
+    public let suiteText: String
+    public var phase: Phase
+    public var statusText: String
+    public var steps: [MelixCLILiveRunStep]
+    public var primaryMetricText: String
+    public var artifactText: String
+    public var detailText: String
+    public var elapsedSeconds: Double
+    public var progressFraction: Double {
+        if phase == .completed {
+            return 1
+        }
+        guard steps.isEmpty == false else {
+            return phase == .failed ? 0 : 0.1
+        }
+        if let activeIndex = steps.firstIndex(where: { $0.phase == .running }) {
+            return min(0.95, max(0.1, (Double(activeIndex) + 0.35) / Double(steps.count)))
+        }
+        let completedCount = steps.filter { $0.phase == .completed }.count
+        if phase == .failed {
+            return min(0.95, max(0.1, Double(completedCount) / Double(steps.count)))
+        }
+        return min(0.95, max(0.1, Double(completedCount) / Double(steps.count)))
+    }
+
+    public init(
+        title: String,
+        targetText: String,
+        suiteText: String,
+        phase: Phase = .running,
+        statusText: String = "Running",
+        steps: [MelixCLILiveRunStep],
+        primaryMetricText: String = "",
+        artifactText: String = "",
+        detailText: String = "",
+        elapsedSeconds: Double = 0
+    ) {
+        self.title = title
+        self.targetText = targetText
+        self.suiteText = suiteText
+        self.phase = phase
+        self.statusText = statusText
+        self.steps = steps
+        self.primaryMetricText = primaryMetricText
+        self.artifactText = artifactText
+        self.detailText = detailText
+        self.elapsedSeconds = elapsedSeconds
+    }
+
+    mutating func move(to stepID: String, detailText: String, elapsedSeconds: Double) {
+        phase = .running
+        statusText = "Running"
+        self.detailText = detailText
+        self.elapsedSeconds = elapsedSeconds
+        guard let activeIndex = steps.firstIndex(where: { $0.id == stepID }) else {
+            return
+        }
+        for index in steps.indices {
+            if index < activeIndex {
+                steps[index].phase = .completed
+            } else if index == activeIndex {
+                steps[index].phase = .running
+            } else {
+                steps[index].phase = .pending
+            }
+        }
+    }
+
+    mutating func finish(
+        primaryMetricText: String,
+        artifactText: String,
+        detailText: String,
+        elapsedSeconds: Double
+    ) {
+        phase = .completed
+        statusText = "Completed"
+        self.primaryMetricText = primaryMetricText
+        self.artifactText = artifactText
+        self.detailText = detailText
+        self.elapsedSeconds = elapsedSeconds
+        for index in steps.indices {
+            steps[index].phase = .completed
+        }
+    }
+
+    mutating func fail(detailText: String, elapsedSeconds: Double) {
+        phase = .failed
+        statusText = "Failed"
+        self.detailText = detailText
+        self.elapsedSeconds = elapsedSeconds
+        if let activeIndex = steps.firstIndex(where: { $0.phase == .running }) {
+            steps[activeIndex].phase = .failed
+        } else if let pendingIndex = steps.firstIndex(where: { $0.phase == .pending }) {
+            steps[pendingIndex].phase = .failed
+        } else if let lastIndex = steps.indices.last {
+            steps[lastIndex].phase = .failed
+        }
+    }
+}
+
+public final class MelixCLILiveRunDisplay: @unchecked Sendable {
+    private let capabilities: MelixCLITerminalCapabilities
+    private let write: @Sendable (String) -> Void
+    private var renderedLineCount = 0
+
+    public var supportsContinuousRefresh: Bool {
+        capabilities.isInteractive && capabilities.supportsANSI
+    }
+
+    public init(
+        capabilities: MelixCLITerminalCapabilities,
+        write: @escaping @Sendable (String) -> Void
+    ) {
+        self.capabilities = capabilities
+        self.write = write
+    }
+
+    public func render(_ state: MelixCLILiveRunState, final: Bool = false) {
+        guard capabilities.isInteractive else {
+            if final {
+                write(Self.appendOnlySummary(state))
+            }
+            return
+        }
+        let text = Self.renderPanel(state)
+        if capabilities.supportsANSI {
+            if renderedLineCount > 0 {
+                write("\u{001B}[\(renderedLineCount)A")
+            }
+            let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+            write(lines.map { "\u{001B}[2K" + $0 }.joined(separator: "\n") + "\n")
+            renderedLineCount = lines.count
+            if final {
+                renderedLineCount = 0
+            }
+        } else {
+            write(Self.appendOnlySummary(state))
+        }
+    }
+
+    public static func renderPanel(_ state: MelixCLILiveRunState) -> String {
+        let progressPercent = progressPercentText(state.progressFraction)
+        var lines = [
+            "Melix \(state.title)",
+            "\(phaseLabel(state.phase)) \(state.statusText)   progress \(progressPercent)   elapsed \(durationText(state.elapsedSeconds))",
+            "Target \(emptyPlaceholder(state.targetText))",
+            "Suite  \(emptyPlaceholder(state.suiteText))",
+            "",
+            "Progress \(progressPercent) \(progressBar(fraction: state.progressFraction))",
+        ]
+        lines.append(contentsOf: state.steps.map { step in
+            "  \(stepSymbol(step.phase)) \(step.title)"
+        })
+        lines.append("")
+        lines.append("Metric   \(emptyPlaceholder(state.primaryMetricText, placeholder: "Collecting metrics"))")
+        lines.append("Artifact \(emptyPlaceholder(state.artifactText, placeholder: "Pending"))")
+        if state.detailText.isEmpty == false {
+            lines.append("Detail   \(state.detailText)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    public static func appendOnlySummary(_ state: MelixCLILiveRunState) -> String {
+        let activeStep = state.steps.last(where: { $0.phase == .running })?.title
+            ?? state.steps.last(where: { $0.phase == .failed })?.title
+            ?? state.steps.last(where: { $0.phase == .completed })?.title
+            ?? state.title
+        var segments = [
+            "[\(phaseLabel(state.phase))]",
+            state.title,
+            activeStep,
+            "progress=\(progressPercentText(state.progressFraction))",
+            "elapsed=\(durationText(state.elapsedSeconds))",
+        ]
+        if state.primaryMetricText.isEmpty == false {
+            segments.append("metric=\(state.primaryMetricText)")
+        }
+        if state.artifactText.isEmpty == false {
+            segments.append("artifact=\(state.artifactText)")
+        }
+        if state.detailText.isEmpty == false {
+            segments.append(state.detailText)
+        }
+        return segments.joined(separator: " ") + "\n"
+    }
+
+    private static func phaseLabel(_ phase: MelixCLILiveRunState.Phase) -> String {
+        switch phase {
+        case .running:
+            return "RUNNING"
+        case .completed:
+            return "DONE"
+        case .failed:
+            return "FAILED"
+        }
+    }
+
+    private static func stepSymbol(_ phase: MelixCLILiveRunStep.Phase) -> String {
+        switch phase {
+        case .pending:
+            return "○"
+        case .running:
+            return "●"
+        case .completed:
+            return "✓"
+        case .failed:
+            return "!"
+        }
+    }
+
+    private static func durationText(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds > 0 else {
+            return "0s"
+        }
+        if seconds < 10 {
+            return String(format: "%.1fs", seconds)
+        }
+        return "\(Int(seconds.rounded()))s"
+    }
+
+    private static func progressPercentText(_ fraction: Double) -> String {
+        let percent = Int((min(1, max(0, fraction)) * 100).rounded())
+        return "\(percent)%"
+    }
+
+    private static func progressBar(fraction: Double, width: Int = 24) -> String {
+        let clampedFraction = min(1, max(0, fraction))
+        let filled = Int((clampedFraction * Double(width)).rounded())
+        return "[" + String(repeating: "█", count: filled) + String(repeating: "░", count: max(0, width - filled)) + "]"
+    }
+
+    private static func emptyPlaceholder(_ value: String, placeholder: String = "n/a") -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? placeholder : value
+    }
+}
+
 public struct EvalCompareOptions: Equatable, Sendable {
     public let modelID: String
     public let hfRepoID: String
@@ -714,6 +1007,7 @@ public struct EvalCompareOptions: Equatable, Sendable {
     public let profile: ControlPlaneEvaluationRequest.Profile
     public let parameters: [String: String]
     public let json: Bool
+    public let liveProgress: Bool
 
     public init(
         modelID: String = "",
@@ -727,7 +1021,8 @@ public struct EvalCompareOptions: Equatable, Sendable {
         fieldMapping: ControlPlaneEvaluationRequest.FieldMapping = .init(),
         profile: ControlPlaneEvaluationRequest.Profile = .init(),
         parameters: [String: String] = [:],
-        json: Bool = false
+        json: Bool = false,
+        liveProgress: Bool = true
     ) {
         self.modelID = modelID
         self.hfRepoID = hfRepoID
@@ -741,6 +1036,7 @@ public struct EvalCompareOptions: Equatable, Sendable {
         self.profile = profile
         self.parameters = parameters
         self.json = json
+        self.liveProgress = liveProgress
     }
 }
 
@@ -1390,6 +1686,7 @@ public struct ServerSessionCreateOptions: Equatable, Sendable {
     public let port: Int
     public let rateLimitPerMinute: Int
     public let timeoutSeconds: Int
+    public let accelerationProfile: String
     public let accelerationMode: String
     public let draftModelID: String
     public let numDraftTokens: Int
@@ -1402,6 +1699,7 @@ public struct ServerSessionCreateOptions: Equatable, Sendable {
         port: Int = MelixGatewayDefaults.port,
         rateLimitPerMinute: Int = 120,
         timeoutSeconds: Int = 120,
+        accelerationProfile: String = ServingAccelerationProfiles.defaultProfileID,
         accelerationMode: String = "baseline",
         draftModelID: String = "",
         numDraftTokens: Int = 0,
@@ -1413,6 +1711,7 @@ public struct ServerSessionCreateOptions: Equatable, Sendable {
         self.port = port
         self.rateLimitPerMinute = rateLimitPerMinute
         self.timeoutSeconds = timeoutSeconds
+        self.accelerationProfile = accelerationProfile
         self.accelerationMode = accelerationMode
         self.draftModelID = draftModelID
         self.numDraftTokens = numDraftTokens
@@ -1428,6 +1727,7 @@ public struct ServerSessionUpdateOptions: Equatable, Sendable {
     public let port: Int
     public let rateLimitPerMinute: Int
     public let timeoutSeconds: Int
+    public let accelerationProfile: String
     public let accelerationMode: String
     public let draftModelID: String
     public let numDraftTokens: Int
@@ -1441,6 +1741,7 @@ public struct ServerSessionUpdateOptions: Equatable, Sendable {
         port: Int = 0,
         rateLimitPerMinute: Int = 0,
         timeoutSeconds: Int = 0,
+        accelerationProfile: String = "",
         accelerationMode: String = "",
         draftModelID: String = "",
         numDraftTokens: Int = 0,
@@ -1453,6 +1754,7 @@ public struct ServerSessionUpdateOptions: Equatable, Sendable {
         self.port = port
         self.rateLimitPerMinute = rateLimitPerMinute
         self.timeoutSeconds = timeoutSeconds
+        self.accelerationProfile = accelerationProfile
         self.accelerationMode = accelerationMode
         self.draftModelID = draftModelID
         self.numDraftTokens = numDraftTokens
@@ -2025,8 +2327,8 @@ public enum MelixCLIParser {
       melix model roots rescan [--json]
       melix server snapshot [--json]
       melix server session list [--json]
-      melix server session create --title TITLE --model-id MODEL_ID [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--acceleration-mode MODE] [--draft-model-id MODEL_ID] [--num-draft-tokens N] [--json]
-      melix server session update --server-session-id ID [--title TITLE] [--model-id MODEL_ID] [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--acceleration-mode MODE] [--draft-model-id MODEL_ID] [--num-draft-tokens N] [--json]
+      melix server session create --title TITLE --model-id MODEL_ID [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--acceleration-profile PROFILE] [--acceleration-mode MODE] [--draft-model-id MODEL_ID] [--num-draft-tokens N] [--json]
+      melix server session update --server-session-id ID [--title TITLE] [--model-id MODEL_ID] [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--acceleration-profile PROFILE] [--acceleration-mode MODE] [--draft-model-id MODEL_ID] [--num-draft-tokens N] [--json]
       melix server session remove --server-session-id ID [--json]
       melix server session select --server-session-id ID [--json]
       melix server start [TITLE] [--model MODEL_ID] [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--server-session-id ID] [--json]
@@ -2056,22 +2358,22 @@ public enum MelixCLIParser {
       melix lora resume --group-id GROUP_ID [--model-id MODEL_ID] [--preset PRESET] [--adapter-name NAME] [--dataset-uri URI] [--json]
       melix lora publishes list [--model-id MODEL_ID] [--json]
       melix lora publishes show --job-id JOB_ID [--model-id MODEL_ID] [--json]
-      melix bench run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--dataset-ref HF_DATASET[@REV]] [--hf-dataset-name NAME] [--hf-dataset-split SPLIT] [--prompt-feature NAME] [--text-feature NAME] [--image-feature NAME] [--source-image-feature NAME] [--mask-feature NAME] [--context-length N ...] [--generation-length N] [--batch-size N ...] [--repeats N] [--cache-profile MODE] [--reasoning-mode MODE] [--structured-output-mode MODE] [--sample-size N] [--batch-factor N] [--preflight-fit-check] [--allow-memory-risk] [--json]
+      melix bench run (--model-id MODEL_ID | --repo-id HF_REPO) [--suite SUITE ...] [--dataset-ref HF_DATASET[@REV]] [--hf-dataset-name NAME] [--hf-dataset-split SPLIT] [--prompt-feature NAME] [--text-feature NAME] [--image-feature NAME] [--source-image-feature NAME] [--mask-feature NAME] [--context-length N ...] [--generation-length N] [--batch-size N ...] [--repeats N] [--cache-profile MODE] [--reasoning-mode MODE] [--structured-output-mode MODE] [--sample-size N] [--batch-factor N] [--preflight-fit-check] [--allow-memory-risk] [--no-live] [--json]
       melix bench list [--json]
       melix bench export-csv --job-id JOB_ID --output PATH [--json]
-      melix bench report --from PATH [--format markdown|json]
-      melix bench matrix run (--model-id MODEL_ID | --repo-id HF_REPO) --suite SUITE ... --context-length N ... --generation-length N ... --batch-size N ... --cache-profile MODE ... --reasoning-mode MODE ... --structured-output-mode MODE ... --concurrency N ... [--repeats N] (--requests N | --duration-seconds N) [--allow-large-matrix] [--json]
+      melix bench report --from PATH [--format terminal|markdown|json]
+      melix bench matrix run (--model-id MODEL_ID | --repo-id HF_REPO) --suite SUITE ... --context-length N ... --generation-length N ... --batch-size N ... --cache-profile MODE ... --reasoning-mode MODE ... --structured-output-mode MODE ... --concurrency N ... [--repeats N] (--requests N | --duration-seconds N) [--allow-large-matrix] [--no-live] [--json]
       melix bench matrix list [--json]
       melix bench matrix export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix bench matrix export-requests-csv --job-id JOB_ID --output PATH [--json]
-      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID [--remote-model MODEL] ...) [--semantic-judge-remote-server-id ID] [--semantic-judge-model MODEL] [--remote-parallelism N] [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO | --dataset-ref HF_DATASET[@REV]] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--schema PATH | --output-schema-json JSON] [--hints PATH] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--remote-extra-body-json JSON] [--eval-prompt TEXT | --eval-prompt-file PATH | --eval-prompt-id ID [--eval-prompt-revision REV]] [--preflight-fit-check] [--allow-memory-risk] [--json]
+      melix eval run (--model-id MODEL_ID | --repo-id HF_REPO | --remote-server-id ID [--remote-model MODEL] ...) [--semantic-judge-remote-server-id ID] [--semantic-judge-model MODEL] [--remote-parallelism N] [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO | --dataset-ref HF_DATASET[@REV]] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--schema PATH | --output-schema-json JSON] [--hints PATH] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--remote-extra-body-json JSON] [--eval-prompt TEXT | --eval-prompt-file PATH | --eval-prompt-id ID [--eval-prompt-revision REV]] [--preflight-fit-check] [--allow-memory-risk] [--no-live] [--json]
       melix eval prompt list [--json]
       melix eval prompt show --prompt-id ID [--revision-id REV] [--json]
       melix eval prompt create --prompt-id ID --title TITLE --system-prompt-file PATH [--json]
       melix eval prompt update --prompt-id ID --system-prompt-file PATH [--json]
       melix eval prompt freeze --prompt-id ID [--revision-id REV] [--json]
       melix eval prompt archive --prompt-id ID [--json]
-      melix eval compare (--model-id MODEL_ID | --repo-id HF_REPO) (--target-model-id MODEL_ID | --target-adapter ADAPTER_MANIFEST_PATH)... [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO | --dataset-ref HF_DATASET[@REV]] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--schema PATH | --output-schema-json JSON] [--hints PATH] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--json]
+      melix eval compare (--model-id MODEL_ID | --repo-id HF_REPO) (--target-model-id MODEL_ID | --target-adapter ADAPTER_MANIFEST_PATH)... [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO | --dataset-ref HF_DATASET[@REV]] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--schema PATH | --output-schema-json JSON] [--hints PATH] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--no-live] [--json]
       melix eval compare export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix eval compare export-samples-csv --job-id JOB_ID --output PATH [--json]
       melix eval compare export-samples-jsonl --job-id JOB_ID --output PATH [--json]
@@ -2079,7 +2381,7 @@ public enum MelixCLIParser {
       melix eval export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix eval export-samples-csv --job-id JOB_ID --output PATH [--json]
       melix eval export-samples-jsonl --job-id JOB_ID --output PATH [--json]
-      melix eval report --from PATH [--format markdown|json]
+      melix eval report --from PATH [--format terminal|markdown|json]
       melix batch run --models PATH [--config PATH] [--run-id ID] [--output-root PATH] [--temp-root PATH] [--start-index N] [--max-models N] [--judge-remote-server-id ID] [--judge-model MODEL] [--bench-suite SUITE] [--bench-context-length N] [--bench-generation-length N] [--bench-batch-size N] [--bench-repeats N] [--bench-sample-size N] [--bench-batch-factor N] [--eval-suite SUITE] [--eval-dataset-id ID] [--eval-scoring-mode MODE] [--eval-sample-size N] [--eval-batch-factor N] [--continue-on-failure true|false] [--restart-stack-per-model true|false] [--preflight] [--dry-run] [--json]
       melix batch status [--run-id ID] [--output-root PATH] [--temp-root PATH] [--json]
       melix batch resume [--run-id ID] [--output-root PATH] [--temp-root PATH] [--models PATH] [--config PATH] [--eval-only] [--missing-only true|false] [--continue-on-failure true|false] [--dry-run] [--json]
@@ -3097,6 +3399,7 @@ public enum MelixCLIParser {
                     port: port,
                     rateLimitPerMinute: rateLimit,
                     timeoutSeconds: timeoutSeconds,
+                    accelerationProfile: servingDefaults.accelerationProfile,
                     accelerationMode: servingDefaults.accelerationMode,
                     draftModelID: servingDefaults.draftModelID,
                     numDraftTokens: servingDefaults.numDraftTokens,
@@ -3125,6 +3428,7 @@ public enum MelixCLIParser {
                         option: "--timeout-seconds",
                         defaultValue: 0
                     ) ?? 0,
+                    accelerationProfile: servingDefaults.accelerationProfile,
                     accelerationMode: servingDefaults.accelerationMode,
                     draftModelID: servingDefaults.draftModelID,
                     numDraftTokens: servingDefaults.numDraftTokens,
@@ -3148,23 +3452,31 @@ public enum MelixCLIParser {
 
     private static func parseCreateServerSessionServingDefaults(
         _ values: ParsedArguments
-    ) throws -> (accelerationMode: String, draftModelID: String, numDraftTokens: Int) {
+    ) throws -> (accelerationProfile: String, accelerationMode: String, draftModelID: String, numDraftTokens: Int) {
+        let profileID = try normalizedServingDefaultsAccelerationProfile(
+            values.single["--acceleration-profile"],
+            defaultValue: ServingAccelerationProfiles.defaultProfileID,
+            allowEmpty: false
+        )
+        let profile = ServingAccelerationProfiles.profile(id: profileID)
         let draftModelID = trimmedOption(values.single["--draft-model-id"])
         let accelerationMode = try normalizedServingDefaultsAccelerationMode(
             values.single["--acceleration-mode"],
-            defaultValue: draftModelID.isEmpty ? "baseline" : "speculative_decode"
+            defaultValue: draftModelID.isEmpty
+                ? ServingAccelerationProfiles.controlPlaneRawValue(profile.accelerationMode)
+                : "speculative_decode"
         )
         let numDraftTokens = try parseNonNegativeIntValue(
             values.single["--num-draft-tokens"],
             option: "--num-draft-tokens",
-            defaultValue: accelerationMode == "speculative_decode" ? defaultSpeculativeNumDraftTokens : 0
+            defaultValue: accelerationMode == "speculative_decode" ? Int(max(profile.numDraftTokens, UInt32(defaultSpeculativeNumDraftTokens))) : 0
         )
 
         if accelerationMode == "baseline" {
             guard draftModelID.isEmpty else {
                 throw MelixCLIError.usage("--draft-model-id requires --acceleration-mode speculative_decode.")
             }
-            return (accelerationMode, "", 0)
+            return (profileID, accelerationMode, "", 0)
         }
 
         guard !draftModelID.isEmpty else {
@@ -3173,31 +3485,39 @@ public enum MelixCLIParser {
         guard numDraftTokens > 0 else {
             throw MelixCLIError.usage("--num-draft-tokens must be greater than zero for speculative decode.")
         }
-        return (accelerationMode, draftModelID, numDraftTokens)
+        return (profileID, accelerationMode, draftModelID, numDraftTokens)
     }
 
     private static func parseUpdateServerSessionServingDefaults(
         _ values: ParsedArguments
-    ) throws -> (accelerationMode: String, draftModelID: String, numDraftTokens: Int) {
+    ) throws -> (accelerationProfile: String, accelerationMode: String, draftModelID: String, numDraftTokens: Int) {
+        let profileID = try normalizedServingDefaultsAccelerationProfile(
+            values.single["--acceleration-profile"],
+            defaultValue: "",
+            allowEmpty: true
+        )
+        let profile = profileID.isEmpty ? nil : ServingAccelerationProfiles.profile(id: profileID)
         let draftModelID = trimmedOption(values.single["--draft-model-id"])
         let accelerationMode = try normalizedServingDefaultsAccelerationMode(
             values.single["--acceleration-mode"],
-            defaultValue: draftModelID.isEmpty ? "" : "speculative_decode",
+            defaultValue: draftModelID.isEmpty
+                ? profile.map { ServingAccelerationProfiles.controlPlaneRawValue($0.accelerationMode) } ?? ""
+                : "speculative_decode",
             allowEmpty: true
         )
         let numDraftTokens = try parseNonNegativeIntValue(
             values.single["--num-draft-tokens"],
             option: "--num-draft-tokens",
-            defaultValue: 0
+            defaultValue: profile.map { Int($0.numDraftTokens) } ?? 0
         )
 
         if accelerationMode == "baseline" {
             guard draftModelID.isEmpty else {
                 throw MelixCLIError.usage("--draft-model-id requires --acceleration-mode speculative_decode.")
             }
-            return (accelerationMode, "", 0)
+            return (profileID, accelerationMode, "", 0)
         }
-        return (accelerationMode, draftModelID, numDraftTokens)
+        return (profileID, accelerationMode, draftModelID, numDraftTokens)
     }
 
     private static func parseChat(_ arguments: [String]) throws -> MelixCLICommand {
@@ -3891,7 +4211,8 @@ public enum MelixCLIParser {
                     parameters: parameters,
                     preflightFitCheck: values.flags.contains("--preflight-fit-check"),
                     allowMemoryRisk: values.flags.contains("--allow-memory-risk"),
-                    json: values.flags.contains("--json")
+                    json: values.flags.contains("--json"),
+                    liveProgress: values.flags.contains("--no-live") == false
                 )
             )
         case "list":
@@ -4007,7 +4328,8 @@ public enum MelixCLIParser {
                     requests: requests,
                     durationSeconds: durationSeconds,
                     allowLargeMatrix: values.flags.contains("--allow-large-matrix"),
-                    json: values.flags.contains("--json")
+                    json: values.flags.contains("--json"),
+                    liveProgress: values.flags.contains("--no-live") == false
                 )
             )
         case "list":
@@ -4113,7 +4435,8 @@ public enum MelixCLIParser {
                     remoteParallelism: UInt32(values.single["--remote-parallelism"] ?? "") ?? 0,
                     preflightFitCheck: values.flags.contains("--preflight-fit-check"),
                     allowMemoryRisk: values.flags.contains("--allow-memory-risk"),
-                    json: values.flags.contains("--json")
+                    json: values.flags.contains("--json"),
+                    liveProgress: values.flags.contains("--no-live") == false
                 )
             )
         case "prompt":
@@ -4475,7 +4798,8 @@ public enum MelixCLIParser {
                 fieldMapping: sourceConfiguration.fieldMapping,
                 profile: sourceConfiguration.profile,
                 parameters: try parseEvalParameters(values),
-                json: values.flags.contains("--json")
+                json: values.flags.contains("--json"),
+                liveProgress: values.flags.contains("--no-live") == false
             )
         )
     }
@@ -5059,9 +5383,17 @@ public enum MelixCLIParser {
         defaultValue: String,
         allowEmpty: Bool = false
     ) throws -> String {
+        guard let value else {
+            return defaultValue
+        }
         let trimmed = trimmedOption(value)
         if trimmed.isEmpty {
-            return allowEmpty ? defaultValue : defaultValue
+            guard allowEmpty else {
+                throw MelixCLIError.usage(
+                    "Invalid value for --acceleration-mode. Expected baseline or speculative_decode."
+                )
+            }
+            return defaultValue
         }
         switch trimmed.lowercased() {
         case "baseline", "speculative_decode":
@@ -5071,6 +5403,31 @@ public enum MelixCLIParser {
                 "Invalid value for --acceleration-mode. Expected baseline or speculative_decode."
             )
         }
+    }
+
+    private static func normalizedServingDefaultsAccelerationProfile(
+        _ value: String?,
+        defaultValue: String,
+        allowEmpty: Bool = false
+    ) throws -> String {
+        guard let value else {
+            return defaultValue
+        }
+        let trimmed = trimmedOption(value)
+        if trimmed.isEmpty {
+            guard allowEmpty else {
+                throw MelixCLIError.usage(
+                    "Invalid value for --acceleration-profile. Expected \(ServingAccelerationProfiles.allowedProfileList)."
+                )
+            }
+            return defaultValue
+        }
+        if let normalized = ServingAccelerationProfiles.normalizeProfileID(trimmed) {
+            return normalized
+        }
+        throw MelixCLIError.usage(
+            "Invalid value for --acceleration-profile. Expected \(ServingAccelerationProfiles.allowedProfileList)."
+        )
     }
 }
 
@@ -5089,6 +5446,7 @@ private struct ArgumentCursor {
         "--allow-large-matrix",
         "--preflight-fit-check",
         "--allow-memory-risk",
+        "--no-live",
         "--resume",
         "--dry-run",
         "--follow",
@@ -5234,16 +5592,24 @@ public actor MelixCLIRunner {
     /// Package-visible so the pipeline extension can derive MELIX_HOME-compatible receipt roots.
     let environment: [String: String]
     private let commandExecutor: MelixCLICommandExecutor?
+    private let terminalCapabilities: MelixCLITerminalCapabilities
+    private let terminalWriter: @Sendable (String) -> Void
 
     public init(
         client: (any ControlPlaneXPCClient)? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         operatorSessionStore: (any MelixOperatorSessionStoring)? = nil,
         commandExecutor: MelixCLICommandExecutor? = nil,
-        serviceBuilder: (@Sendable ([String: String]) -> any ControlPlaneExecuting)? = nil
+        serviceBuilder: (@Sendable ([String: String]) -> any ControlPlaneExecuting)? = nil,
+        terminalCapabilities: MelixCLITerminalCapabilities? = nil,
+        terminalWriter: @escaping @Sendable (String) -> Void = { text in
+            FileHandle.standardOutput.write(Data(text.utf8))
+        }
     ) {
         self.environment = environment
         self.commandExecutor = commandExecutor
+        self.terminalCapabilities = terminalCapabilities ?? MelixCLITerminalCapabilities.detect(environment: environment)
+        self.terminalWriter = terminalWriter
         self.operatorSessionStore = operatorSessionStore ?? MelixOperatorSessionStore(
             melixHome: MelixHome(environment: environment)
         )
@@ -5745,7 +6111,8 @@ public actor MelixCLIRunner {
             completionBatchSize: configuredSession.servingDefaults.completionBatchSize,
             accelerationMode: accelerationMode(for: configuredSession.servingDefaults.accelerationMode),
             draftModelID: configuredSession.servingDefaults.draftModelID,
-            numDraftTokens: configuredSession.servingDefaults.numDraftTokens
+            numDraftTokens: configuredSession.servingDefaults.numDraftTokens,
+            accelerationProfile: configuredSession.servingDefaults.accelerationProfile
         )
     }
 
@@ -5859,7 +6226,8 @@ public actor MelixCLIRunner {
                 fieldMapping: options.fieldMapping,
                 profile: options.profile,
                 parameters: parameters,
-                json: options.json
+                json: options.json,
+                liveProgress: options.liveProgress
             )
         )
     }
@@ -6030,6 +6398,359 @@ public actor MelixCLIRunner {
             lines.append("samples_jsonl: \(exportedSamplesPath)")
         }
         return lines.joined(separator: "\n") + "\n"
+
+    private func runBenchmarkWithLiveDisplay(_ options: BenchRunOptions) async throws -> ControlPlaneBenchResult {
+        guard shouldUseLiveDisplay(json: options.json, enabled: options.liveProgress) else {
+            return try await runBenchmark(options)
+        }
+        let startedAt = Date()
+        let display = makeLiveRunDisplay()
+        var state = MelixCLILiveRunState(
+            title: "Benchmark",
+            targetText: runTargetText(modelID: options.modelID, hfRepoID: options.hfRepoID),
+            suiteText: options.suites.isEmpty ? "default" : options.suites.joined(separator: ", "),
+            steps: [
+                .init(id: "validate", title: "Validate Target"),
+                .init(id: "prepare", title: "Prepare Benchmark"),
+                .init(id: "run", title: "Run Suites"),
+                .init(id: "report", title: "Write Report"),
+            ],
+            detailText: benchmarkLiveDetail(options)
+        )
+        state.move(to: "validate", detailText: "Checking benchmark target and options", elapsedSeconds: elapsedSeconds(since: startedAt))
+        display.render(state)
+        do {
+            state.move(to: "prepare", detailText: benchmarkLiveDetail(options), elapsedSeconds: elapsedSeconds(since: startedAt))
+            display.render(state)
+            state.move(to: "run", detailText: "Benchmark suites are running", elapsedSeconds: elapsedSeconds(since: startedAt))
+            display.render(state)
+            let result = try await withLiveRunTicker(state: state, display: display, startedAt: startedAt) {
+                try await runBenchmark(options)
+            }
+            state.move(to: "report", detailText: "Collecting report and metrics", elapsedSeconds: elapsedSeconds(since: startedAt))
+            display.render(state)
+            state.finish(
+                primaryMetricText: Self.livePrimaryMetricText(result.metrics),
+                artifactText: result.reportPath,
+                detailText: result.job.map { "job \($0.jobID)" } ?? "benchmark completed",
+                elapsedSeconds: elapsedSeconds(since: startedAt)
+            )
+            display.render(state, final: true)
+            return result
+        } catch {
+            state.fail(detailText: String(describing: error), elapsedSeconds: elapsedSeconds(since: startedAt))
+            display.render(state, final: true)
+            throw error
+        }
+    }
+
+    private func runBenchmarkMatrixWithLiveDisplay(_ options: BenchMatrixRunOptions) async throws -> ControlPlaneBenchMatrixResult {
+        guard shouldUseLiveDisplay(json: options.json, enabled: options.liveProgress) else {
+            return try await runBenchmarkMatrix(options)
+        }
+        let startedAt = Date()
+        let display = makeLiveRunDisplay()
+        var state = MelixCLILiveRunState(
+            title: "Benchmark Matrix",
+            targetText: runTargetText(modelID: options.modelID, hfRepoID: options.hfRepoID),
+            suiteText: options.suites.joined(separator: ", "),
+            steps: [
+                .init(id: "validate", title: "Validate Matrix"),
+                .init(id: "expand", title: "Expand Cells"),
+                .init(id: "run", title: "Run Matrix"),
+                .init(id: "summary", title: "Load Summary"),
+            ],
+            detailText: benchmarkMatrixLiveDetail(options)
+        )
+        state.move(to: "validate", detailText: "Checking matrix target and load budget", elapsedSeconds: elapsedSeconds(since: startedAt))
+        display.render(state)
+        do {
+            state.move(to: "expand", detailText: benchmarkMatrixLiveDetail(options), elapsedSeconds: elapsedSeconds(since: startedAt))
+            display.render(state)
+            state.move(to: "run", detailText: "Matrix cells are running", elapsedSeconds: elapsedSeconds(since: startedAt))
+            display.render(state)
+            let result = try await withLiveRunTicker(state: state, display: display, startedAt: startedAt) {
+                try await runBenchmarkMatrix(options)
+            }
+            state.move(to: "summary", detailText: "Loading matrix summary rows", elapsedSeconds: elapsedSeconds(since: startedAt))
+            display.render(state)
+            state.finish(
+                primaryMetricText: Self.livePrimaryMetricText(Self.benchmarkMatrixLiveMetrics(from: result.summaryRows)),
+                artifactText: result.job.outputDir,
+                detailText: "job \(result.job.jobID) • \(result.summaryRows.count) rows",
+                elapsedSeconds: elapsedSeconds(since: startedAt)
+            )
+            display.render(state, final: true)
+            return result
+        } catch {
+            state.fail(detailText: String(describing: error), elapsedSeconds: elapsedSeconds(since: startedAt))
+            display.render(state, final: true)
+            throw error
+        }
+    }
+
+    private func runEvaluationsWithLiveDisplay(_ options: EvalRunOptions) async throws -> [ControlPlaneEvaluationResult] {
+        guard shouldUseLiveDisplay(json: options.json, enabled: options.liveProgress) else {
+            return try await runEvaluations(options)
+        }
+        let suites = options.suites.isEmpty ? ["mmlu"] : options.suites
+        let startedAt = Date()
+        let display = makeLiveRunDisplay()
+        var state = MelixCLILiveRunState(
+            title: "Evaluation",
+            targetText: evaluationTargetText(options),
+            suiteText: suites.joined(separator: ", "),
+            steps: [
+                .init(id: "validate", title: "Validate Target"),
+                .init(id: "prepare", title: "Prepare Suites"),
+                .init(id: "run", title: "Run Evaluation"),
+                .init(id: "score", title: "Collect Scores"),
+            ],
+            detailText: evaluationLiveDetail(options)
+        )
+        state.move(to: "validate", detailText: "Checking evaluation target and dataset", elapsedSeconds: elapsedSeconds(since: startedAt))
+        display.render(state)
+        do {
+            state.move(to: "prepare", detailText: evaluationLiveDetail(options), elapsedSeconds: elapsedSeconds(since: startedAt))
+            display.render(state)
+            state.move(to: "run", detailText: "Evaluation suites are running", elapsedSeconds: elapsedSeconds(since: startedAt))
+            display.render(state)
+            let results = try await withLiveRunTicker(state: state, display: display, startedAt: startedAt) {
+                try await runEvaluations(options)
+            }
+            state.move(to: "score", detailText: "Collecting scores and artifacts", elapsedSeconds: elapsedSeconds(since: startedAt))
+            display.render(state)
+            state.finish(
+                primaryMetricText: Self.livePrimaryMetricText(Self.evaluationLiveMetrics(from: results)),
+                artifactText: results.first?.job.outputDir ?? "",
+                detailText: evaluationCompletionDetail(results),
+                elapsedSeconds: elapsedSeconds(since: startedAt)
+            )
+            display.render(state, final: true)
+            return results
+        } catch {
+            state.fail(detailText: String(describing: error), elapsedSeconds: elapsedSeconds(since: startedAt))
+            display.render(state, final: true)
+            throw error
+        }
+    }
+
+    private func runEvaluationCompareWithLiveDisplay(_ options: EvalCompareOptions) async throws -> [ControlPlaneEvaluationResult] {
+        guard shouldUseLiveDisplay(json: options.json, enabled: options.liveProgress) else {
+            return try await runEvaluationCompare(options)
+        }
+        let startedAt = Date()
+        let display = makeLiveRunDisplay()
+        var state = MelixCLILiveRunState(
+            title: "Evaluation Compare",
+            targetText: runTargetText(modelID: options.modelID, hfRepoID: options.hfRepoID),
+            suiteText: options.suites.isEmpty ? "default" : options.suites.joined(separator: ", "),
+            steps: [
+                .init(id: "baseline", title: "Load Baseline"),
+                .init(id: "candidate", title: "Load Candidate"),
+                .init(id: "compare", title: "Compare Metrics"),
+                .init(id: "report", title: "Render Report"),
+            ],
+            detailText: evaluationCompareLiveDetail(options)
+        )
+        state.move(to: "baseline", detailText: "Checking base model", elapsedSeconds: elapsedSeconds(since: startedAt))
+        display.render(state)
+        do {
+            state.move(to: "candidate", detailText: evaluationCompareLiveDetail(options), elapsedSeconds: elapsedSeconds(since: startedAt))
+            display.render(state)
+            state.move(to: "compare", detailText: "Compare evaluation is running", elapsedSeconds: elapsedSeconds(since: startedAt))
+            display.render(state)
+            let results = try await withLiveRunTicker(state: state, display: display, startedAt: startedAt) {
+                try await runEvaluationCompare(options)
+            }
+            state.move(to: "report", detailText: "Rendering comparison report", elapsedSeconds: elapsedSeconds(since: startedAt))
+            display.render(state)
+            state.finish(
+                primaryMetricText: Self.livePrimaryMetricText(Self.evaluationLiveMetrics(from: results)),
+                artifactText: results.first?.job.outputDir ?? "",
+                detailText: evaluationCompletionDetail(results),
+                elapsedSeconds: elapsedSeconds(since: startedAt)
+            )
+            display.render(state, final: true)
+            return results
+        } catch {
+            state.fail(detailText: String(describing: error), elapsedSeconds: elapsedSeconds(since: startedAt))
+            display.render(state, final: true)
+            throw error
+        }
+    }
+
+    private func shouldUseLiveDisplay(json: Bool, enabled: Bool) -> Bool {
+        enabled && json == false && terminalCapabilities.isInteractive
+    }
+
+    private func makeLiveRunDisplay() -> MelixCLILiveRunDisplay {
+        MelixCLILiveRunDisplay(capabilities: terminalCapabilities, write: terminalWriter)
+    }
+
+    private func withLiveRunTicker<T: Sendable>(
+        state: MelixCLILiveRunState,
+        display: MelixCLILiveRunDisplay,
+        startedAt: Date,
+        operation: @Sendable () async throws -> T
+    ) async throws -> T {
+        guard display.supportsContinuousRefresh else {
+            return try await operation()
+        }
+        let ticker = Task<Void, Never> {
+            var tickState = state
+            while Task.isCancelled == false {
+                do {
+                    try await Task.sleep(nanoseconds: 1_000_000_000)
+                } catch {
+                    return
+                }
+                guard Task.isCancelled == false else {
+                    return
+                }
+                tickState.elapsedSeconds = Date().timeIntervalSince(startedAt)
+                display.render(tickState)
+            }
+        }
+        do {
+            let result = try await operation()
+            ticker.cancel()
+            await ticker.value
+            return result
+        } catch {
+            ticker.cancel()
+            await ticker.value
+            throw error
+        }
+    }
+
+    private func elapsedSeconds(since startedAt: Date) -> Double {
+        Date().timeIntervalSince(startedAt)
+    }
+
+    private func runTargetText(modelID: String, hfRepoID: String) -> String {
+        if modelID.isEmpty == false {
+            return modelID
+        }
+        if hfRepoID.isEmpty == false {
+            return hfRepoID
+        }
+        return "n/a"
+    }
+
+    private func evaluationTargetText(_ options: EvalRunOptions) -> String {
+        if options.modelID.isEmpty == false || options.hfRepoID.isEmpty == false {
+            return runTargetText(modelID: options.modelID, hfRepoID: options.hfRepoID)
+        }
+        if options.remoteTargets.isEmpty == false {
+            return options.remoteTargets.map {
+                [$0.remoteServerID, $0.remoteModelID].filter { $0.isEmpty == false }.joined(separator: " / ")
+            }.joined(separator: ", ")
+        }
+        if options.remoteServerID.isEmpty == false {
+            return [options.remoteServerID, options.remoteModelID].filter { $0.isEmpty == false }.joined(separator: " / ")
+        }
+        return "n/a"
+    }
+
+    private func benchmarkLiveDetail(_ options: BenchRunOptions) -> String {
+        let contexts = options.contextLengths.isEmpty ? "default" : options.contextLengths.map(String.init).joined(separator: ",")
+        let batches = options.batchSizes.isEmpty ? "default" : options.batchSizes.map(String.init).joined(separator: ",")
+        return "ctx \(contexts) • batch \(batches) • \(options.repeats)x repeats"
+    }
+
+    private func benchmarkMatrixLiveDetail(_ options: BenchMatrixRunOptions) -> String {
+        let budget = options.requests > 0 ? "\(options.requests) requests" : "\(options.durationSeconds)s duration"
+        let cells = max(1, options.suites.count)
+            * max(1, options.contextLengths.count)
+            * max(1, options.generationLengths.count)
+            * max(1, options.batchSizes.count)
+            * max(1, options.cacheProfiles.count)
+            * max(1, options.reasoningModes.count)
+            * max(1, options.structuredOutputModes.count)
+            * max(1, options.concurrencyLevels.count)
+        return "\(cells) cells • \(budget) • \(options.repeats)x repeats"
+    }
+
+    private func evaluationLiveDetail(_ options: EvalRunOptions) -> String {
+        let samples = options.sampleSize > 0 ? "\(options.sampleSize)" : "default"
+        if options.semanticJudgeRemoteServerID.isEmpty == false {
+            return "sample \(samples) • semantic judge \(options.semanticJudgeRemoteServerID)"
+        }
+        return "sample \(samples)"
+    }
+
+    private func evaluationCompareLiveDetail(_ options: EvalCompareOptions) -> String {
+        let registered = options.targetModelIDs.count
+        let adapters = options.targetAdapterManifestPaths.count
+        let samples = options.sampleSize > 0 ? "\(options.sampleSize)" : "default"
+        return "\(registered) model targets • \(adapters) adapter targets • sample \(samples)"
+    }
+
+    private func evaluationCompletionDetail(_ results: [ControlPlaneEvaluationResult]) -> String {
+        let rowCount = results.reduce(0) { $0 + $1.results.count }
+        let jobText = results.first?.job.jobID ?? "evaluation"
+        return "job \(jobText) • \(rowCount) result rows"
+    }
+
+    private static func livePrimaryMetricText(_ metrics: [String: Double]) -> String {
+        guard metrics.isEmpty == false else {
+            return ""
+        }
+        let preferredKeys = [
+            "bench.smoke.ttft_ms",
+            "bench.smoke.tokens_per_second",
+            "matrix.throughput_tokens_per_second",
+            "matrix.decode_tokens_per_second",
+            "matrix.ttft_mean_ms",
+            "eval.compare.win_rate",
+            "event_extraction_weighted_f1",
+            "mmlu.accuracy",
+        ]
+        let key = preferredKeys.first(where: { metrics[$0] != nil }) ?? metrics.keys.sorted().first
+        guard let key, let value = metrics[key] else {
+            return ""
+        }
+        return "\(key)=\(liveMetricValueText(value))"
+    }
+
+    private static func liveMetricValueText(_ value: Double) -> String {
+        let format = abs(value) >= 100 ? "%.1f" : "%.3f"
+        return String(format: format, value)
+            .replacingOccurrences(of: #"\.?0+$"#, with: "", options: .regularExpression)
+    }
+
+    private static func benchmarkMatrixLiveMetrics(
+        from rows: [Melix_Controlplane_V1_BenchmarkMatrixSummaryRow]
+    ) -> [String: Double] {
+        guard rows.isEmpty == false else {
+            return [:]
+        }
+        return [
+            "matrix.ttft_mean_ms": average(rows.map(\.ttftMeanMs)),
+            "matrix.decode_tokens_per_second": average(rows.map(\.decodeTokensPerSecondMean)),
+            "matrix.throughput_tokens_per_second": average(rows.map(\.throughputTokensPerSecond)),
+        ]
+    }
+
+    private static func evaluationLiveMetrics(from results: [ControlPlaneEvaluationResult]) -> [String: Double] {
+        var valuesByName: [String: [Double]] = [:]
+        for result in results {
+            for summary in result.results {
+                for metric in summary.metrics where metric.name.isEmpty == false {
+                    valuesByName[metric.name, default: []].append(metric.value)
+                }
+            }
+        }
+        return valuesByName.mapValues(average)
+    }
+
+    private static func average(_ values: [Double]) -> Double {
+        guard values.isEmpty == false else {
+            return 0
+        }
+        return values.reduce(0, +) / Double(values.count)
+
     }
 
     public func run(_ command: MelixCLICommand) async throws -> String {
@@ -6575,7 +7296,8 @@ public actor MelixCLIRunner {
                 completionBatchSize: configuredSession.servingDefaults.completionBatchSize,
                 accelerationMode: accelerationMode(for: configuredSession.servingDefaults.accelerationMode),
                 draftModelID: configuredSession.servingDefaults.draftModelID,
-                numDraftTokens: configuredSession.servingDefaults.numDraftTokens
+                numDraftTokens: configuredSession.servingDefaults.numDraftTokens,
+                accelerationProfile: configuredSession.servingDefaults.accelerationProfile
             )
             let snapshot = try await client.startServerSession(serverSessionID: configuredSession.id)
             return try renderServerSnapshot(snapshot, json: options.json)
@@ -6841,7 +7563,7 @@ public actor MelixCLIRunner {
         case .loraResume(let options):
             return try await runLoraResume(options)
         case .benchRun(let options):
-            let result = try await runBenchmark(options)
+            let result = try await runBenchmarkWithLiveDisplay(options)
             if options.json {
                 var payload: [String: Any] = [
                     "report_path": result.reportPath,
@@ -6888,7 +7610,7 @@ public actor MelixCLIRunner {
         case .benchReport(let options):
             return try renderRunReport(kind: "benchmark", options: options)
         case .benchMatrixRun(let options):
-            let result = try await runBenchmarkMatrix(options)
+            let result = try await runBenchmarkMatrixWithLiveDisplay(options)
             if options.json {
                 return try prettyJSON(makeBenchmarkMatrixPayload(result))
             }
@@ -6941,7 +7663,7 @@ public actor MelixCLIRunner {
             }
             return outputURL.path + "\n"
         case .evalRun(let options):
-            let results = try await runEvaluations(options)
+            let results = try await runEvaluationsWithLiveDisplay(options)
             if options.json {
                 return try prettyJSON(results.map(makeEvaluationPayload))
             }
@@ -6989,7 +7711,7 @@ public actor MelixCLIRunner {
             }
             return "Archived evaluation prompt \(prompt.id).\n"
         case .evalCompare(let options):
-            let results = try await runEvaluationCompare(options)
+            let results = try await runEvaluationCompareWithLiveDisplay(options)
             if options.json {
                 return try prettyJSON(results.map(makeEvaluationPayload))
             }
@@ -7818,12 +8540,14 @@ public actor MelixCLIRunner {
     private func renderRunReport(kind: String, options: RunReportOptions) throws -> String {
         let report = try runRecordStore().report(kind: kind, sourcePath: options.sourcePath)
         switch options.format.lowercased() {
+        case "terminal", "text":
+            return renderRunReportTerminal(report.payload)
         case "markdown", "md":
             return report.markdown
         case "json":
             return try runRecordJSONString(report.payload)
         default:
-            throw MelixCLIError.usage("Invalid value for --format. Expected markdown or json.")
+            throw MelixCLIError.usage("Invalid value for --format. Expected terminal, markdown, or json.")
         }
     }
 
@@ -8090,10 +8814,35 @@ public actor MelixCLIRunner {
         }
     }
 
+    private func applyAccelerationProfile(
+        _ profileID: String,
+        to defaults: inout MelixOperatorServerServingDefaultsState
+    ) throws {
+        let normalizedProfileID = profileID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedProfileID.isEmpty == false else {
+            return
+        }
+        guard let profileID = ServingAccelerationProfiles.normalizeProfileID(normalizedProfileID) else {
+            throw MelixCLIError.usage(
+                "Invalid value for --acceleration-profile. Expected \(ServingAccelerationProfiles.allowedProfileList)."
+            )
+        }
+        let profile = ServingAccelerationProfiles.profile(id: profileID)
+        defaults.accelerationProfile = profileID
+        defaults.concurrentProcessingEnabled = profile.concurrentProcessingEnabled
+        defaults.maxConcurrentRequests = Int(profile.maxConcurrentRequests)
+        defaults.prefillBatchSize = Int(profile.prefillBatchSize)
+        defaults.completionBatchSize = Int(profile.completionBatchSize)
+        defaults.accelerationMode = ServingAccelerationProfiles.controlPlaneRawValue(profile.accelerationMode)
+        defaults.draftModelID = profile.draftModelID
+        defaults.numDraftTokens = Int(profile.numDraftTokens)
+    }
+
     private func servingDefaults(
         for options: ServerSessionCreateOptions
     ) throws -> MelixOperatorServerServingDefaultsState {
         var defaults = MelixOperatorServerServingDefaultsState()
+        try applyAccelerationProfile(options.accelerationProfile, to: &defaults)
         let rawAccelerationMode = options.accelerationMode.trimmingCharacters(in: .whitespacesAndNewlines)
         let accelerationMode = normalizedServingDefaultsAccelerationMode(options.accelerationMode)
         if rawAccelerationMode.isEmpty == false && accelerationMode.isEmpty {
@@ -8102,11 +8851,21 @@ public actor MelixCLIRunner {
             )
         }
         guard accelerationMode == "speculative_decode" else {
+            if rawAccelerationMode.isEmpty == false {
+                defaults.accelerationMode = "baseline"
+                defaults.draftModelID = ""
+                defaults.numDraftTokens = 0
+            }
             return defaults
         }
         defaults.accelerationMode = accelerationMode
-        defaults.draftModelID = options.draftModelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        defaults.numDraftTokens = max(0, options.numDraftTokens)
+        let draftModelID = options.draftModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if draftModelID.isEmpty == false {
+            defaults.draftModelID = draftModelID
+        }
+        if options.numDraftTokens > 0 {
+            defaults.numDraftTokens = options.numDraftTokens
+        }
         if defaults.numDraftTokens <= 0 {
             defaults.numDraftTokens = Self.defaultSpeculativeNumDraftTokens
         }
@@ -8128,10 +8887,12 @@ public actor MelixCLIRunner {
             )
         }
         let draftModelID = options.draftModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        try applyAccelerationProfile(options.accelerationProfile, to: &session.servingDefaults)
         let hasAccelerationMode = accelerationMode.isEmpty == false
         let hasDraftModelID = draftModelID.isEmpty == false
         let hasNumDraftTokens = options.numDraftTokens > 0
-        guard hasAccelerationMode || hasDraftModelID || hasNumDraftTokens else {
+        let hasAccelerationProfile = options.accelerationProfile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        guard hasAccelerationMode || hasDraftModelID || hasNumDraftTokens || hasAccelerationProfile else {
             return
         }
 
@@ -8251,20 +9012,7 @@ public actor MelixCLIRunner {
     }
 
     private func accelerationMode(for rawValue: String) -> Melix_Controlplane_V1_AccelerationMode {
-        switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "baseline":
-            return .baseline
-        case "speculative_decode":
-            return .speculativeDecode
-        case "accelerated_prefill":
-            return .acceleratedPrefill
-        case "active_kv_quantized":
-            return .activeKvQuantized
-        case "sparse_prefill":
-            return .sparsePrefill
-        default:
-            return .unspecified
-        }
+        ServingAccelerationProfiles.controlPlaneAccelerationMode(rawValue: rawValue)
     }
 
     private func runtimeModeLabel(_ model: Melix_Controlplane_V1_ModelSummary) -> String {
@@ -9701,7 +10449,8 @@ public actor MelixCLIRunner {
             remoteParallelism: options.remoteParallelism,
             preflightFitCheck: options.preflightFitCheck,
             allowMemoryRisk: options.allowMemoryRisk,
-            json: options.json
+            json: options.json,
+            liveProgress: options.liveProgress
         )
         let adHocPrompt = try adHocEvaluationPromptSystemPrompt(effectiveOptions)
         let remoteTargetOptions = Self.effectiveRemoteTargetOptions(for: effectiveOptions)

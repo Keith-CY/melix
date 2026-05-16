@@ -587,7 +587,7 @@ PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
   python scripts/benchmark_evaluation_report.py \
     --baseline /tmp/melix-base \
     --candidate /tmp/melix-head \
-    --format markdown
+    --format terminal
 ```
 
 Report status is advisory. `warning` rows indicate direction-aware regressions, including latency,

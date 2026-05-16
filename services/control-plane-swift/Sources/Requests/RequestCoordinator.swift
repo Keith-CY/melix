@@ -6,6 +6,11 @@ public enum RequestCoordinatorError: Error, Equatable {
     case requestAlreadyActive
     case workerUnavailable
     case requestNotResumable
+    case unsupportedAcceleration(
+        reason: Melix_Controlplane_V1_UnsupportedCapabilityReason,
+        message: String,
+        recoveryHint: String
+    )
 }
 
 public struct CoordinatedChatExecution: Sendable {
@@ -315,6 +320,12 @@ private enum CacheRouteClass: String, Sendable {
 
 private let boundarySafePrefillChunkTargetTokens: UInt32 = 16
 private let workerDispatchReadinessCacheTTLSeconds: TimeInterval = 5
+private let defaultActiveKVQuantProfile = "turboquant-q4"
+private let activeKVQuantProfiles: Set<String> = [
+    defaultActiveKVQuantProfile,
+    "q4",
+    "q8",
+]
 
 private struct GatewayBatchingExecutionDefaults: Sendable {
     let concurrentProcessingEnabled: Bool
@@ -372,6 +383,7 @@ private struct GatewayBatchingExecutionDefaults: Sendable {
 
 private struct GatewaySpeculativeExecutionDefaults: Sendable {
     let accelerationMode: Melix_Worker_V1_AccelerationMode
+    let accelerationProfile: String
     let draftModelID: String
     let numDraftTokens: UInt32
 
@@ -379,6 +391,9 @@ private struct GatewaySpeculativeExecutionDefaults: Sendable {
         self.accelerationMode = Self.parseAccelerationMode(
             executionExt["melix.gateway.acceleration_mode"]
         )
+        self.accelerationProfile = ServingAccelerationProfiles.normalizeProfileID(
+            executionExt["melix.gateway.acceleration_profile"]
+        ) ?? ServingAccelerationProfiles.defaultProfileID
         self.draftModelID = executionExt["melix.gateway.draft_model_id"]?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.numDraftTokens = Self.parseUInt32(
@@ -426,6 +441,12 @@ private struct SchedulingPlan: Sendable {
     let continuousBatchEligible: Bool
     let batchCohortID: String
     let batchMaxSize: UInt32
+    let accelerationRefusal: AccelerationReceiptValidation?
+}
+
+private struct ModelAccelerationResolution: Sendable {
+    let request: TranslatedChatRequest
+    let accelerationRefusal: AccelerationReceiptValidation?
 }
 
 private struct StructuredOutputValidationEvent: Sendable {
@@ -734,6 +755,19 @@ public actor RequestCoordinator {
         let requestMetricStartedAt = requestStartedAt ?? now()
         let plan = await resolvedSchedulingPlan(translatedRequest)
         let request = plan.translatedRequest
+        if let accelerationRefusal = plan.accelerationRefusal {
+            await metricsStore.increment("control_plane.acceleration_refusal_count")
+            _ = await schedulerReadModel.recordRejected(
+                requestID: request.requestID,
+                laneHint: plan.admissionLane,
+                priority: request.workerRequest.execution.scheduling.priority
+            )
+            throw RequestCoordinatorError.unsupportedAcceleration(
+                reason: accelerationRefusal.unsupportedReason,
+                message: accelerationRefusal.message,
+                recoveryHint: accelerationRefusal.recoveryHint
+            )
+        }
         requestPlans[request.requestID] = plan
         await recordSchedulingMetrics(for: plan)
         await hydrateSessionGraph(for: request.workerRequest.execution.id)
@@ -877,6 +911,7 @@ public actor RequestCoordinator {
             )
             let structuredOutputValidator = StructuredOutputValidator()
             let initialReasoningBudget = ReasoningBudgetState(execution: request.workerRequest.execution)
+            let requestAccelerationProfileID = request.workerRequest.execution.acceleration.profileID
             Task {
                 var firstDeltaRecorded = false
                 var firstSemanticEventRecorded = false
@@ -946,6 +981,7 @@ public actor RequestCoordinator {
                                 fallbackLane: plan.decodeLane,
                                 requestIdentity: request.workerRequest.execution.id,
                                 routeKind: plan.routeKind,
+                                accelerationProfileID: requestAccelerationProfileID,
                                 event: outputEvent
                             )
                             if let firstSemanticEventMs {
@@ -1210,6 +1246,7 @@ public actor RequestCoordinator {
         fallbackLane: String,
         requestIdentity: Melix_Worker_V1_RequestIdentity,
         routeKind: WorkerRouteKind,
+        accelerationProfileID: String,
         event: Melix_Worker_V1_ExecuteEvent
     ) async {
         let workerSource = routeKind.workerSourceID
@@ -1228,6 +1265,7 @@ public actor RequestCoordinator {
                     : (event.lane.isEmpty ? "text.prefill.hot" : event.lane),
                 workerID: workerSource,
                 accelerationMode: controlPlaneAccelerationMode(from: event.accelerationMode),
+                accelerationProfileID: accelerationProfileID,
                 source: workerSource
             )
         case .decodeStarted(let decodeStarted):
@@ -1238,6 +1276,7 @@ public actor RequestCoordinator {
                 workerID: workerSource,
                 decodeHandle: decodeStarted.decodeHandle,
                 accelerationMode: controlPlaneAccelerationMode(from: event.accelerationMode),
+                accelerationProfileID: accelerationProfileID,
                 source: workerSource
             )
         case .tokenDelta, .reasoningDelta, .toolCallDelta, .usageDelta:
@@ -1247,14 +1286,15 @@ public actor RequestCoordinator {
                 laneHint: observedLane,
                 workerID: workerSource,
                 accelerationMode: controlPlaneAccelerationMode(from: event.accelerationMode),
+                accelerationProfileID: accelerationProfileID,
                 source: workerSource
             )
-                if case .toolCallDelta(let toolCallDelta) = event.payload {
-                    await hydrateToolResult(
-                        requestIdentity: requestIdentity,
-                        toolCallID: toolCallDelta.callID
-                    )
-                }
+            if case .toolCallDelta(let toolCallDelta) = event.payload {
+                await hydrateToolResult(
+                    requestIdentity: requestIdentity,
+                    toolCallID: toolCallDelta.callID
+                )
+            }
         case .cacheDecision(let cacheDecision):
             await schedulerReadModel.recordPhaseTransition(
                 requestID: requestID,
@@ -1262,6 +1302,7 @@ public actor RequestCoordinator {
                 laneHint: observedLane,
                 workerID: workerSource,
                 accelerationMode: controlPlaneAccelerationMode(from: event.accelerationMode),
+                accelerationProfileID: accelerationProfileID,
                 source: workerSource
             )
             if !cacheDecision.restoredSnapshotID.isEmpty {
@@ -1552,7 +1593,9 @@ public actor RequestCoordinator {
         _ translatedRequest: TranslatedChatRequest
     ) async -> SchedulingPlan {
         let recoveredRequest = await resolvedRecoveryRequest(translatedRequest)
-        let request = await resolvedModelAccelerationRequest(recoveredRequest)
+        let accelerationResolution = await resolvedModelAccelerationRequest(recoveredRequest)
+        let request = accelerationResolution.request
+        let accelerationRefusal = accelerationResolution.accelerationRefusal
         let batchingDefaults = GatewayBatchingExecutionDefaults(executionExt: request.workerRequest.execution.ext)
         let routeKind = await workerRegistry.route(forModelID: request.modelID) ?? .swiftText
         let phaseAwareEligible = await canUsePhaseAwareExecution(
@@ -1594,7 +1637,8 @@ public actor RequestCoordinator {
                         prefillLane: lane,
                         batchingDefaults: batchingDefaults
                     )
-                    : 1
+                    : 1,
+                accelerationRefusal: accelerationRefusal
             )
         }
         guard
@@ -1634,7 +1678,8 @@ public actor RequestCoordinator {
                     routeKind: routeKind,
                     prefillLane: prefillLane,
                     batchingDefaults: batchingDefaults
-                )
+                ),
+                accelerationRefusal: accelerationRefusal
             )
         }
 
@@ -1707,28 +1752,33 @@ public actor RequestCoordinator {
                     prefillLane: prefillLane,
                     batchingDefaults: batchingDefaults
                 )
-                : 1
+                : 1,
+            accelerationRefusal: accelerationRefusal
         )
     }
 
     private func resolvedModelAccelerationRequest(
         _ translatedRequest: TranslatedChatRequest
-    ) async -> TranslatedChatRequest {
+    ) async -> ModelAccelerationResolution {
         guard
             let modelCatalog,
             let model = await modelCatalog.model(id: translatedRequest.modelID)
         else {
-            return translatedRequest
+            return ModelAccelerationResolution(
+                request: translatedRequest,
+                accelerationRefusal: nil
+            )
         }
 
         var workerRequest = translatedRequest.workerRequest
         let gatewaySpeculativeDefaults = GatewaySpeculativeExecutionDefaults(
             executionExt: workerRequest.execution.ext
         )
+        let gatewayProfileID = gatewaySpeculativeDefaults.accelerationProfile
         if workerRequest.execution.acceleration.mode == .unspecified {
             let gatewayMode = gatewaySpeculativeDefaults.accelerationMode
             if model.settings.defaultAccelerationMode != .unspecified {
-                workerRequest.execution.acceleration.mode = workerAccelerationMode(
+                workerRequest.execution.acceleration.mode = ModelCapabilityReceipts.workerAccelerationMode(
                     from: model.settings.defaultAccelerationMode
                 )
             } else if gatewayMode != .baseline {
@@ -1754,11 +1804,19 @@ public actor RequestCoordinator {
            !model.settings.accelerationProfileID.isEmpty {
             workerRequest.execution.acceleration.profileID = model.settings.accelerationProfileID
         }
+        if workerRequest.execution.acceleration.profileID.isEmpty {
+            workerRequest.execution.acceleration.profileID = gatewayProfileID
+        }
+        if workerRequest.execution.acceleration.ext["melix.gateway.acceleration_profile"] == nil {
+            workerRequest.execution.acceleration.ext["melix.gateway.acceleration_profile"] = gatewayProfileID
+        }
 
         switch workerRequest.execution.acceleration.mode {
         case .activeKvQuantized:
             if workerRequest.execution.acceleration.activeKvQuantProfile.isEmpty {
-                workerRequest.execution.acceleration.activeKvQuantProfile = model.settings.accelerationProfileID
+                workerRequest.execution.acceleration.activeKvQuantProfile = activeKVQuantProfile(
+                    from: model.settings.accelerationProfileID
+                )
             }
         case .acceleratedPrefill, .sparsePrefill:
             if workerRequest.execution.acceleration.prefillHint.isEmpty {
@@ -1768,12 +1826,53 @@ public actor RequestCoordinator {
             break
         }
 
-        return TranslatedChatRequest(
-            requestID: translatedRequest.requestID,
-            modelID: translatedRequest.modelID,
-            workerRequest: workerRequest,
-            stream: translatedRequest.stream
+        let requestedMode = ModelCapabilityReceipts.controlPlaneAccelerationMode(
+            from: workerRequest.execution.acceleration.mode
         )
+        let receipt: Melix_Controlplane_V1_AccelerationCapabilityReceipt
+        let accelerationRefusal: AccelerationReceiptValidation?
+        if requestedMode == .baseline || requestedMode == .unspecified {
+            receipt = ModelCapabilityReceipts.accelerationReceipt(
+                for: model,
+                requestedMode: requestedMode,
+                draftModelID: workerRequest.execution.acceleration.draftModelID
+            )
+            accelerationRefusal = nil
+        } else {
+            let validation = ModelCapabilityReceipts.validateAcceleration(
+                model: model,
+                requestedMode: requestedMode,
+                draftModelID: workerRequest.execution.acceleration.draftModelID
+            )
+            receipt = validation.receipt
+            accelerationRefusal = validation.ok ? nil : validation
+        }
+        workerRequest.execution.ext.merge(
+            ModelCapabilityReceipts.accelerationAuditMetadata(receipt),
+            uniquingKeysWith: { _, receiptValue in receiptValue }
+        )
+
+        return ModelAccelerationResolution(
+            request: TranslatedChatRequest(
+                requestID: translatedRequest.requestID,
+                modelID: translatedRequest.modelID,
+                workerRequest: workerRequest,
+                stream: translatedRequest.stream
+            ),
+            accelerationRefusal: accelerationRefusal
+        )
+    }
+
+    private func activeKVQuantProfile(from rawProfileID: String) -> String {
+        let normalized = rawProfileID
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "-")
+        if activeKVQuantProfiles.contains(normalized),
+           ServingAccelerationProfiles.normalizeProfileID(normalized) == nil {
+            return normalized
+        }
+        return defaultActiveKVQuantProfile
     }
 
     private func isContinuousBatchEligible(
@@ -1913,6 +2012,9 @@ public actor RequestCoordinator {
                     }
                     let restoreStage = self.restoreStageLabel(for: effectiveRestorePlan)
                     let cachePressure = await self.refreshWorkerCacheObservability(using: client) ?? 0
+                    let appliedProfileID = prefillResponse.appliedAcceleration.profileID.isEmpty
+                        ? request.execution.acceleration.profileID
+                        : prefillResponse.appliedAcceleration.profileID
                     let decodeRequest = makeDecodeRequest(
                         from: request,
                         prefillResponse: prefillResponse
@@ -1955,6 +2057,7 @@ public actor RequestCoordinator {
                             accelerationMode: controlPlaneAccelerationMode(
                                 from: prefillResponse.appliedAcceleration.mode
                             ),
+                            accelerationProfileID: appliedProfileID,
                             source: "swift-text-worker"
                         )
                         var progressEvent = makePrefillProgressEvent(
@@ -2826,22 +2929,7 @@ private func controlPlaneAccelerationMode(
 private func workerAccelerationMode(
     from controlPlaneMode: Melix_Controlplane_V1_AccelerationMode
 ) -> Melix_Worker_V1_AccelerationMode {
-    switch controlPlaneMode {
-    case .unspecified:
-        return .unspecified
-    case .baseline:
-        return .baseline
-    case .speculativeDecode:
-        return .speculativeDecode
-    case .acceleratedPrefill:
-        return .acceleratedPrefill
-    case .sparsePrefill:
-        return .sparsePrefill
-    case .activeKvQuantized:
-        return .activeKvQuantized
-    case .UNRECOGNIZED:
-        return .unspecified
-    }
+    ModelCapabilityReceipts.workerAccelerationMode(from: controlPlaneMode)
 }
 
 private func resolvedPrefillChunkTarget(
