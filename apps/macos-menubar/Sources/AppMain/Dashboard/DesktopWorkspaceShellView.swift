@@ -2337,14 +2337,30 @@ struct DesktopBatchRunsToolSectionView: View {
             ) {
                 Task { await viewModel.requestBatchRunPreflight() }
             }
+            DesktopJobsOperationButton(
+                title: "Refresh Status",
+                isEnabled: viewModel.batchRunStatusCanRefresh
+            ) {
+                Task { await viewModel.requestBatchRunStatus() }
+            }
 
             if viewModel.batchRunPreflightInProgress {
                 Text("Running batch preflight")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
+            } else if viewModel.batchRunStatusInProgress {
+                Text("Refreshing batch status")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
             } else if viewModel.batchRunPreflightErrorMessage.isEmpty == false {
                 Label(viewModel.batchRunPreflightErrorMessage, systemImage: "xmark.octagon")
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            } else if viewModel.batchRunStatusErrorMessage.isEmpty == false {
+                Label(viewModel.batchRunStatusErrorMessage, systemImage: "xmark.octagon")
                     .font(.caption)
                     .foregroundStyle(MelixDesignTokens.StatusColor.error)
                     .textSelection(.enabled)
@@ -2396,8 +2412,90 @@ struct DesktopBatchRunsToolSectionView: View {
                             .textSelection(.enabled)
                     }
                 }
+                batchStatusSection(report)
                 reportSummarySection(title: "Effective Config", rows: report.effectiveConfigRows)
                 reportSummarySection(title: "Isolation Summary", rows: report.isolationSummaryRows)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func batchStatusSection(_ report: RuntimeBatchRunReportState) -> some View {
+        if let summary = report.statusSummary {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Batch Status")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                HStack(spacing: 8) {
+                    Text(summary.statusTitle)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(summary.status == "failed"
+                                         ? MelixDesignTokens.StatusColor.error
+                                         : MelixDesignTokens.StatusColor.success)
+                        .textSelection(.enabled)
+                    Text(summary.countsText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                Text(summary.manifestPath)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                ForEach(report.manifestStatusRows.prefix(6)) { row in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(row.modelIndex)
+                                .font(.caption.weight(.semibold))
+                                .textSelection(.enabled)
+                            Text(row.repoID)
+                                .font(.caption)
+                                .textSelection(.enabled)
+                            Text(row.status)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(row.status == "failed"
+                                                 ? MelixDesignTokens.StatusColor.error
+                                                 : MelixDesignTokens.StatusColor.success)
+                                .textSelection(.enabled)
+                            if row.durationText.isEmpty == false {
+                                Text(row.durationText)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        HStack(spacing: 8) {
+                            if row.benchmarkJobID.isEmpty == false {
+                                Text(row.benchmarkJobID)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                            if row.evaluationJobID.isEmpty == false {
+                                Text(row.evaluationJobID)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                            if row.failureCategory.isEmpty == false {
+                                Text(row.failureCategory)
+                                    .font(.caption)
+                                    .foregroundStyle(MelixDesignTokens.StatusColor.warning)
+                                    .textSelection(.enabled)
+                            }
+                            if row.recoverability.isEmpty == false {
+                                Text(row.recoverability)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

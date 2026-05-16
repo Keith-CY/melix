@@ -59,16 +59,12 @@ struct RuntimeBatchRunsStateTests {
     @MainActor
     func batchRunPreflightActionWritesInputsDispatchesDryRunCommandAndSelectsReport() async throws {
         let runner = RecordingCLIWorkflowRunner()
+        let preflightOutput = Self.batchPreflightOutput(modelListPath: "", configPath: "")
         await runner.configureHandler { command in
             guard case .batchRun(let options) = command else {
                 return .failure(.unsupportedCommand(commandID: "unexpected", surface: .subprocess))
             }
-            let payload = Self.batchPreflightPayload(
-                modelListPath: options.modelListPath,
-                configPath: options.configPath
-            )
-            let data = try! JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
-            return .success(String(decoding: data, as: UTF8.self) + "\n")
+            return .success(preflightOutput(options.modelListPath, options.configPath))
         }
         let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
         viewModel.updateBatchRunModelListText("01 | mlx-community/Qwen3-8B")
@@ -159,6 +155,100 @@ struct RuntimeBatchRunsStateTests {
 
         #expect(failing.batchRunPreflightInProgress == false)
         #expect(failing.batchRunPreflightErrorMessage.contains("preflight failed"))
+    }
+
+    @Test("batch run status action decodes manifest rows with partial failure attribution")
+    @MainActor
+    func batchRunStatusActionDecodesManifestRowsWithPartialFailureAttribution() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        let preflightOutput = Self.batchPreflightOutput(modelListPath: "", configPath: "")
+        let statusOutput = Self.batchStatusOutput()
+        await runner.configureHandler { command in
+            switch command {
+            case .batchRun(let options):
+                return .success(preflightOutput(options.modelListPath, options.configPath))
+            case .batchStatus:
+                return .success(statusOutput)
+            default:
+                return .failure(.unsupportedCommand(commandID: "unexpected", surface: .subprocess))
+            }
+        }
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.updateBatchRunModelListText("01 | mlx-community/Qwen3-8B")
+        viewModel.updateBatchRunConfigText("run_id: smoke-batch")
+
+        await viewModel.requestBatchRunPreflight()
+        await viewModel.requestBatchRunStatus()
+
+        let recordedCommands = await runner.snapshotRecordedCommands()
+        #expect(recordedCommands.count == 2)
+        let statusCommand = try #require(recordedCommands.last)
+        guard case .batchStatus(let options) = statusCommand else {
+            Issue.record("expected batch.status command")
+            return
+        }
+        #expect(options.json)
+        #expect(options.runID == "smoke-batch")
+        #expect(options.outputRoot == "/tmp/melix-batch-output")
+        #expect(options.tempRoot == "/tmp/melix-batch-temp")
+        #expect(viewModel.batchRunStatusInProgress == false)
+        #expect(viewModel.batchRunStatusErrorMessage.isEmpty)
+
+        let report = try #require(viewModel.selectedBatchRunReport)
+        #expect(report.statusSummary?.status == "partial_success")
+        #expect(report.statusSummary?.countsText == "2 succeeded, 1 partial, 1 failed, 0 running, 0 planned / 4 total")
+        #expect(report.statusSummary?.manifestPath == "/tmp/melix-batch-temp/manifest.jsonl")
+        #expect(report.manifestStatusRows.map(\.status) == [
+            "succeeded",
+            "partial_success",
+            "failed",
+            "succeeded",
+        ])
+        let partial = try #require(report.manifestStatusRows.first { $0.modelIndex == "02" })
+        #expect(partial.repoID == "mlx-community/Mistral-7B")
+        #expect(partial.failureAttribution == "artifact_export • retry_same_model")
+        let failed = try #require(report.manifestStatusRows.first { $0.modelIndex == "03" })
+        #expect(failed.failureAttribution == "model_load • operator_action_required")
+    }
+
+    @Test("batch run status action surfaces missing selection and CLI failures")
+    @MainActor
+    func batchRunStatusActionSurfacesMissingSelectionAndCLIFailures() async {
+        let missingSelection = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+
+        await missingSelection.requestBatchRunStatus()
+
+        #expect(missingSelection.batchRunStatusInProgress == false)
+        #expect(missingSelection.batchRunStatusErrorMessage == "Run or select a batch report before refreshing status.")
+
+        let runner = RecordingCLIWorkflowRunner()
+        let preflightOutput = Self.batchPreflightOutput(modelListPath: "", configPath: "")
+        await runner.configureHandler { command in
+            switch command {
+            case .batchRun(let options):
+                return .success(preflightOutput(options.modelListPath, options.configPath))
+            case .batchStatus:
+                return .failure(
+                    .processFailed(
+                        commandID: "batch.status",
+                        surface: .subprocess,
+                        exitCode: 2,
+                        stderr: "status manifest missing"
+                    )
+                )
+            default:
+                return .failure(.unsupportedCommand(commandID: "unexpected", surface: .subprocess))
+            }
+        }
+        let failing = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        failing.updateBatchRunModelListText("01 | mlx-community/Qwen3-8B")
+        failing.updateBatchRunConfigText("run_id: smoke-batch")
+
+        await failing.requestBatchRunPreflight()
+        await failing.requestBatchRunStatus()
+
+        #expect(failing.batchRunStatusInProgress == false)
+        #expect(failing.batchRunStatusErrorMessage.contains("status manifest missing"))
     }
 
     @Test("batch run report decoder renders effective config fallback rows")
@@ -292,5 +382,87 @@ struct RuntimeBatchRunsStateTests {
         customize(&payload)
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
         return try RuntimeBatchRunReportDecoder.decodePreflightOutput(String(decoding: data, as: UTF8.self))
+    }
+
+    private static func batchPreflightOutput(
+        modelListPath: String,
+        configPath: String
+    ) -> @Sendable (String, String) -> String {
+        { runtimeModelListPath, runtimeConfigPath in
+            let payload = batchPreflightPayload(
+                modelListPath: runtimeModelListPath.isEmpty ? modelListPath : runtimeModelListPath,
+                configPath: runtimeConfigPath.isEmpty ? configPath : runtimeConfigPath
+            )
+            let data = try! JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+            return String(decoding: data, as: UTF8.self) + "\n"
+        }
+    }
+
+    private static func batchStatusOutput() -> String {
+        let data = try! JSONSerialization.data(withJSONObject: batchStatusPayload(), options: [.sortedKeys])
+        return String(decoding: data, as: UTF8.self) + "\n"
+    }
+
+    private static func batchStatusPayload() -> [String: Any] {
+        [
+            "schema_version": "melix.batch.run_summary.v1",
+            "run_id": "smoke-batch",
+            "status": "partial_success",
+            "total_models": 4,
+            "succeeded_models": 2,
+            "partial_success_models": 1,
+            "failed_models": 1,
+            "running_models": 0,
+            "planned_models": 0,
+            "temp_root": "/tmp/melix-batch-temp",
+            "output_root": "/tmp/melix-batch-output",
+            "manifest_path": "/tmp/melix-batch-temp/manifest.jsonl",
+            "models": [
+                [
+                    "model_index": "01",
+                    "repo_id": "mlx-community/Qwen3-8B",
+                    "status": "succeeded",
+                    "benchmark_job_id": "bench-01",
+                    "evaluation_job_id": "eval-01",
+                    "failure_category": "",
+                    "recoverability": "",
+                    "duration_seconds": 12.5,
+                    "metric_fields": ["latency_ms": 42.0],
+                ],
+                [
+                    "model_index": "02",
+                    "repo_id": "mlx-community/Mistral-7B",
+                    "status": "partial_success",
+                    "benchmark_job_id": "bench-02",
+                    "evaluation_job_id": "",
+                    "failure_category": "artifact_export",
+                    "recoverability": "retry_same_model",
+                    "duration_seconds": 21.0,
+                    "metric_fields": [:],
+                ],
+                [
+                    "model_index": "03",
+                    "repo_id": "mlx-community/Llama-3.2-3B",
+                    "status": "failed",
+                    "benchmark_job_id": "",
+                    "evaluation_job_id": "",
+                    "failure_category": "model_load",
+                    "recoverability": "operator_action_required",
+                    "duration_seconds": 3.25,
+                    "metric_fields": [:],
+                ],
+                [
+                    "model_index": "04",
+                    "repo_id": "mlx-community/Phi-3.5",
+                    "status": "succeeded",
+                    "benchmark_job_id": "bench-04",
+                    "evaluation_job_id": "eval-04",
+                    "failure_category": "",
+                    "recoverability": "",
+                    "duration_seconds": 9.75,
+                    "metric_fields": ["accuracy": 0.88],
+                ],
+            ],
+        ]
     }
 }

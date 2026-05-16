@@ -1931,6 +1931,198 @@ struct DesktopFoundationViewTests {
         #expect(await runner.snapshotRecordedCommands().count == 1)
     }
 
+    @Test("batch runs tool section renders manifest status rows with failure attribution")
+    @MainActor
+    func batchRunsToolSectionRendersManifestStatusRowsWithFailureAttribution() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureHandler { command in
+            switch command {
+            case .batchRun:
+                return .success(Self.batchRunsPreflightJSON)
+            case .batchStatus:
+                return .success(Self.batchRunsStatusJSON)
+            default:
+                return .failure(.unsupportedCommand(commandID: "unexpected", surface: .subprocess))
+            }
+        }
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.updateBatchRunModelListText("01 | mlx-community/Qwen3-8B")
+        viewModel.updateBatchRunConfigText("run_id: smoke-batch")
+
+        let view = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let preflightButton = try #require(renderedButtons(in: view).first { $0.title == "Run Preflight" })
+        preflightButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected selected batch preflight report") {
+            viewModel.selectedBatchRunReport?.preflightStatus == "ready"
+        }
+
+        let reportView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let statusButton = try #require(renderedButtons(in: reportView).first { $0.title == "Refresh Status" })
+        #expect(statusButton.isEnabled)
+        statusButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected batch manifest status rows") {
+            viewModel.selectedBatchRunReport?.statusSummary?.status == "partial_success"
+        }
+
+        let updatedView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let values = renderedTextValues(in: updatedView)
+        #expect(values.contains("Batch Status"))
+        #expect(values.contains("2 succeeded, 1 partial, 1 failed, 0 running, 0 planned / 4 total"))
+        #expect(values.contains("mlx-community/Mistral-7B"))
+        #expect(values.contains("partial_success"))
+        #expect(values.contains("artifact_export"))
+        #expect(values.contains("retry_same_model"))
+        #expect(values.contains("model_load"))
+        #expect(await runner.snapshotRecordedCommands().count == 2)
+    }
+
+    @Test("batch runs tool section renders status refresh errors")
+    @MainActor
+    func batchRunsToolSectionRendersStatusRefreshErrors() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureHandler { command in
+            switch command {
+            case .batchRun:
+                return .success(Self.batchRunsPreflightJSON)
+            case .batchStatus:
+                return .failure(
+                    .processFailed(
+                        commandID: "batch.status",
+                        surface: .subprocess,
+                        exitCode: 2,
+                        stderr: "status manifest missing"
+                    )
+                )
+            default:
+                return .failure(.unsupportedCommand(commandID: "unexpected", surface: .subprocess))
+            }
+        }
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.updateBatchRunModelListText("01 | mlx-community/Qwen3-8B")
+        viewModel.updateBatchRunConfigText("run_id: smoke-batch")
+
+        let view = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let preflightButton = try #require(renderedButtons(in: view).first { $0.title == "Run Preflight" })
+        preflightButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected selected batch preflight report") {
+            viewModel.selectedBatchRunReport?.preflightStatus == "ready"
+        }
+
+        let reportView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let statusButton = try #require(renderedButtons(in: reportView).first { $0.title == "Refresh Status" })
+        statusButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected status refresh error") {
+            viewModel.batchRunStatusErrorMessage.contains("status manifest missing")
+        }
+
+        let updatedView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        #expect(renderedTextValues(in: updatedView).contains(where: { $0.contains("status manifest missing") }))
+    }
+
+    private static let batchRunsPreflightJSON = #"""
+    {
+      "schema_version": "melix.batch.effective_config.v1",
+      "run_id": "smoke-batch",
+      "model_list": "/tmp/models.txt",
+      "config_path": "/tmp/config.txt",
+      "output_root": "/tmp/melix-batch-output",
+      "temp_root": "/tmp/melix-batch-temp",
+      "selected_model_count": 1,
+      "total_model_count": 4,
+      "preflight_report": "/tmp/melix-batch-output/preflight-report.json",
+      "preflight_result": {
+        "schema_version": "melix.batch.preflight_report.v1",
+        "run_id": "smoke-batch",
+        "status": "ready",
+        "blocker_count": 0,
+        "model_count": 1,
+        "checks": [
+          {
+            "name": "output_root",
+            "status": "ready",
+            "detail": "output root writable",
+            "actionable": "",
+            "category": "filesystem",
+            "metadata": {
+              "path": "/tmp/melix-batch-output"
+            }
+          }
+        ]
+      }
+    }
+    """#
+
+    private static let batchRunsStatusJSON = #"""
+    {
+      "schema_version": "melix.batch.run_summary.v1",
+      "run_id": "smoke-batch",
+      "status": "partial_success",
+      "total_models": 4,
+      "succeeded_models": 2,
+      "partial_success_models": 1,
+      "failed_models": 1,
+      "running_models": 0,
+      "planned_models": 0,
+      "temp_root": "/tmp/melix-batch-temp",
+      "output_root": "/tmp/melix-batch-output",
+      "manifest_path": "/tmp/melix-batch-temp/manifest.jsonl",
+      "models": [
+        {
+          "model_index": "01",
+          "repo_id": "mlx-community/Qwen3-8B",
+          "status": "succeeded",
+          "benchmark_job_id": "bench-01",
+          "evaluation_job_id": "eval-01",
+          "failure_category": "",
+          "recoverability": "",
+          "duration_seconds": 12.5,
+          "metric_fields": {
+            "latency_ms": 42.0
+          }
+        },
+        {
+          "model_index": "02",
+          "repo_id": "mlx-community/Mistral-7B",
+          "status": "partial_success",
+          "benchmark_job_id": "bench-02",
+          "evaluation_job_id": "",
+          "failure_category": "artifact_export",
+          "recoverability": "retry_same_model",
+          "duration_seconds": 21.0,
+          "metric_fields": {}
+        },
+        {
+          "model_index": "03",
+          "repo_id": "mlx-community/Llama-3.2-3B",
+          "status": "failed",
+          "benchmark_job_id": "",
+          "evaluation_job_id": "",
+          "failure_category": "model_load",
+          "recoverability": "operator_action_required",
+          "duration_seconds": 3.25,
+          "metric_fields": {}
+        },
+        {
+          "model_index": "04",
+          "repo_id": "mlx-community/Phi-3.5",
+          "status": "succeeded",
+          "benchmark_job_id": "bench-04",
+          "evaluation_job_id": "eval-04",
+          "failure_category": "",
+          "recoverability": "",
+          "duration_seconds": 9.75,
+          "metric_fields": {
+            "accuracy": 0.88
+          }
+        }
+      ]
+    }
+    """#
+
     @Test("batch runs tool section renders preflight runner error")
     @MainActor
     func batchRunsToolSectionRendersPreflightRunnerError() async throws {

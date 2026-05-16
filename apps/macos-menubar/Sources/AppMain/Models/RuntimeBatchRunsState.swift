@@ -87,6 +87,105 @@ public struct RuntimeBatchRunSummaryRowState: Identifiable, Equatable, Sendable 
     }
 }
 
+public struct RuntimeBatchRunStatusSummaryState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let runID: String
+    public let status: String
+    public let totalModels: Int
+    public let succeededModels: Int
+    public let partialSuccessModels: Int
+    public let failedModels: Int
+    public let runningModels: Int
+    public let plannedModels: Int
+    public let tempRoot: String
+    public let outputRoot: String
+    public let manifestPath: String
+
+    public var statusTitle: String {
+        "Batch \(status.isEmpty ? "unknown" : status)"
+    }
+
+    public var countsText: String {
+        "\(succeededModels) succeeded, \(partialSuccessModels) partial, \(failedModels) failed, \(runningModels) running, \(plannedModels) planned / \(totalModels) total"
+    }
+
+    public init(
+        runID: String,
+        status: String,
+        totalModels: Int,
+        succeededModels: Int,
+        partialSuccessModels: Int,
+        failedModels: Int,
+        runningModels: Int,
+        plannedModels: Int,
+        tempRoot: String,
+        outputRoot: String,
+        manifestPath: String
+    ) {
+        self.id = "\(runID):\(manifestPath)"
+        self.runID = runID
+        self.status = status
+        self.totalModels = totalModels
+        self.succeededModels = succeededModels
+        self.partialSuccessModels = partialSuccessModels
+        self.failedModels = failedModels
+        self.runningModels = runningModels
+        self.plannedModels = plannedModels
+        self.tempRoot = tempRoot
+        self.outputRoot = outputRoot
+        self.manifestPath = manifestPath
+    }
+}
+
+public struct RuntimeBatchRunManifestStatusRowState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let modelIndex: String
+    public let repoID: String
+    public let status: String
+    public let benchmarkJobID: String
+    public let evaluationJobID: String
+    public let failureCategory: String
+    public let recoverability: String
+    public let durationSeconds: Double
+
+    public var failureAttribution: String {
+        [failureCategory, recoverability]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.isEmpty == false }
+            .joined(separator: " • ")
+    }
+
+    public var durationText: String {
+        durationSeconds > 0 ? String(format: "%.2f s", durationSeconds) : ""
+    }
+
+    public init(
+        modelIndex: String,
+        repoID: String,
+        status: String,
+        benchmarkJobID: String,
+        evaluationJobID: String,
+        failureCategory: String,
+        recoverability: String,
+        durationSeconds: Double
+    ) {
+        self.id = "\(modelIndex):\(repoID)"
+        self.modelIndex = modelIndex
+        self.repoID = repoID
+        self.status = status
+        self.benchmarkJobID = benchmarkJobID
+        self.evaluationJobID = evaluationJobID
+        self.failureCategory = failureCategory
+        self.recoverability = recoverability
+        self.durationSeconds = durationSeconds
+    }
+}
+
+struct RuntimeBatchRunStatusSnapshotState: Equatable, Sendable {
+    let summary: RuntimeBatchRunStatusSummaryState
+    let rows: [RuntimeBatchRunManifestStatusRowState]
+}
+
 public struct RuntimeBatchRunReportState: Identifiable, Equatable, Sendable {
     public let id: String
     public let runID: String
@@ -101,6 +200,8 @@ public struct RuntimeBatchRunReportState: Identifiable, Equatable, Sendable {
     public let checks: [RuntimeBatchRunPreflightCheckState]
     public let effectiveConfigRows: [RuntimeBatchRunSummaryRowState]
     public let isolationSummaryRows: [RuntimeBatchRunSummaryRowState]
+    public let statusSummary: RuntimeBatchRunStatusSummaryState?
+    public let manifestStatusRows: [RuntimeBatchRunManifestStatusRowState]
 
     public var statusTitle: String {
         "Preflight \(preflightStatus.isEmpty ? "unknown" : preflightStatus)"
@@ -118,7 +219,9 @@ public struct RuntimeBatchRunReportState: Identifiable, Equatable, Sendable {
         preflightReportPath: String,
         checks: [RuntimeBatchRunPreflightCheckState],
         effectiveConfigRows: [RuntimeBatchRunSummaryRowState] = [],
-        isolationSummaryRows: [RuntimeBatchRunSummaryRowState] = []
+        isolationSummaryRows: [RuntimeBatchRunSummaryRowState] = [],
+        statusSummary: RuntimeBatchRunStatusSummaryState? = nil,
+        manifestStatusRows: [RuntimeBatchRunManifestStatusRowState] = []
     ) {
         self.id = "\(runID.isEmpty ? "batch-run" : runID):\(preflightReportPath)"
         self.runID = runID
@@ -133,6 +236,27 @@ public struct RuntimeBatchRunReportState: Identifiable, Equatable, Sendable {
         self.checks = checks
         self.effectiveConfigRows = effectiveConfigRows
         self.isolationSummaryRows = isolationSummaryRows
+        self.statusSummary = statusSummary
+        self.manifestStatusRows = manifestStatusRows
+    }
+
+    func applyingStatusSnapshot(_ snapshot: RuntimeBatchRunStatusSnapshotState) -> RuntimeBatchRunReportState {
+        RuntimeBatchRunReportState(
+            runID: runID,
+            preflightStatus: preflightStatus,
+            blockerCount: blockerCount,
+            modelCount: max(modelCount, snapshot.summary.totalModels),
+            modelListPath: modelListPath,
+            configPath: configPath,
+            outputRoot: outputRoot.isEmpty ? snapshot.summary.outputRoot : outputRoot,
+            tempRoot: tempRoot.isEmpty ? snapshot.summary.tempRoot : tempRoot,
+            preflightReportPath: preflightReportPath,
+            checks: checks,
+            effectiveConfigRows: effectiveConfigRows,
+            isolationSummaryRows: isolationSummaryRows,
+            statusSummary: snapshot.summary,
+            manifestStatusRows: snapshot.rows
+        )
     }
 }
 
@@ -142,6 +266,13 @@ enum RuntimeBatchRunReportDecoder {
         let decoder = JSONDecoder()
         let payload = try decoder.decode(RuntimeBatchRunDryRunPayload.self, from: data)
         return payload.reportState()
+    }
+
+    static func decodeStatusOutput(_ output: String) throws -> RuntimeBatchRunStatusSnapshotState {
+        let data = Data(output.utf8)
+        let decoder = JSONDecoder()
+        let payload = try decoder.decode(RuntimeBatchRunStatusPayload.self, from: data)
+        return payload.snapshot()
     }
 }
 
@@ -301,6 +432,90 @@ private struct RuntimeBatchRunPreflightCheckPayload: Decodable {
             actionable: actionable,
             category: category,
             metadata: metadata
+        )
+    }
+}
+
+private struct RuntimeBatchRunStatusPayload: Decodable {
+    let runID: String
+    let status: String
+    let totalModels: Int
+    let succeededModels: Int
+    let partialSuccessModels: Int
+    let failedModels: Int
+    let runningModels: Int
+    let plannedModels: Int
+    let tempRoot: String
+    let outputRoot: String
+    let manifestPath: String
+    let models: [RuntimeBatchRunStatusModelPayload]
+
+    enum CodingKeys: String, CodingKey {
+        case runID = "run_id"
+        case status
+        case totalModels = "total_models"
+        case succeededModels = "succeeded_models"
+        case partialSuccessModels = "partial_success_models"
+        case failedModels = "failed_models"
+        case runningModels = "running_models"
+        case plannedModels = "planned_models"
+        case tempRoot = "temp_root"
+        case outputRoot = "output_root"
+        case manifestPath = "manifest_path"
+        case models
+    }
+
+    func snapshot() -> RuntimeBatchRunStatusSnapshotState {
+        RuntimeBatchRunStatusSnapshotState(
+            summary: RuntimeBatchRunStatusSummaryState(
+                runID: runID,
+                status: status,
+                totalModels: totalModels,
+                succeededModels: succeededModels,
+                partialSuccessModels: partialSuccessModels,
+                failedModels: failedModels,
+                runningModels: runningModels,
+                plannedModels: plannedModels,
+                tempRoot: tempRoot,
+                outputRoot: outputRoot,
+                manifestPath: manifestPath
+            ),
+            rows: models.map(\.state)
+        )
+    }
+}
+
+private struct RuntimeBatchRunStatusModelPayload: Decodable {
+    let modelIndex: String
+    let repoID: String
+    let status: String
+    let benchmarkJobID: String
+    let evaluationJobID: String
+    let failureCategory: String
+    let recoverability: String
+    let durationSeconds: Double
+
+    enum CodingKeys: String, CodingKey {
+        case modelIndex = "model_index"
+        case repoID = "repo_id"
+        case status
+        case benchmarkJobID = "benchmark_job_id"
+        case evaluationJobID = "evaluation_job_id"
+        case failureCategory = "failure_category"
+        case recoverability
+        case durationSeconds = "duration_seconds"
+    }
+
+    var state: RuntimeBatchRunManifestStatusRowState {
+        RuntimeBatchRunManifestStatusRowState(
+            modelIndex: modelIndex,
+            repoID: repoID,
+            status: status,
+            benchmarkJobID: benchmarkJobID,
+            evaluationJobID: evaluationJobID,
+            failureCategory: failureCategory,
+            recoverability: recoverability,
+            durationSeconds: durationSeconds
         )
     }
 }

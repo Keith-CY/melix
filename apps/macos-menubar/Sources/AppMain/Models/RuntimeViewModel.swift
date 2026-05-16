@@ -1916,6 +1916,8 @@ public final class RuntimeViewModel {
     public private(set) var selectedBatchRunReportID = ""
     public private(set) var batchRunPreflightInProgress = false
     public private(set) var batchRunPreflightErrorMessage = ""
+    public private(set) var batchRunStatusInProgress = false
+    public private(set) var batchRunStatusErrorMessage = ""
     public private(set) var runtimeJobsRefreshInProgress = false
     public private(set) var selectedRuntimeJobDetailRefreshInProgress = false
     public private(set) var selectedRuntimeJobLogsRefreshInProgress = false
@@ -3549,6 +3551,10 @@ public final class RuntimeViewModel {
         batchRunSetupCanRequestPreflight && batchRunPreflightInProgress == false
     }
 
+    public var batchRunStatusCanRefresh: Bool {
+        selectedBatchRunReport != nil && batchRunStatusInProgress == false
+    }
+
     public var selectedBatchRunReport: RuntimeBatchRunReportState? {
         batchRunReports.first { $0.id == selectedBatchRunReportID }
     }
@@ -3556,12 +3562,14 @@ public final class RuntimeViewModel {
     public func updateBatchRunModelListText(_ text: String) {
         batchRunModelListText = text
         batchRunPreflightErrorMessage = ""
+        batchRunStatusErrorMessage = ""
         notifyStateChanged()
     }
 
     public func updateBatchRunConfigText(_ text: String) {
         batchRunConfigText = text
         batchRunPreflightErrorMessage = ""
+        batchRunStatusErrorMessage = ""
         notifyStateChanged()
     }
 
@@ -3604,6 +3612,47 @@ public final class RuntimeViewModel {
             recordCLIWorkflowErrorIfNeeded(error)
             batchRunPreflightErrorMessage = workflowErrorMessage(error)
             recordLocalError(batchRunPreflightErrorMessage)
+            notifyStateChanged()
+        }
+    }
+
+    public func requestBatchRunStatus() async {
+        guard let report = selectedBatchRunReport else {
+            batchRunStatusErrorMessage = "Run or select a batch report before refreshing status."
+            recordLocalError(batchRunStatusErrorMessage)
+            notifyStateChanged()
+            return
+        }
+        guard let commandWorkflowRunner else {
+            batchRunStatusErrorMessage = "Batch Runs CLI runner is unavailable."
+            recordLocalError(batchRunStatusErrorMessage)
+            notifyStateChanged()
+            return
+        }
+
+        batchRunStatusInProgress = true
+        batchRunStatusErrorMessage = ""
+        notifyStateChanged()
+        do {
+            let command = MelixCLICommand.batchStatus(
+                .init(
+                    runID: report.runID,
+                    outputRoot: report.outputRoot,
+                    tempRoot: report.tempRoot,
+                    json: true
+                )
+            )
+            let output = try await commandWorkflowRunner.run(command)
+            let statusSnapshot = try RuntimeBatchRunReportDecoder.decodeStatusOutput(output)
+            batchRunStatusInProgress = false
+            clearCLIWorkflowFailure()
+            upsertBatchRunReport(report.applyingStatusSnapshot(statusSnapshot))
+            notifyStateChanged()
+        } catch {
+            batchRunStatusInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            batchRunStatusErrorMessage = workflowErrorMessage(error)
+            recordLocalError(batchRunStatusErrorMessage)
             notifyStateChanged()
         }
     }
