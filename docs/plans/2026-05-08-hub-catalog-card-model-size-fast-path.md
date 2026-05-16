@@ -28,6 +28,12 @@ like `128 MB`; values with additional words still return `0` from the direct par
 existing generic `_size_hint_from_text(...)` fallback can handle labeled text such as
 `Model size: 7 MB`.
 
+## 2026-05-16 Slice: Direct Parser Unpack Split
+
+Keep the same two-token direct-parser semantics, but unpack `text.split()` directly and handle
+`ValueError` for non-two-token values. This removes the temporary `parts` list length branch and
+keeps invalid/labeled values on the existing generic parser fallback path.
+
 ## Success Metrics
 
 - Preserve all existing size-hint parsing behavior by falling back to `_size_hint_from_text(...)` when the direct parser cannot handle the value.
