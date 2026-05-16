@@ -251,6 +251,139 @@ struct RuntimeBatchRunsStateTests {
         #expect(failing.batchRunStatusErrorMessage.contains("status manifest missing"))
     }
 
+    @Test("batch run resume action uses selected report and missing-only controls")
+    @MainActor
+    func batchRunResumeActionUsesSelectedReportAndMissingOnlyControls() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        let preflightOutput = Self.batchPreflightOutput(modelListPath: "", configPath: "")
+        let statusOutput = Self.batchStatusOutput()
+        await runner.configureHandler { command in
+            switch command {
+            case .batchRun(let options):
+                return .success(preflightOutput(options.modelListPath, options.configPath))
+            case .batchStatus, .batchResume:
+                return .success(statusOutput)
+            default:
+                return .failure(.unsupportedCommand(commandID: "unexpected", surface: .subprocess))
+            }
+        }
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.updateBatchRunModelListText("01 | mlx-community/Qwen3-8B")
+        viewModel.updateBatchRunConfigText("run_id: smoke-batch")
+
+        await viewModel.requestBatchRunPreflight()
+        await viewModel.requestBatchRunStatus()
+
+        #expect(viewModel.batchRunResumeMissingOnly)
+        #expect(viewModel.batchRunResumeCanRun)
+        #expect(viewModel.batchRunResumeDisabledReason.isEmpty)
+        #expect(viewModel.batchRunResumeSummaryText == "2 incomplete rows available for missing-only resume.")
+
+        await viewModel.requestBatchRunResume()
+
+        var recordedCommands = await runner.snapshotRecordedCommands()
+        #expect(recordedCommands.count == 3)
+        let missingOnlyCommand = try #require(recordedCommands.last)
+        guard case .batchResume(let missingOnlyOptions) = missingOnlyCommand else {
+            Issue.record("expected batch.resume command")
+            return
+        }
+        #expect(missingOnlyOptions.runID == "smoke-batch")
+        #expect(missingOnlyOptions.outputRoot == "/tmp/melix-batch-output")
+        #expect(missingOnlyOptions.tempRoot == "/tmp/melix-batch-temp")
+        #expect(try String(contentsOfFile: missingOnlyOptions.modelListPath, encoding: .utf8) == "01 | mlx-community/Qwen3-8B\n")
+        #expect(try String(contentsOfFile: missingOnlyOptions.configPath, encoding: .utf8) == "run_id: smoke-batch\n")
+        #expect(missingOnlyOptions.missingOnly)
+        #expect(missingOnlyOptions.continueOnFailure)
+        #expect(missingOnlyOptions.dryRun == false)
+        #expect(missingOnlyOptions.json)
+        #expect(viewModel.batchRunResumeInProgress == false)
+        #expect(viewModel.batchRunResumeErrorMessage.isEmpty)
+
+        viewModel.updateBatchRunResumeMissingOnly(false)
+        #expect(viewModel.batchRunResumeSummaryText == "Resume will rerun all 4 manifest rows.")
+        await viewModel.requestBatchRunResume()
+
+        recordedCommands = await runner.snapshotRecordedCommands()
+        let allRowsCommand = try #require(recordedCommands.last)
+        guard case .batchResume(let allRowsOptions) = allRowsCommand else {
+            Issue.record("expected second batch.resume command")
+            return
+        }
+        #expect(allRowsOptions.missingOnly == false)
+    }
+
+    @Test("batch run resume action surfaces disabled states and CLI failures")
+    @MainActor
+    func batchRunResumeActionSurfacesDisabledStatesAndCLIFailures() async {
+        let missingSelection = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+
+        await missingSelection.requestBatchRunResume()
+
+        #expect(missingSelection.batchRunResumeCanRun == false)
+        #expect(missingSelection.batchRunResumeDisabledReason == "Run or select a batch report before resuming.")
+        #expect(missingSelection.batchRunResumeErrorMessage == "Run or select a batch report before resuming.")
+
+        let allSucceededRunner = RecordingCLIWorkflowRunner()
+        let preflightOutput = Self.batchPreflightOutput(modelListPath: "", configPath: "")
+        await allSucceededRunner.configureHandler { command in
+            switch command {
+            case .batchRun(let options):
+                return .success(preflightOutput(options.modelListPath, options.configPath))
+            case .batchStatus:
+                return .success(Self.batchStatusAllSucceededOutput())
+            default:
+                return .failure(.unsupportedCommand(commandID: "unexpected", surface: .subprocess))
+            }
+        }
+        let allSucceeded = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: allSucceededRunner)
+        allSucceeded.updateBatchRunModelListText("01 | mlx-community/Qwen3-8B")
+        allSucceeded.updateBatchRunConfigText("run_id: smoke-batch")
+
+        await allSucceeded.requestBatchRunPreflight()
+        await allSucceeded.requestBatchRunStatus()
+
+        #expect(allSucceeded.batchRunResumeMissingOnly)
+        #expect(allSucceeded.batchRunResumeCanRun == false)
+        #expect(allSucceeded.batchRunResumeDisabledReason == "All manifest rows are complete; turn off Missing Only to rerun every model.")
+        #expect(allSucceeded.batchRunResumeSummaryText == "All manifest rows are complete.")
+        await allSucceeded.requestBatchRunResume()
+        #expect(allSucceeded.batchRunResumeErrorMessage == "All manifest rows are complete; turn off Missing Only to rerun every model.")
+        allSucceeded.updateBatchRunResumeMissingOnly(false)
+        #expect(allSucceeded.batchRunResumeCanRun)
+
+        let failingRunner = RecordingCLIWorkflowRunner()
+        await failingRunner.configureHandler { command in
+            switch command {
+            case .batchRun(let options):
+                return .success(preflightOutput(options.modelListPath, options.configPath))
+            case .batchStatus:
+                return .success(Self.batchStatusOutput())
+            case .batchResume:
+                return .failure(
+                    .processFailed(
+                        commandID: "batch.resume",
+                        surface: .subprocess,
+                        exitCode: 2,
+                        stderr: "resume failed"
+                    )
+                )
+            default:
+                return .failure(.unsupportedCommand(commandID: "unexpected", surface: .subprocess))
+            }
+        }
+        let failing = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: failingRunner)
+        failing.updateBatchRunModelListText("01 | mlx-community/Qwen3-8B")
+        failing.updateBatchRunConfigText("run_id: smoke-batch")
+
+        await failing.requestBatchRunPreflight()
+        await failing.requestBatchRunStatus()
+        await failing.requestBatchRunResume()
+
+        #expect(failing.batchRunResumeInProgress == false)
+        #expect(failing.batchRunResumeErrorMessage.contains("resume failed"))
+    }
+
     @Test("batch run report decoder renders effective config fallback rows")
     func batchRunReportDecoderRendersEffectiveConfigFallbackRows() throws {
         let intPortReport = try Self.decodedBatchReport { payload in
@@ -400,6 +533,23 @@ struct RuntimeBatchRunsStateTests {
 
     private static func batchStatusOutput() -> String {
         let data = try! JSONSerialization.data(withJSONObject: batchStatusPayload(), options: [.sortedKeys])
+        return String(decoding: data, as: UTF8.self) + "\n"
+    }
+
+    private static func batchStatusAllSucceededOutput() -> String {
+        var payload = batchStatusPayload()
+        payload["status"] = "succeeded"
+        payload["succeeded_models"] = 4
+        payload["partial_success_models"] = 0
+        payload["failed_models"] = 0
+        payload["models"] = (payload["models"] as? [[String: Any]] ?? []).map { model in
+            var updated = model
+            updated["status"] = "succeeded"
+            updated["failure_category"] = ""
+            updated["recoverability"] = ""
+            return updated
+        }
+        let data = try! JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
         return String(decoding: data, as: UTF8.self) + "\n"
     }
 

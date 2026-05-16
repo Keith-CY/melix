@@ -2330,41 +2330,78 @@ struct DesktopBatchRunsToolSectionView: View {
     }
 
     private var batchRunOperations: some View {
-        HStack(spacing: 8) {
-            DesktopJobsOperationButton(
-                title: "Run Preflight",
-                isEnabled: viewModel.batchRunPreflightCanRun
-            ) {
-                Task { await viewModel.requestBatchRunPreflight() }
-            }
-            DesktopJobsOperationButton(
-                title: "Refresh Status",
-                isEnabled: viewModel.batchRunStatusCanRefresh
-            ) {
-                Task { await viewModel.requestBatchRunStatus() }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                DesktopJobsOperationButton(
+                    title: "Run Preflight",
+                    isEnabled: viewModel.batchRunPreflightCanRun
+                ) {
+                    Task { await viewModel.requestBatchRunPreflight() }
+                }
+                DesktopJobsOperationButton(
+                    title: "Refresh Status",
+                    isEnabled: viewModel.batchRunStatusCanRefresh
+                ) {
+                    Task { await viewModel.requestBatchRunStatus() }
+                }
+                DesktopBatchRunMissingOnlyToggle(isOn: viewModel.batchRunResumeMissingOnly) {
+                    viewModel.updateBatchRunResumeMissingOnly($0)
+                }
+                DesktopJobsOperationButton(
+                    title: "Resume Batch",
+                    isEnabled: viewModel.batchRunResumeCanRun
+                ) {
+                    Task { await viewModel.requestBatchRunResume() }
+                }
+
+                batchRunOperationStatus
             }
 
-            if viewModel.batchRunPreflightInProgress {
-                Text("Running batch preflight")
+            Text(viewModel.batchRunResumeSummaryText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            if viewModel.batchRunResumeDisabledReason.isEmpty == false {
+                Label(viewModel.batchRunResumeDisabledReason, systemImage: "info.circle")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            } else if viewModel.batchRunStatusInProgress {
-                Text("Refreshing batch status")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            } else if viewModel.batchRunPreflightErrorMessage.isEmpty == false {
-                Label(viewModel.batchRunPreflightErrorMessage, systemImage: "xmark.octagon")
-                    .font(.caption)
-                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
-                    .textSelection(.enabled)
-            } else if viewModel.batchRunStatusErrorMessage.isEmpty == false {
-                Label(viewModel.batchRunStatusErrorMessage, systemImage: "xmark.octagon")
-                    .font(.caption)
-                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
                     .textSelection(.enabled)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var batchRunOperationStatus: some View {
+        if viewModel.batchRunPreflightInProgress {
+            Text("Running batch preflight")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        } else if viewModel.batchRunStatusInProgress {
+            Text("Refreshing batch status")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        } else if viewModel.batchRunResumeInProgress {
+            Text("Resuming batch")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        } else if viewModel.batchRunPreflightErrorMessage.isEmpty == false {
+            Label(viewModel.batchRunPreflightErrorMessage, systemImage: "xmark.octagon")
+                .font(.caption)
+                .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                .textSelection(.enabled)
+        } else if viewModel.batchRunStatusErrorMessage.isEmpty == false {
+            Label(viewModel.batchRunStatusErrorMessage, systemImage: "xmark.octagon")
+                .font(.caption)
+                .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                .textSelection(.enabled)
+        } else if viewModel.batchRunResumeErrorMessage.isEmpty == false {
+            Label(viewModel.batchRunResumeErrorMessage, systemImage: "xmark.octagon")
+                .font(.caption)
+                .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                .textSelection(.enabled)
         }
     }
 
@@ -2895,6 +2932,47 @@ private struct DesktopJobsOperationButton: NSViewRepresentable {
 
         @objc func performAction(_ sender: NSButton) {
             action()
+        }
+    }
+}
+
+private struct DesktopBatchRunMissingOnlyToggle: NSViewRepresentable {
+    let isOn: Bool
+    let action: (Bool) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton(
+            title: "Missing Only",
+            target: context.coordinator,
+            action: #selector(Coordinator.performAction(_:))
+        )
+        button.setButtonType(.switch)
+        button.controlSize = .small
+        button.setAccessibilityLabel("Missing Only")
+        return button
+    }
+
+    func updateNSView(_ button: NSButton, context: Context) {
+        context.coordinator.action = action
+        button.title = "Missing Only"
+        button.state = isOn ? .on : .off
+        button.setAccessibilityLabel("Missing Only")
+    }
+
+    final class Coordinator: NSObject {
+        var action: (Bool) -> Void
+
+        init(action: @escaping (Bool) -> Void) {
+            self.action = action
+        }
+
+        @MainActor
+        @objc func performAction(_ sender: NSButton) {
+            action(sender.state == .on)
         }
     }
 }

@@ -1918,6 +1918,9 @@ public final class RuntimeViewModel {
     public private(set) var batchRunPreflightErrorMessage = ""
     public private(set) var batchRunStatusInProgress = false
     public private(set) var batchRunStatusErrorMessage = ""
+    public private(set) var batchRunResumeMissingOnly = true
+    public private(set) var batchRunResumeInProgress = false
+    public private(set) var batchRunResumeErrorMessage = ""
     public private(set) var runtimeJobsRefreshInProgress = false
     public private(set) var selectedRuntimeJobDetailRefreshInProgress = false
     public private(set) var selectedRuntimeJobLogsRefreshInProgress = false
@@ -3552,7 +3555,38 @@ public final class RuntimeViewModel {
     }
 
     public var batchRunStatusCanRefresh: Bool {
-        selectedBatchRunReport != nil && batchRunStatusInProgress == false
+        selectedBatchRunReport != nil && batchRunStatusInProgress == false && batchRunResumeInProgress == false
+    }
+
+    public var batchRunResumeCanRun: Bool {
+        batchRunResumeDisabledReason.isEmpty
+    }
+
+    public var batchRunResumeDisabledReason: String {
+        guard let report = selectedBatchRunReport else {
+            return "Run or select a batch report before resuming."
+        }
+        guard commandWorkflowRunner != nil else {
+            return "Batch Runs CLI runner is unavailable."
+        }
+        if batchRunPreflightInProgress {
+            return "Wait for batch preflight to finish before resuming."
+        }
+        if batchRunStatusInProgress {
+            return "Wait for status refresh to finish before resuming."
+        }
+        if batchRunResumeInProgress {
+            return "Resume request is already running."
+        }
+        if report.canResume(missingOnly: batchRunResumeMissingOnly) == false {
+            return "All manifest rows are complete; turn off Missing Only to rerun every model."
+        }
+        return ""
+    }
+
+    public var batchRunResumeSummaryText: String {
+        selectedBatchRunReport?.resumeSummaryText(missingOnly: batchRunResumeMissingOnly)
+            ?? "Run or select a batch report before resuming."
     }
 
     public var selectedBatchRunReport: RuntimeBatchRunReportState? {
@@ -3563,6 +3597,7 @@ public final class RuntimeViewModel {
         batchRunModelListText = text
         batchRunPreflightErrorMessage = ""
         batchRunStatusErrorMessage = ""
+        batchRunResumeErrorMessage = ""
         notifyStateChanged()
     }
 
@@ -3570,6 +3605,13 @@ public final class RuntimeViewModel {
         batchRunConfigText = text
         batchRunPreflightErrorMessage = ""
         batchRunStatusErrorMessage = ""
+        batchRunResumeErrorMessage = ""
+        notifyStateChanged()
+    }
+
+    public func updateBatchRunResumeMissingOnly(_ missingOnly: Bool) {
+        batchRunResumeMissingOnly = missingOnly
+        batchRunResumeErrorMessage = ""
         notifyStateChanged()
     }
 
@@ -3589,6 +3631,7 @@ public final class RuntimeViewModel {
 
         batchRunPreflightInProgress = true
         batchRunPreflightErrorMessage = ""
+        batchRunResumeErrorMessage = ""
         notifyStateChanged()
         do {
             let requestFiles = try writeBatchRunRequestFiles()
@@ -3632,6 +3675,7 @@ public final class RuntimeViewModel {
 
         batchRunStatusInProgress = true
         batchRunStatusErrorMessage = ""
+        batchRunResumeErrorMessage = ""
         notifyStateChanged()
         do {
             let command = MelixCLICommand.batchStatus(
@@ -3653,6 +3697,59 @@ public final class RuntimeViewModel {
             recordCLIWorkflowErrorIfNeeded(error)
             batchRunStatusErrorMessage = workflowErrorMessage(error)
             recordLocalError(batchRunStatusErrorMessage)
+            notifyStateChanged()
+        }
+    }
+
+    public func requestBatchRunResume() async {
+        guard let report = selectedBatchRunReport else {
+            batchRunResumeErrorMessage = "Run or select a batch report before resuming."
+            recordLocalError(batchRunResumeErrorMessage)
+            notifyStateChanged()
+            return
+        }
+        let disabledReason = batchRunResumeDisabledReason
+        if disabledReason.isEmpty == false {
+            batchRunResumeErrorMessage = disabledReason
+            recordLocalError(batchRunResumeErrorMessage)
+            notifyStateChanged()
+            return
+        }
+        guard let commandWorkflowRunner else {
+            batchRunResumeErrorMessage = "Batch Runs CLI runner is unavailable."
+            recordLocalError(batchRunResumeErrorMessage)
+            notifyStateChanged()
+            return
+        }
+
+        batchRunResumeInProgress = true
+        batchRunResumeErrorMessage = ""
+        notifyStateChanged()
+        do {
+            let command = MelixCLICommand.batchResume(
+                .init(
+                    runID: report.runID,
+                    outputRoot: report.outputRoot,
+                    tempRoot: report.tempRoot,
+                    modelListPath: report.modelListPath,
+                    configPath: report.configPath,
+                    missingOnly: batchRunResumeMissingOnly,
+                    continueOnFailure: true,
+                    dryRun: false,
+                    json: true
+                )
+            )
+            let output = try await commandWorkflowRunner.run(command)
+            let statusSnapshot = try RuntimeBatchRunReportDecoder.decodeStatusOutput(output)
+            batchRunResumeInProgress = false
+            clearCLIWorkflowFailure()
+            upsertBatchRunReport(report.applyingStatusSnapshot(statusSnapshot))
+            notifyStateChanged()
+        } catch {
+            batchRunResumeInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            batchRunResumeErrorMessage = workflowErrorMessage(error)
+            recordLocalError(batchRunResumeErrorMessage)
             notifyStateChanged()
         }
     }

@@ -1978,6 +1978,83 @@ struct DesktopFoundationViewTests {
         #expect(await runner.snapshotRecordedCommands().count == 2)
     }
 
+    @Test("batch runs tool section renders resume missing-only controls and disabled states")
+    @MainActor
+    func batchRunsToolSectionRendersResumeMissingOnlyControlsAndDisabledStates() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureHandler { command in
+            switch command {
+            case .batchRun:
+                return .success(Self.batchRunsPreflightJSON)
+            case .batchStatus, .batchResume:
+                return .success(Self.batchRunsStatusJSON)
+            default:
+                return .failure(.unsupportedCommand(commandID: "unexpected", surface: .subprocess))
+            }
+        }
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.updateBatchRunModelListText("01 | mlx-community/Qwen3-8B")
+        viewModel.updateBatchRunConfigText("run_id: smoke-batch")
+
+        let initialView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let initialResumeButton = try #require(renderedButtons(in: initialView).first { $0.title == "Resume Batch" })
+        #expect(initialResumeButton.isEnabled == false)
+        #expect(renderedTextValues(in: initialView).contains("Run or select a batch report before resuming."))
+
+        let preflightButton = try #require(renderedButtons(in: initialView).first { $0.title == "Run Preflight" })
+        preflightButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected selected batch preflight report") {
+            viewModel.selectedBatchRunReport?.preflightStatus == "ready"
+        }
+
+        let reportView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let statusButton = try #require(renderedButtons(in: reportView).first { $0.title == "Refresh Status" })
+        statusButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected batch manifest status rows") {
+            viewModel.selectedBatchRunReport?.statusSummary?.status == "partial_success"
+        }
+
+        let statusView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let statusValues = renderedTextValues(in: statusView)
+        let missingOnlyToggle = try #require(renderedButtons(in: statusView).first {
+            $0.title == "Missing Only" || $0.accessibilityLabel() == "Missing Only"
+        })
+        let resumeButton = try #require(renderedButtons(in: statusView).first { $0.title == "Resume Batch" })
+        #expect(missingOnlyToggle.state == .on)
+        #expect(resumeButton.isEnabled)
+        #expect(statusValues.contains("2 incomplete rows available for missing-only resume."))
+
+        resumeButton.performClick(nil)
+
+        try await waitForRecordedCLICommandCount(3, runner: runner, description: "expected missing-only resume command")
+        var recordedCommands = await runner.snapshotRecordedCommands()
+        guard case .batchResume(let missingOnlyOptions) = try #require(recordedCommands.last) else {
+            Issue.record("expected batch.resume command")
+            return
+        }
+        #expect(missingOnlyOptions.missingOnly)
+
+        missingOnlyToggle.performClick(nil)
+        try await waitForDesktopFoundationCondition("expected missing-only toggle to clear") {
+            viewModel.batchRunResumeMissingOnly == false
+        }
+
+        let allRowsView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        #expect(renderedTextValues(in: allRowsView).contains("Resume will rerun all 4 manifest rows."))
+        let allRowsResumeButton = try #require(renderedButtons(in: allRowsView).first { $0.title == "Resume Batch" })
+        allRowsResumeButton.performClick(nil)
+
+        try await waitForRecordedCLICommandCount(4, runner: runner, description: "expected all-rows resume command")
+        recordedCommands = await runner.snapshotRecordedCommands()
+        guard case .batchResume(let allRowsOptions) = try #require(recordedCommands.last) else {
+            Issue.record("expected second batch.resume command")
+            return
+        }
+        #expect(allRowsOptions.missingOnly == false)
+    }
+
     @Test("batch runs tool section renders status refresh errors")
     @MainActor
     func batchRunsToolSectionRendersStatusRefreshErrors() async throws {
@@ -2021,6 +2098,61 @@ struct DesktopFoundationViewTests {
 
         let updatedView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
         #expect(renderedTextValues(in: updatedView).contains(where: { $0.contains("status manifest missing") }))
+    }
+
+    @Test("batch runs tool section renders resume errors")
+    @MainActor
+    func batchRunsToolSectionRendersResumeErrors() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureHandler { command in
+            switch command {
+            case .batchRun:
+                return .success(Self.batchRunsPreflightJSON)
+            case .batchStatus:
+                return .success(Self.batchRunsStatusJSON)
+            case .batchResume:
+                return .failure(
+                    .processFailed(
+                        commandID: "batch.resume",
+                        surface: .subprocess,
+                        exitCode: 2,
+                        stderr: "resume failed"
+                    )
+                )
+            default:
+                return .failure(.unsupportedCommand(commandID: "unexpected", surface: .subprocess))
+            }
+        }
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.updateBatchRunModelListText("01 | mlx-community/Qwen3-8B")
+        viewModel.updateBatchRunConfigText("run_id: smoke-batch")
+
+        let view = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let preflightButton = try #require(renderedButtons(in: view).first { $0.title == "Run Preflight" })
+        preflightButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected selected batch preflight report") {
+            viewModel.selectedBatchRunReport?.preflightStatus == "ready"
+        }
+
+        let reportView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let statusButton = try #require(renderedButtons(in: reportView).first { $0.title == "Refresh Status" })
+        statusButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected batch status before resume") {
+            viewModel.selectedBatchRunReport?.statusSummary?.status == "partial_success"
+        }
+
+        let statusView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let resumeButton = try #require(renderedButtons(in: statusView).first { $0.title == "Resume Batch" })
+        resumeButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected resume error") {
+            viewModel.batchRunResumeErrorMessage.contains("resume failed")
+        }
+
+        let updatedView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        #expect(renderedTextValues(in: updatedView).contains(where: { $0.contains("resume failed") }))
     }
 
     private static let batchRunsPreflightJSON = #"""
@@ -7975,6 +8107,24 @@ private func waitForDesktopFoundationCondition(
     let deadline = ContinuousClock.now + timeout
     while ContinuousClock.now < deadline {
         if await condition() {
+            return
+        }
+        try await Task.sleep(for: pollInterval)
+    }
+
+    throw MenuBarTestError(description: description)
+}
+
+private func waitForRecordedCLICommandCount(
+    _ expectedCount: Int,
+    runner: RecordingCLIWorkflowRunner,
+    description: String,
+    timeout: Duration = .seconds(2),
+    pollInterval: Duration = .milliseconds(10)
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if await runner.snapshotRecordedCommands().count == expectedCount {
             return
         }
         try await Task.sleep(for: pollInterval)

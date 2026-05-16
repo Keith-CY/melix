@@ -207,6 +207,33 @@ public struct RuntimeBatchRunReportState: Identifiable, Equatable, Sendable {
         "Preflight \(preflightStatus.isEmpty ? "unknown" : preflightStatus)"
     }
 
+    public var incompleteManifestRowCount: Int {
+        manifestStatusRows.filter { $0.status != "succeeded" }.count
+    }
+
+    public func canResume(missingOnly: Bool) -> Bool {
+        if missingOnly == false {
+            return true
+        }
+        return manifestStatusRows.isEmpty || incompleteManifestRowCount > 0
+    }
+
+    public func resumeSummaryText(missingOnly: Bool) -> String {
+        if missingOnly {
+            guard manifestStatusRows.isEmpty == false else {
+                return "Manifest status has not loaded; resume will resolve the latest manifest."
+            }
+            let count = incompleteManifestRowCount
+            if count == 0 {
+                return "All manifest rows are complete."
+            }
+            return "\(count) incomplete row\(count == 1 ? "" : "s") available for missing-only resume."
+        }
+
+        let count = manifestStatusRows.isEmpty ? modelCount : manifestStatusRows.count
+        return "Resume will rerun all \(count) manifest row\(count == 1 ? "" : "s")."
+    }
+
     public init(
         runID: String,
         preflightStatus: String,
