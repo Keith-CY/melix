@@ -7,6 +7,7 @@ import time
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -19,8 +20,13 @@ SERVING_DIAGNOSTICS_COMPARISON_SCHEMA_VERSION = "melix.serving_diagnostics.compa
 _EMPTY_EVENT_ATTRIBUTES: Mapping[str, object] = MappingProxyType({})
 _JSON_COMPACT_SEPARATORS = (",", ":")
 _JSONL_ENCODER = json.JSONEncoder(sort_keys=True, separators=_JSON_COMPACT_SEPARATORS)
-_JSON_STRING_ENCODER = json.JSONEncoder(separators=_JSON_COMPACT_SEPARATORS).encode
+_JSON_STRING_ENCODER = json.encoder.encode_basestring_ascii
 _SET_FROZEN_ATTR = object.__setattr__
+
+
+@lru_cache(maxsize=1024)
+def _json_string_literal(value: str) -> str:
+    return _JSON_STRING_ENCODER(value)
 
 
 class ServingDiagnosticsComparisonError(ValueError):
@@ -477,19 +483,18 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
 
 
 def _write_jsonl(path: Path, rows: Any) -> None:
-    with path.open("w", encoding="utf-8") as handle:
-        encode = _JSONL_ENCODER.encode
-        write = handle.write
-        for row in rows:
-            if isinstance(row, ServingDiagnosticsEvent):
-                fast_line = _empty_attribute_event_json_line(row)
-                if fast_line is not None:
-                    write(fast_line)
-                    write("\n")
-                    continue
-                row = row.to_dict()
-            write(encode(row))
-            write("\n")
+    encode = _JSONL_ENCODER.encode
+    lines: list[str] = []
+    append_line = lines.append
+    for row in rows:
+        if isinstance(row, ServingDiagnosticsEvent):
+            fast_line = _empty_attribute_event_json_line(row)
+            if fast_line is not None:
+                append_line(fast_line + "\n")
+                continue
+            row = row.to_dict()
+        append_line(encode(row) + "\n")
+    path.write_bytes("".join(lines).encode("utf-8"))
 
 
 def _empty_attribute_event_json_line(event: ServingDiagnosticsEvent) -> str | None:
@@ -501,7 +506,7 @@ def _empty_attribute_event_json_line(event: ServingDiagnosticsEvent) -> str | No
         return None
     if not math.isfinite(duration_ms):
         return None
-    encode_string = _JSON_STRING_ENCODER
+    encode_string = _json_string_literal
     return (
         '{"attributes":{},"duration_ms":'
         f"{duration_ms!r}"

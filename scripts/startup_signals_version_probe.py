@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import statistics
 import sys
 import time
 import tracemalloc
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(os.environ.get("MELIX_STARTUP_SIGNALS_VERSION_REPO_ROOT", Path.cwd())).resolve()
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 
@@ -23,7 +24,12 @@ def _version_pairs(count: int) -> list[tuple[str, str]]:
         for patch in range(0, 3)
         for suffix in ("", "-alpha", "-beta", "-rc1")
     ]
-    return list(zip(versions, reversed(versions)))[:count]
+    differing_pairs = list(zip(versions, reversed(versions)))[: count // 2]
+    prefix_equivalent_pairs = [
+        (version, version[1:]) if index % 2 == 0 else (version[1:], version)
+        for index, version in enumerate(versions[: count - len(differing_pairs)])
+    ]
+    return differing_pairs + prefix_equivalent_pairs
 
 
 def main() -> int:

@@ -19,6 +19,10 @@ def test_extract_candidate_code_handles_empty_plaintext_and_code_blocks() -> Non
         "print('hi')",
         "parsed_code_block",
     )
+    assert code_eval_runner.extract_candidate_code("```PyThOn\nprint('case')\n```") == (
+        "print('case')",
+        "parsed_code_block",
+    )
     assert code_eval_runner.extract_candidate_code("```python\nprint('hi')\n```   \n\t") == (
         "print('hi')",
         "parsed_code_block",
@@ -814,6 +818,19 @@ def test_load_payload_file_fast_path_extracts_runner_fields_without_metadata_par
     assert payload_path.read_bytes_calls == 1
 
 
+def test_code_eval_payload_required_field_check_preserves_fast_path_gate() -> None:
+    payload = {
+        "failure_detail": "",
+        "runtime_status": "ok",
+        "test_status": "passed",
+        "timeout_status": "ok",
+    }
+
+    assert code_eval_runner._code_eval_payload_has_required_string_fields(payload)
+    del payload["failure_detail"]
+    assert not code_eval_runner._code_eval_payload_has_required_string_fields(payload)
+
+
 def test_load_payload_file_fast_path_reuses_precomputed_key_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     payload_path = _BytesOnlyPayloadPath(
         json.dumps(
@@ -912,6 +929,7 @@ def test_payload_fast_path_field_extractors_cover_malformed_edges() -> None:
     assert code_eval_runner._extract_json_string_field(b'{"failure_detail":"oops}', "failure_detail") is None
     assert code_eval_runner._extract_json_int_field(b'{"tests_passed":-7}', "tests_passed") == -7
     assert code_eval_runner._extract_json_int_field(b'{"tests_total":12345}', "tests_total") == 12345
+    assert code_eval_runner._extract_json_int_field_value_and_end(b'-42, "next": 1', 0) == (-42, 3)
     assert code_eval_runner._extract_json_int_field(b'{"tests_total":-}', "tests_total") is None
     assert code_eval_runner._extract_json_int_field(b'{"tests_total": }', "tests_total") is None
 

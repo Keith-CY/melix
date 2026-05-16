@@ -16,6 +16,7 @@ import textwrap
 _DEFAULT_STDIO_LIMIT_BYTES = 32_768
 _JSON_LOADS = json.loads
 _JSON_DECODE_ERROR = json.JSONDecodeError
+_COMMON_PYTHON_CODE_BLOCK_TAGS = ("python", "Python", "PYTHON")
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,9 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
 
 
 def _code_block_content_start(text: str, start: int) -> int:
-    if text[start : start + 6].lower() == "python":
+    if text.startswith(_COMMON_PYTHON_CODE_BLOCK_TAGS, start):
+        start += 6
+    elif text[start : start + 6].lower() == "python":
         start += 6
     while start < len(text) and text[start].isspace():
         start += 1
@@ -295,6 +298,17 @@ _REQUIRED_CODE_EVAL_PAYLOAD_STRING_KEYS = (
     "test_status",
     "failure_detail",
 )
+
+
+def _code_eval_payload_has_required_string_fields(payload: dict[str, object]) -> bool:
+    return (
+        "runtime_status" in payload
+        and "timeout_status" in payload
+        and "test_status" in payload
+        and "failure_detail" in payload
+    )
+
+
 _CODE_EVAL_PAYLOAD_KEY_TOKENS = {
     key: json.dumps(key, separators=(",", ":")).encode("utf-8")
     for key in (*_CODE_EVAL_PAYLOAD_STRING_KEYS, *_CODE_EVAL_PAYLOAD_INT_KEYS)
@@ -371,13 +385,14 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
                 search_start = value_start + len(value) + 1
             continue
 
-        value = _extract_json_int_field_at(payload_bytes, value_start)
-        if value is None:
+        int_result = _extract_json_int_field_value_and_end(payload_bytes, value_start)
+        if int_result is None:
             return None
+        value, value_end = int_result
         payload[key] = value
-        search_start = value_start + len(str(value))
+        search_start = value_end
 
-    if all(key in payload for key in _REQUIRED_CODE_EVAL_PAYLOAD_STRING_KEYS):
+    if _code_eval_payload_has_required_string_fields(payload):
         return payload
     return None
 
@@ -450,6 +465,17 @@ def _extract_json_int_field_with_token(payload_bytes: bytes, key_token: bytes) -
 
 
 def _extract_json_int_field_at(payload_bytes: bytes, start: int | None) -> int | None:
+    result = _extract_json_int_field_value_and_end(payload_bytes, start)
+    if result is None:
+        return None
+    value, _end = result
+    return value
+
+
+def _extract_json_int_field_value_and_end(
+    payload_bytes: bytes,
+    start: int | None,
+) -> tuple[int, int] | None:
     if start is None:
         return None
     cursor = start
@@ -471,7 +497,7 @@ def _extract_json_int_field_at(payload_bytes: bytes, start: int | None) -> int |
         cursor += 1
     if digit_count == 0:
         return None
-    return sign * value
+    return sign * value, cursor
 
 
 def _read_limited_stdio(path: Path, byte_limit: int) -> tuple[str, int]:
