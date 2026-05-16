@@ -327,8 +327,9 @@ class RequestStreamAssembler:
     def _unseen_delta(self, raw: str) -> str:
         if self._raw_seen_assistant_part_count:
             self._materialized_raw_seen()
-        if raw.startswith(self._raw_seen):
-            delta = raw[len(self._raw_seen) :]
+        raw_seen = self._raw_seen
+        if raw.startswith(raw_seen):
+            delta = raw[len(raw_seen) :]
             self._raw_seen = raw
             return delta
 
