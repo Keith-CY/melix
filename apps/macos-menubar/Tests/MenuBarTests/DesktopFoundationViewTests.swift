@@ -1108,6 +1108,57 @@ struct DesktopFoundationViewTests {
         )
     }
 
+    @Test("settings tab renders discovery copy and open affordances")
+    @MainActor
+    func settingsTabRendersDiscoveryCopyAndOpenAffordances() throws {
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
+            snapshot: Melix_Controlplane_V1_ServerSnapshot(),
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-discovery-affordances",
+            features: [],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
+            lastError: nil,
+            recentEvents: []
+        )
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.applyRuntimeDiscovery(
+            try RuntimeDiscoveryPayloadDecoder.decodeSnapshot([
+                (.info, RuntimeDiscoveryStateTests.infoJSON),
+                (.schema, RuntimeDiscoveryStateTests.schemaJSON),
+            ])
+        )
+
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("melix.discovery.copy.\(UUID().uuidString)"))
+        #expect(RuntimeDiscoveryClipboard.copy("/repo/docs/plans", to: pasteboard))
+        #expect(pasteboard.string(forType: .string) == "/repo/docs/plans")
+        #expect(RuntimeDiscoveryClipboard.copy("   ", to: pasteboard) == false)
+
+        var openedURL: URL?
+        #expect(openRuntimeDiscoveryPath("/repo/docs/plans") { url in
+            openedURL = url
+            return true
+        })
+        #expect(openedURL?.path == "/repo/docs/plans")
+        #expect(openRuntimeDiscoveryPath("   ") { _ in true } == false)
+
+        let tab = DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
+        let view = hostView(tab)
+        let buttons = renderedButtons(in: view)
+        let values = tab.accessibilitySummary
+
+        #expect(buttons.count >= 4)
+        #expect(values.contains("Copy Schema Version"))
+        #expect(values.contains("Copy Endpoint"))
+        #expect(values.contains("Copy Schema Path"))
+        #expect(values.contains("Open Schema Path"))
+    }
+
     @Test("settings tab refreshes runtime discovery and renders status states")
     @MainActor
     func settingsTabRefreshesRuntimeDiscoveryAndRendersStatusStates() async throws {

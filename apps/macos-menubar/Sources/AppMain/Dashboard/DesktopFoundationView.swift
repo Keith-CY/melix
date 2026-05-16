@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 @MainActor
@@ -2034,6 +2035,11 @@ struct DesktopSettingsTabView: View {
                     Text(payload.schemaVersion)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    Button(action: { RuntimeDiscoveryClipboard.copy(payload.schemaVersion) }) {
+                        Label("Copy Schema Version", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
                 }
             }
             ForEach(payload.valueRows) { row in
@@ -2044,7 +2050,7 @@ struct DesktopSettingsTabView: View {
                     .font(.caption)
                     .fontWeight(.semibold)
                 ForEach(payload.links) { link in
-                    discoveryKeyValueRow(link.key, link.url)
+                    discoveryEndpointLinkRow(link)
                 }
             }
             if payload.models.isEmpty == false {
@@ -2099,7 +2105,7 @@ struct DesktopSettingsTabView: View {
                     .font(.caption)
                     .fontWeight(.semibold)
                 ForEach(payload.schemaPaths) { path in
-                    discoveryKeyValueRow(path.key, path.path)
+                    discoverySchemaPathRow(path)
                 }
             }
             if payload.configSettings.isEmpty == false {
@@ -2128,6 +2134,45 @@ struct DesktopSettingsTabView: View {
             Text(value)
                 .font(.caption)
                 .textSelection(.enabled)
+        }
+    }
+
+    private func discoveryEndpointLinkRow(_ link: RuntimeDiscoveryLinkRowState) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(link.key)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(link.url)
+                .font(.caption)
+                .textSelection(.enabled)
+            Button(action: { RuntimeDiscoveryClipboard.copy(link.url) }) {
+                Label("Copy Endpoint", systemImage: "doc.on.doc")
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+        }
+    }
+
+    private func discoverySchemaPathRow(_ path: RuntimeDiscoverySchemaPathState) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(path.key)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(path.path)
+                .font(.caption)
+                .textSelection(.enabled)
+            Button(action: { RuntimeDiscoveryClipboard.copy(path.path) }) {
+                Label("Copy Schema Path", systemImage: "doc.on.doc")
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+            Button(action: { openRuntimeDiscoveryPath(path.path) }) {
+                Label("Open Schema Path", systemImage: "folder")
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
         }
     }
 
@@ -2192,8 +2237,14 @@ struct DesktopSettingsTabView: View {
         for payload in viewModel.runtimeDiscoveryPayloads {
             values.append(payload.endpoint.displayTitle)
             values.append(payload.schemaVersion)
+            if payload.schemaVersion.isEmpty == false {
+                values.append("Copy Schema Version")
+            }
             values.append(contentsOf: payload.valueRows.flatMap { [$0.key, $0.value] })
             values.append(contentsOf: payload.links.flatMap { [$0.key, $0.url] })
+            if payload.links.isEmpty == false {
+                values.append("Copy Endpoint")
+            }
             values.append(contentsOf: payload.models.flatMap {
                 [$0.modelID, $0.kind, $0.supportedModalitiesText, $0.supportedTasksText, $0.capabilityReceiptText]
             })
@@ -2214,6 +2265,9 @@ struct DesktopSettingsTabView: View {
             }
             values.append(contentsOf: payload.instructionAreas.flatMap { [$0.id, $0.title, $0.commandsText] })
             values.append(contentsOf: payload.schemaPaths.flatMap { [$0.key, $0.path] })
+            if payload.schemaPaths.isEmpty == false {
+                values.append(contentsOf: ["Copy Schema Path", "Open Schema Path"])
+            }
             values.append(contentsOf: payload.configSettings.flatMap {
                 [$0.key, $0.valueType, $0.defaultValueText, $0.environmentVariable, $0.summary]
             })
@@ -2364,4 +2418,28 @@ struct DesktopAPIReferenceTabView: View {
             }
         }
     }
+}
+
+enum RuntimeDiscoveryClipboard {
+    @discardableResult
+    static func copy(_ value: String, to pasteboard: NSPasteboard = .general) -> Bool {
+        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedValue.isEmpty == false else {
+            return false
+        }
+        pasteboard.clearContents()
+        return pasteboard.setString(trimmedValue, forType: .string)
+    }
+}
+
+@discardableResult
+func openRuntimeDiscoveryPath(
+    _ path: String,
+    opener: (URL) -> Bool = { NSWorkspace.shared.open($0) }
+) -> Bool {
+    let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmedPath.isEmpty == false else {
+        return false
+    }
+    return opener(URL(fileURLWithPath: trimmedPath))
 }
