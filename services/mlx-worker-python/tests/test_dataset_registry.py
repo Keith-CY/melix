@@ -99,6 +99,14 @@ def test_dataset_catalog_inferred_split_and_config_preserves_legacy_helpers() ->
     assert catalog._inferred_split_and_config("") == ("", "default")
 
 
+def test_dataset_catalog_split_alias_prefix_scan_matches_legacy_delimiters() -> None:
+    assert catalog._split_alias_from_candidate("train-00000-of-00001") == "train"
+    assert catalog._split_alias_from_candidate("validation_shard_00000") == "validation"
+    assert catalog._split_alias_from_candidate("test-mixed_00000") == "test"
+    assert catalog._split_alias_from_candidate("dev_00000-extra") == "validation"
+    assert catalog._split_alias_from_candidate("custom-train") == ""
+
+
 def test_dataset_catalog_reports_unavailable_roots_and_filters_snapshots(tmp_path: Path) -> None:
     home = tmp_path / "home"
     _write_hf_dataset_snapshot(home)

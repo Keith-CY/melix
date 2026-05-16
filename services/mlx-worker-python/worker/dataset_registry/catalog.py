@@ -881,8 +881,19 @@ def _inferred_split_and_config(relative_path: str) -> tuple[str, str]:
 
 
 def _split_alias_from_candidate(candidate: str) -> str:
-    prefix = candidate.split("-", 1)[0].split("_", 1)[0].lower()
+    delimiter_index = _first_split_alias_delimiter(candidate)
+    prefix = candidate[:delimiter_index].lower() if delimiter_index >= 0 else candidate.lower()
     return _SPLIT_ALIASES.get(prefix, "")
+
+
+def _first_split_alias_delimiter(candidate: str) -> int:
+    dash_index = candidate.find("-")
+    underscore_index = candidate.find("_")
+    if dash_index < 0:
+        return underscore_index
+    if underscore_index < 0:
+        return dash_index
+    return dash_index if dash_index < underscore_index else underscore_index
 
 
 def _path_matches_split(relative_path: Path, split: str) -> bool:
