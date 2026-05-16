@@ -1310,6 +1310,65 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
     }
 
+    @Test("capability disabled explanations render in model settings and server defaults")
+    @MainActor
+    func capabilityDisabledExplanationsRenderInSettingsAndServerDefaults() async throws {
+        var model = makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)
+        var capabilityReceipt = Melix_Controlplane_V1_ModelCapabilityReceipt()
+        var tools = Melix_Controlplane_V1_TaskCapabilityReceipt()
+        tools.capability = "tools"
+        tools.state = .capabilityUnsupported
+        tools.unsupportedReason = .unsupportedReasonUnsupportedTask
+        tools.recoveryHint = "Select a tool-capable model."
+        tools.provenance = "tool parser metadata"
+        var completion = Melix_Controlplane_V1_TaskCapabilityReceipt()
+        completion.capability = "completion"
+        completion.state = .capabilitySupported
+        completion.provenance = "model catalog"
+        var acceleration = Melix_Controlplane_V1_AccelerationCapabilityReceipt()
+        acceleration.requestedAccelerationMode = .speculativeDecode
+        acceleration.supportedModes = [.baseline]
+        acceleration.state = .capabilityUnsupported
+        acceleration.unsupportedReason = .unsupportedReasonUnsupportedMode
+        acceleration.recoveryHint = "Switch to baseline or pick a compatible draft model."
+        capabilityReceipt.tasks = [completion, tools]
+        capabilityReceipt.acceleration = acceleration
+        model.capabilityReceipt = capabilityReceipt
+
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [model]
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.modelSettingsToolParserXMLFallbackDraft = true
+        viewModel.modelSettingsAccelerationModeDraft = "speculative_decode"
+        let modelsView = hostView(
+            DesktopModelsTabView(
+                foundation: viewModel.desktopFoundationState,
+                viewModel: viewModel
+            ),
+            size: CGSize(width: 1_200, height: 1_800)
+        )
+
+        #expect(modelsView.subviews.isEmpty == false)
+        #expect(viewModel.modelSettingsToolParserXMLFallbackDisabledReason == "Tool parser XML fallback is unavailable for \(desktopTestReadyModelID): tools capability is unsupported • reason unsupported task • recovery Select a tool-capable model.")
+        #expect(viewModel.modelSettingsAccelerationModeDisabledReason == "Model settings acceleration is unavailable for \(desktopTestReadyModelID): Speculative Decode acceleration is unsupported • reason unsupported mode • recovery Switch to baseline or pick a compatible draft model.")
+
+        viewModel.selectSurface(.server)
+        viewModel.updateSelectedServerSessionAccelerationMode("speculative_decode")
+        let serverView = hostView(
+            DesktopWorkspaceShellView(viewModel: viewModel),
+            size: CGSize(width: 1_400, height: 1_100)
+        )
+
+        #expect(serverView.subviews.isEmpty == false)
+        #expect(viewModel.selectedServerAccelerationModeDisabledReason == "Serving acceleration is unavailable for \(desktopTestReadyModelID): Speculative Decode acceleration is unsupported • reason unsupported mode • recovery Switch to baseline or pick a compatible draft model.")
+    }
+
     @Test("models registry uses design-system workspace primitives")
     func modelsRegistryUsesDesignSystemWorkspacePrimitives() throws {
         let root = try repositoryRootForDesktopFoundationTests()

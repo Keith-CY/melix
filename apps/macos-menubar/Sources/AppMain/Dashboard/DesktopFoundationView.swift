@@ -265,6 +265,11 @@ struct DesktopModelsTabView: View {
                                 }
                             }
                         }
+                        if let disabledReason = viewModel.modelSettingsAccelerationModeDisabledReason {
+                            Text(disabledReason)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                         HStack(spacing: 12) {
                             Picker(
                                 "Cache Mode",
@@ -352,6 +357,11 @@ struct DesktopModelsTabView: View {
                             )
                             .toggleStyle(.checkbox)
                         }
+                        if let disabledReason = viewModel.modelSettingsToolParserXMLFallbackDisabledReason {
+                            Text(disabledReason)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                         HStack(spacing: 12) {
                             Text("Load Trust")
                                 .font(.caption)
@@ -403,6 +413,11 @@ struct DesktopModelsTabView: View {
                         HStack {
                             Button("Apply Settings", action: applyPrimaryModelSettingsAction())
                             .buttonStyle(.borderedProminent)
+                            .disabled(
+                                viewModel.modelSettingsAccelerationModeDisabledReason != nil
+                                    || (viewModel.modelSettingsToolParserXMLFallbackDraft
+                                        && viewModel.modelSettingsToolParserXMLFallbackDisabledReason != nil)
+                            )
                             Button("Reset Draft", action: resetPrimaryModelSettingsAction())
                             .buttonStyle(.bordered)
                             Spacer()

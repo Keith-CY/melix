@@ -6049,6 +6049,66 @@ struct RuntimeViewModelTests {
         #expect(noReceiptViewModel.diagnosticsBenchmarkUnavailableText == nil)
     }
 
+    @Test("capability guards explain unsupported tools and acceleration disabled states")
+    @MainActor
+    func capabilityGuardsExplainUnsupportedToolsAndAccelerationDisabledStates() async throws {
+        let modelID = testReadyModelID
+        var model = makeModelSummary(modelID: modelID, state: .modelWarm)
+        var capabilityReceipt = Melix_Controlplane_V1_ModelCapabilityReceipt()
+        var tools = makeTaskCapabilityReceipt(
+            "tools",
+            state: .capabilityUnsupported,
+            provenance: "tool parser metadata"
+        )
+        tools.unsupportedReason = .unsupportedReasonUnsupportedTask
+        tools.recoveryHint = "Select a tool-capable model."
+
+        var completion = makeTaskCapabilityReceipt(
+            "completion",
+            state: .capabilitySupported,
+            provenance: "model catalog"
+        )
+        completion.unsupportedReason = .unsupportedReasonNone
+
+        var acceleration = Melix_Controlplane_V1_AccelerationCapabilityReceipt()
+        acceleration.requestedAccelerationMode = .speculativeDecode
+        acceleration.supportedModes = [.baseline]
+        acceleration.state = .capabilityUnsupported
+        acceleration.unsupportedReason = .unsupportedReasonUnsupportedMode
+        acceleration.recoveryHint = "Switch to baseline or pick a compatible draft model."
+
+        capabilityReceipt.tasks = [completion, tools]
+        capabilityReceipt.acceleration = acceleration
+        model.capabilityReceipt = capabilityReceipt
+
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [model],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        viewModel.modelSettingsToolParserXMLFallbackDraft = true
+        viewModel.modelSettingsAccelerationModeDraft = "speculative_decode"
+        viewModel.updateSelectedServerSessionAccelerationMode("speculative_decode")
+
+        #expect(viewModel.modelSettingsToolParserXMLFallbackDisabledReason == "Tool parser XML fallback is unavailable for \(testReadyModelID): tools capability is unsupported • reason unsupported task • recovery Select a tool-capable model.")
+        #expect(viewModel.modelSettingsAccelerationModeDisabledReason == "Model settings acceleration is unavailable for \(testReadyModelID): Speculative Decode acceleration is unsupported • reason unsupported mode • recovery Switch to baseline or pick a compatible draft model.")
+        #expect(viewModel.selectedServerAccelerationModeDisabledReason == "Serving acceleration is unavailable for \(testReadyModelID): Speculative Decode acceleration is unsupported • reason unsupported mode • recovery Switch to baseline or pick a compatible draft model.")
+
+        viewModel.modelSettingsToolParserXMLFallbackDraft = false
+        viewModel.modelSettingsAccelerationModeDraft = "baseline"
+        viewModel.updateSelectedServerSessionAccelerationMode("baseline")
+
+        #expect(viewModel.modelSettingsToolParserXMLFallbackDisabledReason != nil)
+        #expect(viewModel.modelSettingsAccelerationModeDisabledReason == nil)
+        #expect(viewModel.selectedServerAccelerationModeDisabledReason == nil)
+    }
+
     @Test("benchmark and evaluation control normalization fills defaults and preserves toggle state")
     @MainActor
     func benchmarkAndEvaluationControlNormalizationFillsDefaultsAndPreservesToggleState() async throws {

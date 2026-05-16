@@ -1534,6 +1534,11 @@ private struct DesktopServerSessionEditor: View {
                             Text(servingDefaultsCompactSummary(for: session))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                            if let disabledReason = viewModel.selectedServerAccelerationModeDisabledReason {
+                                Text(disabledReason)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                             DisclosureGroup(DesktopServerWorkspaceDefaults.advancedServingDefaultsTitle, isExpanded: $showsAdvanced) {
                                 advancedServingDefaultsForm(for: session)
                                     .padding(.top, 12)

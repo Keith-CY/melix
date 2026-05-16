@@ -2874,6 +2874,39 @@ public final class RuntimeViewModel {
         diagnosticsEvaluationUnavailableText == nil
     }
 
+    public var modelSettingsToolParserXMLFallbackDisabledReason: String? {
+        guard let modelID = primaryModel?.modelID else {
+            return nil
+        }
+        return unsupportedCapabilityDispatchMessage(
+            actionTitle: "Tool parser XML fallback",
+            modelID: modelID,
+            capabilityIDs: ["tools"]
+        )
+    }
+
+    public var modelSettingsAccelerationModeDisabledReason: String? {
+        guard let modelID = primaryModel?.modelID else {
+            return nil
+        }
+        return unsupportedAccelerationModeMessage(
+            actionTitle: "Model settings acceleration",
+            modelID: modelID,
+            requestedMode: modelSettingsAccelerationModeDraft
+        )
+    }
+
+    public var selectedServerAccelerationModeDisabledReason: String? {
+        guard let session = selectedServerSession else {
+            return nil
+        }
+        return unsupportedAccelerationModeMessage(
+            actionTitle: "Serving acceleration",
+            modelID: session.modelID,
+            requestedMode: session.servingDefaults.accelerationMode
+        )
+    }
+
     public func isPendingAssistantTranscriptEntry(_ entry: DesktopChatTranscriptEntry) -> Bool {
         isEmptyPendingAssistantEntry(entry)
     }
@@ -11635,6 +11668,45 @@ public final class RuntimeViewModel {
         return nil
     }
 
+    private func unsupportedAccelerationModeMessage(
+        actionTitle: String,
+        modelID: String,
+        requestedMode: String
+    ) -> String? {
+        let normalizedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestedAccelerationMode = servingDefaultsAccelerationMode(from: requestedMode)
+        guard normalizedModelID.isEmpty == false,
+              requestedAccelerationMode != .baseline,
+              let model = latestSnapshot.models.first(where: { $0.modelID == normalizedModelID }),
+              model.hasCapabilityReceipt,
+              model.capabilityReceipt.hasAcceleration
+        else {
+            return nil
+        }
+
+        let acceleration = model.capabilityReceipt.acceleration
+        let supportedModes = Set(acceleration.supportedModes)
+        let supportedByModeList = supportedModes.isEmpty || supportedModes.contains(requestedAccelerationMode)
+        guard supportedByModeList == false || runtimeCapabilitySupportStateBlocksDispatch(acceleration.state) else {
+            return nil
+        }
+
+        let state: Melix_Controlplane_V1_CapabilitySupportState = runtimeCapabilitySupportStateBlocksDispatch(acceleration.state)
+            ? acceleration.state
+            : .capabilityUnsupported
+        return runtimeAccelerationModeDisabledMessage(
+            actionTitle: actionTitle,
+            modelID: normalizedModelID,
+            accelerationMode: requestedAccelerationMode,
+            state: state,
+            unsupportedReason: runtimeAccelerationModeUnsupportedReason(
+                acceleration.unsupportedReason,
+                supportedByModeList: supportedByModeList
+            ),
+            recoveryHint: acceleration.recoveryHint
+        )
+    }
+
     private func runtimeCapabilitySupportStateBlocksDispatch(
         _ state: Melix_Controlplane_V1_CapabilitySupportState
     ) -> Bool {
@@ -11665,6 +11737,40 @@ public final class RuntimeViewModel {
             recoveryHint: recoveryHint
         )
         return parts.joined(separator: " • ")
+    }
+
+    private func runtimeAccelerationModeDisabledMessage(
+        actionTitle: String,
+        modelID: String,
+        accelerationMode: Melix_Controlplane_V1_AccelerationMode,
+        state: Melix_Controlplane_V1_CapabilitySupportState,
+        unsupportedReason: Melix_Controlplane_V1_UnsupportedCapabilityReason,
+        recoveryHint: String
+    ) -> String {
+        var parts = [
+            "\(actionTitle) is unavailable for \(modelID): \(runtimeAccelerationModeText(accelerationMode)) acceleration is \(runtimeCapabilitySupportStateText(state))"
+        ]
+        runtimeAppendUnsupportedCapabilityDetails(
+            to: &parts,
+            unsupportedReason: unsupportedReason,
+            recoveryHint: recoveryHint
+        )
+        return parts.joined(separator: " • ")
+    }
+
+    private func runtimeAccelerationModeUnsupportedReason(
+        _ unsupportedReason: Melix_Controlplane_V1_UnsupportedCapabilityReason,
+        supportedByModeList: Bool
+    ) -> Melix_Controlplane_V1_UnsupportedCapabilityReason {
+        if supportedByModeList {
+            return unsupportedReason
+        }
+        switch unsupportedReason {
+        case .unspecified, .unsupportedReasonNone:
+            return .unsupportedReasonUnsupportedMode
+        default:
+            return unsupportedReason
+        }
     }
 
     private func catalogModelRow(for modelID: String) -> RuntimeModelRow? {
