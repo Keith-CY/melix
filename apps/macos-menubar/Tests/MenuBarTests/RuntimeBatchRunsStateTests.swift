@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import AppMain
+import MelixCLICore
 
 @Suite("Runtime Batch Runs State")
 struct RuntimeBatchRunsStateTests {
@@ -52,5 +53,186 @@ struct RuntimeBatchRunsStateTests {
         #expect(viewModel.batchRunSetupCanRequestPreflight == true)
         #expect(viewModel.batchRunSetupValidationMessages.allSatisfy { $0.severity != .error })
         #expect(viewModel.batchRunSetupSummaryText == "2 models • 3 config values")
+    }
+
+    @Test("batch run preflight action writes inputs dispatches dry-run command and selects report")
+    @MainActor
+    func batchRunPreflightActionWritesInputsDispatchesDryRunCommandAndSelectsReport() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureHandler { command in
+            guard case .batchRun(let options) = command else {
+                return .failure(.unsupportedCommand(commandID: "unexpected", surface: .subprocess))
+            }
+            let payload = Self.batchPreflightPayload(
+                modelListPath: options.modelListPath,
+                configPath: options.configPath
+            )
+            let data = try! JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+            return .success(String(decoding: data, as: UTF8.self) + "\n")
+        }
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.updateBatchRunModelListText("01 | mlx-community/Qwen3-8B")
+        viewModel.updateBatchRunConfigText(
+            """
+            run_id: smoke-batch
+            bench_suite: latency
+            """
+        )
+
+        await viewModel.requestBatchRunPreflight()
+
+        let recordedCommands = await runner.snapshotRecordedCommands()
+        let command = try #require(recordedCommands.first)
+        guard case .batchRun(let options) = command else {
+            Issue.record("expected batch.run command")
+            return
+        }
+        #expect(options.preflight)
+        #expect(options.dryRun)
+        #expect(options.json)
+        #expect(try String(contentsOfFile: options.modelListPath, encoding: .utf8) == "01 | mlx-community/Qwen3-8B\n")
+        #expect(try String(contentsOfFile: options.configPath, encoding: .utf8).contains("bench_suite: latency"))
+        #expect(viewModel.batchRunPreflightInProgress == false)
+        #expect(viewModel.batchRunPreflightErrorMessage.isEmpty)
+        #expect(viewModel.batchRunReports.count == 1)
+        #expect(viewModel.selectedBatchRunReportID == viewModel.batchRunReports.first?.id)
+        #expect(viewModel.selectedBatchRunReport?.runID == "smoke-batch")
+        #expect(viewModel.selectedBatchRunReport?.preflightStatus == "ready")
+        #expect(viewModel.selectedBatchRunReport?.checks.first?.name == "output_root")
+
+        await viewModel.requestBatchRunPreflight()
+        #expect(viewModel.batchRunReports.count == 1)
+    }
+
+    @Test("batch run preflight action blocks invalid input before CLI dispatch")
+    @MainActor
+    func batchRunPreflightActionBlocksInvalidInputBeforeCLIDispatch() async {
+        let runner = RecordingCLIWorkflowRunner()
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.updateBatchRunModelListText("")
+        viewModel.updateBatchRunConfigText("unknown_key: value")
+
+        await viewModel.requestBatchRunPreflight()
+
+        #expect(await runner.snapshotRecordedCommands().isEmpty)
+        #expect(viewModel.batchRunPreflightInProgress == false)
+        #expect(viewModel.batchRunPreflightErrorMessage == "Resolve batch input validation errors before running preflight.")
+    }
+
+    @Test("batch run preflight action surfaces missing runner and CLI failures")
+    @MainActor
+    func batchRunPreflightActionSurfacesMissingRunnerAndCLIFailures() async {
+        let missingRunner = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        missingRunner.updateBatchRunModelListText("mlx-community/Qwen3-8B")
+
+        await missingRunner.requestBatchRunPreflight()
+
+        #expect(missingRunner.batchRunPreflightErrorMessage == "Batch Runs CLI runner is unavailable.")
+
+        let failingRunner = RecordingCLIWorkflowRunner()
+        await failingRunner.configureHandler { _ in
+            .failure(
+                .processFailed(
+                    commandID: "batch.run",
+                    surface: .subprocess,
+                    exitCode: 2,
+                    stderr: "preflight failed"
+                )
+            )
+        }
+        let failing = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: failingRunner)
+        failing.updateBatchRunModelListText("mlx-community/Qwen3-8B")
+
+        await failing.requestBatchRunPreflight()
+
+        #expect(failing.batchRunPreflightInProgress == false)
+        #expect(failing.batchRunPreflightErrorMessage.contains("preflight failed"))
+    }
+
+    private static func batchPreflightPayload(modelListPath: String, configPath: String) -> [String: Any] {
+        [
+            "schema_version": "melix.batch.effective_config.v1",
+            "run_id": "smoke-batch",
+            "model_list": modelListPath,
+            "config_path": configPath,
+            "output_root": "/tmp/melix-batch-output",
+            "temp_root": "/tmp/melix-batch-temp",
+            "melix_home": "/tmp/melix-home",
+            "runtime_dir": "/tmp/melix-runtime",
+            "http_port": "12434",
+            "service_instance_name": "window-ui",
+            "selected_model_count": 1,
+            "total_model_count": 1,
+            "dry_run": true,
+            "preflight": true,
+            "continue_on_failure": true,
+            "restart_stack_per_model": true,
+            "preflight_report": "/tmp/melix-batch-output/preflight-report.json",
+            "isolation_policy": [
+                "schema_version": "melix.batch.isolation_policy.v1",
+                "best_effort_unload_previous_model": true,
+                "best_effort_unload_after_model": true,
+                "restart_stack_per_model": true,
+                "force_clean_stack_after_runtime_failure": true,
+                "cleanup_failures_preserve_artifacts": true,
+            ],
+            "judge": [
+                "remote_server_id": "judge-local",
+                "model": "judge-model",
+            ],
+            "benchmark": [
+                "suite": "latency",
+                "context_length": 2048,
+                "generation_length": 128,
+                "batch_size": 2,
+                "repeats": 1,
+                "sample_size": 8,
+                "batch_factor": 1,
+            ],
+            "evaluation": [
+                "suite": "mt-bench",
+                "dataset_id": "smoke",
+                "scoring_mode": "exact",
+                "sample_size": 8,
+                "batch_factor": 1,
+            ],
+            "models": [
+                [
+                    "index": "01",
+                    "repo_id": "mlx-community/Qwen3-8B",
+                    "source_line": 1,
+                    "slug": "01-mlx-community-qwen3-8b",
+                ],
+            ],
+            "preflight_result": [
+                "schema_version": "melix.batch.preflight_report.v1",
+                "run_id": "smoke-batch",
+                "status": "ready",
+                "blocker_count": 0,
+                "model_count": 1,
+                "runtime": [
+                    "repo_root": "/tmp/melix",
+                    "melix_home": "/tmp/melix-home",
+                    "runtime_dir": "/tmp/melix-runtime",
+                    "http_port": "12434",
+                    "service_instance_name": "window-ui",
+                    "melix_cli": "/tmp/melix",
+                ],
+                "judge": [
+                    "remote_server_id": "judge-local",
+                    "model": "judge-model",
+                ],
+                "checks": [
+                    [
+                        "name": "output_root",
+                        "status": "ready",
+                        "detail": "output root writable",
+                        "actionable": "",
+                        "category": "filesystem",
+                        "metadata": ["path": "/tmp/melix-batch-output"],
+                    ],
+                ],
+            ],
+        ]
     }
 }

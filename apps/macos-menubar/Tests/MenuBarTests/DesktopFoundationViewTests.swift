@@ -1770,7 +1770,7 @@ struct DesktopFoundationViewTests {
 
     @Test("batch runs tool section renders model config inputs and validation messages")
     @MainActor
-    func batchRunsToolSectionRendersModelConfigInputsAndValidationMessages() {
+    func batchRunsToolSectionRendersModelConfigInputsAndValidationMessages() throws {
         let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
         viewModel.selectToolSection(.batchRuns)
         viewModel.updateBatchRunModelListText("")
@@ -1783,9 +1783,12 @@ struct DesktopFoundationViewTests {
 
         let view = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
         let values = renderedTextValues(in: view)
+        let buttons = renderedButtons(in: view)
+        let preflightButton = try #require(buttons.first { $0.title == "Run Preflight" })
 
         #expect(viewModel.selectedSurface == .tools)
         #expect(viewModel.selectedToolSection == .batchRuns)
+        #expect(preflightButton.isEnabled == false)
         #expect(values.contains("0 models • 0 config values"))
         #expect(values.contains("Add at least one model repository."))
         #expect(values.contains(where: { $0.contains("unknown_key") }))
@@ -1798,7 +1801,146 @@ struct DesktopFoundationViewTests {
         viewModel.updateBatchRunConfigText("run_id: smoke-batch")
         let readyView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
         let readyValues = renderedTextValues(in: readyView)
+        let readyPreflightButton = try #require(renderedButtons(in: readyView).first { $0.title == "Run Preflight" })
+        #expect(readyPreflightButton.isEnabled)
         #expect(readyValues.contains("Batch input is ready for preflight."))
+    }
+
+    @Test("batch runs tool section preflight button dispatches and selects report")
+    @MainActor
+    func batchRunsToolSectionPreflightButtonDispatchesAndSelectsReport() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureHandler { command in
+            guard case .batchRun = command else {
+                return .failure(.unsupportedCommand(commandID: "unexpected", surface: .subprocess))
+            }
+            return .success(
+                """
+                {
+                  "schema_version": "melix.batch.effective_config.v1",
+                  "run_id": "smoke-batch",
+                  "model_list": "/tmp/models.txt",
+                  "config_path": "/tmp/config.txt",
+                  "output_root": "/tmp/melix-batch-output",
+                  "temp_root": "/tmp/melix-batch-temp",
+                  "melix_home": "/tmp/melix-home",
+                  "runtime_dir": "/tmp/melix-runtime",
+                  "http_port": "12434",
+                  "service_instance_name": "window-ui",
+                  "selected_model_count": 1,
+                  "total_model_count": 1,
+                  "dry_run": true,
+                  "preflight": true,
+                  "continue_on_failure": true,
+                  "restart_stack_per_model": true,
+                  "preflight_report": "/tmp/melix-batch-output/preflight-report.json",
+                  "isolation_policy": {
+                    "schema_version": "melix.batch.isolation_policy.v1",
+                    "best_effort_unload_previous_model": true,
+                    "best_effort_unload_after_model": true,
+                    "restart_stack_per_model": true,
+                    "force_clean_stack_after_runtime_failure": true,
+                    "cleanup_failures_preserve_artifacts": true
+                  },
+                  "judge": {
+                    "remote_server_id": "judge-local",
+                    "model": "judge-model"
+                  },
+                  "benchmark": {
+                    "suite": "latency",
+                    "context_length": 2048,
+                    "generation_length": 128,
+                    "batch_size": 2,
+                    "repeats": 1,
+                    "sample_size": 8,
+                    "batch_factor": 1
+                  },
+                  "evaluation": {
+                    "suite": "mt-bench",
+                    "dataset_id": "smoke",
+                    "scoring_mode": "exact",
+                    "sample_size": 8,
+                    "batch_factor": 1
+                  },
+                  "models": [
+                    {
+                      "index": "01",
+                      "repo_id": "mlx-community/Qwen3-8B",
+                      "source_line": 1,
+                      "slug": "01-mlx-community-qwen3-8b"
+                    }
+                  ],
+                  "preflight_result": {
+                    "schema_version": "melix.batch.preflight_report.v1",
+                    "run_id": "smoke-batch",
+                    "status": "ready",
+                    "blocker_count": 0,
+                    "model_count": 1,
+                    "runtime": {
+                      "repo_root": "/tmp/melix",
+                      "melix_home": "/tmp/melix-home",
+                      "runtime_dir": "/tmp/melix-runtime",
+                      "http_port": "12434",
+                      "service_instance_name": "window-ui",
+                      "melix_cli": "/tmp/melix"
+                    },
+                    "judge": {
+                      "remote_server_id": "judge-local",
+                      "model": "judge-model"
+                    },
+                    "checks": [
+                      {
+                        "name": "output_root",
+                        "status": "ready",
+                        "detail": "output root writable",
+                        "actionable": "",
+                        "category": "filesystem",
+                        "metadata": {
+                          "path": "/tmp/melix-batch-output"
+                        }
+                      }
+                    ]
+                  }
+                }
+                """
+            )
+        }
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.updateBatchRunModelListText("01 | mlx-community/Qwen3-8B")
+        viewModel.updateBatchRunConfigText("run_id: smoke-batch")
+
+        let view = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let preflightButton = try #require(renderedButtons(in: view).first { $0.title == "Run Preflight" })
+        preflightButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected selected batch preflight report") {
+            viewModel.selectedBatchRunReport?.preflightStatus == "ready"
+        }
+
+        let updatedView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let values = renderedTextValues(in: updatedView)
+        #expect(values.contains("smoke-batch"))
+        #expect(values.contains("Preflight ready"))
+        #expect(values.contains("output_root"))
+        #expect(await runner.snapshotRecordedCommands().count == 1)
+    }
+
+    @Test("batch runs tool section renders preflight runner error")
+    @MainActor
+    func batchRunsToolSectionRendersPreflightRunnerError() async throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.updateBatchRunModelListText("mlx-community/Qwen3-8B")
+
+        let view = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let preflightButton = try #require(renderedButtons(in: view).first { $0.title == "Run Preflight" })
+        preflightButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected missing batch runner error") {
+            viewModel.batchRunPreflightErrorMessage == "Batch Runs CLI runner is unavailable."
+        }
+
+        let updatedView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        #expect(renderedTextValues(in: updatedView).contains("Batch Runs CLI runner is unavailable."))
     }
 
     @Test("jobs tool section renders selected job detail summary")

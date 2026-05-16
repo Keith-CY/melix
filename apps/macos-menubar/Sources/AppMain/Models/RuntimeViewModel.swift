@@ -1890,6 +1890,11 @@ private enum RuntimeLoraWorkflowOperation: String, Sendable {
     }
 }
 
+private struct BatchRunRequestFiles {
+    let modelListPath: String
+    let configPath: String
+}
+
 @MainActor
 @Observable
 public final class RuntimeViewModel {
@@ -1907,6 +1912,10 @@ public final class RuntimeViewModel {
     public private(set) var selectedRuntimeJobID = ""
     public private(set) var batchRunModelListText = ""
     public private(set) var batchRunConfigText = ""
+    public private(set) var batchRunReports: [RuntimeBatchRunReportState] = []
+    public private(set) var selectedBatchRunReportID = ""
+    public private(set) var batchRunPreflightInProgress = false
+    public private(set) var batchRunPreflightErrorMessage = ""
     public private(set) var runtimeJobsRefreshInProgress = false
     public private(set) var selectedRuntimeJobDetailRefreshInProgress = false
     public private(set) var selectedRuntimeJobLogsRefreshInProgress = false
@@ -3536,14 +3545,67 @@ public final class RuntimeViewModel {
         )
     }
 
+    public var batchRunPreflightCanRun: Bool {
+        batchRunSetupCanRequestPreflight && batchRunPreflightInProgress == false
+    }
+
+    public var selectedBatchRunReport: RuntimeBatchRunReportState? {
+        batchRunReports.first { $0.id == selectedBatchRunReportID }
+    }
+
     public func updateBatchRunModelListText(_ text: String) {
         batchRunModelListText = text
+        batchRunPreflightErrorMessage = ""
         notifyStateChanged()
     }
 
     public func updateBatchRunConfigText(_ text: String) {
         batchRunConfigText = text
+        batchRunPreflightErrorMessage = ""
         notifyStateChanged()
+    }
+
+    public func requestBatchRunPreflight() async {
+        guard batchRunSetupCanRequestPreflight else {
+            batchRunPreflightErrorMessage = "Resolve batch input validation errors before running preflight."
+            recordLocalError(batchRunPreflightErrorMessage)
+            notifyStateChanged()
+            return
+        }
+        guard let commandWorkflowRunner else {
+            batchRunPreflightErrorMessage = "Batch Runs CLI runner is unavailable."
+            recordLocalError(batchRunPreflightErrorMessage)
+            notifyStateChanged()
+            return
+        }
+
+        batchRunPreflightInProgress = true
+        batchRunPreflightErrorMessage = ""
+        notifyStateChanged()
+        do {
+            let requestFiles = try writeBatchRunRequestFiles()
+            let command = MelixCLICommand.batchRun(
+                .init(
+                    modelListPath: requestFiles.modelListPath,
+                    configPath: requestFiles.configPath,
+                    preflight: true,
+                    dryRun: true,
+                    json: true
+                )
+            )
+            let output = try await commandWorkflowRunner.run(command)
+            let report = try RuntimeBatchRunReportDecoder.decodePreflightOutput(output)
+            batchRunPreflightInProgress = false
+            clearCLIWorkflowFailure()
+            upsertBatchRunReport(report)
+            notifyStateChanged()
+        } catch {
+            batchRunPreflightInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            batchRunPreflightErrorMessage = workflowErrorMessage(error)
+            recordLocalError(batchRunPreflightErrorMessage)
+            notifyStateChanged()
+        }
     }
 
     public func applyRuntimeJobs(_ jobs: [RuntimeJobSummaryState]) {
@@ -3722,6 +3784,46 @@ public final class RuntimeViewModel {
             return nil
         }
         return jobID
+    }
+
+    private func upsertBatchRunReport(_ report: RuntimeBatchRunReportState) {
+        if let index = batchRunReports.firstIndex(where: { $0.id == report.id }) {
+            batchRunReports[index] = report
+        } else {
+            batchRunReports.insert(report, at: 0)
+        }
+        selectedBatchRunReportID = report.id
+    }
+
+    private func writeBatchRunRequestFiles() throws -> BatchRunRequestFiles {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-window-batch-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let modelListURL = root.appendingPathComponent("models.txt")
+        try normalizedBatchRequestText(batchRunModelListText).write(
+            to: modelListURL,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        var configPath = ""
+        if batchRunConfigText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            let configURL = root.appendingPathComponent("batch-config.txt")
+            try normalizedBatchRequestText(batchRunConfigText).write(
+                to: configURL,
+                atomically: true,
+                encoding: .utf8
+            )
+            configPath = configURL.path
+        }
+
+        return BatchRunRequestFiles(modelListPath: modelListURL.path, configPath: configPath)
+    }
+
+    private func normalizedBatchRequestText(_ text: String) -> String {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? "" : normalized + "\n"
     }
 
     public func openPreferences() {

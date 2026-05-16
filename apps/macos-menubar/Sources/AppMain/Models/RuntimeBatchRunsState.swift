@@ -48,6 +48,158 @@ public struct RuntimeBatchRunConfigEntryState: Identifiable, Equatable, Sendable
     }
 }
 
+public struct RuntimeBatchRunPreflightCheckState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let name: String
+    public let status: String
+    public let detail: String
+    public let actionable: String
+    public let category: String
+    public let metadata: [String: String]
+
+    public init(
+        name: String,
+        status: String,
+        detail: String,
+        actionable: String,
+        category: String,
+        metadata: [String: String]
+    ) {
+        self.id = "\(category):\(name)"
+        self.name = name
+        self.status = status
+        self.detail = detail
+        self.actionable = actionable
+        self.category = category
+        self.metadata = metadata
+    }
+}
+
+public struct RuntimeBatchRunReportState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let runID: String
+    public let preflightStatus: String
+    public let blockerCount: Int
+    public let modelCount: Int
+    public let modelListPath: String
+    public let configPath: String
+    public let outputRoot: String
+    public let tempRoot: String
+    public let preflightReportPath: String
+    public let checks: [RuntimeBatchRunPreflightCheckState]
+
+    public var statusTitle: String {
+        "Preflight \(preflightStatus.isEmpty ? "unknown" : preflightStatus)"
+    }
+
+    public init(
+        runID: String,
+        preflightStatus: String,
+        blockerCount: Int,
+        modelCount: Int,
+        modelListPath: String,
+        configPath: String,
+        outputRoot: String,
+        tempRoot: String,
+        preflightReportPath: String,
+        checks: [RuntimeBatchRunPreflightCheckState]
+    ) {
+        self.id = "\(runID.isEmpty ? "batch-run" : runID):\(preflightReportPath)"
+        self.runID = runID
+        self.preflightStatus = preflightStatus
+        self.blockerCount = blockerCount
+        self.modelCount = modelCount
+        self.modelListPath = modelListPath
+        self.configPath = configPath
+        self.outputRoot = outputRoot
+        self.tempRoot = tempRoot
+        self.preflightReportPath = preflightReportPath
+        self.checks = checks
+    }
+}
+
+enum RuntimeBatchRunReportDecoder {
+    static func decodePreflightOutput(_ output: String) throws -> RuntimeBatchRunReportState {
+        let data = Data(output.utf8)
+        let decoder = JSONDecoder()
+        let payload = try decoder.decode(RuntimeBatchRunDryRunPayload.self, from: data)
+        return payload.reportState()
+    }
+}
+
+private struct RuntimeBatchRunDryRunPayload: Decodable {
+    let runID: String
+    let modelList: String
+    let configPath: String
+    let outputRoot: String
+    let tempRoot: String
+    let selectedModelCount: Int
+    let preflightReport: String
+    let preflightResult: RuntimeBatchRunPreflightPayload?
+
+    enum CodingKeys: String, CodingKey {
+        case runID = "run_id"
+        case modelList = "model_list"
+        case configPath = "config_path"
+        case outputRoot = "output_root"
+        case tempRoot = "temp_root"
+        case selectedModelCount = "selected_model_count"
+        case preflightReport = "preflight_report"
+        case preflightResult = "preflight_result"
+    }
+
+    func reportState() -> RuntimeBatchRunReportState {
+        RuntimeBatchRunReportState(
+            runID: preflightResult?.runID.isEmpty == false ? preflightResult?.runID ?? runID : runID,
+            preflightStatus: preflightResult?.status ?? "unknown",
+            blockerCount: preflightResult?.blockerCount ?? 0,
+            modelCount: preflightResult?.modelCount ?? selectedModelCount,
+            modelListPath: modelList,
+            configPath: configPath,
+            outputRoot: outputRoot,
+            tempRoot: tempRoot,
+            preflightReportPath: preflightReport,
+            checks: preflightResult?.checks.map(\.state) ?? []
+        )
+    }
+}
+
+private struct RuntimeBatchRunPreflightPayload: Decodable {
+    let runID: String
+    let status: String
+    let blockerCount: Int
+    let modelCount: Int
+    let checks: [RuntimeBatchRunPreflightCheckPayload]
+
+    enum CodingKeys: String, CodingKey {
+        case runID = "run_id"
+        case status
+        case blockerCount = "blocker_count"
+        case modelCount = "model_count"
+        case checks
+    }
+}
+
+private struct RuntimeBatchRunPreflightCheckPayload: Decodable {
+    let name: String
+    let status: String
+    let detail: String
+    let actionable: String
+    let category: String
+    let metadata: [String: String]
+
+    var state: RuntimeBatchRunPreflightCheckState {
+        RuntimeBatchRunPreflightCheckState(
+            name: name,
+            status: status,
+            detail: detail,
+            actionable: actionable,
+            category: category,
+            metadata: metadata
+        )
+    }
+}
+
 enum RuntimeBatchRunSetupParser {
     private static let supportedConfigKeys: Set<String> = [
         "bench_batch_factor",

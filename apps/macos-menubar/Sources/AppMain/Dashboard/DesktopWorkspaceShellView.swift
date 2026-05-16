@@ -2276,6 +2276,8 @@ struct DesktopBatchRunsToolSectionView: View {
                     }
 
                     validationMessages
+                    batchRunOperations
+                    selectedReportSummary
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -2324,6 +2326,78 @@ struct DesktopBatchRunsToolSectionView: View {
                         .textSelection(.enabled)
                 }
             }
+        }
+    }
+
+    private var batchRunOperations: some View {
+        HStack(spacing: 8) {
+            DesktopJobsOperationButton(
+                title: "Run Preflight",
+                isEnabled: viewModel.batchRunPreflightCanRun
+            ) {
+                Task { await viewModel.requestBatchRunPreflight() }
+            }
+
+            if viewModel.batchRunPreflightInProgress {
+                Text("Running batch preflight")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            } else if viewModel.batchRunPreflightErrorMessage.isEmpty == false {
+                Label(viewModel.batchRunPreflightErrorMessage, systemImage: "xmark.octagon")
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var selectedReportSummary: some View {
+        if let report = viewModel.selectedBatchRunReport {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Selected Preflight Report")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                HStack(spacing: 10) {
+                    Text(report.runID)
+                        .font(.subheadline.weight(.semibold))
+                        .textSelection(.enabled)
+                    Text(report.statusTitle)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(report.preflightStatus == "ready"
+                                         ? MelixDesignTokens.StatusColor.success
+                                         : MelixDesignTokens.StatusColor.warning)
+                        .textSelection(.enabled)
+                    Text("\(report.modelCount) model\(report.modelCount == 1 ? "" : "s")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    Text("\(report.blockerCount) blocker\(report.blockerCount == 1 ? "" : "s")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                ForEach(report.checks.prefix(3)) { check in
+                    HStack(spacing: 8) {
+                        Text(check.name)
+                            .font(.caption.weight(.semibold))
+                            .textSelection(.enabled)
+                        Text(check.status)
+                            .font(.caption)
+                            .foregroundStyle(check.status == "ready"
+                                             ? MelixDesignTokens.StatusColor.success
+                                             : MelixDesignTokens.StatusColor.warning)
+                            .textSelection(.enabled)
+                        Text(check.detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
