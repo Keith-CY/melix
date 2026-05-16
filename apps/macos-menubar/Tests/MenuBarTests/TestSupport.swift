@@ -1678,6 +1678,20 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         emit(event)
     }
 
+    func sendBenchmarkProgress(
+        jobID: String,
+        suite: String,
+        pct: Double
+    ) {
+        var event = Melix_Controlplane_V1_ControlPlaneEvent()
+        event.eventType = "benchmark.progress"
+        event.benchProgress = Melix_Controlplane_V1_BenchmarkProgressEvent()
+        event.benchProgress.jobID = jobID
+        event.benchProgress.suite = suite
+        event.benchProgress.pct = pct
+        emit(event)
+    }
+
     func sendHeartbeat() {
         var event = Melix_Controlplane_V1_ControlPlaneEvent()
         event.eventType = "heartbeat"

@@ -19,6 +19,7 @@ SERVING_DIAGNOSTICS_COMPARISON_SCHEMA_VERSION = "melix.serving_diagnostics.compa
 _EMPTY_EVENT_ATTRIBUTES: Mapping[str, object] = MappingProxyType({})
 _JSON_COMPACT_SEPARATORS = (",", ":")
 _JSONL_ENCODER = json.JSONEncoder(sort_keys=True, separators=_JSON_COMPACT_SEPARATORS)
+_JSON_STRING_ENCODER = json.JSONEncoder(separators=_JSON_COMPACT_SEPARATORS).encode
 _SET_FROZEN_ATTR = object.__setattr__
 
 
@@ -75,7 +76,7 @@ class BoundedServingDiagnosticsEventQueue:
             )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ServingDiagnosticsRequestSummary:
     request_id: str
     task_kind: str
@@ -296,7 +297,7 @@ def write_serving_diagnostics_bundle(
     _write_json(manifest_path, manifest)
     _write_json(effective_config_path, _stable_json_object(effective_config))
     _write_json(request_summary_path, request_summary.to_dict())
-    _write_jsonl(events_path, (event.to_dict() for event in event_rows))
+    _write_jsonl(events_path, event_rows)
     return {
         "bundle_root": bundle_root,
         "manifest": manifest_path,
@@ -480,5 +481,37 @@ def _write_jsonl(path: Path, rows: Any) -> None:
         encode = _JSONL_ENCODER.encode
         write = handle.write
         for row in rows:
+            if isinstance(row, ServingDiagnosticsEvent):
+                fast_line = _empty_attribute_event_json_line(row)
+                if fast_line is not None:
+                    write(fast_line)
+                    write("\n")
+                    continue
+                row = row.to_dict()
             write(encode(row))
             write("\n")
+
+
+def _empty_attribute_event_json_line(event: ServingDiagnosticsEvent) -> str | None:
+    if event.attributes is not _EMPTY_EVENT_ATTRIBUTES:
+        return None
+    event_index = event.event_index
+    duration_ms = event.duration_ms
+    if type(event_index) is not int or type(duration_ms) is not float:
+        return None
+    if not math.isfinite(duration_ms):
+        return None
+    encode_string = _JSON_STRING_ENCODER
+    return (
+        '{"attributes":{},"duration_ms":'
+        f"{duration_ms!r}"
+        ',"event_index":'
+        f"{event_index}"
+        ',"phase":'
+        f"{encode_string(event.phase)}"
+        ',"request_id":'
+        f"{encode_string(event.request_id)}"
+        ',"schema_version":"melix.serving_diagnostics.event.v1","status":'
+        f"{encode_string(event.status)}"
+        "}"
+    )

@@ -1144,6 +1144,8 @@ struct OpenAIHandlerTests {
         var model = warmModel()
         model.settings.defaultAccelerationMode = .sparsePrefill
         model.settings.accelerationProfileID = "structured-user"
+        model.settings.ext["melix.acceleration.supported_modes"] = "baseline,sparse_prefill"
+        model.settings.ext["melix.acceleration.target_capability"] = "sparse_prefill"
         let catalog = ModelCatalog(seedModels: [model])
         let workerClient = ScriptedWorkerClient(events: [
             makeCompletedEvent(requestID: "req-sparse-prefill", seq: 1, finishReason: "stop", assistantText: "done"),
@@ -1188,6 +1190,85 @@ struct OpenAIHandlerTests {
         #expect(request.execution.acceleration.mode == .sparsePrefill)
         #expect(request.execution.acceleration.profileID == "structured-user")
         #expect(request.execution.acceleration.prefillHint == "structured-user")
+        #expect(request.execution.ext["melix.capability.receipt_schema"] == "melix.model_capability_receipt.v1")
+        #expect(request.execution.ext["melix.acceleration.requested_acceleration_mode"] == "sparse_prefill")
+        #expect(request.execution.ext["melix.acceleration.resolved_acceleration_mode"] == "sparse_prefill")
+        #expect(request.execution.ext["melix.acceleration.unsupported_reason"] == "none")
+    }
+
+    @Test("POST /v1/chat/completions returns typed unsupported acceleration errors")
+    func postChatCompletionsReturnsTypedUnsupportedAccelerationErrors() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-http-unsupported-acceleration-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let servingDefaultsStore = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:]
+        )
+        var defaults = Melix_Controlplane_V1_ApplyServingDefaults()
+        defaults.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        defaults.temperature = 0.7
+        defaults.topP = 1.0
+        defaults.maxTokens = 256
+        defaults.streamIntervalTokens = 1
+        defaults.maxConcurrentRequests = 4
+        defaults.concurrentProcessingEnabled = true
+        defaults.prefillBatchSize = 2
+        defaults.completionBatchSize = 2
+        defaults.accelerationMode = .speculativeDecode
+        defaults.draftModelID = "other-draft"
+        defaults.numDraftTokens = 4
+        try await servingDefaultsStore.apply(command: defaults)
+
+        var model = warmModel()
+        model.settings.defaultAccelerationMode = .unspecified
+        model.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        model.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"
+        let catalog = ModelCatalog(seedModels: [model])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(requestID: "req-unsupported-acceleration", seq: 1, finishReason: "stop", assistantText: "done"),
+        ])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-unsupported-acceleration" }),
+            gatewayServingDefaultsStore: servingDefaultsStore
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": false,
+              "messages": [
+                { "role": "user", "content": "Hello" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+
+        #expect(response.statusCode == 400)
+        #expect(error["code"] as? String == "unsupported_acceleration")
+        #expect(error["unsupported_reason"] as? String == "draft_model_not_allowed")
+        #expect(error["recovery_hint"] as? String == "Choose one of the target receipt's valid_draft_model_ids.")
+        #expect(await workerClient.lastGenerateRequest == nil)
     }
 
     @Test("POST /v1/chat/completions omits usage frames unless stream options opt in")
@@ -7113,10 +7194,16 @@ struct OpenAIHandlerTests {
         )
         let capabilities = try await jsonPayload(from: capabilitiesResponse.body)
         let models = try #require(capabilities["models"] as? [[String: Any]])
+        let qwenModel = try #require(models.first { $0["model_id"] as? String == "mlx-community/Qwen3.5-9B-MLX-4bit" })
+        let capabilityReceipt = try #require(qwenModel["capability_receipt"] as? [String: Any])
+        let accelerationReceipt = try #require(capabilityReceipt["acceleration"] as? [String: Any])
         #expect(capabilitiesResponse.statusCode == 200)
         #expect(capabilities["schema_version"] as? String == "melix.discovery.capabilities.v1")
         #expect((capabilities["supported_tasks"] as? [String])?.contains("text-generation") == true)
         #expect(models.contains { $0["model_id"] as? String == "mlx-community/Qwen3.5-9B-MLX-4bit" })
+        #expect(capabilityReceipt["schema_version"] as? String == "melix.model_capability_receipt.v1")
+        #expect(accelerationReceipt["requested_acceleration_mode"] as? String == "baseline")
+        #expect((accelerationReceipt["supported_modes"] as? [String]) == ["baseline"])
 
         let instructionsResponse = try await handler.handle(
             HTTPRequest(method: .get, path: "/api/instructions", headers: [:], body: Data())
@@ -7217,8 +7304,10 @@ struct OpenAIHandlerTests {
         )
         let payload = try await jsonPayload(from: response.body)
         let discoveredModels = try #require(payload["models"] as? [[String: Any]])
+        let firstReceipt = try #require(discoveredModels.first?["capability_receipt"] as? [String: Any])
 
         #expect(response.statusCode == 200)
+        #expect(firstReceipt["schema_version"] as? String == "melix.model_capability_receipt.v1")
         for (modelID, _, discoveryState) in stateCases {
             #expect(discoveredModels.contains { model in
                 model["model_id"] as? String == modelID && model["state"] as? String == discoveryState

@@ -143,6 +143,34 @@ work continues. `manifest.json` records `event_count` and
 enough for diagnosis. Dropped debug events do not invalidate separate
 evidence-mode benchmark or evaluation artifacts.
 
+## Capability Receipts
+
+Model discovery surfaces expose `capability_receipt` for every model returned
+by `/api/capabilities` and `melix capabilities --json`. The receipt is the
+operator-facing source of truth for task support, requested and resolved
+acceleration mode, valid draft model IDs, speculative-head readiness, typed
+unsupported reasons, provenance, and recovery hints. Do not infer acceleration
+support from model names, aliases, or route kinds when a receipt is present.
+
+Control-plane request admission validates non-baseline acceleration against the
+model receipt before worker dispatch. Unsupported requests fail closed with an
+`unsupported_acceleration` error code and an `unsupported_reason` such as
+`unsupported_mode`, `missing_draft_model`, `draft_model_not_allowed`,
+`target_disabled`, `drafter_disabled`, `metadata_inconsistent`, or
+`runtime_unavailable`. Accepted worker requests copy receipt-derived audit
+metadata into execution ext fields:
+
+- `melix.capability.receipt_schema`
+- `melix.acceleration.requested_acceleration_mode`
+- `melix.acceleration.resolved_acceleration_mode`
+- `melix.acceleration.supported_modes`
+- `melix.acceleration.target_capability`
+- `melix.acceleration.drafter_capability`
+- `melix.acceleration.valid_draft_model_ids`
+- `melix.acceleration.unsupported_reason`
+- `melix.acceleration.state`
+- `melix.acceleration.recovery_hint`
+
 ## Lightweight Status Diagnostics
 
 `ListLoadedModels` exposes per-loaded-model throughput counters with the same

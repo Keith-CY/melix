@@ -1224,8 +1224,11 @@ class EvaluationCore:
 
         request_latencies = cls._numeric_trace_values(traces, "request_duration_ms")
         total_latencies = cls._numeric_trace_values(traces, "total_duration_ms")
-        raw_response_chars = cls._numeric_trace_values(traces, "raw_response_chars")
-        throttle_sleep_values = cls._numeric_trace_values(traces, "throttle_sleep_ms")
+        raw_response_char_count, raw_response_char_sum, raw_response_char_max = cls._numeric_trace_sum_count_max(
+            traces,
+            "raw_response_chars",
+        )
+        throttle_sleep_total = cls._numeric_trace_sum(traces, "throttle_sleep_ms")
         provider_usage_totals: dict[str, int] = {}
         for trace in traces:
             usage = trace.get("provider_usage")
@@ -1258,10 +1261,12 @@ class EvaluationCore:
             "dialogue_status_counts": status_counts,
             "request_duration_ms": cls._latency_stats(request_latencies),
             "total_duration_ms": cls._latency_stats(total_latencies),
-            "total_throttle_sleep_ms": cls._round_ms(sum(throttle_sleep_values)),
+            "total_throttle_sleep_ms": cls._round_ms(throttle_sleep_total),
             "raw_response_chars": {
-                "mean": cls._round_ms(sum(raw_response_chars) / len(raw_response_chars)) if raw_response_chars else 0.0,
-                "max": cls._round_ms(max(raw_response_chars)) if raw_response_chars else 0.0,
+                "mean": cls._round_ms(raw_response_char_sum / raw_response_char_count)
+                if raw_response_char_count
+                else 0.0,
+                "max": cls._round_ms(raw_response_char_max) if raw_response_char_count else 0.0,
             },
             "provider_usage_totals": provider_usage_totals,
             "slowest_dialogues": slowest_dialogues,
@@ -1360,6 +1365,37 @@ class EvaluationCore:
             if isinstance(value, (int, float)):
                 values.append(float(value))
         return values
+
+    @staticmethod
+    def _numeric_trace_sum(traces: list[dict[str, object]], field_name: str) -> float:
+        total = 0.0
+        for trace in traces:
+            value = trace.get(field_name)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)):
+                total += float(value)
+        return total
+
+    @staticmethod
+    def _numeric_trace_sum_count_max(
+        traces: list[dict[str, object]],
+        field_name: str,
+    ) -> tuple[int, float, float]:
+        count = 0
+        total = 0.0
+        max_value = 0.0
+        for trace in traces:
+            value = trace.get(field_name)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)):
+                numeric_value = float(value)
+                total += numeric_value
+                if count == 0 or numeric_value > max_value:
+                    max_value = numeric_value
+                count += 1
+        return count, total, max_value
 
     @classmethod
     def _latency_stats(cls, values: list[float]) -> dict[str, float]:

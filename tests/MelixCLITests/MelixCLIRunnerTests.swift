@@ -567,8 +567,14 @@ struct MelixCLIRunnerTests {
         let capabilities = try #require(parseJSONObject(try await runner.run(.capabilities(.init(json: true, modelQuery: "qwen35_9b_mlx_4bit")))))
         let alias = try #require(capabilities["model_alias_discovery"] as? [String: Any])
         let suggestions = try #require(alias["suggestions"] as? [[String: Any]])
+        let models = try #require(capabilities["models"] as? [[String: Any]])
+        let textModel = try #require(models.first { $0["model_id"] as? String == "melix-dev-text" })
+        let receipt = try #require(textModel["capability_receipt"] as? [String: Any])
+        let acceleration = try #require(receipt["acceleration"] as? [String: Any])
         #expect(capabilities["schema_version"] as? String == "melix.discovery.capabilities.v1")
         #expect((capabilities["supported_tasks"] as? [String])?.contains("text-generation") == true)
+        #expect(receipt["schema_version"] as? String == "melix.model_capability_receipt.v1")
+        #expect(acceleration["requested_acceleration_mode"] as? String == "baseline")
         #expect(suggestions.contains { $0["model_id"] as? String == "mlx-community/Qwen3.5-9B-MLX-4bit" })
 
         let fullIDCapabilities = try #require(parseJSONObject(try await runner.run(.capabilities(.init(json: true, modelQuery: "mlx-community/Qwen3.5-9B-MLX-4bit")))))
@@ -10123,8 +10129,102 @@ struct MelixCLIRunnerTests {
             _ = try await runner.run(.benchReport(.init(sourcePath: sourceRoot.path, format: "txt")))
             Issue.record("Expected bench report to reject an unsupported format.")
         } catch let error as MelixCLIError {
-            #expect(error == .usage("Invalid value for --format. Expected markdown or json."))
+            #expect(error == .usage("Invalid value for --format. Expected terminal, markdown, or json."))
         }
+
+        let terminalReport = try await runner.run(.benchReport(.init(sourcePath: sourceRoot.path, format: "terminal")))
+        #expect(terminalReport.contains("Melix Benchmark Dashboard"))
+        #expect(terminalReport.contains("runs=1 completed=1 failed=0 other=0"))
+        #expect(terminalReport.contains("bench-1  completed  text-generation  HuggingFaceH4/ultrachat_200k"))
+        #expect(terminalReport.contains("bench.smoke.ttft_ms=24.5 ms"))
+        #expect(terminalReport.contains("run-record.json"))
+    }
+
+    @Test("interactive bench run emits live terminal panel without changing final text")
+    func interactiveBenchRunEmitsLiveTerminalPanelWithoutChangingFinalText() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setBenchResult(
+            ControlPlaneBenchResult(
+                reportPath: "/tmp/melix/bench/runs/bench-live/report.md",
+                reportMarkdown: "# Melix Bench\n\n- bench.smoke.ttft_ms: 24.45 ms\n",
+                metrics: ["bench.smoke.ttft_ms": 24.45],
+                job: {
+                    var job = Melix_Controlplane_V1_BenchmarkJobSummary()
+                    job.jobID = "bench-live"
+                    job.modelID = "melix-dev-text"
+                    job.status = "completed"
+                    job.outputDir = "/tmp/melix/bench/runs/bench-live"
+                    return job
+                }()
+            )
+        )
+        let liveOutput = LiveOutputCapture()
+        let runner = MelixCLIRunner(
+            client: client,
+            terminalCapabilities: .init(isInteractive: true, supportsANSI: false),
+            terminalWriter: { liveOutput.append($0) }
+        )
+
+        let finalOutput = try await runner.run(
+            .benchRun(.init(modelID: "melix-dev-text", suites: ["smoke"]))
+        )
+
+        #expect(finalOutput.contains("# Melix Bench"))
+        let capturedLiveOutput = liveOutput.value()
+        #expect(capturedLiveOutput.contains("[RUNNING] Benchmark"))
+        #expect(capturedLiveOutput.contains("progress="))
+        #expect(capturedLiveOutput.contains("elapsed="))
+        #expect(capturedLiveOutput.contains("[DONE] Benchmark"))
+        #expect(capturedLiveOutput.contains("progress=100%"))
+        #expect(capturedLiveOutput.contains("bench.smoke.ttft_ms=24.45"))
+    }
+
+    @Test("live terminal panel renders progress percent bar and elapsed time")
+    func liveTerminalPanelRendersProgressPercentBarAndElapsedTime() {
+        var state = MelixCLILiveRunState(
+            title: "Evaluation",
+            targetText: "melix-dev-text",
+            suiteText: "mmlu",
+            steps: [
+                .init(id: "validate", title: "Validate Target"),
+                .init(id: "prepare", title: "Prepare Suites"),
+                .init(id: "run", title: "Run Evaluation"),
+                .init(id: "score", title: "Collect Scores"),
+            ]
+        )
+        state.move(to: "run", detailText: "Evaluation suites are running", elapsedSeconds: 12.4)
+
+        let panel = MelixCLILiveRunDisplay.renderPanel(state)
+
+        #expect(panel.contains("progress 59%"))
+        #expect(panel.contains("elapsed 12s"))
+        #expect(panel.contains("Progress 59% ["))
+        #expect(panel.contains("● Run Evaluation"))
+    }
+
+    @Test("json bench run suppresses live terminal output")
+    func jsonBenchRunSuppressesLiveTerminalOutput() async throws {
+        let client = StubControlPlaneXPCClient()
+        await client.setBenchResult(
+            ControlPlaneBenchResult(
+                reportPath: "/tmp/melix/bench/runs/bench-json/report.md",
+                reportMarkdown: "# Melix Bench\n",
+                metrics: ["bench.smoke.ttft_ms": 12.0]
+            )
+        )
+        let liveOutput = LiveOutputCapture()
+        let runner = MelixCLIRunner(
+            client: client,
+            terminalCapabilities: .init(isInteractive: true, supportsANSI: true),
+            terminalWriter: { liveOutput.append($0) }
+        )
+
+        let jsonOutput = try await runner.run(
+            .benchRun(.init(modelID: "melix-dev-text", suites: ["smoke"], json: true))
+        )
+
+        #expect(parseJSONObject(jsonOutput)?["report_path"] as? String == "/tmp/melix/bench/runs/bench-json/report.md")
+        #expect(liveOutput.value() == "")
     }
 
     @Test("jobs CLI handles model ops roots cancellation and edge cases")
@@ -10911,6 +11011,23 @@ private func captureSmokeRunnerError(
 private func posixPermissions(at url: URL) throws -> Int {
     let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
     return (attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0
+}
+
+private final class LiveOutputCapture: @unchecked Sendable {
+    private var text = ""
+    private let lock = NSLock()
+
+    func append(_ chunk: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        text += chunk
+    }
+
+    func value() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return text
+    }
 }
 
 private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {

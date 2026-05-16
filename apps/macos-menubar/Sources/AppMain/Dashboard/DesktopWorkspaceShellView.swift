@@ -3850,6 +3850,222 @@ enum DesktopDiagnosticsStage: String, CaseIterable, Identifiable {
     }
 }
 
+struct DesktopDiagnosticsRunMonitorView: View {
+    let monitor: RuntimeDiagnosticsRunMonitorState
+
+    private var accentColor: Color {
+        switch monitor.phase {
+        case .running:
+            return MelixDesignTokens.accent
+        case .completed:
+            return MelixDesignTokens.StatusColor.success
+        case .failed:
+            return MelixDesignTokens.StatusColor.error
+        }
+    }
+
+    private var symbolName: String {
+        switch monitor.phase {
+        case .running:
+            return "gauge.with.dots.needle.67percent"
+        case .completed:
+            return "checkmark.circle.fill"
+        case .failed:
+            return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var metricText: String {
+        monitor.primaryMetricText.isEmpty ? "Collecting metrics" : monitor.primaryMetricText
+    }
+
+    private var artifactText: String {
+        monitor.artifactText.isEmpty ? "Artifact pending" : monitor.artifactText
+    }
+
+    private var progressValue: Double {
+        monitor.progressFraction ?? (monitor.phase == .completed ? 1 : 0)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: symbolName)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(accentColor)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(monitor.title)
+                            .font(.headline)
+                        if monitor.phase == .running {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                    }
+                    Text("\(monitor.targetText) • \(monitor.suiteText)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 12)
+                Text(monitor.statusText)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(accentColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(accentColor.opacity(0.12), in: Capsule())
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                ProgressView(value: progressValue)
+                    .tint(accentColor)
+                Text(monitor.progressText.isEmpty ? monitor.statusText : monitor.progressText)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            if monitor.steps.isEmpty == false {
+                DesktopDiagnosticsRunStepTimelineView(steps: monitor.steps, accentColor: accentColor)
+            }
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
+                DesktopDiagnosticsRunMonitorTile(title: "Elapsed") {
+                    elapsedText
+                }
+                DesktopDiagnosticsRunMonitorTile(title: "Primary Metric", value: metricText)
+                DesktopDiagnosticsRunMonitorTile(title: "Artifact", value: artifactText)
+            }
+
+            if monitor.recentEvents.isEmpty == false {
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(Array(monitor.recentEvents.enumerated()), id: \.offset) { _, event in
+                        Text(event)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .textSelection(.enabled)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else if monitor.detailText.isEmpty == false {
+                Text(monitor.detailText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder
+    private var elapsedText: some View {
+        if monitor.phase == .running, let startedAt = monitor.startedAt {
+            TimelineView(.periodic(from: startedAt, by: 1)) { context in
+                Text(Self.elapsedText(since: startedAt, now: context.date))
+            }
+        } else {
+            Text(monitor.elapsedText)
+        }
+    }
+
+    private static func elapsedText(since startedAt: Date, now: Date) -> String {
+        let seconds = max(0, now.timeIntervalSince(startedAt))
+        if seconds < 10 {
+            return String(format: "%.1fs", seconds)
+        }
+        if seconds < 60 {
+            return "\(Int(seconds.rounded()))s"
+        }
+        let minutes = Int(seconds) / 60
+        let remainder = Int(seconds) % 60
+        return "\(minutes)m \(remainder)s"
+    }
+}
+
+private struct DesktopDiagnosticsRunStepTimelineView: View {
+    let steps: [RuntimeDiagnosticsRunStepState]
+    let accentColor: Color
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], spacing: 8) {
+            ForEach(steps) { step in
+                HStack(spacing: 6) {
+                    Image(systemName: symbolName(for: step.phase))
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(color(for: step.phase))
+                        .frame(width: 16, height: 16)
+                    Text(step.title)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(step.phase == .pending ? .secondary : .primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(color(for: step.phase).opacity(step.phase == .pending ? 0.06 : 0.12), in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+    }
+
+    private func symbolName(for phase: RuntimeDiagnosticsRunStepState.Phase) -> String {
+        switch phase {
+        case .pending:
+            return "circle"
+        case .running:
+            return "arrow.triangle.2.circlepath"
+        case .completed:
+            return "checkmark.circle.fill"
+        case .failed:
+            return "xmark.circle.fill"
+        }
+    }
+
+    private func color(for phase: RuntimeDiagnosticsRunStepState.Phase) -> Color {
+        switch phase {
+        case .pending:
+            return .secondary
+        case .running:
+            return accentColor
+        case .completed:
+            return MelixDesignTokens.StatusColor.success
+        case .failed:
+            return MelixDesignTokens.StatusColor.error
+        }
+    }
+}
+
+private struct DesktopDiagnosticsRunMonitorTile<Content: View>: View {
+    let title: String
+    let content: Content
+
+    init(title: String, value: String) where Content == Text {
+        self.title = title
+        self.content = Text(value)
+    }
+
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            content
+                .font(.caption.weight(.semibold))
+                .lineLimit(2)
+                .textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
 struct DesktopDiagnosticsToolSectionView: View {
     static let emptyBenchmarkTitle = "No Benchmark Results Yet"
     static let emptyBenchmarkDetail = "Run Benchmark to capture latency and throughput history."
@@ -4771,6 +4987,12 @@ struct DesktopDiagnosticsToolSectionView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if let monitor = viewModel.diagnosticsRunMonitor {
+                DesktopEditorialSectionCard("Run Monitor") {
+                    DesktopDiagnosticsRunMonitorView(monitor: monitor)
+                }
             }
 
             DesktopEditorialSectionCard(diagnosticsSnapshotTitle) {

@@ -11,6 +11,9 @@ import worker.model_ops.hub_catalog as hub_catalog_module
 from worker.model_ops.hub_catalog import (
     HubCatalog,
     HubCatalogError,
+    HubModelCardRecord,
+    HubModelSummaryRecord,
+    HubSearchPage,
     _bytes_per_parameter,
     _is_mlx_compatible,
     _local_fit_evidence,
@@ -22,6 +25,44 @@ from worker.model_ops.hub_catalog import (
 KB = 1024
 MB = 1024 ** 2
 GB = 1024 ** 3
+
+
+def test_hub_catalog_records_use_slots() -> None:
+    summary = HubModelSummaryRecord(
+        repo_id="owner/model",
+        author="owner",
+        model_name="model",
+        summary="summary",
+        pipeline_tag="text-generation",
+        tags=["mlx"],
+        downloads=1,
+        likes=2,
+        mlx_compatible=True,
+        library_name="mlx",
+        sibling_files=["config.json"],
+        last_modified="2026-05-15T00:00:00Z",
+    )
+    page = HubSearchPage(items=[summary], next_cursor="cursor")
+    card = HubModelCardRecord(
+        repo_id="owner/model",
+        author="owner",
+        model_name="model",
+        summary="summary",
+        license="mit",
+        pipeline_tag="text-generation",
+        tags=["mlx"],
+        downloads=1,
+        likes=2,
+        mlx_compatible=True,
+        library_name="mlx",
+        sibling_files=["config.json"],
+        base_models=[],
+        last_modified="2026-05-15T00:00:00Z",
+    )
+
+    assert hasattr(summary, "__dict__") is False
+    assert hasattr(page, "__dict__") is False
+    assert hasattr(card, "__dict__") is False
 
 
 def test_quantization_summary_preserves_alias_order_from_lowered_tags() -> None:

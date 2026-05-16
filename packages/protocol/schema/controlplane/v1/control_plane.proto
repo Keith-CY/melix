@@ -822,6 +822,81 @@ enum AccelerationMode {
   ACCELERATION_MODE_SPARSE_PREFILL = 5;
 }
 
+enum UnsupportedCapabilityReason {
+  UNSUPPORTED_CAPABILITY_REASON_UNSPECIFIED = 0;
+  UNSUPPORTED_REASON_NONE = 1;
+  UNSUPPORTED_REASON_UNSUPPORTED_TASK = 2;
+  UNSUPPORTED_REASON_UNSUPPORTED_MODE = 3;
+  UNSUPPORTED_REASON_MISSING_DRAFT_MODEL = 4;
+  UNSUPPORTED_REASON_DRAFT_MODEL_NOT_ALLOWED = 5;
+  UNSUPPORTED_REASON_TARGET_DISABLED = 6;
+  UNSUPPORTED_REASON_DRAFTER_DISABLED = 7;
+  UNSUPPORTED_REASON_METADATA_INCONSISTENT = 8;
+  UNSUPPORTED_REASON_RUNTIME_UNAVAILABLE = 9;
+  UNSUPPORTED_REASON_EXPERIMENTAL_UNVERIFIED = 10;
+}
+
+enum CapabilitySupportState {
+  CAPABILITY_SUPPORT_STATE_UNSPECIFIED = 0;
+  CAPABILITY_SUPPORTED = 1;
+  CAPABILITY_UNSUPPORTED = 2;
+  CAPABILITY_EXPERIMENTAL = 3;
+  CAPABILITY_METADATA_INCONSISTENT = 4;
+}
+
+message TaskCapabilityReceipt {
+  string capability = 1;
+  CapabilitySupportState state = 2;
+  UnsupportedCapabilityReason unsupported_reason = 3;
+  string provenance = 4;
+  string recovery_hint = 5;
+  map<string, string> metadata = 6;
+}
+
+message SpeculativeHeadCapabilityReceipt {
+  bool configured = 1;
+  uint32 configured_layers = 2;
+  uint32 indexed_layers = 3;
+  string drop_flag_state = 4;
+  bool runtime_available = 5;
+  bool artifact_available = 6;
+  CapabilitySupportState state = 7;
+  UnsupportedCapabilityReason unsupported_reason = 8;
+  string provenance = 9;
+  string recovery_hint = 10;
+}
+
+message DraftCompatibilityReceipt {
+  string draft_model_id = 1;
+  CapabilitySupportState state = 2;
+  UnsupportedCapabilityReason unsupported_reason = 3;
+  string provenance = 4;
+  string recovery_hint = 5;
+  map<string, string> metadata = 6;
+}
+
+message AccelerationCapabilityReceipt {
+  AccelerationMode requested_acceleration_mode = 1;
+  AccelerationMode resolved_acceleration_mode = 2;
+  repeated AccelerationMode supported_modes = 3;
+  string target_capability = 4;
+  string drafter_capability = 5;
+  repeated string valid_draft_model_ids = 6;
+  CapabilitySupportState state = 7;
+  UnsupportedCapabilityReason unsupported_reason = 8;
+  string provenance = 9;
+  string recovery_hint = 10;
+  repeated DraftCompatibilityReceipt draft_compatibility = 11;
+  SpeculativeHeadCapabilityReceipt speculative_head = 12;
+  map<string, string> metadata = 13;
+}
+
+message ModelCapabilityReceipt {
+  string schema_version = 1;
+  repeated TaskCapabilityReceipt tasks = 2;
+  AccelerationCapabilityReceipt acceleration = 3;
+}
+
 message ModelSettings {
   string alias = 1;
   string type_override = 2;
@@ -1268,6 +1343,7 @@ message ModelSummary {
   // surface for CLI and summary consumers.
   string runtime_mode = 17;
   ModelLoadTrustPolicy load_trust = 18;
+  ModelCapabilityReceipt capability_receipt = 19;
 }
 
 message ModelInfo {

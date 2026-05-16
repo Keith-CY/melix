@@ -10,7 +10,7 @@ class AudioPreprocessError(ValueError):
     pass
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PreparedAudioInput:
     bytes_data: bytes
     local_path: str
