@@ -164,14 +164,14 @@ class ServingDiagnosticsEvent:
         status: str,
         duration_ms: float = 0.0,
         attributes: Mapping[str, object] = _EMPTY_EVENT_ATTRIBUTES,
+        _set_attr: Any = _SET_FROZEN_ATTR,
     ) -> None:
-        set_attr = _SET_FROZEN_ATTR
-        set_attr(self, "request_id", request_id)
-        set_attr(self, "phase", phase)
-        set_attr(self, "event_index", event_index)
-        set_attr(self, "status", status)
-        set_attr(self, "duration_ms", duration_ms)
-        set_attr(self, "attributes", attributes)
+        _set_attr(self, "request_id", request_id)
+        _set_attr(self, "phase", phase)
+        _set_attr(self, "event_index", event_index)
+        _set_attr(self, "status", status)
+        _set_attr(self, "duration_ms", duration_ms)
+        _set_attr(self, "attributes", attributes)
 
     def to_dict(self) -> dict[str, object]:
         attributes = self.attributes
