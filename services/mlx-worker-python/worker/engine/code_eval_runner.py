@@ -16,6 +16,7 @@ import textwrap
 _DEFAULT_STDIO_LIMIT_BYTES = 32_768
 _JSON_LOADS = json.loads
 _JSON_DECODE_ERROR = json.JSONDecodeError
+_COMMON_PYTHON_CODE_BLOCK_TAGS = ("python", "Python", "PYTHON")
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,9 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
 
 
 def _code_block_content_start(text: str, start: int) -> int:
-    if text[start : start + 6].lower() == "python":
+    if text.startswith(_COMMON_PYTHON_CODE_BLOCK_TAGS, start):
+        start += 6
+    elif text[start : start + 6].lower() == "python":
         start += 6
     while start < len(text) and text[start].isspace():
         start += 1
