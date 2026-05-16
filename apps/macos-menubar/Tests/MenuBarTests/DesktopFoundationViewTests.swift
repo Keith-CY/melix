@@ -527,6 +527,59 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedServerSession?.servingDefaults.accelerationProfile == "low-memory")
     }
 
+    @Test("workspace server surface renders requested and effective acceleration profile receipts")
+    @MainActor
+    func workspaceServerSurfaceRendersRequestedAndEffectiveAccelerationProfileReceipts() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
+        servingDefaults.serverSessionID = "server-session-1"
+        servingDefaults.servedModelID = desktopTestReadyModelID
+        servingDefaults.requestedTemperature = 0.4
+        servingDefaults.requestedTopP = 0.9
+        servingDefaults.requestedMaxTokens = 512
+        servingDefaults.requestedStreamIntervalTokens = 2
+        servingDefaults.requestedMaxConcurrentRequests = 8
+        servingDefaults.requestedConcurrentProcessingEnabled = true
+        servingDefaults.requestedPrefillBatchSize = 4
+        servingDefaults.requestedCompletionBatchSize = 4
+        servingDefaults.requestedAccelerationMode = .speculativeDecode
+        servingDefaults.requestedNumDraftTokens = 6
+        servingDefaults.requestedAccelerationProfile = "throughput"
+        servingDefaults.effectiveTemperature = 0.4
+        servingDefaults.effectiveTopP = 0.9
+        servingDefaults.effectiveMaxTokens = 512
+        servingDefaults.effectiveStreamIntervalTokens = 2
+        servingDefaults.effectiveMaxConcurrentRequests = 1
+        servingDefaults.effectiveConcurrentProcessingEnabled = false
+        servingDefaults.effectivePrefillBatchSize = 1
+        servingDefaults.effectiveCompletionBatchSize = 1
+        servingDefaults.effectiveAccelerationMode = .baseline
+        servingDefaults.effectiveAccelerationProfile = "low-memory"
+        servingDefaults.accelerationProfileIntent = "Conservative single-request serving for constrained local memory."
+        servingDefaults.source = .operatorOverride
+        snapshot.servingDefaults.sessions = [servingDefaults]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.server)
+
+        let view = hostView(
+            DesktopWorkspaceShellView(viewModel: viewModel),
+            size: CGSize(width: 1_280, height: 1_400)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Requested profile: Throughput"))
+        #expect(renderedTexts.contains("Effective profile: Low Memory"))
+        #expect(renderedTexts.contains("Intent: Conservative single-request serving for constrained local memory."))
+        #expect(renderedTexts.contains("Resolved defaults: None • sequences 1 • prefill 1 • completion 1"))
+    }
+
     @Test("workspace server surface renders remote server picker and editor")
     @MainActor
     func workspaceServerSurfaceRendersRemoteServerPickerAndEditor() async throws {

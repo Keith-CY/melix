@@ -1823,6 +1823,7 @@ private struct ServingDefaultsProjection: Equatable, Sendable {
     let concurrentProcessingEnabled: Bool
     let prefillBatchSize: Int
     let completionBatchSize: Int
+    let accelerationProfile: String
     let accelerationMode: String
     let draftModelID: String
     let numDraftTokens: Int
@@ -1834,6 +1835,8 @@ private struct ServingDefaultsProjection: Equatable, Sendable {
     let effectiveConcurrentProcessingEnabled: Bool
     let effectivePrefillBatchSize: Int
     let effectiveCompletionBatchSize: Int
+    let effectiveAccelerationProfile: String
+    let accelerationProfileIntent: String
     let effectiveAccelerationMode: String
     let effectiveDraftModelID: String
     let effectiveNumDraftTokens: Int
@@ -12603,6 +12606,9 @@ public final class RuntimeViewModel {
             session.servingDefaults.effectiveConcurrentProcessingEnabled = effectiveBatchingDefaults.concurrentProcessingEnabled
             session.servingDefaults.effectivePrefillBatchSize = effectiveBatchingDefaults.prefillBatchSize
             session.servingDefaults.effectiveCompletionBatchSize = effectiveBatchingDefaults.completionBatchSize
+            session.servingDefaults.effectiveAccelerationProfile = session.servingDefaults.accelerationProfile
+            session.servingDefaults.accelerationProfileIntent = ServingAccelerationProfiles
+                .profile(id: session.servingDefaults.effectiveAccelerationProfile).intent
             session.servingDefaults.effectiveAccelerationMode = session.servingDefaults.accelerationMode
             if session.servingDefaults.accelerationMode == "speculative_decode" {
                 session.servingDefaults.effectiveDraftModelID = session.servingDefaults.draftModelID
@@ -12621,6 +12627,7 @@ public final class RuntimeViewModel {
         session.servingDefaults.concurrentProcessingEnabled = projection.concurrentProcessingEnabled
         session.servingDefaults.prefillBatchSize = projection.prefillBatchSize
         session.servingDefaults.completionBatchSize = projection.completionBatchSize
+        session.servingDefaults.accelerationProfile = projection.accelerationProfile
         session.servingDefaults.accelerationMode = projection.accelerationMode
         session.servingDefaults.draftModelID = projection.draftModelID
         session.servingDefaults.numDraftTokens = projection.numDraftTokens
@@ -12632,6 +12639,8 @@ public final class RuntimeViewModel {
         session.servingDefaults.effectiveConcurrentProcessingEnabled = projection.effectiveConcurrentProcessingEnabled
         session.servingDefaults.effectivePrefillBatchSize = projection.effectivePrefillBatchSize
         session.servingDefaults.effectiveCompletionBatchSize = projection.effectiveCompletionBatchSize
+        session.servingDefaults.effectiveAccelerationProfile = projection.effectiveAccelerationProfile
+        session.servingDefaults.accelerationProfileIntent = projection.accelerationProfileIntent
         session.servingDefaults.effectiveAccelerationMode = projection.effectiveAccelerationMode
         session.servingDefaults.effectiveDraftModelID = projection.effectiveDraftModelID
         session.servingDefaults.effectiveNumDraftTokens = projection.effectiveNumDraftTokens
@@ -12830,6 +12839,13 @@ public final class RuntimeViewModel {
         let effectiveNumDraftTokens = effectiveAccelerationMode == "speculative_decode"
             ? (summary.effectiveNumDraftTokens == 0 ? requestedNumDraftTokens : Int(summary.effectiveNumDraftTokens))
             : 0
+        let requestedAccelerationProfile = ServingAccelerationProfiles
+            .normalizeProfileID(summary.requestedAccelerationProfile) ?? ServingAccelerationProfiles.defaultProfileID
+        let effectiveAccelerationProfile = ServingAccelerationProfiles
+            .normalizeProfileID(summary.effectiveAccelerationProfile) ?? requestedAccelerationProfile
+        let accelerationProfileIntent = summary.accelerationProfileIntent.isEmpty
+            ? ServingAccelerationProfiles.profile(id: effectiveAccelerationProfile).intent
+            : summary.accelerationProfileIntent
 
         return ServingDefaultsProjection(
             temperature: summary.requestedTemperature,
@@ -12840,6 +12856,7 @@ public final class RuntimeViewModel {
             concurrentProcessingEnabled: requestedConcurrentProcessingEnabled,
             prefillBatchSize: requestedPrefillBatchSize,
             completionBatchSize: requestedCompletionBatchSize,
+            accelerationProfile: requestedAccelerationProfile,
             accelerationMode: requestedAccelerationMode,
             draftModelID: requestedDraftModelID,
             numDraftTokens: requestedNumDraftTokens,
@@ -12851,6 +12868,8 @@ public final class RuntimeViewModel {
             effectiveConcurrentProcessingEnabled: effectiveConcurrentProcessingEnabled,
             effectivePrefillBatchSize: effectivePrefillBatchSize,
             effectiveCompletionBatchSize: effectiveCompletionBatchSize,
+            effectiveAccelerationProfile: effectiveAccelerationProfile,
+            accelerationProfileIntent: accelerationProfileIntent,
             effectiveAccelerationMode: effectiveAccelerationMode,
             effectiveDraftModelID: effectiveDraftModelID,
             effectiveNumDraftTokens: effectiveNumDraftTokens,

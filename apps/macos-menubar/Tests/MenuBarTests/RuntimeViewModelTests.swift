@@ -1036,9 +1036,9 @@ struct RuntimeViewModelTests {
         }
     }
 
-    @Test("snapshot serving defaults projection hydrates requested and effective generation state")
+    @Test("snapshot serving defaults projection hydrates requested and effective acceleration profile receipts")
     @MainActor
-    func snapshotServingDefaultsProjectionHydratesRequestedAndEffectiveGenerationState() async throws {
+    func snapshotServingDefaultsProjectionHydratesAccelerationProfileReceipts() async throws {
         let client = FakeControlPlaneXPCClient()
         let snapshot = makeSnapshot(
             serverState: .serverReady,
@@ -1071,6 +1071,7 @@ struct RuntimeViewModelTests {
         servingDefaults.requestedAccelerationMode = .speculativeDecode
         servingDefaults.requestedDraftModelID = "melix-dev-draft"
         servingDefaults.requestedNumDraftTokens = 6
+        servingDefaults.requestedAccelerationProfile = "throughput"
         servingDefaults.effectiveTemperature = 0.2
         servingDefaults.effectiveTopP = 0.88
         servingDefaults.effectiveMaxTokens = 512
@@ -1079,6 +1080,8 @@ struct RuntimeViewModelTests {
         servingDefaults.effectiveAccelerationMode = .speculativeDecode
         servingDefaults.effectiveDraftModelID = "melix-dev-draft"
         servingDefaults.effectiveNumDraftTokens = 6
+        servingDefaults.effectiveAccelerationProfile = "low-memory"
+        servingDefaults.accelerationProfileIntent = "Runtime selected the low-memory profile after model constraints."
         servingDefaults.source = .operatorOverride
         servingDefaults.modelOverrideApplied = true
         var projectedSnapshot = snapshot
@@ -1097,19 +1100,22 @@ struct RuntimeViewModelTests {
         #expect(session.servingDefaults.accelerationMode == "speculative_decode")
         #expect(session.servingDefaults.draftModelID == "melix-dev-draft")
         #expect(session.servingDefaults.numDraftTokens == 6)
+        #expect(session.servingDefaults.accelerationProfile == "throughput")
         #expect(session.servingDefaults.effectiveTemperature == 0.2)
         #expect(session.servingDefaults.effectiveTopP == 0.88)
         #expect(session.servingDefaults.effectiveMaxTokens == 512)
         #expect(session.servingDefaults.effectiveAccelerationMode == "speculative_decode")
         #expect(session.servingDefaults.effectiveDraftModelID == "melix-dev-draft")
         #expect(session.servingDefaults.effectiveNumDraftTokens == 6)
+        #expect(session.servingDefaults.effectiveAccelerationProfile == "low-memory")
+        #expect(session.servingDefaults.accelerationProfileIntent == "Runtime selected the low-memory profile after model constraints.")
         #expect(session.servingDefaults.sourceText == "Operator Override")
         #expect(session.servingDefaults.modelOverrideApplied)
     }
 
-    @Test("snapshot serving defaults projection keeps local defaults when no summary is available")
+    @Test("snapshot serving defaults projection keeps acceleration profile receipts when no summary is available")
     @MainActor
-    func snapshotServingDefaultsProjectionKeepsLocalDefaultsWhenSummaryIsMissing() async throws {
+    func snapshotServingDefaultsProjectionKeepsAccelerationProfileReceiptsWhenSummaryIsMissing() async throws {
         let client = FakeControlPlaneXPCClient()
         let snapshot = makeSnapshot(
             serverState: .serverReady,
@@ -1128,6 +1134,8 @@ struct RuntimeViewModelTests {
         #expect(session.servingDefaults.streamIntervalTokens == 1)
         #expect(session.servingDefaults.maxConcurrentRequests == 4)
         #expect(session.servingDefaults.accelerationMode == "baseline")
+        #expect(session.servingDefaults.effectiveAccelerationProfile == "balanced")
+        #expect(session.servingDefaults.accelerationProfileIntent == "Default serving with baseline decode and moderate batching.")
         #expect(session.servingDefaults.numDraftTokens == 0)
         #expect(session.servingDefaults.sourceText == "Built-in Defaults")
         #expect(session.servingDefaults.modelOverrideApplied == false)

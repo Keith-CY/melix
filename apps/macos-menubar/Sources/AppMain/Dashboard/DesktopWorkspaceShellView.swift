@@ -1540,6 +1540,7 @@ private struct DesktopServerSessionEditor: View {
                                     .foregroundStyle(.secondary)
                             }
                             DesktopServingAccelerationProfilePicker(viewModel: viewModel)
+                            DesktopServingAccelerationProfileSummary(servingDefaults: session.servingDefaults)
                             DisclosureGroup(DesktopServerWorkspaceDefaults.advancedServingDefaultsTitle, isExpanded: $showsAdvanced) {
                                 advancedServingDefaultsForm(for: session)
                                     .padding(.top, 12)
@@ -6313,6 +6314,39 @@ struct DesktopServingAccelerationProfilePicker: View {
     }
 }
 
+struct DesktopServingAccelerationProfileSummary: View {
+    let servingDefaults: DesktopServerServingDefaultsState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            DesktopPassiveStaticTextLabel(
+                title: "Requested profile: \(servingAccelerationProfileLabel(servingDefaults.accelerationProfile))",
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                textColor: .secondaryLabelColor
+            )
+            DesktopPassiveStaticTextLabel(
+                title: "Effective profile: \(servingAccelerationProfileLabel(servingDefaults.effectiveAccelerationProfile))",
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                textColor: .secondaryLabelColor
+            )
+            DesktopPassiveStaticTextLabel(
+                title: "Intent: \(servingDefaults.accelerationProfileIntent)",
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                textColor: .secondaryLabelColor,
+                lineBreakMode: .byWordWrapping,
+                maximumNumberOfLines: 2
+            )
+            DesktopPassiveStaticTextLabel(
+                title: "Resolved defaults: \(desktopAccelerationModeText(servingDefaults.effectiveAccelerationMode)) • sequences \(servingDefaults.effectiveMaxConcurrentRequests) • prefill \(servingDefaults.effectivePrefillBatchSize) • completion \(servingDefaults.effectiveCompletionBatchSize)",
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                textColor: .secondaryLabelColor,
+                lineBreakMode: .byWordWrapping,
+                maximumNumberOfLines: 2
+            )
+        }
+    }
+}
+
 private struct DesktopPassiveStaticTextLabel: NSViewRepresentable {
     let title: String
     let font: NSFont
@@ -9906,6 +9940,10 @@ private func desktopAccelerationModeText(_ rawValue: String) -> String {
     default:
         return "None"
     }
+}
+
+private func servingAccelerationProfileLabel(_ rawValue: String) -> String {
+    ServingAccelerationProfiles.profile(id: rawValue).label
 }
 
 func desktopAPIAuthenticationReferenceText(selectedExport: AgentIntegrationExport?) -> String {
