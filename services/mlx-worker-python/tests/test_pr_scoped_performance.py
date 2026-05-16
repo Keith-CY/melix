@@ -2225,12 +2225,18 @@ def test_registered_probes_expose_focused_commands() -> None:
     maintenance_probe = None
     worker_registry_probe = None
     swift_probe = None
+    training_config_probe = None
+    job_registry_probe = None
     for probe in load_probe_registry(REGISTRY_PATH):
         assert probe.test_command
         assert probe.coverage_command
         assert probe.probe_command
         assert "uv run --project services/mlx-worker-python bash -lc" not in probe.probe_command
         assert probe.coverage_replays_tests is (probe.probe_id in replaying_probe_ids)
+        if probe.probe_id == "training-config-target-module-cache":
+            training_config_probe = probe
+        if probe.probe_id == "job-registry-derived-model-single-pass":
+            job_registry_probe = probe
         if probe.probe_id == "model-registry-plain-local-manifest-stat-elision":
             registry_probe = probe
         if probe.probe_id == "maintenance-percentile-vector-reuse":
@@ -2291,6 +2297,27 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert swift_probe.probe_command.startswith("python3 - <<'PY'")
     assert "stdout=sys.stderr" in swift_probe.probe_command
     assert "stderr=sys.stderr" in swift_probe.probe_command
+
+    assert training_config_probe is not None
+    training_config_metrics = {metric.key: metric for metric in training_config_probe.metrics}
+    assert training_config_metrics["peak_bytes_mean"].warn_abs == 1024.0
+
+    assert job_registry_probe is not None
+    job_registry_metrics = {metric.key: metric for metric in job_registry_probe.metrics}
+    assert job_registry_metrics["resolve_target_elapsed_ms_mean"].warn_abs == 0.01
+    assert job_registry_metrics["manifest_path_elapsed_ms_mean"].warn_abs == 0.01
+
+    tiny_elapsed_metric = _build_metric_row(
+        key="tiny_elapsed_ms_mean",
+        unit="ms",
+        direction="lower_is_better",
+        warn_pct=5.0,
+        warn_abs=0.01,
+        base_metrics={"tiny_elapsed_ms_mean": 0.002},
+        head_metrics={"tiny_elapsed_ms_mean": 0.004},
+    )
+    assert tiny_elapsed_metric["status"] == "neutral"
+    assert tiny_elapsed_metric["warn_abs"] == 0.01
 
 
 def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -> None:
