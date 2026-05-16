@@ -3421,14 +3421,14 @@ class EvaluationCore:
     @staticmethod
     def _normalized_answer(value: str) -> str:
         stripped = EvaluationCore._strip_wrapping(value)
+        if len(stripped) == 1:
+            option = EvaluationCore._extract_option_value(stripped)
+            if option is not None:
+                return option
         if EvaluationCore._looks_like_numeric(stripped):
             numeric = EvaluationCore._extract_numeric_value(stripped)
             if numeric is not None:
                 return numeric
-        if EvaluationCore._looks_like_option(stripped):
-            option = EvaluationCore._extract_option_value(stripped)
-            if option is not None:
-                return option
         if (
             "  " in stripped
             or "\t" in stripped
