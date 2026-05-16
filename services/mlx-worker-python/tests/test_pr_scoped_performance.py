@@ -783,7 +783,12 @@ def test_scope_report_selects_changed_scope_coverage_probe() -> None:
     )
 
     selected_ids = {probe["id"] for probe in scope["selected_probes"]}
-    assert "changed-scope-coverage-empty-path-short-circuit" in selected_ids
+    assert scope["selected_count"] == 2
+    assert scope["force_all"] is False
+    assert selected_ids == {
+        "changed-scope-coverage-empty-path-short-circuit",
+        "changed-scope-coverage-diff-parser",
+    }
 
 
 def test_scope_report_selects_changed_scope_coverage_parser_probe() -> None:
@@ -2248,7 +2253,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert "test_has_mlx_signal_skips_config_text_fallback_for_nonempty_payload_without_mlx_signal" in registry_probe.test_command
     assert "test_metadata_payload_has_mlx_signal_does_not_request_sorted_json" in registry_probe.test_command
     assert "test_has_mlx_signal_config_payload_fast_path_avoids_json_dump" in registry_probe.test_command
-    assert "scripts/changed_scope_coverage.py" in registry_probe.watch_globs
+    assert "scripts/changed_scope_coverage.py" not in registry_probe.watch_globs
     assert "test_registry_snapshot_reuses_hf_cache_config_payload" in registry_probe.coverage_command
     assert "test_raw_model_spec_loads_config_payload_when_not_supplied" in registry_probe.coverage_command
     assert "test_has_mlx_signal_falls_back_to_config_text_for_empty_supplied_payload" in registry_probe.coverage_command
@@ -2308,7 +2313,8 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
     for probe_id in ("probe-policy-noop-overhead", "serving-diagnostics-debug-queue-bounds"):
         watch_globs = by_id[probe_id]["watch_globs"]
         probe_command = by_id[probe_id]["probe_command"]
-        assert "scripts/changed_scope_coverage.py" in watch_globs
+        assert "scripts/changed_scope_coverage.py" not in watch_globs
+        assert "scripts/changed_scope_coverage.py" in by_id[probe_id]["coverage_command"]
         assert "services/mlx-worker-python/tests/test_pr_scoped_performance.py" in watch_globs
         assert "../head/$SCRIPT" in probe_command
         assert "${GITHUB_WORKSPACE:-}/head/$SCRIPT" in probe_command

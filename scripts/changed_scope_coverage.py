@@ -52,10 +52,11 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
     for line in diff_text.splitlines():
         first_char = line[0] if line else ""
         if first_char == "d" and line.startswith(_DIFF_HEADER_PREFIX):
-            current_path = _parse_diff_header_new_path(line)
-            current_changed_lines = (
-                None if current_path is None else changed_by_path.setdefault(current_path, set())
-            )
+            separator_index = line.find(_DIFF_HEADER_SEPARATOR, len(_DIFF_HEADER_PREFIX))
+            current_changed_lines = None
+            if separator_index >= 0:
+                current_path = line[separator_index + len(_DIFF_HEADER_SEPARATOR) :]
+                current_changed_lines = changed_by_path.setdefault(current_path, set())
             new_line = None
             continue
         if first_char == "@" and line.startswith("@@"):
