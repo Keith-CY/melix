@@ -16304,6 +16304,11 @@ private func runtimeModelTaskCapabilityReceiptRow(
     var parts = [
         "task \(capability): \(runtimeCapabilitySupportStateText(receipt.state))"
     ]
+    runtimeAppendUnsupportedCapabilityDetails(
+        to: &parts,
+        unsupportedReason: receipt.unsupportedReason,
+        recoveryHint: receipt.recoveryHint
+    )
     let provenance = receipt.provenance.trimmingCharacters(in: .whitespacesAndNewlines)
     if provenance.isEmpty == false {
         parts.append(provenance)
@@ -16327,6 +16332,11 @@ private func runtimeModelAccelerationCapabilityReceiptRows(
     if receipt.supportedModes.isEmpty == false {
         summaryParts.append("supported \(receipt.supportedModes.map(runtimeAccelerationModeText).joined(separator: ", "))")
     }
+    runtimeAppendUnsupportedCapabilityDetails(
+        to: &summaryParts,
+        unsupportedReason: receipt.unsupportedReason,
+        recoveryHint: receipt.recoveryHint
+    )
     let provenance = receipt.provenance.trimmingCharacters(in: .whitespacesAndNewlines)
     if provenance.isEmpty == false {
         summaryParts.append(provenance)
@@ -16375,6 +16385,11 @@ private func runtimeModelDraftCompatibilityReceiptRow(
     var parts = [
         "draft \(draftModelID): \(runtimeCapabilitySupportStateText(receipt.state))"
     ]
+    runtimeAppendUnsupportedCapabilityDetails(
+        to: &parts,
+        unsupportedReason: receipt.unsupportedReason,
+        recoveryHint: receipt.recoveryHint
+    )
     let provenance = receipt.provenance.trimmingCharacters(in: .whitespacesAndNewlines)
     if provenance.isEmpty == false {
         parts.append(provenance)
@@ -16396,6 +16411,11 @@ private func runtimeModelSpeculativeHeadCapabilityReceiptRow(
     }
     parts.append(receipt.runtimeAvailable ? "runtime available" : "runtime missing")
     parts.append(receipt.artifactAvailable ? "artifact available" : "artifact missing")
+    runtimeAppendUnsupportedCapabilityDetails(
+        to: &parts,
+        unsupportedReason: receipt.unsupportedReason,
+        recoveryHint: receipt.recoveryHint
+    )
     let provenance = receipt.provenance.trimmingCharacters(in: .whitespacesAndNewlines)
     if provenance.isEmpty == false {
         parts.append(provenance)
@@ -16403,8 +16423,52 @@ private func runtimeModelSpeculativeHeadCapabilityReceiptRow(
     return parts.joined(separator: " • ")
 }
 
+private func runtimeAppendUnsupportedCapabilityDetails(
+    to parts: inout [String],
+    unsupportedReason: Melix_Controlplane_V1_UnsupportedCapabilityReason,
+    recoveryHint: String
+) {
+    let reason = runtimeUnsupportedCapabilityReasonText(unsupportedReason)
+    if reason.isEmpty == false {
+        parts.append("reason \(reason)")
+    }
+    let hint = recoveryHint.trimmingCharacters(in: .whitespacesAndNewlines)
+    if hint.isEmpty == false {
+        parts.append("recovery \(hint)")
+    }
+}
+
 private func runtimeYesNoText(_ value: Bool) -> String {
     value ? "yes" : "no"
+}
+
+private func runtimeUnsupportedCapabilityReasonText(
+    _ reason: Melix_Controlplane_V1_UnsupportedCapabilityReason
+) -> String {
+    switch reason {
+    case .unsupportedReasonUnsupportedTask:
+        return "unsupported task"
+    case .unsupportedReasonUnsupportedMode:
+        return "unsupported mode"
+    case .unsupportedReasonMissingDraftModel:
+        return "missing draft model"
+    case .unsupportedReasonDraftModelNotAllowed:
+        return "draft model not allowed"
+    case .unsupportedReasonTargetDisabled:
+        return "target disabled"
+    case .unsupportedReasonDrafterDisabled:
+        return "drafter disabled"
+    case .unsupportedReasonMetadataInconsistent:
+        return "metadata inconsistent"
+    case .unsupportedReasonRuntimeUnavailable:
+        return "runtime unavailable"
+    case .unsupportedReasonExperimentalUnverified:
+        return "experimental unverified"
+    case .unspecified, .unsupportedReasonNone:
+        return ""
+    case .UNRECOGNIZED(let value):
+        return "unrecognized \(value)"
+    }
 }
 
 private func runtimeCapabilitySupportStateText(

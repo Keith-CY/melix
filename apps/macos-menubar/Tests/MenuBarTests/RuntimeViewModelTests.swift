@@ -4371,6 +4371,121 @@ struct RuntimeViewModelTests {
         ])
     }
 
+    @Test("runtime model row renders unsupported reasons and recovery hints")
+    func runtimeModelRowRendersUnsupportedReasonsAndRecoveryHints() {
+        var model = makeModelSummary(state: .modelWarm)
+        var receipt = Melix_Controlplane_V1_ModelCapabilityReceipt()
+        receipt.schemaVersion = "melix.model_capabilities.v1"
+
+        var task = makeTaskCapabilityReceipt(
+            "tools",
+            state: .capabilityUnsupported,
+            provenance: "model catalog"
+        )
+        task.unsupportedReason = .unsupportedReasonUnsupportedTask
+        task.recoveryHint = "Select a tool-capable model."
+
+        var missingDraftTask = makeTaskCapabilityReceipt(
+            "draft",
+            state: .capabilityUnsupported,
+            provenance: ""
+        )
+        missingDraftTask.unsupportedReason = .unsupportedReasonMissingDraftModel
+
+        var targetDisabledTask = makeTaskCapabilityReceipt(
+            "target",
+            state: .capabilityUnsupported,
+            provenance: ""
+        )
+        targetDisabledTask.unsupportedReason = .unsupportedReasonTargetDisabled
+
+        var drafterDisabledTask = makeTaskCapabilityReceipt(
+            "drafter",
+            state: .capabilityUnsupported,
+            provenance: ""
+        )
+        drafterDisabledTask.unsupportedReason = .unsupportedReasonDrafterDisabled
+
+        var metadataTask = makeTaskCapabilityReceipt(
+            "metadata",
+            state: .capabilityUnsupported,
+            provenance: ""
+        )
+        metadataTask.unsupportedReason = .unsupportedReasonMetadataInconsistent
+
+        var experimentalTask = makeTaskCapabilityReceipt(
+            "experimental",
+            state: .capabilityUnsupported,
+            provenance: ""
+        )
+        experimentalTask.unsupportedReason = .unsupportedReasonExperimentalUnverified
+
+        var noneTask = makeTaskCapabilityReceipt(
+            "none",
+            state: .capabilityUnsupported,
+            provenance: ""
+        )
+        noneTask.unsupportedReason = .unsupportedReasonNone
+
+        var futureTask = makeTaskCapabilityReceipt(
+            "future",
+            state: .capabilityUnsupported,
+            provenance: ""
+        )
+        futureTask.unsupportedReason = .UNRECOGNIZED(999)
+        receipt.tasks = [
+            task,
+            missingDraftTask,
+            targetDisabledTask,
+            drafterDisabledTask,
+            metadataTask,
+            experimentalTask,
+            noneTask,
+            futureTask,
+        ]
+
+        var acceleration = Melix_Controlplane_V1_AccelerationCapabilityReceipt()
+        acceleration.requestedAccelerationMode = .speculativeDecode
+        acceleration.state = .capabilityUnsupported
+        acceleration.unsupportedReason = .unsupportedReasonUnsupportedMode
+        acceleration.provenance = "model catalog"
+        acceleration.recoveryHint = "Switch to baseline or accelerated prefill."
+
+        var draft = Melix_Controlplane_V1_DraftCompatibilityReceipt()
+        draft.draftModelID = "melix-dev-draft"
+        draft.state = .capabilityUnsupported
+        draft.unsupportedReason = .unsupportedReasonDraftModelNotAllowed
+        draft.provenance = "draft cache"
+        draft.recoveryHint = "Pick a compatible draft model."
+        acceleration.draftCompatibility = [draft]
+
+        var speculativeHead = Melix_Controlplane_V1_SpeculativeHeadCapabilityReceipt()
+        speculativeHead.state = .capabilityUnsupported
+        speculativeHead.unsupportedReason = .unsupportedReasonRuntimeUnavailable
+        speculativeHead.provenance = "head index"
+        speculativeHead.recoveryHint = "Build the speculative-head index."
+        acceleration.speculativeHead = speculativeHead
+
+        receipt.acceleration = acceleration
+        model.capabilityReceipt = receipt
+
+        let row = makeRuntimeModelRow(model)
+
+        #expect(row.capabilityReceiptRows == [
+            "task tools: unsupported • reason unsupported task • recovery Select a tool-capable model. • model catalog",
+            "task draft: unsupported • reason missing draft model",
+            "task target: unsupported • reason target disabled",
+            "task drafter: unsupported • reason drafter disabled",
+            "task metadata: unsupported • reason metadata inconsistent",
+            "task experimental: unsupported • reason experimental unverified",
+            "task none: unsupported",
+            "task future: unsupported • reason unrecognized 999",
+            "acceleration: unsupported • requested Speculative Decode • reason unsupported mode • recovery Switch to baseline or accelerated prefill. • model catalog",
+            "draft melix-dev-draft: unsupported • reason draft model not allowed • recovery Pick a compatible draft model. • draft cache",
+            "speculative head: unsupported • configured no • layers 0/0 • runtime missing • artifact missing • reason runtime unavailable • recovery Build the speculative-head index. • head index",
+        ])
+    }
+
     @Test("runtime model row falls back across residency states policies and ttl descriptors")
     func runtimeModelRowFallsBackAcrossResidencyStateBranches() {
         var explicitResidency = makeModelSummary(
