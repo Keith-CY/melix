@@ -89,6 +89,48 @@ public struct RuntimeSettingsSnapshotState: Equatable, Sendable {
     }
 }
 
+public struct RuntimeSettingsValidationIssueState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let key: String
+    public let message: String
+    public let source: String
+
+    public init(key: String, message: String, source: String) {
+        self.id = "\(source):\(key):\(message)"
+        self.key = key
+        self.message = message
+        self.source = source
+    }
+}
+
+public struct RuntimeSettingsValidationResultState: Equatable, Sendable {
+    public static let empty = RuntimeSettingsValidationResultState(valid: true, issues: [], metrics: [])
+
+    public let valid: Bool
+    public let issues: [RuntimeSettingsValidationIssueState]
+    public let metrics: [RuntimeSettingMetricState]
+
+    public init(
+        valid: Bool,
+        issues: [RuntimeSettingsValidationIssueState],
+        metrics: [RuntimeSettingMetricState]
+    ) {
+        self.valid = valid
+        self.issues = issues
+        self.metrics = metrics
+    }
+
+    public var summaryText: String {
+        if valid {
+            return "Runtime settings are valid."
+        }
+        if issues.count == 1 {
+            return "1 validation issue."
+        }
+        return "\(issues.count) validation issues."
+    }
+}
+
 public enum RuntimeSettingsPayloadDecoder {
     public static func decodeShow(_ output: String) throws -> RuntimeSettingsSnapshotState {
         try decodeShow(Data(output.utf8))
@@ -129,6 +171,37 @@ public enum RuntimeSettingsPayloadDecoder {
             schemaVersion: stringText(for: payload["schema_version"]),
             rows: rows,
             sources: sources,
+            metrics: metrics
+        )
+    }
+
+    public static func decodeValidation(_ output: String) throws -> RuntimeSettingsValidationResultState {
+        try decodeValidation(Data(output.utf8))
+    }
+
+    public static func decodeValidation(_ data: Data) throws -> RuntimeSettingsValidationResultState {
+        let decoded = try JSONSerialization.jsonObject(with: data)
+        guard let payload = decoded as? [String: Any] else {
+            throw dataCorrupted("Settings validation payload must be a JSON object.")
+        }
+
+        let issues = (payload["errors"] as? [[String: Any]] ?? []).map { error in
+            RuntimeSettingsValidationIssueState(
+                key: stringText(for: error["key"]),
+                message: stringText(for: error["message"]),
+                source: stringText(for: error["source"])
+            )
+        }
+        let metrics = (payload["metrics"] as? [String: Any] ?? [:]).keys.sorted().map { key in
+            RuntimeSettingMetricState(
+                name: key,
+                valueText: displayText(for: (payload["metrics"] as? [String: Any])?[key] ?? NSNull())
+            )
+        }
+
+        return RuntimeSettingsValidationResultState(
+            valid: (payload["valid"] as? Bool) ?? issues.isEmpty,
+            issues: issues,
             metrics: metrics
         )
     }

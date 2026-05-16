@@ -1911,6 +1911,12 @@ public final class RuntimeViewModel {
     public private(set) var runtimeJobCancelResultsByID: [String: RuntimeJobCancelResultState] = [:]
     public private(set) var selectedRuntimeJobID = ""
     public private(set) var runtimeSettingsSnapshot = RuntimeSettingsSnapshotState.empty
+    public private(set) var runtimeSettingKeyDraft = ""
+    public private(set) var runtimeSettingValueDraft = ""
+    public private(set) var runtimeSettingsOperationInProgress = false
+    public private(set) var runtimeSettingsOperationMessage = ""
+    public private(set) var runtimeSettingsOperationErrorMessage = ""
+    public private(set) var runtimeSettingsValidationResult: RuntimeSettingsValidationResultState?
     public private(set) var batchRunModelListText = ""
     public private(set) var batchRunConfigText = ""
     public private(set) var batchRunReports: [RuntimeBatchRunReportState] = []
@@ -1937,6 +1943,18 @@ public final class RuntimeViewModel {
     }
     public var runtimeSettingMetrics: [RuntimeSettingMetricState] {
         runtimeSettingsSnapshot.metrics
+    }
+    public var runtimeSettingsCanSet: Bool {
+        normalizedRuntimeSettingKey.isEmpty == false
+            && normalizedRuntimeSettingValue.isEmpty == false
+            && runtimeSettingsOperationInProgress == false
+    }
+    public var runtimeSettingsCanReset: Bool {
+        normalizedRuntimeSettingKey.isEmpty == false
+            && runtimeSettingsOperationInProgress == false
+    }
+    public var runtimeSettingsCanValidate: Bool {
+        runtimeSettingsOperationInProgress == false
     }
     public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
     public private(set) var models: [RuntimeModelRow] = [] {
@@ -2777,6 +2795,14 @@ public final class RuntimeViewModel {
 
     private var commandWorkflowRunner: (any MelixCLIWorkflowRunning)? {
         cliWorkflowRunner ?? operatorCommandRunner
+    }
+
+    private var normalizedRuntimeSettingKey: String {
+        runtimeSettingKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedRuntimeSettingValue: String {
+        runtimeSettingValueDraft.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func reloadHuggingFaceTokenHint() {
@@ -3779,6 +3805,90 @@ public final class RuntimeViewModel {
     public func applyRuntimeSettings(_ snapshot: RuntimeSettingsSnapshotState) {
         runtimeSettingsSnapshot = snapshot
         notifyStateChanged()
+    }
+
+    public func updateRuntimeSettingDraft(key: String, value: String) {
+        runtimeSettingKeyDraft = key
+        runtimeSettingValueDraft = value
+        notifyStateChanged()
+    }
+
+    public func applyRuntimeSettingsOperationMessage(_ message: String) {
+        runtimeSettingsOperationMessage = message
+        runtimeSettingsOperationErrorMessage = ""
+        notifyStateChanged()
+    }
+
+    public func setRuntimeSetting() async {
+        let key = normalizedRuntimeSettingKey
+        let value = normalizedRuntimeSettingValue
+        guard key.isEmpty == false, value.isEmpty == false else {
+            failRuntimeSettingsOperation("Enter a setting key and value before setting.")
+            return
+        }
+        guard let commandWorkflowRunner else {
+            failRuntimeSettingsOperation("Settings CLI runner is unavailable.")
+            return
+        }
+
+        beginRuntimeSettingsOperation()
+        do {
+            _ = try await commandWorkflowRunner.run(.settingsSet(.init(key: key, value: value, json: true)))
+            try await refreshRuntimeSettingsSnapshot(using: commandWorkflowRunner)
+            runtimeSettingsOperationInProgress = false
+            runtimeSettingsOperationMessage = "Updated \(key)."
+            runtimeSettingsOperationErrorMessage = ""
+            clearCLIWorkflowFailure()
+            notifyStateChanged()
+        } catch {
+            failRuntimeSettingsOperation(error)
+        }
+    }
+
+    public func resetRuntimeSetting() async {
+        let key = normalizedRuntimeSettingKey
+        guard key.isEmpty == false else {
+            failRuntimeSettingsOperation("Enter a setting key before resetting.")
+            return
+        }
+        guard let commandWorkflowRunner else {
+            failRuntimeSettingsOperation("Settings CLI runner is unavailable.")
+            return
+        }
+
+        beginRuntimeSettingsOperation()
+        do {
+            _ = try await commandWorkflowRunner.run(.settingsReset(.init(key: key, json: true)))
+            try await refreshRuntimeSettingsSnapshot(using: commandWorkflowRunner)
+            runtimeSettingsOperationInProgress = false
+            runtimeSettingsOperationMessage = "Reset \(key)."
+            runtimeSettingsOperationErrorMessage = ""
+            clearCLIWorkflowFailure()
+            notifyStateChanged()
+        } catch {
+            failRuntimeSettingsOperation(error)
+        }
+    }
+
+    public func validateRuntimeSettings() async {
+        guard let commandWorkflowRunner else {
+            failRuntimeSettingsOperation("Settings CLI runner is unavailable.")
+            return
+        }
+
+        beginRuntimeSettingsOperation()
+        do {
+            let output = try await commandWorkflowRunner.run(.settingsValidate(.init(json: true)))
+            let result = try RuntimeSettingsPayloadDecoder.decodeValidation(output)
+            runtimeSettingsValidationResult = result
+            runtimeSettingsOperationInProgress = false
+            runtimeSettingsOperationMessage = result.summaryText
+            runtimeSettingsOperationErrorMessage = ""
+            clearCLIWorkflowFailure()
+            notifyStateChanged()
+        } catch {
+            failRuntimeSettingsOperation(error)
+        }
     }
 
     public func applyRuntimeJobDetail(_ detail: RuntimeJobDetailState) {
@@ -11690,6 +11800,31 @@ public final class RuntimeViewModel {
             at: 0
         )
         trimRecentEvents()
+    }
+
+    private func beginRuntimeSettingsOperation() {
+        runtimeSettingsOperationInProgress = true
+        runtimeSettingsOperationMessage = ""
+        runtimeSettingsOperationErrorMessage = ""
+        notifyStateChanged()
+    }
+
+    private func refreshRuntimeSettingsSnapshot(using runner: any MelixCLIWorkflowRunning) async throws {
+        let output = try await runner.run(.settingsShow(.init(json: true)))
+        runtimeSettingsSnapshot = try RuntimeSettingsPayloadDecoder.decodeShow(output)
+    }
+
+    private func failRuntimeSettingsOperation(_ error: Error) {
+        recordCLIWorkflowErrorIfNeeded(error)
+        failRuntimeSettingsOperation(workflowErrorMessage(error))
+    }
+
+    private func failRuntimeSettingsOperation(_ message: String) {
+        runtimeSettingsOperationInProgress = false
+        runtimeSettingsOperationMessage = ""
+        runtimeSettingsOperationErrorMessage = message
+        recordLocalError(message)
+        notifyStateChanged()
     }
 
     private func record(event: Melix_Controlplane_V1_ControlPlaneEvent) {

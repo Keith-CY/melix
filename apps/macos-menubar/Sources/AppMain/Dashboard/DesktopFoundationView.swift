@@ -1811,6 +1811,7 @@ struct DesktopSettingsTabView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if let viewModel, viewModel.runtimeSettingRows.isEmpty == false {
+                runtimeSettingsControls(viewModel)
                 Text("Runtime Settings")
                     .font(.headline)
                 VStack(alignment: .leading, spacing: 10) {
@@ -1872,6 +1873,9 @@ struct DesktopSettingsTabView: View {
                     }
                 }
             } else {
+                if let viewModel {
+                    runtimeSettingsControls(viewModel)
+                }
                 ForEach(foundation.settings) { row in
                     HStack {
                         Text(row.key)
@@ -1887,9 +1891,86 @@ struct DesktopSettingsTabView: View {
         .accessibilityLabel(accessibilitySummary)
     }
 
+    private func runtimeSettingsControls(_ viewModel: RuntimeViewModel) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Setting key")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField(
+                        "Setting key",
+                        text: Binding(
+                            get: { viewModel.runtimeSettingKeyDraft },
+                            set: { viewModel.updateRuntimeSettingDraft(key: $0, value: viewModel.runtimeSettingValueDraft) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Setting value")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField(
+                        "Setting value",
+                        text: Binding(
+                            get: { viewModel.runtimeSettingValueDraft },
+                            set: { viewModel.updateRuntimeSettingDraft(key: viewModel.runtimeSettingKeyDraft, value: $0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+            }
+            HStack(spacing: 8) {
+                DesktopSettingsOperationButton(title: "Set Setting", isEnabled: viewModel.runtimeSettingsCanSet) {
+                    Task { await viewModel.setRuntimeSetting() }
+                }
+                DesktopSettingsOperationButton(title: "Reset Setting", isEnabled: viewModel.runtimeSettingsCanReset) {
+                    Task { await viewModel.resetRuntimeSetting() }
+                }
+                DesktopSettingsOperationButton(title: "Validate Settings", isEnabled: viewModel.runtimeSettingsCanValidate) {
+                    Task { await viewModel.validateRuntimeSettings() }
+                }
+                if viewModel.runtimeSettingsOperationInProgress {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            if viewModel.runtimeSettingsOperationMessage.isEmpty == false {
+                Text(viewModel.runtimeSettingsOperationMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                    .textSelection(.enabled)
+            }
+            if viewModel.runtimeSettingsOperationErrorMessage.isEmpty == false {
+                Text(viewModel.runtimeSettingsOperationErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            }
+            if let validationResult = viewModel.runtimeSettingsValidationResult, validationResult.issues.isEmpty == false {
+                ForEach(validationResult.issues) { issue in
+                    Text("\(issue.key): \(issue.message)")
+                        .font(.caption)
+                        .foregroundStyle(MelixDesignTokens.StatusColor.warning)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+    }
+
     var accessibilitySummary: String {
         if let viewModel, viewModel.runtimeSettingRows.isEmpty == false {
-            var values = ["Runtime Settings"]
+            var values = [
+                "Setting key",
+                "Setting value",
+                "Set Setting",
+                "Reset Setting",
+                "Validate Settings",
+                viewModel.runtimeSettingsOperationMessage,
+                viewModel.runtimeSettingsOperationErrorMessage,
+                "Runtime Settings",
+            ]
             values.append(contentsOf: viewModel.runtimeSettingRows.flatMap { row in
                 [
                     row.key,
@@ -1908,12 +1989,57 @@ struct DesktopSettingsTabView: View {
                 values.append("Resolve Metrics")
                 values.append(contentsOf: viewModel.runtimeSettingMetrics.flatMap { [$0.name, $0.valueText] })
             }
+            if let validationResult = viewModel.runtimeSettingsValidationResult {
+                values.append(validationResult.summaryText)
+                values.append(contentsOf: validationResult.issues.flatMap { [$0.key, $0.message, $0.source] })
+            }
             return values.filter { $0.isEmpty == false }.joined(separator: " ")
         }
 
         return foundation.settings.flatMap { [$0.key, $0.value] }
             .filter { $0.isEmpty == false }
             .joined(separator: " ")
+    }
+}
+
+private struct DesktopSettingsOperationButton: NSViewRepresentable {
+    let title: String
+    let isEnabled: Bool
+    let action: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton(
+            title: title,
+            target: context.coordinator,
+            action: #selector(Coordinator.performAction(_:))
+        )
+        button.bezelStyle = .rounded
+        button.controlSize = .small
+        button.setAccessibilityLabel(title)
+        return button
+    }
+
+    func updateNSView(_ button: NSButton, context: Context) {
+        context.coordinator.action = action
+        button.title = title
+        button.isEnabled = isEnabled
+        button.setAccessibilityLabel(title)
+    }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc func performAction(_ sender: NSButton) {
+            action()
+        }
     }
 }
 

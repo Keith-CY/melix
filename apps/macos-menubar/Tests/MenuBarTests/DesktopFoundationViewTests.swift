@@ -840,6 +840,165 @@ struct DesktopFoundationViewTests {
         #expect(shellView.subviews.isEmpty == false)
     }
 
+    @Test("settings tab renders runtime settings operation controls")
+    @MainActor
+    func settingsTabRendersRuntimeSettingsOperationControls() async throws {
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
+            snapshot: Melix_Controlplane_V1_ServerSnapshot(),
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-settings-controls",
+            features: [],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
+            lastError: nil,
+            recentEvents: []
+        )
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.applyRuntimeSettings(
+            RuntimeSettingsSnapshotState(
+                schemaVersion: "melix.runtime_settings.effective.v1",
+                rows: [
+                    RuntimeSettingRowState(
+                        key: "max_concurrent_jobs",
+                        currentValueText: "4",
+                        source: "default",
+                        sourceDetail: "builtin"
+                    ),
+                ],
+                sources: [],
+                metrics: []
+            )
+        )
+        viewModel.updateRuntimeSettingDraft(key: "max_concurrent_jobs", value: "8")
+        viewModel.applyRuntimeSettingsOperationMessage("Updated max_concurrent_jobs.")
+
+        let tab = DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
+        let view = hostView(tab)
+        let values = tab.accessibilitySummary
+        let buttons = renderedButtons(in: view)
+
+        #expect(values.contains("Setting key"))
+        #expect(values.contains("Setting value"))
+        #expect(buttons.contains { $0.title == "Set Setting" })
+        #expect(buttons.contains { $0.title == "Reset Setting" })
+        #expect(buttons.contains { $0.title == "Validate Settings" })
+        #expect(values.contains("Updated max_concurrent_jobs."))
+    }
+
+    @Test("settings tab drives runtime settings operation buttons and renders failures")
+    @MainActor
+    func settingsTabDrivesRuntimeSettingsOperationButtonsAndRendersFailures() async throws {
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
+            snapshot: Melix_Controlplane_V1_ServerSnapshot(),
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-settings-actions",
+            features: [],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
+            lastError: nil,
+            recentEvents: []
+        )
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureOutput(
+            """
+            {
+              "key": "max_concurrent_jobs",
+              "value": 8,
+              "source": "user_settings"
+            }
+            """,
+            for: .settingsSet(.init(key: "max_concurrent_jobs", value: "8", json: true))
+        )
+        await runner.configureOutput(Self.runtimeSettingsOperationSnapshotJSON, for: .settingsShow(.init(json: true)))
+        await runner.configureOutput(
+            """
+            {
+              "valid": false,
+              "errors": [
+                {
+                  "key": "max_concurrent_jobs",
+                  "message": "expected int",
+                  "source": "user_settings"
+                }
+              ],
+              "metrics": {}
+            }
+            """,
+            for: .settingsValidate(.init(json: true))
+        )
+        await runner.configureOutput(
+            """
+            {
+              "key": "max_concurrent_jobs",
+              "removed": true
+            }
+            """,
+            for: .settingsReset(.init(key: "max_concurrent_jobs", json: true))
+        )
+
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.applyRuntimeSettings(try RuntimeSettingsPayloadDecoder.decodeShow(Self.runtimeSettingsOperationSnapshotJSON))
+        viewModel.updateRuntimeSettingDraft(key: "max_concurrent_jobs", value: "8")
+
+        let actionView = hostView(DesktopSettingsTabView(foundation: foundation, viewModel: viewModel))
+        let setButton = try #require(renderedButtons(in: actionView).first { $0.title == "Set Setting" })
+        setButton.performClick(nil)
+        try await waitForDesktopFoundationCondition("settings set completes") {
+            viewModel.runtimeSettingsOperationMessage == "Updated max_concurrent_jobs."
+        }
+
+        let validateButton = try #require(renderedButtons(in: actionView).first { $0.title == "Validate Settings" })
+        validateButton.performClick(nil)
+        try await waitForDesktopFoundationCondition("settings validation completes") {
+            viewModel.runtimeSettingsOperationMessage == "1 validation issue."
+        }
+        let validationTab = DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
+        _ = hostView(validationTab)
+        #expect(validationTab.accessibilitySummary.contains("expected int"))
+        #expect(validationTab.accessibilitySummary.contains("user_settings"))
+
+        let resetButton = try #require(renderedButtons(in: actionView).first { $0.title == "Reset Setting" })
+        resetButton.performClick(nil)
+        try await waitForDesktopFoundationCondition("settings reset completes") {
+            viewModel.runtimeSettingsOperationMessage == "Reset max_concurrent_jobs."
+        }
+
+        #expect(
+            await runner.snapshotRecordedCommands() == [
+                .settingsSet(.init(key: "max_concurrent_jobs", value: "8", json: true)),
+                .settingsShow(.init(json: true)),
+                .settingsValidate(.init(json: true)),
+                .settingsReset(.init(key: "max_concurrent_jobs", json: true)),
+                .settingsShow(.init(json: true)),
+            ]
+        )
+
+        let localErrorViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        localErrorViewModel.applyRuntimeSettings(try RuntimeSettingsPayloadDecoder.decodeShow(Self.runtimeSettingsOperationSnapshotJSON))
+        localErrorViewModel.updateRuntimeSettingDraft(key: "max_concurrent_jobs", value: "8")
+        await localErrorViewModel.setRuntimeSetting()
+        let errorTab = DesktopSettingsTabView(foundation: foundation, viewModel: localErrorViewModel)
+        _ = hostView(errorTab)
+        #expect(errorTab.accessibilitySummary.contains("Settings CLI runner is unavailable."))
+
+        let legacyTab = DesktopSettingsTabView(
+            foundation: foundation,
+            viewModel: RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        )
+        _ = hostView(legacyTab)
+        #expect(legacyTab.accessibilitySummary.contains("Protocol"))
+    }
+
     @Test("settings tab normalizes tooling state labels across model states and config paths")
     @MainActor
     func settingsTabNormalizesToolingStateLabelsAcrossModelStatesAndConfigPaths() async throws {
@@ -2296,6 +2455,25 @@ struct DesktopFoundationViewTests {
             }
           }
         ]
+      }
+    }
+    """#
+
+    private static let runtimeSettingsOperationSnapshotJSON = #"""
+    {
+      "schema_version": "melix.runtime_settings.effective.v1",
+      "settings": {
+        "max_concurrent_jobs": {
+          "value": 4,
+          "source": "default",
+          "source_detail": "builtin"
+        }
+      },
+      "sources": {
+        "user_settings": "/tmp/melix-home/runtime_settings.json"
+      },
+      "metrics": {
+        "settings_resolve_ms": 3
       }
     }
     """#
