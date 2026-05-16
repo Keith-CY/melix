@@ -16,11 +16,15 @@ registry entry includes focused `test_command`, `coverage_command`, and
 
 ## Optimization
 
-`_count_assert_nodes()` previously used `ast.walk()`, which creates and manages
-an internal queue while yielding every AST node. This slice replaces it with a
-single explicit stack over `ast.iter_child_nodes()`. The traversal order is not
-observable because the helper only counts `ast.Assert` nodes, and behavior stays
-unchanged for nested asserts and modules without asserts.
+`_count_assert_nodes()` already avoids `ast.walk()` by using a single explicit
+stack over statement container nodes. This follow-up counts top-level assert
+nodes while seeding the stack, avoiding stack push/pop work for common flat test
+modules, then keeps the existing stack traversal for nested statement
+containers. It also removes the per-container generator expression passed to
+`stack.extend(...)` and appends matching child statement containers directly.
+The traversal order is not observable because the helper only counts
+`ast.Assert` nodes, and behavior stays unchanged for nested asserts and modules
+without asserts.
 
 ## Verification Plan
 
