@@ -1886,6 +1886,9 @@ struct DesktopSettingsTabView: View {
                     }
                 }
             }
+            if let viewModel {
+                runtimeDiscoveryInspector(viewModel)
+            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilitySummary)
@@ -1959,6 +1962,143 @@ struct DesktopSettingsTabView: View {
         }
     }
 
+    private func runtimeDiscoveryInspector(_ viewModel: RuntimeViewModel) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 8) {
+                Text("Discovery Inspector")
+                    .font(.headline)
+                Spacer()
+                DesktopSettingsOperationButton(title: "Refresh Discovery", isEnabled: !viewModel.runtimeDiscoveryRefreshInProgress) {
+                    Task { await viewModel.refreshRuntimeDiscovery() }
+                }
+                if viewModel.runtimeDiscoveryRefreshInProgress {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            if viewModel.runtimeDiscoveryOperationMessage.isEmpty == false {
+                Text(viewModel.runtimeDiscoveryOperationMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                    .textSelection(.enabled)
+            }
+            if viewModel.runtimeDiscoveryOperationErrorMessage.isEmpty == false {
+                Text(viewModel.runtimeDiscoveryOperationErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            }
+            if viewModel.runtimeDiscoveryPayloads.isEmpty {
+                Text("Discovery metadata unavailable.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(viewModel.runtimeDiscoveryPayloads) { payload in
+                        runtimeDiscoveryPayload(payload)
+                    }
+                }
+            }
+        }
+    }
+
+    private func runtimeDiscoveryPayload(_ payload: RuntimeDiscoveryPayloadState) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(payload.endpoint.displayTitle)
+                    .fontWeight(.semibold)
+                Spacer()
+                if payload.schemaVersion.isEmpty == false {
+                    Text(payload.schemaVersion)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            ForEach(payload.valueRows) { row in
+                discoveryKeyValueRow(row.key, row.value)
+            }
+            if payload.links.isEmpty == false {
+                Text("Endpoint Links")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                ForEach(payload.links) { link in
+                    discoveryKeyValueRow(link.key, link.url)
+                }
+            }
+            if payload.models.isEmpty == false {
+                Text("Models")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                ForEach(payload.models) { model in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.modelID)
+                            .fontWeight(.medium)
+                        Text([model.kind, model.supportedModalitiesText, model.supportedTasksText]
+                            .filter { $0.isEmpty == false }
+                            .joined(separator: " | "))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if model.capabilityReceiptText.isEmpty == false {
+                            Text(model.capabilityReceiptText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                    }
+                }
+            }
+            if let alias = payload.aliasDiscovery {
+                discoveryKeyValueRow("model_alias.query", alias.query)
+                discoveryKeyValueRow("model_alias.status", alias.status)
+                if alias.suggestionsText.isEmpty == false {
+                    discoveryKeyValueRow("model_alias.suggestions", alias.suggestionsText)
+                }
+            }
+            if payload.instructionAreas.isEmpty == false {
+                Text("Instruction Areas")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                ForEach(payload.instructionAreas) { area in
+                    discoveryKeyValueRow(area.title.isEmpty ? area.id : area.title, area.commandsText)
+                }
+            }
+            if payload.schemaPaths.isEmpty == false {
+                Text("Schema Paths")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                ForEach(payload.schemaPaths) { path in
+                    discoveryKeyValueRow(path.key, path.path)
+                }
+            }
+            if payload.configSettings.isEmpty == false {
+                Text("Runtime Setting Metadata")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                ForEach(payload.configSettings) { setting in
+                    discoveryKeyValueRow(
+                        setting.key,
+                        [setting.valueType, setting.defaultValueText, setting.environmentVariable, setting.summary]
+                            .filter { $0.isEmpty == false }
+                            .joined(separator: " | ")
+                    )
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func discoveryKeyValueRow(_ key: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(key)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(.caption)
+                .textSelection(.enabled)
+        }
+    }
+
     var accessibilitySummary: String {
         if let viewModel, viewModel.runtimeSettingRows.isEmpty == false {
             var values = [
@@ -1993,12 +2133,45 @@ struct DesktopSettingsTabView: View {
                 values.append(validationResult.summaryText)
                 values.append(contentsOf: validationResult.issues.flatMap { [$0.key, $0.message, $0.source] })
             }
+            values.append(contentsOf: runtimeDiscoveryAccessibilityValues(viewModel))
             return values.filter { $0.isEmpty == false }.joined(separator: " ")
         }
 
-        return foundation.settings.flatMap { [$0.key, $0.value] }
-            .filter { $0.isEmpty == false }
-            .joined(separator: " ")
+        var values = foundation.settings.flatMap { [$0.key, $0.value] }
+        if let viewModel {
+            values.append(contentsOf: runtimeDiscoveryAccessibilityValues(viewModel))
+        }
+        return values.filter { $0.isEmpty == false }.joined(separator: " ")
+    }
+
+    private func runtimeDiscoveryAccessibilityValues(_ viewModel: RuntimeViewModel) -> [String] {
+        var values = [
+            "Discovery Inspector",
+            "Refresh Discovery",
+            viewModel.runtimeDiscoveryOperationMessage,
+            viewModel.runtimeDiscoveryOperationErrorMessage,
+        ]
+        if viewModel.runtimeDiscoveryPayloads.isEmpty {
+            values.append("Discovery metadata unavailable.")
+        }
+        for payload in viewModel.runtimeDiscoveryPayloads {
+            values.append(payload.endpoint.displayTitle)
+            values.append(payload.schemaVersion)
+            values.append(contentsOf: payload.valueRows.flatMap { [$0.key, $0.value] })
+            values.append(contentsOf: payload.links.flatMap { [$0.key, $0.url] })
+            values.append(contentsOf: payload.models.flatMap {
+                [$0.modelID, $0.kind, $0.supportedModalitiesText, $0.supportedTasksText, $0.capabilityReceiptText]
+            })
+            if let alias = payload.aliasDiscovery {
+                values.append(contentsOf: [alias.query, alias.status, alias.suggestionsText])
+            }
+            values.append(contentsOf: payload.instructionAreas.flatMap { [$0.id, $0.title, $0.commandsText] })
+            values.append(contentsOf: payload.schemaPaths.flatMap { [$0.key, $0.path] })
+            values.append(contentsOf: payload.configSettings.flatMap {
+                [$0.key, $0.valueType, $0.defaultValueText, $0.environmentVariable, $0.summary]
+            })
+        }
+        return values
     }
 }
 

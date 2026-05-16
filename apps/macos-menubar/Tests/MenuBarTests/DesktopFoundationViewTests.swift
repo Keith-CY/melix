@@ -999,6 +999,125 @@ struct DesktopFoundationViewTests {
         #expect(legacyTab.accessibilitySummary.contains("Protocol"))
     }
 
+    @Test("settings tab renders runtime discovery inspector payloads")
+    @MainActor
+    func settingsTabRendersRuntimeDiscoveryInspectorPayloads() async throws {
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
+            snapshot: Melix_Controlplane_V1_ServerSnapshot(),
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-discovery",
+            features: [],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
+            lastError: nil,
+            recentEvents: []
+        )
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.applyRuntimeDiscovery(
+            try RuntimeDiscoveryPayloadDecoder.decodeSnapshot([
+                (.info, RuntimeDiscoveryStateTests.infoJSON),
+                (.capabilities, RuntimeDiscoveryStateTests.capabilitiesJSON),
+                (.instructions, RuntimeDiscoveryStateTests.instructionsJSON),
+                (.schema, RuntimeDiscoveryStateTests.schemaJSON),
+                (.configMetadata, RuntimeDiscoveryStateTests.configMetadataJSON),
+            ])
+        )
+
+        let tab = DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
+        let view = hostView(tab)
+        let values = tab.accessibilitySummary
+        let buttons = renderedButtons(in: view)
+
+        #expect(buttons.contains { $0.title == "Refresh Discovery" })
+        #expect(values.contains("Discovery Inspector"))
+        #expect(values.contains("Info"))
+        #expect(values.contains("Capabilities"))
+        #expect(values.contains("Instructions"))
+        #expect(values.contains("Schema"))
+        #expect(values.contains("Config Metadata"))
+        #expect(values.contains("melix.discovery.info.v1"))
+        #expect(values.contains("runtime_settings"))
+        #expect(values.contains("/api/config-metadata"))
+        #expect(values.contains("mlx-community/Qwen3.5-9B-MLX-4bit"))
+        #expect(values.contains("qwen35_9b_mlx_4bit"))
+        #expect(values.contains("/repo/packages/protocol/schema"))
+        #expect(values.contains("max_concurrent_jobs"))
+        #expect(values.contains("MELIX_MAX_CONCURRENT_JOBS"))
+    }
+
+    @Test("settings tab refreshes runtime discovery and renders status states")
+    @MainActor
+    func settingsTabRefreshesRuntimeDiscoveryAndRendersStatusStates() async throws {
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
+            snapshot: Melix_Controlplane_V1_ServerSnapshot(),
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-discovery-status",
+            features: [],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
+            lastError: nil,
+            recentEvents: []
+        )
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureOutput(RuntimeDiscoveryStateTests.infoJSON, for: .info(.init(json: true)))
+        await runner.configureOutput(RuntimeDiscoveryStateTests.capabilitiesJSON, for: .capabilities(.init(json: true)))
+        await runner.configureOutput(RuntimeDiscoveryStateTests.instructionsJSON, for: .instructions(.init(json: true)))
+        await runner.configureOutput(RuntimeDiscoveryStateTests.schemaJSON, for: .schema(.init(json: true)))
+        await runner.configureOutput(RuntimeDiscoveryStateTests.configMetadataJSON, for: .configMetadata(.init(json: true)))
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+
+        let refreshView = hostView(DesktopSettingsTabView(foundation: foundation, viewModel: viewModel))
+        #expect(DesktopSettingsTabView(foundation: foundation, viewModel: viewModel).accessibilitySummary.contains("Discovery metadata unavailable."))
+        let refreshButton = try #require(renderedButtons(in: refreshView).first { $0.title == "Refresh Discovery" })
+        refreshButton.performClick(nil)
+        try await waitForDesktopFoundationCondition("discovery refresh completes") {
+            viewModel.runtimeDiscoveryOperationMessage == "Runtime discovery refreshed."
+        }
+        let refreshedTab = DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
+        _ = hostView(refreshedTab)
+        #expect(refreshedTab.accessibilitySummary.contains("Runtime discovery refreshed."))
+        #expect(refreshedTab.accessibilitySummary.contains("melix.discovery.config_metadata.v1"))
+
+        let errorViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        await errorViewModel.refreshRuntimeDiscovery()
+        let errorTab = DesktopSettingsTabView(foundation: foundation, viewModel: errorViewModel)
+        _ = hostView(errorTab)
+        #expect(errorTab.accessibilitySummary.contains("Discovery CLI runner is unavailable."))
+
+        let settingsViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        settingsViewModel.applyRuntimeSettings(
+            RuntimeSettingsSnapshotState(
+                schemaVersion: "melix.runtime_settings.effective.v1",
+                rows: [
+                    RuntimeSettingRowState(
+                        key: "max_concurrent_jobs",
+                        currentValueText: "4",
+                        source: "default",
+                        sourceDetail: "builtin"
+                    ),
+                ],
+                sources: [],
+                metrics: []
+            )
+        )
+        settingsViewModel.applyRuntimeDiscovery(viewModel.runtimeDiscoverySnapshot)
+        let settingsTab = DesktopSettingsTabView(foundation: foundation, viewModel: settingsViewModel)
+        _ = hostView(settingsTab)
+        #expect(settingsTab.accessibilitySummary.contains("Runtime Settings"))
+        #expect(settingsTab.accessibilitySummary.contains("Discovery Inspector"))
+        #expect(settingsTab.accessibilitySummary.contains("melix.discovery.info.v1"))
+    }
+
     @Test("settings tab normalizes tooling state labels across model states and config paths")
     @MainActor
     func settingsTabNormalizesToolingStateLabelsAcrossModelStatesAndConfigPaths() async throws {

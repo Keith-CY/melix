@@ -1917,6 +1917,10 @@ public final class RuntimeViewModel {
     public private(set) var runtimeSettingsOperationMessage = ""
     public private(set) var runtimeSettingsOperationErrorMessage = ""
     public private(set) var runtimeSettingsValidationResult: RuntimeSettingsValidationResultState?
+    public private(set) var runtimeDiscoverySnapshot = RuntimeDiscoverySnapshotState.empty
+    public private(set) var runtimeDiscoveryOperationInProgress = false
+    public private(set) var runtimeDiscoveryOperationMessage = ""
+    public private(set) var runtimeDiscoveryOperationErrorMessage = ""
     public private(set) var batchRunModelListText = ""
     public private(set) var batchRunConfigText = ""
     public private(set) var batchRunReports: [RuntimeBatchRunReportState] = []
@@ -1955,6 +1959,12 @@ public final class RuntimeViewModel {
     }
     public var runtimeSettingsCanValidate: Bool {
         runtimeSettingsOperationInProgress == false
+    }
+    public var runtimeDiscoveryPayloads: [RuntimeDiscoveryPayloadState] {
+        runtimeDiscoverySnapshot.payloads
+    }
+    public var runtimeDiscoveryRefreshInProgress: Bool {
+        runtimeDiscoveryOperationInProgress
     }
     public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
     public private(set) var models: [RuntimeModelRow] = [] {
@@ -3807,6 +3817,11 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    public func applyRuntimeDiscovery(_ snapshot: RuntimeDiscoverySnapshotState) {
+        runtimeDiscoverySnapshot = snapshot
+        notifyStateChanged()
+    }
+
     public func updateRuntimeSettingDraft(key: String, value: String) {
         runtimeSettingKeyDraft = key
         runtimeSettingValueDraft = value
@@ -3888,6 +3903,32 @@ public final class RuntimeViewModel {
             notifyStateChanged()
         } catch {
             failRuntimeSettingsOperation(error)
+        }
+    }
+
+    public func refreshRuntimeDiscovery() async {
+        guard let commandWorkflowRunner else {
+            failRuntimeDiscoveryOperation("Discovery CLI runner is unavailable.")
+            return
+        }
+
+        beginRuntimeDiscoveryOperation()
+        do {
+            let entries: [(RuntimeDiscoveryEndpoint, String)] = [
+                (.info, try await commandWorkflowRunner.run(.info(.init(json: true)))),
+                (.capabilities, try await commandWorkflowRunner.run(.capabilities(.init(json: true)))),
+                (.instructions, try await commandWorkflowRunner.run(.instructions(.init(json: true)))),
+                (.schema, try await commandWorkflowRunner.run(.schema(.init(json: true)))),
+                (.configMetadata, try await commandWorkflowRunner.run(.configMetadata(.init(json: true)))),
+            ]
+            runtimeDiscoverySnapshot = try RuntimeDiscoveryPayloadDecoder.decodeSnapshot(entries)
+            runtimeDiscoveryOperationInProgress = false
+            runtimeDiscoveryOperationMessage = "Runtime discovery refreshed."
+            runtimeDiscoveryOperationErrorMessage = ""
+            clearCLIWorkflowFailure()
+            notifyStateChanged()
+        } catch {
+            failRuntimeDiscoveryOperation(error)
         }
     }
 
@@ -11823,6 +11864,26 @@ public final class RuntimeViewModel {
         runtimeSettingsOperationInProgress = false
         runtimeSettingsOperationMessage = ""
         runtimeSettingsOperationErrorMessage = message
+        recordLocalError(message)
+        notifyStateChanged()
+    }
+
+    private func beginRuntimeDiscoveryOperation() {
+        runtimeDiscoveryOperationInProgress = true
+        runtimeDiscoveryOperationMessage = ""
+        runtimeDiscoveryOperationErrorMessage = ""
+        notifyStateChanged()
+    }
+
+    private func failRuntimeDiscoveryOperation(_ error: Error) {
+        recordCLIWorkflowErrorIfNeeded(error)
+        failRuntimeDiscoveryOperation(workflowErrorMessage(error))
+    }
+
+    private func failRuntimeDiscoveryOperation(_ message: String) {
+        runtimeDiscoveryOperationInProgress = false
+        runtimeDiscoveryOperationMessage = ""
+        runtimeDiscoveryOperationErrorMessage = message
         recordLocalError(message)
         notifyStateChanged()
     }
