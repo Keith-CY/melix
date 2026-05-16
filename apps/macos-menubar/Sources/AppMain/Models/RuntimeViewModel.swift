@@ -1903,11 +1903,13 @@ public final class RuntimeViewModel {
     public private(set) var runtimeJobDetailsByID: [String: RuntimeJobDetailState] = [:]
     public private(set) var runtimeJobLogSnapshotsByID: [String: RuntimeJobLogSnapshotState] = [:]
     public private(set) var runtimeJobArtifactSnapshotsByID: [String: RuntimeJobArtifactSnapshotState] = [:]
+    public private(set) var runtimeJobCancelResultsByID: [String: RuntimeJobCancelResultState] = [:]
     public private(set) var selectedRuntimeJobID = ""
     public private(set) var runtimeJobsRefreshInProgress = false
     public private(set) var selectedRuntimeJobDetailRefreshInProgress = false
     public private(set) var selectedRuntimeJobLogsRefreshInProgress = false
     public private(set) var selectedRuntimeJobArtifactsRefreshInProgress = false
+    public private(set) var selectedRuntimeJobCancelInProgress = false
     public let runtimeJobsEmptyStateTitle = "No Jobs Yet"
     public let runtimeJobsEmptyStateDetail = "Run a benchmark, evaluation, training, or synthetic workflow to populate Jobs."
     public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
@@ -3447,6 +3449,62 @@ public final class RuntimeViewModel {
         runtimeJobArtifactSnapshotsByID[selectedRuntimeJobID]
     }
 
+    public var selectedRuntimeJobCancelResult: RuntimeJobCancelResultState? {
+        runtimeJobCancelResultsByID[selectedRuntimeJobID]
+    }
+
+    public var selectedRuntimeJobCancellationState: RuntimeJobCancellationState {
+        if let detail = selectedRuntimeJobDetail {
+            return detail.cancellation
+        }
+        if let job = selectedRuntimeJob {
+            return RuntimeJobCancellationState(
+                cancelable: job.cancelable,
+                requested: job.cancellationRequested
+            )
+        }
+        return RuntimeJobCancellationState()
+    }
+
+    public var selectedRuntimeJobCanRequestCancellation: Bool {
+        guard selectedRuntimeJobID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
+              selectedRuntimeJobCancelInProgress == false,
+              selectedRuntimeJobCancelResult == nil
+        else {
+            return false
+        }
+        let cancellation = selectedRuntimeJobCancellationState
+        return cancellation.cancelable && cancellation.requested == false
+    }
+
+    public var selectedRuntimeJobCancellationStatusText: String {
+        if selectedRuntimeJobCancelInProgress {
+            return "Requesting cancellation"
+        }
+        if let result = selectedRuntimeJobCancelResult {
+            if result.cancelRequested {
+                return "Cancellation requested"
+            }
+            return result.reason.isEmpty
+                ? "Cancellation not requested"
+                : "Cancellation not requested: \(result.reason)"
+        }
+        guard selectedRuntimeJobID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            return "Select a job to request cancellation"
+        }
+        let cancellation = selectedRuntimeJobCancellationState
+        if cancellation.requested {
+            return "Cancellation already requested"
+        }
+        if cancellation.cancelable {
+            return "Active job can receive a durable cancel request"
+        }
+        if selectedRuntimeJob?.isTerminal == true || selectedRuntimeJobDetail?.summary.isTerminal == true {
+            return "Terminal job cannot be canceled"
+        }
+        return "Job is not cancelable"
+    }
+
     public func applyRuntimeJobs(_ jobs: [RuntimeJobSummaryState]) {
         runtimeJobs = jobs
         if runtimeJobs.contains(where: { $0.id == selectedRuntimeJobID }) == false {
@@ -3561,6 +3619,37 @@ public final class RuntimeViewModel {
             notifyStateChanged()
         } catch {
             selectedRuntimeJobArtifactsRefreshInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            recordLocalError(String(describing: error))
+            notifyStateChanged()
+        }
+    }
+
+    public func requestSelectedRuntimeJobCancellation() async {
+        guard let jobID = runtimeJobIDForSelectedOperation("requesting job cancellation") else {
+            return
+        }
+        guard selectedRuntimeJobCanRequestCancellation else {
+            recordLocalError("Selected job is terminal or already has a cancel request.")
+            notifyStateChanged()
+            return
+        }
+        guard let commandWorkflowRunner else {
+            recordLocalError("Jobs CLI runner is unavailable.")
+            notifyStateChanged()
+            return
+        }
+
+        selectedRuntimeJobCancelInProgress = true
+        notifyStateChanged()
+        do {
+            let result = try await commandWorkflowRunner.cancelRuntimeJob(jobID: jobID)
+            selectedRuntimeJobCancelInProgress = false
+            clearCLIWorkflowFailure()
+            runtimeJobCancelResultsByID[result.jobID.isEmpty ? jobID : result.jobID] = result
+            notifyStateChanged()
+        } catch {
+            selectedRuntimeJobCancelInProgress = false
             recordCLIWorkflowErrorIfNeeded(error)
             recordLocalError(String(describing: error))
             notifyStateChanged()

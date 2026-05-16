@@ -632,4 +632,248 @@ struct RuntimeJobsStateTests {
         #expect(viewModel.lastCLIWorkflowFailure?.commandID == "jobs.list")
         #expect(viewModel.lastCLIWorkflowFailure?.failureKind == .invalidJSON)
     }
+
+    @Test("runtime jobs cancel result decodes active and terminal receipts")
+    func runtimeJobsCancelResultDecodesActiveAndTerminalReceipts() throws {
+        let active = try RuntimeJobsPayloadDecoder.decodeCancelResult(Data("""
+        {
+          "schema_version": "melix.job_cancel_result.v1",
+          "job_id": "bench-cli-1",
+          "cancel_requested": true,
+          "status": "running",
+          "phase": "sampling",
+          "request_path": "/tmp/melix/jobs/bench-cli-1/cancel-request.json",
+          "request": {
+            "requested_at_unix_ms": 1778913000000,
+            "process_signal": {
+              "pid": null,
+              "sent": false,
+              "reason": "direct_process_signal_disabled"
+            }
+          }
+        }
+        """.utf8))
+        let terminal = try RuntimeJobsPayloadDecoder.decodeCancelResult(Data("""
+        {
+          "schema_version": "melix.job_cancel_result.v1",
+          "job_id": "bench-cli-2",
+          "cancel_requested": false,
+          "status": "completed",
+          "phase": "completed",
+          "reason": "job_terminal_or_not_active",
+          "request_path": "/tmp/melix/jobs/bench-cli-2/cancel-request.json"
+        }
+        """.utf8))
+        let legacyProcessSignal = try RuntimeJobsPayloadDecoder.decodeCancelResult(Data("""
+        {
+          "schema_version": "melix.job_cancel_result.v1",
+          "job_id": "bench-cli-3",
+          "cancel_requested": true,
+          "status": "running",
+          "phase": "sampling",
+          "request_path": "/tmp/melix/jobs/bench-cli-3/cancel-request.json",
+          "request": {
+            "requested_at_unix_ms": 1778913000001,
+            "process_signal": "disabled"
+          }
+        }
+        """.utf8))
+
+        #expect(active.cancelRequested)
+        #expect(active.jobID == "bench-cli-1")
+        #expect(active.requestPath.hasSuffix("cancel-request.json"))
+        #expect(active.requestedAtUnixMS == 1_778_913_000_000)
+        #expect(active.processSignal == "direct_process_signal_disabled")
+        #expect(terminal.cancelRequested == false)
+        #expect(terminal.reason == "job_terminal_or_not_active")
+        #expect(terminal.isTerminalNotActive)
+        #expect(legacyProcessSignal.processSignal == "disabled")
+    }
+
+    @Test("runtime view model requests selected active job cancellation through CLI workflow runner")
+    @MainActor
+    func runtimeViewModelRequestsSelectedActiveJobCancellationThroughCLIWorkflowRunner() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureOutput(
+            """
+            {
+              "schema_version": "melix.job_cancel_result.v1",
+              "job_id": "bench-cli-1",
+              "cancel_requested": true,
+              "status": "running",
+              "phase": "sampling",
+              "request_path": "/tmp/melix/jobs/bench-cli-1/cancel-request.json",
+              "request": {
+                "requested_at_unix_ms": 1778913000000,
+                "process_signal": {
+                  "pid": null,
+                  "sent": false,
+                  "reason": "direct_process_signal_disabled"
+                }
+              }
+            }
+            """,
+            for: .jobsCancel(.init(jobID: "bench-cli-1", json: true))
+        )
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        let jobs = try RuntimeJobsPayloadDecoder.decodeList(Data("""
+        [
+          {
+            "job_id": "bench-cli-1",
+            "run_kind": "benchmark",
+            "status": "running",
+            "phase": "sampling",
+            "model_id": "mlx-community/Qwen3-8B",
+            "task_kind": "text-generation",
+            "cancelable": true,
+            "cancellation_requested": false
+          }
+        ]
+        """.utf8))
+        viewModel.applyRuntimeJobs(jobs)
+
+        #expect(viewModel.selectedRuntimeJobCanRequestCancellation)
+        await viewModel.requestSelectedRuntimeJobCancellation()
+
+        #expect(viewModel.selectedRuntimeJobCancelInProgress == false)
+        #expect(viewModel.selectedRuntimeJobCancelResult?.cancelRequested == true)
+        #expect(viewModel.selectedRuntimeJobCancellationStatusText == "Cancellation requested")
+        #expect(viewModel.selectedRuntimeJobCanRequestCancellation == false)
+        #expect(await runner.snapshotRecordedCommands() == [.jobsCancel(.init(jobID: "bench-cli-1", json: true))])
+    }
+
+    @Test("runtime view model avoids CLI cancellation for terminal jobs")
+    @MainActor
+    func runtimeViewModelAvoidsCLICancellationForTerminalJobs() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        let jobs = try RuntimeJobsPayloadDecoder.decodeList(Data("""
+        [
+          {
+            "job_id": "bench-cli-2",
+            "run_kind": "benchmark",
+            "status": "completed",
+            "phase": "completed",
+            "model_id": "mlx-community/Qwen3-8B",
+            "task_kind": "text-generation",
+            "cancelable": false,
+            "cancellation_requested": false
+          }
+        ]
+        """.utf8))
+        viewModel.applyRuntimeJobs(jobs)
+
+        #expect(viewModel.selectedRuntimeJobCanRequestCancellation == false)
+        #expect(viewModel.selectedRuntimeJobCancellationStatusText == "Terminal job cannot be canceled")
+        await viewModel.requestSelectedRuntimeJobCancellation()
+
+        #expect(await runner.snapshotRecordedCommands().isEmpty)
+        #expect(viewModel.lastError == "Selected job is terminal or already has a cancel request.")
+    }
+
+    @Test("runtime view model renders stale terminal cancel receipts")
+    @MainActor
+    func runtimeViewModelRendersStaleTerminalCancelReceipts() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureOutput(
+            """
+            {
+              "schema_version": "melix.job_cancel_result.v1",
+              "job_id": "bench-cli-1",
+              "cancel_requested": false,
+              "status": "completed",
+              "phase": "completed",
+              "reason": "job_terminal_or_not_active",
+              "request_path": "/tmp/melix/jobs/bench-cli-1/cancel-request.json"
+            }
+            """,
+            for: .jobsCancel(.init(jobID: "bench-cli-1", json: true))
+        )
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        let jobs = try RuntimeJobsPayloadDecoder.decodeList(Data("""
+        [
+          {
+            "job_id": "bench-cli-1",
+            "run_kind": "benchmark",
+            "status": "running",
+            "phase": "sampling",
+            "model_id": "mlx-community/Qwen3-8B",
+            "task_kind": "text-generation",
+            "cancelable": true,
+            "cancellation_requested": false
+          }
+        ]
+        """.utf8))
+        viewModel.applyRuntimeJobs(jobs)
+
+        await viewModel.requestSelectedRuntimeJobCancellation()
+
+        #expect(viewModel.selectedRuntimeJobCancelResult?.cancelRequested == false)
+        #expect(viewModel.selectedRuntimeJobCancelResult?.reason == "job_terminal_or_not_active")
+        #expect(viewModel.selectedRuntimeJobCancellationStatusText == "Cancellation not requested: job_terminal_or_not_active")
+        #expect(viewModel.selectedRuntimeJobCanRequestCancellation == false)
+    }
+
+    @Test("runtime view model surfaces cancel guard and CLI failure states")
+    @MainActor
+    func runtimeViewModelSurfacesCancelGuardAndCLIFailureStates() async throws {
+        let noSelection = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        #expect(noSelection.selectedRuntimeJobCancellationStatusText == "Select a job to request cancellation")
+        await noSelection.requestSelectedRuntimeJobCancellation()
+        #expect(noSelection.lastError == "Select a job before requesting job cancellation.")
+
+        let requested = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        let requestedJobs = try RuntimeJobsPayloadDecoder.decodeList(Data("""
+        [
+          {
+            "job_id": "bench-requested",
+            "run_kind": "benchmark",
+            "status": "running",
+            "phase": "sampling",
+            "model_id": "mlx-community/Qwen3-8B",
+            "task_kind": "text-generation",
+            "cancelable": true,
+            "cancellation_requested": true
+          }
+        ]
+        """.utf8))
+        requested.applyRuntimeJobs(requestedJobs)
+        #expect(requested.selectedRuntimeJobCanRequestCancellation == false)
+        #expect(requested.selectedRuntimeJobCancellationStatusText == "Cancellation already requested")
+        await requested.requestSelectedRuntimeJobCancellation()
+        #expect(requested.lastError == "Selected job is terminal or already has a cancel request.")
+
+        let missingRunner = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        let activeJobs = try RuntimeJobsPayloadDecoder.decodeList(Data("""
+        [
+          {
+            "job_id": "bench-active",
+            "run_kind": "benchmark",
+            "status": "running",
+            "phase": "sampling",
+            "model_id": "mlx-community/Qwen3-8B",
+            "task_kind": "text-generation",
+            "cancelable": true,
+            "cancellation_requested": false
+          }
+        ]
+        """.utf8))
+        missingRunner.applyRuntimeJobs(activeJobs)
+        #expect(missingRunner.selectedRuntimeJobCanRequestCancellation)
+        await missingRunner.requestSelectedRuntimeJobCancellation()
+        #expect(missingRunner.lastError == "Jobs CLI runner is unavailable.")
+
+        let failingRunner = RecordingCLIWorkflowRunner()
+        await failingRunner.configureHandler { command in
+            .failure(.processFailed(commandID: command.workflowCommandID, surface: .subprocess, exitCode: 2, stderr: "failed"))
+        }
+        let failing = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: failingRunner)
+        failing.applyRuntimeJobs(activeJobs)
+
+        await failing.requestSelectedRuntimeJobCancellation()
+
+        #expect(failing.selectedRuntimeJobCancelInProgress == false)
+        #expect(failing.lastCLIWorkflowFailure?.commandID == "jobs.cancel")
+        #expect(failing.selectedRuntimeJobCancelResult == nil)
+    }
 }

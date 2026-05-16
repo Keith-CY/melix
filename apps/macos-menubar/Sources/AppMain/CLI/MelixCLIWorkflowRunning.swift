@@ -243,6 +243,12 @@ extension MelixCLIWorkflowRunning {
         let output = try await run(command)
         return try decodeRuntimeJobArtifactSnapshot(output: output, command: command, surface: surface)
     }
+
+    func cancelRuntimeJob(jobID: String) async throws -> RuntimeJobCancelResultState {
+        let command = MelixCLICommand.jobsCancel(.init(jobID: jobID, json: true))
+        let output = try await run(command)
+        return try decodeRuntimeJobCancelResult(output: output, command: command, surface: surface)
+    }
 }
 
 func decodeMelixCLIJSON<Value: Decodable>(
@@ -339,6 +345,16 @@ private func decodeRuntimeJobArtifactSnapshot(
 ) throws -> RuntimeJobArtifactSnapshotState {
     try decodeRuntimeJobPayload(output: output, command: command, surface: surface) {
         try RuntimeJobsPayloadDecoder.decodeArtifactSnapshot($0)
+    }
+}
+
+private func decodeRuntimeJobCancelResult(
+    output: String,
+    command: MelixCLICommand,
+    surface: MelixCLIWorkflowSurface
+) throws -> RuntimeJobCancelResultState {
+    try decodeRuntimeJobPayload(output: output, command: command, surface: surface) {
+        try RuntimeJobsPayloadDecoder.decodeCancelResult($0)
     }
 }
 

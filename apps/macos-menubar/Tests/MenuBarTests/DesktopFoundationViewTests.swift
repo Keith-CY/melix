@@ -1978,6 +1978,109 @@ struct DesktopFoundationViewTests {
         #expect(values.contains("/tmp/melix/jobs/bench-cli-1/manifest.json"))
     }
 
+    @Test("jobs tool section renders cancel request states for active and terminal jobs")
+    @MainActor
+    func jobsToolSectionRendersCancelRequestStatesForActiveAndTerminalJobs() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.selectToolSection(.jobs)
+        let jobs = try RuntimeJobsPayloadDecoder.decodeList(Data("""
+        [
+          {
+            "job_id": "bench-active",
+            "run_kind": "benchmark",
+            "status": "running",
+            "phase": "sampling",
+            "model_id": "mlx-community/Qwen3-8B",
+            "task_kind": "text-generation",
+            "cancelable": true,
+            "cancellation_requested": false
+          },
+          {
+            "job_id": "bench-terminal",
+            "run_kind": "benchmark",
+            "status": "completed",
+            "phase": "completed",
+            "model_id": "mlx-community/Qwen3-8B",
+            "task_kind": "text-generation",
+            "cancelable": false,
+            "cancellation_requested": false
+          }
+        ]
+        """.utf8))
+        viewModel.applyRuntimeJobs(jobs)
+
+        let activeView = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
+        let activeButtons = renderedButtons(in: activeView)
+        let activeCancelButton = try #require(activeButtons.first { $0.title == "Request Cancel" })
+        #expect(activeCancelButton.isEnabled)
+        #expect(renderedTextValues(in: activeView).contains("Active job can receive a durable cancel request"))
+
+        viewModel.selectRuntimeJob(id: "bench-terminal")
+        let terminalView = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
+        let terminalButtons = renderedButtons(in: terminalView)
+        let terminalCancelButton = try #require(terminalButtons.first { $0.title == "Request Cancel" })
+        #expect(terminalCancelButton.isEnabled == false)
+        #expect(renderedTextValues(in: terminalView).contains("Terminal job cannot be canceled"))
+    }
+
+    @Test("jobs tool section cancel button dispatches and renders cancel result")
+    @MainActor
+    func jobsToolSectionCancelButtonDispatchesAndRendersCancelResult() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureOutput(
+            """
+            {
+              "schema_version": "melix.job_cancel_result.v1",
+              "job_id": "bench-active",
+              "cancel_requested": true,
+              "status": "running",
+              "phase": "sampling",
+              "request_path": "/tmp/melix/jobs/bench-active/cancel-request.json",
+              "request": {
+                "requested_at_unix_ms": 1778913000000,
+                "process_signal": {
+                  "pid": null,
+                  "sent": false,
+                  "reason": "direct_process_signal_disabled"
+                }
+              }
+            }
+            """,
+            for: .jobsCancel(.init(jobID: "bench-active", json: true))
+        )
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.selectToolSection(.jobs)
+        let jobs = try RuntimeJobsPayloadDecoder.decodeList(Data("""
+        [
+          {
+            "job_id": "bench-active",
+            "run_kind": "benchmark",
+            "status": "running",
+            "phase": "sampling",
+            "model_id": "mlx-community/Qwen3-8B",
+            "task_kind": "text-generation",
+            "cancelable": true,
+            "cancellation_requested": false
+          }
+        ]
+        """.utf8))
+        viewModel.applyRuntimeJobs(jobs)
+
+        let view = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
+        let cancelButton = try #require(renderedButtons(in: view).first { $0.title == "Request Cancel" })
+        cancelButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected selected job cancel result") {
+            viewModel.selectedRuntimeJobCancelResult?.cancelRequested == true
+        }
+
+        let updatedView = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
+        let values = renderedTextValues(in: updatedView)
+        #expect(values.contains("Cancellation requested"))
+        #expect(values.contains("/tmp/melix/jobs/bench-active/cancel-request.json"))
+        #expect(await runner.snapshotRecordedCommands() == [.jobsCancel(.init(jobID: "bench-active", json: true))])
+    }
+
     @Test("training defaults to preset-first primary fields with advanced folded")
     @MainActor
     func trainingDefaultsToPresetFirstPrimaryFieldsWithAdvancedFolded() async throws {

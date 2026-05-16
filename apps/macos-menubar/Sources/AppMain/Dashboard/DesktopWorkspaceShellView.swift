@@ -2300,6 +2300,13 @@ struct DesktopJobsToolSectionView: View {
             ) {
                 Task { await viewModel.refreshSelectedRuntimeJobArtifacts() }
             }
+
+            DesktopJobsOperationButton(
+                title: "Request Cancel",
+                isEnabled: viewModel.selectedRuntimeJobCanRequestCancellation
+            ) {
+                Task { await viewModel.requestSelectedRuntimeJobCancellation() }
+            }
         }
     }
 
@@ -2387,6 +2394,7 @@ struct DesktopJobsToolSectionView: View {
                         ]
                     )
 
+                    cancelRequestBlock
                     fetchedLogBlock
                     fetchedArtifactsBlock
 
@@ -2421,11 +2429,25 @@ struct DesktopJobsToolSectionView: View {
                         DesktopJobSummaryField(title: "Artifacts", value: job.artifactRoot)
                     }
 
+                    cancelRequestBlock
                     fetchedLogBlock
                     fetchedArtifactsBlock
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var cancelRequestBlock: some View {
+        DesktopJobDetailBlock(
+            title: "Cancel Request",
+            values: [
+                viewModel.selectedRuntimeJobCancellationStatusText,
+                viewModel.selectedRuntimeJobCancelResult?.requestPath
+                    ?? viewModel.selectedRuntimeJobDetail?.cancellation.requestPath
+                    ?? "",
+            ]
+        )
     }
 
     @ViewBuilder

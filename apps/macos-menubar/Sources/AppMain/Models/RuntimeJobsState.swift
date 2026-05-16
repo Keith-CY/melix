@@ -16,6 +16,10 @@ public enum RuntimeJobsPayloadDecoder {
     public static func decodeArtifactSnapshot(_ data: Data) throws -> RuntimeJobArtifactSnapshotState {
         try JSONDecoder().decode(RuntimeJobArtifactSnapshotState.self, from: data)
     }
+
+    public static func decodeCancelResult(_ data: Data) throws -> RuntimeJobCancelResultState {
+        try JSONDecoder().decode(RuntimeJobCancelResultState.self, from: data)
+    }
 }
 
 public struct RuntimeJobSummaryState: Decodable, Equatable, Identifiable, Sendable {
@@ -360,6 +364,47 @@ public struct RuntimeJobArtifactSnapshotState: Decodable, Equatable, Sendable {
     }
 }
 
+public struct RuntimeJobCancelResultState: Decodable, Equatable, Sendable {
+    public let schemaVersion: String
+    public let jobID: String
+    public let cancelRequested: Bool
+    public let status: String
+    public let phase: String
+    public let reason: String
+    public let requestPath: String
+    public let requestedAtUnixMS: Int64
+    public let processSignal: String
+
+    public var isTerminalNotActive: Bool {
+        reason == "job_terminal_or_not_active"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = container.decodeFlexibleString(forKey: .schemaVersion)
+        jobID = container.decodeFlexibleString(forKey: .jobID)
+        cancelRequested = container.decodeFlexibleBool(forKey: .cancelRequested)
+        status = container.decodeFlexibleString(forKey: .status)
+        phase = container.decodeFlexibleString(forKey: .phase)
+        reason = container.decodeFlexibleString(forKey: .reason)
+        requestPath = container.decodeFlexibleString(forKey: .requestPath)
+        let request = try? container.decode(RuntimeJobCancelRequestReceiptState.self, forKey: .request)
+        requestedAtUnixMS = request?.requestedAtUnixMS ?? 0
+        processSignal = request?.processSignal ?? ""
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case jobID = "job_id"
+        case cancelRequested = "cancel_requested"
+        case status
+        case phase
+        case reason
+        case requestPath = "request_path"
+        case request
+    }
+}
+
 public struct RuntimeJobCancellationState: Decodable, Equatable, Sendable {
     public let cancelable: Bool
     public let requested: Bool
@@ -382,6 +427,39 @@ public struct RuntimeJobCancellationState: Decodable, Equatable, Sendable {
         case cancelable
         case requested
         case requestPath = "request_path"
+    }
+}
+
+private struct RuntimeJobCancelRequestReceiptState: Decodable {
+    let requestedAtUnixMS: Int64
+    let processSignal: String
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        requestedAtUnixMS = container.decodeFlexibleInt64(forKey: .requestedAtUnixMS)
+        if let signal = try? container.decode(RuntimeJobProcessSignalState.self, forKey: .processSignal) {
+            processSignal = signal.reason
+        } else {
+            processSignal = container.decodeFlexibleString(forKey: .processSignal)
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case requestedAtUnixMS = "requested_at_unix_ms"
+        case processSignal = "process_signal"
+    }
+}
+
+private struct RuntimeJobProcessSignalState: Decodable {
+    let reason: String
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        reason = container.decodeFlexibleString(forKey: .reason)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case reason
     }
 }
 
