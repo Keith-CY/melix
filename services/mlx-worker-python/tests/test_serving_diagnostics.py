@@ -538,7 +538,7 @@ def test_serving_diagnostics_events_jsonl_streams_default_attribute_rows(
     )
     event = ServingDiagnosticsEvent(
         request_id='req-"quoted"',
-        phase="decode",
+        phase="decode-音声",
         event_index=7,
         status="completed",
         duration_ms=0.001,
@@ -563,7 +563,7 @@ def test_serving_diagnostics_events_jsonl_streams_default_attribute_rows(
     line = paths["events"].read_text(encoding="utf-8")
     assert line == (
         '{"attributes":{},"duration_ms":0.001,"event_index":7,'
-        '"phase":"decode","request_id":"req-\\"quoted\\"",'
+        '"phase":"decode-\\u97f3\\u58f0","request_id":"req-\\"quoted\\"",'
         '"schema_version":"melix.serving_diagnostics.event.v1",'
         '"status":"completed"}\n'
     )

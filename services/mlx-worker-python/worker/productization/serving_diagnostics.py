@@ -19,7 +19,7 @@ SERVING_DIAGNOSTICS_COMPARISON_SCHEMA_VERSION = "melix.serving_diagnostics.compa
 _EMPTY_EVENT_ATTRIBUTES: Mapping[str, object] = MappingProxyType({})
 _JSON_COMPACT_SEPARATORS = (",", ":")
 _JSONL_ENCODER = json.JSONEncoder(sort_keys=True, separators=_JSON_COMPACT_SEPARATORS)
-_JSON_STRING_ENCODER = json.JSONEncoder(separators=_JSON_COMPACT_SEPARATORS).encode
+_JSON_STRING_ENCODER = json.encoder.encode_basestring_ascii
 _SET_FROZEN_ATTR = object.__setattr__
 
 
