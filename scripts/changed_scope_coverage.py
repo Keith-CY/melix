@@ -47,27 +47,41 @@ def _parse_hunk_new_start(line: str) -> int | None:
 
 def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
     changed_by_path: dict[str, set[int]] = {}
-    current_changed_lines: set[int] | None = None
+    add_changed_line = None
     new_line: int | None = None
     for line in diff_text.split("\n"):
         first_char = line[0] if line else ""
         if first_char == "d" and line.startswith(_DIFF_HEADER_PREFIX):
             separator_index = line.find(_DIFF_HEADER_SEPARATOR, len(_DIFF_HEADER_PREFIX))
-            current_changed_lines = None
+            add_changed_line = None
             if separator_index >= 0:
                 current_path = line[separator_index + len(_DIFF_HEADER_SEPARATOR) :]
-                current_changed_lines = changed_by_path.setdefault(current_path, set())
+                add_changed_line = changed_by_path.setdefault(current_path, set()).add
             new_line = None
             continue
         if first_char == "@" and line.startswith("@@"):
-            new_line = _parse_hunk_new_start(line)
+            new_range_index = line.find(" +")
+            if new_range_index < 0:
+                new_line = None
+                continue
+            digit_index = new_range_index + 2
+            end_index = digit_index
+            line_length = len(line)
+            value = 0
+            while end_index < line_length:
+                digit = ord(line[end_index]) - 48
+                if digit < 0 or digit > 9:
+                    break
+                value = value * 10 + digit
+                end_index += 1
+            new_line = value if end_index != digit_index else None
             continue
-        if current_changed_lines is None or new_line is None:
+        if add_changed_line is None or new_line is None:
             continue
         if first_char == "\\" and line.startswith("\\ "):
             continue
         if first_char == "+":
-            current_changed_lines.add(new_line)
+            add_changed_line(new_line)
             new_line += 1
         elif first_char == "-":
             continue
