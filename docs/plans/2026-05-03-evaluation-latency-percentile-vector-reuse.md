@@ -27,9 +27,10 @@ The probe must be base-compatible so `origin/main` still runs successfully durin
 ## Success Metrics
 
 - `_latency_stats()` performs one sort per invocation instead of two.
+- A follow-up micro-slice may keep the same behavior and one-sort invariant while removing repeated class attribute lookups from the return-path by binding `_round_ms` and `_ordered_percentile` once per call.
 - Latency summary outputs (`mean`, `p50`, `p95`, `max`) remain unchanged.
 - Focused changed-scope coverage for touched executable files is at least 95%.
-- Local probe shows lower elapsed time and fewer sort calls versus `origin/main`.
+- The registered local probe must show stable or lower `elapsed_ms_mean` versus `origin/main`; `sorted_calls_mean` must remain `1.0`.
 
 ## Verification Commands
 
