@@ -2538,19 +2538,23 @@ class EvaluationCore:
     def _sample_probe_means(samples: Any, field_names: tuple[str, ...]) -> dict[str, float]:
         if not field_names:
             return {}
-        totals = [0.0] * len(field_names)
+        field_count = len(field_names)
+        totals = [0.0] * field_count
+        field_indexes = range(field_count)
+        get_field = getattr
+        to_float = float
         sample_count = 0
         for sample in samples:
             sample_count += 1
-            for index, field_name in enumerate(field_names):
-                value = getattr(sample, field_name, 0.0)
+            for index in field_indexes:
+                value = get_field(sample, field_names[index], 0.0)
                 if value:
-                    totals[index] += float(value)
+                    totals[index] += to_float(value)
         if sample_count == 0:
             return {field_name: 0.0 for field_name in field_names}
         return {
-            field_name: round(totals[index] / sample_count, 4)
-            for index, field_name in enumerate(field_names)
+            field_names[index]: round(totals[index] / sample_count, 4)
+            for index in field_indexes
         }
 
     @staticmethod
