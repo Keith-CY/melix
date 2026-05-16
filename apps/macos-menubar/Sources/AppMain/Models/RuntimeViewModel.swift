@@ -230,6 +230,8 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
     public let accelerationModeText: String
     public let accelerationProfileID: String
     public let toolParserFallbackText: String
+    public let requestedLoadTrustModeText: String
+    public let effectiveLoadTrustModeText: String
     public let ocrPromptProfileText: String
     public let ocrSamplingProfileText: String
     public let ocrTemperatureText: String
@@ -291,6 +293,8 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         accelerationModeText: String = "Unspecified",
         accelerationProfileID: String = "",
         toolParserFallbackText: String = "Off",
+        requestedLoadTrustModeText: String = "",
+        effectiveLoadTrustModeText: String = "",
         ocrPromptProfileText: String = "",
         ocrSamplingProfileText: String = "",
         ocrTemperatureText: String = "",
@@ -351,6 +355,8 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         self.accelerationModeText = accelerationModeText
         self.accelerationProfileID = accelerationProfileID
         self.toolParserFallbackText = toolParserFallbackText
+        self.requestedLoadTrustModeText = requestedLoadTrustModeText
+        self.effectiveLoadTrustModeText = effectiveLoadTrustModeText
         self.ocrPromptProfileText = ocrPromptProfileText
         self.ocrSamplingProfileText = ocrSamplingProfileText
         self.ocrTemperatureText = ocrTemperatureText
@@ -7597,6 +7603,12 @@ public final class RuntimeViewModel {
                 } ?? "Unspecified",
                 accelerationProfileID: snapshotModel?.settings.accelerationProfileID ?? "",
                 toolParserFallbackText: snapshotModel.map(runtimeToolParserFallbackText) ?? "Off",
+                requestedLoadTrustModeText: snapshotModel.map {
+                    runtimeModelLoadTrustModeText($0.loadTrust.requestedMode, ifPresentOn: $0)
+                } ?? "",
+                effectiveLoadTrustModeText: snapshotModel.map {
+                    runtimeModelLoadTrustModeText($0.loadTrust.effectiveMode, ifPresentOn: $0)
+                } ?? "",
                 ocrPromptProfileText: snapshotModel?.settings.ext["ocr_prompt_profile_id"] ?? "",
                 ocrSamplingProfileText: snapshotModel.map {
                     runtimeEffectiveOCRSamplingProfileText(
@@ -16098,6 +16110,27 @@ private func runtimeAccelerationModeText(_ mode: Melix_Controlplane_V1_Accelerat
         return "None"
     default:
         return "None"
+    }
+}
+
+private func runtimeModelLoadTrustModeText(
+    _ mode: Melix_Controlplane_V1_ModelLoadTrustMode,
+    ifPresentOn model: Melix_Controlplane_V1_ModelSummary
+) -> String {
+    guard model.hasLoadTrust else {
+        return ""
+    }
+    switch mode {
+    case .modelLoadTrustDefaultSafe:
+        return "Default Safe"
+    case .modelLoadTrustTrustRemoteCode:
+        return "Trust Remote Code"
+    case .modelLoadTrustNotApplicable:
+        return "Not Applicable"
+    case .unspecified:
+        return "Unspecified"
+    case .UNRECOGNIZED(let value):
+        return "Unrecognized \(value)"
     }
 }
 

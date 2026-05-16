@@ -1737,6 +1737,12 @@ func desktopModelInfoSummaryContent(
     detailLines.append("adaptive thinking: \(info.adaptiveThinkingText)")
     detailLines.append("acceleration: \(info.accelerationModeText) • \(info.accelerationProfileID.isEmpty ? "no-profile" : info.accelerationProfileID)")
     detailLines.append("parser fallback: \(info.toolParserFallbackText)")
+    if !info.requestedLoadTrustModeText.isEmpty {
+        detailLines.append("requested trust mode: \(info.requestedLoadTrustModeText)")
+    }
+    if !info.effectiveLoadTrustModeText.isEmpty {
+        detailLines.append("effective trust mode: \(info.effectiveLoadTrustModeText)")
+    }
     detailLines.append("pin on load: \(info.pinOnLoad ? "yes" : "no")")
     if info.ttlSeconds > 0 {
         detailLines.append("ttl seconds: \(info.ttlSeconds)")

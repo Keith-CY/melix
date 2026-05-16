@@ -4165,6 +4165,99 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedModelInfo?.generationConfigTemperatureText == "0.12")
     }
 
+    @Test("model detail renders requested and effective load trust modes")
+    @MainActor
+    func modelDetailRendersRequestedAndEffectiveLoadTrustModes() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-remote-code"
+        model.kind = "text"
+        model.state = .modelWarm
+        model.settings.alias = "Remote Code Model"
+        var loadTrust = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+        loadTrust.requestedMode = .modelLoadTrustTrustRemoteCode
+        loadTrust.effectiveMode = .modelLoadTrustDefaultSafe
+        model.loadTrust = loadTrust
+        snapshot.models = [model]
+
+        var info = Melix_Controlplane_V1_ModelInfo()
+        info.ok = true
+        info.modelKind = "text"
+        info.maxContext = 4096
+        info.supportedParsers = ["text"]
+        info.supportedModalities = ["text"]
+
+        await client.configureSnapshot(snapshot)
+        await client.configureModelInfo(info)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.inspectPrimaryModel()
+
+        let selectedInfo = try #require(viewModel.selectedModelInfo)
+        let content = desktopModelInfoSummaryContent(selectedInfo)
+        let view = hostView(DesktopModelInfoSummaryView(info: selectedInfo))
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(selectedInfo.requestedLoadTrustModeText == "Trust Remote Code")
+        #expect(selectedInfo.effectiveLoadTrustModeText == "Default Safe")
+        #expect(content.detailLines.contains("requested trust mode: Trust Remote Code"))
+        #expect(content.detailLines.contains("effective trust mode: Default Safe"))
+    }
+
+    @Test("model detail maps all load trust mode labels")
+    @MainActor
+    func modelDetailMapsAllLoadTrustModeLabels() async throws {
+        let unrecognized = try #require(Melix_Controlplane_V1_ModelLoadTrustMode(rawValue: 99))
+        let cases: [(String, Melix_Controlplane_V1_ModelLoadTrustMode?, String)] = [
+            ("absent", nil, ""),
+            ("default-safe", .modelLoadTrustDefaultSafe, "Default Safe"),
+            ("trust-remote-code", .modelLoadTrustTrustRemoteCode, "Trust Remote Code"),
+            ("not-applicable", .modelLoadTrustNotApplicable, "Not Applicable"),
+            ("unspecified", .unspecified, "Unspecified"),
+            ("unrecognized", unrecognized, "Unrecognized 99"),
+        ]
+
+        for (suffix, mode, expectedText) in cases {
+            let client = FakeControlPlaneXPCClient()
+            var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+            snapshot.serverState = .serverReady
+
+            let modelID = "melix-load-trust-\(suffix)"
+            var model = Melix_Controlplane_V1_ModelSummary()
+            model.modelID = modelID
+            model.kind = "text"
+            model.state = .modelWarm
+            if let mode {
+                var loadTrust = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+                loadTrust.requestedMode = mode
+                loadTrust.effectiveMode = mode
+                model.loadTrust = loadTrust
+            }
+            snapshot.models = [model]
+
+            var info = Melix_Controlplane_V1_ModelInfo()
+            info.ok = true
+            info.modelKind = "text"
+            info.maxContext = 4096
+            info.supportedParsers = ["text"]
+            info.supportedModalities = ["text"]
+
+            await client.configureSnapshot(snapshot)
+            await client.configureModelInfo(info)
+
+            let viewModel = RuntimeViewModel(client: client)
+            await viewModel.start()
+            await viewModel.fetchModelInfo(modelID: modelID)
+
+            #expect(viewModel.selectedModelInfo?.requestedLoadTrustModeText == expectedText)
+            #expect(viewModel.selectedModelInfo?.effectiveLoadTrustModeText == expectedText)
+        }
+    }
+
     @Test("model info summary view renders typed settings and merged defaults")
     @MainActor
     func modelInfoSummaryViewRendersTypedSettingsAndMergedDefaults() {
