@@ -33,3 +33,7 @@ This is a Python helper slice and is locally verifiable on Linux with the regist
 - Changed executable line coverage is at least 95%.
 - Local registered probe shows lower `elapsed_ms_mean` than the same worktree baseline.
 - Git diff check passes.
+
+## Probe scope follow-up
+
+The initial CI report selected every probe whose coverage command reuses `scripts/changed_scope_coverage.py`, which turned unrelated probe noise into direct gate regressions. This slice keeps `scripts/changed_scope_coverage.py` as a direct `watch_globs` path only for the two changed-scope coverage probes. Other probes still execute the helper from their `coverage_command`, but helper edits are validated by the focused changed-scope probes rather than by every downstream consumer probe.
