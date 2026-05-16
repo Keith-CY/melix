@@ -385,6 +385,16 @@ def test_count_assert_nodes_counts_nested_asserts() -> None:
     assert code_eval_runner._count_assert_nodes(module) == 2
 
 
+def test_count_assert_nodes_returns_zero_without_asserts() -> None:
+    module = code_eval_runner.ast.parse(
+        "value = identity(1)\nif enabled:\n    value += identity(2)",
+        filename="<tests>",
+        mode="exec",
+    )
+
+    assert code_eval_runner._count_assert_nodes(module) == 0
+
+
 def test_count_nonblank_test_lines_matches_splitlines_semantics() -> None:
     test_code = "\n assert one\r\n\t\rassert two\n   \nassert three"
 
