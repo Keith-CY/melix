@@ -1947,7 +1947,7 @@ private struct DesktopToolsWorkspaceView: View {
                     case .logs:
                         DesktopLogsTabView(foundation: foundation)
                     case .settings:
-                        DesktopSettingsTabView(foundation: foundation)
+                        DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
                     }
                 }
                 .padding(20)

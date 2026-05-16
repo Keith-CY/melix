@@ -1801,17 +1801,119 @@ func desktopModelInfoSummaryContent(
 
 struct DesktopSettingsTabView: View {
     let foundation: DesktopFoundationState
+    let viewModel: RuntimeViewModel?
+
+    init(foundation: DesktopFoundationState, viewModel: RuntimeViewModel? = nil) {
+        self.foundation = foundation
+        self.viewModel = viewModel
+    }
 
     var body: some View {
-        List(foundation.settings) { row in
-            HStack {
-                Text(row.key)
-                    .fontWeight(.semibold)
-                Spacer()
-                Text(row.value)
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 14) {
+            if let viewModel, viewModel.runtimeSettingRows.isEmpty == false {
+                Text("Runtime Settings")
+                    .font(.headline)
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(viewModel.runtimeSettingRows) { row in
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(row.key)
+                                    .fontWeight(.semibold)
+                                Spacer()
+                                Text(row.currentValueText)
+                                    .foregroundStyle(.primary)
+                            }
+                            HStack(spacing: 8) {
+                                Text(row.source)
+                                if row.sourceDetail.isEmpty == false {
+                                    Text(row.sourceDetail)
+                                }
+                                Text(row.validationState.displayTitle)
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            if row.validationMessage.isEmpty == false {
+                                Text(row.validationMessage)
+                                    .font(.caption)
+                                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+                if viewModel.runtimeSettingSources.isEmpty == false {
+                    Text("Resolved Sources")
+                        .font(.headline)
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(viewModel.runtimeSettingSources) { source in
+                            HStack {
+                                Text(source.key)
+                                    .fontWeight(.semibold)
+                                Spacer()
+                                Text(source.path)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                if viewModel.runtimeSettingMetrics.isEmpty == false {
+                    Text("Resolve Metrics")
+                        .font(.headline)
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(viewModel.runtimeSettingMetrics) { metric in
+                            HStack {
+                                Text(metric.name)
+                                    .fontWeight(.semibold)
+                                Spacer()
+                                Text(metric.valueText)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            } else {
+                ForEach(foundation.settings) { row in
+                    HStack {
+                        Text(row.key)
+                            .fontWeight(.semibold)
+                        Spacer()
+                        Text(row.value)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(accessibilitySummary)
+    }
+
+    var accessibilitySummary: String {
+        if let viewModel, viewModel.runtimeSettingRows.isEmpty == false {
+            var values = ["Runtime Settings"]
+            values.append(contentsOf: viewModel.runtimeSettingRows.flatMap { row in
+                [
+                    row.key,
+                    row.currentValueText,
+                    row.source,
+                    row.sourceDetail,
+                    row.validationState.displayTitle,
+                    row.validationMessage,
+                ]
+            })
+            if viewModel.runtimeSettingSources.isEmpty == false {
+                values.append("Resolved Sources")
+                values.append(contentsOf: viewModel.runtimeSettingSources.flatMap { [$0.key, $0.path] })
+            }
+            if viewModel.runtimeSettingMetrics.isEmpty == false {
+                values.append("Resolve Metrics")
+                values.append(contentsOf: viewModel.runtimeSettingMetrics.flatMap { [$0.name, $0.valueText] })
+            }
+            return values.filter { $0.isEmpty == false }.joined(separator: " ")
+        }
+
+        return foundation.settings.flatMap { [$0.key, $0.value] }
+            .filter { $0.isEmpty == false }
+            .joined(separator: " ")
     }
 }
 

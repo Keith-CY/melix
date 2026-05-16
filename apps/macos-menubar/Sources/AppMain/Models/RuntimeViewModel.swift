@@ -1910,6 +1910,7 @@ public final class RuntimeViewModel {
     public private(set) var runtimeJobArtifactSnapshotsByID: [String: RuntimeJobArtifactSnapshotState] = [:]
     public private(set) var runtimeJobCancelResultsByID: [String: RuntimeJobCancelResultState] = [:]
     public private(set) var selectedRuntimeJobID = ""
+    public private(set) var runtimeSettingsSnapshot = RuntimeSettingsSnapshotState.empty
     public private(set) var batchRunModelListText = ""
     public private(set) var batchRunConfigText = ""
     public private(set) var batchRunReports: [RuntimeBatchRunReportState] = []
@@ -1928,6 +1929,15 @@ public final class RuntimeViewModel {
     public private(set) var selectedRuntimeJobCancelInProgress = false
     public let runtimeJobsEmptyStateTitle = "No Jobs Yet"
     public let runtimeJobsEmptyStateDetail = "Run a benchmark, evaluation, training, or synthetic workflow to populate Jobs."
+    public var runtimeSettingRows: [RuntimeSettingRowState] {
+        runtimeSettingsSnapshot.rows
+    }
+    public var runtimeSettingSources: [RuntimeSettingSourceState] {
+        runtimeSettingsSnapshot.sources
+    }
+    public var runtimeSettingMetrics: [RuntimeSettingMetricState] {
+        runtimeSettingsSnapshot.metrics
+    }
     public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
     public private(set) var models: [RuntimeModelRow] = [] {
         didSet { refreshModelRegistryEntries() }
@@ -3763,6 +3773,11 @@ public final class RuntimeViewModel {
         if selectedRuntimeJobID != previousSelectedRuntimeJobID {
             persistOperatorSessionState()
         }
+        notifyStateChanged()
+    }
+
+    public func applyRuntimeSettings(_ snapshot: RuntimeSettingsSnapshotState) {
+        runtimeSettingsSnapshot = snapshot
         notifyStateChanged()
     }
 

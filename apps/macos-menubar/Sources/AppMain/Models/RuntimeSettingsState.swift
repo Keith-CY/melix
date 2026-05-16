@@ -4,6 +4,17 @@ public enum RuntimeSettingValidationState: String, Equatable, Sendable {
     case notValidated = "not_validated"
     case valid
     case invalid
+
+    public var displayTitle: String {
+        switch self {
+        case .notValidated:
+            return "Not validated"
+        case .valid:
+            return "Valid"
+        case .invalid:
+            return "Invalid"
+        }
+    }
 }
 
 public struct RuntimeSettingRowState: Identifiable, Equatable, Sendable {
@@ -58,6 +69,8 @@ public struct RuntimeSettingMetricState: Identifiable, Equatable, Sendable {
 }
 
 public struct RuntimeSettingsSnapshotState: Equatable, Sendable {
+    public static let empty = RuntimeSettingsSnapshotState(schemaVersion: "", rows: [], sources: [], metrics: [])
+
     public let schemaVersion: String
     public let rows: [RuntimeSettingRowState]
     public let sources: [RuntimeSettingSourceState]

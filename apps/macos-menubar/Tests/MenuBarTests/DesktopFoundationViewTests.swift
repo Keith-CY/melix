@@ -761,6 +761,85 @@ struct DesktopFoundationViewTests {
         #expect(foundation.settings.contains { $0.key == "Boot Arguments" && $0.value == "--config /tmp/melix.json" })
     }
 
+    @Test("settings tab renders runtime settings rows with source and validation state")
+    @MainActor
+    func settingsTabRendersRuntimeSettingsRowsWithSourceAndValidationState() async throws {
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
+            snapshot: Melix_Controlplane_V1_ServerSnapshot(),
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-settings",
+            features: [],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
+            lastError: nil,
+            recentEvents: []
+        )
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.applyRuntimeSettings(
+            RuntimeSettingsSnapshotState(
+                schemaVersion: "melix.runtime_settings.effective.v1",
+                rows: [
+                    RuntimeSettingRowState(
+                        key: "model_cache_path",
+                        currentValueText: "/tmp/melix/models",
+                        source: "environment",
+                        sourceDetail: "MELIX_MODEL_CACHE_PATH"
+                    ),
+                    RuntimeSettingRowState(
+                        key: "memory_pressure_threshold",
+                        currentValueText: "1.25",
+                        source: "user_settings",
+                        sourceDetail: "/tmp/melix-home/runtime_settings.json",
+                        validationState: .invalid,
+                        validationMessage: "must be <= 1.0"
+                    ),
+                    RuntimeSettingRowState(
+                        key: "max_workers",
+                        currentValueText: "4",
+                        source: "default",
+                        sourceDetail: "runtime defaults",
+                        validationState: .valid
+                    ),
+                ],
+                sources: [
+                    RuntimeSettingSourceState(key: "user_settings", path: "/tmp/melix-home/runtime_settings.json"),
+                ],
+                metrics: [
+                    RuntimeSettingMetricState(name: "settings_resolve_ms", valueText: "3"),
+                ]
+            )
+        )
+
+        let tab = DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
+        let view = hostView(tab)
+        let values = tab.accessibilitySummary
+        #expect(view.subviews.isEmpty == false)
+        #expect(values.contains("Runtime Settings"))
+        #expect(values.contains("model_cache_path"))
+        #expect(values.contains("/tmp/melix/models"))
+        #expect(values.contains("environment"))
+        #expect(values.contains("MELIX_MODEL_CACHE_PATH"))
+        #expect(values.contains("Not validated"))
+        #expect(values.contains("memory_pressure_threshold"))
+        #expect(values.contains("1.25"))
+        #expect(values.contains("Invalid"))
+        #expect(values.contains("must be <= 1.0"))
+        #expect(values.contains("max_workers"))
+        #expect(values.contains("Valid"))
+        #expect(values.contains("Resolved Sources"))
+        #expect(values.contains("/tmp/melix-home/runtime_settings.json"))
+        #expect(values.contains("settings_resolve_ms"))
+
+        viewModel.selectToolSection(.settings)
+        let shellView = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        #expect(shellView.subviews.isEmpty == false)
+    }
+
     @Test("settings tab normalizes tooling state labels across model states and config paths")
     @MainActor
     func settingsTabNormalizesToolingStateLabelsAcrossModelStatesAndConfigPaths() async throws {
