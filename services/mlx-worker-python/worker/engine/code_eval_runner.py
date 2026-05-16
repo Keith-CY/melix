@@ -251,11 +251,18 @@ def _count_tests(test_code: str) -> int:
 def _count_assert_nodes(
     module: ast.AST,
     *,
-    _walk=ast.walk,
+    _iter_child_nodes=ast.iter_child_nodes,
     _assert_type=ast.Assert,
     _isinstance=isinstance,
 ) -> int:
-    return sum(1 for node in _walk(module) if _isinstance(node, _assert_type))
+    count = 0
+    stack = [module]
+    while stack:
+        node = stack.pop()
+        if _isinstance(node, _assert_type):
+            count += 1
+        stack.extend(_iter_child_nodes(node))
+    return count
 
 
 def _count_nonblank_test_lines(test_code: str) -> int:
