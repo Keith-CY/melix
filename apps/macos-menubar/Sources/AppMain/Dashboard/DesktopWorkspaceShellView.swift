@@ -2317,12 +2317,57 @@ struct DesktopJobsToolSectionView: View {
 
     @ViewBuilder
     private var selectedJobSummary: some View {
-        MelixSectionCard("Selected Job") {
-            if let job = viewModel.selectedRuntimeJob {
+        if let detail = viewModel.selectedRuntimeJobDetail {
+            MelixSectionCard("Job Detail") {
+                VStack(alignment: .leading, spacing: 12) {
+                    selectedJobHeader(detail.summary)
+
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 10)], spacing: 10) {
+                        DesktopJobSummaryField(title: "Run", value: detail.summary.runKind)
+                        DesktopJobSummaryField(title: "Status", value: detail.summary.status)
+                        DesktopJobSummaryField(title: "Phase", value: detail.summary.phase)
+                        DesktopJobSummaryField(title: "Started", value: timestampText(detail.timestamps.startedAtUnixMS))
+                        DesktopJobSummaryField(title: "Updated", value: timestampText(detail.timestamps.updatedAtUnixMS))
+                        DesktopJobSummaryField(title: "Ended", value: timestampText(detail.timestamps.endedAtUnixMS))
+                        DesktopJobSummaryField(title: "Duration", value: durationText(detail.timestamps.durationMS))
+                        DesktopJobSummaryField(title: "Model", value: detail.summary.modelID)
+                        DesktopJobSummaryField(title: "Task", value: detail.summary.taskKind)
+                    }
+
+                    if let error = detail.error {
+                        DesktopJobDetailBlock(title: "Error", values: [error.code, error.message])
+                    }
+
+                    DesktopJobDetailBlock(
+                        title: "Logs",
+                        values: [
+                            detail.logs.available ? "available" : "unavailable",
+                            detail.logs.path,
+                            detail.logs.command,
+                        ]
+                    )
+
+                    if detail.artifacts.isEmpty == false {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(detail.artifacts) { artifact in
+                                DesktopJobDetailBlock(
+                                    title: "Artifact",
+                                    values: [
+                                        artifact.kind,
+                                        artifact.path,
+                                        artifact.relativePath,
+                                        artifact.exists ? "exists" : "missing",
+                                    ]
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        } else if let job = viewModel.selectedRuntimeJob {
+            MelixSectionCard("Selected Job") {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(job.jobID)
-                        .font(.headline)
-                        .textSelection(.enabled)
+                    selectedJobHeader(job)
 
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 10)], spacing: 10) {
                         DesktopJobSummaryField(title: "Run", value: job.runKind)
@@ -2335,6 +2380,12 @@ struct DesktopJobsToolSectionView: View {
                 }
             }
         }
+    }
+
+    private func selectedJobHeader(_ job: RuntimeJobSummaryState) -> some View {
+        Text(job.jobID)
+            .font(.headline)
+            .textSelection(.enabled)
     }
 
     private func jobSubtitle(for job: RuntimeJobSummaryState) -> String {
@@ -2352,6 +2403,14 @@ struct DesktopJobsToolSectionView: View {
             return MelixDesignTokens.StatusColor.warning
         }
         return .secondary
+    }
+
+    private func timestampText(_ unixMS: Int64) -> String {
+        unixMS == 0 ? "N/A" : String(unixMS)
+    }
+
+    private func durationText(_ durationMS: Int64) -> String {
+        durationMS == 0 ? "N/A" : "\(durationMS) ms"
     }
 
     private var queueSummaryText: String {
@@ -2396,6 +2455,32 @@ private struct DesktopJobSummaryField: View {
                 .font(.caption)
                 .textSelection(.enabled)
                 .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct DesktopJobDetailBlock: View {
+    let title: String
+    let values: [String]
+
+    private var visibleValues: [String] {
+        values
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.isEmpty == false }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            ForEach(visibleValues, id: \.self) { value in
+                Text(value)
+                    .font(.caption)
+                    .textSelection(.enabled)
+                    .lineLimit(3)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

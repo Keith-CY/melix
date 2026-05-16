@@ -1768,6 +1768,65 @@ struct DesktopFoundationViewTests {
         #expect(shellView.subviews.isEmpty == false)
     }
 
+    @Test("jobs tool section renders selected job detail summary")
+    @MainActor
+    func jobsToolSectionRendersSelectedJobDetailSummary() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.selectToolSection(.jobs)
+        let detail = try RuntimeJobsPayloadDecoder.decodeDetail(Data("""
+        {
+          "job_id": "bench-20260516-1120",
+          "run_kind": "benchmark",
+          "operation": "bench run",
+          "status": "failed",
+          "phase": "export",
+          "model_id": "mlx-community/Qwen3-8B",
+          "task_kind": "text-generation",
+          "artifact_root": "/tmp/melix/jobs/bench-20260516-1120",
+          "timestamps": {
+            "started_at_unix_ms": 1778911200000,
+            "updated_at_unix_ms": 1778911210000,
+            "ended_at_unix_ms": 1778911215000,
+            "duration_ms": 15000
+          },
+          "error": {
+            "code": "E_MLX",
+            "message": "out of memory"
+          },
+          "logs": {
+            "available": true,
+            "path": "/tmp/melix/jobs/bench-20260516-1120/job.log",
+            "command": "melix jobs logs bench-20260516-1120"
+          },
+          "artifacts": [
+            {
+              "kind": "manifest",
+              "path": "/tmp/melix/jobs/bench-20260516-1120/manifest.json",
+              "relative_path": "manifest.json",
+              "exists": true
+            }
+          ]
+        }
+        """.utf8))
+        viewModel.applyRuntimeJobDetail(detail)
+
+        let view = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
+        let values = renderedTextValues(in: view)
+
+        #expect(values.contains("bench-20260516-1120"))
+        #expect(values.contains("failed"))
+        #expect(values.contains("export"))
+        #expect(values.contains("1778911200000"))
+        #expect(values.contains("1778911215000"))
+        #expect(values.contains("15000 ms"))
+        #expect(values.contains("E_MLX"))
+        #expect(values.contains("out of memory"))
+        #expect(values.contains("/tmp/melix/jobs/bench-20260516-1120/job.log"))
+        #expect(values.contains("melix jobs logs bench-20260516-1120"))
+        #expect(values.contains("manifest"))
+        #expect(values.contains("/tmp/melix/jobs/bench-20260516-1120/manifest.json"))
+    }
+
     @Test("training defaults to preset-first primary fields with advanced folded")
     @MainActor
     func trainingDefaultsToPresetFirstPrimaryFieldsWithAdvancedFolded() async throws {

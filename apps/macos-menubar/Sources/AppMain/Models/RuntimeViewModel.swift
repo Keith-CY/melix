@@ -1900,6 +1900,7 @@ public final class RuntimeViewModel {
     public var selectedSurface: DesktopSurface = .chat
     public var selectedToolSection: DesktopToolSection = .modelsLibrary
     public private(set) var runtimeJobs: [RuntimeJobSummaryState] = []
+    public private(set) var runtimeJobDetailsByID: [String: RuntimeJobDetailState] = [:]
     public private(set) var selectedRuntimeJobID = ""
     public let runtimeJobsEmptyStateTitle = "No Jobs Yet"
     public let runtimeJobsEmptyStateDetail = "Run a benchmark, evaluation, training, or synthetic workflow to populate Jobs."
@@ -3428,10 +3429,27 @@ public final class RuntimeViewModel {
         runtimeJobs.first { $0.id == selectedRuntimeJobID }
     }
 
+    public var selectedRuntimeJobDetail: RuntimeJobDetailState? {
+        runtimeJobDetailsByID[selectedRuntimeJobID]
+    }
+
     public func applyRuntimeJobs(_ jobs: [RuntimeJobSummaryState]) {
         runtimeJobs = jobs
         if runtimeJobs.contains(where: { $0.id == selectedRuntimeJobID }) == false {
             selectedRuntimeJobID = runtimeJobs.first?.id ?? ""
+        }
+        notifyStateChanged()
+    }
+
+    public func applyRuntimeJobDetail(_ detail: RuntimeJobDetailState) {
+        runtimeJobDetailsByID[detail.summary.id] = detail
+        if let index = runtimeJobs.firstIndex(where: { $0.id == detail.summary.id }) {
+            runtimeJobs[index] = detail.summary
+        } else {
+            runtimeJobs.append(detail.summary)
+        }
+        if selectedRuntimeJobID.isEmpty || runtimeJobs.contains(where: { $0.id == selectedRuntimeJobID }) == false {
+            selectedRuntimeJobID = detail.summary.id
         }
         notifyStateChanged()
     }

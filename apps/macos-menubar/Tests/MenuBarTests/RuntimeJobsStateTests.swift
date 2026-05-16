@@ -342,4 +342,59 @@ struct RuntimeJobsStateTests {
         #expect(viewModel.selectedSurface == .tools)
         #expect(viewModel.selectedToolSection == .jobs)
     }
+
+    @Test("runtime view model tracks selected job detail")
+    @MainActor
+    func runtimeViewModelTracksSelectedJobDetail() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        let detail = try RuntimeJobsPayloadDecoder.decodeDetail(Data("""
+        {
+          "job_id": "bench-20260516-1120",
+          "run_kind": "benchmark",
+          "operation": "bench run",
+          "status": "failed",
+          "phase": "export",
+          "model_id": "mlx-community/Qwen3-8B",
+          "task_kind": "text-generation",
+          "artifact_root": "/tmp/melix/jobs/bench-20260516-1120",
+          "timestamps": {
+            "started_at_unix_ms": 1778911200000,
+            "updated_at_unix_ms": 1778911210000,
+            "ended_at_unix_ms": 1778911215000,
+            "duration_ms": 15000
+          },
+          "error": {
+            "code": "E_MLX",
+            "message": "out of memory"
+          },
+          "logs": {
+            "available": true,
+            "path": "/tmp/melix/jobs/bench-20260516-1120/job.log",
+            "command": "melix jobs logs bench-20260516-1120"
+          },
+          "artifacts": [
+            {
+              "kind": "manifest",
+              "path": "/tmp/melix/jobs/bench-20260516-1120/manifest.json",
+              "relative_path": "manifest.json",
+              "exists": true
+            }
+          ]
+        }
+        """.utf8))
+
+        viewModel.applyRuntimeJobDetail(detail)
+
+        #expect(viewModel.runtimeJobs.map(\.id) == ["bench-20260516-1120"])
+        #expect(viewModel.selectedRuntimeJobID == "bench-20260516-1120")
+        #expect(viewModel.selectedRuntimeJobDetail?.summary.status == "failed")
+        #expect(viewModel.selectedRuntimeJobDetail?.timestamps.durationMS == 15000)
+        #expect(viewModel.selectedRuntimeJobDetail?.error?.code == "E_MLX")
+        #expect(viewModel.selectedRuntimeJobDetail?.logs.path.hasSuffix("job.log") == true)
+        #expect(viewModel.selectedRuntimeJobDetail?.artifacts.first?.kind == "manifest")
+
+        viewModel.applyRuntimeJobDetail(detail)
+        #expect(viewModel.runtimeJobs.count == 1)
+        #expect(viewModel.selectedRuntimeJobDetail?.summary.id == "bench-20260516-1120")
+    }
 }
