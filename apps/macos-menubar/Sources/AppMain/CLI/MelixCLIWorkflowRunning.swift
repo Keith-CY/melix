@@ -249,6 +249,18 @@ extension MelixCLIWorkflowRunning {
         let output = try await run(command)
         return try decodeRuntimeJobCancelResult(output: output, command: command, surface: surface)
     }
+
+    func listWorkflowRecipes(task: String) async throws -> RuntimeWorkflowRecipeCatalogState {
+        let command = MelixCLICommand.recipesList(.init(task: task, json: true))
+        let output = try await run(command)
+        return try decodeWorkflowRecipeCatalog(output: output, command: command, surface: surface)
+    }
+
+    func showWorkflowRecipe(recipeID: String, version: String = "") async throws -> RuntimeWorkflowRecipeDetailState {
+        let command = MelixCLICommand.recipesShow(.init(recipeID: recipeID, version: version, json: true))
+        let output = try await run(command)
+        return try decodeWorkflowRecipeDetail(output: output, command: command, surface: surface)
+    }
 }
 
 func decodeMelixCLIJSON<Value: Decodable>(
@@ -355,6 +367,38 @@ private func decodeRuntimeJobCancelResult(
 ) throws -> RuntimeJobCancelResultState {
     try decodeRuntimeJobPayload(output: output, command: command, surface: surface) {
         try RuntimeJobsPayloadDecoder.decodeCancelResult($0)
+    }
+}
+
+private func decodeWorkflowRecipeCatalog(
+    output: String,
+    command: MelixCLICommand,
+    surface: MelixCLIWorkflowSurface
+) throws -> RuntimeWorkflowRecipeCatalogState {
+    do {
+        return try RuntimeWorkflowRecipesPayloadDecoder.decodeCatalog(output)
+    } catch {
+        throw MelixCLIWorkflowError.invalidJSON(
+            commandID: command.workflowCommandID,
+            surface: surface,
+            output: output
+        )
+    }
+}
+
+private func decodeWorkflowRecipeDetail(
+    output: String,
+    command: MelixCLICommand,
+    surface: MelixCLIWorkflowSurface
+) throws -> RuntimeWorkflowRecipeDetailState {
+    do {
+        return try RuntimeWorkflowRecipesPayloadDecoder.decodeDetail(output)
+    } catch {
+        throw MelixCLIWorkflowError.invalidJSON(
+            commandID: command.workflowCommandID,
+            surface: surface,
+            output: output
+        )
     }
 }
 

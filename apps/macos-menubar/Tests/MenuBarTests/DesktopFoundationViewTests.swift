@@ -311,7 +311,7 @@ struct DesktopFoundationViewTests {
     @MainActor
     func toolsCategoriesMapSectionsIntoStagedWorkflowGroups() {
         #expect(DesktopToolCategory.models.sections == [.modelsLibrary, .downloads])
-        #expect(DesktopToolCategory.build.sections == [.training])
+        #expect(DesktopToolCategory.build.sections == [.training, .workflowRecipes])
         #expect(DesktopToolCategory.validate.sections == [.batchRuns, .jobs, .diagnostics])
         #expect(DesktopToolCategory.system.sections == [.logs, .settings])
     }

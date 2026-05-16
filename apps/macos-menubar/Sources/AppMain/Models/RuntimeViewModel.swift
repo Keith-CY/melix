@@ -1922,6 +1922,14 @@ public final class RuntimeViewModel {
     public private(set) var runtimeDiscoveryOperationInProgress = false
     public private(set) var runtimeDiscoveryOperationMessage = ""
     public private(set) var runtimeDiscoveryOperationErrorMessage = ""
+    public private(set) var workflowRecipeCatalog = RuntimeWorkflowRecipeCatalogState.empty
+    public private(set) var workflowRecipeDetailsByID: [String: RuntimeWorkflowRecipeDetailState] = [:]
+    public private(set) var selectedWorkflowRecipeID = ""
+    public private(set) var workflowRecipeTaskFilterDraft = ""
+    public private(set) var workflowRecipeCatalogInProgress = false
+    public private(set) var workflowRecipeDetailInProgress = false
+    public private(set) var workflowRecipeCatalogMessage = ""
+    public private(set) var workflowRecipeCatalogErrorMessage = ""
     public private(set) var batchRunModelListText = ""
     public private(set) var batchRunConfigText = ""
     public private(set) var batchRunReports: [RuntimeBatchRunReportState] = []
@@ -1970,6 +1978,20 @@ public final class RuntimeViewModel {
     public var runtimeDiscoveryAliasLookupCanRun: Bool {
         normalizedRuntimeDiscoveryAliasQuery.isEmpty == false
             && runtimeDiscoveryOperationInProgress == false
+    }
+    public var workflowRecipeFilteredRecipes: [RuntimeWorkflowRecipeSummaryState] {
+        let filter = normalizedWorkflowRecipeTaskFilter
+        guard filter.isEmpty == false else {
+            return workflowRecipeCatalog.recipes
+        }
+        return workflowRecipeCatalog.recipes.filter { recipe in
+            recipe.tasks.contains(filter)
+                || recipe.id.localizedCaseInsensitiveContains(filter)
+                || recipe.title.localizedCaseInsensitiveContains(filter)
+        }
+    }
+    public var selectedWorkflowRecipeDetail: RuntimeWorkflowRecipeDetailState? {
+        workflowRecipeDetailsByID[selectedWorkflowRecipeID]
     }
     public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
     public private(set) var models: [RuntimeModelRow] = [] {
@@ -2822,6 +2844,10 @@ public final class RuntimeViewModel {
 
     private var normalizedRuntimeDiscoveryAliasQuery: String {
         runtimeDiscoveryAliasQueryDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedWorkflowRecipeTaskFilter: String {
+        workflowRecipeTaskFilterDraft.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func reloadHuggingFaceTokenHint() {
@@ -3836,6 +3862,11 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    public func updateWorkflowRecipeTaskFilter(_ filter: String) {
+        workflowRecipeTaskFilterDraft = filter
+        notifyStateChanged()
+    }
+
     public func updateRuntimeSettingDraft(key: String, value: String) {
         runtimeSettingKeyDraft = key
         runtimeSettingValueDraft = value
@@ -3845,6 +3876,20 @@ public final class RuntimeViewModel {
     public func applyRuntimeSettingsOperationMessage(_ message: String) {
         runtimeSettingsOperationMessage = message
         runtimeSettingsOperationErrorMessage = ""
+        notifyStateChanged()
+    }
+
+    public func applyWorkflowRecipeCatalog(_ catalog: RuntimeWorkflowRecipeCatalogState) {
+        workflowRecipeCatalog = catalog
+        if selectedWorkflowRecipeID.isEmpty || catalog.recipes.contains(where: { $0.id == selectedWorkflowRecipeID }) == false {
+            selectedWorkflowRecipeID = catalog.recipes.first?.id ?? ""
+        }
+        notifyStateChanged()
+    }
+
+    public func applyWorkflowRecipeDetail(_ detail: RuntimeWorkflowRecipeDetailState) {
+        workflowRecipeDetailsByID[detail.id] = detail
+        selectedWorkflowRecipeID = detail.id
         notifyStateChanged()
     }
 
@@ -3976,6 +4021,67 @@ public final class RuntimeViewModel {
             notifyStateChanged()
         } catch {
             failRuntimeDiscoveryOperation(error)
+        }
+    }
+
+    public func refreshWorkflowRecipeCatalog() async {
+        guard let commandWorkflowRunner else {
+            failWorkflowRecipeOperation("Workflow recipe CLI runner is unavailable.")
+            return
+        }
+
+        workflowRecipeCatalogInProgress = true
+        workflowRecipeCatalogMessage = ""
+        workflowRecipeCatalogErrorMessage = ""
+        notifyStateChanged()
+
+        do {
+            let catalog = try await commandWorkflowRunner.listWorkflowRecipes(task: normalizedWorkflowRecipeTaskFilter)
+            workflowRecipeCatalogInProgress = false
+            workflowRecipeCatalogMessage = Self.workflowRecipeCatalogLoadedMessage(count: catalog.recipes.count)
+            workflowRecipeCatalogErrorMessage = ""
+            clearCLIWorkflowFailure()
+            applyWorkflowRecipeCatalog(catalog)
+        } catch {
+            recordCLIWorkflowErrorIfNeeded(error)
+            failWorkflowRecipeOperation(workflowErrorMessage(error))
+        }
+    }
+
+    public func selectWorkflowRecipe(recipeID: String) async {
+        let normalizedRecipeID = recipeID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedRecipeID.isEmpty == false else {
+            failWorkflowRecipeOperation("Select a workflow recipe before loading detail.")
+            return
+        }
+
+        selectedWorkflowRecipeID = normalizedRecipeID
+        if workflowRecipeDetailsByID[normalizedRecipeID] != nil {
+            notifyStateChanged()
+            return
+        }
+
+        guard let commandWorkflowRunner else {
+            failWorkflowRecipeOperation("Workflow recipe CLI runner is unavailable.")
+            return
+        }
+
+        workflowRecipeDetailInProgress = true
+        workflowRecipeCatalogMessage = ""
+        workflowRecipeCatalogErrorMessage = ""
+        notifyStateChanged()
+
+        do {
+            let detail = try await commandWorkflowRunner.showWorkflowRecipe(recipeID: normalizedRecipeID)
+            workflowRecipeDetailInProgress = false
+            workflowRecipeCatalogMessage = "Loaded \(detail.id)."
+            workflowRecipeCatalogErrorMessage = ""
+            clearCLIWorkflowFailure()
+            applyWorkflowRecipeDetail(detail)
+        } catch {
+            workflowRecipeDetailInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            failWorkflowRecipeOperation(workflowErrorMessage(error))
         }
     }
 
@@ -11931,6 +12037,19 @@ public final class RuntimeViewModel {
         runtimeDiscoveryOperationInProgress = false
         runtimeDiscoveryOperationMessage = ""
         runtimeDiscoveryOperationErrorMessage = message
+        recordLocalError(message)
+        notifyStateChanged()
+    }
+
+    private static func workflowRecipeCatalogLoadedMessage(count: Int) -> String {
+        count == 1 ? "Loaded 1 workflow recipe." : "Loaded \(count) workflow recipes."
+    }
+
+    private func failWorkflowRecipeOperation(_ message: String) {
+        workflowRecipeCatalogInProgress = false
+        workflowRecipeDetailInProgress = false
+        workflowRecipeCatalogMessage = ""
+        workflowRecipeCatalogErrorMessage = message
         recordLocalError(message)
         notifyStateChanged()
     }

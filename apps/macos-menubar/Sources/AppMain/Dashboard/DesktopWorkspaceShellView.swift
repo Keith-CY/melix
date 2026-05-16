@@ -1938,6 +1938,8 @@ private struct DesktopToolsWorkspaceView: View {
                         DesktopDownloadsToolSectionView(viewModel: viewModel)
                     case .training:
                         DesktopTrainingToolSectionView(viewModel: viewModel)
+                    case .workflowRecipes:
+                        DesktopWorkflowRecipesToolSectionView(viewModel: viewModel)
                     case .batchRuns:
                         DesktopBatchRunsToolSectionView(viewModel: viewModel)
                     case .jobs:
@@ -2004,7 +2006,7 @@ private struct DesktopToolsWorkspaceView: View {
         switch viewModel.selectedToolSection {
         case .training, .diagnostics:
             return DesktopLoRAVisualPolish.pageBackgroundColor
-        case .modelsLibrary, .downloads, .batchRuns, .jobs, .logs, .settings:
+        case .modelsLibrary, .downloads, .workflowRecipes, .batchRuns, .jobs, .logs, .settings:
             return Color(nsColor: .windowBackgroundColor)
         }
     }
@@ -2234,6 +2236,297 @@ struct DesktopDownloadsToolSectionView: View {
         }
     }
 
+}
+
+struct DesktopWorkflowRecipesToolSectionView: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .bottom, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Task filter")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField(
+                        "Task filter",
+                        text: Binding(
+                            get: { viewModel.workflowRecipeTaskFilterDraft },
+                            set: { viewModel.updateWorkflowRecipeTaskFilter($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+                Button("Refresh Catalog", action: refreshCatalogAction)
+                .buttonStyle(.borderedProminent)
+                .disabled(viewModel.workflowRecipeCatalogInProgress)
+                if viewModel.workflowRecipeCatalogInProgress || viewModel.workflowRecipeDetailInProgress {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            if viewModel.workflowRecipeCatalog.availableTaskFilters.isEmpty == false {
+                HStack(spacing: 8) {
+                    ForEach(viewModel.workflowRecipeCatalog.availableTaskFilters, id: \.self) { task in
+                        Button(task) {
+                            applyTaskFilter(task)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    Button("Clear", action: clearTaskFilter)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+
+            if viewModel.workflowRecipeCatalogMessage.isEmpty == false {
+                Text(viewModel.workflowRecipeCatalogMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                    .textSelection(.enabled)
+            }
+            if viewModel.workflowRecipeCatalogErrorMessage.isEmpty == false {
+                Text(viewModel.workflowRecipeCatalogErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            }
+
+            HStack(alignment: .top, spacing: 14) {
+                MelixSectionCard("Recipe Catalog") {
+                    recipeCatalogList
+                }
+                .frame(minWidth: 280, maxWidth: 360, alignment: .topLeading)
+
+                MelixSectionCard("Recipe Detail") {
+                    recipeDetail
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(accessibilitySummary)
+    }
+
+    private var recipeCatalogList: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if viewModel.workflowRecipeFilteredRecipes.isEmpty {
+                Text("No workflow recipes match this filter.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(viewModel.workflowRecipeFilteredRecipes) { recipe in
+                    Button {
+                        selectRecipeAction(recipe.id)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(recipe.title)
+                                    .font(.headline)
+                                    .lineLimit(2)
+                                Spacer(minLength: 8)
+                                Text("v\(recipe.version)")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text(recipe.id)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            if recipe.taskText.isEmpty == false {
+                                Text(recipe.taskText)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            viewModel.selectedWorkflowRecipeID == recipe.id
+                                ? MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.selected)
+                                : Color.secondary.opacity(0.05),
+                            in: RoundedRectangle(cornerRadius: 8)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    func refreshCatalogAction() {
+        Task { await viewModel.refreshWorkflowRecipeCatalog() }
+    }
+
+    func applyTaskFilter(_ task: String) {
+        viewModel.updateWorkflowRecipeTaskFilter(task)
+    }
+
+    func clearTaskFilter() {
+        viewModel.updateWorkflowRecipeTaskFilter("")
+    }
+
+    func selectRecipeAction(_ recipeID: String) {
+        Task { await viewModel.selectWorkflowRecipe(recipeID: recipeID) }
+    }
+
+    private var recipeDetail: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let detail = viewModel.selectedWorkflowRecipeDetail {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(detail.title)
+                            .font(.headline)
+                        Spacer()
+                        Text("v\(detail.version)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(detail.id)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                    if detail.description.isEmpty == false {
+                        Text(detail.description)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if detail.taskText.isEmpty == false {
+                        Text(detail.taskText)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+
+                workflowRecipeInputRows(detail.inputRows)
+                workflowRecipeKeyValueRows("Preflight", rows: detail.preflightRows)
+                workflowRecipePipelineRows(detail.pipelineSteps)
+                workflowRecipeKeyValueRows("Outputs", rows: detail.outputRows)
+            } else {
+                Text("Select a recipe to inspect its inputs, preflight, pipeline, and outputs.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func workflowRecipeInputRows(_ rows: [RuntimeWorkflowRecipeInputRowState]) -> some View {
+        Group {
+            if rows.isEmpty == false {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Inputs")
+                        .font(.caption.weight(.semibold))
+                    ForEach(rows) { row in
+                        HStack(alignment: .firstTextBaseline) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(row.name)
+                                    .font(.caption.weight(.semibold))
+                                Text([row.valueType, row.requirementText, row.uriKind]
+                                    .filter { $0.isEmpty == false }
+                                    .joined(separator: " | "))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if row.defaultValueText.isEmpty == false {
+                                Text(row.defaultValueText)
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func workflowRecipeKeyValueRows(
+        _ title: String,
+        rows: [RuntimeWorkflowRecipeKeyValueRowState]
+    ) -> some View {
+        Group {
+            if rows.isEmpty == false {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title)
+                        .font(.caption.weight(.semibold))
+                    ForEach(rows) { row in
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(row.name)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(row.valueText)
+                                .font(.caption)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func workflowRecipePipelineRows(_ rows: [RuntimeWorkflowRecipePipelineStepState]) -> some View {
+        Group {
+            if rows.isEmpty == false {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Pipeline")
+                        .font(.caption.weight(.semibold))
+                    ForEach(rows) { step in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(step.id) • \(step.command)")
+                                .font(.caption.weight(.semibold))
+                            if step.argumentSummaryText.isEmpty == false {
+                                Text(step.argumentSummaryText)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    var accessibilitySummary: String {
+        var values = [
+            "Workflow Recipes",
+            "Task filter",
+            viewModel.workflowRecipeTaskFilterDraft,
+            "Refresh Catalog",
+            viewModel.workflowRecipeCatalogMessage,
+            viewModel.workflowRecipeCatalogErrorMessage,
+        ]
+        values.append(contentsOf: viewModel.workflowRecipeCatalog.availableTaskFilters)
+        if viewModel.workflowRecipeFilteredRecipes.isEmpty {
+            values.append("No workflow recipes match this filter.")
+        }
+        values.append(contentsOf: viewModel.workflowRecipeFilteredRecipes.flatMap {
+            [$0.id, $0.version, $0.title, $0.taskText, $0.digest]
+        })
+        if let detail = viewModel.selectedWorkflowRecipeDetail {
+            values.append(contentsOf: [
+                detail.id,
+                detail.version,
+                detail.title,
+                detail.description,
+                detail.taskText,
+                detail.digest,
+            ])
+            values.append(contentsOf: detail.inputRows.flatMap {
+                [$0.name, $0.valueType, $0.requirementText, $0.defaultValueText, $0.uriKind]
+            })
+            values.append(contentsOf: detail.preflightRows.flatMap { [$0.name, $0.valueText] })
+            values.append(contentsOf: detail.pipelineSteps.flatMap { [$0.id, $0.command, $0.argumentSummaryText] })
+            values.append(contentsOf: detail.outputRows.flatMap { [$0.name, $0.valueText] })
+        } else {
+            values.append("Select a recipe to inspect its inputs, preflight, pipeline, and outputs.")
+        }
+        return values.filter { $0.isEmpty == false }.joined(separator: " ")
+    }
 }
 
 struct DesktopBatchRunsToolSectionView: View {

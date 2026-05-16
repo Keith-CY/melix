@@ -32,6 +32,7 @@ public enum DesktopToolSection: String, CaseIterable, Identifiable, Codable, Sen
     case modelsLibrary = "Models Library"
     case downloads = "Downloads"
     case training = "Training"
+    case workflowRecipes = "Workflow Recipes"
     case batchRuns = "Batch Runs"
     case jobs = "Jobs"
     case diagnostics = "Diagnostics"
@@ -50,6 +51,8 @@ public enum DesktopToolSection: String, CaseIterable, Identifiable, Codable, Sen
             return "arrow.down.circle"
         case .training:
             return "figure.strengthtraining.traditional"
+        case .workflowRecipes:
+            return "list.bullet.clipboard"
         case .batchRuns:
             return "rectangle.stack.badge.play"
         case .jobs:
@@ -77,7 +80,7 @@ public enum DesktopToolCategory: String, CaseIterable, Identifiable, Codable, Se
         case .models:
             return [.modelsLibrary, .downloads]
         case .build:
-            return [.training]
+            return [.training, .workflowRecipes]
         case .validate:
             return [.batchRuns, .jobs, .diagnostics]
         case .system:
