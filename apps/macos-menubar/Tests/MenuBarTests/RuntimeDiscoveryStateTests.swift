@@ -49,6 +49,37 @@ struct RuntimeDiscoveryStateTests {
         #expect(configMetadata.configSettings.first?.environmentVariable == "MELIX_MAX_CONCURRENT_JOBS")
     }
 
+    @Test("runtime discovery decoder maps model alias suggestions and no match states")
+    func runtimeDiscoveryDecoderMapsModelAliasSuggestionsAndNoMatchStates() throws {
+        let suggested = try RuntimeDiscoveryPayloadDecoder.decodePayload(endpoint: .capabilities, Self.capabilitiesJSON)
+        let alias = try #require(suggested.aliasDiscovery)
+        #expect(alias.statusDisplayTitle == "Suggestions available")
+        #expect(alias.suggestions.map(\.modelID) == ["mlx-community/Qwen3.5-9B-MLX-4bit"])
+        #expect(alias.suggestions.first?.aliasesText == "qwen35_9b_mlx_4bit")
+        #expect(alias.suggestions.first?.displayText.contains("qwen3.5") == true)
+        #expect(alias.emptyStateMessage.isEmpty)
+
+        let noMatch = try RuntimeDiscoveryPayloadDecoder.decodePayload(endpoint: .capabilities, Self.noMatchCapabilitiesJSON)
+        let noMatchAlias = try #require(noMatch.aliasDiscovery)
+        #expect(noMatchAlias.status == "no_match")
+        #expect(noMatchAlias.statusDisplayTitle == "No match")
+        #expect(noMatchAlias.suggestions.isEmpty)
+        #expect(noMatchAlias.emptyStateMessage == "No model alias matches not a/model id.")
+
+        let fullModel = RuntimeDiscoveryAliasState(query: "org/model", status: "valid_full_model_id")
+        #expect(fullModel.statusDisplayTitle == "Full model ID")
+        #expect(fullModel.emptyStateMessage == "Query is already a full model ID.")
+        let localPath = RuntimeDiscoveryAliasState(query: "/tmp/model", status: "local_path_passthrough")
+        #expect(localPath.statusDisplayTitle == "Local path")
+        #expect(localPath.emptyStateMessage == "Query is treated as a local model path.")
+        let notRequested = RuntimeDiscoveryAliasState(query: "", status: "not_requested")
+        #expect(notRequested.statusDisplayTitle == "Not requested")
+        #expect(notRequested.emptyStateMessage == "Enter a model alias query to see suggestions.")
+        let unknown = RuntimeDiscoveryAliasState(query: "custom", status: "custom_status")
+        #expect(unknown.statusDisplayTitle == "custom_status")
+        #expect(unknown.emptyStateMessage.isEmpty)
+    }
+
     @Test("runtime view model refreshes discovery through CLI runner")
     @MainActor
     func runtimeViewModelRefreshesDiscoveryThroughCLIRunner() async throws {
@@ -95,6 +126,58 @@ struct RuntimeDiscoveryStateTests {
         await failingViewModel.refreshRuntimeDiscovery()
         #expect(failingViewModel.runtimeDiscoveryOperationInProgress == false)
         #expect(failingViewModel.runtimeDiscoveryOperationErrorMessage.contains("discovery failed"))
+        #expect(failingViewModel.lastCLIWorkflowFailure?.commandID == "capabilities")
+    }
+
+    @Test("runtime view model looks up model aliases through capabilities query")
+    @MainActor
+    func runtimeViewModelLooksUpModelAliasesThroughCapabilitiesQuery() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureOutput(
+            Self.noMatchCapabilitiesJSON,
+            for: .capabilities(.init(json: true, modelQuery: "not a/model id"))
+        )
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.applyRuntimeDiscovery(
+            RuntimeDiscoverySnapshotState(
+                payloads: [
+                    try RuntimeDiscoveryPayloadDecoder.decodePayload(endpoint: .info, Self.infoJSON),
+                ]
+            )
+        )
+        viewModel.updateRuntimeDiscoveryAliasQuery(" not a/model id ")
+
+        await viewModel.lookupRuntimeDiscoveryModelAlias()
+
+        let alias = try #require(viewModel.runtimeDiscoverySnapshot.payload(for: .capabilities)?.aliasDiscovery)
+        #expect(alias.status == "no_match")
+        #expect(alias.emptyStateMessage == "No model alias matches not a/model id.")
+        #expect(viewModel.runtimeDiscoveryAliasLookupCanRun)
+        #expect(viewModel.runtimeDiscoveryOperationMessage == "Model alias lookup refreshed.")
+        #expect(
+            await runner.snapshotRecordedCommands() == [
+                .capabilities(.init(json: true, modelQuery: "not a/model id")),
+            ]
+        )
+
+        let missingQueryViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        await missingQueryViewModel.lookupRuntimeDiscoveryModelAlias()
+        #expect(missingQueryViewModel.runtimeDiscoveryOperationErrorMessage == "Model alias query is required.")
+
+        let missingRunnerViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        missingRunnerViewModel.updateRuntimeDiscoveryAliasQuery("qwen")
+        await missingRunnerViewModel.lookupRuntimeDiscoveryModelAlias()
+        #expect(missingRunnerViewModel.runtimeDiscoveryOperationErrorMessage == "Discovery CLI runner is unavailable.")
+
+        let failingRunner = RecordingCLIWorkflowRunner()
+        await failingRunner.configureFailure(
+            .processFailed(commandID: "capabilities", surface: .subprocess, exitCode: 2, stderr: "alias failed"),
+            for: .capabilities(.init(json: true, modelQuery: "qwen"))
+        )
+        let failingViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: failingRunner)
+        failingViewModel.updateRuntimeDiscoveryAliasQuery("qwen")
+        await failingViewModel.lookupRuntimeDiscoveryModelAlias()
+        #expect(failingViewModel.runtimeDiscoveryOperationErrorMessage.contains("alias failed"))
         #expect(failingViewModel.lastCLIWorkflowFailure?.commandID == "capabilities")
     }
 
@@ -162,6 +245,21 @@ struct RuntimeDiscoveryStateTests {
             "quantization": "4bit"
           }
         ],
+        "families": []
+      }
+    }
+    """#
+
+    static let noMatchCapabilitiesJSON = #"""
+    {
+      "schema_version": "melix.discovery.capabilities.v1",
+      "features": ["runtime_settings"],
+      "supported_tasks": ["text-generation", "tools"],
+      "models": [],
+      "model_alias_discovery": {
+        "query": "not a/model id",
+        "status": "no_match",
+        "suggestions": [],
         "families": []
       }
     }

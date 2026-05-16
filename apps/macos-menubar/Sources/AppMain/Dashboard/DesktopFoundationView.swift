@@ -1976,6 +1976,7 @@ struct DesktopSettingsTabView: View {
                         .controlSize(.small)
                 }
             }
+            runtimeDiscoveryAliasLookupControls(viewModel)
             if viewModel.runtimeDiscoveryOperationMessage.isEmpty == false {
                 Text(viewModel.runtimeDiscoveryOperationMessage)
                     .font(.caption)
@@ -1998,6 +1999,27 @@ struct DesktopSettingsTabView: View {
                         runtimeDiscoveryPayload(payload)
                     }
                 }
+            }
+        }
+    }
+
+    private func runtimeDiscoveryAliasLookupControls(_ viewModel: RuntimeViewModel) -> some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Model alias query")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField(
+                    "Model alias query",
+                    text: Binding(
+                        get: { viewModel.runtimeDiscoveryAliasQueryDraft },
+                        set: { viewModel.updateRuntimeDiscoveryAliasQuery($0) }
+                    )
+                )
+                .textFieldStyle(.roundedBorder)
+            }
+            DesktopSettingsOperationButton(title: "Lookup Alias", isEnabled: viewModel.runtimeDiscoveryAliasLookupCanRun) {
+                Task { await viewModel.lookupRuntimeDiscoveryModelAlias() }
             }
         }
     }
@@ -2049,9 +2071,19 @@ struct DesktopSettingsTabView: View {
             }
             if let alias = payload.aliasDiscovery {
                 discoveryKeyValueRow("model_alias.query", alias.query)
-                discoveryKeyValueRow("model_alias.status", alias.status)
-                if alias.suggestionsText.isEmpty == false {
-                    discoveryKeyValueRow("model_alias.suggestions", alias.suggestionsText)
+                discoveryKeyValueRow("model_alias.status", alias.statusDisplayTitle)
+                if alias.suggestions.isEmpty == false {
+                    Text("Model Alias Suggestions")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                    ForEach(alias.suggestions) { suggestion in
+                        discoveryKeyValueRow(suggestion.modelID, suggestion.displayText)
+                    }
+                } else if alias.emptyStateMessage.isEmpty == false {
+                    Text(alias.emptyStateMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
                 }
             }
             if payload.instructionAreas.isEmpty == false {
@@ -2148,6 +2180,9 @@ struct DesktopSettingsTabView: View {
         var values = [
             "Discovery Inspector",
             "Refresh Discovery",
+            "Model alias query",
+            "Lookup Alias",
+            viewModel.runtimeDiscoveryAliasQueryDraft,
             viewModel.runtimeDiscoveryOperationMessage,
             viewModel.runtimeDiscoveryOperationErrorMessage,
         ]
@@ -2163,7 +2198,19 @@ struct DesktopSettingsTabView: View {
                 [$0.modelID, $0.kind, $0.supportedModalitiesText, $0.supportedTasksText, $0.capabilityReceiptText]
             })
             if let alias = payload.aliasDiscovery {
-                values.append(contentsOf: [alias.query, alias.status, alias.suggestionsText])
+                values.append(contentsOf: [
+                    alias.query,
+                    alias.status,
+                    alias.statusDisplayTitle,
+                    alias.suggestionsText,
+                    alias.emptyStateMessage,
+                ])
+                values.append(contentsOf: alias.suggestions.flatMap {
+                    [$0.modelID, $0.family, $0.aliasesText, $0.quantization, $0.displayText]
+                })
+                if alias.suggestions.isEmpty == false {
+                    values.append("Model Alias Suggestions")
+                }
             }
             values.append(contentsOf: payload.instructionAreas.flatMap { [$0.id, $0.title, $0.commandsText] })
             values.append(contentsOf: payload.schemaPaths.flatMap { [$0.key, $0.path] })

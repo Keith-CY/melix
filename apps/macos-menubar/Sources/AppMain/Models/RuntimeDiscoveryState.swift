@@ -133,15 +133,90 @@ public struct RuntimeDiscoveryModelState: Identifiable, Equatable, Sendable {
     }
 }
 
+public struct RuntimeDiscoveryAliasSuggestionState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let modelID: String
+    public let family: String
+    public let aliases: [String]
+    public let quantization: String
+
+    public init(modelID: String, family: String, aliases: [String], quantization: String) {
+        self.id = [modelID, aliases.joined(separator: ",")].filter { $0.isEmpty == false }.joined(separator: "|")
+        self.modelID = modelID
+        self.family = family
+        self.aliases = aliases
+        self.quantization = quantization
+    }
+
+    public var aliasesText: String {
+        aliases.joined(separator: ", ")
+    }
+
+    public var displayText: String {
+        [
+            modelID,
+            family.isEmpty ? "" : "family: \(family)",
+            quantization.isEmpty ? "" : "quantization: \(quantization)",
+            aliasesText.isEmpty ? "" : "aliases: \(aliasesText)",
+        ]
+        .filter { $0.isEmpty == false }
+        .joined(separator: " | ")
+    }
+}
+
 public struct RuntimeDiscoveryAliasState: Equatable, Sendable {
     public let query: String
     public let status: String
+    public let suggestions: [RuntimeDiscoveryAliasSuggestionState]
     public let suggestionsText: String
 
-    public init(query: String, status: String, suggestionsText: String) {
+    public init(
+        query: String,
+        status: String,
+        suggestions: [RuntimeDiscoveryAliasSuggestionState] = [],
+        suggestionsText: String = ""
+    ) {
         self.query = query
         self.status = status
-        self.suggestionsText = suggestionsText
+        self.suggestions = suggestions
+        self.suggestionsText = suggestionsText.isEmpty
+            ? suggestions.map(\.displayText).joined(separator: " | ")
+            : suggestionsText
+    }
+
+    public var statusDisplayTitle: String {
+        switch status {
+        case "suggested":
+            return "Suggestions available"
+        case "no_match":
+            return "No match"
+        case "valid_full_model_id":
+            return "Full model ID"
+        case "local_path_passthrough":
+            return "Local path"
+        case "not_requested":
+            return "Not requested"
+        default:
+            return status
+        }
+    }
+
+    public var emptyStateMessage: String {
+        guard suggestions.isEmpty else {
+            return ""
+        }
+        switch status {
+        case "no_match" where query.isEmpty == false:
+            return "No model alias matches \(query)."
+        case "not_requested":
+            return "Enter a model alias query to see suggestions."
+        case "valid_full_model_id":
+            return "Query is already a full model ID."
+        case "local_path_passthrough":
+            return "Query is treated as a local model path."
+        default:
+            return ""
+        }
     }
 }
 
@@ -319,22 +394,24 @@ public enum RuntimeDiscoveryPayloadDecoder {
         guard let object = value as? [String: Any] else {
             return nil
         }
-        let suggestions = (object["suggestions"] as? [[String: Any]] ?? [])
-            .map { suggestion in
-                [
-                    stringText(for: suggestion["model_id"]),
-                    stringText(for: suggestion["family"]),
-                    stringText(for: suggestion["quantization"]),
-                    stringArray(for: suggestion["aliases"]).joined(separator: ", "),
-                ]
-                .filter { $0.isEmpty == false }
-                .joined(separator: " ")
-            }
+        let suggestions = aliasSuggestions(from: object["suggestions"])
         return RuntimeDiscoveryAliasState(
             query: stringText(for: object["query"]),
             status: stringText(for: object["status"]),
-            suggestionsText: suggestions.joined(separator: " | ")
+            suggestions: suggestions,
+            suggestionsText: suggestions.map(\.displayText).joined(separator: " | ")
         )
+    }
+
+    private static func aliasSuggestions(from value: Any?) -> [RuntimeDiscoveryAliasSuggestionState] {
+        (value as? [[String: Any]] ?? []).map { suggestion in
+            RuntimeDiscoveryAliasSuggestionState(
+                modelID: stringText(for: suggestion["model_id"]),
+                family: stringText(for: suggestion["family"]),
+                aliases: stringArray(for: suggestion["aliases"]),
+                quantization: stringText(for: suggestion["quantization"])
+            )
+        }
     }
 
     private static func stringArray(for value: Any?) -> [String] {

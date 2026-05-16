@@ -1918,6 +1918,7 @@ public final class RuntimeViewModel {
     public private(set) var runtimeSettingsOperationErrorMessage = ""
     public private(set) var runtimeSettingsValidationResult: RuntimeSettingsValidationResultState?
     public private(set) var runtimeDiscoverySnapshot = RuntimeDiscoverySnapshotState.empty
+    public private(set) var runtimeDiscoveryAliasQueryDraft = ""
     public private(set) var runtimeDiscoveryOperationInProgress = false
     public private(set) var runtimeDiscoveryOperationMessage = ""
     public private(set) var runtimeDiscoveryOperationErrorMessage = ""
@@ -1965,6 +1966,10 @@ public final class RuntimeViewModel {
     }
     public var runtimeDiscoveryRefreshInProgress: Bool {
         runtimeDiscoveryOperationInProgress
+    }
+    public var runtimeDiscoveryAliasLookupCanRun: Bool {
+        normalizedRuntimeDiscoveryAliasQuery.isEmpty == false
+            && runtimeDiscoveryOperationInProgress == false
     }
     public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
     public private(set) var models: [RuntimeModelRow] = [] {
@@ -2813,6 +2818,10 @@ public final class RuntimeViewModel {
 
     private var normalizedRuntimeSettingValue: String {
         runtimeSettingValueDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedRuntimeDiscoveryAliasQuery: String {
+        runtimeDiscoveryAliasQueryDraft.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func reloadHuggingFaceTokenHint() {
@@ -3822,6 +3831,11 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    public func updateRuntimeDiscoveryAliasQuery(_ query: String) {
+        runtimeDiscoveryAliasQueryDraft = query
+        notifyStateChanged()
+    }
+
     public func updateRuntimeSettingDraft(key: String, value: String) {
         runtimeSettingKeyDraft = key
         runtimeSettingValueDraft = value
@@ -3924,6 +3938,39 @@ public final class RuntimeViewModel {
             runtimeDiscoverySnapshot = try RuntimeDiscoveryPayloadDecoder.decodeSnapshot(entries)
             runtimeDiscoveryOperationInProgress = false
             runtimeDiscoveryOperationMessage = "Runtime discovery refreshed."
+            runtimeDiscoveryOperationErrorMessage = ""
+            clearCLIWorkflowFailure()
+            notifyStateChanged()
+        } catch {
+            failRuntimeDiscoveryOperation(error)
+        }
+    }
+
+    public func lookupRuntimeDiscoveryModelAlias() async {
+        let query = normalizedRuntimeDiscoveryAliasQuery
+        guard query.isEmpty == false else {
+            failRuntimeDiscoveryOperation("Model alias query is required.")
+            return
+        }
+        guard let commandWorkflowRunner else {
+            failRuntimeDiscoveryOperation("Discovery CLI runner is unavailable.")
+            return
+        }
+
+        beginRuntimeDiscoveryOperation()
+        do {
+            let output = try await commandWorkflowRunner.run(.capabilities(.init(json: true, modelQuery: query)))
+            let capabilities = try RuntimeDiscoveryPayloadDecoder.decodePayload(endpoint: .capabilities, output)
+            var payloads = runtimeDiscoverySnapshot.payloads
+            if let index = payloads.firstIndex(where: { $0.endpoint == .capabilities }) {
+                payloads[index] = capabilities
+            } else {
+                payloads.append(capabilities)
+            }
+            runtimeDiscoveryAliasQueryDraft = query
+            runtimeDiscoverySnapshot = RuntimeDiscoverySnapshotState(payloads: payloads)
+            runtimeDiscoveryOperationInProgress = false
+            runtimeDiscoveryOperationMessage = "Model alias lookup refreshed."
             runtimeDiscoveryOperationErrorMessage = ""
             clearCLIWorkflowFailure()
             notifyStateChanged()

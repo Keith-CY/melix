@@ -1050,6 +1050,64 @@ struct DesktopFoundationViewTests {
         #expect(values.contains("MELIX_MAX_CONCURRENT_JOBS"))
     }
 
+    @Test("settings tab renders model alias lookup suggestions and no match states")
+    @MainActor
+    func settingsTabRendersModelAliasLookupSuggestionsAndNoMatchStates() async throws {
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
+            snapshot: Melix_Controlplane_V1_ServerSnapshot(),
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-discovery-alias",
+            features: [],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
+            lastError: nil,
+            recentEvents: []
+        )
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureOutput(
+            RuntimeDiscoveryStateTests.noMatchCapabilitiesJSON,
+            for: .capabilities(.init(json: true, modelQuery: "not a/model id"))
+        )
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.applyRuntimeDiscovery(
+            try RuntimeDiscoveryPayloadDecoder.decodeSnapshot([
+                (.capabilities, RuntimeDiscoveryStateTests.capabilitiesJSON),
+            ])
+        )
+        viewModel.updateRuntimeDiscoveryAliasQuery("not a/model id")
+
+        let initialTab = DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
+        let initialView = hostView(initialTab)
+        let initialValues = initialTab.accessibilitySummary
+        let lookupButton = try #require(renderedButtons(in: initialView).first { $0.title == "Lookup Alias" })
+
+        #expect(initialValues.contains("Model alias query"))
+        #expect(initialValues.contains("Lookup Alias"))
+        #expect(initialValues.contains("Model Alias Suggestions"))
+        #expect(initialValues.contains("Suggestions available"))
+        #expect(initialValues.contains("mlx-community/Qwen3.5-9B-MLX-4bit"))
+
+        lookupButton.performClick(nil)
+        try await waitForDesktopFoundationCondition("alias lookup completes") {
+            viewModel.runtimeDiscoveryOperationMessage == "Model alias lookup refreshed."
+        }
+
+        let noMatchTab = DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
+        _ = hostView(noMatchTab)
+        #expect(noMatchTab.accessibilitySummary.contains("No match"))
+        #expect(noMatchTab.accessibilitySummary.contains("No model alias matches not a/model id."))
+        #expect(
+            await runner.snapshotRecordedCommands() == [
+                .capabilities(.init(json: true, modelQuery: "not a/model id")),
+            ]
+        )
+    }
+
     @Test("settings tab refreshes runtime discovery and renders status states")
     @MainActor
     func settingsTabRefreshesRuntimeDiscoveryAndRendersStatusStates() async throws {
