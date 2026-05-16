@@ -29,6 +29,40 @@ struct RuntimeWorkflowRecipesStateTests {
         #expect(detail.preflightRows.contains { $0.name == "pipeline_dry_run" && $0.valueText == "true" })
     }
 
+    @Test("workflow recipe decoder maps uri inspect candidates and ambiguity results")
+    func workflowRecipeDecoderMapsURIInspectCandidatesAndAmbiguityResults() throws {
+        let inspection = try RuntimeWorkflowRecipesPayloadDecoder.decodeURIInspection(Self.uriInspectionJSON)
+
+        #expect(inspection.schemaVersion == "melix.uri_inspection.v1")
+        #expect(inspection.originalURI == "org/repo")
+        #expect(inspection.normalizedLocator == "org/repo")
+        #expect(inspection.candidateCount == 2)
+        #expect(inspection.ambiguityCount == 1)
+        #expect(inspection.summaryText == "2 candidates, 1 ambiguous")
+        #expect(inspection.candidates.map(\.kind) == ["hf_model_repo", "hf_dataset_repo"])
+        #expect(inspection.candidates.first?.repoID == "org/repo")
+        #expect(inspection.candidates.first?.revision == "main")
+        #expect(inspection.candidates.first?.confidenceText == "62%")
+        #expect(inspection.candidates.first?.reasonText == "bare org/repo locator; prefer hf://model or hf://dataset for disambiguation")
+        #expect(inspection.candidates.first?.generatedCommandText == "model hub download --repo-id org/repo")
+        #expect(inspection.candidates.last?.taskKind == "dataset_import")
+        #expect(inspection.metrics.first?.name == "uri.ambiguity_count")
+
+        let emptyInspection = try RuntimeWorkflowRecipesPayloadDecoder.decodeURIInspection(Self.emptyURIInspectionJSON)
+        #expect(emptyInspection.candidates.isEmpty)
+        #expect(emptyInspection.summaryText == "0 candidates, 0 ambiguous")
+
+        let stringlyInspection = try RuntimeWorkflowRecipesPayloadDecoder.decodeURIInspection(Self.stringlyURIInspectionJSON)
+        #expect(stringlyInspection.candidateCount == 1)
+        #expect(stringlyInspection.ambiguityCount == 0)
+        #expect(stringlyInspection.candidates.first?.confidenceText == "62.5%")
+
+        let fallbackInspection = try RuntimeWorkflowRecipesPayloadDecoder.decodeURIInspection(Self.fallbackURIInspectionJSON)
+        #expect(fallbackInspection.candidateCount == 1)
+        #expect(fallbackInspection.ambiguityCount == 0)
+        #expect(fallbackInspection.candidates.first?.confidenceText == "0%")
+    }
+
     @Test("runtime view model refreshes workflow recipe catalog and detail through CLI runner")
     @MainActor
     func runtimeViewModelRefreshesWorkflowRecipeCatalogAndDetailThroughCLIRunner() async throws {
@@ -60,6 +94,34 @@ struct RuntimeWorkflowRecipesStateTests {
         ])
     }
 
+    @Test("runtime view model inspects workflow recipe uri through cli runner")
+    @MainActor
+    func runtimeViewModelInspectsWorkflowRecipeURIThroughCLIRunner() async throws {
+        let runner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await runner.configureOutput(Self.uriInspectionJSON, for: .uriInspect(.init(uri: "org/repo", json: true)))
+
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.updateWorkflowRecipeURIInspectDraft(" org/repo ")
+
+        await viewModel.inspectWorkflowRecipeURI()
+
+        #expect(viewModel.workflowRecipeURIInspection?.candidateCount == 2)
+        #expect(viewModel.workflowRecipeURIInspection?.ambiguityCount == 1)
+        #expect(viewModel.workflowRecipeURIInspection?.candidates.first?.kind == "hf_model_repo")
+        #expect(viewModel.workflowRecipeURIInspectMessage == "Inspected org/repo: 2 candidates, 1 ambiguous.")
+        #expect(viewModel.workflowRecipeURIInspectErrorMessage.isEmpty)
+        #expect(await runner.snapshotRecordedCommands() == [.uriInspect(.init(uri: "org/repo", json: true))])
+
+        let noRunnerViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        noRunnerViewModel.updateWorkflowRecipeURIInspectDraft("")
+        await noRunnerViewModel.inspectWorkflowRecipeURI()
+        #expect(noRunnerViewModel.workflowRecipeURIInspectErrorMessage == "Enter a URI before inspecting.")
+
+        noRunnerViewModel.updateWorkflowRecipeURIInspectDraft("org/repo")
+        await noRunnerViewModel.inspectWorkflowRecipeURI()
+        #expect(noRunnerViewModel.workflowRecipeURIInspectErrorMessage == "Workflow recipe CLI runner is unavailable.")
+    }
+
     @Test("workflow recipes section renders catalog filters and selected recipe detail")
     @MainActor
     func workflowRecipesSectionRendersCatalogFiltersAndSelectedRecipeDetail() throws {
@@ -79,6 +141,36 @@ struct RuntimeWorkflowRecipesStateTests {
         #expect(summary.contains("repo_id"))
         #expect(summary.contains("estimate.import"))
         #expect(summary.contains("managed_model_path"))
+    }
+
+    @Test("workflow recipes section renders uri inspect form and candidate ambiguity results")
+    @MainActor
+    func workflowRecipesSectionRendersURIInspectFormAndCandidateAmbiguityResults() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.updateWorkflowRecipeURIInspectDraft("org/repo")
+        viewModel.applyWorkflowRecipeURIInspection(
+            try RuntimeWorkflowRecipesPayloadDecoder.decodeURIInspection(Self.uriInspectionJSON)
+        )
+
+        let section = DesktopWorkflowRecipesToolSectionView(viewModel: viewModel)
+        let hosted = hostWorkflowRecipeView(section)
+        let summary = section.accessibilitySummary
+
+        #expect(hosted.subviews.isEmpty == false)
+        #expect(summary.contains("URI to inspect"))
+        #expect(summary.contains("Inspect URI"))
+        #expect(summary.contains("org/repo"))
+        #expect(summary.contains("2 candidates, 1 ambiguous"))
+        #expect(summary.contains("hf_model_repo"))
+        #expect(summary.contains("hf_dataset_repo"))
+        #expect(summary.contains("model hub download --repo-id org/repo"))
+        #expect(summary.contains("bare org/repo locator could also identify a Hugging Face dataset"))
+
+        viewModel.applyWorkflowRecipeURIInspection(
+            try RuntimeWorkflowRecipesPayloadDecoder.decodeURIInspection(Self.emptyURIInspectionJSON)
+        )
+        let emptySummary = DesktopWorkflowRecipesToolSectionView(viewModel: viewModel).accessibilitySummary
+        #expect(emptySummary.contains("No URI candidates found."))
     }
 
     @Test("workflow recipes section buttons drive filter refresh and clear actions")
@@ -118,6 +210,30 @@ struct RuntimeWorkflowRecipesStateTests {
         #expect(recordedCommands.contains(.recipesShow(.init(recipeID: "import.hf-mlx-model", json: true))))
     }
 
+    @Test("workflow recipes section drives uri inspect action")
+    @MainActor
+    func workflowRecipesSectionDrivesURIInspectAction() async throws {
+        let runner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await runner.configureOutput(Self.uriInspectionJSON, for: .uriInspect(.init(uri: "org/repo", json: true)))
+
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.updateWorkflowRecipeURIInspectDraft("org/repo")
+
+        let section = DesktopWorkflowRecipesToolSectionView(viewModel: viewModel)
+        let hosted = hostWorkflowRecipeView(section)
+
+        #expect(hosted.subviews.isEmpty == false)
+        #expect(section.accessibilitySummary.contains("Inspect URI"))
+
+        section.inspectURIAction()
+        try await waitForWorkflowRecipeCondition("workflow recipe uri inspect action completes") {
+            viewModel.workflowRecipeURIInspection?.candidateCount == 2
+        }
+
+        #expect(viewModel.workflowRecipeURIInspectMessage == "Inspected org/repo: 2 candidates, 1 ambiguous.")
+        #expect(await runner.snapshotRecordedCommands() == [.uriInspect(.init(uri: "org/repo", json: true))])
+    }
+
     @Test("workflow recipes empty and error states are visible")
     @MainActor
     func workflowRecipesEmptyAndErrorStatesAreVisible() async throws {
@@ -133,6 +249,7 @@ struct RuntimeWorkflowRecipesStateTests {
         #expect(summary.contains("No workflow recipes match this filter."))
         #expect(summary.contains("Select a recipe to inspect its inputs, preflight, pipeline, and outputs."))
         #expect(summary.contains("Workflow recipe CLI runner is unavailable."))
+        #expect(summary.contains("Inspect a URI to see candidate workflow inputs."))
     }
 
     @Test("runtime view model handles workflow recipe errors and cached selection")
@@ -168,6 +285,20 @@ struct RuntimeWorkflowRecipesStateTests {
         let noRunnerViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
         await noRunnerViewModel.selectWorkflowRecipe(recipeID: "import.hf-mlx-model")
         #expect(noRunnerViewModel.workflowRecipeCatalogErrorMessage == "Workflow recipe CLI runner is unavailable.")
+
+        let uriFailureRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await uriFailureRunner.configureFailure(
+            .processFailed(commandID: "uri.inspect", surface: .subprocess, exitCode: 4, stderr: "inspect failed"),
+            for: .uriInspect(.init(uri: "org/repo", json: true))
+        )
+        let uriFailureViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: uriFailureRunner)
+        uriFailureViewModel.updateWorkflowRecipeURIInspectDraft("org/repo")
+        await uriFailureViewModel.inspectWorkflowRecipeURI()
+        #expect(uriFailureViewModel.workflowRecipeURIInspectErrorMessage.contains("inspect failed"))
+
+        let failureSection = DesktopWorkflowRecipesToolSectionView(viewModel: uriFailureViewModel)
+        _ = hostWorkflowRecipeView(failureSection)
+        #expect(failureSection.accessibilitySummary.contains("inspect failed"))
     }
 
     @Test("workflow recipe cli bridge maps malformed json to workflow errors")
@@ -175,6 +306,7 @@ struct RuntimeWorkflowRecipesStateTests {
         let runner = RecordingCLIWorkflowRunner(surface: .subprocess)
         await runner.configureOutput("not-json\n", for: .recipesList(.init(task: "", json: true)))
         await runner.configureOutput("not-json\n", for: .recipesShow(.init(recipeID: "import.hf-mlx-model", json: true)))
+        await runner.configureOutput("not-json\n", for: .uriInspect(.init(uri: "org/repo", json: true)))
 
         do {
             _ = try await runner.listWorkflowRecipes(task: "")
@@ -186,6 +318,13 @@ struct RuntimeWorkflowRecipesStateTests {
         do {
             _ = try await runner.showWorkflowRecipe(recipeID: "import.hf-mlx-model")
             Issue.record("Expected malformed detail JSON to fail.")
+        } catch let error as MelixCLIWorkflowError {
+            #expect(error.failureKind == .invalidJSON)
+        }
+
+        do {
+            _ = try await runner.inspectWorkflowRecipeURI(uri: "org/repo")
+            Issue.record("Expected malformed URI inspection JSON to fail.")
         } catch let error as MelixCLIWorkflowError {
             #expect(error.failureKind == .invalidJSON)
         }
@@ -342,6 +481,110 @@ struct RuntimeWorkflowRecipesStateTests {
       "outputs": {
         "managed_model_path": "from download_model step"
       }
+    }
+    """#
+
+    static let uriInspectionJSON = #"""
+    {
+      "schema_version": "melix.uri_inspection.v1",
+      "original_uri": "org/repo",
+      "normalized_locator": "org/repo",
+      "candidate_count": 2,
+      "ambiguity_count": 1,
+      "candidates": [
+        {
+          "kind": "hf_model_repo",
+          "confidence": 0.62,
+          "task_kind": "model_import",
+          "source_kind": "huggingface",
+          "revision": "main",
+          "repo_id": "org/repo",
+          "normalized_locator": "hf://model/org/repo",
+          "reasons": [
+            "bare org/repo locator; prefer hf://model or hf://dataset for disambiguation"
+          ],
+          "recommended_next_action": "model hub download --repo-id org/repo",
+          "generated_command_arguments": ["model", "hub", "download", "--repo-id", "org/repo"],
+          "warnings": []
+        },
+        {
+          "kind": "hf_dataset_repo",
+          "confidence": 0.38,
+          "task_kind": "dataset_import",
+          "source_kind": "huggingface",
+          "revision": "main",
+          "repo_id": "org/repo",
+          "normalized_locator": "hf://dataset/org/repo",
+          "reasons": [
+            "bare org/repo locator could also identify a Hugging Face dataset"
+          ],
+          "recommended_next_action": "dataset hub download --repo-id org/repo",
+          "generated_command_arguments": ["dataset", "hub", "download", "--repo-id", "org/repo"],
+          "warnings": ["prefer an explicit hf://dataset URI"]
+        }
+      ],
+      "metrics": {
+        "uri.inspect_ms": 3.5,
+        "uri.candidate_count": 2,
+        "uri.ambiguity_count": 1
+      }
+    }
+    """#
+
+    static let emptyURIInspectionJSON = #"""
+    {
+      "schema_version": "melix.uri_inspection.v1",
+      "original_uri": "",
+      "normalized_locator": "",
+      "candidate_count": 0,
+      "ambiguity_count": 0,
+      "candidates": [],
+      "metrics": {}
+    }
+    """#
+
+    static let stringlyURIInspectionJSON = #"""
+    {
+      "schema_version": "melix.uri_inspection.v1",
+      "original_uri": "hf://model/org/repo",
+      "normalized_locator": "hf://model/org/repo",
+      "candidate_count": "1",
+      "ambiguity_count": "0",
+      "candidates": [
+        {
+          "kind": "hf_model_repo",
+          "confidence": "0.625",
+          "task_kind": "model_import",
+          "source_kind": "huggingface",
+          "normalized_locator": "hf://model/org/repo",
+          "reasons": [],
+          "generated_command_arguments": [],
+          "recommended_next_action": "inspect_only",
+          "warnings": []
+        }
+      ],
+      "metrics": {}
+    }
+    """#
+
+    static let fallbackURIInspectionJSON = #"""
+    {
+      "schema_version": "melix.uri_inspection.v1",
+      "original_uri": "unknown",
+      "normalized_locator": "unknown",
+      "candidates": [
+        {
+          "kind": "unknown",
+          "task_kind": "inspect",
+          "source_kind": "local_path",
+          "normalized_locator": "unknown",
+          "reasons": [],
+          "generated_command_arguments": [],
+          "recommended_next_action": "inspect_only",
+          "warnings": []
+        }
+      ],
+      "metrics": {}
     }
     """#
 }

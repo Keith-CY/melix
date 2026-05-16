@@ -1926,10 +1926,15 @@ public final class RuntimeViewModel {
     public private(set) var workflowRecipeDetailsByID: [String: RuntimeWorkflowRecipeDetailState] = [:]
     public private(set) var selectedWorkflowRecipeID = ""
     public private(set) var workflowRecipeTaskFilterDraft = ""
+    public private(set) var workflowRecipeURIInspectDraft = ""
+    public private(set) var workflowRecipeURIInspection: RuntimeWorkflowURIInspectionState?
     public private(set) var workflowRecipeCatalogInProgress = false
     public private(set) var workflowRecipeDetailInProgress = false
+    public private(set) var workflowRecipeURIInspectInProgress = false
     public private(set) var workflowRecipeCatalogMessage = ""
     public private(set) var workflowRecipeCatalogErrorMessage = ""
+    public private(set) var workflowRecipeURIInspectMessage = ""
+    public private(set) var workflowRecipeURIInspectErrorMessage = ""
     public private(set) var batchRunModelListText = ""
     public private(set) var batchRunConfigText = ""
     public private(set) var batchRunReports: [RuntimeBatchRunReportState] = []
@@ -1992,6 +1997,10 @@ public final class RuntimeViewModel {
     }
     public var selectedWorkflowRecipeDetail: RuntimeWorkflowRecipeDetailState? {
         workflowRecipeDetailsByID[selectedWorkflowRecipeID]
+    }
+    public var workflowRecipeURIInspectCanRun: Bool {
+        normalizedWorkflowRecipeURIInspectDraft.isEmpty == false
+            && workflowRecipeURIInspectInProgress == false
     }
     public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
     public private(set) var models: [RuntimeModelRow] = [] {
@@ -2848,6 +2857,10 @@ public final class RuntimeViewModel {
 
     private var normalizedWorkflowRecipeTaskFilter: String {
         workflowRecipeTaskFilterDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedWorkflowRecipeURIInspectDraft: String {
+        workflowRecipeURIInspectDraft.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func reloadHuggingFaceTokenHint() {
@@ -3867,6 +3880,11 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    public func updateWorkflowRecipeURIInspectDraft(_ uri: String) {
+        workflowRecipeURIInspectDraft = uri
+        notifyStateChanged()
+    }
+
     public func updateRuntimeSettingDraft(key: String, value: String) {
         runtimeSettingKeyDraft = key
         runtimeSettingValueDraft = value
@@ -3890,6 +3908,11 @@ public final class RuntimeViewModel {
     public func applyWorkflowRecipeDetail(_ detail: RuntimeWorkflowRecipeDetailState) {
         workflowRecipeDetailsByID[detail.id] = detail
         selectedWorkflowRecipeID = detail.id
+        notifyStateChanged()
+    }
+
+    public func applyWorkflowRecipeURIInspection(_ inspection: RuntimeWorkflowURIInspectionState) {
+        workflowRecipeURIInspection = inspection
         notifyStateChanged()
     }
 
@@ -4082,6 +4105,37 @@ public final class RuntimeViewModel {
             workflowRecipeDetailInProgress = false
             recordCLIWorkflowErrorIfNeeded(error)
             failWorkflowRecipeOperation(workflowErrorMessage(error))
+        }
+    }
+
+    public func inspectWorkflowRecipeURI() async {
+        let uri = normalizedWorkflowRecipeURIInspectDraft
+        guard uri.isEmpty == false else {
+            failWorkflowRecipeURIInspection("Enter a URI before inspecting.")
+            return
+        }
+        guard let commandWorkflowRunner else {
+            failWorkflowRecipeURIInspection("Workflow recipe CLI runner is unavailable.")
+            return
+        }
+
+        workflowRecipeURIInspectDraft = uri
+        workflowRecipeURIInspectInProgress = true
+        workflowRecipeURIInspectMessage = ""
+        workflowRecipeURIInspectErrorMessage = ""
+        notifyStateChanged()
+
+        do {
+            let inspection = try await commandWorkflowRunner.inspectWorkflowRecipeURI(uri: uri)
+            workflowRecipeURIInspectInProgress = false
+            workflowRecipeURIInspectMessage = "Inspected \(uri): \(inspection.summaryText)."
+            workflowRecipeURIInspectErrorMessage = ""
+            clearCLIWorkflowFailure()
+            applyWorkflowRecipeURIInspection(inspection)
+        } catch {
+            workflowRecipeURIInspectInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            failWorkflowRecipeURIInspection(workflowErrorMessage(error))
         }
     }
 
@@ -12050,6 +12104,14 @@ public final class RuntimeViewModel {
         workflowRecipeDetailInProgress = false
         workflowRecipeCatalogMessage = ""
         workflowRecipeCatalogErrorMessage = message
+        recordLocalError(message)
+        notifyStateChanged()
+    }
+
+    private func failWorkflowRecipeURIInspection(_ message: String) {
+        workflowRecipeURIInspectInProgress = false
+        workflowRecipeURIInspectMessage = ""
+        workflowRecipeURIInspectErrorMessage = message
         recordLocalError(message)
         notifyStateChanged()
     }

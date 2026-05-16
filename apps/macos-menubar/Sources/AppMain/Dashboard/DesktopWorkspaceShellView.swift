@@ -2260,7 +2260,28 @@ struct DesktopWorkflowRecipesToolSectionView: View {
                 Button("Refresh Catalog", action: refreshCatalogAction)
                 .buttonStyle(.borderedProminent)
                 .disabled(viewModel.workflowRecipeCatalogInProgress)
-                if viewModel.workflowRecipeCatalogInProgress || viewModel.workflowRecipeDetailInProgress {
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("URI to inspect")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField(
+                        "URI to inspect",
+                        text: Binding(
+                            get: { viewModel.workflowRecipeURIInspectDraft },
+                            set: { viewModel.updateWorkflowRecipeURIInspectDraft($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+                Button("Inspect URI", action: inspectURIAction)
+                    .buttonStyle(.bordered)
+                    .disabled(viewModel.workflowRecipeURIInspectCanRun == false)
+
+                if viewModel.workflowRecipeCatalogInProgress
+                    || viewModel.workflowRecipeDetailInProgress
+                    || viewModel.workflowRecipeURIInspectInProgress
+                {
                     ProgressView()
                         .controlSize(.small)
                 }
@@ -2292,6 +2313,22 @@ struct DesktopWorkflowRecipesToolSectionView: View {
                     .font(.caption)
                     .foregroundStyle(MelixDesignTokens.StatusColor.error)
                     .textSelection(.enabled)
+            }
+            if viewModel.workflowRecipeURIInspectMessage.isEmpty == false {
+                Text(viewModel.workflowRecipeURIInspectMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                    .textSelection(.enabled)
+            }
+            if viewModel.workflowRecipeURIInspectErrorMessage.isEmpty == false {
+                Text(viewModel.workflowRecipeURIInspectErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            }
+
+            MelixSectionCard("URI Inspect") {
+                uriInspectionPanel
             }
 
             HStack(alignment: .top, spacing: 14) {
@@ -2372,6 +2409,90 @@ struct DesktopWorkflowRecipesToolSectionView: View {
 
     func selectRecipeAction(_ recipeID: String) {
         Task { await viewModel.selectWorkflowRecipe(recipeID: recipeID) }
+    }
+
+    func inspectURIAction() {
+        Task { await viewModel.inspectWorkflowRecipeURI() }
+    }
+
+    private var uriInspectionPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let inspection = viewModel.workflowRecipeURIInspection {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(inspection.summaryText)
+                        .font(.headline)
+                    Spacer()
+                    if inspection.schemaVersion.isEmpty == false {
+                        Text(inspection.schemaVersion)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if inspection.normalizedLocator.isEmpty == false {
+                    Text(inspection.normalizedLocator)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                if inspection.candidates.isEmpty {
+                    Text("No URI candidates found.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(inspection.candidates) { candidate in
+                        workflowRecipeURICandidateRow(candidate)
+                    }
+                }
+            } else {
+                Text("Inspect a URI to see candidate workflow inputs.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func workflowRecipeURICandidateRow(_ candidate: RuntimeWorkflowURICandidateState) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(candidate.kind)
+                    .font(.caption.weight(.semibold))
+                Text(candidate.confidenceText)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(candidate.taskKind)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            Text([candidate.sourceKind, candidate.repoID, candidate.revision]
+                .filter { $0.isEmpty == false }
+                .joined(separator: " | "))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(candidate.normalizedLocator)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+            if candidate.reasonText.isEmpty == false {
+                Text(candidate.reasonText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            if candidate.generatedCommandText.isEmpty == false {
+                Text(candidate.generatedCommandText)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+            }
+            if candidate.warningText.isEmpty == false {
+                Text(candidate.warningText)
+                    .font(.caption2)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.warning)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var recipeDetail: some View {
@@ -2496,11 +2617,45 @@ struct DesktopWorkflowRecipesToolSectionView: View {
             "Workflow Recipes",
             "Task filter",
             viewModel.workflowRecipeTaskFilterDraft,
+            viewModel.workflowRecipeURIInspectDraft,
             "Refresh Catalog",
+            "URI to inspect",
+            "Inspect URI",
             viewModel.workflowRecipeCatalogMessage,
             viewModel.workflowRecipeCatalogErrorMessage,
+            viewModel.workflowRecipeURIInspectMessage,
+            viewModel.workflowRecipeURIInspectErrorMessage,
         ]
         values.append(contentsOf: viewModel.workflowRecipeCatalog.availableTaskFilters)
+        if let inspection = viewModel.workflowRecipeURIInspection {
+            values.append(contentsOf: [
+                inspection.schemaVersion,
+                inspection.originalURI,
+                inspection.normalizedLocator,
+                inspection.summaryText,
+            ])
+            if inspection.candidates.isEmpty {
+                values.append("No URI candidates found.")
+            }
+            values.append(contentsOf: inspection.candidates.flatMap {
+                [
+                    $0.kind,
+                    $0.sourceKind,
+                    $0.taskKind,
+                    $0.confidenceText,
+                    $0.normalizedLocator,
+                    $0.repoID,
+                    $0.revision,
+                    $0.reasonText,
+                    $0.warningText,
+                    $0.recommendedNextAction,
+                    $0.generatedCommandText,
+                ]
+            })
+            values.append(contentsOf: inspection.metrics.flatMap { [$0.name, $0.valueText] })
+        } else {
+            values.append("Inspect a URI to see candidate workflow inputs.")
+        }
         if viewModel.workflowRecipeFilteredRecipes.isEmpty {
             values.append("No workflow recipes match this filter.")
         }

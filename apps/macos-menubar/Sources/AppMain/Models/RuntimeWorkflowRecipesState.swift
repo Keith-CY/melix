@@ -148,6 +148,103 @@ public struct RuntimeWorkflowRecipeDetailState: Identifiable, Equatable, Sendabl
     }
 }
 
+public struct RuntimeWorkflowURICandidateState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let kind: String
+    public let sourceKind: String
+    public let taskKind: String
+    public let confidence: Double
+    public let normalizedLocator: String
+    public let repoID: String
+    public let revision: String
+    public let reasons: [String]
+    public let warnings: [String]
+    public let recommendedNextAction: String
+    public let generatedCommandArguments: [String]
+
+    public init(
+        id: String,
+        kind: String,
+        sourceKind: String,
+        taskKind: String,
+        confidence: Double,
+        normalizedLocator: String,
+        repoID: String,
+        revision: String,
+        reasons: [String],
+        warnings: [String],
+        recommendedNextAction: String,
+        generatedCommandArguments: [String]
+    ) {
+        self.id = id
+        self.kind = kind
+        self.sourceKind = sourceKind
+        self.taskKind = taskKind
+        self.confidence = confidence
+        self.normalizedLocator = normalizedLocator
+        self.repoID = repoID
+        self.revision = revision
+        self.reasons = reasons
+        self.warnings = warnings
+        self.recommendedNextAction = recommendedNextAction
+        self.generatedCommandArguments = generatedCommandArguments
+    }
+
+    public var confidenceText: String {
+        let percent = confidence * 100
+        if percent.isFinite, percent.rounded(.towardZero) == percent {
+            return "\(Int(percent))%"
+        }
+        return "\(String(format: "%.1f", percent))%"
+    }
+
+    public var reasonText: String {
+        reasons.joined(separator: "; ")
+    }
+
+    public var warningText: String {
+        warnings.joined(separator: "; ")
+    }
+
+    public var generatedCommandText: String {
+        generatedCommandArguments.isEmpty
+            ? recommendedNextAction
+            : generatedCommandArguments.joined(separator: " ")
+    }
+}
+
+public struct RuntimeWorkflowURIInspectionState: Equatable, Sendable {
+    public let schemaVersion: String
+    public let originalURI: String
+    public let normalizedLocator: String
+    public let candidateCount: Int
+    public let ambiguityCount: Int
+    public let candidates: [RuntimeWorkflowURICandidateState]
+    public let metrics: [RuntimeWorkflowRecipeMetricState]
+
+    public init(
+        schemaVersion: String,
+        originalURI: String,
+        normalizedLocator: String,
+        candidateCount: Int,
+        ambiguityCount: Int,
+        candidates: [RuntimeWorkflowURICandidateState],
+        metrics: [RuntimeWorkflowRecipeMetricState]
+    ) {
+        self.schemaVersion = schemaVersion
+        self.originalURI = originalURI
+        self.normalizedLocator = normalizedLocator
+        self.candidateCount = candidateCount
+        self.ambiguityCount = ambiguityCount
+        self.candidates = candidates
+        self.metrics = metrics
+    }
+
+    public var summaryText: String {
+        "\(candidateCount) \(candidateCount == 1 ? "candidate" : "candidates"), \(ambiguityCount) ambiguous"
+    }
+}
+
 public enum RuntimeWorkflowRecipesPayloadDecoder {
     public static func decodeCatalog(_ output: String) throws -> RuntimeWorkflowRecipeCatalogState {
         try decodeCatalog(Data(output.utf8))
@@ -190,6 +287,43 @@ public enum RuntimeWorkflowRecipesPayloadDecoder {
             preflightRows: keyValueRows(from: payload["preflight"]),
             pipelineSteps: pipelineSteps(from: pipeline["steps"]),
             outputRows: keyValueRows(from: payload["outputs"])
+        )
+    }
+
+    public static func decodeURIInspection(_ output: String) throws -> RuntimeWorkflowURIInspectionState {
+        try decodeURIInspection(Data(output.utf8))
+    }
+
+    public static func decodeURIInspection(_ data: Data) throws -> RuntimeWorkflowURIInspectionState {
+        let payload = try jsonObject(from: data, message: "Workflow recipe URI inspection payload must be a JSON object.")
+        let candidates = (payload["candidates"] as? [[String: Any]] ?? []).enumerated().map { index, candidate in
+            RuntimeWorkflowURICandidateState(
+                id: [
+                    stringText(for: candidate["kind"]),
+                    stringText(for: candidate["normalized_locator"]),
+                    String(index),
+                ].joined(separator: "|"),
+                kind: stringText(for: candidate["kind"]),
+                sourceKind: stringText(for: candidate["source_kind"]),
+                taskKind: stringText(for: candidate["task_kind"]),
+                confidence: doubleValue(for: candidate["confidence"]),
+                normalizedLocator: stringText(for: candidate["normalized_locator"]),
+                repoID: stringText(for: candidate["repo_id"]),
+                revision: stringText(for: candidate["revision"]),
+                reasons: stringArray(for: candidate["reasons"]),
+                warnings: stringArray(for: candidate["warnings"]),
+                recommendedNextAction: stringText(for: candidate["recommended_next_action"]),
+                generatedCommandArguments: stringArray(for: candidate["generated_command_arguments"])
+            )
+        }
+        return RuntimeWorkflowURIInspectionState(
+            schemaVersion: stringText(for: payload["schema_version"]),
+            originalURI: stringText(for: payload["original_uri"]),
+            normalizedLocator: stringText(for: payload["normalized_locator"]),
+            candidateCount: intValue(for: payload["candidate_count"], fallback: candidates.count),
+            ambiguityCount: intValue(for: payload["ambiguity_count"], fallback: max(candidates.count - 1, 0)),
+            candidates: candidates,
+            metrics: metricRows(from: payload["metrics"])
         )
     }
 
@@ -252,6 +386,26 @@ public enum RuntimeWorkflowRecipesPayloadDecoder {
             return string
         }
         return displayText(for: value)
+    }
+
+    private static func intValue(for value: Any?, fallback: Int) -> Int {
+        if let number = value as? NSNumber {
+            return number.intValue
+        }
+        if let string = value as? String, let int = Int(string) {
+            return int
+        }
+        return fallback
+    }
+
+    private static func doubleValue(for value: Any?) -> Double {
+        if let number = value as? NSNumber {
+            return number.doubleValue
+        }
+        if let string = value as? String, let double = Double(string) {
+            return double
+        }
+        return 0
     }
 
     private static func argumentSummary(from value: Any?) -> String {
