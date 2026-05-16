@@ -377,12 +377,34 @@ def test_count_tests_reuses_cached_counts_for_repeated_payloads() -> None:
 
 def test_count_assert_nodes_counts_nested_asserts() -> None:
     module = code_eval_runner.ast.parse(
-        "assert identity(1) == 1\nif enabled:\n    assert identity(2) == 2",
+        textwrap.dedent(
+            """
+            assert identity(1) == 1
+            if enabled:
+                assert identity(2) == 2
+            else:
+                with context:
+                    assert identity(3) == 3
+            try:
+                assert identity(4) == 4
+            except Exception:
+                assert identity(5) == 5
+            finally:
+                assert identity(6) == 6
+            def check():
+                assert identity(7) == 7
+            class Nested:
+                assert identity(8) == 8
+            match status:
+                case "ok":
+                    assert identity(9) == 9
+            """
+        ),
         filename="<tests>",
         mode="exec",
     )
 
-    assert code_eval_runner._count_assert_nodes(module) == 2
+    assert code_eval_runner._count_assert_nodes(module) == 9
 
 
 def test_count_assert_nodes_returns_zero_without_asserts() -> None:
