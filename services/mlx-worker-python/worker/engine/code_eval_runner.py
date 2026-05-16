@@ -16,6 +16,7 @@ import textwrap
 _DEFAULT_STDIO_LIMIT_BYTES = 32_768
 _JSON_LOADS = json.loads
 _JSON_DECODE_ERROR = json.JSONDecodeError
+_OS_PREAD = getattr(os, "pread", None)
 _COMMON_PYTHON_CODE_BLOCK_TAGS = ("python", "Python", "PYTHON")
 
 
@@ -525,13 +526,20 @@ def _read_limited_stdio(path: Path, byte_limit: int) -> tuple[str, int]:
 
     try:
         size = os.fstat(fd).st_size
-        read_limit = max(int(byte_limit), 0)
+        read_limit = byte_limit if byte_limit > 0 else 0
         if size > read_limit:
-            os.lseek(fd, -read_limit, os.SEEK_END)
             read_size = read_limit
+            offset = size - read_limit
         else:
             read_size = size
-        return os.read(fd, read_size).decode("utf-8", errors="replace").strip(), size
+            offset = 0
+        if offset > 0 and _OS_PREAD is not None:
+            data = _OS_PREAD(fd, read_size, offset)
+        else:
+            if offset > 0:
+                os.lseek(fd, offset, os.SEEK_SET)
+            data = os.read(fd, read_size)
+        return data.decode("utf-8", errors="replace").strip(), size
     except OSError:
         return "", 0
     finally:

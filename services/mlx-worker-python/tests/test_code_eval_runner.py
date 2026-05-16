@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -490,6 +491,42 @@ def test_read_limited_stdio_handles_open_race(
     monkeypatch.setattr(code_eval_runner.os, "open", fake_open)
 
     assert code_eval_runner._read_limited_stdio(output_path, 4) == ("", 0)
+
+
+def test_read_limited_stdio_uses_pread_for_tail_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output_path = tmp_path / "output.txt"
+    output_path.write_text("0123456789abcdef", encoding="utf-8")
+    pread_calls: list[tuple[int, int]] = []
+
+    def fake_pread(fd: int, size: int, offset: int) -> bytes:
+        pread_calls.append((size, offset))
+        return os.pread(fd, size, offset)
+
+    monkeypatch.setattr(code_eval_runner, "_OS_PREAD", fake_pread)
+
+    assert code_eval_runner._read_limited_stdio(output_path, 4) == ("cdef", 16)
+    assert pread_calls == [(4, 12)]
+
+
+def test_read_limited_stdio_falls_back_to_seek_when_pread_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output_path = tmp_path / "output.txt"
+    output_path.write_text("0123456789abcdef", encoding="utf-8")
+    lseek_calls: list[tuple[int, int]] = []
+    original_lseek = os.lseek
+
+    def fake_lseek(fd: int, offset: int, whence: int) -> int:
+        lseek_calls.append((offset, whence))
+        return original_lseek(fd, offset, whence)
+
+    monkeypatch.setattr(code_eval_runner, "_OS_PREAD", None)
+    monkeypatch.setattr(code_eval_runner.os, "lseek", fake_lseek)
+
+    assert code_eval_runner._read_limited_stdio(output_path, 4) == ("cdef", 16)
+    assert lseek_calls == [(12, os.SEEK_SET)]
 
 
 def test_read_limited_stdio_ignores_close_errors(
