@@ -224,7 +224,11 @@ class RequestStreamAssembler:
         token_count = 0
         byte_delta = None
         token_bytes = fragment.token_bytes
-        if fragment.token_ids or fragment.token_logprobs or token_bytes is not None:
+        if token_bytes is not None and not fragment.token_ids and not fragment.token_logprobs:
+            token_count = 1
+            self._metrics["generated_token_count"] += 1
+            byte_delta = self._token_byte_delta(token_bytes)
+        elif fragment.token_ids or fragment.token_logprobs:
             token_count = self._record_token_metadata(fragment)
             if token_bytes is not None:
                 byte_delta = self._token_byte_delta(token_bytes)
