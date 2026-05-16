@@ -1957,6 +1957,17 @@ public final class RuntimeViewModel {
     public private(set) var workflowRecipePlanErrorMessage = ""
     public private(set) var workflowRecipeApplyMessage = ""
     public private(set) var workflowRecipeApplyErrorMessage = ""
+    public private(set) var syntheticDatasetIDDraft = ""
+    public private(set) var syntheticDatasetNameDraft = ""
+    public private(set) var syntheticDatasetNumRecordsDraft = "100"
+    public private(set) var syntheticDatasetOutputKindDraft = "training"
+    public private(set) var syntheticDatasetOutputFormatDraft = "prompt_completion"
+    public private(set) var syntheticDatasetOutputDirDraft = ""
+    public private(set) var syntheticDatasetProviderEndpointDraft = ""
+    public private(set) var syntheticDatasetProviderNameDraft = "melix"
+    public private(set) var syntheticDatasetProviderTypeDraft = "openai"
+    public private(set) var syntheticDatasetModelAliasDraft = "generator"
+    public private(set) var syntheticDatasetModelDraft = ""
     public private(set) var batchRunModelListText = ""
     public private(set) var batchRunConfigText = ""
     public private(set) var batchRunReports: [RuntimeBatchRunReportState] = []
@@ -2051,6 +2062,81 @@ public final class RuntimeViewModel {
     public var workflowRecipeApplyCanRun: Bool {
         selectedWorkflowRecipeID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             && workflowRecipeApplyInProgress == false
+    }
+    public var normalizedSyntheticDatasetID: String {
+        syntheticDatasetIDDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetName: String {
+        syntheticDatasetNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetNumRecords: UInt32? {
+        let text = syntheticDatasetNumRecordsDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value = UInt32(text), value > 0 else { return nil }
+        return value
+    }
+    public var normalizedSyntheticDatasetOutputKind: String {
+        syntheticDatasetOutputKindDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetOutputFormat: String {
+        syntheticDatasetOutputFormatDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetOutputDir: String {
+        syntheticDatasetOutputDirDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetProviderEndpoint: String {
+        syntheticDatasetProviderEndpointDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetProviderName: String {
+        syntheticDatasetProviderNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetProviderType: String {
+        syntheticDatasetProviderTypeDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetModelAlias: String {
+        syntheticDatasetModelAliasDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetModel: String {
+        syntheticDatasetModelDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var syntheticDatasetBaseFormValidationMessages: [RuntimeSyntheticDatasetValidationMessageState] {
+        var messages: [RuntimeSyntheticDatasetValidationMessageState] = []
+        if normalizedSyntheticDatasetID.isEmpty {
+            messages.append(.init(field: "Dataset ID", message: "Enter a dataset ID."))
+        }
+        if normalizedSyntheticDatasetName.isEmpty {
+            messages.append(.init(field: "Dataset Name", message: "Enter a dataset name."))
+        }
+        if normalizedSyntheticDatasetNumRecords == nil {
+            messages.append(.init(field: "Records", message: "Enter a positive record count."))
+        }
+        if normalizedSyntheticDatasetOutputKind.isEmpty {
+            messages.append(.init(field: "Output Kind", message: "Enter an output kind."))
+        }
+        if normalizedSyntheticDatasetOutputFormat.isEmpty {
+            messages.append(.init(field: "Output Format", message: "Enter an output format."))
+        }
+        if normalizedSyntheticDatasetOutputDir.isEmpty {
+            messages.append(.init(field: "Output Directory", message: "Enter an output directory."))
+        }
+        if normalizedSyntheticDatasetProviderEndpoint.isEmpty {
+            messages.append(.init(field: "Provider Endpoint", message: "Enter a provider endpoint."))
+        }
+        if normalizedSyntheticDatasetProviderName.isEmpty {
+            messages.append(.init(field: "Provider Name", message: "Enter a provider name."))
+        }
+        if normalizedSyntheticDatasetProviderType.isEmpty {
+            messages.append(.init(field: "Provider Type", message: "Enter a provider type."))
+        }
+        if normalizedSyntheticDatasetModelAlias.isEmpty {
+            messages.append(.init(field: "Model Alias", message: "Enter a model alias."))
+        }
+        if normalizedSyntheticDatasetModel.isEmpty {
+            messages.append(.init(field: "Model", message: "Enter a model."))
+        }
+        return messages
+    }
+    public var syntheticDatasetBaseFormCanContinue: Bool {
+        syntheticDatasetBaseFormValidationMessages.isEmpty
     }
     public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
     public private(set) var models: [RuntimeModelRow] = [] {
@@ -3987,6 +4073,61 @@ public final class RuntimeViewModel {
 
     public func updateWorkflowRecipeApplyFromStepDraft(_ stepID: String) {
         workflowRecipeApplyFromStepDraft = stepID
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetIDDraft(_ datasetID: String) {
+        syntheticDatasetIDDraft = datasetID
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetNameDraft(_ datasetName: String) {
+        syntheticDatasetNameDraft = datasetName
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetNumRecordsDraft(_ count: String) {
+        syntheticDatasetNumRecordsDraft = count
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetOutputKindDraft(_ outputKind: String) {
+        syntheticDatasetOutputKindDraft = outputKind
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetOutputFormatDraft(_ outputFormat: String) {
+        syntheticDatasetOutputFormatDraft = outputFormat
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetOutputDirDraft(_ outputDir: String) {
+        syntheticDatasetOutputDirDraft = outputDir
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetProviderEndpointDraft(_ endpoint: String) {
+        syntheticDatasetProviderEndpointDraft = endpoint
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetProviderNameDraft(_ providerName: String) {
+        syntheticDatasetProviderNameDraft = providerName
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetProviderTypeDraft(_ providerType: String) {
+        syntheticDatasetProviderTypeDraft = providerType
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetModelAliasDraft(_ modelAlias: String) {
+        syntheticDatasetModelAliasDraft = modelAlias
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetModelDraft(_ model: String) {
+        syntheticDatasetModelDraft = model
         notifyStateChanged()
     }
 

@@ -1940,6 +1940,8 @@ private struct DesktopToolsWorkspaceView: View {
                         DesktopTrainingToolSectionView(viewModel: viewModel)
                     case .workflowRecipes:
                         DesktopWorkflowRecipesToolSectionView(viewModel: viewModel)
+                    case .syntheticDatasets:
+                        DesktopSyntheticDatasetToolSectionView(viewModel: viewModel)
                     case .batchRuns:
                         DesktopBatchRunsToolSectionView(viewModel: viewModel)
                     case .jobs:
@@ -2006,7 +2008,7 @@ private struct DesktopToolsWorkspaceView: View {
         switch viewModel.selectedToolSection {
         case .training, .diagnostics:
             return DesktopLoRAVisualPolish.pageBackgroundColor
-        case .modelsLibrary, .downloads, .workflowRecipes, .batchRuns, .jobs, .logs, .settings:
+        case .modelsLibrary, .downloads, .workflowRecipes, .syntheticDatasets, .batchRuns, .jobs, .logs, .settings:
             return Color(nsColor: .windowBackgroundColor)
         }
     }
@@ -3262,6 +3264,191 @@ struct DesktopWorkflowRecipesToolSectionView: View {
             values.append("Select a recipe to inspect its inputs, preflight, pipeline, and outputs.")
         }
         return values.filter { $0.isEmpty == false }.joined(separator: " ")
+    }
+}
+
+struct DesktopSyntheticDatasetToolSectionView: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Synthetic Dataset Studio")
+                .font(.title3.weight(.semibold))
+
+            HStack(alignment: .top, spacing: 14) {
+                MelixSectionCard("Dataset Identity") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        formField(
+                            "Dataset ID",
+                            text: Binding(
+                                get: { viewModel.syntheticDatasetIDDraft },
+                                set: { viewModel.updateSyntheticDatasetIDDraft($0) }
+                            )
+                        )
+                        formField(
+                            "Dataset Name",
+                            text: Binding(
+                                get: { viewModel.syntheticDatasetNameDraft },
+                                set: { viewModel.updateSyntheticDatasetNameDraft($0) }
+                            )
+                        )
+                        formField(
+                            "Records",
+                            text: Binding(
+                                get: { viewModel.syntheticDatasetNumRecordsDraft },
+                                set: { viewModel.updateSyntheticDatasetNumRecordsDraft($0) }
+                            )
+                        )
+                    }
+                }
+
+                MelixSectionCard("Output") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        formField(
+                            "Output Kind",
+                            text: Binding(
+                                get: { viewModel.syntheticDatasetOutputKindDraft },
+                                set: { viewModel.updateSyntheticDatasetOutputKindDraft($0) }
+                            )
+                        )
+                        formField(
+                            "Output Format",
+                            text: Binding(
+                                get: { viewModel.syntheticDatasetOutputFormatDraft },
+                                set: { viewModel.updateSyntheticDatasetOutputFormatDraft($0) }
+                            )
+                        )
+                        formField(
+                            "Output Directory",
+                            text: Binding(
+                                get: { viewModel.syntheticDatasetOutputDirDraft },
+                                set: { viewModel.updateSyntheticDatasetOutputDirDraft($0) }
+                            )
+                        )
+                    }
+                }
+            }
+
+            HStack(alignment: .top, spacing: 14) {
+                MelixSectionCard("Provider") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        formField(
+                            "Provider Endpoint",
+                            text: Binding(
+                                get: { viewModel.syntheticDatasetProviderEndpointDraft },
+                                set: { viewModel.updateSyntheticDatasetProviderEndpointDraft($0) }
+                            )
+                        )
+                        formField(
+                            "Provider Name",
+                            text: Binding(
+                                get: { viewModel.syntheticDatasetProviderNameDraft },
+                                set: { viewModel.updateSyntheticDatasetProviderNameDraft($0) }
+                            )
+                        )
+                        formField(
+                            "Provider Type",
+                            text: Binding(
+                                get: { viewModel.syntheticDatasetProviderTypeDraft },
+                                set: { viewModel.updateSyntheticDatasetProviderTypeDraft($0) }
+                            )
+                        )
+                    }
+                }
+
+                MelixSectionCard("Model") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        formField(
+                            "Model Alias",
+                            text: Binding(
+                                get: { viewModel.syntheticDatasetModelAliasDraft },
+                                set: { viewModel.updateSyntheticDatasetModelAliasDraft($0) }
+                            )
+                        )
+                        formField(
+                            "Model",
+                            text: Binding(
+                                get: { viewModel.syntheticDatasetModelDraft },
+                                set: { viewModel.updateSyntheticDatasetModelDraft($0) }
+                            )
+                        )
+                    }
+                }
+            }
+
+            MelixSectionCard("Validation") {
+                if viewModel.syntheticDatasetBaseFormValidationMessages.isEmpty {
+                    Text("Ready to configure columns before preview or create.")
+                        .font(.caption)
+                        .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(viewModel.syntheticDatasetBaseFormValidationMessages) { message in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(message.field)
+                                    .font(.caption.weight(.semibold))
+                                Text(message.message)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func formField(_ label: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField(label, text: text)
+                .textFieldStyle(.roundedBorder)
+        }
+    }
+
+    var accessibilitySummary: String {
+        var values = [
+            "Synthetic Dataset Studio",
+            "Dataset Identity",
+            "Dataset ID",
+            viewModel.normalizedSyntheticDatasetID,
+            "Dataset Name",
+            viewModel.normalizedSyntheticDatasetName,
+            "Records",
+            viewModel.syntheticDatasetNumRecordsDraft,
+            "Output",
+            "Output Kind",
+            viewModel.normalizedSyntheticDatasetOutputKind,
+            "Output Format",
+            viewModel.normalizedSyntheticDatasetOutputFormat,
+            "Output Directory",
+            viewModel.normalizedSyntheticDatasetOutputDir,
+            "Provider",
+            "Provider Endpoint",
+            viewModel.normalizedSyntheticDatasetProviderEndpoint,
+            "Provider Name",
+            viewModel.normalizedSyntheticDatasetProviderName,
+            "Provider Type",
+            viewModel.normalizedSyntheticDatasetProviderType,
+            "Model",
+            "Model Alias",
+            viewModel.normalizedSyntheticDatasetModelAlias,
+            viewModel.normalizedSyntheticDatasetModel,
+            "Validation",
+        ]
+        if viewModel.syntheticDatasetBaseFormValidationMessages.isEmpty {
+            values.append("Ready to configure columns before preview or create.")
+        } else {
+            values.append(contentsOf: viewModel.syntheticDatasetBaseFormValidationMessages.flatMap {
+                [$0.field, $0.message]
+            })
+        }
+        return values
+            .filter { $0.isEmpty == false }
+            .joined(separator: " ")
     }
 }
 

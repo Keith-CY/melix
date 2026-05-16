@@ -33,6 +33,7 @@ public enum DesktopToolSection: String, CaseIterable, Identifiable, Codable, Sen
     case downloads = "Downloads"
     case training = "Training"
     case workflowRecipes = "Workflow Recipes"
+    case syntheticDatasets = "Synthetic Datasets"
     case batchRuns = "Batch Runs"
     case jobs = "Jobs"
     case diagnostics = "Diagnostics"
@@ -53,6 +54,8 @@ public enum DesktopToolSection: String, CaseIterable, Identifiable, Codable, Sen
             return "figure.strengthtraining.traditional"
         case .workflowRecipes:
             return "list.bullet.clipboard"
+        case .syntheticDatasets:
+            return "sparkles.rectangle.stack"
         case .batchRuns:
             return "rectangle.stack.badge.play"
         case .jobs:
@@ -80,7 +83,7 @@ public enum DesktopToolCategory: String, CaseIterable, Identifiable, Codable, Se
         case .models:
             return [.modelsLibrary, .downloads]
         case .build:
-            return [.training, .workflowRecipes]
+            return [.training, .workflowRecipes, .syntheticDatasets]
         case .validate:
             return [.batchRuns, .jobs, .diagnostics]
         case .system:

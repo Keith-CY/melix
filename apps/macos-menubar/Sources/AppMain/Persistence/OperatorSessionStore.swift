@@ -397,6 +397,8 @@ private extension DesktopToolSection {
             self = .training
         case "workflowrecipes":
             self = .workflowRecipes
+        case "syntheticdatasets":
+            self = .syntheticDatasets
         case "batchruns":
             self = .batchRuns
         case "jobs":
@@ -422,6 +424,8 @@ private extension DesktopToolSection {
             return "training"
         case .workflowRecipes:
             return "workflowRecipes"
+        case .syntheticDatasets:
+            return "syntheticDatasets"
         case .batchRuns:
             return "batchRuns"
         case .jobs:

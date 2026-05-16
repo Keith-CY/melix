@@ -226,6 +226,15 @@ private func groundedToolSectionCount(for viewModel: RuntimeViewModel) -> Int {
         ),
         (.downloads, hostedDesktopPolishViewHasSubviews(DesktopDownloadsToolSectionView(viewModel: viewModel))),
         (.training, hostedDesktopPolishViewHasSubviews(DesktopTrainingToolSectionView(viewModel: viewModel))),
+        (
+            .workflowRecipes,
+            hostedDesktopPolishViewHasSubviews(DesktopWorkflowRecipesToolSectionView(viewModel: viewModel))
+        ),
+        (
+            .syntheticDatasets,
+            hostedDesktopPolishViewHasSubviews(DesktopSyntheticDatasetToolSectionView(viewModel: viewModel))
+        ),
+        (.batchRuns, hostedDesktopPolishViewHasSubviews(DesktopBatchRunsToolSectionView(viewModel: viewModel))),
         (.jobs, hostedDesktopPolishViewHasSubviews(DesktopJobsToolSectionView(viewModel: viewModel))),
         (
             .diagnostics,
