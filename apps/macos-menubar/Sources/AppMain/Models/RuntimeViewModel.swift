@@ -1932,14 +1932,19 @@ public final class RuntimeViewModel {
     public private(set) var workflowRecipeSetValueDraft = ""
     public private(set) var workflowRecipeSetValues: [String: String] = [:]
     public private(set) var workflowRecipePlanOutputPathDraft = ""
+    public private(set) var workflowRecipeApplyDryRun = true
+    public private(set) var workflowRecipeApplyResume = false
+    public private(set) var workflowRecipeApplyFromStepDraft = ""
     public private(set) var workflowRecipeURIInspection: RuntimeWorkflowURIInspectionState?
     public private(set) var workflowRecipeInitPreview: RuntimeWorkflowRecipeInitPreviewState?
     public private(set) var workflowRecipePlan: RuntimeWorkflowRecipePlanState?
+    public private(set) var workflowRecipeApplyResult: RuntimeWorkflowRecipeApplyResultState?
     public private(set) var workflowRecipeCatalogInProgress = false
     public private(set) var workflowRecipeDetailInProgress = false
     public private(set) var workflowRecipeURIInspectInProgress = false
     public private(set) var workflowRecipeInitPreviewInProgress = false
     public private(set) var workflowRecipePlanInProgress = false
+    public private(set) var workflowRecipeApplyInProgress = false
     public private(set) var workflowRecipeCatalogMessage = ""
     public private(set) var workflowRecipeCatalogErrorMessage = ""
     public private(set) var workflowRecipeURIInspectMessage = ""
@@ -1950,6 +1955,8 @@ public final class RuntimeViewModel {
     public private(set) var workflowRecipeSetEditorErrorMessage = ""
     public private(set) var workflowRecipePlanMessage = ""
     public private(set) var workflowRecipePlanErrorMessage = ""
+    public private(set) var workflowRecipeApplyMessage = ""
+    public private(set) var workflowRecipeApplyErrorMessage = ""
     public private(set) var batchRunModelListText = ""
     public private(set) var batchRunConfigText = ""
     public private(set) var batchRunReports: [RuntimeBatchRunReportState] = []
@@ -2040,6 +2047,10 @@ public final class RuntimeViewModel {
     public var workflowRecipePlanCanRun: Bool {
         selectedWorkflowRecipeID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             && workflowRecipePlanInProgress == false
+    }
+    public var workflowRecipeApplyCanRun: Bool {
+        selectedWorkflowRecipeID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            && workflowRecipeApplyInProgress == false
     }
     public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
     public private(set) var models: [RuntimeModelRow] = [] {
@@ -2916,6 +2927,10 @@ public final class RuntimeViewModel {
 
     private var normalizedWorkflowRecipePlanOutputPath: String {
         workflowRecipePlanOutputPathDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedWorkflowRecipeApplyFromStep: String {
+        workflowRecipeApplyFromStepDraft.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func reloadHuggingFaceTokenHint() {
@@ -3960,6 +3975,21 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    public func updateWorkflowRecipeApplyDryRun(_ enabled: Bool) {
+        workflowRecipeApplyDryRun = enabled
+        notifyStateChanged()
+    }
+
+    public func updateWorkflowRecipeApplyResume(_ enabled: Bool) {
+        workflowRecipeApplyResume = enabled
+        notifyStateChanged()
+    }
+
+    public func updateWorkflowRecipeApplyFromStepDraft(_ stepID: String) {
+        workflowRecipeApplyFromStepDraft = stepID
+        notifyStateChanged()
+    }
+
     public func updateRuntimeSettingDraft(key: String, value: String) {
         runtimeSettingKeyDraft = key
         runtimeSettingValueDraft = value
@@ -4004,6 +4034,11 @@ public final class RuntimeViewModel {
 
     public func applyWorkflowRecipePlan(_ plan: RuntimeWorkflowRecipePlanState) {
         workflowRecipePlan = plan
+        notifyStateChanged()
+    }
+
+    public func applyWorkflowRecipeResult(_ result: RuntimeWorkflowRecipeApplyResultState) {
+        workflowRecipeApplyResult = result
         notifyStateChanged()
     }
 
@@ -4080,6 +4115,47 @@ public final class RuntimeViewModel {
             workflowRecipePlanInProgress = false
             recordCLIWorkflowErrorIfNeeded(error)
             failWorkflowRecipePlan(workflowErrorMessage(error))
+        }
+    }
+
+    public func applyWorkflowRecipe() async {
+        let recipeID = selectedWorkflowRecipeID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard recipeID.isEmpty == false else {
+            failWorkflowRecipeApply("Select a workflow recipe before applying.")
+            return
+        }
+        guard let commandWorkflowRunner else {
+            failWorkflowRecipeApply("Workflow recipe CLI runner is unavailable.")
+            return
+        }
+
+        workflowRecipeApplyInProgress = true
+        workflowRecipeApplyMessage = ""
+        workflowRecipeApplyErrorMessage = ""
+        workflowRecipeApplyFromStepDraft = normalizedWorkflowRecipeApplyFromStep
+        notifyStateChanged()
+
+        do {
+            let result = try await commandWorkflowRunner.applyWorkflowRecipe(
+                recipeID: recipeID,
+                version: selectedWorkflowRecipeDetail?.version ?? "",
+                values: workflowRecipeSetValues,
+                dryRun: workflowRecipeApplyDryRun,
+                resume: workflowRecipeApplyResume,
+                fromStepID: normalizedWorkflowRecipeApplyFromStep
+            )
+            workflowRecipeApplyInProgress = false
+            let name = result.name.isEmpty ? recipeID : result.name
+            let mode = workflowRecipeApplyDryRun ? " as dry run" : ""
+            let stepLabel = result.stepRows.count == 1 ? "step" : "steps"
+            workflowRecipeApplyMessage = "Applied \(name)\(mode): \(result.status) \(result.stepRows.count) \(stepLabel)."
+            workflowRecipeApplyErrorMessage = ""
+            clearCLIWorkflowFailure()
+            applyWorkflowRecipeResult(result)
+        } catch {
+            workflowRecipeApplyInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            failWorkflowRecipeApply(workflowErrorMessage(error))
         }
     }
 
@@ -12331,6 +12407,14 @@ public final class RuntimeViewModel {
         workflowRecipePlanInProgress = false
         workflowRecipePlanMessage = ""
         workflowRecipePlanErrorMessage = message
+        recordLocalError(message)
+        notifyStateChanged()
+    }
+
+    private func failWorkflowRecipeApply(_ message: String) {
+        workflowRecipeApplyInProgress = false
+        workflowRecipeApplyMessage = ""
+        workflowRecipeApplyErrorMessage = message
         recordLocalError(message)
         notifyStateChanged()
     }
