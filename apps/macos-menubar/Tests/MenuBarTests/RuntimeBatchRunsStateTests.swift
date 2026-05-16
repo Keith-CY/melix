@@ -99,6 +99,18 @@ struct RuntimeBatchRunsStateTests {
         #expect(viewModel.selectedBatchRunReport?.runID == "smoke-batch")
         #expect(viewModel.selectedBatchRunReport?.preflightStatus == "ready")
         #expect(viewModel.selectedBatchRunReport?.checks.first?.name == "output_root")
+        #expect(viewModel.selectedBatchRunReport?.effectiveConfigRows.contains {
+            $0.title == "Output Root" && $0.detail == "/tmp/melix-batch-output"
+        } == true)
+        #expect(viewModel.selectedBatchRunReport?.effectiveConfigRows.contains {
+            $0.title == "Benchmark" && $0.detail.contains("latency")
+        } == true)
+        #expect(viewModel.selectedBatchRunReport?.isolationSummaryRows.contains {
+            $0.title == "Restart Stack Per Model" && $0.detail == "enabled"
+        } == true)
+        #expect(viewModel.selectedBatchRunReport?.isolationSummaryRows.contains {
+            $0.title == "Force Clean After Runtime Failure" && $0.detail == "enabled"
+        } == true)
 
         await viewModel.requestBatchRunPreflight()
         #expect(viewModel.batchRunReports.count == 1)
@@ -147,6 +159,43 @@ struct RuntimeBatchRunsStateTests {
 
         #expect(failing.batchRunPreflightInProgress == false)
         #expect(failing.batchRunPreflightErrorMessage.contains("preflight failed"))
+    }
+
+    @Test("batch run report decoder renders effective config fallback rows")
+    func batchRunReportDecoderRendersEffectiveConfigFallbackRows() throws {
+        let intPortReport = try Self.decodedBatchReport { payload in
+            payload["http_port"] = 12435
+            payload.removeValue(forKey: "melix_home")
+            payload.removeValue(forKey: "runtime_dir")
+            payload.removeValue(forKey: "service_instance_name")
+            payload.removeValue(forKey: "continue_on_failure")
+            payload.removeValue(forKey: "isolation_policy")
+            payload["restart_stack_per_model"] = false
+        }
+
+        #expect(intPortReport.effectiveConfigRows.contains {
+            $0.title == "HTTP Port" && $0.detail == "12435"
+        })
+        #expect(intPortReport.effectiveConfigRows.contains { $0.title == "MELIX_HOME" } == false)
+        #expect(intPortReport.effectiveConfigRows.contains { $0.title == "Continue On Failure" } == false)
+        #expect(intPortReport.isolationSummaryRows.contains {
+            $0.title == "Restart Stack Per Model" && $0.detail == "disabled"
+        })
+        #expect(intPortReport.isolationSummaryRows.contains {
+            $0.title == "Force Clean After Runtime Failure"
+        } == false)
+
+        let boolPortReport = try Self.decodedBatchReport { payload in
+            payload["http_port"] = true
+        }
+        #expect(boolPortReport.effectiveConfigRows.contains {
+            $0.title == "HTTP Port" && $0.detail == "true"
+        })
+
+        let unsupportedPortReport = try Self.decodedBatchReport { payload in
+            payload["http_port"] = ["unexpected": "object"]
+        }
+        #expect(unsupportedPortReport.effectiveConfigRows.contains { $0.title == "HTTP Port" } == false)
     }
 
     private static func batchPreflightPayload(modelListPath: String, configPath: String) -> [String: Any] {
@@ -234,5 +283,14 @@ struct RuntimeBatchRunsStateTests {
                 ],
             ],
         ]
+    }
+
+    private static func decodedBatchReport(
+        customizing customize: (inout [String: Any]) -> Void
+    ) throws -> RuntimeBatchRunReportState {
+        var payload = batchPreflightPayload(modelListPath: "/tmp/models.txt", configPath: "/tmp/config.txt")
+        customize(&payload)
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        return try RuntimeBatchRunReportDecoder.decodePreflightOutput(String(decoding: data, as: UTF8.self))
     }
 }

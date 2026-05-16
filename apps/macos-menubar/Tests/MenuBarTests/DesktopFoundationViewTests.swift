@@ -1922,6 +1922,12 @@ struct DesktopFoundationViewTests {
         #expect(values.contains("smoke-batch"))
         #expect(values.contains("Preflight ready"))
         #expect(values.contains("output_root"))
+        #expect(values.contains("Effective Config"))
+        #expect(values.contains("Output Root"))
+        #expect(values.contains("/tmp/melix-batch-output"))
+        #expect(values.contains("Isolation Summary"))
+        #expect(values.contains("Restart Stack Per Model"))
+        #expect(values.contains("enabled"))
         #expect(await runner.snapshotRecordedCommands().count == 1)
     }
 

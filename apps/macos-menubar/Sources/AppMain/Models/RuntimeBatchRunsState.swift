@@ -75,6 +75,18 @@ public struct RuntimeBatchRunPreflightCheckState: Identifiable, Equatable, Senda
     }
 }
 
+public struct RuntimeBatchRunSummaryRowState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let title: String
+    public let detail: String
+
+    public init(id: String, title: String, detail: String) {
+        self.id = id
+        self.title = title
+        self.detail = detail
+    }
+}
+
 public struct RuntimeBatchRunReportState: Identifiable, Equatable, Sendable {
     public let id: String
     public let runID: String
@@ -87,6 +99,8 @@ public struct RuntimeBatchRunReportState: Identifiable, Equatable, Sendable {
     public let tempRoot: String
     public let preflightReportPath: String
     public let checks: [RuntimeBatchRunPreflightCheckState]
+    public let effectiveConfigRows: [RuntimeBatchRunSummaryRowState]
+    public let isolationSummaryRows: [RuntimeBatchRunSummaryRowState]
 
     public var statusTitle: String {
         "Preflight \(preflightStatus.isEmpty ? "unknown" : preflightStatus)"
@@ -102,7 +116,9 @@ public struct RuntimeBatchRunReportState: Identifiable, Equatable, Sendable {
         outputRoot: String,
         tempRoot: String,
         preflightReportPath: String,
-        checks: [RuntimeBatchRunPreflightCheckState]
+        checks: [RuntimeBatchRunPreflightCheckState],
+        effectiveConfigRows: [RuntimeBatchRunSummaryRowState] = [],
+        isolationSummaryRows: [RuntimeBatchRunSummaryRowState] = []
     ) {
         self.id = "\(runID.isEmpty ? "batch-run" : runID):\(preflightReportPath)"
         self.runID = runID
@@ -115,6 +131,8 @@ public struct RuntimeBatchRunReportState: Identifiable, Equatable, Sendable {
         self.tempRoot = tempRoot
         self.preflightReportPath = preflightReportPath
         self.checks = checks
+        self.effectiveConfigRows = effectiveConfigRows
+        self.isolationSummaryRows = isolationSummaryRows
     }
 }
 
@@ -133,8 +151,18 @@ private struct RuntimeBatchRunDryRunPayload: Decodable {
     let configPath: String
     let outputRoot: String
     let tempRoot: String
+    let melixHome: String?
+    let runtimeDir: String?
+    let httpPort: RuntimeBatchRunStringValue?
+    let serviceInstanceName: String?
     let selectedModelCount: Int
+    let totalModelCount: Int?
+    let continueOnFailure: Bool?
+    let restartStackPerModel: Bool?
     let preflightReport: String
+    let benchmark: RuntimeBatchRunBenchmarkPayload?
+    let evaluation: RuntimeBatchRunEvaluationPayload?
+    let isolationPolicy: RuntimeBatchRunIsolationPolicyPayload?
     let preflightResult: RuntimeBatchRunPreflightPayload?
 
     enum CodingKeys: String, CodingKey {
@@ -143,8 +171,18 @@ private struct RuntimeBatchRunDryRunPayload: Decodable {
         case configPath = "config_path"
         case outputRoot = "output_root"
         case tempRoot = "temp_root"
+        case melixHome = "melix_home"
+        case runtimeDir = "runtime_dir"
+        case httpPort = "http_port"
+        case serviceInstanceName = "service_instance_name"
         case selectedModelCount = "selected_model_count"
+        case totalModelCount = "total_model_count"
+        case continueOnFailure = "continue_on_failure"
+        case restartStackPerModel = "restart_stack_per_model"
         case preflightReport = "preflight_report"
+        case benchmark
+        case evaluation
+        case isolationPolicy = "isolation_policy"
         case preflightResult = "preflight_result"
     }
 
@@ -159,8 +197,75 @@ private struct RuntimeBatchRunDryRunPayload: Decodable {
             outputRoot: outputRoot,
             tempRoot: tempRoot,
             preflightReportPath: preflightReport,
-            checks: preflightResult?.checks.map(\.state) ?? []
+            checks: preflightResult?.checks.map(\.state) ?? [],
+            effectiveConfigRows: effectiveConfigRows(),
+            isolationSummaryRows: isolationSummaryRows()
         )
+    }
+
+    private func effectiveConfigRows() -> [RuntimeBatchRunSummaryRowState] {
+        let totalModels = totalModelCount ?? preflightResult?.modelCount ?? selectedModelCount
+        let modelDetail = totalModels == selectedModelCount
+            ? "\(selectedModelCount)"
+            : "\(selectedModelCount)/\(totalModels)"
+
+        return [
+            row(id: "run-id", title: "Run ID", detail: runID),
+            row(id: "models", title: "Models", detail: modelDetail),
+            row(id: "output-root", title: "Output Root", detail: outputRoot),
+            row(id: "temp-root", title: "Temp Root", detail: tempRoot),
+            row(id: "melix-home", title: "MELIX_HOME", detail: melixHome),
+            row(id: "runtime-dir", title: "Runtime Dir", detail: runtimeDir),
+            row(id: "http-port", title: "HTTP Port", detail: httpPort?.value),
+            row(id: "service-instance", title: "Service Instance", detail: serviceInstanceName),
+            row(id: "continue-on-failure", title: "Continue On Failure", detail: enabledText(continueOnFailure)),
+            row(id: "benchmark", title: "Benchmark", detail: benchmark?.summaryText),
+            row(id: "evaluation", title: "Evaluation", detail: evaluation?.summaryText),
+        ].compactMap { $0 }
+    }
+
+    private func isolationSummaryRows() -> [RuntimeBatchRunSummaryRowState] {
+        [
+            row(
+                id: "best-effort-unload-previous-model",
+                title: "Best-effort Unload Previous Model",
+                detail: enabledText(isolationPolicy?.bestEffortUnloadPreviousModel)
+            ),
+            row(
+                id: "best-effort-unload-after-model",
+                title: "Best-effort Unload After Model",
+                detail: enabledText(isolationPolicy?.bestEffortUnloadAfterModel)
+            ),
+            row(
+                id: "restart-stack-per-model",
+                title: "Restart Stack Per Model",
+                detail: enabledText(isolationPolicy?.restartStackPerModel ?? restartStackPerModel)
+            ),
+            row(
+                id: "force-clean-stack-after-runtime-failure",
+                title: "Force Clean After Runtime Failure",
+                detail: enabledText(isolationPolicy?.forceCleanStackAfterRuntimeFailure)
+            ),
+            row(
+                id: "cleanup-failures-preserve-artifacts",
+                title: "Cleanup Failures Preserve Artifacts",
+                detail: enabledText(isolationPolicy?.cleanupFailuresPreserveArtifacts)
+            ),
+        ].compactMap { $0 }
+    }
+
+    private func row(id: String, title: String, detail: String?) -> RuntimeBatchRunSummaryRowState? {
+        guard let detail = detail?.trimmingCharacters(in: .whitespacesAndNewlines), detail.isEmpty == false else {
+            return nil
+        }
+        return RuntimeBatchRunSummaryRowState(id: id, title: title, detail: detail)
+    }
+
+    private func enabledText(_ value: Bool?) -> String? {
+        guard let value else {
+            return nil
+        }
+        return value ? "enabled" : "disabled"
     }
 }
 
@@ -197,6 +302,97 @@ private struct RuntimeBatchRunPreflightCheckPayload: Decodable {
             category: category,
             metadata: metadata
         )
+    }
+}
+
+private struct RuntimeBatchRunStringValue: Decodable {
+    let value: String
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let stringValue = try? container.decode(String.self) {
+            value = stringValue
+        } else if let intValue = try? container.decode(Int.self) {
+            value = String(intValue)
+        } else if let boolValue = try? container.decode(Bool.self) {
+            value = boolValue ? "true" : "false"
+        } else {
+            value = ""
+        }
+    }
+}
+
+private struct RuntimeBatchRunBenchmarkPayload: Decodable {
+    let suite: String?
+    let contextLength: Int?
+    let generationLength: Int?
+    let batchSize: Int?
+    let repeats: Int?
+    let sampleSize: Int?
+    let batchFactor: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case suite
+        case contextLength = "context_length"
+        case generationLength = "generation_length"
+        case batchSize = "batch_size"
+        case repeats
+        case sampleSize = "sample_size"
+        case batchFactor = "batch_factor"
+    }
+
+    var summaryText: String {
+        [
+            suite,
+            contextLength.map { "ctx \($0)" },
+            generationLength.map { "gen \($0)" },
+            batchSize.map { "batch \($0)" },
+            repeats.map { "repeats \($0)" },
+            sampleSize.map { "sample \($0)" },
+            batchFactor.map { "batch factor \($0)" },
+        ].compactMap { $0 }.joined(separator: " • ")
+    }
+}
+
+private struct RuntimeBatchRunEvaluationPayload: Decodable {
+    let suite: String?
+    let datasetID: String?
+    let scoringMode: String?
+    let sampleSize: Int?
+    let batchFactor: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case suite
+        case datasetID = "dataset_id"
+        case scoringMode = "scoring_mode"
+        case sampleSize = "sample_size"
+        case batchFactor = "batch_factor"
+    }
+
+    var summaryText: String {
+        [
+            suite,
+            datasetID.map { "dataset \($0)" },
+            scoringMode.map { "scoring \($0)" },
+            sampleSize.map { "sample \($0)" },
+            batchFactor.map { "batch factor \($0)" },
+        ].compactMap { $0 }.joined(separator: " • ")
+    }
+}
+
+private struct RuntimeBatchRunIsolationPolicyPayload: Decodable {
+    let bestEffortUnloadPreviousModel: Bool?
+    let bestEffortUnloadAfterModel: Bool?
+    let restartStackPerModel: Bool?
+    let forceCleanStackAfterRuntimeFailure: Bool?
+    let cleanupFailuresPreserveArtifacts: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case bestEffortUnloadPreviousModel = "best_effort_unload_previous_model"
+        case bestEffortUnloadAfterModel = "best_effort_unload_after_model"
+        case restartStackPerModel = "restart_stack_per_model"
+        case forceCleanStackAfterRuntimeFailure = "force_clean_stack_after_runtime_failure"
+        case cleanupFailuresPreserveArtifacts = "cleanup_failures_preserve_artifacts"
     }
 }
 

@@ -2396,6 +2396,33 @@ struct DesktopBatchRunsToolSectionView: View {
                             .textSelection(.enabled)
                     }
                 }
+                reportSummarySection(title: "Effective Config", rows: report.effectiveConfigRows)
+                reportSummarySection(title: "Isolation Summary", rows: report.isolationSummaryRows)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func reportSummarySection(title: String, rows: [RuntimeBatchRunSummaryRowState]) -> some View {
+        if rows.isEmpty == false {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                ForEach(rows) { row in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(row.title)
+                            .font(.caption.weight(.semibold))
+                            .textSelection(.enabled)
+                        Text(row.detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .textSelection(.enabled)
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
