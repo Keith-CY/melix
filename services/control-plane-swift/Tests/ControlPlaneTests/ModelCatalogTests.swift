@@ -246,6 +246,7 @@ struct ModelCatalogTests {
         )
         #expect(speculativeHeadRefusal.ok == false)
         #expect(speculativeHeadRefusal.unsupportedReason == .unsupportedReasonRuntimeUnavailable)
+        #expect(speculativeHeadRefusal.receipt.state == .capabilityUnsupported)
 
         var payloadModel = ModelCatalog.devTextModel()
         payloadModel.settings.defaultAccelerationMode = .speculativeDecode
