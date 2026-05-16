@@ -13,10 +13,12 @@ def _no_op_call() -> None:
 
 
 class NoOpProbeRecorder:
+    __slots__ = ()
+
     record = staticmethod(_no_op_call)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ProbeOverheadMetrics:
     sample_count: int
     iteration_count: int

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from worker.productization.probe_policy_overhead import measure_no_op_probe_policy_overhead
+from worker.productization.probe_policy_overhead import (
+    NoOpProbeRecorder,
+    measure_no_op_probe_policy_overhead,
+)
 from worker.productization.probe_policy import ProbeMode, ProbePolicy, probe_policy_from_env
 
 
@@ -53,6 +56,15 @@ def test_probe_policy_uses_slots_for_hot_path_instances() -> None:
     assert policy.telemetry_enabled is False
     assert policy.no_op_reason == "probe_mode_minimal"
     assert ProbePolicy(mode=ProbeMode.EVIDENCE).no_op_reason == ""
+
+
+def test_no_op_probe_recorder_and_metrics_use_slots_for_hot_path() -> None:
+    recorder = NoOpProbeRecorder()
+    metrics = measure_no_op_probe_policy_overhead(iterations=1, samples=1)
+
+    assert not hasattr(recorder, "__dict__")
+    assert not hasattr(metrics, "__dict__")
+    assert recorder.record() is None
 
 
 def test_no_op_probe_policy_overhead_metrics_are_thresholded() -> None:
