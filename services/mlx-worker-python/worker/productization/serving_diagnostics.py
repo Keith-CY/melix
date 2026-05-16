@@ -507,16 +507,21 @@ def _empty_attribute_event_json_line(event: ServingDiagnosticsEvent) -> str | No
     if not math.isfinite(duration_ms):
         return None
     encode_string = _json_string_literal
+    phase = event.phase
+    request_id = event.request_id
+    status = event.status
+    encoded_phase = '"decode"' if phase == "decode" else encode_string(phase)
+    encoded_status = '"completed"' if status == "completed" else encode_string(status)
     return (
         '{"attributes":{},"duration_ms":'
-        f"{duration_ms!r}"
+        f"{duration_ms}"
         ',"event_index":'
         f"{event_index}"
         ',"phase":'
-        f"{encode_string(event.phase)}"
+        f"{encoded_phase}"
         ',"request_id":'
-        f"{encode_string(event.request_id)}"
+        f"{encode_string(request_id)}"
         ',"schema_version":"melix.serving_diagnostics.event.v1","status":'
-        f"{encode_string(event.status)}"
+        f"{encoded_status}"
         "}"
     )
