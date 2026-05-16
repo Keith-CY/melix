@@ -12,6 +12,10 @@ from worker.model_ops.adapter_capabilities import (
     UNSUPPORTED_REASON_UNSUPPORTED_BACKEND,
 )
 from worker.model_ops.errors import ModelOperationError
+from worker.model_ops.lora_runtime_metadata import (
+    build_adapter_runtime_manifest_fields,
+    build_quantized_lora_manifest_fields,
+)
 from worker.model_ops.mlx_lm_runner import ActivationRequest, MLXLMRunner
 
 
@@ -147,6 +151,21 @@ class AdapterActivationPipeline:
             if activation_mode == "adapter_backed_runtime"
             else str(derived_model_dir)
         )
+        runtime_fields = build_adapter_runtime_manifest_fields(
+            source_model=source_model,
+            adapter_manifest=adapter_manifest,
+            adapter_manifest_path=adapter_manifest_path,
+            adapter_weights_path=adapter_weights_path,
+            activation_mode=activation_mode,
+            adapter_scope=adapter_scope,
+        )
+        target_modules = _adapter_manifest_target_modules(adapter_manifest)
+        quantized_lora_fields = build_quantized_lora_manifest_fields(
+            source_model=source_model,
+            training_mode=str(adapter_manifest.get("training_mode", "")),
+            quantization_mode=str(adapter_manifest.get("quantization_mode", "")),
+            target_modules=target_modules,
+        )
         manifest = {
             "schema_version": "melix.derived_text_model.v1",
             "job_id": job_id,
@@ -185,10 +204,25 @@ class AdapterActivationPipeline:
             "remove_supported": True,
             "melix.derived_from_adapter": True,
         }
+        manifest.update(runtime_fields)
+        manifest.update(quantized_lora_fields)
         if derived_model_alias:
             manifest["derived_model_alias"] = derived_model_alias
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         return AdapterActivationPipelineResult(manifest=manifest, manifest_path=manifest_path)
+
+
+def _adapter_manifest_target_modules(adapter_manifest: dict[str, Any]) -> list[str]:
+    raw_targets = adapter_manifest.get("target_modules", [])
+    if raw_targets is None:
+        return []
+    if isinstance(raw_targets, str):
+        candidates = raw_targets.split(",")
+    elif isinstance(raw_targets, (list, tuple)):
+        candidates = raw_targets
+    else:
+        candidates = [raw_targets]
+    return [str(candidate).strip() for candidate in candidates if str(candidate).strip()]
 
 
 def _validate_adapter_scope(

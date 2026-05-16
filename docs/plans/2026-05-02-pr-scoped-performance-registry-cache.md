@@ -31,6 +31,8 @@ Metrics:
 - `load_probe_registry_ms_mean` (lower is better)
 - `build_scope_report_ms_mean` (lower is better)
 
+The registry-cache timing metrics use absolute warning floors alongside percentage thresholds: 0.5 ms for hot load and scope selection, and 10 ms for cold load. The probe intentionally measures CI infrastructure paths whose absolute cost is small relative to the full workflow, and cold JSON load timing is sensitive to host file-cache state.
+
 ## Success Metrics
 
 - No behavior regression in scope selection or probe execution tests.

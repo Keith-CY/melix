@@ -21,7 +21,9 @@ This slice only touches Python worker code and repository CI probe metadata. It 
 Register `training-config-target-module-cache` in PR-scoped performance CI. The probe repeatedly resolves static family target presets across dense and MoE profiles and reports:
 
 - `elapsed_ms_mean` — lower is better
-- `peak_bytes_mean` — lower is better
+- `peak_bytes_mean` — lower is better with a 1 KiB absolute noise floor, because
+  the cached target-module path normally allocates below 1 KiB and percentage
+  deltas at that size are not meaningful regression signals
 - `checksum`, `iteration_count`, and `case_count` structural metrics
 
 ## Success Metrics
