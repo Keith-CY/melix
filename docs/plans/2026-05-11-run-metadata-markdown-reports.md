@@ -13,8 +13,8 @@ offline commands that turn completed runs into GitHub-ready evidence.
   - `melix runs list [--from PATH] [--json]`
   - `melix runs show <id> [--from PATH] [--json]`
   - `melix runs export <id> --format json|md [--from PATH] [--output PATH]`
-  - `melix bench report --from PATH --format markdown|json`
-  - `melix eval report --from PATH --format markdown|json`
+  - `melix bench report --from PATH --format terminal|markdown|json`
+  - `melix eval report --from PATH --format terminal|markdown|json`
 - Redact sensitive command parameters and request metadata before persistence.
 - Keep hosted telemetry, dashboards, and raw private dataset storage out of
   scope.

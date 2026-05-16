@@ -59,7 +59,38 @@ public enum ModelCatalogPresentation {
             metadata[key] = value
         }
 
+        for (key, value) in capabilityReceiptPublicMetadata(for: model) {
+            metadata[key] = value
+        }
+
         return metadata.isEmpty ? nil : metadata
+    }
+
+    public static func capabilityReceiptPublicMetadata(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> [String: String] {
+        let receipt = ModelCapabilityReceipts.receipt(for: model)
+        var metadata: [String: String] = [
+            "melix.capability.receipt_present": "true",
+            "melix.capability.receipt_schema": receipt.schemaVersion,
+            "melix.acceleration.requested_mode": ModelCapabilityReceipts.accelerationModeIdentifier(
+                receipt.acceleration.requestedAccelerationMode
+            ),
+            "melix.acceleration.resolved_mode": ModelCapabilityReceipts.accelerationModeIdentifier(
+                receipt.acceleration.resolvedAccelerationMode
+            ),
+            "melix.acceleration.supported_modes": receipt.acceleration.supportedModes
+                .map(ModelCapabilityReceipts.accelerationModeIdentifier)
+                .joined(separator: ","),
+            "melix.acceleration.unsupported_reason": ModelCapabilityReceipts.unsupportedReasonIdentifier(
+                receipt.acceleration.unsupportedReason
+            ),
+        ]
+        if !receipt.acceleration.validDraftModelIds.isEmpty {
+            metadata["melix.acceleration.valid_draft_model_ids"] = receipt.acceleration.validDraftModelIds
+                .joined(separator: ",")
+        }
+        return metadata
     }
 
     public static func loadTrustPolicy(

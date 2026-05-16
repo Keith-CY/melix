@@ -3341,6 +3341,10 @@ struct RequestCoordinatorTests {
         let metricsStore = MetricsStore()
         var textModel = ModelCatalog.devTextModel()
         textModel.settings.defaultAccelerationMode = .unspecified
+        textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        textModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-text"
+        textModel.settings.ext["melix.acceleration.target_capability"] = "speculative_decode"
+        textModel.settings.ext["melix.acceleration.drafter_capability"] = "speculative_draft"
         let catalog = ModelCatalog(seedModels: [textModel])
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
@@ -3380,6 +3384,13 @@ struct RequestCoordinatorTests {
         #expect(decodeRequest.execution.acceleration.profileID == "throughput")
         #expect(decodeRequest.execution.acceleration.draftModelID == "melix-dev-text")
         #expect(decodeRequest.execution.acceleration.numDraftTokens == 7)
+        #expect(prefillRequest.execution.ext["melix.capability.receipt_schema"] == "melix.model_capability_receipt.v1")
+        #expect(prefillRequest.execution.ext["melix.acceleration.requested_acceleration_mode"] == "speculative_decode")
+        #expect(prefillRequest.execution.ext["melix.acceleration.resolved_acceleration_mode"] == "speculative_decode")
+        #expect(prefillRequest.execution.ext["melix.acceleration.target_capability"] == "speculative_decode")
+        #expect(prefillRequest.execution.ext["melix.acceleration.drafter_capability"] == "speculative_draft")
+        #expect(prefillRequest.execution.ext["melix.acceleration.unsupported_reason"] == "none")
+        #expect(prefillRequest.execution.ext["melix.acceleration.valid_draft_model_ids"] == "melix-dev-text")
 
         await workerClient.emitDecodeStarted(
             requestID: "req-gateway-speculative-defaults",
@@ -3416,6 +3427,44 @@ struct RequestCoordinatorTests {
 
         await workerClient.finish(requestID: "req-gateway-speculative-defaults")
         _ = await consumer.result
+    }
+
+    @Test("unsupported speculative draft is rejected before worker dispatch")
+    func unsupportedSpeculativeDraftIsRejectedBeforeWorkerDispatch() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var textModel = ModelCatalog.devTextModel()
+        textModel.settings.defaultAccelerationMode = .unspecified
+        textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        textModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"
+        let catalog = ModelCatalog(seedModels: [textModel])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        do {
+            _ = try await coordinator.startChatCompletion(
+                makeTranslatedChatRequest(
+                    requestID: "req-invalid-draft",
+                    executionExt: [
+                        "melix.gateway.acceleration_mode": "speculative_decode",
+                        "melix.gateway.draft_model_id": "other-draft",
+                    ]
+                )
+            )
+            Issue.record("Expected unsupported acceleration to be thrown.")
+        } catch let error as RequestCoordinatorError {
+            #expect(error == .unsupportedAcceleration(
+                reason: .unsupportedReasonDraftModelNotAllowed,
+                message: "Draft model other-draft is not allowed for this target model.",
+                recoveryHint: "Choose one of the target receipt's valid_draft_model_ids."
+            ))
+        }
+
+        #expect(await workerClient.generatedRequests.isEmpty)
+        #expect(await workerClient.lastPrefillRequest() == nil)
+        #expect(await workerClient.lastDecodeRequest() == nil)
     }
 
     @Test("model acceleration defaults override gateway speculative execution defaults")
@@ -3456,6 +3505,115 @@ struct RequestCoordinatorTests {
         #expect(decodeRequest.execution.acceleration.numDraftTokens == 0)
 
         await workerClient.finish(requestID: "req-gateway-speculative-overridden")
+        _ = await consumer.result
+    }
+
+    @Test("model active KV defaults populate TurboQuant Q4 when profile is empty")
+    func modelActiveKVDefaultsPopulateTurboQuantQ4WhenProfileIsEmpty() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var textModel = ModelCatalog.devTextModel()
+        textModel.settings.defaultAccelerationMode = .activeKvQuantized
+        textModel.settings.accelerationProfileID = ""
+        let catalog = ModelCatalog(seedModels: [textModel])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-model-active-kv-default-turboquant",
+                saveBoundarySnapshot: true
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {}
+            } catch {}
+        }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+
+        #expect(prefillRequest.execution.acceleration.mode == .activeKvQuantized)
+        #expect(prefillRequest.execution.acceleration.activeKvQuantProfile == "turboquant-q4")
+        #expect(decodeRequest.execution.acceleration.mode == .activeKvQuantized)
+        #expect(decodeRequest.execution.acceleration.activeKvQuantProfile == "turboquant-q4")
+
+        await workerClient.finish(requestID: "req-model-active-kv-default-turboquant")
+        _ = await consumer.result
+    }
+
+    @Test("serving profile IDs do not replace the active KV quant profile")
+    func servingProfileIDsDoNotReplaceActiveKVQuantProfile() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var textModel = ModelCatalog.devTextModel()
+        textModel.settings.defaultAccelerationMode = .activeKvQuantized
+        textModel.settings.accelerationProfileID = "balanced"
+        let catalog = ModelCatalog(seedModels: [textModel])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-model-active-kv-serving-profile-balanced",
+                saveBoundarySnapshot: true
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {}
+            } catch {}
+        }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+
+        #expect(prefillRequest.execution.acceleration.profileID == "balanced")
+        #expect(prefillRequest.execution.acceleration.activeKvQuantProfile == "turboquant-q4")
+        #expect(decodeRequest.execution.acceleration.profileID == "balanced")
+        #expect(decodeRequest.execution.acceleration.activeKvQuantProfile == "turboquant-q4")
+
+        await workerClient.finish(requestID: "req-model-active-kv-serving-profile-balanced")
+        _ = await consumer.result
+    }
+
+    @Test("explicit active KV quant profile IDs remain supported")
+    func explicitActiveKVQuantProfileIDsRemainSupported() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var textModel = ModelCatalog.devTextModel()
+        textModel.settings.defaultAccelerationMode = .activeKvQuantized
+        textModel.settings.accelerationProfileID = "q8"
+        let catalog = ModelCatalog(seedModels: [textModel])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-model-active-kv-explicit-q8",
+                saveBoundarySnapshot: true
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {}
+            } catch {}
+        }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+
+        #expect(prefillRequest.execution.acceleration.activeKvQuantProfile == "q8")
+        #expect(decodeRequest.execution.acceleration.activeKvQuantProfile == "q8")
+
+        await workerClient.finish(requestID: "req-model-active-kv-explicit-q8")
         _ = await consumer.result
     }
 

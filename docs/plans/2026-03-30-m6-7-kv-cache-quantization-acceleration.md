@@ -68,6 +68,10 @@ Add feature-flagged KV-cache quantization acceleration so memory pressure can be
 - the storage-fastpath speedup evidence is `docs/metrics/phase2-active-kv-vendored-turboquant-storage-fastpath.json`; it removes decode-side trimmed quantized-state materialization from the routed fused path. `QuantizedKVCache.updateQuantizedStorage(...)` returns full preallocated q4 storage plus the effective sequence length; `attentionWithCacheUpdate(...)` tries the fused q4 route against that storage state and only materializes with `getQuantizedState()` when the fused route is unavailable. The fused Metal route now uses the storage sequence length as the memory stride and the effective sequence length as the softmax loop bound. The real-model run keeps `active_kv_kernel_path = tq_mse_single`, `active_kv_runtime_route = routed`, and `active_kv_fallback_count = 0`, drops aggregate `cache_materialize_call_count` from `5379` to `3`, `cache_materialize_total_us` from `348621` to `278`, and `cache_update_total_us` from `1081676` to `728859`, but the release gate remains failed because `worker_tps_overhead_pct = 61.43`.
 - the fused decode-quantize experiment evidence is `docs/metrics/phase2-active-kv-vendored-turboquant-fused-quantize-experiment.json`; it validates a single-dispatch key/value q4 affine quantizer including bfloat16 output handling, but the real-model data rejects it for default runtime use because aggregate `cache_quantize_total_us` regressed from the storage-fastpath `92171` to `823275`. The experimental route is therefore gated behind `MELIX_SWIFT_TURBOQUANT_FUSED_QUANTIZE=1`, and default `QuantizedKVCache.updateQuantizedStorage(...)` keeps using MLX's native vectorized `quantized(...)` implementation.
 - the append-slice speedup evidence is `docs/metrics/phase2-active-kv-vendored-turboquant-append-slice.json`; it shortens q4 storage writes from `.ellipsis` plus trailing full-slice indexing to direct 3-axis slice updates. The same real-model gate keeps `active_kv_kernel_path = tq_mse_single`, `active_kv_runtime_route = routed`, `active_kv_fallback_count = 0`, and `active_kv_estimated_memory_savings_pct = 75.0`; aggregate `cache_append_total_us` improves from `615953` to `592356` and `cache_update_total_us` from `728859` to `725794`, but the fused release gate remains failed because `worker_tps_overhead_pct = 60.0`.
+- the default active-KV product profile is now `turboquant-q4`. Empty active-KV
+  profile requests from the control plane or worker normalize to
+  `turboquant-q4`; explicit `q4` remains available for affine comparison rows.
+  Worker handshake capability metadata advertises `turboquant-q4,q4,q8`.
 
 ## Verification
 
@@ -148,6 +152,8 @@ Add feature-flagged KV-cache quantization acceleration so memory pressure can be
 ## Acceptance
 
 - KV-cache quantization acceleration can be enabled through explicit policy
+- user-facing 4-bit active-KV requests resolve to `turboquant-q4` unless an
+  explicit affine `q4` profile is requested
 - memory and throughput effects are measurable and benchmarked
 - optimization work is blocked until the report contains non-`N/A` baseline and affine q4 decode rows plus an affine-vs-baseline comparison
 - any later TurboQuant profile must be compared against both baseline and affine q4 using the same probe fields

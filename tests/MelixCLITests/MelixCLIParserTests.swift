@@ -16,7 +16,8 @@ struct MelixCLIParserTests {
         #expect(MelixCLIParser.usageText.contains("melix runs list [--from PATH] [--json]"))
         #expect(MelixCLIParser.usageText.contains("melix jobs show JOB_ID [--from PATH] [--json]"))
         #expect(MelixCLIParser.usageText.contains("melix jobs cancel JOB_ID [--from PATH] [--json]"))
-        #expect(MelixCLIParser.usageText.contains("melix bench report --from PATH [--format markdown|json]"))
+        #expect(MelixCLIParser.usageText.contains("melix bench report --from PATH [--format terminal|markdown|json]"))
+        #expect(MelixCLIParser.usageText.contains("melix eval report --from PATH [--format terminal|markdown|json]"))
         #expect(MelixCLIParser.usageText.contains("melix settings show --json [--override KEY=VALUE ...]"))
         #expect(MelixCLIParser.usageText.contains("melix info --json"))
         #expect(MelixCLIParser.usageText.contains("melix capabilities --json [--model-query MODEL]"))
@@ -2597,6 +2598,7 @@ struct MelixCLIParserTests {
             "--generation-length", "256",
             "--sample-size", "8",
             "--batch-factor", "2",
+            "--no-live",
             "--json",
         ])
 
@@ -2617,6 +2619,7 @@ struct MelixCLIParserTests {
         #expect(options.structuredOutputMode.isEmpty)
         #expect(options.parameters["sample_size"] == "8")
         #expect(options.parameters["batch_factor"] == "2")
+        #expect(options.liveProgress == false)
         #expect(options.json)
     }
 
@@ -2946,6 +2949,7 @@ struct MelixCLIParserTests {
             "--concurrency", "1",
             "--repeats", "3",
             "--requests", "24",
+            "--no-live",
             "--json",
         ])
 
@@ -2968,6 +2972,7 @@ struct MelixCLIParserTests {
         #expect(options.requests == 24)
         #expect(options.durationSeconds == 0)
         #expect(options.allowLargeMatrix == false)
+        #expect(options.liveProgress == false)
         #expect(options.json)
     }
 
@@ -3198,6 +3203,7 @@ struct MelixCLIParserTests {
             "--few-shot", "4",
             "--preflight-fit-check",
             "--allow-memory-risk",
+            "--no-live",
             "--json",
         ])
 
@@ -3217,6 +3223,7 @@ struct MelixCLIParserTests {
         #expect(options.parameters["few_shot"] == "4")
         #expect(options.preflightFitCheck)
         #expect(options.allowMemoryRisk)
+        #expect(options.liveProgress == false)
         #expect(options.json)
     }
 
@@ -3506,6 +3513,7 @@ struct MelixCLIParserTests {
             "--seed", "7",
             "--scoring-mode", "multiple_choice_accuracy",
             "--code-exec-policy", "sandboxed",
+            "--no-live",
             "--json",
         ])
 
@@ -3526,6 +3534,7 @@ struct MelixCLIParserTests {
         #expect(options.parameters["seed"] == "7")
         #expect(options.parameters["scoring_mode"] == "multiple_choice_accuracy")
         #expect(options.parameters["code_exec_policy"] == "sandboxed")
+        #expect(options.liveProgress == false)
         #expect(options.json)
     }
 
