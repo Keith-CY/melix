@@ -7,6 +7,7 @@ import time
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -21,6 +22,11 @@ _JSON_COMPACT_SEPARATORS = (",", ":")
 _JSONL_ENCODER = json.JSONEncoder(sort_keys=True, separators=_JSON_COMPACT_SEPARATORS)
 _JSON_STRING_ENCODER = json.encoder.encode_basestring_ascii
 _SET_FROZEN_ATTR = object.__setattr__
+
+
+@lru_cache(maxsize=1024)
+def _json_string_literal(value: str) -> str:
+    return _JSON_STRING_ENCODER(value)
 
 
 class ServingDiagnosticsComparisonError(ValueError):
@@ -500,7 +506,7 @@ def _empty_attribute_event_json_line(event: ServingDiagnosticsEvent) -> str | No
         return None
     if not math.isfinite(duration_ms):
         return None
-    encode_string = _JSON_STRING_ENCODER
+    encode_string = _json_string_literal
     return (
         '{"attributes":{},"duration_ms":'
         f"{duration_ms!r}"
