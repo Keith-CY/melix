@@ -16287,7 +16287,11 @@ private func runtimeModelCapabilityReceiptRows(
     guard model.hasCapabilityReceipt else {
         return []
     }
-    return model.capabilityReceipt.tasks.compactMap(runtimeModelTaskCapabilityReceiptRow)
+    var rows = model.capabilityReceipt.tasks.compactMap(runtimeModelTaskCapabilityReceiptRow)
+    if model.capabilityReceipt.hasAcceleration {
+        rows.append(contentsOf: runtimeModelAccelerationCapabilityReceiptRows(model.capabilityReceipt.acceleration))
+    }
+    return rows
 }
 
 private func runtimeModelTaskCapabilityReceiptRow(
@@ -16305,6 +16309,102 @@ private func runtimeModelTaskCapabilityReceiptRow(
         parts.append(provenance)
     }
     return parts.joined(separator: " • ")
+}
+
+private func runtimeModelAccelerationCapabilityReceiptRows(
+    _ receipt: Melix_Controlplane_V1_AccelerationCapabilityReceipt
+) -> [String] {
+    var rows: [String] = []
+    var summaryParts = [
+        "acceleration: \(runtimeCapabilitySupportStateText(receipt.state))"
+    ]
+    if receipt.requestedAccelerationMode != .unspecified {
+        summaryParts.append("requested \(runtimeAccelerationModeText(receipt.requestedAccelerationMode))")
+    }
+    if receipt.resolvedAccelerationMode != .unspecified {
+        summaryParts.append("resolved \(runtimeAccelerationModeText(receipt.resolvedAccelerationMode))")
+    }
+    if receipt.supportedModes.isEmpty == false {
+        summaryParts.append("supported \(receipt.supportedModes.map(runtimeAccelerationModeText).joined(separator: ", "))")
+    }
+    let provenance = receipt.provenance.trimmingCharacters(in: .whitespacesAndNewlines)
+    if provenance.isEmpty == false {
+        summaryParts.append(provenance)
+    }
+    rows.append(summaryParts.joined(separator: " • "))
+
+    let routeRow = runtimeModelAccelerationRouteReceiptRow(receipt)
+    if routeRow.isEmpty == false {
+        rows.append(routeRow)
+    }
+    rows.append(contentsOf: receipt.draftCompatibility.compactMap(runtimeModelDraftCompatibilityReceiptRow))
+    if receipt.hasSpeculativeHead {
+        rows.append(runtimeModelSpeculativeHeadCapabilityReceiptRow(receipt.speculativeHead))
+    }
+    return rows
+}
+
+private func runtimeModelAccelerationRouteReceiptRow(
+    _ receipt: Melix_Controlplane_V1_AccelerationCapabilityReceipt
+) -> String {
+    var parts: [String] = []
+    let targetCapability = receipt.targetCapability.trimmingCharacters(in: .whitespacesAndNewlines)
+    if targetCapability.isEmpty == false {
+        parts.append("target \(targetCapability)")
+    }
+    let drafterCapability = receipt.drafterCapability.trimmingCharacters(in: .whitespacesAndNewlines)
+    if drafterCapability.isEmpty == false {
+        parts.append("drafter \(drafterCapability)")
+    }
+    if receipt.validDraftModelIds.isEmpty == false {
+        parts.append("valid drafts \(receipt.validDraftModelIds.joined(separator: ", "))")
+    }
+    guard parts.isEmpty == false else {
+        return ""
+    }
+    return "acceleration route: \(parts.joined(separator: " • "))"
+}
+
+private func runtimeModelDraftCompatibilityReceiptRow(
+    _ receipt: Melix_Controlplane_V1_DraftCompatibilityReceipt
+) -> String? {
+    let draftModelID = receipt.draftModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard draftModelID.isEmpty == false else {
+        return nil
+    }
+    var parts = [
+        "draft \(draftModelID): \(runtimeCapabilitySupportStateText(receipt.state))"
+    ]
+    let provenance = receipt.provenance.trimmingCharacters(in: .whitespacesAndNewlines)
+    if provenance.isEmpty == false {
+        parts.append(provenance)
+    }
+    return parts.joined(separator: " • ")
+}
+
+private func runtimeModelSpeculativeHeadCapabilityReceiptRow(
+    _ receipt: Melix_Controlplane_V1_SpeculativeHeadCapabilityReceipt
+) -> String {
+    var parts = [
+        "speculative head: \(runtimeCapabilitySupportStateText(receipt.state))",
+        "configured \(runtimeYesNoText(receipt.configured))",
+        "layers \(receipt.configuredLayers)/\(receipt.indexedLayers)"
+    ]
+    let dropFlagState = receipt.dropFlagState.trimmingCharacters(in: .whitespacesAndNewlines)
+    if dropFlagState.isEmpty == false {
+        parts.append("drop \(dropFlagState)")
+    }
+    parts.append(receipt.runtimeAvailable ? "runtime available" : "runtime missing")
+    parts.append(receipt.artifactAvailable ? "artifact available" : "artifact missing")
+    let provenance = receipt.provenance.trimmingCharacters(in: .whitespacesAndNewlines)
+    if provenance.isEmpty == false {
+        parts.append(provenance)
+    }
+    return parts.joined(separator: " • ")
+}
+
+private func runtimeYesNoText(_ value: Bool) -> String {
+    value ? "yes" : "no"
 }
 
 private func runtimeCapabilitySupportStateText(

@@ -4325,6 +4325,52 @@ struct RuntimeViewModelTests {
         ])
     }
 
+    @Test("runtime model row renders acceleration draft and speculative head receipts")
+    func runtimeModelRowRendersAccelerationDraftAndSpeculativeHeadReceipts() {
+        var model = makeModelSummary(state: .modelWarm)
+        var receipt = Melix_Controlplane_V1_ModelCapabilityReceipt()
+        receipt.schemaVersion = "melix.model_capabilities.v1"
+
+        var acceleration = Melix_Controlplane_V1_AccelerationCapabilityReceipt()
+        acceleration.requestedAccelerationMode = .speculativeDecode
+        acceleration.resolvedAccelerationMode = .acceleratedPrefill
+        acceleration.supportedModes = [.baseline, .speculativeDecode]
+        acceleration.targetCapability = "completion"
+        acceleration.drafterCapability = "completion"
+        acceleration.validDraftModelIds = ["melix-dev-draft", "melix-dev-draft-2"]
+        acceleration.state = .capabilityExperimental
+        acceleration.provenance = "model catalog"
+
+        var draft = Melix_Controlplane_V1_DraftCompatibilityReceipt()
+        draft.draftModelID = "melix-dev-draft"
+        draft.state = .capabilitySupported
+        draft.provenance = "draft cache"
+        acceleration.draftCompatibility = [draft]
+
+        var speculativeHead = Melix_Controlplane_V1_SpeculativeHeadCapabilityReceipt()
+        speculativeHead.configured = true
+        speculativeHead.configuredLayers = 4
+        speculativeHead.indexedLayers = 3
+        speculativeHead.dropFlagState = "enabled"
+        speculativeHead.runtimeAvailable = true
+        speculativeHead.artifactAvailable = false
+        speculativeHead.state = .capabilityExperimental
+        speculativeHead.provenance = "head index"
+        acceleration.speculativeHead = speculativeHead
+
+        receipt.acceleration = acceleration
+        model.capabilityReceipt = receipt
+
+        let row = makeRuntimeModelRow(model)
+
+        #expect(row.capabilityReceiptRows == [
+            "acceleration: experimental • requested Speculative Decode • resolved Accelerated Prefill • supported None, Speculative Decode • model catalog",
+            "acceleration route: target completion • drafter completion • valid drafts melix-dev-draft, melix-dev-draft-2",
+            "draft melix-dev-draft: supported • draft cache",
+            "speculative head: experimental • configured yes • layers 4/3 • drop enabled • runtime available • artifact missing • head index",
+        ])
+    }
+
     @Test("runtime model row falls back across residency states policies and ttl descriptors")
     func runtimeModelRowFallsBackAcrossResidencyStateBranches() {
         var explicitResidency = makeModelSummary(
