@@ -532,26 +532,34 @@ def _alignment_manifest_payload(
 
 def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
     scores: list[float] = []
+    scores_append = scores.append
+    scores_extend = scores.extend
+    to_float = float
+    is_instance = isinstance
+    dict_type = dict
+    list_type = list
     score_total = 0.0
     candidate_group_margins: list[float] = []
+    candidate_group_margins_append = candidate_group_margins.append
     candidate_group_margin_total = 0.0
     candidate_group_variance_total = 0.0
     for sample in samples:
         if "reward_score" in sample:
-            reward_score = float(sample["reward_score"])
-            scores.append(reward_score)
+            reward_score = to_float(sample["reward_score"])
+            scores_append(reward_score)
             score_total += reward_score
         candidates = sample.get("candidates")
         candidate_scores: list[float] = []
+        candidate_scores_append = candidate_scores.append
         candidate_score_min: float | None = None
         candidate_score_max: float | None = None
         candidate_score_total = 0.0
         candidate_score_square_total = 0.0
-        if isinstance(candidates, list):
+        if is_instance(candidates, list_type):
             for candidate in candidates:
-                if isinstance(candidate, dict) and "score" in candidate:
-                    candidate_score = float(candidate["score"])
-                    candidate_scores.append(candidate_score)
+                if is_instance(candidate, dict_type) and "score" in candidate:
+                    candidate_score = to_float(candidate["score"])
+                    candidate_scores_append(candidate_score)
                     candidate_score_total += candidate_score
                     candidate_score_square_total += candidate_score * candidate_score
                     if candidate_score_min is None or candidate_score < candidate_score_min:
@@ -559,7 +567,7 @@ def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
                     if candidate_score_max is None or candidate_score > candidate_score_max:
                         candidate_score_max = candidate_score
         if candidate_scores:
-            scores.extend(candidate_scores)
+            scores_extend(candidate_scores)
             score_total += candidate_score_total
         candidate_score_count = len(candidate_scores)
         if candidate_score_count >= 2:
@@ -570,7 +578,7 @@ def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
             candidate_group_variance = (
                 candidate_score_square_total / candidate_score_count
             ) - (group_mean * group_mean)
-            candidate_group_margins.append(candidate_group_margin)
+            candidate_group_margins_append(candidate_group_margin)
             candidate_group_margin_total += candidate_group_margin
             candidate_group_variance_total += candidate_group_variance
     if not scores:
