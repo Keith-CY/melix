@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import AppMain
+import MelixCLICore
 
 @Suite("Runtime Jobs State")
 struct RuntimeJobsStateTests {
@@ -396,5 +397,239 @@ struct RuntimeJobsStateTests {
         viewModel.applyRuntimeJobDetail(detail)
         #expect(viewModel.runtimeJobs.count == 1)
         #expect(viewModel.selectedRuntimeJobDetail?.summary.id == "bench-20260516-1120")
+    }
+
+    @Test("runtime view model refreshes jobs through CLI workflow runner")
+    @MainActor
+    func runtimeViewModelRefreshesJobsThroughCLIWorkflowRunner() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        let listCommand = MelixCLICommand.jobsList(.init(json: true))
+        await runner.configureOutput(
+            """
+            [
+              {
+                "job_id": "bench-cli-1",
+                "run_kind": "benchmark",
+                "status": "running",
+                "phase": "sampling",
+                "model_id": "mlx-community/Qwen3-8B",
+                "task_kind": "text-generation",
+                "updated_at_unix_ms": 1778912044000,
+                "cancelable": true
+              }
+            ]
+            """,
+            for: listCommand
+        )
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+
+        await viewModel.refreshRuntimeJobs()
+
+        #expect(viewModel.runtimeJobs.map(\.id) == ["bench-cli-1"])
+        #expect(viewModel.selectedRuntimeJobID == "bench-cli-1")
+        #expect(viewModel.lastCLIWorkflowFailure == nil)
+        #expect(await runner.snapshotRecordedCommands() == [listCommand])
+    }
+
+    @Test("runtime view model refreshes selected job detail logs and artifacts through CLI workflow runner")
+    @MainActor
+    func runtimeViewModelRefreshesSelectedJobDetailLogsAndArtifactsThroughCLIWorkflowRunner() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureHandler { command in
+            switch command {
+            case .jobsList:
+                return .success(
+                    """
+                    [
+                      {
+                        "job_id": "bench-cli-1",
+                        "run_kind": "benchmark",
+                        "status": "running",
+                        "phase": "sampling",
+                        "model_id": "mlx-community/Qwen3-8B",
+                        "task_kind": "text-generation",
+                        "updated_at_unix_ms": 1778912044000,
+                        "cancelable": true
+                      }
+                    ]
+                    """
+                )
+            case .jobsShow(let options):
+                guard options.jobID == "bench-cli-1", options.json else {
+                    return .failure(.unsupportedCommand(commandID: command.workflowCommandID, surface: .subprocess))
+                }
+                return .success(
+                    """
+                    {
+                      "job_id": "bench-cli-1",
+                      "run_kind": "benchmark",
+                      "status": "running",
+                      "phase": "export",
+                      "model_id": "mlx-community/Qwen3-8B",
+                      "task_kind": "text-generation",
+                      "artifact_root": "/tmp/melix/jobs/bench-cli-1",
+                      "timestamps": {
+                        "started_at_unix_ms": 1778912000000,
+                        "updated_at_unix_ms": 1778912044000,
+                        "duration_ms": 44000
+                      },
+                      "logs": {
+                        "available": true,
+                        "path": "/tmp/melix/jobs/bench-cli-1/job.log",
+                        "command": "melix jobs logs bench-cli-1"
+                      },
+                      "artifacts": []
+                    }
+                    """
+                )
+            case .jobsLogs(let options):
+                guard options.jobID == "bench-cli-1", options.json else {
+                    return .failure(.unsupportedCommand(commandID: command.workflowCommandID, surface: .subprocess))
+                }
+                return .success(
+                    """
+                    {
+                      "schema_version": "melix.logs.v1",
+                      "run_id": "bench-cli-1",
+                      "source_path": "/tmp/melix/jobs/bench-cli-1/run-record.json",
+                      "log_path": "/tmp/melix/jobs/bench-cli-1/job.log",
+                      "follow_requested": false,
+                      "active_follow_supported": false,
+                      "content": "sampling complete\\nexport started",
+                      "redaction_schema_version": "melix.diagnostics.redaction.v1",
+                      "redacted_field_count": 0
+                    }
+                    """
+                )
+            case .jobsArtifacts(let options):
+                guard options.jobID == "bench-cli-1", options.json else {
+                    return .failure(.unsupportedCommand(commandID: command.workflowCommandID, surface: .subprocess))
+                }
+                return .success(
+                    """
+                    {
+                      "schema_version": "melix.job_artifacts.v1",
+                      "job_id": "bench-cli-1",
+                      "artifact_count": 1,
+                      "artifacts": [
+                        {
+                          "kind": "manifest",
+                          "path": "/tmp/melix/jobs/bench-cli-1/manifest.json",
+                          "relative_path": "manifest.json",
+                          "exists": true
+                        }
+                      ]
+                    }
+                    """
+                )
+            default:
+                return .failure(.unsupportedCommand(commandID: command.workflowCommandID, surface: .subprocess))
+            }
+        }
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+
+        await viewModel.refreshRuntimeJobs()
+        await viewModel.refreshSelectedRuntimeJobDetail()
+        await viewModel.refreshSelectedRuntimeJobLogs()
+        await viewModel.refreshSelectedRuntimeJobArtifacts()
+
+        #expect(viewModel.selectedRuntimeJobDetail?.summary.phase == "export")
+        #expect(viewModel.selectedRuntimeJobLogSnapshot?.content.contains("export started") == true)
+        #expect(viewModel.selectedRuntimeJobArtifactSnapshot?.artifacts.first?.kind == "manifest")
+        #expect(
+            await runner.snapshotRecordedCommands() == [
+                .jobsList(.init(json: true)),
+                .jobsShow(.init(jobID: "bench-cli-1", json: true)),
+                .jobsLogs(.init(jobID: "bench-cli-1", json: true)),
+                .jobsArtifacts(.init(jobID: "bench-cli-1", json: true)),
+            ]
+        )
+    }
+
+    @Test("runtime view model surfaces missing jobs runner and selection errors")
+    @MainActor
+    func runtimeViewModelSurfacesMissingJobsRunnerAndSelectionErrors() async throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+
+        await viewModel.refreshRuntimeJobs()
+        #expect(viewModel.lastError == "Jobs CLI runner is unavailable.")
+
+        await viewModel.refreshSelectedRuntimeJobDetail()
+        #expect(viewModel.lastError == "Select a job before refreshing job detail.")
+
+        let jobs = try RuntimeJobsPayloadDecoder.decodeList(Data("""
+        [
+          {
+            "job_id": "bench-cli-1",
+            "run_kind": "benchmark",
+            "status": "running",
+            "phase": "sampling",
+            "model_id": "mlx-community/Qwen3-8B",
+            "task_kind": "text-generation"
+          }
+        ]
+        """.utf8))
+        viewModel.applyRuntimeJobs(jobs)
+
+        await viewModel.refreshSelectedRuntimeJobDetail()
+        #expect(viewModel.lastError == "Jobs CLI runner is unavailable.")
+        await viewModel.refreshSelectedRuntimeJobLogs()
+        #expect(viewModel.lastError == "Jobs CLI runner is unavailable.")
+        await viewModel.refreshSelectedRuntimeJobArtifacts()
+        #expect(viewModel.lastError == "Jobs CLI runner is unavailable.")
+    }
+
+    @Test("runtime view model records jobs CLI failures per operation")
+    @MainActor
+    func runtimeViewModelRecordsJobsCLIFailuresPerOperation() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureHandler { command in
+            .failure(.processFailed(commandID: command.workflowCommandID, surface: .subprocess, exitCode: 2, stderr: "failed"))
+        }
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+
+        await viewModel.refreshRuntimeJobs()
+        #expect(viewModel.runtimeJobsRefreshInProgress == false)
+        #expect(viewModel.lastCLIWorkflowFailure?.commandID == "jobs.list")
+
+        let jobs = try RuntimeJobsPayloadDecoder.decodeList(Data("""
+        [
+          {
+            "job_id": "bench-cli-1",
+            "run_kind": "benchmark",
+            "status": "running",
+            "phase": "sampling",
+            "model_id": "mlx-community/Qwen3-8B",
+            "task_kind": "text-generation"
+          }
+        ]
+        """.utf8))
+        viewModel.applyRuntimeJobs(jobs)
+
+        await viewModel.refreshSelectedRuntimeJobDetail()
+        #expect(viewModel.selectedRuntimeJobDetailRefreshInProgress == false)
+        #expect(viewModel.lastCLIWorkflowFailure?.commandID == "jobs.show")
+
+        await viewModel.refreshSelectedRuntimeJobLogs()
+        #expect(viewModel.selectedRuntimeJobLogsRefreshInProgress == false)
+        #expect(viewModel.lastCLIWorkflowFailure?.commandID == "jobs.logs")
+
+        await viewModel.refreshSelectedRuntimeJobArtifacts()
+        #expect(viewModel.selectedRuntimeJobArtifactsRefreshInProgress == false)
+        #expect(viewModel.lastCLIWorkflowFailure?.commandID == "jobs.artifacts")
+    }
+
+    @Test("runtime jobs CLI decoder maps malformed JSON to workflow failure")
+    @MainActor
+    func runtimeJobsCLIDecoderMapsMalformedJSONToWorkflowFailure() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureOutput("{", for: .jobsList(.init(json: true)))
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+
+        await viewModel.refreshRuntimeJobs()
+
+        #expect(viewModel.runtimeJobsRefreshInProgress == false)
+        #expect(viewModel.lastCLIWorkflowFailure?.commandID == "jobs.list")
+        #expect(viewModel.lastCLIWorkflowFailure?.failureKind == .invalidJSON)
     }
 }

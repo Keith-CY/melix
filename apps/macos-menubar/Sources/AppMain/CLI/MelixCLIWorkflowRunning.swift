@@ -219,6 +219,30 @@ extension MelixCLIWorkflowRunning {
         let output = try await run(command)
         return try decodeManagedModelReceipt(output: output, command: command, surface: surface)
     }
+
+    func listRuntimeJobs() async throws -> [RuntimeJobSummaryState] {
+        let command = MelixCLICommand.jobsList(.init(json: true))
+        let output = try await run(command)
+        return try decodeRuntimeJobsList(output: output, command: command, surface: surface)
+    }
+
+    func showRuntimeJob(jobID: String) async throws -> RuntimeJobDetailState {
+        let command = MelixCLICommand.jobsShow(.init(jobID: jobID, json: true))
+        let output = try await run(command)
+        return try decodeRuntimeJobDetail(output: output, command: command, surface: surface)
+    }
+
+    func fetchRuntimeJobLogs(jobID: String) async throws -> RuntimeJobLogSnapshotState {
+        let command = MelixCLICommand.jobsLogs(.init(jobID: jobID, json: true))
+        let output = try await run(command)
+        return try decodeRuntimeJobLogSnapshot(output: output, command: command, surface: surface)
+    }
+
+    func fetchRuntimeJobArtifacts(jobID: String) async throws -> RuntimeJobArtifactSnapshotState {
+        let command = MelixCLICommand.jobsArtifacts(.init(jobID: jobID, json: true))
+        let output = try await run(command)
+        return try decodeRuntimeJobArtifactSnapshot(output: output, command: command, surface: surface)
+    }
 }
 
 func decodeMelixCLIJSON<Value: Decodable>(
@@ -269,6 +293,65 @@ private func decodeManagedModelReceipt(
 
     do {
         return try JSONDecoder().decode(ManagedModelReceipt.self, from: data)
+    } catch {
+        throw MelixCLIWorkflowError.invalidJSON(
+            commandID: command.workflowCommandID,
+            surface: surface,
+            output: output
+        )
+    }
+}
+
+private func decodeRuntimeJobsList(
+    output: String,
+    command: MelixCLICommand,
+    surface: MelixCLIWorkflowSurface
+) throws -> [RuntimeJobSummaryState] {
+    try decodeRuntimeJobPayload(output: output, command: command, surface: surface) {
+        try RuntimeJobsPayloadDecoder.decodeList($0)
+    }
+}
+
+private func decodeRuntimeJobDetail(
+    output: String,
+    command: MelixCLICommand,
+    surface: MelixCLIWorkflowSurface
+) throws -> RuntimeJobDetailState {
+    try decodeRuntimeJobPayload(output: output, command: command, surface: surface) {
+        try RuntimeJobsPayloadDecoder.decodeDetail($0)
+    }
+}
+
+private func decodeRuntimeJobLogSnapshot(
+    output: String,
+    command: MelixCLICommand,
+    surface: MelixCLIWorkflowSurface
+) throws -> RuntimeJobLogSnapshotState {
+    try decodeRuntimeJobPayload(output: output, command: command, surface: surface) {
+        try RuntimeJobsPayloadDecoder.decodeLogSnapshot($0)
+    }
+}
+
+private func decodeRuntimeJobArtifactSnapshot(
+    output: String,
+    command: MelixCLICommand,
+    surface: MelixCLIWorkflowSurface
+) throws -> RuntimeJobArtifactSnapshotState {
+    try decodeRuntimeJobPayload(output: output, command: command, surface: surface) {
+        try RuntimeJobsPayloadDecoder.decodeArtifactSnapshot($0)
+    }
+}
+
+private func decodeRuntimeJobPayload<Value>(
+    output: String,
+    command: MelixCLICommand,
+    surface: MelixCLIWorkflowSurface,
+    decode: (Data) throws -> Value
+) throws -> Value {
+    let data = Data(output.utf8)
+
+    do {
+        return try decode(data)
     } catch {
         throw MelixCLIWorkflowError.invalidJSON(
             commandID: command.workflowCommandID,

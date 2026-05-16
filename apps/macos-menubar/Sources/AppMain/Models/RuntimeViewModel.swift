@@ -1901,7 +1901,13 @@ public final class RuntimeViewModel {
     public var selectedToolSection: DesktopToolSection = .modelsLibrary
     public private(set) var runtimeJobs: [RuntimeJobSummaryState] = []
     public private(set) var runtimeJobDetailsByID: [String: RuntimeJobDetailState] = [:]
+    public private(set) var runtimeJobLogSnapshotsByID: [String: RuntimeJobLogSnapshotState] = [:]
+    public private(set) var runtimeJobArtifactSnapshotsByID: [String: RuntimeJobArtifactSnapshotState] = [:]
     public private(set) var selectedRuntimeJobID = ""
+    public private(set) var runtimeJobsRefreshInProgress = false
+    public private(set) var selectedRuntimeJobDetailRefreshInProgress = false
+    public private(set) var selectedRuntimeJobLogsRefreshInProgress = false
+    public private(set) var selectedRuntimeJobArtifactsRefreshInProgress = false
     public let runtimeJobsEmptyStateTitle = "No Jobs Yet"
     public let runtimeJobsEmptyStateDetail = "Run a benchmark, evaluation, training, or synthetic workflow to populate Jobs."
     public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
@@ -3433,6 +3439,14 @@ public final class RuntimeViewModel {
         runtimeJobDetailsByID[selectedRuntimeJobID]
     }
 
+    public var selectedRuntimeJobLogSnapshot: RuntimeJobLogSnapshotState? {
+        runtimeJobLogSnapshotsByID[selectedRuntimeJobID]
+    }
+
+    public var selectedRuntimeJobArtifactSnapshot: RuntimeJobArtifactSnapshotState? {
+        runtimeJobArtifactSnapshotsByID[selectedRuntimeJobID]
+    }
+
     public func applyRuntimeJobs(_ jobs: [RuntimeJobSummaryState]) {
         runtimeJobs = jobs
         if runtimeJobs.contains(where: { $0.id == selectedRuntimeJobID }) == false {
@@ -3454,12 +3468,121 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    public func refreshRuntimeJobs() async {
+        guard let commandWorkflowRunner else {
+            recordLocalError("Jobs CLI runner is unavailable.")
+            notifyStateChanged()
+            return
+        }
+
+        runtimeJobsRefreshInProgress = true
+        notifyStateChanged()
+        do {
+            let jobs = try await commandWorkflowRunner.listRuntimeJobs()
+            runtimeJobsRefreshInProgress = false
+            clearCLIWorkflowFailure()
+            applyRuntimeJobs(jobs)
+        } catch {
+            runtimeJobsRefreshInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            recordLocalError(String(describing: error))
+            notifyStateChanged()
+        }
+    }
+
+    public func refreshSelectedRuntimeJobDetail() async {
+        guard let jobID = runtimeJobIDForSelectedOperation("refreshing job detail") else {
+            return
+        }
+        guard let commandWorkflowRunner else {
+            recordLocalError("Jobs CLI runner is unavailable.")
+            notifyStateChanged()
+            return
+        }
+
+        selectedRuntimeJobDetailRefreshInProgress = true
+        notifyStateChanged()
+        do {
+            let detail = try await commandWorkflowRunner.showRuntimeJob(jobID: jobID)
+            selectedRuntimeJobDetailRefreshInProgress = false
+            clearCLIWorkflowFailure()
+            applyRuntimeJobDetail(detail)
+        } catch {
+            selectedRuntimeJobDetailRefreshInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            recordLocalError(String(describing: error))
+            notifyStateChanged()
+        }
+    }
+
+    public func refreshSelectedRuntimeJobLogs() async {
+        guard let jobID = runtimeJobIDForSelectedOperation("fetching job logs") else {
+            return
+        }
+        guard let commandWorkflowRunner else {
+            recordLocalError("Jobs CLI runner is unavailable.")
+            notifyStateChanged()
+            return
+        }
+
+        selectedRuntimeJobLogsRefreshInProgress = true
+        notifyStateChanged()
+        do {
+            let snapshot = try await commandWorkflowRunner.fetchRuntimeJobLogs(jobID: jobID)
+            selectedRuntimeJobLogsRefreshInProgress = false
+            clearCLIWorkflowFailure()
+            runtimeJobLogSnapshotsByID[snapshot.jobID] = snapshot
+            notifyStateChanged()
+        } catch {
+            selectedRuntimeJobLogsRefreshInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            recordLocalError(String(describing: error))
+            notifyStateChanged()
+        }
+    }
+
+    public func refreshSelectedRuntimeJobArtifacts() async {
+        guard let jobID = runtimeJobIDForSelectedOperation("refreshing job artifacts") else {
+            return
+        }
+        guard let commandWorkflowRunner else {
+            recordLocalError("Jobs CLI runner is unavailable.")
+            notifyStateChanged()
+            return
+        }
+
+        selectedRuntimeJobArtifactsRefreshInProgress = true
+        notifyStateChanged()
+        do {
+            let snapshot = try await commandWorkflowRunner.fetchRuntimeJobArtifacts(jobID: jobID)
+            selectedRuntimeJobArtifactsRefreshInProgress = false
+            clearCLIWorkflowFailure()
+            runtimeJobArtifactSnapshotsByID[snapshot.jobID] = snapshot
+            notifyStateChanged()
+        } catch {
+            selectedRuntimeJobArtifactsRefreshInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            recordLocalError(String(describing: error))
+            notifyStateChanged()
+        }
+    }
+
     public func selectRuntimeJob(id: String) {
         guard runtimeJobs.contains(where: { $0.id == id }) else {
             return
         }
         selectedRuntimeJobID = id
         notifyStateChanged()
+    }
+
+    private func runtimeJobIDForSelectedOperation(_ operation: String) -> String? {
+        let jobID = selectedRuntimeJobID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard jobID.isEmpty == false else {
+            recordLocalError("Select a job before \(operation).")
+            notifyStateChanged()
+            return nil
+        }
+        return jobID
     }
 
     public func openPreferences() {

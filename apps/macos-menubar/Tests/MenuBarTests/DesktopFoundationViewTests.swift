@@ -1827,6 +1827,157 @@ struct DesktopFoundationViewTests {
         #expect(values.contains("/tmp/melix/jobs/bench-20260516-1120/manifest.json"))
     }
 
+    @Test("jobs tool section renders CLI operation controls")
+    @MainActor
+    func jobsToolSectionRendersCLIOperationControls() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.selectToolSection(.jobs)
+        let jobs = try RuntimeJobsPayloadDecoder.decodeList(Data("""
+        [
+          {
+            "job_id": "bench-20260516-1027",
+            "run_kind": "benchmark",
+            "status": "running",
+            "phase": "sampling",
+            "model_id": "mlx-community/Qwen3-8B",
+            "task_kind": "text-generation",
+            "updated_at_unix_ms": 1778908099000,
+            "cancelable": true
+          }
+        ]
+        """.utf8))
+        viewModel.applyRuntimeJobs(jobs)
+
+        let view = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
+        let values = renderedTextValues(in: view)
+
+        #expect(values.contains("Refresh Jobs"))
+        #expect(values.contains("Refresh Detail"))
+        #expect(values.contains("Fetch Logs"))
+        #expect(values.contains("Refresh Artifacts"))
+    }
+
+    @Test("jobs tool section operation buttons dispatch and render fetched results")
+    @MainActor
+    func jobsToolSectionOperationButtonsDispatchAndRenderFetchedResults() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureOutput(
+            """
+            [
+              {
+                "job_id": "bench-cli-1",
+                "run_kind": "benchmark",
+                "status": "running",
+                "phase": "sampling",
+                "model_id": "mlx-community/Qwen3-8B",
+                "task_kind": "text-generation",
+                "updated_at_unix_ms": 1778912044000,
+                "cancelable": true
+              }
+            ]
+            """,
+            for: .jobsList(.init(json: true))
+        )
+        await runner.configureOutput(
+            """
+            {
+              "job_id": "bench-cli-1",
+              "run_kind": "benchmark",
+              "status": "running",
+              "phase": "export",
+              "model_id": "mlx-community/Qwen3-8B",
+              "task_kind": "text-generation",
+              "logs": {
+                "available": true,
+                "path": "/tmp/melix/jobs/bench-cli-1/job.log",
+                "command": "melix jobs logs bench-cli-1"
+              },
+              "artifacts": []
+            }
+            """,
+            for: .jobsShow(.init(jobID: "bench-cli-1", json: true))
+        )
+        await runner.configureOutput(
+            """
+            {
+              "schema_version": "melix.logs.v1",
+              "run_id": "bench-cli-1",
+              "source_path": "/tmp/melix/jobs/bench-cli-1/run-record.json",
+              "log_path": "/tmp/melix/jobs/bench-cli-1/job.log",
+              "follow_requested": false,
+              "active_follow_supported": false,
+              "content": "export started",
+              "redacted_field_count": 0
+            }
+            """,
+            for: .jobsLogs(.init(jobID: "bench-cli-1", json: true))
+        )
+        await runner.configureOutput(
+            """
+            {
+              "schema_version": "melix.job_artifacts.v1",
+              "job_id": "bench-cli-1",
+              "artifact_count": 1,
+              "artifacts": [
+                {
+                  "kind": "manifest",
+                  "path": "/tmp/melix/jobs/bench-cli-1/manifest.json",
+                  "relative_path": "manifest.json",
+                  "exists": true
+                }
+              ]
+            }
+            """,
+            for: .jobsArtifacts(.init(jobID: "bench-cli-1", json: true))
+        )
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.applyRuntimeJobs(try RuntimeJobsPayloadDecoder.decodeList(Data("""
+        [
+          {
+            "job_id": "bench-cli-1",
+            "run_kind": "benchmark",
+            "status": "running",
+            "phase": "sampling",
+            "model_id": "mlx-community/Qwen3-8B",
+            "task_kind": "text-generation"
+          }
+        ]
+        """.utf8)))
+
+        let view = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
+        let buttons = renderedButtons(in: view)
+        try #require(buttons.contains { $0.title == "Refresh Jobs" })
+        try #require(buttons.contains { $0.title == "Refresh Detail" })
+        try #require(buttons.contains { $0.title == "Fetch Logs" })
+        try #require(buttons.contains { $0.title == "Refresh Artifacts" })
+
+        buttons.first { $0.title == "Refresh Jobs" }?.performClick(nil)
+        try await waitForDesktopFoundationCondition("expected jobs list refresh command") {
+            viewModel.runtimeJobs.first?.updatedAtUnixMS == 1778912044000
+        }
+
+        buttons.first { $0.title == "Refresh Detail" }?.performClick(nil)
+        try await waitForDesktopFoundationCondition("expected selected job detail") {
+            viewModel.selectedRuntimeJobDetail?.summary.phase == "export"
+        }
+
+        buttons.first { $0.title == "Fetch Logs" }?.performClick(nil)
+        try await waitForDesktopFoundationCondition("expected selected job logs") {
+            viewModel.selectedRuntimeJobLogSnapshot?.content == "export started"
+        }
+
+        buttons.first { $0.title == "Refresh Artifacts" }?.performClick(nil)
+        try await waitForDesktopFoundationCondition("expected selected job artifacts") {
+            viewModel.selectedRuntimeJobArtifactSnapshot?.artifacts.first?.kind == "manifest"
+        }
+
+        let updatedView = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
+        let values = renderedTextValues(in: updatedView)
+        #expect(values.contains("export started"))
+        #expect(values.contains("manifest"))
+        #expect(values.contains("/tmp/melix/jobs/bench-cli-1/manifest.json"))
+    }
+
     @Test("training defaults to preset-first primary fields with advanced folded")
     @MainActor
     func trainingDefaultsToPresetFirstPrimaryFieldsWithAdvancedFolded() async throws {
@@ -7283,6 +7434,7 @@ private func renderedTextValues(in rootView: NSView) -> [String] {
     }
 
     func visit(_ view: NSView) {
+        appendValue(view.accessibilityLabel() ?? "")
         if let textField = view as? NSTextField {
             appendValue(textField.stringValue)
         }
@@ -7304,6 +7456,23 @@ private func renderedTextValues(in rootView: NSView) -> [String] {
 
     visit(rootView)
     return values
+}
+
+@MainActor
+private func renderedButtons(in rootView: NSView) -> [NSButton] {
+    var buttons: [NSButton] = []
+
+    func visit(_ view: NSView) {
+        if let button = view as? NSButton {
+            buttons.append(button)
+        }
+        for subview in view.subviews {
+            visit(subview)
+        }
+    }
+
+    visit(rootView)
+    return buttons
 }
 
 @MainActor

@@ -8,6 +8,14 @@ public enum RuntimeJobsPayloadDecoder {
     public static func decodeDetail(_ data: Data) throws -> RuntimeJobDetailState {
         try JSONDecoder().decode(RuntimeJobDetailState.self, from: data)
     }
+
+    public static func decodeLogSnapshot(_ data: Data) throws -> RuntimeJobLogSnapshotState {
+        try JSONDecoder().decode(RuntimeJobLogSnapshotState.self, from: data)
+    }
+
+    public static func decodeArtifactSnapshot(_ data: Data) throws -> RuntimeJobArtifactSnapshotState {
+        try JSONDecoder().decode(RuntimeJobArtifactSnapshotState.self, from: data)
+    }
 }
 
 public struct RuntimeJobSummaryState: Decodable, Equatable, Identifiable, Sendable {
@@ -287,6 +295,68 @@ public struct RuntimeJobArtifactState: Decodable, Equatable, Identifiable, Senda
         case path
         case relativePath = "relative_path"
         case exists
+    }
+}
+
+public struct RuntimeJobLogSnapshotState: Decodable, Equatable, Sendable {
+    public let schemaVersion: String
+    public let jobID: String
+    public let sourcePath: String
+    public let logPath: String
+    public let followRequested: Bool
+    public let activeFollowSupported: Bool
+    public let content: String
+    public let redactionSchemaVersion: String
+    public let redactedFieldCount: Int
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = container.decodeFlexibleString(forKey: .schemaVersion)
+        let runID = container.decodeFlexibleString(forKey: .runID)
+        let decodedJobID = container.decodeFlexibleString(forKey: .jobID)
+        jobID = runID.isEmpty ? decodedJobID : runID
+        sourcePath = container.decodeFlexibleString(forKey: .sourcePath)
+        logPath = container.decodeFlexibleString(forKey: .logPath)
+        followRequested = container.decodeFlexibleBool(forKey: .followRequested)
+        activeFollowSupported = container.decodeFlexibleBool(forKey: .activeFollowSupported)
+        content = container.decodeFlexibleString(forKey: .content)
+        redactionSchemaVersion = container.decodeFlexibleString(forKey: .redactionSchemaVersion)
+        redactedFieldCount = Int(container.decodeFlexibleInt64(forKey: .redactedFieldCount))
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case runID = "run_id"
+        case jobID = "job_id"
+        case sourcePath = "source_path"
+        case logPath = "log_path"
+        case followRequested = "follow_requested"
+        case activeFollowSupported = "active_follow_supported"
+        case content
+        case redactionSchemaVersion = "redaction_schema_version"
+        case redactedFieldCount = "redacted_field_count"
+    }
+}
+
+public struct RuntimeJobArtifactSnapshotState: Decodable, Equatable, Sendable {
+    public let schemaVersion: String
+    public let jobID: String
+    public let artifactCount: Int
+    public let artifacts: [RuntimeJobArtifactState]
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = container.decodeFlexibleString(forKey: .schemaVersion)
+        jobID = container.decodeFlexibleString(forKey: .jobID)
+        artifactCount = Int(container.decodeFlexibleInt64(forKey: .artifactCount))
+        artifacts = (try? container.decode([RuntimeJobArtifactState].self, forKey: .artifacts)) ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case jobID = "job_id"
+        case artifactCount = "artifact_count"
+        case artifacts
     }
 }
 

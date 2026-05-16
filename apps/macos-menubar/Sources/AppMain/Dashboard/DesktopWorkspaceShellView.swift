@@ -2247,11 +2247,14 @@ struct DesktopJobsToolSectionView: View {
 
             if viewModel.runtimeJobs.isEmpty {
                 MelixSectionCard("Jobs List") {
-                    DesktopJobsInlineEmptyStateView(
-                        title: Self.emptyStateTitle,
-                        detail: Self.emptyStateDetail,
-                        symbolName: "tray"
-                    )
+                    VStack(alignment: .leading, spacing: 10) {
+                        jobsOperationBar
+                        DesktopJobsInlineEmptyStateView(
+                            title: Self.emptyStateTitle,
+                            detail: Self.emptyStateDetail,
+                            symbolName: "tray"
+                        )
+                    }
                 }
             } else {
                 HStack(alignment: .top, spacing: 14) {
@@ -2265,9 +2268,46 @@ struct DesktopJobsToolSectionView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private var jobsOperationBar: some View {
+        HStack(spacing: 8) {
+            DesktopJobsOperationButton(
+                title: "Refresh Jobs",
+                isEnabled: viewModel.runtimeJobsRefreshInProgress == false
+            ) {
+                Task { await viewModel.refreshRuntimeJobs() }
+            }
+
+            DesktopJobsOperationButton(
+                title: "Refresh Detail",
+                isEnabled: viewModel.selectedRuntimeJobID.isEmpty == false
+                    && viewModel.selectedRuntimeJobDetailRefreshInProgress == false
+            ) {
+                Task { await viewModel.refreshSelectedRuntimeJobDetail() }
+            }
+
+            DesktopJobsOperationButton(
+                title: "Fetch Logs",
+                isEnabled: viewModel.selectedRuntimeJobID.isEmpty == false
+                    && viewModel.selectedRuntimeJobLogsRefreshInProgress == false
+            ) {
+                Task { await viewModel.refreshSelectedRuntimeJobLogs() }
+            }
+
+            DesktopJobsOperationButton(
+                title: "Refresh Artifacts",
+                isEnabled: viewModel.selectedRuntimeJobID.isEmpty == false
+                    && viewModel.selectedRuntimeJobArtifactsRefreshInProgress == false
+            ) {
+                Task { await viewModel.refreshSelectedRuntimeJobArtifacts() }
+            }
+        }
+    }
+
     private var jobsList: some View {
         MelixSectionCard("Jobs List") {
             VStack(alignment: .leading, spacing: 8) {
+                jobsOperationBar
+
                 Text(queueSummaryText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -2347,6 +2387,9 @@ struct DesktopJobsToolSectionView: View {
                         ]
                     )
 
+                    fetchedLogBlock
+                    fetchedArtifactsBlock
+
                     if detail.artifacts.isEmpty == false {
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(detail.artifacts) { artifact in
@@ -2377,6 +2420,42 @@ struct DesktopJobsToolSectionView: View {
                         DesktopJobSummaryField(title: "Task", value: job.taskKind)
                         DesktopJobSummaryField(title: "Artifacts", value: job.artifactRoot)
                     }
+
+                    fetchedLogBlock
+                    fetchedArtifactsBlock
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var fetchedLogBlock: some View {
+        if let snapshot = viewModel.selectedRuntimeJobLogSnapshot {
+            DesktopJobDetailBlock(
+                title: "Fetched Logs",
+                values: [
+                    snapshot.logPath,
+                    snapshot.content,
+                    snapshot.redactedFieldCount == 0 ? "" : "redacted fields \(snapshot.redactedFieldCount)",
+                ]
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var fetchedArtifactsBlock: some View {
+        if let snapshot = viewModel.selectedRuntimeJobArtifactSnapshot, snapshot.artifacts.isEmpty == false {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(snapshot.artifacts) { artifact in
+                    DesktopJobDetailBlock(
+                        title: "Fetched Artifact",
+                        values: [
+                            artifact.kind,
+                            artifact.path,
+                            artifact.relativePath,
+                            artifact.exists ? "exists" : "missing",
+                        ]
+                    )
                 }
             }
         }
@@ -2439,6 +2518,47 @@ private struct DesktopJobsInlineEmptyStateView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
+    }
+}
+
+private struct DesktopJobsOperationButton: NSViewRepresentable {
+    let title: String
+    let isEnabled: Bool
+    let action: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton(
+            title: title,
+            target: context.coordinator,
+            action: #selector(Coordinator.performAction(_:))
+        )
+        button.bezelStyle = NSButton.BezelStyle.rounded
+        button.controlSize = NSControl.ControlSize.small
+        button.setAccessibilityLabel(title)
+        return button
+    }
+
+    func updateNSView(_ button: NSButton, context: Context) {
+        context.coordinator.action = action
+        button.title = title
+        button.isEnabled = isEnabled
+        button.setAccessibilityLabel(title)
+    }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc func performAction(_ sender: NSButton) {
+            action()
+        }
     }
 }
 
