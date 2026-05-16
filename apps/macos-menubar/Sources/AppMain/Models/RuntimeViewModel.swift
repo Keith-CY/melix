@@ -238,6 +238,7 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
     public let loadTrustCustomLoaderText: String
     public let loadTrustBlockReasonText: String
     public let loadTrustReloadRequiredText: String
+    public let loadTrustRuntimeGuidanceText: String
     public let ocrPromptProfileText: String
     public let ocrSamplingProfileText: String
     public let ocrTemperatureText: String
@@ -304,6 +305,7 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         loadTrustCustomLoaderText: String = "",
         loadTrustBlockReasonText: String = "",
         loadTrustReloadRequiredText: String = "",
+        loadTrustRuntimeGuidanceText: String = "",
         ocrPromptProfileText: String = "",
         ocrSamplingProfileText: String = "",
         ocrTemperatureText: String = "",
@@ -369,6 +371,7 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         self.loadTrustCustomLoaderText = loadTrustCustomLoaderText
         self.loadTrustBlockReasonText = loadTrustBlockReasonText
         self.loadTrustReloadRequiredText = loadTrustReloadRequiredText
+        self.loadTrustRuntimeGuidanceText = loadTrustRuntimeGuidanceText
         self.ocrPromptProfileText = ocrPromptProfileText
         self.ocrSamplingProfileText = ocrSamplingProfileText
         self.ocrTemperatureText = ocrTemperatureText
@@ -7669,6 +7672,9 @@ public final class RuntimeViewModel {
                 } ?? "",
                 loadTrustReloadRequiredText: snapshotModel.map {
                     runtimeModelLoadTrustReloadRequiredText($0.loadTrust, ifPresentOn: $0)
+                } ?? "",
+                loadTrustRuntimeGuidanceText: snapshotModel.map {
+                    runtimeModelLoadTrustRuntimeGuidanceText(for: $0)
                 } ?? "",
                 ocrPromptProfileText: snapshotModel?.settings.ext["ocr_prompt_profile_id"] ?? "",
                 ocrSamplingProfileText: snapshotModel.map {
@@ -16258,7 +16264,39 @@ private func runtimeModelLoadTrustReceiptRows(
     if reloadRequired.isEmpty == false {
         rows.append(reloadRequired)
     }
+    let runtimeGuidance = runtimeModelLoadTrustRuntimeGuidanceText(for: model)
+    if runtimeGuidance.isEmpty == false {
+        rows.append("guidance \(runtimeLowercasedFirstSentence(runtimeGuidance))")
+    }
     return rows
+}
+
+private func runtimeModelLoadTrustRuntimeGuidanceText(
+    for model: Melix_Controlplane_V1_ModelSummary
+) -> String {
+    guard model.hasLoadTrust else {
+        return ""
+    }
+    let policy = model.loadTrust
+    guard policy.requiresReloadForTrustChange else {
+        return ""
+    }
+    let storedMode = model.settings.loadTrustMode == .unspecified
+        ? policy.requestedMode
+        : model.settings.loadTrustMode
+    let activeMode = policy.effectiveMode
+    guard storedMode != .unspecified, storedMode != activeMode else {
+        return ""
+    }
+    return "Unload and reload this model to apply \(runtimeModelSettingsLoadTrustModeText(storedMode)); active runtime is \(runtimeModelSettingsLoadTrustModeText(activeMode))."
+}
+
+private func runtimeLowercasedFirstSentence(_ text: String) -> String {
+    var trimmed = text
+    if trimmed.last == "." {
+        trimmed.removeLast()
+    }
+    return trimmed.prefix(1).lowercased() + trimmed.dropFirst()
 }
 
 private func runtimeAccelerationModeDisplayText(from rawValue: String) -> String {

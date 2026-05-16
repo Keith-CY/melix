@@ -1788,6 +1788,9 @@ func desktopModelInfoSummaryContent(
     if !info.loadTrustReloadRequiredText.isEmpty {
         detailLines.append("trust reload: \(info.loadTrustReloadRequiredText)")
     }
+    if !info.loadTrustRuntimeGuidanceText.isEmpty {
+        detailLines.append("trust guidance: \(info.loadTrustRuntimeGuidanceText)")
+    }
     detailLines.append("pin on load: \(info.pinOnLoad ? "yes" : "no")")
     if info.ttlSeconds > 0 {
         detailLines.append("ttl seconds: \(info.ttlSeconds)")

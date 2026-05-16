@@ -4176,6 +4176,7 @@ struct DesktopFoundationViewTests {
         model.kind = "text"
         model.state = .modelWarm
         model.settings.alias = "Remote Code Model"
+        model.settings.loadTrustMode = .modelLoadTrustTrustRemoteCode
         var loadTrust = Melix_Controlplane_V1_ModelLoadTrustPolicy()
         loadTrust.requestedMode = .modelLoadTrustTrustRemoteCode
         loadTrust.effectiveMode = .modelLoadTrustDefaultSafe
@@ -4209,6 +4210,45 @@ struct DesktopFoundationViewTests {
         #expect(row.loadTrustReceiptRows.contains("custom loader Required • model-config-auto-map"))
         #expect(row.loadTrustReceiptRows.contains("blocked remote code trust is not enabled"))
         #expect(row.loadTrustReceiptRows.contains("Reload Required"))
+        #expect(
+            row.loadTrustReceiptRows.contains(
+                "guidance unload and reload this model to apply Trust Remote Code; active runtime is Default Safe"
+            )
+        )
+    }
+
+    @Test("dashboard residency rows suppress load trust reload guidance when not needed")
+    @MainActor
+    func dashboardResidencyRowsSuppressLoadTrustReloadGuidanceWhenNotNeeded() throws {
+        var absentModel = Melix_Controlplane_V1_ModelSummary()
+        absentModel.modelID = "melix-no-trust"
+        absentModel.kind = "text"
+        absentModel.state = .modelWarm
+
+        var noReloadModel = Melix_Controlplane_V1_ModelSummary()
+        noReloadModel.modelID = "melix-no-reload"
+        noReloadModel.kind = "text"
+        noReloadModel.state = .modelWarm
+        noReloadModel.settings.loadTrustMode = .modelLoadTrustTrustRemoteCode
+        var noReloadTrust = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+        noReloadTrust.requestedMode = .modelLoadTrustTrustRemoteCode
+        noReloadTrust.effectiveMode = .modelLoadTrustDefaultSafe
+        noReloadModel.loadTrust = noReloadTrust
+
+        var alreadyEffectiveModel = Melix_Controlplane_V1_ModelSummary()
+        alreadyEffectiveModel.modelID = "melix-trust-applied"
+        alreadyEffectiveModel.kind = "text"
+        alreadyEffectiveModel.state = .modelWarm
+        alreadyEffectiveModel.settings.loadTrustMode = .modelLoadTrustTrustRemoteCode
+        var alreadyEffectiveTrust = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+        alreadyEffectiveTrust.requestedMode = .modelLoadTrustTrustRemoteCode
+        alreadyEffectiveTrust.effectiveMode = .modelLoadTrustTrustRemoteCode
+        alreadyEffectiveTrust.requiresReloadForTrustChange = true
+        alreadyEffectiveModel.loadTrust = alreadyEffectiveTrust
+
+        #expect(makeRuntimeModelRow(absentModel).loadTrustReceiptRows.isEmpty)
+        #expect(makeRuntimeModelRow(noReloadModel).loadTrustReceiptRows.contains { $0.hasPrefix("guidance ") } == false)
+        #expect(makeRuntimeModelRow(alreadyEffectiveModel).loadTrustReceiptRows.contains { $0.hasPrefix("guidance ") } == false)
     }
 
     @Test("models workspace wires model load trust opt-in controls")
@@ -4362,6 +4402,7 @@ struct DesktopFoundationViewTests {
         model.modelID = "melix-custom-loader"
         model.kind = "text"
         model.state = .modelWarm
+        model.settings.loadTrustMode = .modelLoadTrustTrustRemoteCode
         var loadTrust = Melix_Controlplane_V1_ModelLoadTrustPolicy()
         loadTrust.requestedMode = .modelLoadTrustTrustRemoteCode
         loadTrust.effectiveMode = .modelLoadTrustDefaultSafe
@@ -4392,9 +4433,18 @@ struct DesktopFoundationViewTests {
         #expect(selectedInfo.loadTrustCustomLoaderText == "Required • model-config-auto-map")
         #expect(selectedInfo.loadTrustBlockReasonText == "remote code trust is not enabled")
         #expect(selectedInfo.loadTrustReloadRequiredText == "Reload Required")
+        #expect(
+            selectedInfo.loadTrustRuntimeGuidanceText
+                == "Unload and reload this model to apply Trust Remote Code; active runtime is Default Safe."
+        )
         #expect(content.detailLines.contains("custom loader: Required • model-config-auto-map"))
         #expect(content.detailLines.contains("trust block reason: remote code trust is not enabled"))
         #expect(content.detailLines.contains("trust reload: Reload Required"))
+        #expect(
+            content.detailLines.contains(
+                "trust guidance: Unload and reload this model to apply Trust Remote Code; active runtime is Default Safe."
+            )
+        )
     }
 
     @Test("model detail maps custom loader detection edge labels")
