@@ -352,6 +352,20 @@ struct DesktopModelsTabView: View {
                             )
                             .toggleStyle(.checkbox)
                         }
+                        HStack(spacing: 12) {
+                            Text("Load Trust")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(viewModel.modelSettingsLoadTrustModeText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Button("Trust Remote Code", action: trustRemoteCodeForPrimaryModelAction())
+                                .buttonStyle(.bordered)
+                                .accessibilityLabel("Trust Remote Code")
+                            Button("Clear Trust Override", action: clearPrimaryModelLoadTrustOverrideAction())
+                                .buttonStyle(.bordered)
+                                .accessibilityLabel("Clear Trust Override")
+                        }
                         if primaryModel.kind == "ocr" {
                             HStack(spacing: 12) {
                                 TextField(
@@ -438,6 +452,14 @@ struct DesktopModelsTabView: View {
 
     func resetPrimaryModelSettingsAction() -> () -> Void {
         { viewModel.resetPrimaryModelSettingsDrafts() }
+    }
+
+    func trustRemoteCodeForPrimaryModelAction() -> () -> Void {
+        { Task { await viewModel.trustRemoteCodeForPrimaryModel() } }
+    }
+
+    func clearPrimaryModelLoadTrustOverrideAction() -> () -> Void {
+        { Task { await viewModel.clearPrimaryModelLoadTrustOverride() } }
     }
 
     func inspectPrimaryModelAction() -> () -> Void {

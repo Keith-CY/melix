@@ -4211,6 +4211,53 @@ struct DesktopFoundationViewTests {
         #expect(row.loadTrustReceiptRows.contains("Reload Required"))
     }
 
+    @Test("models workspace wires model load trust opt-in controls")
+    @MainActor
+    func modelsWorkspaceWiresModelLoadTrustOptInControls() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-remote-code"
+        model.kind = "text"
+        model.state = .modelWarm
+        model.settings.alias = "Remote Code Model"
+        var loadTrust = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+        loadTrust.requestedMode = .modelLoadTrustTrustRemoteCode
+        loadTrust.effectiveMode = .modelLoadTrustDefaultSafe
+        model.loadTrust = loadTrust
+        snapshot.models = [model]
+
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        let tab = DesktopModelsTabView(
+            foundation: viewModel.desktopFoundationState,
+            viewModel: viewModel
+        )
+        let view = hostView(
+            tab
+        )
+
+        #expect(view.subviews.isEmpty == false)
+
+        tab.trustRemoteCodeForPrimaryModelAction()()
+        try await waitForDesktopFoundationCondition("trust opt-in dispatched") {
+            viewModel.modelSettingsLoadTrustModeText == "Trust Remote Code"
+        }
+        var updates = await client.recordedModelSettingsUpdates
+        #expect(updates.last?.values["load_trust_mode"] == "trust_remote_code")
+
+        tab.clearPrimaryModelLoadTrustOverrideAction()()
+        try await waitForDesktopFoundationCondition("trust clear dispatched") {
+            viewModel.modelSettingsLoadTrustModeText == "Unspecified"
+        }
+        updates = await client.recordedModelSettingsUpdates
+        #expect(updates.last?.values["load_trust_mode"] == "")
+    }
+
     @Test("model detail renders requested and effective load trust modes")
     @MainActor
     func modelDetailRendersRequestedAndEffectiveLoadTrustModes() async throws {

@@ -5016,6 +5016,56 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedModelInfo?.generationConfigTemperatureText == "0.12")
     }
 
+    @Test("model load trust controls dispatch opt-in and clear policy updates")
+    @MainActor
+    func modelLoadTrustControlsDispatchOptInAndClearPolicyUpdates() async throws {
+        let emptyClient = FakeControlPlaneXPCClient()
+        let emptyViewModel = RuntimeViewModel(client: emptyClient)
+
+        #expect(emptyViewModel.modelSettingsLoadTrustModeText == "Unspecified")
+        await emptyViewModel.trustRemoteCodeForPrimaryModel()
+        #expect(await emptyClient.recordedModelSettingsUpdates.isEmpty)
+
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+        )
+        snapshot.models[0].settings.alias = "Melix Text"
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        await viewModel.trustRemoteCodeForPrimaryModel()
+
+        var updates = await client.recordedModelSettingsUpdates
+        #expect(updates.last?.modelID == "melix-dev-text")
+        #expect(updates.last?.values["load_trust_mode"] == "trust_remote_code")
+        #expect(viewModel.modelSettingsLoadTrustModeText == "Trust Remote Code")
+
+        await viewModel.clearPrimaryModelLoadTrustOverride()
+
+        updates = await client.recordedModelSettingsUpdates
+        #expect(updates.last?.modelID == "melix-dev-text")
+        #expect(updates.last?.values["load_trust_mode"] == "")
+        #expect(viewModel.modelSettingsLoadTrustModeText == "Unspecified")
+
+        await client.configureErrors(modelSettings: MenuBarTestError(description: "policy failed"))
+        await viewModel.updateModelLoadTrustMode(modelID: "melix-dev-text", mode: "trust_remote_code")
+        #expect(viewModel.lastError?.contains("policy failed") == true)
+
+        await client.configureErrors(modelSettings: nil)
+        await viewModel.updateModelLoadTrustMode(modelID: "melix-dev-text", mode: "safe")
+        #expect(viewModel.modelSettingsLoadTrustModeText == "Default Safe")
+
+        await viewModel.updateModelLoadTrustMode(modelID: "melix-dev-text", mode: "not_applicable")
+        #expect(viewModel.modelSettingsLoadTrustModeText == "Not Applicable")
+
+        await viewModel.updateModelLoadTrustMode(modelID: "melix-dev-text", mode: "unknown-trust-mode")
+        #expect(viewModel.modelSettingsLoadTrustModeText == "Unspecified")
+    }
+
     @Test("model settings validation guards invalid drafts resets typed values and no-ops without a primary model")
     @MainActor
     func modelSettingsValidationGuardsInvalidDraftsResetsValuesAndNoOpsWithoutPrimaryModel() async throws {

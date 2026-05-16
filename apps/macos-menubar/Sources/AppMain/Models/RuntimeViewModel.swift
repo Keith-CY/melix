@@ -2449,6 +2449,12 @@ public final class RuntimeViewModel {
     public var modelSettingsOCRTemperatureDraft = ""
     public var modelSettingsOCRTopPDraft = ""
     public var modelSettingsOCRMaxTokensDraft = ""
+    public var modelSettingsLoadTrustModeText: String {
+        guard let model = primaryModelSummary else {
+            return "Unspecified"
+        }
+        return runtimeModelSettingsLoadTrustModeText(model.settings.loadTrustMode)
+    }
     public var selectedBenchmarkModelID = "melix-dev-text"
     public var selectedBenchmarkPresentationMode: RuntimeBenchmarkPresentationMode = .standard
     public var preferredDiagnosticsStage: RuntimeDiagnosticsStagePreference?
@@ -7491,6 +7497,40 @@ public final class RuntimeViewModel {
 
     public func resetPrimaryModelSettingsDrafts() {
         synchronizeModelSettingsDrafts(force: true)
+        notifyStateChanged()
+    }
+
+    public func trustRemoteCodeForPrimaryModel() async {
+        await updatePrimaryModelLoadTrustMode("trust_remote_code")
+    }
+
+    public func clearPrimaryModelLoadTrustOverride() async {
+        await updatePrimaryModelLoadTrustMode("")
+    }
+
+    private func updatePrimaryModelLoadTrustMode(_ mode: String) async {
+        guard let model = primaryModelSummary else {
+            return
+        }
+        await updateModelLoadTrustMode(modelID: model.modelID, mode: mode)
+    }
+
+    public func updateModelLoadTrustMode(modelID: String, mode: String) async {
+        let startedAt = Date()
+        do {
+            let model = try await client.updateModelSettings(
+                modelID: modelID,
+                values: ["load_trust_mode": mode]
+            )
+            await metrics.record(
+                name: "menu.model_load_trust_policy_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            upsert(model: model)
+            synchronizeModelSettingsDrafts(force: true)
+        } catch {
+            recordLocalError(String(describing: error))
+        }
         notifyStateChanged()
     }
 
@@ -16142,6 +16182,12 @@ private func runtimeModelLoadTrustModeText(
     guard model.hasLoadTrust else {
         return ""
     }
+    return runtimeModelSettingsLoadTrustModeText(mode)
+}
+
+private func runtimeModelSettingsLoadTrustModeText(
+    _ mode: Melix_Controlplane_V1_ModelLoadTrustMode
+) -> String {
     switch mode {
     case .modelLoadTrustDefaultSafe:
         return "Default Safe"

@@ -499,10 +499,16 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         let repoID: String
     }
 
+    struct RecordedModelSettingsUpdate: Equatable, Sendable {
+        let modelID: String
+        let values: [String: String]
+    }
+
     private var streamContinuations: [AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent>.Continuation] = []
     private var nextEventSequence: UInt64 = 1
 
     private(set) var recordedActions: [String] = []
+    private(set) var recordedModelSettingsUpdates: [RecordedModelSettingsUpdate] = []
     private(set) var recordedModelOperationRequests: [RecordedModelOperationRequest] = []
     private(set) var recordedBenchRequests: [ControlPlaneBenchRequest] = []
     private(set) var recordedBenchMatrixRequests: [ControlPlaneBenchMatrixRequest] = []
@@ -914,6 +920,9 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         values: [String: String]
     ) async throws -> Melix_Controlplane_V1_ModelSummary {
         recordedActions.append("settings:\(modelID)")
+        recordedModelSettingsUpdates.append(
+            RecordedModelSettingsUpdate(modelID: modelID, values: values)
+        )
         if let modelSettingsError {
             throw modelSettingsError
         }
@@ -1017,6 +1026,25 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         }
         if let toolParserXMLFallback = values["tool_parser_xml_fallback"] {
             modelSettings.ext["tool_parser_xml_fallback"] = toolParserXMLFallback
+        }
+        if let loadTrustMode = values["load_trust_mode"] ?? values["model_load_trust_mode"] {
+            let normalizedLoadTrustMode = loadTrustMode
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+                .replacingOccurrences(of: "-", with: "_")
+                .replacingOccurrences(of: " ", with: "_")
+            modelSettings.loadTrustMode = switch normalizedLoadTrustMode {
+            case "", "clear", "unset", "unspecified", "default":
+                .unspecified
+            case "safe", "default_safe", "false", "0", "no", "off":
+                .modelLoadTrustDefaultSafe
+            case "trust_remote_code", "remote_code", "trusted", "true", "1", "yes", "on":
+                .modelLoadTrustTrustRemoteCode
+            case "not_applicable", "n/a", "na":
+                .modelLoadTrustNotApplicable
+            default:
+                .unspecified
+            }
         }
         if let ocrSamplingProfileID = values["ocr_sampling_profile_id"] {
             modelSettings.ext["ocr_sampling_profile_id"] = ocrSamplingProfileID
