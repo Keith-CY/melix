@@ -494,7 +494,7 @@ def _write_jsonl(path: Path, rows: Any) -> None:
                 continue
             row = row.to_dict()
         append_line(encode(row) + "\n")
-    path.write_text("".join(lines), encoding="utf-8")
+    path.write_bytes("".join(lines).encode("utf-8"))
 
 
 def _empty_attribute_event_json_line(event: ServingDiagnosticsEvent) -> str | None:
