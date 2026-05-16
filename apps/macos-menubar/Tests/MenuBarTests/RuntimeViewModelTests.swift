@@ -4285,6 +4285,46 @@ struct RuntimeViewModelTests {
         #expect(makeRuntimeModelRow(off).adaptiveThinkingText == "Off")
     }
 
+    @Test("runtime model row renders task capability receipts")
+    func runtimeModelRowRendersTaskCapabilityReceipts() {
+        #expect(makeRuntimeModelRow(makeModelSummary(state: .modelWarm)).capabilityReceiptRows.isEmpty)
+
+        var model = makeModelSummary(state: .modelWarm)
+        var receipt = Melix_Controlplane_V1_ModelCapabilityReceipt()
+        receipt.schemaVersion = "melix.model_capabilities.v1"
+        receipt.tasks = [
+            makeTaskCapabilityReceipt("completion", provenance: "model catalog"),
+            makeTaskCapabilityReceipt("embedding", provenance: "model catalog"),
+            makeTaskCapabilityReceipt("vision", provenance: "vision metadata"),
+            makeTaskCapabilityReceipt("tools", provenance: "tool parser metadata"),
+            makeTaskCapabilityReceipt("reasoning", provenance: "reasoning policy"),
+            makeTaskCapabilityReceipt("insert", provenance: "tokenizer metadata"),
+            makeTaskCapabilityReceipt("audio", state: .capabilityUnsupported, provenance: ""),
+            makeTaskCapabilityReceipt("draft", state: .capabilityExperimental, provenance: ""),
+            makeTaskCapabilityReceipt("metadata", state: .capabilityMetadataInconsistent, provenance: ""),
+            makeTaskCapabilityReceipt("unknown", state: .unspecified, provenance: ""),
+            makeTaskCapabilityReceipt("future", state: .UNRECOGNIZED(999), provenance: ""),
+            makeTaskCapabilityReceipt(" ", provenance: "ignored"),
+        ]
+        model.capabilityReceipt = receipt
+
+        let row = makeRuntimeModelRow(model)
+
+        #expect(row.capabilityReceiptRows == [
+            "task completion: supported • model catalog",
+            "task embedding: supported • model catalog",
+            "task vision: supported • vision metadata",
+            "task tools: supported • tool parser metadata",
+            "task reasoning: supported • reasoning policy",
+            "task insert: supported • tokenizer metadata",
+            "task audio: unsupported",
+            "task draft: experimental",
+            "task metadata: metadata inconsistent",
+            "task unknown: unspecified",
+            "task future: unrecognized 999",
+        ])
+    }
+
     @Test("runtime model row falls back across residency states policies and ttl descriptors")
     func runtimeModelRowFallsBackAcrossResidencyStateBranches() {
         var explicitResidency = makeModelSummary(
@@ -5005,6 +5045,12 @@ struct RuntimeViewModelTests {
         model.settings.ext["melix.generation_config.top_p"] = "0.9"
         model.settings.ext["melix.generation_config.max_tokens"] = "320"
         model.settings.ext["ocr_stop_sequences"] = "<ocr:end>"
+        var capabilityReceipt = Melix_Controlplane_V1_ModelCapabilityReceipt()
+        capabilityReceipt.schemaVersion = "melix.model_capabilities.v1"
+        capabilityReceipt.tasks = [
+            makeTaskCapabilityReceipt("completion", provenance: "model catalog"),
+        ]
+        model.capabilityReceipt = capabilityReceipt
         model.cachePolicy.effectiveMode = .hybrid
         model.cachePolicy.compatibility = .cacheCompatibilityCompatible
         model.cachePolicy.compatibilityReason = "requested policy is compatible with the current worker cache capabilities"
@@ -5067,6 +5113,7 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedModelInfo?.ocrTopPText == "0.82")
         #expect(viewModel.selectedModelInfo?.ocrMaxTokensText == "192")
         #expect(viewModel.selectedModelInfo?.generationConfigTemperatureText == "0.12")
+        #expect(viewModel.selectedModelInfo?.capabilityReceiptRows == ["task completion: supported • model catalog"])
     }
 
     @Test("model load trust controls dispatch opt-in and clear policy updates")
@@ -12362,6 +12409,18 @@ private func makeCapabilityModelSummary(
     model.features = features
     model.maxContext = 8192
     return model
+}
+
+private func makeTaskCapabilityReceipt(
+    _ capability: String,
+    state: Melix_Controlplane_V1_CapabilitySupportState = .capabilitySupported,
+    provenance: String
+) -> Melix_Controlplane_V1_TaskCapabilityReceipt {
+    var receipt = Melix_Controlplane_V1_TaskCapabilityReceipt()
+    receipt.capability = capability
+    receipt.state = state
+    receipt.provenance = provenance
+    return receipt
 }
 
 private func makeRuntimeModelRow(state: Melix_Controlplane_V1_ModelState) -> RuntimeModelRow {

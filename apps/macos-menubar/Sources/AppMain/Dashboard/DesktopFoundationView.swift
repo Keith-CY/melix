@@ -1791,6 +1791,9 @@ func desktopModelInfoSummaryContent(
     if !info.loadTrustRuntimeGuidanceText.isEmpty {
         detailLines.append("trust guidance: \(info.loadTrustRuntimeGuidanceText)")
     }
+    for row in info.capabilityReceiptRows {
+        detailLines.append("capability \(row)")
+    }
     detailLines.append("pin on load: \(info.pinOnLoad ? "yes" : "no")")
     if info.ttlSeconds > 0 {
         detailLines.append("ttl seconds: \(info.ttlSeconds)")

@@ -87,6 +87,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public let restoreRepoID: String
     public let restoreRevision: String
     public let loadTrustReceiptRows: [String]
+    public let capabilityReceiptRows: [String]
 
     public init(
         modelID: String,
@@ -124,7 +125,8 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         restoreCommandText: String = "",
         restoreRepoID: String = "",
         restoreRevision: String = "main",
-        loadTrustReceiptRows: [String] = []
+        loadTrustReceiptRows: [String] = [],
+        capabilityReceiptRows: [String] = []
     ) {
         self.modelID = modelID
         self.kind = kind
@@ -162,6 +164,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         self.restoreRepoID = restoreRepoID
         self.restoreRevision = restoreRevision
         self.loadTrustReceiptRows = loadTrustReceiptRows
+        self.capabilityReceiptRows = capabilityReceiptRows
     }
 
     public var id: String {
@@ -239,6 +242,7 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
     public let loadTrustBlockReasonText: String
     public let loadTrustReloadRequiredText: String
     public let loadTrustRuntimeGuidanceText: String
+    public let capabilityReceiptRows: [String]
     public let ocrPromptProfileText: String
     public let ocrSamplingProfileText: String
     public let ocrTemperatureText: String
@@ -306,6 +310,7 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         loadTrustBlockReasonText: String = "",
         loadTrustReloadRequiredText: String = "",
         loadTrustRuntimeGuidanceText: String = "",
+        capabilityReceiptRows: [String] = [],
         ocrPromptProfileText: String = "",
         ocrSamplingProfileText: String = "",
         ocrTemperatureText: String = "",
@@ -372,6 +377,7 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         self.loadTrustBlockReasonText = loadTrustBlockReasonText
         self.loadTrustReloadRequiredText = loadTrustReloadRequiredText
         self.loadTrustRuntimeGuidanceText = loadTrustRuntimeGuidanceText
+        self.capabilityReceiptRows = capabilityReceiptRows
         self.ocrPromptProfileText = ocrPromptProfileText
         self.ocrSamplingProfileText = ocrSamplingProfileText
         self.ocrTemperatureText = ocrTemperatureText
@@ -7676,6 +7682,9 @@ public final class RuntimeViewModel {
                 loadTrustRuntimeGuidanceText: snapshotModel.map {
                     runtimeModelLoadTrustRuntimeGuidanceText(for: $0)
                 } ?? "",
+                capabilityReceiptRows: snapshotModel.map {
+                    runtimeModelCapabilityReceiptRows(for: $0)
+                } ?? [],
                 ocrPromptProfileText: snapshotModel?.settings.ext["ocr_prompt_profile_id"] ?? "",
                 ocrSamplingProfileText: snapshotModel.map {
                     runtimeEffectiveOCRSamplingProfileText(
@@ -15879,7 +15888,8 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
         restoreCommandText: ModelRuntimeAvailability.restoreCommand(for: model),
         restoreRepoID: ModelRuntimeAvailability.restoreRepoID(for: model),
         restoreRevision: ModelRuntimeAvailability.restoreRevision(for: model),
-        loadTrustReceiptRows: runtimeModelLoadTrustReceiptRows(for: model)
+        loadTrustReceiptRows: runtimeModelLoadTrustReceiptRows(for: model),
+        capabilityReceiptRows: runtimeModelCapabilityReceiptRows(for: model)
     )
 }
 
@@ -16269,6 +16279,51 @@ private func runtimeModelLoadTrustReceiptRows(
         rows.append("guidance \(runtimeLowercasedFirstSentence(runtimeGuidance))")
     }
     return rows
+}
+
+private func runtimeModelCapabilityReceiptRows(
+    for model: Melix_Controlplane_V1_ModelSummary
+) -> [String] {
+    guard model.hasCapabilityReceipt else {
+        return []
+    }
+    return model.capabilityReceipt.tasks.compactMap(runtimeModelTaskCapabilityReceiptRow)
+}
+
+private func runtimeModelTaskCapabilityReceiptRow(
+    _ receipt: Melix_Controlplane_V1_TaskCapabilityReceipt
+) -> String? {
+    let capability = receipt.capability.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard capability.isEmpty == false else {
+        return nil
+    }
+    var parts = [
+        "task \(capability): \(runtimeCapabilitySupportStateText(receipt.state))"
+    ]
+    let provenance = receipt.provenance.trimmingCharacters(in: .whitespacesAndNewlines)
+    if provenance.isEmpty == false {
+        parts.append(provenance)
+    }
+    return parts.joined(separator: " • ")
+}
+
+private func runtimeCapabilitySupportStateText(
+    _ state: Melix_Controlplane_V1_CapabilitySupportState
+) -> String {
+    switch state {
+    case .capabilitySupported:
+        return "supported"
+    case .capabilityUnsupported:
+        return "unsupported"
+    case .capabilityExperimental:
+        return "experimental"
+    case .capabilityMetadataInconsistent:
+        return "metadata inconsistent"
+    case .unspecified:
+        return "unspecified"
+    case .UNRECOGNIZED(let value):
+        return "unrecognized \(value)"
+    }
 }
 
 private func runtimeModelLoadTrustRuntimeGuidanceText(

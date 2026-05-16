@@ -4185,6 +4185,14 @@ struct DesktopFoundationViewTests {
         loadTrust.blockReason = "remote code trust is not enabled"
         loadTrust.requiresReloadForTrustChange = true
         model.loadTrust = loadTrust
+        var capabilityReceipt = Melix_Controlplane_V1_ModelCapabilityReceipt()
+        capabilityReceipt.schemaVersion = "melix.model_capabilities.v1"
+        var completionReceipt = Melix_Controlplane_V1_TaskCapabilityReceipt()
+        completionReceipt.capability = "completion"
+        completionReceipt.state = .capabilitySupported
+        completionReceipt.provenance = "model catalog"
+        capabilityReceipt.tasks = [completionReceipt]
+        model.capabilityReceipt = capabilityReceipt
         snapshot.models = [model]
 
         let foundation = DesktopFoundationState.build(
@@ -4215,6 +4223,7 @@ struct DesktopFoundationViewTests {
                 "guidance unload and reload this model to apply Trust Remote Code; active runtime is Default Safe"
             )
         )
+        #expect(row.capabilityReceiptRows.contains("task completion: supported • model catalog"))
     }
 
     @Test("dashboard residency rows suppress load trust reload guidance when not needed")
@@ -4518,6 +4527,14 @@ struct DesktopFoundationViewTests {
             accelerationModeText: "Active KV Quantized",
             accelerationProfileID: "kv-q8",
             toolParserFallbackText: "XML",
+            capabilityReceiptRows: [
+                "task completion: supported • model catalog",
+                "task embedding: supported • model catalog",
+                "task vision: supported • vision metadata",
+                "task tools: supported • tool parser metadata",
+                "task reasoning: supported • reasoning policy",
+                "task insert: supported • tokenizer metadata",
+            ],
             ocrPromptProfileText: "ocr-default-v1",
             ocrSamplingProfileText: "ocr-deterministic",
             ocrTemperatureText: "0.05",
@@ -4559,6 +4576,12 @@ struct DesktopFoundationViewTests {
         #expect(content.detailLines.contains("adaptive thinking: Adaptive • 192 tok"))
         #expect(content.detailLines.contains("acceleration: Active KV Quantized • kv-q8"))
         #expect(content.detailLines.contains("parser fallback: XML"))
+        #expect(content.detailLines.contains("capability task completion: supported • model catalog"))
+        #expect(content.detailLines.contains("capability task embedding: supported • model catalog"))
+        #expect(content.detailLines.contains("capability task vision: supported • vision metadata"))
+        #expect(content.detailLines.contains("capability task tools: supported • tool parser metadata"))
+        #expect(content.detailLines.contains("capability task reasoning: supported • reasoning policy"))
+        #expect(content.detailLines.contains("capability task insert: supported • tokenizer metadata"))
         #expect(content.detailLines.contains("pin on load: yes"))
         #expect(content.detailLines.contains("ttl seconds: 600"))
         #expect(content.detailLines.contains("parsers: text, json"))
