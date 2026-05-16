@@ -292,6 +292,10 @@ private actor ModelIdleSweepScheduler {
         self.lastSweepStartedAt = startedAt
         sweepInFlight = true
         Task.detached(priority: .background) { [modelCatalog, workerRegistry, metricsStore, servedModelIDs, idleTimeoutSeconds] in
+            // sweepIdleModels is declared async (not async throws), so markSweepFinished
+            // is always reached. If its signature ever gains `throws`, wrap the call in
+            // do/catch and call markSweepFinished() in both branches to keep the circuit
+            // breaker from getting permanently stuck.
             _ = await OnDemandModelLoader.sweepIdleModels(
                 servedModelIDs: servedModelIDs,
                 idleTimeoutSeconds: idleTimeoutSeconds,
