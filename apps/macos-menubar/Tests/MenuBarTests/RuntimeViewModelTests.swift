@@ -744,6 +744,48 @@ struct RuntimeViewModelTests {
         #expect(await client.recordedServingDefaultsApplyRequests.isEmpty)
     }
 
+    @Test("serving acceleration profile applies profile defaults")
+    @MainActor
+    func servingAccelerationProfileAppliesProfileDefaults() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionAccelerationProfile("throughput")
+
+        let servingDefaults = try #require(viewModel.selectedServerSession?.servingDefaults)
+        #expect(servingDefaults.accelerationProfile == "throughput")
+        #expect(servingDefaults.accelerationMode == "speculative_decode")
+        #expect(servingDefaults.concurrentProcessingEnabled)
+        #expect(servingDefaults.maxConcurrentRequests == 8)
+        #expect(servingDefaults.prefillBatchSize == 4)
+        #expect(servingDefaults.completionBatchSize == 4)
+        #expect(servingDefaults.numDraftTokens == 6)
+    }
+
+    @Test("serving acceleration profile preserves manual low-level overrides")
+    @MainActor
+    func servingAccelerationProfilePreservesManualLowLevelOverrides() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionAccelerationMode("active_kv_quantized")
+        viewModel.updateSelectedServerSessionMaxConcurrentRequests(12)
+        viewModel.updateSelectedServerSessionCompletionBatchSize(5)
+
+        viewModel.updateSelectedServerSessionAccelerationProfile("throughput")
+
+        let servingDefaults = try #require(viewModel.selectedServerSession?.servingDefaults)
+        #expect(servingDefaults.accelerationProfile == "throughput")
+        #expect(servingDefaults.accelerationMode == "active_kv_quantized")
+        #expect(servingDefaults.maxConcurrentRequests == 12)
+        #expect(servingDefaults.completionBatchSize == 5)
+        #expect(servingDefaults.concurrentProcessingEnabled)
+        #expect(servingDefaults.prefillBatchSize == 4)
+        #expect(servingDefaults.numDraftTokens == 6)
+    }
+
     @Test("applySelectedServerServingDefaultsFromUI schedules the typed request through the view model")
     @MainActor
     func applySelectedServerServingDefaultsFromUISchedulesTypedRequest() async throws {

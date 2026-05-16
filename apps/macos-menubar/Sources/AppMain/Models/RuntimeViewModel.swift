@@ -5728,9 +5728,45 @@ public final class RuntimeViewModel {
         let normalizedProfile = ServingAccelerationProfiles.normalizeProfileID(value)
             ?? ServingAccelerationProfiles.defaultProfileID
         updateSelectedServerSession { session in
-            session.servingDefaults.accelerationProfile = normalizedProfile
+            let previousProfile = ServingAccelerationProfiles.profile(id: session.servingDefaults.accelerationProfile)
+            let nextProfile = ServingAccelerationProfiles.profile(id: normalizedProfile)
+            Self.applyServingAccelerationProfileDefaults(
+                nextProfile,
+                replacing: previousProfile,
+                to: &session.servingDefaults
+            )
             session.updatedAt = Date()
         }
+    }
+
+    private static func applyServingAccelerationProfileDefaults(
+        _ nextProfile: ServingAccelerationProfile,
+        replacing previousProfile: ServingAccelerationProfile,
+        to servingDefaults: inout DesktopServerServingDefaultsState
+    ) {
+        let previousAccelerationMode = ServingAccelerationProfiles.controlPlaneRawValue(previousProfile.accelerationMode)
+        if servingDefaults.accelerationMode == previousAccelerationMode {
+            servingDefaults.accelerationMode = ServingAccelerationProfiles.controlPlaneRawValue(nextProfile.accelerationMode)
+        }
+        if servingDefaults.draftModelID == previousProfile.draftModelID {
+            servingDefaults.draftModelID = nextProfile.draftModelID
+        }
+        if servingDefaults.numDraftTokens == Int(previousProfile.numDraftTokens) {
+            servingDefaults.numDraftTokens = Int(nextProfile.numDraftTokens)
+        }
+        if servingDefaults.concurrentProcessingEnabled == previousProfile.concurrentProcessingEnabled {
+            servingDefaults.concurrentProcessingEnabled = nextProfile.concurrentProcessingEnabled
+        }
+        if servingDefaults.maxConcurrentRequests == Int(previousProfile.maxConcurrentRequests) {
+            servingDefaults.maxConcurrentRequests = Int(nextProfile.maxConcurrentRequests)
+        }
+        if servingDefaults.prefillBatchSize == Int(previousProfile.prefillBatchSize) {
+            servingDefaults.prefillBatchSize = Int(nextProfile.prefillBatchSize)
+        }
+        if servingDefaults.completionBatchSize == Int(previousProfile.completionBatchSize) {
+            servingDefaults.completionBatchSize = Int(nextProfile.completionBatchSize)
+        }
+        servingDefaults.accelerationProfile = nextProfile.id
     }
 
     public func updateSelectedServerSessionDraftModelID(_ value: String) {
