@@ -1270,6 +1270,20 @@ private struct DesktopResidencyRowsSection: View {
                                 .font(.caption2)
                                 .foregroundStyle(MelixDesignTokens.StatusColor.error)
                         }
+                        if model.loadTrustReceiptRows.isEmpty == false {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Load Trust")
+                                    .font(.caption2)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(.secondary)
+                                ForEach(model.loadTrustReceiptRows, id: \.self) { row in
+                                    Text(row)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .accessibilityElement(children: .combine)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }

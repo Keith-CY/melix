@@ -4165,6 +4165,52 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedModelInfo?.generationConfigTemperatureText == "0.12")
     }
 
+    @Test("dashboard residency rows render model metadata load trust receipts")
+    @MainActor
+    func dashboardResidencyRowsRenderModelMetadataLoadTrustReceipts() throws {
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-remote-code"
+        model.kind = "text"
+        model.state = .modelWarm
+        model.settings.alias = "Remote Code Model"
+        var loadTrust = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+        loadTrust.requestedMode = .modelLoadTrustTrustRemoteCode
+        loadTrust.effectiveMode = .modelLoadTrustDefaultSafe
+        loadTrust.customLoaderRequired = true
+        loadTrust.customLoaderDetectionSource = "model-config-auto-map"
+        loadTrust.blockReason = "remote code trust is not enabled"
+        loadTrust.requiresReloadForTrustChange = true
+        model.loadTrust = loadTrust
+        snapshot.models = [model]
+
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
+            snapshot: snapshot,
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-load-trust",
+            features: ["models"],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
+            lastError: nil,
+            recentEvents: []
+        )
+        let view = hostView(DesktopDashboardTabView(foundation: foundation))
+        let row = try #require(foundation.models.first)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(row.loadTrustReceiptRows.contains("requested Trust Remote Code • effective Default Safe"))
+        #expect(row.loadTrustReceiptRows.contains("custom loader Required • model-config-auto-map"))
+        #expect(row.loadTrustReceiptRows.contains("blocked remote code trust is not enabled"))
+        #expect(row.loadTrustReceiptRows.contains("Reload Required"))
+    }
+
     @Test("model detail renders requested and effective load trust modes")
     @MainActor
     func modelDetailRendersRequestedAndEffectiveLoadTrustModes() async throws {

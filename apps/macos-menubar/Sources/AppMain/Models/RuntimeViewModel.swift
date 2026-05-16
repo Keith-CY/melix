@@ -86,6 +86,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public let restoreCommandText: String
     public let restoreRepoID: String
     public let restoreRevision: String
+    public let loadTrustReceiptRows: [String]
 
     public init(
         modelID: String,
@@ -122,7 +123,8 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         registryDescriptorPathText: String = "",
         restoreCommandText: String = "",
         restoreRepoID: String = "",
-        restoreRevision: String = "main"
+        restoreRevision: String = "main",
+        loadTrustReceiptRows: [String] = []
     ) {
         self.modelID = modelID
         self.kind = kind
@@ -159,6 +161,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         self.restoreCommandText = restoreCommandText
         self.restoreRepoID = restoreRepoID
         self.restoreRevision = restoreRevision
+        self.loadTrustReceiptRows = loadTrustReceiptRows
     }
 
     public var id: String {
@@ -15829,7 +15832,8 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
         registryDescriptorPathText: ModelRuntimeAvailability.descriptorPath(for: model),
         restoreCommandText: ModelRuntimeAvailability.restoreCommand(for: model),
         restoreRepoID: ModelRuntimeAvailability.restoreRepoID(for: model),
-        restoreRevision: ModelRuntimeAvailability.restoreRevision(for: model)
+        restoreRevision: ModelRuntimeAvailability.restoreRevision(for: model),
+        loadTrustReceiptRows: runtimeModelLoadTrustReceiptRows(for: model)
     )
 }
 
@@ -16184,6 +16188,31 @@ private func runtimeModelLoadTrustReloadRequiredText(
         return ""
     }
     return "Reload Required"
+}
+
+private func runtimeModelLoadTrustReceiptRows(
+    for model: Melix_Controlplane_V1_ModelSummary
+) -> [String] {
+    guard model.hasLoadTrust else {
+        return []
+    }
+    let policy = model.loadTrust
+    var rows = [
+        "requested \(runtimeModelLoadTrustModeText(policy.requestedMode, ifPresentOn: model)) • effective \(runtimeModelLoadTrustModeText(policy.effectiveMode, ifPresentOn: model))"
+    ]
+    let customLoader = runtimeModelLoadTrustCustomLoaderText(policy, ifPresentOn: model)
+    if customLoader.isEmpty == false {
+        rows.append("custom loader \(customLoader)")
+    }
+    let blockReason = runtimeModelLoadTrustBlockReasonText(policy, ifPresentOn: model)
+    if blockReason.isEmpty == false {
+        rows.append("blocked \(blockReason)")
+    }
+    let reloadRequired = runtimeModelLoadTrustReloadRequiredText(policy, ifPresentOn: model)
+    if reloadRequired.isEmpty == false {
+        rows.append(reloadRequired)
+    }
+    return rows
 }
 
 private func runtimeAccelerationModeDisplayText(from rawValue: String) -> String {
