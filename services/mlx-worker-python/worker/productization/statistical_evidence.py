@@ -16,10 +16,8 @@ def build_paired_statistical_evidence(
     bootstrap_iterations: int,
     bootstrap_seed: int,
 ) -> dict[str, object]:
-    outcomes = tuple(float(value) for value in paired_outcomes)
+    outcomes, mean_value, all_values_equal = _outcome_stats(paired_outcomes)
     sample_size = len(outcomes)
-    mean_value = _mean(outcomes)
-    all_values_equal = bool(outcomes) and _all_values_equal(outcomes)
     delta_accuracy = _rounded(mean_value)
     bootstrap_interval = _paired_bootstrap_interval(
         outcomes=outcomes,
@@ -110,6 +108,26 @@ def build_category_breakdown(
             "delta_accuracy": _rounded(target_accuracy - base_accuracy),
         }
     return breakdown
+
+
+def _outcome_stats(values: tuple[int | float, ...]) -> tuple[tuple[float, ...], float, bool]:
+    outcomes: list[float] = []
+    total = 0.0
+    first_value: float | None = None
+    all_values_equal = False
+    append_outcome = outcomes.append
+    for value in values:
+        outcome = float(value)
+        append_outcome(outcome)
+        total += outcome
+        if first_value is None:
+            first_value = outcome
+            all_values_equal = True
+        elif outcome != first_value:
+            all_values_equal = False
+    outcome_count = len(outcomes)
+    mean_value = total / outcome_count if outcome_count else 0.0
+    return tuple(outcomes), mean_value, all_values_equal
 
 
 def _paired_bootstrap_interval(

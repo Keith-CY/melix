@@ -148,7 +148,7 @@ def test_bootstrap_interval_sorts_replicates_in_place(monkeypatch: pytest.Monkey
     }
 
 
-def test_bootstrap_interval_sums_replicates_without_per_replicate_mean_helper_calls(
+def test_bootstrap_interval_sums_replicates_without_mean_helper_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     mean_lengths: list[int] = []
@@ -167,7 +167,7 @@ def test_bootstrap_interval_sums_replicates_without_per_replicate_mean_helper_ca
         bootstrap_seed=13,
     )
 
-    assert mean_lengths == [8]
+    assert mean_lengths == []
     assert evidence["bootstrap"] == {
         "method": "paired_bootstrap_percentile",
         "confidence_level": 0.9,
@@ -207,7 +207,7 @@ def test_bootstrap_interval_short_circuits_constant_outcomes_without_sampling(
     assert evidence["analytical"]["upper_bound"] == 1.0
 
 
-def test_build_paired_statistical_evidence_reuses_constant_scan_between_intervals(
+def test_build_paired_statistical_evidence_inlines_constant_scan_between_intervals(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     equality_scan_lengths: list[int] = []
@@ -226,7 +226,7 @@ def test_build_paired_statistical_evidence_reuses_constant_scan_between_interval
         bootstrap_seed=17,
     )
 
-    assert equality_scan_lengths == [5]
+    assert equality_scan_lengths == []
     assert evidence["bootstrap"]["lower_bound"] == 1.0
     assert evidence["bootstrap"]["upper_bound"] == 1.0
     assert evidence["analytical"]["lower_bound"] == 1.0
