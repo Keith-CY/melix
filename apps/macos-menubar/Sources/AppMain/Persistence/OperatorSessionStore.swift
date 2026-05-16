@@ -395,6 +395,8 @@ private extension DesktopToolSection {
             self = .downloads
         case "training":
             self = .training
+        case "batchruns":
+            self = .batchRuns
         case "jobs":
             self = .jobs
         case "diagnostics":
@@ -416,6 +418,8 @@ private extension DesktopToolSection {
             return "downloads"
         case .training:
             return "training"
+        case .batchRuns:
+            return "batchRuns"
         case .jobs:
             return "jobs"
         case .diagnostics:

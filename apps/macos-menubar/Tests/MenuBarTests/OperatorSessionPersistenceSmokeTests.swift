@@ -188,6 +188,33 @@ struct OperatorSessionPersistenceSmokeTests {
         #expect(legacyState.selectedRuntimeJobID.isEmpty)
     }
 
+    @Test("app operator session store round-trips batch runs tool section")
+    func appOperatorSessionStoreRoundTripsBatchRunsToolSection() throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-batch-runs-store-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let appStore = OperatorSessionStore(melixHome: melixHome)
+
+        try appStore.save(
+            OperatorSessionState(
+                selectedSurface: .tools,
+                selectedToolSection: .batchRuns,
+                selectedServerSessionID: "",
+                serverSessions: []
+            )
+        )
+
+        let restoredState = try #require(try appStore.load())
+        let uiPayload = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.operatorSessionFileURL)) as? [String: Any]
+        )
+        #expect(restoredState.selectedToolSection == .batchRuns)
+        #expect(uiPayload["selected_tool_section"] as? String == "batchRuns")
+    }
+
     @Test("shared operator session store migrates legacy monolithic state")
     func sharedOperatorSessionStoreMigratesLegacyMonolithicState() throws {
         let temporaryRoot = FileManager.default.temporaryDirectory

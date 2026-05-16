@@ -1905,6 +1905,8 @@ public final class RuntimeViewModel {
     public private(set) var runtimeJobArtifactSnapshotsByID: [String: RuntimeJobArtifactSnapshotState] = [:]
     public private(set) var runtimeJobCancelResultsByID: [String: RuntimeJobCancelResultState] = [:]
     public private(set) var selectedRuntimeJobID = ""
+    public private(set) var batchRunModelListText = ""
+    public private(set) var batchRunConfigText = ""
     public private(set) var runtimeJobsRefreshInProgress = false
     public private(set) var selectedRuntimeJobDetailRefreshInProgress = false
     public private(set) var selectedRuntimeJobLogsRefreshInProgress = false
@@ -3503,6 +3505,45 @@ public final class RuntimeViewModel {
             return "Terminal job cannot be canceled"
         }
         return "Job is not cancelable"
+    }
+
+    public var batchRunModelInputs: [RuntimeBatchRunModelInputState] {
+        RuntimeBatchRunSetupParser.modelInputs(from: batchRunModelListText)
+    }
+
+    public var batchRunConfigEntries: [RuntimeBatchRunConfigEntryState] {
+        RuntimeBatchRunSetupParser.configEntries(from: batchRunConfigText)
+    }
+
+    public var batchRunSetupValidationMessages: [RuntimeBatchRunValidationMessageState] {
+        RuntimeBatchRunSetupParser.validationMessages(
+            modelsText: batchRunModelListText,
+            configText: batchRunConfigText
+        )
+    }
+
+    public var batchRunSetupCanRequestPreflight: Bool {
+        RuntimeBatchRunSetupParser.canRequestPreflight(
+            modelsText: batchRunModelListText,
+            configText: batchRunConfigText
+        )
+    }
+
+    public var batchRunSetupSummaryText: String {
+        RuntimeBatchRunSetupParser.summaryText(
+            modelsText: batchRunModelListText,
+            configText: batchRunConfigText
+        )
+    }
+
+    public func updateBatchRunModelListText(_ text: String) {
+        batchRunModelListText = text
+        notifyStateChanged()
+    }
+
+    public func updateBatchRunConfigText(_ text: String) {
+        batchRunConfigText = text
+        notifyStateChanged()
     }
 
     public func applyRuntimeJobs(_ jobs: [RuntimeJobSummaryState]) {

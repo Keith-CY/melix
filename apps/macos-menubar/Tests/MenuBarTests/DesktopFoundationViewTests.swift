@@ -312,7 +312,7 @@ struct DesktopFoundationViewTests {
     func toolsCategoriesMapSectionsIntoStagedWorkflowGroups() {
         #expect(DesktopToolCategory.models.sections == [.modelsLibrary, .downloads])
         #expect(DesktopToolCategory.build.sections == [.training])
-        #expect(DesktopToolCategory.validate.sections == [.jobs, .diagnostics])
+        #expect(DesktopToolCategory.validate.sections == [.batchRuns, .jobs, .diagnostics])
         #expect(DesktopToolCategory.system.sections == [.logs, .settings])
     }
 
@@ -1766,6 +1766,39 @@ struct DesktopFoundationViewTests {
 
         let shellView = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
         #expect(shellView.subviews.isEmpty == false)
+    }
+
+    @Test("batch runs tool section renders model config inputs and validation messages")
+    @MainActor
+    func batchRunsToolSectionRendersModelConfigInputsAndValidationMessages() {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.selectToolSection(.batchRuns)
+        viewModel.updateBatchRunModelListText("")
+        viewModel.updateBatchRunConfigText(
+            """
+            unknown_key: value
+            broken line
+            """
+        )
+
+        let view = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let values = renderedTextValues(in: view)
+
+        #expect(viewModel.selectedSurface == .tools)
+        #expect(viewModel.selectedToolSection == .batchRuns)
+        #expect(values.contains("0 models • 0 config values"))
+        #expect(values.contains("Add at least one model repository."))
+        #expect(values.contains(where: { $0.contains("unknown_key") }))
+        #expect(values.contains(where: { $0.contains("line 2") }))
+
+        let shellView = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        #expect(shellView.subviews.isEmpty == false)
+
+        viewModel.updateBatchRunModelListText("mlx-community/Qwen3-8B")
+        viewModel.updateBatchRunConfigText("run_id: smoke-batch")
+        let readyView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let readyValues = renderedTextValues(in: readyView)
+        #expect(readyValues.contains("Batch input is ready for preflight."))
     }
 
     @Test("jobs tool section renders selected job detail summary")

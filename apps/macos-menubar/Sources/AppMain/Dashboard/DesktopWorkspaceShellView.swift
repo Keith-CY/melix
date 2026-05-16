@@ -1938,6 +1938,8 @@ private struct DesktopToolsWorkspaceView: View {
                         DesktopDownloadsToolSectionView(viewModel: viewModel)
                     case .training:
                         DesktopTrainingToolSectionView(viewModel: viewModel)
+                    case .batchRuns:
+                        DesktopBatchRunsToolSectionView(viewModel: viewModel)
                     case .jobs:
                         DesktopJobsToolSectionView(viewModel: viewModel)
                     case .diagnostics:
@@ -2002,7 +2004,7 @@ private struct DesktopToolsWorkspaceView: View {
         switch viewModel.selectedToolSection {
         case .training, .diagnostics:
             return DesktopLoRAVisualPolish.pageBackgroundColor
-        case .modelsLibrary, .downloads, .jobs, .logs, .settings:
+        case .modelsLibrary, .downloads, .batchRuns, .jobs, .logs, .settings:
             return Color(nsColor: .windowBackgroundColor)
         }
     }
@@ -2232,6 +2234,120 @@ struct DesktopDownloadsToolSectionView: View {
         }
     }
 
+}
+
+struct DesktopBatchRunsToolSectionView: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Batch runs coordinate model-list driven benchmark and evaluation workflows with explicit preflight state.")
+                .foregroundStyle(.secondary)
+
+            MelixSectionCard("Batch Inputs") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Batch Inputs")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Batch Inputs")
+                    Text(viewModel.batchRunSetupSummaryText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+
+                    HStack(alignment: .top, spacing: 12) {
+                        batchTextEditor(
+                            title: "Model List",
+                            text: Binding(
+                                get: { viewModel.batchRunModelListText },
+                                set: { viewModel.updateBatchRunModelListText($0) }
+                            ),
+                            prompt: "01 | mlx-community/Qwen3-8B"
+                        )
+
+                        batchTextEditor(
+                            title: "Config",
+                            text: Binding(
+                                get: { viewModel.batchRunConfigText },
+                                set: { viewModel.updateBatchRunConfigText($0) }
+                            ),
+                            prompt: "run_id: smoke-batch"
+                        )
+                    }
+
+                    validationMessages
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func batchTextEditor(title: String, text: Binding<String>, prompt: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityLabel(title)
+            TextEditor(text: text)
+                .font(.system(.caption, design: .monospaced))
+                .frame(minHeight: 96)
+                .overlay(alignment: .topLeading) {
+                    if text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(prompt)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 8)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .scrollContentBackground(.hidden)
+                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var validationMessages: some View {
+        if viewModel.batchRunSetupValidationMessages.isEmpty {
+            Label("Batch input is ready for preflight.", systemImage: "checkmark.circle")
+                .font(.caption)
+                .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                .textSelection(.enabled)
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(viewModel.batchRunSetupValidationMessages) { message in
+                    Label(message.message, systemImage: symbolName(for: message.severity))
+                        .font(.caption)
+                        .foregroundStyle(color(for: message.severity))
+                        .textSelection(.enabled)
+                }
+            }
+        }
+    }
+
+    private func symbolName(for severity: RuntimeBatchRunValidationSeverity) -> String {
+        switch severity {
+        case .info:
+            return "info.circle"
+        case .warning:
+            return "exclamationmark.triangle"
+        case .error:
+            return "xmark.octagon"
+        }
+    }
+
+    private func color(for severity: RuntimeBatchRunValidationSeverity) -> Color {
+        switch severity {
+        case .info:
+            return .secondary
+        case .warning:
+            return MelixDesignTokens.StatusColor.warning
+        case .error:
+            return MelixDesignTokens.StatusColor.error
+        }
+    }
 }
 
 struct DesktopJobsToolSectionView: View {
