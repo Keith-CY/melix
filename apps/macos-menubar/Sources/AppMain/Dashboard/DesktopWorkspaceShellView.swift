@@ -1539,6 +1539,7 @@ private struct DesktopServerSessionEditor: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
+                            DesktopServingAccelerationProfilePicker(viewModel: viewModel)
                             DisclosureGroup(DesktopServerWorkspaceDefaults.advancedServingDefaultsTitle, isExpanded: $showsAdvanced) {
                                 advancedServingDefaultsForm(for: session)
                                     .padding(.top, 12)
@@ -6282,6 +6283,33 @@ private struct DesktopPassiveCaptionLabel: View {
             textColor: foregroundStyle.map(NSColor.init) ?? .secondaryLabelColor
         )
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct DesktopServingAccelerationProfilePicker: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            DesktopPassiveStaticTextLabel(
+                title: "Acceleration Profile",
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+                textColor: .secondaryLabelColor
+            )
+            Picker(
+                "Acceleration Profile",
+                selection: Binding(
+                    get: { viewModel.selectedServerSession?.servingDefaults.accelerationProfile ?? ServingAccelerationProfiles.defaultProfileID },
+                    set: { viewModel.updateSelectedServerSessionAccelerationProfile($0) }
+                )
+            ) {
+                ForEach(viewModel.servingAccelerationProfileOptions, id: \.id) { profile in
+                    Text(profile.label).tag(profile.id)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(maxWidth: 280, alignment: .leading)
+        }
     }
 }
 

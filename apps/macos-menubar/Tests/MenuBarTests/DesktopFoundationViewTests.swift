@@ -486,6 +486,47 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedServerSession?.servingDefaults.sourceText == "Environment Defaults")
     }
 
+    @Test("workspace server surface renders acceleration profile picker")
+    @MainActor
+    func workspaceServerSurfaceRendersAccelerationProfilePicker() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.server)
+
+        let view = hostView(
+            DesktopWorkspaceShellView(viewModel: viewModel),
+            size: CGSize(width: 1_280, height: 1_400)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+        let pickerView = hostView(
+            DesktopServingAccelerationProfilePicker(viewModel: viewModel),
+            size: CGSize(width: 320, height: 120)
+        )
+        let pickerTexts = renderedTextValues(in: pickerView)
+
+        #expect(viewModel.servingAccelerationProfileOptions.map(\.id) == [
+            "balanced",
+            "throughput",
+            "low-memory",
+            "long-session",
+        ])
+        #expect(renderedTexts.contains("Acceleration Profile"))
+        #expect(renderedTexts.contains("Balanced"))
+        #expect(pickerTexts.contains("Acceleration Profile"))
+        #expect(pickerTexts.contains("Balanced"))
+
+        viewModel.updateSelectedServerSessionAccelerationProfile("LOW_MEMORY")
+
+        #expect(viewModel.selectedServerSession?.servingDefaults.accelerationProfile == "low-memory")
+    }
+
     @Test("workspace server surface renders remote server picker and editor")
     @MainActor
     func workspaceServerSurfaceRendersRemoteServerPickerAndEditor() async throws {

@@ -2907,6 +2907,10 @@ public final class RuntimeViewModel {
         )
     }
 
+    public var servingAccelerationProfileOptions: [ServingAccelerationProfile] {
+        ServingAccelerationProfiles.all
+    }
+
     public func isPendingAssistantTranscriptEntry(_ entry: DesktopChatTranscriptEntry) -> Bool {
         isEmptyPendingAssistantEntry(entry)
     }
@@ -5713,6 +5717,15 @@ public final class RuntimeViewModel {
     public func updateSelectedServerSessionAccelerationMode(_ value: String) {
         updateSelectedServerSession { session in
             session.servingDefaults.accelerationMode = value
+            session.updatedAt = Date()
+        }
+    }
+
+    public func updateSelectedServerSessionAccelerationProfile(_ value: String) {
+        let normalizedProfile = ServingAccelerationProfiles.normalizeProfileID(value)
+            ?? ServingAccelerationProfiles.defaultProfileID
+        updateSelectedServerSession { session in
+            session.servingDefaults.accelerationProfile = normalizedProfile
             session.updatedAt = Date()
         }
     }
