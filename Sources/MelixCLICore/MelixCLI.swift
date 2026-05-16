@@ -6398,6 +6398,7 @@ public actor MelixCLIRunner {
             lines.append("samples_jsonl: \(exportedSamplesPath)")
         }
         return lines.joined(separator: "\n") + "\n"
+    }
 
     private func runBenchmarkWithLiveDisplay(_ options: BenchRunOptions) async throws -> ControlPlaneBenchResult {
         guard shouldUseLiveDisplay(json: options.json, enabled: options.liveProgress) else {
