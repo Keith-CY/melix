@@ -49,7 +49,7 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
     changed_by_path: dict[str, set[int]] = {}
     current_changed_lines: set[int] | None = None
     new_line: int | None = None
-    for line in diff_text.splitlines():
+    for line in diff_text.split("\n"):
         first_char = line[0] if line else ""
         if first_char == "d" and line.startswith(_DIFF_HEADER_PREFIX):
             separator_index = line.find(_DIFF_HEADER_SEPARATOR, len(_DIFF_HEADER_PREFIX))
