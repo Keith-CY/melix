@@ -900,25 +900,47 @@ def _path_matches_split(relative_path: Path, split: str) -> bool:
     normalized_split = split.lower()
     split_dash_prefix = f"{normalized_split}-"
     split_underscore_prefix = f"{normalized_split}_"
-    for part in relative_path.parts:
-        lowered = part.lower()
-        if (
-            lowered == normalized_split
-            or lowered.startswith(split_dash_prefix)
-            or lowered.startswith(split_underscore_prefix)
-        ):
-            return True
-        dot_index = lowered.rfind(".")
-        if dot_index <= 0 or dot_index == len(lowered) - 1:
-            continue
-        stem = lowered[:dot_index]
-        if (
-            stem == normalized_split
-            or stem.startswith(split_dash_prefix)
-            or stem.startswith(split_underscore_prefix)
+    if _path_part_matches_split(
+        relative_path.name,
+        normalized_split,
+        split_dash_prefix,
+        split_underscore_prefix,
+    ):
+        return True
+    parts = relative_path.parts
+    for part in parts[:-1]:
+        if _path_part_matches_split(
+            part,
+            normalized_split,
+            split_dash_prefix,
+            split_underscore_prefix,
         ):
             return True
     return False
+
+
+def _path_part_matches_split(
+    part: str,
+    normalized_split: str,
+    split_dash_prefix: str,
+    split_underscore_prefix: str,
+) -> bool:
+    lowered = part.lower()
+    if (
+        lowered == normalized_split
+        or lowered.startswith(split_dash_prefix)
+        or lowered.startswith(split_underscore_prefix)
+    ):
+        return True
+    dot_index = lowered.rfind(".")
+    if dot_index <= 0 or dot_index == len(lowered) - 1:
+        return False
+    stem = lowered[:dot_index]
+    return (
+        stem == normalized_split
+        or stem.startswith(split_dash_prefix)
+        or stem.startswith(split_underscore_prefix)
+    )
 
 
 def _string_stem(name: str) -> str:

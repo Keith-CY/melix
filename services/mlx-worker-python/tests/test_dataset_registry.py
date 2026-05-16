@@ -220,6 +220,29 @@ def test_dataset_catalog_selected_split_filters_during_iteration(
     assert list(catalog._iter_matching_dataset_files(snapshot_dir, split="")) == []
 
 
+def test_dataset_catalog_path_match_checks_filename_before_parent_parts() -> None:
+    class FilenameOnlyPath:
+        name = "validation-00000.jsonl"
+
+        @property
+        def parts(self) -> tuple[str, ...]:
+            raise AssertionError("filename split matches should not inspect parent parts")
+
+    assert catalog._path_matches_split(FilenameOnlyPath(), "validation") is True  # type: ignore[arg-type]
+    assert (
+        catalog._path_matches_split(Path("custom/validation-00000.jsonl"), "validation")
+        is True
+    )
+    assert (
+        catalog._path_matches_split(Path("validation/shard-00000.jsonl"), "validation")
+        is True
+    )
+    assert (
+        catalog._path_matches_split(Path("custom/train-00000.jsonl"), "validation")
+        is False
+    )
+
+
 def test_dataset_catalog_row_reader_respects_limit(tmp_path: Path) -> None:
     home = tmp_path / "home"
     snapshot_dir = _write_hf_dataset_snapshot(
