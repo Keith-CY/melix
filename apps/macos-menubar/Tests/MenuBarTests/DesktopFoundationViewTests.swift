@@ -5362,6 +5362,68 @@ struct DesktopFoundationViewTests {
 
     }
 
+    @Test("diagnostics capability refusals are visible before worker dispatch")
+    @MainActor
+    func diagnosticsCapabilityRefusalsAreVisibleBeforeWorkerDispatch() async throws {
+        var model = makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)
+        var capabilityReceipt = Melix_Controlplane_V1_ModelCapabilityReceipt()
+        var completion = Melix_Controlplane_V1_TaskCapabilityReceipt()
+        completion.capability = "completion"
+        completion.state = .capabilityUnsupported
+        completion.unsupportedReason = .unsupportedReasonUnsupportedTask
+        completion.recoveryHint = "Select a completion-capable model."
+        completion.provenance = "model catalog"
+        capabilityReceipt.tasks = [completion]
+        model.capabilityReceipt = capabilityReceipt
+
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [model]
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+
+        let benchmarkReason = "Benchmark is unavailable for \(desktopTestReadyModelID): completion capability is unsupported • reason unsupported task • recovery Select a completion-capable model."
+        let benchmarkView = hostView(
+            DesktopDiagnosticsToolSectionView(
+                viewModel: viewModel,
+                foundation: viewModel.desktopFoundationState
+            ),
+            size: CGSize(width: 1_280, height: 1_800)
+        )
+        let benchmarkTexts = renderedTextValues(in: benchmarkView)
+
+        #expect(viewModel.diagnosticsBenchmarkUnavailableText == benchmarkReason)
+        #expect(benchmarkTexts.contains(benchmarkReason))
+        await viewModel.runBench()
+        #expect(await client.recordedBenchRequests.isEmpty)
+        #expect(viewModel.lastError == benchmarkReason)
+
+        viewModel.preferredDiagnosticsStage = .evaluation
+        let evaluationReason = "Evaluation is unavailable for \(desktopTestReadyModelID): completion capability is unsupported • reason unsupported task • recovery Select a completion-capable model."
+        let evaluationView = hostView(
+            DesktopDiagnosticsToolSectionView(
+                viewModel: viewModel,
+                foundation: viewModel.desktopFoundationState
+            ),
+            size: CGSize(width: 1_280, height: 1_800)
+        )
+        let evaluationTexts = renderedTextValues(in: evaluationView)
+
+        #expect(viewModel.diagnosticsEvaluationUnavailableText == evaluationReason)
+        #expect(evaluationTexts.contains(evaluationReason))
+        await viewModel.runEvaluation()
+        #expect(await client.recordedEvaluationRequests.isEmpty)
+        #expect(viewModel.lastError == evaluationReason)
+    }
+
     @Test("workspace diagnostics renders evaluation configuration history and sample previews")
     @MainActor
     func workspaceDiagnosticsRendersEvaluationConfigurationHistoryAndSamples() async throws {
@@ -9010,6 +9072,7 @@ private func hostView<Content: View>(_ rootView: Content, size: CGSize) -> NSVie
 @MainActor
 private func renderedTextValues(in rootView: NSView) -> [String] {
     var values: [String] = []
+    var visitedObjects = Set<ObjectIdentifier>()
 
     func appendValue(_ value: String) {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -9018,7 +9081,51 @@ private func renderedTextValues(in rootView: NSView) -> [String] {
         }
     }
 
+    func accessibilityString(_ object: NSObject, selectorName: String) -> String? {
+        let selector = NSSelectorFromString(selectorName)
+        guard object.responds(to: selector),
+              let value = object.perform(selector)?.takeUnretainedValue() as? String
+        else {
+            return nil
+        }
+        return value
+    }
+
+    func accessibilityChildren(_ object: NSObject) -> [Any] {
+        let selector = NSSelectorFromString("accessibilityChildren")
+        guard object.responds(to: selector),
+              let children = object.perform(selector)?.takeUnretainedValue() as? [Any]
+        else {
+            return []
+        }
+        return children
+    }
+
+    func visitAccessibilityElement(_ element: Any) {
+        if let view = element as? NSView {
+            visit(view)
+            return
+        }
+        guard let object = element as? NSObject else {
+            return
+        }
+        let identifier = ObjectIdentifier(object)
+        guard visitedObjects.insert(identifier).inserted else {
+            return
+        }
+        appendValue(accessibilityString(object, selectorName: "accessibilityLabel") ?? "")
+        appendValue(accessibilityString(object, selectorName: "accessibilityValue") ?? "")
+        appendValue(accessibilityString(object, selectorName: "accessibilityHelp") ?? "")
+        for child in accessibilityChildren(object) {
+            visitAccessibilityElement(child)
+        }
+    }
+
     func visit(_ view: NSView) {
+        let identifier = ObjectIdentifier(view)
+        guard visitedObjects.insert(identifier).inserted else {
+            return
+        }
         appendValue(view.accessibilityLabel() ?? "")
         if let textField = view as? NSTextField {
             appendValue(textField.stringValue)
@@ -9036,6 +9143,9 @@ private func renderedTextValues(in rootView: NSView) -> [String] {
         }
         for subview in view.subviews {
             visit(subview)
+        }
+        for child in view.accessibilityChildren() ?? [] {
+            visitAccessibilityElement(child)
         }
     }
 

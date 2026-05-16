@@ -6289,13 +6289,29 @@ private struct DesktopPassiveStaticTextLabel: NSViewRepresentable {
     let title: String
     let font: NSFont
     let textColor: NSColor
+    let lineBreakMode: NSLineBreakMode
+    let maximumNumberOfLines: Int
+
+    init(
+        title: String,
+        font: NSFont,
+        textColor: NSColor,
+        lineBreakMode: NSLineBreakMode = .byTruncatingTail,
+        maximumNumberOfLines: Int = 1
+    ) {
+        self.title = title
+        self.font = font
+        self.textColor = textColor
+        self.lineBreakMode = lineBreakMode
+        self.maximumNumberOfLines = maximumNumberOfLines
+    }
 
     func makeNSView(context: Context) -> NSTextField {
         let label = NSTextField(labelWithString: title)
         label.font = font
         label.textColor = textColor
-        label.lineBreakMode = .byTruncatingTail
-        label.maximumNumberOfLines = 1
+        label.lineBreakMode = lineBreakMode
+        label.maximumNumberOfLines = maximumNumberOfLines
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return label
     }
@@ -6304,6 +6320,8 @@ private struct DesktopPassiveStaticTextLabel: NSViewRepresentable {
         label.stringValue = title
         label.font = font
         label.textColor = textColor
+        label.lineBreakMode = lineBreakMode
+        label.maximumNumberOfLines = maximumNumberOfLines
     }
 }
 
@@ -7555,9 +7573,15 @@ struct DesktopDiagnosticsToolSectionView: View {
                             .foregroundStyle(.secondary)
 
                         if let disabledReason = viewModel.diagnosticsBenchmarkUnavailableText {
-                            Text(disabledReason)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            DesktopPassiveStaticTextLabel(
+                                title: disabledReason,
+                                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                                textColor: .secondaryLabelColor,
+                                lineBreakMode: .byWordWrapping,
+                                maximumNumberOfLines: 0
+                            )
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityLabel(disabledReason)
                         }
 
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
@@ -8306,9 +8330,15 @@ struct DesktopDiagnosticsToolSectionView: View {
                             .foregroundStyle(.secondary)
 
                         if let disabledReason = viewModel.diagnosticsEvaluationUnavailableText {
-                            Text(disabledReason)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            DesktopPassiveStaticTextLabel(
+                                title: disabledReason,
+                                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                                textColor: .secondaryLabelColor,
+                                lineBreakMode: .byWordWrapping,
+                                maximumNumberOfLines: 0
+                            )
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityLabel(disabledReason)
                         }
 
                         Divider()
