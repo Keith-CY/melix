@@ -1931,6 +1931,39 @@ struct DesktopFoundationViewTests {
         #expect(await runner.snapshotRecordedCommands().count == 1)
     }
 
+    @Test("batch runs tool section renders preflight readiness categories and blockers")
+    @MainActor
+    func batchRunsToolSectionRendersPreflightReadinessCategoriesAndBlockers() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureHandler { command in
+            guard case .batchRun = command else {
+                return .failure(.unsupportedCommand(commandID: "unexpected", surface: .subprocess))
+            }
+            return .success(Self.batchRunsBlockedPreflightJSON)
+        }
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.updateBatchRunModelListText("01 | mlx-community/Qwen3-8B")
+        viewModel.updateBatchRunConfigText("run_id: blocked-batch")
+
+        let view = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let preflightButton = try #require(renderedButtons(in: view).first { $0.title == "Run Preflight" })
+        preflightButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected blocked batch preflight report") {
+            viewModel.selectedBatchRunReport?.preflightStatus == "blocked"
+        }
+
+        let updatedView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let values = renderedTextValues(in: updatedView)
+        #expect(values.contains("Preflight Readiness"))
+        #expect(values.contains("filesystem"))
+        #expect(values.contains("1/1 ready • 0 blockers"))
+        #expect(values.contains("runtime"))
+        #expect(values.contains("0/1 ready • 1 blocker"))
+        #expect(values.contains("Set a free MELIX_HTTP_PORT before running the batch."))
+        #expect(values.contains("Select a judge remote server."))
+    }
+
     @Test("batch runs tool section renders manifest status rows with failure attribution")
     @MainActor
     func batchRunsToolSectionRendersManifestStatusRowsWithFailureAttribution() async throws {
@@ -2182,6 +2215,57 @@ struct DesktopFoundationViewTests {
             "metadata": {
               "path": "/tmp/melix-batch-output"
             }
+          }
+        ]
+      }
+    }
+    """#
+
+    private static let batchRunsBlockedPreflightJSON = #"""
+    {
+      "schema_version": "melix.batch.effective_config.v1",
+      "run_id": "blocked-batch",
+      "model_list": "/tmp/models.txt",
+      "config_path": "/tmp/config.txt",
+      "output_root": "/tmp/melix-batch-output",
+      "temp_root": "/tmp/melix-batch-temp",
+      "selected_model_count": 1,
+      "total_model_count": 1,
+      "preflight_report": "/tmp/melix-batch-output/preflight-report.json",
+      "preflight_result": {
+        "schema_version": "melix.batch.preflight_report.v1",
+        "run_id": "blocked-batch",
+        "status": "blocked",
+        "blocker_count": 2,
+        "model_count": 1,
+        "checks": [
+          {
+            "name": "output_root",
+            "status": "ready",
+            "detail": "output root writable",
+            "actionable": "",
+            "category": "filesystem",
+            "metadata": {
+              "path": "/tmp/melix-batch-output"
+            }
+          },
+          {
+            "name": "http_port",
+            "status": "blocked",
+            "detail": "HTTP port is already in use",
+            "actionable": "Set a free MELIX_HTTP_PORT before running the batch.",
+            "category": "runtime",
+            "metadata": {
+              "port": "12434"
+            }
+          },
+          {
+            "name": "judge_remote",
+            "status": "blocked",
+            "detail": "judge remote server is missing",
+            "actionable": "Select a judge remote server.",
+            "category": "judge",
+            "metadata": {}
           }
         ]
       }

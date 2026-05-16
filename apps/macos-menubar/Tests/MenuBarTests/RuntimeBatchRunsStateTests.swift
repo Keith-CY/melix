@@ -421,6 +421,52 @@ struct RuntimeBatchRunsStateTests {
         #expect(unsupportedPortReport.effectiveConfigRows.contains { $0.title == "HTTP Port" } == false)
     }
 
+    @Test("batch run report decoder groups preflight readiness categories and blockers")
+    func batchRunReportDecoderGroupsPreflightReadinessCategoriesAndBlockers() throws {
+        let report = try Self.decodedBatchReport { payload in
+            var preflight = payload["preflight_result"] as? [String: Any] ?? [:]
+            preflight["status"] = "blocked"
+            preflight["blocker_count"] = 2
+            preflight["checks"] = [
+                [
+                    "name": "output_root",
+                    "status": "ready",
+                    "detail": "output root writable",
+                    "actionable": "",
+                    "category": "filesystem",
+                    "metadata": ["path": "/tmp/melix-batch-output"],
+                ],
+                [
+                    "name": "http_port",
+                    "status": "blocked",
+                    "detail": "HTTP port is already in use",
+                    "actionable": "Set a free MELIX_HTTP_PORT before running the batch.",
+                    "category": "runtime",
+                    "metadata": ["port": "12434"],
+                ],
+                [
+                    "name": "judge_remote",
+                    "status": "blocked",
+                    "detail": "judge remote server is missing",
+                    "actionable": "Select a judge remote server.",
+                    "category": "judge",
+                    "metadata": [:],
+                ],
+            ]
+            payload["preflight_result"] = preflight
+        }
+
+        #expect(report.preflightReadinessCategories.map(\.category) == ["filesystem", "judge", "runtime"])
+        let filesystem = try #require(report.preflightReadinessCategories.first { $0.category == "filesystem" })
+        #expect(filesystem.readinessText == "1/1 ready • 0 blockers")
+        #expect(filesystem.blockingReasonTexts.isEmpty)
+
+        let runtime = try #require(report.preflightReadinessCategories.first { $0.category == "runtime" })
+        #expect(runtime.readinessText == "0/1 ready • 1 blocker")
+        #expect(runtime.blockingReasonTexts == ["Set a free MELIX_HTTP_PORT before running the batch."])
+        #expect(runtime.checks.first?.blockingReasonText == "Set a free MELIX_HTTP_PORT before running the batch.")
+    }
+
     private static func batchPreflightPayload(modelListPath: String, configPath: String) -> [String: Any] {
         [
             "schema_version": "melix.batch.effective_config.v1",

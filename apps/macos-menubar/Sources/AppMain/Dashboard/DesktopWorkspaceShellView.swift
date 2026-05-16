@@ -2432,26 +2432,64 @@ struct DesktopBatchRunsToolSectionView: View {
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }
-                ForEach(report.checks.prefix(3)) { check in
-                    HStack(spacing: 8) {
-                        Text(check.name)
-                            .font(.caption.weight(.semibold))
-                            .textSelection(.enabled)
-                        Text(check.status)
-                            .font(.caption)
-                            .foregroundStyle(check.status == "ready"
-                                             ? MelixDesignTokens.StatusColor.success
-                                             : MelixDesignTokens.StatusColor.warning)
-                            .textSelection(.enabled)
-                        Text(check.detail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-                }
+                preflightReadinessSection(report)
                 batchStatusSection(report)
                 reportSummarySection(title: "Effective Config", rows: report.effectiveConfigRows)
                 reportSummarySection(title: "Isolation Summary", rows: report.isolationSummaryRows)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func preflightReadinessSection(_ report: RuntimeBatchRunReportState) -> some View {
+        let categories = report.preflightReadinessCategories
+        if categories.isEmpty == false {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Preflight Readiness")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                ForEach(categories) { category in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(category.category)
+                                .font(.caption.weight(.semibold))
+                                .textSelection(.enabled)
+                            Text(category.readinessText)
+                                .font(.caption)
+                                .foregroundStyle(category.blockerCount == 0
+                                                 ? MelixDesignTokens.StatusColor.success
+                                                 : MelixDesignTokens.StatusColor.warning)
+                                .textSelection(.enabled)
+                        }
+                        ForEach(category.checks) { check in
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 8) {
+                                    Text(check.name)
+                                        .font(.caption.weight(.semibold))
+                                        .textSelection(.enabled)
+                                    Text(check.status)
+                                        .font(.caption)
+                                        .foregroundStyle(check.isReady
+                                                         ? MelixDesignTokens.StatusColor.success
+                                                         : MelixDesignTokens.StatusColor.warning)
+                                        .textSelection(.enabled)
+                                    Text(check.detail)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                }
+                                if check.isBlocking && check.blockingReasonText.isEmpty == false {
+                                    Text(check.blockingReasonText)
+                                        .font(.caption)
+                                        .foregroundStyle(MelixDesignTokens.StatusColor.warning)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                        }
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

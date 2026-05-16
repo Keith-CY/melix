@@ -73,6 +73,59 @@ public struct RuntimeBatchRunPreflightCheckState: Identifiable, Equatable, Senda
         self.category = category
         self.metadata = metadata
     }
+
+    public var isReady: Bool {
+        status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "ready"
+    }
+
+    public var isBlocking: Bool {
+        isReady == false
+    }
+
+    public var blockingReasonText: String {
+        let action = actionable.trimmingCharacters(in: .whitespacesAndNewlines)
+        if action.isEmpty == false {
+            return action
+        }
+        return detail.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+public struct RuntimeBatchRunPreflightCategoryState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let category: String
+    public let checks: [RuntimeBatchRunPreflightCheckState]
+
+    public var readyCount: Int {
+        checks.filter(\.isReady).count
+    }
+
+    public var blockerCount: Int {
+        checks.filter(\.isBlocking).count
+    }
+
+    public var readinessText: String {
+        "\(readyCount)/\(checks.count) ready • \(blockerCount) blocker\(blockerCount == 1 ? "" : "s")"
+    }
+
+    public var blockingReasonTexts: [String] {
+        checks
+            .filter(\.isBlocking)
+            .map(\.blockingReasonText)
+            .filter { $0.isEmpty == false }
+    }
+
+    public init(category: String, checks: [RuntimeBatchRunPreflightCheckState]) {
+        let normalizedCategory = RuntimeBatchRunPreflightCategoryState.normalizedCategory(category)
+        self.id = normalizedCategory
+        self.category = normalizedCategory
+        self.checks = checks
+    }
+
+    static func normalizedCategory(_ category: String) -> String {
+        let trimmed = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "uncategorized" : trimmed
+    }
 }
 
 public struct RuntimeBatchRunSummaryRowState: Identifiable, Equatable, Sendable {
@@ -205,6 +258,18 @@ public struct RuntimeBatchRunReportState: Identifiable, Equatable, Sendable {
 
     public var statusTitle: String {
         "Preflight \(preflightStatus.isEmpty ? "unknown" : preflightStatus)"
+    }
+
+    public var preflightReadinessCategories: [RuntimeBatchRunPreflightCategoryState] {
+        let groupedChecks = Dictionary(grouping: checks) { check in
+            RuntimeBatchRunPreflightCategoryState.normalizedCategory(check.category)
+        }
+        return groupedChecks.keys.sorted().map { category in
+            RuntimeBatchRunPreflightCategoryState(
+                category: category,
+                checks: groupedChecks[category, default: []]
+            )
+        }
     }
 
     public var incompleteManifestRowCount: Int {
