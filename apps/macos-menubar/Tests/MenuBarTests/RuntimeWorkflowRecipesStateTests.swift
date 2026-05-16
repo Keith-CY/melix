@@ -170,6 +170,62 @@ struct RuntimeWorkflowRecipesStateTests {
         ])
     }
 
+    @Test("runtime view model edits workflow recipe set variables")
+    @MainActor
+    func runtimeViewModelEditsWorkflowRecipeSetVariables() async throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+
+        viewModel.updateWorkflowRecipeSetKeyDraft(" repo_id ")
+        viewModel.updateWorkflowRecipeSetValueDraft(" org/repo ")
+        viewModel.addWorkflowRecipeSetDraft()
+
+        #expect(viewModel.workflowRecipeSetValues == ["repo_id": "org/repo"])
+        #expect(viewModel.workflowRecipeSetRows.map(\.argumentText) == ["--set repo_id=org/repo"])
+        #expect(viewModel.workflowRecipeSetArgumentSummaryText == "--set repo_id=org/repo")
+        #expect(viewModel.workflowRecipeSetEditorMessage == "Added --set repo_id=org/repo.")
+        #expect(viewModel.workflowRecipeSetEditorErrorMessage.isEmpty)
+        #expect(viewModel.workflowRecipeSetKeyDraft.isEmpty)
+        #expect(viewModel.workflowRecipeSetValueDraft.isEmpty)
+
+        viewModel.updateWorkflowRecipeSetKeyDraft("repo_id")
+        viewModel.updateWorkflowRecipeSetValueDraft("org/updated")
+        viewModel.addWorkflowRecipeSetDraft()
+        #expect(viewModel.workflowRecipeSetValues["repo_id"] == "org/updated")
+        #expect(viewModel.workflowRecipeSetEditorMessage == "Updated --set repo_id=org/updated.")
+
+        viewModel.updateWorkflowRecipeSetKeyDraft("invalid=key")
+        viewModel.updateWorkflowRecipeSetValueDraft("value")
+        viewModel.addWorkflowRecipeSetDraft()
+        #expect(viewModel.workflowRecipeSetEditorErrorMessage == "Variable key cannot include '='.")
+
+        viewModel.updateWorkflowRecipeSetKeyDraft("")
+        viewModel.updateWorkflowRecipeSetValueDraft("value")
+        viewModel.addWorkflowRecipeSetDraft()
+        #expect(viewModel.workflowRecipeSetEditorErrorMessage == "Enter a variable key before adding a --set value.")
+
+        viewModel.updateWorkflowRecipeSetKeyDraft("bad key")
+        viewModel.updateWorkflowRecipeSetValueDraft("value")
+        viewModel.addWorkflowRecipeSetDraft()
+        #expect(viewModel.workflowRecipeSetEditorErrorMessage == "Variable key cannot contain whitespace.")
+
+        viewModel.removeWorkflowRecipeSetValue(key: " ")
+        #expect(viewModel.workflowRecipeSetEditorErrorMessage == "Select a variable before removing it.")
+
+        viewModel.removeWorkflowRecipeSetValue(key: "repo_id")
+        #expect(viewModel.workflowRecipeSetRows.isEmpty)
+        #expect(viewModel.workflowRecipeSetEditorMessage == "Removed --set repo_id.")
+
+        viewModel.updateWorkflowRecipeSetKeyDraft("revision")
+        viewModel.updateWorkflowRecipeSetValueDraft("main")
+        viewModel.addWorkflowRecipeSetDraft()
+        viewModel.clearWorkflowRecipeSetValues()
+        #expect(viewModel.workflowRecipeSetValues.isEmpty)
+        #expect(viewModel.workflowRecipeSetEditorMessage == "Cleared recipe variables.")
+
+        viewModel.clearWorkflowRecipeSetValues()
+        #expect(viewModel.workflowRecipeSetEditorErrorMessage == "No recipe variables to clear.")
+    }
+
     @Test("workflow recipes section renders catalog filters and selected recipe detail")
     @MainActor
     func workflowRecipesSectionRendersCatalogFiltersAndSelectedRecipeDetail() throws {
@@ -244,6 +300,50 @@ struct RuntimeWorkflowRecipesStateTests {
         #expect(summary.contains("sha256:source-uri-digest"))
         #expect(summary.contains("Import an MLX-compatible Hugging Face model"))
         #expect(summary.contains("model.hub.download"))
+    }
+
+    @Test("workflow recipes section renders and drives set variable editor")
+    @MainActor
+    func workflowRecipesSectionRendersAndDrivesSetVariableEditor() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        let section = DesktopWorkflowRecipesToolSectionView(viewModel: viewModel)
+        let hosted = hostWorkflowRecipeView(section)
+        let initialSummary = section.accessibilitySummary
+
+        #expect(hosted.subviews.isEmpty == false)
+        #expect(initialSummary.contains("Recipe Variables"))
+        #expect(initialSummary.contains("Variable key"))
+        #expect(initialSummary.contains("Variable value"))
+        #expect(initialSummary.contains("Add --set"))
+        #expect(initialSummary.contains("No recipe variables configured."))
+
+        viewModel.updateWorkflowRecipeSetKeyDraft("repo_id")
+        viewModel.updateWorkflowRecipeSetValueDraft("org/repo")
+        section.addRecipeVariableAction()
+        _ = hostWorkflowRecipeView(DesktopWorkflowRecipesToolSectionView(viewModel: viewModel))
+        let addedSummary = DesktopWorkflowRecipesToolSectionView(viewModel: viewModel).accessibilitySummary
+        #expect(viewModel.workflowRecipeSetValues == ["repo_id": "org/repo"])
+        #expect(addedSummary.contains("--set repo_id=org/repo"))
+        #expect(addedSummary.contains("Added --set repo_id=org/repo."))
+
+        section.applyRecipeVariableDraft(key: "invalid=key", value: "value")
+        _ = hostWorkflowRecipeView(DesktopWorkflowRecipesToolSectionView(viewModel: viewModel))
+        let errorSummary = DesktopWorkflowRecipesToolSectionView(viewModel: viewModel).accessibilitySummary
+        #expect(errorSummary.contains("Variable key cannot include '='."))
+
+        section.applyRecipeVariableDraft(key: "repo_id", value: "org/repo")
+        section.removeRecipeVariableAction("repo_id")
+        _ = hostWorkflowRecipeView(DesktopWorkflowRecipesToolSectionView(viewModel: viewModel))
+        let removedSummary = DesktopWorkflowRecipesToolSectionView(viewModel: viewModel).accessibilitySummary
+        #expect(viewModel.workflowRecipeSetValues.isEmpty)
+        #expect(removedSummary.contains("Removed --set repo_id."))
+
+        section.applyRecipeVariableDraft(key: "revision", value: "main")
+        section.clearRecipeVariablesAction()
+        #expect(viewModel.workflowRecipeSetValues.isEmpty)
+        #expect(DesktopWorkflowRecipesToolSectionView(viewModel: viewModel).accessibilitySummary.contains(
+            "Cleared recipe variables."
+        ))
     }
 
     @Test("workflow recipes section buttons drive filter refresh and clear actions")

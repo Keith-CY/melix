@@ -2339,6 +2339,18 @@ struct DesktopWorkflowRecipesToolSectionView: View {
                     .foregroundStyle(MelixDesignTokens.StatusColor.error)
                     .textSelection(.enabled)
             }
+            if viewModel.workflowRecipeSetEditorMessage.isEmpty == false {
+                Text(viewModel.workflowRecipeSetEditorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                    .textSelection(.enabled)
+            }
+            if viewModel.workflowRecipeSetEditorErrorMessage.isEmpty == false {
+                Text(viewModel.workflowRecipeSetEditorErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            }
 
             MelixSectionCard("URI Inspect") {
                 uriInspectionPanel
@@ -2346,6 +2358,10 @@ struct DesktopWorkflowRecipesToolSectionView: View {
 
             MelixSectionCard("Recipe Init Preview") {
                 recipeInitPreviewPanel
+            }
+
+            MelixSectionCard("Recipe Variables") {
+                recipeVariablesPanel
             }
 
             HStack(alignment: .top, spacing: 14) {
@@ -2434,6 +2450,24 @@ struct DesktopWorkflowRecipesToolSectionView: View {
 
     func previewRecipeInitAction() {
         Task { await viewModel.previewWorkflowRecipeInitFromInspectedURI() }
+    }
+
+    func addRecipeVariableAction() {
+        viewModel.addWorkflowRecipeSetDraft()
+    }
+
+    func applyRecipeVariableDraft(key: String, value: String) {
+        viewModel.updateWorkflowRecipeSetKeyDraft(key)
+        viewModel.updateWorkflowRecipeSetValueDraft(value)
+        viewModel.addWorkflowRecipeSetDraft()
+    }
+
+    func removeRecipeVariableAction(_ key: String) {
+        viewModel.removeWorkflowRecipeSetValue(key: key)
+    }
+
+    func clearRecipeVariablesAction() {
+        viewModel.clearWorkflowRecipeSetValues()
     }
 
     private var uriInspectionPanel: some View {
@@ -2577,6 +2611,79 @@ struct DesktopWorkflowRecipesToolSectionView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private var recipeVariablesPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .bottom, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Variable key")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField(
+                        "Variable key",
+                        text: Binding(
+                            get: { viewModel.workflowRecipeSetKeyDraft },
+                            set: { viewModel.updateWorkflowRecipeSetKeyDraft($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Variable value")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField(
+                        "Variable value",
+                        text: Binding(
+                            get: { viewModel.workflowRecipeSetValueDraft },
+                            set: { viewModel.updateWorkflowRecipeSetValueDraft($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+                Button("Add --set", action: addRecipeVariableAction)
+                    .buttonStyle(.bordered)
+                    .disabled(viewModel.workflowRecipeSetEditorCanAdd == false)
+                Button("Clear Variables", action: clearRecipeVariablesAction)
+                    .buttonStyle(.bordered)
+                    .disabled(viewModel.workflowRecipeSetRows.isEmpty)
+            }
+
+            if viewModel.workflowRecipeSetRows.isEmpty {
+                Text("No recipe variables configured.")
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(viewModel.workflowRecipeSetRows) { row in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(row.key)
+                                    .font(.caption.weight(.semibold))
+                                Text(row.argumentText)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                            Spacer()
+                            Text(row.value)
+                                .font(.caption)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Button("Remove") {
+                                removeRecipeVariableAction(row.key)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var recipeDetail: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let detail = viewModel.selectedWorkflowRecipeDetail {
@@ -2707,12 +2814,22 @@ struct DesktopWorkflowRecipesToolSectionView: View {
             "Recipe init task",
             "Preview Recipe Init",
             "Recipe Init Preview",
+            "Recipe Variables",
+            "Variable key",
+            "Variable value",
+            "Add --set",
+            "Clear Variables",
             viewModel.workflowRecipeCatalogMessage,
             viewModel.workflowRecipeCatalogErrorMessage,
             viewModel.workflowRecipeURIInspectMessage,
             viewModel.workflowRecipeURIInspectErrorMessage,
             viewModel.workflowRecipeInitPreviewMessage,
             viewModel.workflowRecipeInitPreviewErrorMessage,
+            viewModel.workflowRecipeSetKeyDraft,
+            viewModel.workflowRecipeSetValueDraft,
+            viewModel.workflowRecipeSetArgumentSummaryText,
+            viewModel.workflowRecipeSetEditorMessage,
+            viewModel.workflowRecipeSetEditorErrorMessage,
         ]
         values.append(contentsOf: viewModel.workflowRecipeCatalog.availableTaskFilters)
         if let inspection = viewModel.workflowRecipeURIInspection {
@@ -2766,6 +2883,10 @@ struct DesktopWorkflowRecipesToolSectionView: View {
         } else {
             values.append("Preview recipe init from an inspected URI before applying a workflow.")
         }
+        if viewModel.workflowRecipeSetRows.isEmpty {
+            values.append("No recipe variables configured.")
+        }
+        values.append(contentsOf: viewModel.workflowRecipeSetRows.flatMap { [$0.key, $0.value, $0.argumentText] })
         if viewModel.workflowRecipeFilteredRecipes.isEmpty {
             values.append("No workflow recipes match this filter.")
         }

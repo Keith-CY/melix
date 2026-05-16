@@ -1928,6 +1928,9 @@ public final class RuntimeViewModel {
     public private(set) var workflowRecipeTaskFilterDraft = ""
     public private(set) var workflowRecipeURIInspectDraft = ""
     public private(set) var workflowRecipeInitTaskDraft = ""
+    public private(set) var workflowRecipeSetKeyDraft = ""
+    public private(set) var workflowRecipeSetValueDraft = ""
+    public private(set) var workflowRecipeSetValues: [String: String] = [:]
     public private(set) var workflowRecipeURIInspection: RuntimeWorkflowURIInspectionState?
     public private(set) var workflowRecipeInitPreview: RuntimeWorkflowRecipeInitPreviewState?
     public private(set) var workflowRecipeCatalogInProgress = false
@@ -1940,6 +1943,8 @@ public final class RuntimeViewModel {
     public private(set) var workflowRecipeURIInspectErrorMessage = ""
     public private(set) var workflowRecipeInitPreviewMessage = ""
     public private(set) var workflowRecipeInitPreviewErrorMessage = ""
+    public private(set) var workflowRecipeSetEditorMessage = ""
+    public private(set) var workflowRecipeSetEditorErrorMessage = ""
     public private(set) var batchRunModelListText = ""
     public private(set) var batchRunConfigText = ""
     public private(set) var batchRunReports: [RuntimeBatchRunReportState] = []
@@ -2015,6 +2020,17 @@ public final class RuntimeViewModel {
         workflowRecipeInitPreviewSourceURI.isEmpty == false
             && normalizedWorkflowRecipeInitTask.isEmpty == false
             && workflowRecipeInitPreviewInProgress == false
+    }
+    public var workflowRecipeSetEditorCanAdd: Bool {
+        normalizedWorkflowRecipeSetKey.isEmpty == false
+    }
+    public var workflowRecipeSetRows: [RuntimeWorkflowRecipeSetValueRowState] {
+        workflowRecipeSetValues.keys.sorted().map { key in
+            RuntimeWorkflowRecipeSetValueRowState(key: key, value: workflowRecipeSetValues[key] ?? "")
+        }
+    }
+    public var workflowRecipeSetArgumentSummaryText: String {
+        workflowRecipeSetRows.map(\.argumentText).joined(separator: " ")
     }
     public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
     public private(set) var models: [RuntimeModelRow] = [] {
@@ -2879,6 +2895,14 @@ public final class RuntimeViewModel {
 
     private var normalizedWorkflowRecipeInitTask: String {
         workflowRecipeInitTaskDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedWorkflowRecipeSetKey: String {
+        workflowRecipeSetKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedWorkflowRecipeSetValue: String {
+        workflowRecipeSetValueDraft.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func reloadHuggingFaceTokenHint() {
@@ -3908,6 +3932,16 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    public func updateWorkflowRecipeSetKeyDraft(_ key: String) {
+        workflowRecipeSetKeyDraft = key
+        notifyStateChanged()
+    }
+
+    public func updateWorkflowRecipeSetValueDraft(_ value: String) {
+        workflowRecipeSetValueDraft = value
+        notifyStateChanged()
+    }
+
     public func updateRuntimeSettingDraft(key: String, value: String) {
         runtimeSettingKeyDraft = key
         runtimeSettingValueDraft = value
@@ -3947,6 +3981,46 @@ public final class RuntimeViewModel {
 
     public func applyWorkflowRecipeInitPreview(_ preview: RuntimeWorkflowRecipeInitPreviewState) {
         workflowRecipeInitPreview = preview
+        notifyStateChanged()
+    }
+
+    public func addWorkflowRecipeSetDraft() {
+        let key = normalizedWorkflowRecipeSetKey
+        let value = normalizedWorkflowRecipeSetValue
+        guard validateWorkflowRecipeSetKey(key) else {
+            return
+        }
+        let wasUpdate = workflowRecipeSetValues[key] != nil
+        workflowRecipeSetValues[key] = value
+        workflowRecipeSetKeyDraft = ""
+        workflowRecipeSetValueDraft = ""
+        workflowRecipeSetEditorMessage = wasUpdate
+            ? "Updated --set \(key)=\(value)."
+            : "Added --set \(key)=\(value)."
+        workflowRecipeSetEditorErrorMessage = ""
+        notifyStateChanged()
+    }
+
+    public func removeWorkflowRecipeSetValue(key: String) {
+        let normalizedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedKey.isEmpty == false else {
+            failWorkflowRecipeSetEditor("Select a variable before removing it.")
+            return
+        }
+        workflowRecipeSetValues.removeValue(forKey: normalizedKey)
+        workflowRecipeSetEditorMessage = "Removed --set \(normalizedKey)."
+        workflowRecipeSetEditorErrorMessage = ""
+        notifyStateChanged()
+    }
+
+    public func clearWorkflowRecipeSetValues() {
+        guard workflowRecipeSetValues.isEmpty == false else {
+            failWorkflowRecipeSetEditor("No recipe variables to clear.")
+            return
+        }
+        workflowRecipeSetValues = [:]
+        workflowRecipeSetEditorMessage = "Cleared recipe variables."
+        workflowRecipeSetEditorErrorMessage = ""
         notifyStateChanged()
     }
 
@@ -12190,6 +12264,29 @@ public final class RuntimeViewModel {
         workflowRecipeInitPreviewInProgress = false
         workflowRecipeInitPreviewMessage = ""
         workflowRecipeInitPreviewErrorMessage = message
+        recordLocalError(message)
+        notifyStateChanged()
+    }
+
+    private func validateWorkflowRecipeSetKey(_ key: String) -> Bool {
+        guard key.isEmpty == false else {
+            failWorkflowRecipeSetEditor("Enter a variable key before adding a --set value.")
+            return false
+        }
+        guard key.contains("=") == false else {
+            failWorkflowRecipeSetEditor("Variable key cannot include '='.")
+            return false
+        }
+        guard key.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else {
+            failWorkflowRecipeSetEditor("Variable key cannot contain whitespace.")
+            return false
+        }
+        return true
+    }
+
+    private func failWorkflowRecipeSetEditor(_ message: String) {
+        workflowRecipeSetEditorMessage = ""
+        workflowRecipeSetEditorErrorMessage = message
         recordLocalError(message)
         notifyStateChanged()
     }

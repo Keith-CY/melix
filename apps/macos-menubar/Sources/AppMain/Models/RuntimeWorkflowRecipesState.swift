@@ -92,6 +92,20 @@ public struct RuntimeWorkflowRecipeKeyValueRowState: Identifiable, Equatable, Se
     }
 }
 
+public struct RuntimeWorkflowRecipeSetValueRowState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let key: String
+    public let value: String
+    public let argumentText: String
+
+    public init(key: String, value: String) {
+        self.id = key
+        self.key = key
+        self.value = value
+        self.argumentText = "--set \(key)=\(value)"
+    }
+}
+
 public struct RuntimeWorkflowRecipePipelineStepState: Identifiable, Equatable, Sendable {
     public let id: String
     public let command: String
