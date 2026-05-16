@@ -84,6 +84,23 @@ struct RuntimeWorkflowRecipesStateTests {
         #expect(previewWithoutInspection.provenanceRows.map(\.name) == ["source", "source_uri_digest"])
     }
 
+    @Test("workflow recipe decoder maps planned pipeline json and dry-run receipts")
+    func workflowRecipeDecoderMapsPlannedPipelineJSONAndDryRunReceipts() throws {
+        let plan = try RuntimeWorkflowRecipesPayloadDecoder.decodePlan(Self.planJSON)
+
+        #expect(plan.schemaVersion == "melix.workflow_recipe_plan.v1")
+        #expect(plan.recipeID == "import.hf-mlx-model")
+        #expect(plan.recipeVersion == "1")
+        #expect(plan.recipeDigest == "digest-import")
+        #expect(plan.pipelineSchemaVersion == "melix.pipeline.v1")
+        #expect(plan.pipelineSteps.map(\.command) == ["estimate.import", "model.hub.download", "model.roots.rescan"])
+        #expect(plan.pipelineJSONText.contains(#""schema_version" : "melix.pipeline.v1""#))
+        #expect(plan.artifactRows.map(\.kind) == ["pipeline"])
+        #expect(plan.artifactRows.first?.path == "/tmp/planned.pipeline.json")
+        #expect(plan.metrics.map(\.name).contains("recipe.plan_ms"))
+        #expect(plan.summaryText == "import.hf-mlx-model v1 planned 3 pipeline steps.")
+    }
+
     @Test("runtime view model refreshes workflow recipe catalog and detail through CLI runner")
     @MainActor
     func runtimeViewModelRefreshesWorkflowRecipeCatalogAndDetailThroughCLIRunner() async throws {
@@ -167,6 +184,46 @@ struct RuntimeWorkflowRecipesStateTests {
         #expect(viewModel.workflowRecipeInitPreviewErrorMessage.isEmpty)
         #expect(await runner.snapshotRecordedCommands() == [
             .recipesInit(.init(sourceURI: "hf://model/org/repo", task: "model_import", json: true)),
+        ])
+    }
+
+    @Test("runtime view model plans workflow recipe through cli runner")
+    @MainActor
+    func runtimeViewModelPlansWorkflowRecipeThroughCLIRunner() async throws {
+        let runner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await runner.configureOutput(
+            Self.planJSON,
+            for: .recipesPlan(.init(
+                recipeID: "import.hf-mlx-model",
+                version: "1",
+                values: ["repo_id": "org/repo"],
+                outputPath: "/tmp/planned.pipeline.json",
+                json: true
+            ))
+        )
+
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.applyWorkflowRecipeDetail(try RuntimeWorkflowRecipesPayloadDecoder.decodeDetail(Self.detailJSON))
+        viewModel.updateWorkflowRecipeSetKeyDraft("repo_id")
+        viewModel.updateWorkflowRecipeSetValueDraft("org/repo")
+        viewModel.addWorkflowRecipeSetDraft()
+        viewModel.updateWorkflowRecipePlanOutputPathDraft(" /tmp/planned.pipeline.json ")
+
+        await viewModel.planWorkflowRecipe()
+
+        #expect(viewModel.workflowRecipePlan?.recipeID == "import.hf-mlx-model")
+        #expect(viewModel.workflowRecipePlan?.pipelineSteps.count == 3)
+        #expect(viewModel.workflowRecipePlan?.artifactRows.first?.path == "/tmp/planned.pipeline.json")
+        #expect(viewModel.workflowRecipePlanMessage == "Planned import.hf-mlx-model with 3 pipeline steps.")
+        #expect(viewModel.workflowRecipePlanErrorMessage.isEmpty)
+        #expect(await runner.snapshotRecordedCommands() == [
+            .recipesPlan(.init(
+                recipeID: "import.hf-mlx-model",
+                version: "1",
+                values: ["repo_id": "org/repo"],
+                outputPath: "/tmp/planned.pipeline.json",
+                json: true
+            )),
         ])
     }
 
@@ -344,6 +401,62 @@ struct RuntimeWorkflowRecipesStateTests {
         #expect(DesktopWorkflowRecipesToolSectionView(viewModel: viewModel).accessibilitySummary.contains(
             "Cleared recipe variables."
         ))
+    }
+
+    @Test("workflow recipes section renders and drives planned pipeline summary")
+    @MainActor
+    func workflowRecipesSectionRendersAndDrivesPlannedPipelineSummary() async throws {
+        let runner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await runner.configureOutput(
+            Self.planJSON,
+            for: .recipesPlan(.init(
+                recipeID: "import.hf-mlx-model",
+                version: "1",
+                values: ["repo_id": "org/repo"],
+                outputPath: "/tmp/planned.pipeline.json",
+                json: true
+            ))
+        )
+
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.applyWorkflowRecipeDetail(try RuntimeWorkflowRecipesPayloadDecoder.decodeDetail(Self.detailJSON))
+        viewModel.updateWorkflowRecipeSetKeyDraft("repo_id")
+        viewModel.updateWorkflowRecipeSetValueDraft("org/repo")
+        viewModel.addWorkflowRecipeSetDraft()
+        viewModel.updateWorkflowRecipePlanOutputPathDraft("/tmp/planned.pipeline.json")
+
+        let section = DesktopWorkflowRecipesToolSectionView(viewModel: viewModel)
+        let hosted = hostWorkflowRecipeView(section)
+        let initialSummary = section.accessibilitySummary
+
+        #expect(hosted.subviews.isEmpty == false)
+        #expect(initialSummary.contains("Planned Pipeline"))
+        #expect(initialSummary.contains("Plan output path"))
+        #expect(initialSummary.contains("Plan Recipe"))
+        #expect(initialSummary.contains("Plan a selected recipe to inspect pipeline JSON and dry-run receipts."))
+
+        section.planRecipeAction()
+        try await waitForWorkflowRecipeCondition("workflow recipe plan action completes") {
+            viewModel.workflowRecipePlan?.pipelineSteps.count == 3
+        }
+
+        _ = hostWorkflowRecipeView(DesktopWorkflowRecipesToolSectionView(viewModel: viewModel))
+        let plannedSummary = DesktopWorkflowRecipesToolSectionView(viewModel: viewModel).accessibilitySummary
+        #expect(plannedSummary.contains("Planned import.hf-mlx-model with 3 pipeline steps."))
+        #expect(plannedSummary.contains("Pipeline JSON"))
+        #expect(plannedSummary.contains("Dry-run Receipts"))
+        #expect(plannedSummary.contains("/tmp/planned.pipeline.json"))
+        #expect(plannedSummary.contains("model.hub.download"))
+        #expect(plannedSummary.contains("recipe.plan_ms"))
+        #expect(await runner.snapshotRecordedCommands() == [
+            .recipesPlan(.init(
+                recipeID: "import.hf-mlx-model",
+                version: "1",
+                values: ["repo_id": "org/repo"],
+                outputPath: "/tmp/planned.pipeline.json",
+                json: true
+            )),
+        ])
     }
 
     @Test("workflow recipes section buttons drive filter refresh and clear actions")
@@ -542,6 +655,29 @@ struct RuntimeWorkflowRecipesStateTests {
         let initFailureSection = DesktopWorkflowRecipesToolSectionView(viewModel: initFailureViewModel)
         _ = hostWorkflowRecipeView(initFailureSection)
         #expect(initFailureSection.accessibilitySummary.contains("init failed"))
+
+        let planNoSelectionViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        await planNoSelectionViewModel.planWorkflowRecipe()
+        #expect(planNoSelectionViewModel.workflowRecipePlanErrorMessage == "Select a workflow recipe before planning.")
+
+        let planNoRunnerViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        planNoRunnerViewModel.applyWorkflowRecipeDetail(try RuntimeWorkflowRecipesPayloadDecoder.decodeDetail(Self.detailJSON))
+        await planNoRunnerViewModel.planWorkflowRecipe()
+        #expect(planNoRunnerViewModel.workflowRecipePlanErrorMessage == "Workflow recipe CLI runner is unavailable.")
+
+        let planFailureRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await planFailureRunner.configureFailure(
+            .processFailed(commandID: "recipes.plan", surface: .subprocess, exitCode: 6, stderr: "plan failed"),
+            for: .recipesPlan(.init(recipeID: "import.hf-mlx-model", version: "1", json: true))
+        )
+        let planFailureViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: planFailureRunner)
+        planFailureViewModel.applyWorkflowRecipeDetail(try RuntimeWorkflowRecipesPayloadDecoder.decodeDetail(Self.detailJSON))
+        await planFailureViewModel.planWorkflowRecipe()
+        #expect(planFailureViewModel.workflowRecipePlanErrorMessage.contains("plan failed"))
+
+        let planFailureSection = DesktopWorkflowRecipesToolSectionView(viewModel: planFailureViewModel)
+        _ = hostWorkflowRecipeView(planFailureSection)
+        #expect(planFailureSection.accessibilitySummary.contains("plan failed"))
     }
 
     @Test("workflow recipe cli bridge maps malformed json to workflow errors")
@@ -553,6 +689,10 @@ struct RuntimeWorkflowRecipesStateTests {
         await runner.configureOutput(
             "not-json\n",
             for: .recipesInit(.init(sourceURI: "hf://model/org/repo", task: "model_import", json: true))
+        )
+        await runner.configureOutput(
+            "not-json\n",
+            for: .recipesPlan(.init(recipeID: "import.hf-mlx-model", version: "1", json: true))
         )
 
         do {
@@ -579,6 +719,13 @@ struct RuntimeWorkflowRecipesStateTests {
         do {
             _ = try await runner.initWorkflowRecipeFromURI(sourceURI: "hf://model/org/repo", task: "model_import")
             Issue.record("Expected malformed recipe init preview JSON to fail.")
+        } catch let error as MelixCLIWorkflowError {
+            #expect(error.failureKind == .invalidJSON)
+        }
+
+        do {
+            _ = try await runner.planWorkflowRecipe(recipeID: "import.hf-mlx-model", version: "1")
+            Issue.record("Expected malformed recipe plan JSON to fail.")
         } catch let error as MelixCLIWorkflowError {
             #expect(error.failureKind == .invalidJSON)
         }
@@ -937,6 +1084,52 @@ struct RuntimeWorkflowRecipesStateTests {
       "provenance": {
         "source": "generated_from_uri",
         "source_uri_digest": "sha256:source-uri-digest"
+      }
+    }
+    """#
+
+    static let planJSON = #"""
+    {
+      "schema_version": "melix.workflow_recipe_plan.v1",
+      "recipe_id": "import.hf-mlx-model",
+      "recipe_version": "1",
+      "recipe_digest": "digest-import",
+      "pipeline": {
+        "schema_version": "melix.pipeline.v1",
+        "steps": [
+          {
+            "id": "estimate_import",
+            "command": "estimate.import",
+            "args": {
+              "repo_id": "org/repo",
+              "target_kind": "import"
+            }
+          },
+          {
+            "id": "download_model",
+            "command": "model.hub.download",
+            "args": {
+              "repo_id": "org/repo",
+              "revision": "main"
+            }
+          },
+          {
+            "id": "rescan_roots",
+            "command": "model.roots.rescan",
+            "args": {}
+          }
+        ]
+      },
+      "artifacts": [
+        {
+          "kind": "pipeline",
+          "path": "/tmp/planned.pipeline.json"
+        }
+      ],
+      "metrics": {
+        "recipe.lookup_ms": 1.5,
+        "recipe.schema_validate_ms": 0.5,
+        "recipe.plan_ms": 2.25
       }
     }
     """#

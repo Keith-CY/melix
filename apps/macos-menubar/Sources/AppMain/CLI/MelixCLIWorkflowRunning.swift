@@ -276,6 +276,19 @@ extension MelixCLIWorkflowRunning {
         let output = try await run(command)
         return try decodeWorkflowRecipeInitPreview(output: output, command: command, surface: surface)
     }
+
+    func planWorkflowRecipe(
+        recipeID: String,
+        version: String = "",
+        values: [String: String] = [:],
+        outputPath: String = ""
+    ) async throws -> RuntimeWorkflowRecipePlanState {
+        let command = MelixCLICommand.recipesPlan(
+            .init(recipeID: recipeID, version: version, values: values, outputPath: outputPath, json: true)
+        )
+        let output = try await run(command)
+        return try decodeWorkflowRecipePlan(output: output, command: command, surface: surface)
+    }
 }
 
 func decodeMelixCLIJSON<Value: Decodable>(
@@ -440,6 +453,22 @@ private func decodeWorkflowRecipeInitPreview(
 ) throws -> RuntimeWorkflowRecipeInitPreviewState {
     do {
         return try RuntimeWorkflowRecipesPayloadDecoder.decodeInitPreview(output)
+    } catch {
+        throw MelixCLIWorkflowError.invalidJSON(
+            commandID: command.workflowCommandID,
+            surface: surface,
+            output: output
+        )
+    }
+}
+
+private func decodeWorkflowRecipePlan(
+    output: String,
+    command: MelixCLICommand,
+    surface: MelixCLIWorkflowSurface
+) throws -> RuntimeWorkflowRecipePlanState {
+    do {
+        return try RuntimeWorkflowRecipesPayloadDecoder.decodePlan(output)
     } catch {
         throw MelixCLIWorkflowError.invalidJSON(
             commandID: command.workflowCommandID,

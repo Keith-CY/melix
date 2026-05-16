@@ -106,6 +106,18 @@ public struct RuntimeWorkflowRecipeSetValueRowState: Identifiable, Equatable, Se
     }
 }
 
+public struct RuntimeWorkflowRecipeArtifactRowState: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let kind: String
+    public let path: String
+
+    public init(kind: String, path: String) {
+        self.id = "\(kind)|\(path)"
+        self.kind = kind
+        self.path = path
+    }
+}
+
 public struct RuntimeWorkflowRecipePipelineStepState: Identifiable, Equatable, Sendable {
     public let id: String
     public let command: String
@@ -281,6 +293,46 @@ public struct RuntimeWorkflowRecipeInitPreviewState: Equatable, Sendable {
     }
 }
 
+public struct RuntimeWorkflowRecipePlanState: Equatable, Sendable {
+    public let schemaVersion: String
+    public let recipeID: String
+    public let recipeVersion: String
+    public let recipeDigest: String
+    public let pipelineSchemaVersion: String
+    public let pipelineJSONText: String
+    public let pipelineSteps: [RuntimeWorkflowRecipePipelineStepState]
+    public let artifactRows: [RuntimeWorkflowRecipeArtifactRowState]
+    public let metrics: [RuntimeWorkflowRecipeMetricState]
+
+    public init(
+        schemaVersion: String,
+        recipeID: String,
+        recipeVersion: String,
+        recipeDigest: String,
+        pipelineSchemaVersion: String,
+        pipelineJSONText: String,
+        pipelineSteps: [RuntimeWorkflowRecipePipelineStepState],
+        artifactRows: [RuntimeWorkflowRecipeArtifactRowState],
+        metrics: [RuntimeWorkflowRecipeMetricState]
+    ) {
+        self.schemaVersion = schemaVersion
+        self.recipeID = recipeID
+        self.recipeVersion = recipeVersion
+        self.recipeDigest = recipeDigest
+        self.pipelineSchemaVersion = pipelineSchemaVersion
+        self.pipelineJSONText = pipelineJSONText
+        self.pipelineSteps = pipelineSteps
+        self.artifactRows = artifactRows
+        self.metrics = metrics
+    }
+
+    public var summaryText: String {
+        let versionText = recipeVersion.isEmpty ? "" : " v\(recipeVersion)"
+        let stepLabel = pipelineSteps.count == 1 ? "pipeline step" : "pipeline steps"
+        return "\(recipeID)\(versionText) planned \(pipelineSteps.count) \(stepLabel)."
+    }
+}
+
 public enum RuntimeWorkflowRecipesPayloadDecoder {
     public static func decodeCatalog(_ output: String) throws -> RuntimeWorkflowRecipeCatalogState {
         try decodeCatalog(Data(output.utf8))
@@ -384,6 +436,26 @@ public enum RuntimeWorkflowRecipesPayloadDecoder {
         )
     }
 
+    public static func decodePlan(_ output: String) throws -> RuntimeWorkflowRecipePlanState {
+        try decodePlan(Data(output.utf8))
+    }
+
+    public static func decodePlan(_ data: Data) throws -> RuntimeWorkflowRecipePlanState {
+        let payload = try jsonObject(from: data, message: "Workflow recipe plan payload must be a JSON object.")
+        let pipeline = payload["pipeline"] as? [String: Any] ?? [:]
+        return RuntimeWorkflowRecipePlanState(
+            schemaVersion: stringText(for: payload["schema_version"]),
+            recipeID: stringText(for: payload["recipe_id"]),
+            recipeVersion: stringText(for: payload["recipe_version"]),
+            recipeDigest: stringText(for: payload["recipe_digest"]),
+            pipelineSchemaVersion: stringText(for: pipeline["schema_version"]),
+            pipelineJSONText: jsonText(for: pipeline),
+            pipelineSteps: pipelineSteps(from: pipeline["steps"]),
+            artifactRows: artifactRows(from: payload["artifacts"]),
+            metrics: metricRows(from: payload["metrics"])
+        )
+    }
+
     private static func jsonObject(from data: Data, message: String) throws -> [String: Any] {
         let decoded = try JSONSerialization.jsonObject(with: data)
         guard let payload = decoded as? [String: Any] else {
@@ -425,6 +497,15 @@ public enum RuntimeWorkflowRecipesPayloadDecoder {
         let object = value as? [String: Any] ?? [:]
         return object.keys.sorted().map { key in
             RuntimeWorkflowRecipeMetricState(name: key, valueText: displayText(for: object[key] ?? NSNull()))
+        }
+    }
+
+    private static func artifactRows(from value: Any?) -> [RuntimeWorkflowRecipeArtifactRowState] {
+        (value as? [[String: Any]] ?? []).map { artifact in
+            RuntimeWorkflowRecipeArtifactRowState(
+                kind: stringText(for: artifact["kind"]),
+                path: stringText(for: artifact["path"])
+            )
         }
     }
 
@@ -509,6 +590,19 @@ public enum RuntimeWorkflowRecipesPayloadDecoder {
             return string
         }
         return String(describing: value)
+    }
+
+    private static func jsonText(for value: Any) -> String {
+        guard JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(
+                withJSONObject: value,
+                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+              ),
+              let string = String(data: data, encoding: .utf8)
+        else {
+            return ""
+        }
+        return string
     }
 
     private static func dataCorrupted(_ message: String) -> DecodingError {

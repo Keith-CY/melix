@@ -2351,6 +2351,18 @@ struct DesktopWorkflowRecipesToolSectionView: View {
                     .foregroundStyle(MelixDesignTokens.StatusColor.error)
                     .textSelection(.enabled)
             }
+            if viewModel.workflowRecipePlanMessage.isEmpty == false {
+                Text(viewModel.workflowRecipePlanMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                    .textSelection(.enabled)
+            }
+            if viewModel.workflowRecipePlanErrorMessage.isEmpty == false {
+                Text(viewModel.workflowRecipePlanErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            }
 
             MelixSectionCard("URI Inspect") {
                 uriInspectionPanel
@@ -2362,6 +2374,10 @@ struct DesktopWorkflowRecipesToolSectionView: View {
 
             MelixSectionCard("Recipe Variables") {
                 recipeVariablesPanel
+            }
+
+            MelixSectionCard("Planned Pipeline") {
+                recipePlanPanel
             }
 
             HStack(alignment: .top, spacing: 14) {
@@ -2468,6 +2484,10 @@ struct DesktopWorkflowRecipesToolSectionView: View {
 
     func clearRecipeVariablesAction() {
         viewModel.clearWorkflowRecipeSetValues()
+    }
+
+    func planRecipeAction() {
+        Task { await viewModel.planWorkflowRecipe() }
     }
 
     private var uriInspectionPanel: some View {
@@ -2684,6 +2704,72 @@ struct DesktopWorkflowRecipesToolSectionView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private var recipePlanPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .bottom, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Plan output path")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField(
+                        "Plan output path",
+                        text: Binding(
+                            get: { viewModel.workflowRecipePlanOutputPathDraft },
+                            set: { viewModel.updateWorkflowRecipePlanOutputPathDraft($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+                Button("Plan Recipe", action: planRecipeAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.workflowRecipePlanCanRun == false)
+            }
+
+            if let plan = viewModel.workflowRecipePlan {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(plan.summaryText)
+                            .font(.headline)
+                        Spacer()
+                        if plan.schemaVersion.isEmpty == false {
+                            Text(plan.schemaVersion)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text(plan.recipeDigest)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    if plan.pipelineSchemaVersion.isEmpty == false {
+                        Text(plan.pipelineSchemaVersion)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+
+                if plan.pipelineJSONText.isEmpty == false {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Pipeline JSON")
+                            .font(.caption.weight(.semibold))
+                        Text(plan.pipelineJSONText)
+                            .font(.caption.monospaced())
+                            .lineLimit(10)
+                            .textSelection(.enabled)
+                    }
+                }
+
+                workflowRecipePipelineRows(plan.pipelineSteps)
+                workflowRecipeArtifactRows(plan.artifactRows)
+                workflowRecipeMetricRows("Planning Metrics", rows: plan.metrics)
+            } else {
+                Text("Plan a selected recipe to inspect pipeline JSON and dry-run receipts.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var recipeDetail: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let detail = viewModel.selectedWorkflowRecipeDetail {
@@ -2801,6 +2887,50 @@ struct DesktopWorkflowRecipesToolSectionView: View {
         }
     }
 
+    private func workflowRecipeArtifactRows(_ rows: [RuntimeWorkflowRecipeArtifactRowState]) -> some View {
+        Group {
+            if rows.isEmpty == false {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Dry-run Receipts")
+                        .font(.caption.weight(.semibold))
+                    ForEach(rows) { row in
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(row.kind)
+                                .font(.caption.weight(.semibold))
+                            Spacer()
+                            Text(row.path)
+                                .font(.caption.monospaced())
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func workflowRecipeMetricRows(_ title: String, rows: [RuntimeWorkflowRecipeMetricState]) -> some View {
+        Group {
+            if rows.isEmpty == false {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title)
+                        .font(.caption.weight(.semibold))
+                    ForEach(rows) { row in
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(row.name)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(row.valueText)
+                                .font(.caption.monospacedDigit())
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     var accessibilitySummary: String {
         var values = [
             "Workflow Recipes",
@@ -2819,6 +2949,9 @@ struct DesktopWorkflowRecipesToolSectionView: View {
             "Variable value",
             "Add --set",
             "Clear Variables",
+            "Planned Pipeline",
+            "Plan output path",
+            "Plan Recipe",
             viewModel.workflowRecipeCatalogMessage,
             viewModel.workflowRecipeCatalogErrorMessage,
             viewModel.workflowRecipeURIInspectMessage,
@@ -2830,6 +2963,9 @@ struct DesktopWorkflowRecipesToolSectionView: View {
             viewModel.workflowRecipeSetArgumentSummaryText,
             viewModel.workflowRecipeSetEditorMessage,
             viewModel.workflowRecipeSetEditorErrorMessage,
+            viewModel.workflowRecipePlanOutputPathDraft,
+            viewModel.workflowRecipePlanMessage,
+            viewModel.workflowRecipePlanErrorMessage,
         ]
         values.append(contentsOf: viewModel.workflowRecipeCatalog.availableTaskFilters)
         if let inspection = viewModel.workflowRecipeURIInspection {
@@ -2887,6 +3023,24 @@ struct DesktopWorkflowRecipesToolSectionView: View {
             values.append("No recipe variables configured.")
         }
         values.append(contentsOf: viewModel.workflowRecipeSetRows.flatMap { [$0.key, $0.value, $0.argumentText] })
+        if let plan = viewModel.workflowRecipePlan {
+            values.append(contentsOf: [
+                plan.schemaVersion,
+                plan.recipeID,
+                plan.recipeVersion,
+                plan.recipeDigest,
+                plan.pipelineSchemaVersion,
+                plan.summaryText,
+                "Pipeline JSON",
+                plan.pipelineJSONText,
+                "Dry-run Receipts",
+            ])
+            values.append(contentsOf: plan.pipelineSteps.flatMap { [$0.id, $0.command, $0.argumentSummaryText] })
+            values.append(contentsOf: plan.artifactRows.flatMap { [$0.kind, $0.path] })
+            values.append(contentsOf: plan.metrics.flatMap { [$0.name, $0.valueText] })
+        } else {
+            values.append("Plan a selected recipe to inspect pipeline JSON and dry-run receipts.")
+        }
         if viewModel.workflowRecipeFilteredRecipes.isEmpty {
             values.append("No workflow recipes match this filter.")
         }
