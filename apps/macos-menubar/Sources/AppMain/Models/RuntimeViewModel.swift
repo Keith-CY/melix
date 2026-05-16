@@ -1982,6 +1982,10 @@ public final class RuntimeViewModel {
     public private(set) var syntheticDatasetPreviewInProgress = false
     public private(set) var syntheticDatasetPreviewMessage = ""
     public private(set) var syntheticDatasetPreviewErrorMessage = ""
+    public private(set) var syntheticDatasetCreateResult: RuntimeSyntheticDatasetCreateResultState?
+    public private(set) var syntheticDatasetCreateInProgress = false
+    public private(set) var syntheticDatasetCreateMessage = ""
+    public private(set) var syntheticDatasetCreateErrorMessage = ""
     public private(set) var batchRunModelListText = ""
     public private(set) var batchRunConfigText = ""
     public private(set) var batchRunReports: [RuntimeBatchRunReportState] = []
@@ -2254,6 +2258,14 @@ public final class RuntimeViewModel {
     }
     public var syntheticDatasetCanPreview: Bool {
         syntheticDatasetPreviewValidationMessages.isEmpty && syntheticDatasetPreviewInProgress == false
+    }
+    public var syntheticDatasetCreateValidationMessages: [RuntimeSyntheticDatasetValidationMessageState] {
+        syntheticDatasetPreviewValidationMessages
+    }
+    public var syntheticDatasetCanCreate: Bool {
+        syntheticDatasetCreateValidationMessages.isEmpty
+            && syntheticDatasetCreateInProgress == false
+            && syntheticDatasetPreviewInProgress == false
     }
     public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
     public private(set) var models: [RuntimeModelRow] = [] {
@@ -4395,6 +4407,44 @@ public final class RuntimeViewModel {
 
     public func applySyntheticDatasetPreview(_ preview: RuntimeSyntheticDatasetPreviewState) {
         syntheticDatasetPreview = preview
+        notifyStateChanged()
+    }
+
+    public func createSyntheticDataset() async {
+        guard syntheticDatasetCreateValidationMessages.isEmpty else {
+            failSyntheticDatasetCreate("Resolve synthetic dataset validation errors before create.")
+            return
+        }
+        guard let commandWorkflowRunner else {
+            failSyntheticDatasetCreate("Synthetic Dataset CLI runner is unavailable.")
+            return
+        }
+
+        syntheticDatasetCreateInProgress = true
+        syntheticDatasetCreateMessage = ""
+        syntheticDatasetCreateErrorMessage = ""
+        notifyStateChanged()
+
+        do {
+            let result = try await commandWorkflowRunner.createSyntheticDataset(
+                options: syntheticDatasetRequestOptions(mode: "create")
+            )
+            syntheticDatasetCreateInProgress = false
+            let label = result.datasetID.isEmpty ? result.datasetName : result.datasetID
+            let rowLabel = result.rowCount == 1 ? "row" : "rows"
+            syntheticDatasetCreateMessage = "Created \(label) package with \(result.rowCount) \(rowLabel)."
+            syntheticDatasetCreateErrorMessage = ""
+            clearCLIWorkflowFailure()
+            applySyntheticDatasetCreateResult(result)
+        } catch {
+            syntheticDatasetCreateInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            failSyntheticDatasetCreate(workflowErrorMessage(error))
+        }
+    }
+
+    public func applySyntheticDatasetCreateResult(_ result: RuntimeSyntheticDatasetCreateResultState) {
+        syntheticDatasetCreateResult = result
         notifyStateChanged()
     }
 
@@ -12831,6 +12881,14 @@ public final class RuntimeViewModel {
         syntheticDatasetPreviewInProgress = false
         syntheticDatasetPreviewMessage = ""
         syntheticDatasetPreviewErrorMessage = message
+        recordLocalError(message)
+        notifyStateChanged()
+    }
+
+    private func failSyntheticDatasetCreate(_ message: String) {
+        syntheticDatasetCreateInProgress = false
+        syntheticDatasetCreateMessage = ""
+        syntheticDatasetCreateErrorMessage = message
         recordLocalError(message)
         notifyStateChanged()
     }

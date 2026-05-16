@@ -30,6 +30,50 @@ struct RuntimeSyntheticDatasetStateTests {
         ])
     }
 
+    @Test("synthetic dataset create decoder maps package manifest and artifact paths")
+    func syntheticDatasetCreateDecoderMapsPackageManifestAndArtifactPaths() throws {
+        let result = try RuntimeSyntheticDatasetPayloadDecoder.decodeCreate(Self.syntheticCreateJSON)
+
+        #expect(result.schemaVersion == "melix.training_dataset_package.v1")
+        #expect(result.datasetID == "synthetic.chat.v1")
+        #expect(result.datasetName == "Synthetic Chat")
+        #expect(result.outputKind == "training")
+        #expect(result.outputFormat == "prompt_completion")
+        #expect(result.rowCount == 4)
+        #expect(result.sampleCount == 4)
+        #expect(result.previewOnly == false)
+        #expect(result.summaryText == "synthetic.chat.v1 package contains 4 rows.")
+        #expect(result.manifestRows.map(\.name) == [
+            "build_ready",
+            "dataset_id",
+            "dataset_name",
+            "operation",
+            "output_format",
+            "output_kind",
+            "preview_only",
+            "row_count",
+            "sample_count",
+            "schema_version",
+            "validation_ratio",
+        ])
+        #expect(result.manifestRows.first { $0.name == "build_ready" }?.valueText == "true")
+        #expect(result.manifestRows.first { $0.name == "validation_ratio" }?.valueText == "0.2")
+        #expect(result.artifactRows.map(\.name) == [
+            "artifact_path",
+            "config_path",
+            "generated_jsonl_path",
+            "manifest_path",
+            "output_path",
+            "package.manifest_path",
+            "package.samples_path",
+            "validation_path",
+        ])
+
+        #expect(throws: DecodingError.self) {
+            _ = try RuntimeSyntheticDatasetPayloadDecoder.decodeCreate("[]")
+        }
+    }
+
     @Test("synthetic dataset preview decoder maps fallback value shapes and rejects non objects")
     func syntheticDatasetPreviewDecoderMapsFallbackValueShapesAndRejectsNonObjects() throws {
         let preview = try RuntimeSyntheticDatasetPayloadDecoder.decodePreview(Self.syntheticPreviewVariantJSON)
@@ -320,6 +364,43 @@ struct RuntimeSyntheticDatasetStateTests {
         #expect(malformedViewModel.syntheticDatasetPreviewErrorMessage == "dataset.synthetic.preview returned malformed JSON.")
     }
 
+    @Test("runtime view model creates synthetic dataset through cli runner")
+    @MainActor
+    func runtimeViewModelCreatesSyntheticDatasetThroughCLIRunner() async throws {
+        let runner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        let expectedCommand = Self.syntheticCreateCommand()
+        await runner.configureOutput(Self.syntheticCreateJSON, for: expectedCommand)
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        configureValidSyntheticDatasetPreviewRequest(viewModel)
+
+        #expect(viewModel.syntheticDatasetCanCreate)
+        await viewModel.createSyntheticDataset()
+
+        #expect(viewModel.syntheticDatasetCreateResult?.datasetID == "synthetic.chat.v1")
+        #expect(viewModel.syntheticDatasetCreateResult?.manifestRows.count == 11)
+        #expect(viewModel.syntheticDatasetCreateResult?.artifactRows.count == 8)
+        #expect(viewModel.syntheticDatasetCreateMessage == "Created synthetic.chat.v1 package with 4 rows.")
+        #expect(viewModel.syntheticDatasetCreateErrorMessage.isEmpty)
+        #expect(viewModel.syntheticDatasetCreateInProgress == false)
+        #expect(await runner.snapshotRecordedCommands() == [expectedCommand])
+
+        let invalidViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        await invalidViewModel.createSyntheticDataset()
+        #expect(invalidViewModel.syntheticDatasetCreateErrorMessage == "Resolve synthetic dataset validation errors before create.")
+
+        let noRunnerViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        configureValidSyntheticDatasetPreviewRequest(noRunnerViewModel)
+        await noRunnerViewModel.createSyntheticDataset()
+        #expect(noRunnerViewModel.syntheticDatasetCreateErrorMessage == "Synthetic Dataset CLI runner is unavailable.")
+
+        let malformedRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await malformedRunner.configureOutput("not-json\n", for: expectedCommand)
+        let malformedViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: malformedRunner)
+        configureValidSyntheticDatasetPreviewRequest(malformedViewModel)
+        await malformedViewModel.createSyntheticDataset()
+        #expect(malformedViewModel.syntheticDatasetCreateErrorMessage == "dataset.synthetic.create returned malformed JSON.")
+    }
+
     @Test("synthetic dataset tool section renders identity output provider model form")
     @MainActor
     func syntheticDatasetToolSectionRendersIdentityOutputProviderModelForm() throws {
@@ -488,6 +569,46 @@ struct RuntimeSyntheticDatasetStateTests {
         #expect(errorSection.accessibilitySummary.contains("Synthetic Dataset CLI runner is unavailable."))
     }
 
+    @Test("synthetic dataset tool section renders and drives create package result")
+    @MainActor
+    func syntheticDatasetToolSectionRendersAndDrivesCreatePackageResult() async throws {
+        let runner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await runner.configureOutput(Self.syntheticCreateJSON, for: Self.syntheticCreateCommand())
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        configureValidSyntheticDatasetPreviewRequest(viewModel)
+
+        let section = DesktopSyntheticDatasetToolSectionView(viewModel: viewModel)
+        _ = hostSyntheticDatasetView(section)
+        section.createDatasetAction()
+
+        try await waitForSyntheticDatasetCondition("synthetic create action completes") {
+            viewModel.syntheticDatasetCreateResult?.artifactRows.count == 8
+        }
+
+        let renderedSection = DesktopSyntheticDatasetToolSectionView(viewModel: viewModel)
+        let hosted = hostSyntheticDatasetView(renderedSection)
+        let summary = renderedSection.accessibilitySummary
+
+        #expect(hosted.subviews.isEmpty == false)
+        #expect(summary.contains("Create Package"))
+        #expect(summary.contains("Create Dataset"))
+        #expect(summary.contains("Created synthetic.chat.v1 package with 4 rows."))
+        #expect(summary.contains("Package Manifest"))
+        #expect(summary.contains("generate_synthetic_dataset"))
+        #expect(summary.contains("package.manifest_path"))
+        #expect(summary.contains("/tmp/synthetic-chat/package/manifest.json"))
+        #expect(summary.contains("validation_path"))
+        #expect(summary.contains("/tmp/synthetic-chat/validation.jsonl"))
+
+        let emptyResultViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        emptyResultViewModel.applySyntheticDatasetCreateResult(
+            try RuntimeSyntheticDatasetPayloadDecoder.decodeCreate(Self.syntheticEmptyCreateJSON)
+        )
+        let emptySummary = DesktopSyntheticDatasetToolSectionView(viewModel: emptyResultViewModel).accessibilitySummary
+        #expect(emptySummary.contains("Create result did not include manifest fields."))
+        #expect(emptySummary.contains("Create result did not include artifact paths."))
+    }
+
     @Test("synthetic dataset navigation has icon category and session persistence mapping")
     func syntheticDatasetNavigationHasIconCategoryAndSessionPersistenceMapping() throws {
         #expect(DesktopToolSection.syntheticDatasets.symbolName == "sparkles.rectangle.stack")
@@ -510,6 +631,32 @@ struct RuntimeSyntheticDatasetStateTests {
     private static func syntheticPreviewCommand() -> MelixCLICommand {
         .datasetSynthetic(.init(
             mode: "preview",
+            datasetID: "synthetic.chat.v1",
+            datasetName: "Synthetic Chat",
+            numRecords: 4,
+            outputKind: "training",
+            outputFormat: "prompt_completion",
+            outputDir: "/tmp/synthetic-chat",
+            providerEndpoint: "http://127.0.0.1:11434/v1",
+            providerName: "melix",
+            providerType: "openai",
+            modelAlias: "generator",
+            model: "melix-dev-text",
+            columns: [
+                #"prompt:llm_text:{"prompt":"Write a concise answer."}"#,
+            ],
+            seedSourceKind: "local_jsonl",
+            seedSourcePath: "/tmp/seeds.jsonl",
+            validationRatio: "0.2",
+            resume: "if_possible",
+            enableDataDesignerTelemetry: true,
+            json: true
+        ))
+    }
+
+    private static func syntheticCreateCommand() -> MelixCLICommand {
+        .datasetSynthetic(.init(
+            mode: "create",
             datasetID: "synthetic.chat.v1",
             datasetName: "Synthetic Chat",
             numRecords: 4,
@@ -599,6 +746,36 @@ struct RuntimeSyntheticDatasetStateTests {
       "preview_samples": []
     }
     """#
+
+    private static let syntheticCreateJSON = #"""
+    {
+      "operation": "generate_synthetic_dataset",
+      "schema_version": "melix.training_dataset_package.v1",
+      "dataset_id": "synthetic.chat.v1",
+      "dataset_name": "Synthetic Chat",
+      "output_kind": "training",
+      "output_format": "prompt_completion",
+      "row_count": 4,
+      "sample_count": 4,
+      "preview_only": false,
+      "build_ready": true,
+      "validation_ratio": 0.2,
+      "manifest_path": "/tmp/synthetic-chat/synthetic_dataset.manifest.json",
+      "output_path": "/tmp/synthetic-chat/train.jsonl",
+      "validation_path": "/tmp/synthetic-chat/validation.jsonl",
+      "package": {
+        "manifest_path": "/tmp/synthetic-chat/package/manifest.json",
+        "samples_path": "/tmp/synthetic-chat/package/samples.jsonl"
+      },
+      "datadesigner": {
+        "config_path": "/tmp/synthetic-chat/data_designer/config.json",
+        "artifact_path": "/tmp/synthetic-chat/data_designer/artifacts",
+        "generated_jsonl_path": "/tmp/synthetic-chat/data_designer/generated.jsonl"
+      }
+    }
+    """#
+
+    private static let syntheticEmptyCreateJSON = "{}"
 }
 
 @MainActor

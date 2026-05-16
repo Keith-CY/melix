@@ -3287,6 +3287,18 @@ struct DesktopSyntheticDatasetToolSectionView: View {
                     .foregroundStyle(MelixDesignTokens.StatusColor.error)
                     .textSelection(.enabled)
             }
+            if viewModel.syntheticDatasetCreateMessage.isEmpty == false {
+                Text(viewModel.syntheticDatasetCreateMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                    .textSelection(.enabled)
+            }
+            if viewModel.syntheticDatasetCreateErrorMessage.isEmpty == false {
+                Text(viewModel.syntheticDatasetCreateErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            }
 
             HStack(alignment: .top, spacing: 14) {
                 MelixSectionCard("Dataset Identity") {
@@ -3401,6 +3413,10 @@ struct DesktopSyntheticDatasetToolSectionView: View {
                 previewPanel
             }
 
+            MelixSectionCard("Create Package") {
+                createPanel
+            }
+
             MelixSectionCard("Validation") {
                 if viewModel.syntheticDatasetBaseFormValidationMessages.isEmpty {
                     Text("Ready to configure columns before preview or create.")
@@ -3434,6 +3450,10 @@ struct DesktopSyntheticDatasetToolSectionView: View {
 
     func previewDatasetAction() {
         Task { await viewModel.previewSyntheticDataset() }
+    }
+
+    func createDatasetAction() {
+        Task { await viewModel.createSyntheticDataset() }
     }
 
     private var columnEditorPanel: some View {
@@ -3651,6 +3671,87 @@ struct DesktopSyntheticDatasetToolSectionView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private var createPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Button("Create Dataset", action: createDatasetAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.syntheticDatasetCanCreate == false)
+                if viewModel.syntheticDatasetCreateInProgress {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            if let result = viewModel.syntheticDatasetCreateResult {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(result.summaryText)
+                            .font(.headline)
+                        Spacer()
+                        if result.schemaVersion.isEmpty == false {
+                            Text(result.schemaVersion)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text([result.outputKind, result.outputFormat]
+                        .filter { $0.isEmpty == false }
+                        .joined(separator: " | "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if result.manifestRows.isEmpty {
+                    Text("Create result did not include manifest fields.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Package Manifest")
+                            .font(.caption.weight(.semibold))
+                        ForEach(result.manifestRows) { row in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(row.name)
+                                    .font(.caption.weight(.semibold))
+                                Text(row.valueText)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
+
+                if result.artifactRows.isEmpty {
+                    Text("Create result did not include artifact paths.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Artifacts")
+                            .font(.caption.weight(.semibold))
+                        ForEach(result.artifactRows) { row in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(row.name)
+                                    .font(.caption.weight(.semibold))
+                                Text(row.path)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
+            } else {
+                Text("Create a package after previewing the request shape and validation state.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func formField(_ label: String, text: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
@@ -3712,6 +3813,10 @@ struct DesktopSyntheticDatasetToolSectionView: View {
             "Preview Dataset",
             viewModel.syntheticDatasetPreviewMessage,
             viewModel.syntheticDatasetPreviewErrorMessage,
+            "Create Package",
+            "Create Dataset",
+            viewModel.syntheticDatasetCreateMessage,
+            viewModel.syntheticDatasetCreateErrorMessage,
             "Validation",
         ]
         if viewModel.syntheticDatasetColumnEditorErrorMessage.isEmpty == false {
@@ -3750,6 +3855,30 @@ struct DesktopSyntheticDatasetToolSectionView: View {
             }
         } else {
             values.append("Run a preview to inspect generated rows before creating a package.")
+        }
+        if let result = viewModel.syntheticDatasetCreateResult {
+            values.append(contentsOf: [
+                result.schemaVersion,
+                result.datasetID,
+                result.datasetName,
+                result.outputKind,
+                result.outputFormat,
+                String(result.rowCount),
+                String(result.sampleCount),
+            ])
+            if result.manifestRows.isEmpty {
+                values.append("Create result did not include manifest fields.")
+            } else {
+                values.append("Package Manifest")
+                values.append(contentsOf: result.manifestRows.flatMap { [$0.name, $0.valueText] })
+            }
+            if result.artifactRows.isEmpty {
+                values.append("Create result did not include artifact paths.")
+            } else {
+                values.append(contentsOf: result.artifactRows.flatMap { [$0.name, $0.path] })
+            }
+        } else {
+            values.append("Create a package after previewing the request shape and validation state.")
         }
         if viewModel.syntheticDatasetBaseFormValidationMessages.isEmpty {
             values.append("Ready to configure columns before preview or create.")
