@@ -3506,9 +3506,13 @@ public final class RuntimeViewModel {
     }
 
     public func applyRuntimeJobs(_ jobs: [RuntimeJobSummaryState]) {
+        let previousSelectedRuntimeJobID = selectedRuntimeJobID
         runtimeJobs = jobs
         if runtimeJobs.contains(where: { $0.id == selectedRuntimeJobID }) == false {
             selectedRuntimeJobID = runtimeJobs.first?.id ?? ""
+        }
+        if selectedRuntimeJobID != previousSelectedRuntimeJobID {
+            persistOperatorSessionState()
         }
         notifyStateChanged()
     }
@@ -3520,8 +3524,12 @@ public final class RuntimeViewModel {
         } else {
             runtimeJobs.append(detail.summary)
         }
+        let previousSelectedRuntimeJobID = selectedRuntimeJobID
         if selectedRuntimeJobID.isEmpty || runtimeJobs.contains(where: { $0.id == selectedRuntimeJobID }) == false {
             selectedRuntimeJobID = detail.summary.id
+        }
+        if selectedRuntimeJobID != previousSelectedRuntimeJobID {
+            persistOperatorSessionState()
         }
         notifyStateChanged()
     }
@@ -3661,6 +3669,7 @@ public final class RuntimeViewModel {
             return
         }
         selectedRuntimeJobID = id
+        persistOperatorSessionState(force: true)
         notifyStateChanged()
     }
 
@@ -9356,6 +9365,7 @@ public final class RuntimeViewModel {
             selectedSurface = restoredState.selectedSurface
             selectedToolSection = restoredState.selectedToolSection
             selectedServerSessionID = restoredState.selectedServerSessionID
+            selectedRuntimeJobID = restoredState.selectedRuntimeJobID
             desktopPaneVisibility = DesktopPaneVisibilityState.mergedWithDefaults(restoredState.paneVisibility)
             dismissedBannerIDs = Set(restoredState.dismissedBannerIDs)
             registryConfiguredRootPaths = Self.normalizedRegistryRootPaths(restoredState.registryRoots)
@@ -9376,6 +9386,7 @@ public final class RuntimeViewModel {
             selectedSurface: selectedSurface,
             selectedToolSection: selectedToolSection,
             selectedServerSessionID: selectedServerSessionID,
+            selectedRuntimeJobID: selectedRuntimeJobID,
             serverSessions: persistedServerSessions,
             dismissedBannerIDs: dismissedBannerIDs.sorted(),
             downloadQueue: downloadQueue,

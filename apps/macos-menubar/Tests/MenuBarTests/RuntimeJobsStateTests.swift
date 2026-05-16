@@ -876,4 +876,64 @@ struct RuntimeJobsStateTests {
         #expect(failing.lastCLIWorkflowFailure?.commandID == "jobs.cancel")
         #expect(failing.selectedRuntimeJobCancelResult == nil)
     }
+
+    @Test("runtime view model persists selected runtime job and restores across restart")
+    @MainActor
+    func runtimeViewModelPersistsSelectedRuntimeJobAndRestoresAcrossRestart() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-jobs-selected-session-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let jobs = try RuntimeJobsPayloadDecoder.decodeList(Data("""
+        [
+          {
+            "job_id": "bench-cli-1",
+            "run_kind": "benchmark",
+            "status": "running",
+            "phase": "sampling",
+            "model_id": "mlx-community/Qwen3-8B",
+            "task_kind": "text-generation",
+            "cancelable": true
+          },
+          {
+            "job_id": "eval-cli-2",
+            "run_kind": "evaluation",
+            "status": "completed",
+            "phase": "completed",
+            "model_id": "mlx-community/Qwen3-8B",
+            "task_kind": "evaluation",
+            "cancelable": false
+          }
+        ]
+        """.utf8))
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            operatorSessionStore: operatorSessionStore
+        )
+
+        await viewModel.start()
+        viewModel.selectToolSection(.jobs)
+        viewModel.applyRuntimeJobs(jobs)
+        viewModel.selectRuntimeJob(id: "eval-cli-2")
+
+        let persistedPayload = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.operatorSessionFileURL)) as? [String: Any]
+        )
+        #expect(persistedPayload["selected_tool_section"] as? String == "jobs")
+        #expect(persistedPayload["selected_runtime_job_id"] as? String == "eval-cli-2")
+
+        let restored = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            operatorSessionStore: operatorSessionStore
+        )
+        await restored.start()
+
+        #expect(restored.selectedToolSection == .jobs)
+        #expect(restored.selectedRuntimeJobID == "eval-cli-2")
+        restored.applyRuntimeJobs(jobs)
+        #expect(restored.selectedRuntimeJob?.id == "eval-cli-2")
+    }
 }

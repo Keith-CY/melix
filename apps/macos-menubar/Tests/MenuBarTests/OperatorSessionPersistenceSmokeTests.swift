@@ -93,6 +93,7 @@ struct OperatorSessionPersistenceSmokeTests {
                 selectedSurface: .server,
                 selectedToolSection: .jobs,
                 selectedServerSessionID: "server-session-shared",
+                selectedRuntimeJobID: "job-shared-selection",
                 serverSessions: [
                     DesktopServerSessionState(
                         id: "server-session-shared",
@@ -128,7 +129,9 @@ struct OperatorSessionPersistenceSmokeTests {
 
         #expect(sharedState.selectedSurfaceID == "server")
         #expect(sharedState.selectedToolSectionID == "jobs")
+        #expect(sharedState.selectedRuntimeJobID == "job-shared-selection")
         #expect(restoredAppState.selectedToolSection == .jobs)
+        #expect(restoredAppState.selectedRuntimeJobID == "job-shared-selection")
         #expect(sharedState.selectedServerSessionID == "server-session-shared")
         #expect(sharedState.serverSessions.first?.modelID == "melix-dev-vlm")
         #expect(sharedState.serverSessions.first?.autoSleepEnabled == true)
@@ -137,10 +140,52 @@ struct OperatorSessionPersistenceSmokeTests {
         #expect(sharedState.registryRoots == ["/tmp/models-a", "/tmp/models-b"])
         #expect(sharedState.paneVisibility.first(where: { $0.surfaceID == "server" })?.showsInspector == true)
         #expect(sharedState.paneVisibility.first(where: { $0.surfaceID == "api" })?.showsSidebar == false)
+        #expect(uiPayload["selected_runtime_job_id"] as? String == "job-shared-selection")
         #expect(uiPayload["server_sessions"] == nil)
         #expect(uiPayload["registry_roots"] == nil)
         #expect((serverSessionsPayload["server_sessions"] as? [[String: Any]])?.first?["id"] as? String == "server-session-shared")
         #expect(modelRootsPayload["registry_roots"] as? [String] == ["/tmp/models-a", "/tmp/models-b"])
+    }
+
+    @Test("app operator session state codable preserves selected runtime job")
+    func appOperatorSessionStateCodablePreservesSelectedRuntimeJob() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let state = OperatorSessionState(
+            schemaVersion: 1,
+            selectedSurface: .tools,
+            selectedToolSection: .jobs,
+            selectedServerSessionID: "",
+            selectedRuntimeJobID: "job-codable-selection",
+            serverSessions: [],
+            paneVisibility: []
+        )
+
+        var decodedState = try JSONDecoder().decode(OperatorSessionState.self, from: encoder.encode(state))
+        #expect(decodedState.schemaVersion == 6)
+        #expect(decodedState.selectedToolSection == .jobs)
+        #expect(decodedState.selectedRuntimeJobID == "job-codable-selection")
+        #expect(decodedState.paneVisibility.count == DesktopPaneVisibilityState.defaultStates.count)
+
+        decodedState.schemaVersion = 1
+        decodedState.ensurePaneVisibilityDefaults()
+        #expect(decodedState.schemaVersion == 6)
+        #expect(decodedState.paneVisibility.count == DesktopPaneVisibilityState.defaultStates.count)
+
+        let legacyJSON = Data(
+            #"""
+            {
+              "schema_version": 5,
+              "selected_surface": "tools",
+              "selected_tool_section": "jobs",
+              "selected_server_session_id": "",
+              "server_sessions": []
+            }
+            """#.utf8
+        )
+        let legacyState = try JSONDecoder().decode(OperatorSessionState.self, from: legacyJSON)
+        #expect(legacyState.schemaVersion == 6)
+        #expect(legacyState.selectedRuntimeJobID.isEmpty)
     }
 
     @Test("shared operator session store migrates legacy monolithic state")
