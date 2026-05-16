@@ -232,6 +232,9 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
     public let toolParserFallbackText: String
     public let requestedLoadTrustModeText: String
     public let effectiveLoadTrustModeText: String
+    public let loadTrustCustomLoaderText: String
+    public let loadTrustBlockReasonText: String
+    public let loadTrustReloadRequiredText: String
     public let ocrPromptProfileText: String
     public let ocrSamplingProfileText: String
     public let ocrTemperatureText: String
@@ -295,6 +298,9 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         toolParserFallbackText: String = "Off",
         requestedLoadTrustModeText: String = "",
         effectiveLoadTrustModeText: String = "",
+        loadTrustCustomLoaderText: String = "",
+        loadTrustBlockReasonText: String = "",
+        loadTrustReloadRequiredText: String = "",
         ocrPromptProfileText: String = "",
         ocrSamplingProfileText: String = "",
         ocrTemperatureText: String = "",
@@ -357,6 +363,9 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         self.toolParserFallbackText = toolParserFallbackText
         self.requestedLoadTrustModeText = requestedLoadTrustModeText
         self.effectiveLoadTrustModeText = effectiveLoadTrustModeText
+        self.loadTrustCustomLoaderText = loadTrustCustomLoaderText
+        self.loadTrustBlockReasonText = loadTrustBlockReasonText
+        self.loadTrustReloadRequiredText = loadTrustReloadRequiredText
         self.ocrPromptProfileText = ocrPromptProfileText
         self.ocrSamplingProfileText = ocrSamplingProfileText
         self.ocrTemperatureText = ocrTemperatureText
@@ -7608,6 +7617,15 @@ public final class RuntimeViewModel {
                 } ?? "",
                 effectiveLoadTrustModeText: snapshotModel.map {
                     runtimeModelLoadTrustModeText($0.loadTrust.effectiveMode, ifPresentOn: $0)
+                } ?? "",
+                loadTrustCustomLoaderText: snapshotModel.map {
+                    runtimeModelLoadTrustCustomLoaderText($0.loadTrust, ifPresentOn: $0)
+                } ?? "",
+                loadTrustBlockReasonText: snapshotModel.map {
+                    runtimeModelLoadTrustBlockReasonText($0.loadTrust, ifPresentOn: $0)
+                } ?? "",
+                loadTrustReloadRequiredText: snapshotModel.map {
+                    runtimeModelLoadTrustReloadRequiredText($0.loadTrust, ifPresentOn: $0)
                 } ?? "",
                 ocrPromptProfileText: snapshotModel?.settings.ext["ocr_prompt_profile_id"] ?? "",
                 ocrSamplingProfileText: snapshotModel.map {
@@ -16132,6 +16150,40 @@ private func runtimeModelLoadTrustModeText(
     case .UNRECOGNIZED(let value):
         return "Unrecognized \(value)"
     }
+}
+
+private func runtimeModelLoadTrustCustomLoaderText(
+    _ policy: Melix_Controlplane_V1_ModelLoadTrustPolicy,
+    ifPresentOn model: Melix_Controlplane_V1_ModelSummary
+) -> String {
+    guard model.hasLoadTrust else {
+        return ""
+    }
+    let detectionSource = policy.customLoaderDetectionSource.trimmingCharacters(in: .whitespacesAndNewlines)
+    if policy.customLoaderRequired {
+        return detectionSource.isEmpty ? "Required" : "Required • \(detectionSource)"
+    }
+    return detectionSource.isEmpty ? "" : "Not Required • \(detectionSource)"
+}
+
+private func runtimeModelLoadTrustBlockReasonText(
+    _ policy: Melix_Controlplane_V1_ModelLoadTrustPolicy,
+    ifPresentOn model: Melix_Controlplane_V1_ModelSummary
+) -> String {
+    guard model.hasLoadTrust else {
+        return ""
+    }
+    return policy.blockReason.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+private func runtimeModelLoadTrustReloadRequiredText(
+    _ policy: Melix_Controlplane_V1_ModelLoadTrustPolicy,
+    ifPresentOn model: Melix_Controlplane_V1_ModelSummary
+) -> String {
+    guard model.hasLoadTrust, policy.requiresReloadForTrustChange else {
+        return ""
+    }
+    return "Reload Required"
 }
 
 private func runtimeAccelerationModeDisplayText(from rawValue: String) -> String {

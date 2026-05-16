@@ -4258,6 +4258,96 @@ struct DesktopFoundationViewTests {
         }
     }
 
+    @Test("model detail renders load trust custom loader block and reload markers")
+    @MainActor
+    func modelDetailRendersLoadTrustCustomLoaderBlockAndReloadMarkers() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-custom-loader"
+        model.kind = "text"
+        model.state = .modelWarm
+        var loadTrust = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+        loadTrust.requestedMode = .modelLoadTrustTrustRemoteCode
+        loadTrust.effectiveMode = .modelLoadTrustDefaultSafe
+        loadTrust.customLoaderRequired = true
+        loadTrust.customLoaderDetectionSource = "model-config-auto-map"
+        loadTrust.blockReason = "remote code trust is not enabled"
+        loadTrust.requiresReloadForTrustChange = true
+        model.loadTrust = loadTrust
+        snapshot.models = [model]
+
+        var info = Melix_Controlplane_V1_ModelInfo()
+        info.ok = true
+        info.modelKind = "text"
+        info.maxContext = 4096
+        info.supportedParsers = ["text"]
+        info.supportedModalities = ["text"]
+
+        await client.configureSnapshot(snapshot)
+        await client.configureModelInfo(info)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.fetchModelInfo(modelID: "melix-custom-loader")
+
+        let selectedInfo = try #require(viewModel.selectedModelInfo)
+        let content = desktopModelInfoSummaryContent(selectedInfo)
+
+        #expect(selectedInfo.loadTrustCustomLoaderText == "Required • model-config-auto-map")
+        #expect(selectedInfo.loadTrustBlockReasonText == "remote code trust is not enabled")
+        #expect(selectedInfo.loadTrustReloadRequiredText == "Reload Required")
+        #expect(content.detailLines.contains("custom loader: Required • model-config-auto-map"))
+        #expect(content.detailLines.contains("trust block reason: remote code trust is not enabled"))
+        #expect(content.detailLines.contains("trust reload: Reload Required"))
+    }
+
+    @Test("model detail maps custom loader detection edge labels")
+    @MainActor
+    func modelDetailMapsCustomLoaderDetectionEdgeLabels() async throws {
+        let cases: [(String, Bool, String, String)] = [
+            ("required-no-source", true, "   ", "Required"),
+            ("not-required-source", false, "metadata-scan", "Not Required • metadata-scan"),
+        ]
+
+        for (suffix, customLoaderRequired, detectionSource, expectedText) in cases {
+            let client = FakeControlPlaneXPCClient()
+            var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+            snapshot.serverState = .serverReady
+
+            let modelID = "melix-custom-loader-\(suffix)"
+            var model = Melix_Controlplane_V1_ModelSummary()
+            model.modelID = modelID
+            model.kind = "text"
+            model.state = .modelWarm
+            var loadTrust = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+            loadTrust.requestedMode = .modelLoadTrustDefaultSafe
+            loadTrust.effectiveMode = .modelLoadTrustDefaultSafe
+            loadTrust.customLoaderRequired = customLoaderRequired
+            loadTrust.customLoaderDetectionSource = detectionSource
+            model.loadTrust = loadTrust
+            snapshot.models = [model]
+
+            var info = Melix_Controlplane_V1_ModelInfo()
+            info.ok = true
+            info.modelKind = "text"
+            info.maxContext = 4096
+            info.supportedParsers = ["text"]
+            info.supportedModalities = ["text"]
+
+            await client.configureSnapshot(snapshot)
+            await client.configureModelInfo(info)
+
+            let viewModel = RuntimeViewModel(client: client)
+            await viewModel.start()
+            await viewModel.fetchModelInfo(modelID: modelID)
+
+            #expect(viewModel.selectedModelInfo?.loadTrustCustomLoaderText == expectedText)
+        }
+    }
+
     @Test("model info summary view renders typed settings and merged defaults")
     @MainActor
     func modelInfoSummaryViewRendersTypedSettingsAndMergedDefaults() {

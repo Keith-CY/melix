@@ -1743,6 +1743,15 @@ func desktopModelInfoSummaryContent(
     if !info.effectiveLoadTrustModeText.isEmpty {
         detailLines.append("effective trust mode: \(info.effectiveLoadTrustModeText)")
     }
+    if !info.loadTrustCustomLoaderText.isEmpty {
+        detailLines.append("custom loader: \(info.loadTrustCustomLoaderText)")
+    }
+    if !info.loadTrustBlockReasonText.isEmpty {
+        detailLines.append("trust block reason: \(info.loadTrustBlockReasonText)")
+    }
+    if !info.loadTrustReloadRequiredText.isEmpty {
+        detailLines.append("trust reload: \(info.loadTrustReloadRequiredText)")
+    }
     detailLines.append("pin on load: \(info.pinOnLoad ? "yes" : "no")")
     if info.ttlSeconds > 0 {
         detailLines.append("ttl seconds: \(info.ttlSeconds)")
