@@ -63,6 +63,27 @@ struct RuntimeWorkflowRecipesStateTests {
         #expect(fallbackInspection.candidates.first?.confidenceText == "0%")
     }
 
+    @Test("workflow recipe decoder maps init preview provenance from inspected uri")
+    func workflowRecipeDecoderMapsInitPreviewProvenanceFromInspectedURI() throws {
+        let preview = try RuntimeWorkflowRecipesPayloadDecoder.decodeInitPreview(Self.initPreviewJSON)
+
+        #expect(preview.recipe.id == "import.hf-mlx-model")
+        #expect(preview.recipe.title == "Import an MLX-compatible Hugging Face model")
+        #expect(preview.source == "generated_from_uri")
+        #expect(preview.sourceURIDigest == "sha256:source-uri-digest")
+        #expect(preview.inspection?.summaryText == "1 candidate, 0 ambiguous")
+        #expect(preview.inspection?.candidates.first?.normalizedLocator == "hf://model/org/repo@main")
+        #expect(preview.provenanceRows.map(\.name) == ["source", "source_uri_digest"])
+        #expect(preview.recipe.inputRows.map(\.name).contains("repo_id"))
+        #expect(preview.recipe.pipelineSteps.map(\.command).contains("model.hub.download"))
+
+        let previewWithoutInspection = try RuntimeWorkflowRecipesPayloadDecoder.decodeInitPreview(
+            Self.initPreviewWithoutInspectionJSON
+        )
+        #expect(previewWithoutInspection.inspection == nil)
+        #expect(previewWithoutInspection.provenanceRows.map(\.name) == ["source", "source_uri_digest"])
+    }
+
     @Test("runtime view model refreshes workflow recipe catalog and detail through CLI runner")
     @MainActor
     func runtimeViewModelRefreshesWorkflowRecipeCatalogAndDetailThroughCLIRunner() async throws {
@@ -122,6 +143,33 @@ struct RuntimeWorkflowRecipesStateTests {
         #expect(noRunnerViewModel.workflowRecipeURIInspectErrorMessage == "Workflow recipe CLI runner is unavailable.")
     }
 
+    @Test("runtime view model previews recipe init from inspected uri through cli runner")
+    @MainActor
+    func runtimeViewModelPreviewsRecipeInitFromInspectedURIThroughCLIRunner() async throws {
+        let runner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await runner.configureOutput(
+            Self.initPreviewJSON,
+            for: .recipesInit(.init(sourceURI: "hf://model/org/repo", task: "model_import", json: true))
+        )
+
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.applyWorkflowRecipeURIInspection(
+            try RuntimeWorkflowRecipesPayloadDecoder.decodeURIInspection(Self.singleCandidateURIInspectionJSON)
+        )
+
+        #expect(viewModel.workflowRecipeInitTaskDraft == "model_import")
+
+        await viewModel.previewWorkflowRecipeInitFromInspectedURI()
+
+        #expect(viewModel.workflowRecipeInitPreview?.recipe.id == "import.hf-mlx-model")
+        #expect(viewModel.workflowRecipeInitPreview?.sourceURIDigest == "sha256:source-uri-digest")
+        #expect(viewModel.workflowRecipeInitPreviewMessage == "Previewed import.hf-mlx-model from hf://model/org/repo.")
+        #expect(viewModel.workflowRecipeInitPreviewErrorMessage.isEmpty)
+        #expect(await runner.snapshotRecordedCommands() == [
+            .recipesInit(.init(sourceURI: "hf://model/org/repo", task: "model_import", json: true)),
+        ])
+    }
+
     @Test("workflow recipes section renders catalog filters and selected recipe detail")
     @MainActor
     func workflowRecipesSectionRendersCatalogFiltersAndSelectedRecipeDetail() throws {
@@ -171,6 +219,31 @@ struct RuntimeWorkflowRecipesStateTests {
         )
         let emptySummary = DesktopWorkflowRecipesToolSectionView(viewModel: viewModel).accessibilitySummary
         #expect(emptySummary.contains("No URI candidates found."))
+    }
+
+    @Test("workflow recipes section renders recipe init preview from inspected uri")
+    @MainActor
+    func workflowRecipesSectionRendersRecipeInitPreviewFromInspectedURI() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.applyWorkflowRecipeURIInspection(
+            try RuntimeWorkflowRecipesPayloadDecoder.decodeURIInspection(Self.singleCandidateURIInspectionJSON)
+        )
+        viewModel.applyWorkflowRecipeInitPreview(
+            try RuntimeWorkflowRecipesPayloadDecoder.decodeInitPreview(Self.initPreviewJSON)
+        )
+
+        let section = DesktopWorkflowRecipesToolSectionView(viewModel: viewModel)
+        let hosted = hostWorkflowRecipeView(section)
+        let summary = section.accessibilitySummary
+
+        #expect(hosted.subviews.isEmpty == false)
+        #expect(summary.contains("Recipe init task"))
+        #expect(summary.contains("Preview Recipe Init"))
+        #expect(summary.contains("Recipe Init Preview"))
+        #expect(summary.contains("generated_from_uri"))
+        #expect(summary.contains("sha256:source-uri-digest"))
+        #expect(summary.contains("Import an MLX-compatible Hugging Face model"))
+        #expect(summary.contains("model.hub.download"))
     }
 
     @Test("workflow recipes section buttons drive filter refresh and clear actions")
@@ -232,6 +305,37 @@ struct RuntimeWorkflowRecipesStateTests {
 
         #expect(viewModel.workflowRecipeURIInspectMessage == "Inspected org/repo: 2 candidates, 1 ambiguous.")
         #expect(await runner.snapshotRecordedCommands() == [.uriInspect(.init(uri: "org/repo", json: true))])
+    }
+
+    @Test("workflow recipes section drives recipe init preview action")
+    @MainActor
+    func workflowRecipesSectionDrivesRecipeInitPreviewAction() async throws {
+        let runner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await runner.configureOutput(
+            Self.initPreviewJSON,
+            for: .recipesInit(.init(sourceURI: "hf://model/org/repo", task: "model_import", json: true))
+        )
+
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.applyWorkflowRecipeURIInspection(
+            try RuntimeWorkflowRecipesPayloadDecoder.decodeURIInspection(Self.singleCandidateURIInspectionJSON)
+        )
+
+        let section = DesktopWorkflowRecipesToolSectionView(viewModel: viewModel)
+        _ = hostWorkflowRecipeView(section)
+
+        section.previewRecipeInitAction()
+        try await waitForWorkflowRecipeCondition("workflow recipe init preview action completes") {
+            viewModel.workflowRecipeInitPreview?.recipe.id == "import.hf-mlx-model"
+        }
+
+        #expect(viewModel.workflowRecipeInitPreviewMessage == "Previewed import.hf-mlx-model from hf://model/org/repo.")
+        #expect(DesktopWorkflowRecipesToolSectionView(viewModel: viewModel).accessibilitySummary.contains(
+            "Previewed import.hf-mlx-model from hf://model/org/repo."
+        ))
+        #expect(await runner.snapshotRecordedCommands() == [
+            .recipesInit(.init(sourceURI: "hf://model/org/repo", task: "model_import", json: true)),
+        ])
     }
 
     @Test("workflow recipes empty and error states are visible")
@@ -299,6 +403,45 @@ struct RuntimeWorkflowRecipesStateTests {
         let failureSection = DesktopWorkflowRecipesToolSectionView(viewModel: uriFailureViewModel)
         _ = hostWorkflowRecipeView(failureSection)
         #expect(failureSection.accessibilitySummary.contains("inspect failed"))
+
+        let initNoSourceViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        await initNoSourceViewModel.previewWorkflowRecipeInitFromInspectedURI()
+        #expect(
+            initNoSourceViewModel.workflowRecipeInitPreviewErrorMessage
+                == "Inspect or enter a URI before previewing recipe init."
+        )
+
+        let initMissingTaskRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        let initMissingTaskViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            cliWorkflowRunner: initMissingTaskRunner
+        )
+        initMissingTaskViewModel.updateWorkflowRecipeURIInspectDraft("hf://model/org/repo")
+        initMissingTaskViewModel.updateWorkflowRecipeInitTaskDraft("  ")
+        await initMissingTaskViewModel.previewWorkflowRecipeInitFromInspectedURI()
+        #expect(initMissingTaskViewModel.workflowRecipeInitPreviewErrorMessage == "Enter a recipe init task before previewing.")
+
+        let initNoRunnerViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        initNoRunnerViewModel.updateWorkflowRecipeURIInspectDraft("hf://model/org/repo")
+        initNoRunnerViewModel.updateWorkflowRecipeInitTaskDraft("model_import")
+        await initNoRunnerViewModel.previewWorkflowRecipeInitFromInspectedURI()
+        #expect(initNoRunnerViewModel.workflowRecipeInitPreviewErrorMessage == "Workflow recipe CLI runner is unavailable.")
+
+        let initFailureRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await initFailureRunner.configureFailure(
+            .processFailed(commandID: "recipes.init", surface: .subprocess, exitCode: 5, stderr: "init failed"),
+            for: .recipesInit(.init(sourceURI: "hf://model/org/repo", task: "model_import", json: true))
+        )
+        let initFailureViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: initFailureRunner)
+        initFailureViewModel.applyWorkflowRecipeURIInspection(
+            try RuntimeWorkflowRecipesPayloadDecoder.decodeURIInspection(Self.singleCandidateURIInspectionJSON)
+        )
+        await initFailureViewModel.previewWorkflowRecipeInitFromInspectedURI()
+        #expect(initFailureViewModel.workflowRecipeInitPreviewErrorMessage.contains("init failed"))
+
+        let initFailureSection = DesktopWorkflowRecipesToolSectionView(viewModel: initFailureViewModel)
+        _ = hostWorkflowRecipeView(initFailureSection)
+        #expect(initFailureSection.accessibilitySummary.contains("init failed"))
     }
 
     @Test("workflow recipe cli bridge maps malformed json to workflow errors")
@@ -307,6 +450,10 @@ struct RuntimeWorkflowRecipesStateTests {
         await runner.configureOutput("not-json\n", for: .recipesList(.init(task: "", json: true)))
         await runner.configureOutput("not-json\n", for: .recipesShow(.init(recipeID: "import.hf-mlx-model", json: true)))
         await runner.configureOutput("not-json\n", for: .uriInspect(.init(uri: "org/repo", json: true)))
+        await runner.configureOutput(
+            "not-json\n",
+            for: .recipesInit(.init(sourceURI: "hf://model/org/repo", task: "model_import", json: true))
+        )
 
         do {
             _ = try await runner.listWorkflowRecipes(task: "")
@@ -325,6 +472,13 @@ struct RuntimeWorkflowRecipesStateTests {
         do {
             _ = try await runner.inspectWorkflowRecipeURI(uri: "org/repo")
             Issue.record("Expected malformed URI inspection JSON to fail.")
+        } catch let error as MelixCLIWorkflowError {
+            #expect(error.failureKind == .invalidJSON)
+        }
+
+        do {
+            _ = try await runner.initWorkflowRecipeFromURI(sourceURI: "hf://model/org/repo", task: "model_import")
+            Issue.record("Expected malformed recipe init preview JSON to fail.")
         } catch let error as MelixCLIWorkflowError {
             #expect(error.failureKind == .invalidJSON)
         }
@@ -564,6 +718,126 @@ struct RuntimeWorkflowRecipesStateTests {
         }
       ],
       "metrics": {}
+    }
+    """#
+
+    static let singleCandidateURIInspectionJSON = #"""
+    {
+      "schema_version": "melix.uri_inspection.v1",
+      "original_uri": "hf://model/org/repo",
+      "normalized_locator": "hf://model/org/repo",
+      "candidate_count": 1,
+      "ambiguity_count": 0,
+      "candidates": [
+        {
+          "kind": "hf_model_repo",
+          "confidence": 0.96,
+          "task_kind": "model_import",
+          "source_kind": "huggingface",
+          "revision": "main",
+          "repo_id": "org/repo",
+          "normalized_locator": "hf://model/org/repo@main",
+          "reasons": ["explicit Hugging Face model locator"],
+          "recommended_next_action": "model hub download --repo-id org/repo --revision main",
+          "generated_command_arguments": ["model", "hub", "download", "--repo-id", "org/repo", "--revision", "main"],
+          "warnings": []
+        }
+      ],
+      "metrics": {
+        "uri.candidate_count": 1
+      }
+    }
+    """#
+
+    static let initPreviewJSON = #"""
+    {
+      "schema_version": "melix.workflow_recipe.v1",
+      "id": "import.hf-mlx-model",
+      "version": "1",
+      "title": "Import an MLX-compatible Hugging Face model",
+      "description": "Inspect fit, download a Hugging Face model, and rescan managed roots.",
+      "tasks": ["model_import"],
+      "recipe_digest": "digest-import",
+      "inputs": [
+        {
+          "name": "repo_id",
+          "type": "string",
+          "required": true,
+          "uri_kind": "hf_model_repo"
+        }
+      ],
+      "preflight": {
+        "uri_inspection": true,
+        "pipeline_dry_run": true
+      },
+      "pipeline": {
+        "schema_version": "melix.pipeline.v1",
+        "steps": [
+          {
+            "id": "download_model",
+            "command": "model.hub.download",
+            "args": {
+              "repo_id": "org/repo",
+              "revision": "main"
+            }
+          }
+        ]
+      },
+      "outputs": {
+        "managed_model_path": "from download_model step"
+      },
+      "provenance": {
+        "source": "generated_from_uri",
+        "source_uri_digest": "sha256:source-uri-digest",
+        "inspection": {
+          "schema_version": "melix.uri_inspection.v1",
+          "original_uri": "hf://model/org/repo",
+          "normalized_locator": "hf://model/org/repo",
+          "candidate_count": 1,
+          "ambiguity_count": 0,
+          "candidates": [
+            {
+              "kind": "hf_model_repo",
+              "confidence": 0.96,
+              "task_kind": "model_import",
+              "source_kind": "huggingface",
+              "revision": "main",
+              "repo_id": "org/repo",
+              "normalized_locator": "hf://model/org/repo@main",
+              "reasons": ["explicit Hugging Face model locator"],
+              "recommended_next_action": "model hub download --repo-id org/repo --revision main",
+              "generated_command_arguments": ["model", "hub", "download", "--repo-id", "org/repo", "--revision", "main"],
+              "warnings": []
+            }
+          ],
+          "metrics": {
+            "uri.candidate_count": 1
+          }
+        }
+      }
+    }
+    """#
+
+    static let initPreviewWithoutInspectionJSON = #"""
+    {
+      "schema_version": "melix.workflow_recipe.v1",
+      "id": "import.hf-mlx-model",
+      "version": "1",
+      "title": "Import an MLX-compatible Hugging Face model",
+      "description": "Inspect fit, download a Hugging Face model, and rescan managed roots.",
+      "tasks": ["model_import"],
+      "recipe_digest": "digest-import",
+      "inputs": [],
+      "preflight": {},
+      "pipeline": {
+        "schema_version": "melix.pipeline.v1",
+        "steps": []
+      },
+      "outputs": {},
+      "provenance": {
+        "source": "generated_from_uri",
+        "source_uri_digest": "sha256:source-uri-digest"
+      }
     }
     """#
 

@@ -1927,14 +1927,19 @@ public final class RuntimeViewModel {
     public private(set) var selectedWorkflowRecipeID = ""
     public private(set) var workflowRecipeTaskFilterDraft = ""
     public private(set) var workflowRecipeURIInspectDraft = ""
+    public private(set) var workflowRecipeInitTaskDraft = ""
     public private(set) var workflowRecipeURIInspection: RuntimeWorkflowURIInspectionState?
+    public private(set) var workflowRecipeInitPreview: RuntimeWorkflowRecipeInitPreviewState?
     public private(set) var workflowRecipeCatalogInProgress = false
     public private(set) var workflowRecipeDetailInProgress = false
     public private(set) var workflowRecipeURIInspectInProgress = false
+    public private(set) var workflowRecipeInitPreviewInProgress = false
     public private(set) var workflowRecipeCatalogMessage = ""
     public private(set) var workflowRecipeCatalogErrorMessage = ""
     public private(set) var workflowRecipeURIInspectMessage = ""
     public private(set) var workflowRecipeURIInspectErrorMessage = ""
+    public private(set) var workflowRecipeInitPreviewMessage = ""
+    public private(set) var workflowRecipeInitPreviewErrorMessage = ""
     public private(set) var batchRunModelListText = ""
     public private(set) var batchRunConfigText = ""
     public private(set) var batchRunReports: [RuntimeBatchRunReportState] = []
@@ -2001,6 +2006,15 @@ public final class RuntimeViewModel {
     public var workflowRecipeURIInspectCanRun: Bool {
         normalizedWorkflowRecipeURIInspectDraft.isEmpty == false
             && workflowRecipeURIInspectInProgress == false
+    }
+    public var workflowRecipeInitPreviewSourceURI: String {
+        let inspectedURI = workflowRecipeURIInspection?.originalURI.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return inspectedURI.isEmpty ? normalizedWorkflowRecipeURIInspectDraft : inspectedURI
+    }
+    public var workflowRecipeInitPreviewCanRun: Bool {
+        workflowRecipeInitPreviewSourceURI.isEmpty == false
+            && normalizedWorkflowRecipeInitTask.isEmpty == false
+            && workflowRecipeInitPreviewInProgress == false
     }
     public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
     public private(set) var models: [RuntimeModelRow] = [] {
@@ -2861,6 +2875,10 @@ public final class RuntimeViewModel {
 
     private var normalizedWorkflowRecipeURIInspectDraft: String {
         workflowRecipeURIInspectDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedWorkflowRecipeInitTask: String {
+        workflowRecipeInitTaskDraft.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func reloadHuggingFaceTokenHint() {
@@ -3885,6 +3903,11 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    public func updateWorkflowRecipeInitTaskDraft(_ task: String) {
+        workflowRecipeInitTaskDraft = task
+        notifyStateChanged()
+    }
+
     public func updateRuntimeSettingDraft(key: String, value: String) {
         runtimeSettingKeyDraft = key
         runtimeSettingValueDraft = value
@@ -3913,6 +3936,17 @@ public final class RuntimeViewModel {
 
     public func applyWorkflowRecipeURIInspection(_ inspection: RuntimeWorkflowURIInspectionState) {
         workflowRecipeURIInspection = inspection
+        if normalizedWorkflowRecipeInitTask.isEmpty,
+           let taskKind = inspection.candidates.first?.taskKind,
+           taskKind.isEmpty == false
+        {
+            workflowRecipeInitTaskDraft = taskKind
+        }
+        notifyStateChanged()
+    }
+
+    public func applyWorkflowRecipeInitPreview(_ preview: RuntimeWorkflowRecipeInitPreviewState) {
+        workflowRecipeInitPreview = preview
         notifyStateChanged()
     }
 
@@ -4136,6 +4170,42 @@ public final class RuntimeViewModel {
             workflowRecipeURIInspectInProgress = false
             recordCLIWorkflowErrorIfNeeded(error)
             failWorkflowRecipeURIInspection(workflowErrorMessage(error))
+        }
+    }
+
+    public func previewWorkflowRecipeInitFromInspectedURI() async {
+        let sourceURI = workflowRecipeInitPreviewSourceURI
+        let task = normalizedWorkflowRecipeInitTask
+        guard sourceURI.isEmpty == false else {
+            failWorkflowRecipeInitPreview("Inspect or enter a URI before previewing recipe init.")
+            return
+        }
+        guard task.isEmpty == false else {
+            failWorkflowRecipeInitPreview("Enter a recipe init task before previewing.")
+            return
+        }
+        guard let commandWorkflowRunner else {
+            failWorkflowRecipeInitPreview("Workflow recipe CLI runner is unavailable.")
+            return
+        }
+
+        workflowRecipeInitTaskDraft = task
+        workflowRecipeInitPreviewInProgress = true
+        workflowRecipeInitPreviewMessage = ""
+        workflowRecipeInitPreviewErrorMessage = ""
+        notifyStateChanged()
+
+        do {
+            let preview = try await commandWorkflowRunner.initWorkflowRecipeFromURI(sourceURI: sourceURI, task: task)
+            workflowRecipeInitPreviewInProgress = false
+            workflowRecipeInitPreviewMessage = "Previewed \(preview.recipe.id) from \(sourceURI)."
+            workflowRecipeInitPreviewErrorMessage = ""
+            clearCLIWorkflowFailure()
+            applyWorkflowRecipeInitPreview(preview)
+        } catch {
+            workflowRecipeInitPreviewInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            failWorkflowRecipeInitPreview(workflowErrorMessage(error))
         }
     }
 
@@ -12112,6 +12182,14 @@ public final class RuntimeViewModel {
         workflowRecipeURIInspectInProgress = false
         workflowRecipeURIInspectMessage = ""
         workflowRecipeURIInspectErrorMessage = message
+        recordLocalError(message)
+        notifyStateChanged()
+    }
+
+    private func failWorkflowRecipeInitPreview(_ message: String) {
+        workflowRecipeInitPreviewInProgress = false
+        workflowRecipeInitPreviewMessage = ""
+        workflowRecipeInitPreviewErrorMessage = message
         recordLocalError(message)
         notifyStateChanged()
     }

@@ -2281,6 +2281,7 @@ struct DesktopWorkflowRecipesToolSectionView: View {
                 if viewModel.workflowRecipeCatalogInProgress
                     || viewModel.workflowRecipeDetailInProgress
                     || viewModel.workflowRecipeURIInspectInProgress
+                    || viewModel.workflowRecipeInitPreviewInProgress
                 {
                     ProgressView()
                         .controlSize(.small)
@@ -2326,9 +2327,25 @@ struct DesktopWorkflowRecipesToolSectionView: View {
                     .foregroundStyle(MelixDesignTokens.StatusColor.error)
                     .textSelection(.enabled)
             }
+            if viewModel.workflowRecipeInitPreviewMessage.isEmpty == false {
+                Text(viewModel.workflowRecipeInitPreviewMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                    .textSelection(.enabled)
+            }
+            if viewModel.workflowRecipeInitPreviewErrorMessage.isEmpty == false {
+                Text(viewModel.workflowRecipeInitPreviewErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            }
 
             MelixSectionCard("URI Inspect") {
                 uriInspectionPanel
+            }
+
+            MelixSectionCard("Recipe Init Preview") {
+                recipeInitPreviewPanel
             }
 
             HStack(alignment: .top, spacing: 14) {
@@ -2415,8 +2432,31 @@ struct DesktopWorkflowRecipesToolSectionView: View {
         Task { await viewModel.inspectWorkflowRecipeURI() }
     }
 
+    func previewRecipeInitAction() {
+        Task { await viewModel.previewWorkflowRecipeInitFromInspectedURI() }
+    }
+
     private var uriInspectionPanel: some View {
         VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .bottom, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Recipe init task")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField(
+                        "Recipe init task",
+                        text: Binding(
+                            get: { viewModel.workflowRecipeInitTaskDraft },
+                            set: { viewModel.updateWorkflowRecipeInitTaskDraft($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+                Button("Preview Recipe Init", action: previewRecipeInitAction)
+                    .buttonStyle(.bordered)
+                    .disabled(viewModel.workflowRecipeInitPreviewCanRun == false)
+            }
+
             if let inspection = viewModel.workflowRecipeURIInspection {
                 HStack(alignment: .firstTextBaseline) {
                     Text(inspection.summaryText)
@@ -2493,6 +2533,48 @@ struct DesktopWorkflowRecipesToolSectionView: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var recipeInitPreviewPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let preview = viewModel.workflowRecipeInitPreview {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(preview.recipe.title)
+                            .font(.headline)
+                        Spacer()
+                        Text("v\(preview.recipe.version)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(preview.recipe.id)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                    if preview.recipe.description.isEmpty == false {
+                        Text(preview.recipe.description)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let inspectionSummary = preview.inspection?.summaryText,
+                       inspectionSummary.isEmpty == false
+                    {
+                        Text(inspectionSummary)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+
+                workflowRecipeKeyValueRows("Provenance", rows: preview.provenanceRows)
+                workflowRecipeInputRows(preview.recipe.inputRows)
+                workflowRecipeKeyValueRows("Preflight", rows: preview.recipe.preflightRows)
+                workflowRecipePipelineRows(preview.recipe.pipelineSteps)
+                workflowRecipeKeyValueRows("Outputs", rows: preview.recipe.outputRows)
+            } else {
+                Text("Preview recipe init from an inspected URI before applying a workflow.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var recipeDetail: some View {
@@ -2618,13 +2700,19 @@ struct DesktopWorkflowRecipesToolSectionView: View {
             "Task filter",
             viewModel.workflowRecipeTaskFilterDraft,
             viewModel.workflowRecipeURIInspectDraft,
+            viewModel.workflowRecipeInitTaskDraft,
             "Refresh Catalog",
             "URI to inspect",
             "Inspect URI",
+            "Recipe init task",
+            "Preview Recipe Init",
+            "Recipe Init Preview",
             viewModel.workflowRecipeCatalogMessage,
             viewModel.workflowRecipeCatalogErrorMessage,
             viewModel.workflowRecipeURIInspectMessage,
             viewModel.workflowRecipeURIInspectErrorMessage,
+            viewModel.workflowRecipeInitPreviewMessage,
+            viewModel.workflowRecipeInitPreviewErrorMessage,
         ]
         values.append(contentsOf: viewModel.workflowRecipeCatalog.availableTaskFilters)
         if let inspection = viewModel.workflowRecipeURIInspection {
@@ -2655,6 +2743,28 @@ struct DesktopWorkflowRecipesToolSectionView: View {
             values.append(contentsOf: inspection.metrics.flatMap { [$0.name, $0.valueText] })
         } else {
             values.append("Inspect a URI to see candidate workflow inputs.")
+        }
+        if let preview = viewModel.workflowRecipeInitPreview {
+            values.append(contentsOf: [
+                preview.recipe.id,
+                preview.recipe.version,
+                preview.recipe.title,
+                preview.recipe.description,
+                preview.recipe.taskText,
+                preview.recipe.digest,
+                preview.source,
+                preview.sourceURIDigest,
+                preview.inspection?.summaryText ?? "",
+            ])
+            values.append(contentsOf: preview.provenanceRows.flatMap { [$0.name, $0.valueText] })
+            values.append(contentsOf: preview.recipe.inputRows.flatMap {
+                [$0.name, $0.valueType, $0.requirementText, $0.defaultValueText, $0.uriKind]
+            })
+            values.append(contentsOf: preview.recipe.preflightRows.flatMap { [$0.name, $0.valueText] })
+            values.append(contentsOf: preview.recipe.pipelineSteps.flatMap { [$0.id, $0.command, $0.argumentSummaryText] })
+            values.append(contentsOf: preview.recipe.outputRows.flatMap { [$0.name, $0.valueText] })
+        } else {
+            values.append("Preview recipe init from an inspected URI before applying a workflow.")
         }
         if viewModel.workflowRecipeFilteredRecipes.isEmpty {
             values.append("No workflow recipes match this filter.")

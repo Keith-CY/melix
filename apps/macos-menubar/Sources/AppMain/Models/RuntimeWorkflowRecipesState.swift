@@ -245,6 +245,28 @@ public struct RuntimeWorkflowURIInspectionState: Equatable, Sendable {
     }
 }
 
+public struct RuntimeWorkflowRecipeInitPreviewState: Equatable, Sendable {
+    public let recipe: RuntimeWorkflowRecipeDetailState
+    public let source: String
+    public let sourceURIDigest: String
+    public let inspection: RuntimeWorkflowURIInspectionState?
+    public let provenanceRows: [RuntimeWorkflowRecipeKeyValueRowState]
+
+    public init(
+        recipe: RuntimeWorkflowRecipeDetailState,
+        source: String,
+        sourceURIDigest: String,
+        inspection: RuntimeWorkflowURIInspectionState?,
+        provenanceRows: [RuntimeWorkflowRecipeKeyValueRowState]
+    ) {
+        self.recipe = recipe
+        self.source = source
+        self.sourceURIDigest = sourceURIDigest
+        self.inspection = inspection
+        self.provenanceRows = provenanceRows
+    }
+}
+
 public enum RuntimeWorkflowRecipesPayloadDecoder {
     public static func decodeCatalog(_ output: String) throws -> RuntimeWorkflowRecipeCatalogState {
         try decodeCatalog(Data(output.utf8))
@@ -327,6 +349,27 @@ public enum RuntimeWorkflowRecipesPayloadDecoder {
         )
     }
 
+    public static func decodeInitPreview(_ output: String) throws -> RuntimeWorkflowRecipeInitPreviewState {
+        try decodeInitPreview(Data(output.utf8))
+    }
+
+    public static func decodeInitPreview(_ data: Data) throws -> RuntimeWorkflowRecipeInitPreviewState {
+        let payload = try jsonObject(from: data, message: "Workflow recipe init preview payload must be a JSON object.")
+        let recipe = try decodeDetail(data)
+        let provenance = payload["provenance"] as? [String: Any] ?? [:]
+        let provenanceDisplay: [String: Any] = [
+            "source": provenance["source"] ?? NSNull(),
+            "source_uri_digest": provenance["source_uri_digest"] ?? NSNull(),
+        ]
+        return RuntimeWorkflowRecipeInitPreviewState(
+            recipe: recipe,
+            source: stringText(for: provenance["source"]),
+            sourceURIDigest: stringText(for: provenance["source_uri_digest"]),
+            inspection: uriInspection(from: provenance["inspection"]),
+            provenanceRows: keyValueRows(from: provenanceDisplay)
+        )
+    }
+
     private static func jsonObject(from data: Data, message: String) throws -> [String: Any] {
         let decoded = try JSONSerialization.jsonObject(with: data)
         guard let payload = decoded as? [String: Any] else {
@@ -369,6 +412,16 @@ public enum RuntimeWorkflowRecipesPayloadDecoder {
         return object.keys.sorted().map { key in
             RuntimeWorkflowRecipeMetricState(name: key, valueText: displayText(for: object[key] ?? NSNull()))
         }
+    }
+
+    private static func uriInspection(from value: Any?) -> RuntimeWorkflowURIInspectionState? {
+        guard let object = value as? [String: Any],
+              JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        else {
+            return nil
+        }
+        return try? decodeURIInspection(data)
     }
 
     private static func stringArray(for value: Any?) -> [String] {
