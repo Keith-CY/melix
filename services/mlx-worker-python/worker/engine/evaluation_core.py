@@ -1758,11 +1758,13 @@ class EvaluationCore:
             return {"mean": 0.0, "p50": 0.0, "p95": 0.0, "max": 0.0}
         sorted_values = sorted(values)
         value_count = len(sorted_values)
+        round_ms = cls._round_ms
+        ordered_percentile = cls._ordered_percentile
         return {
-            "mean": cls._round_ms(sum(sorted_values) / value_count),
-            "p50": cls._round_ms(cls._ordered_percentile(sorted_values, 50.0)),
-            "p95": cls._round_ms(cls._ordered_percentile(sorted_values, 95.0)),
-            "max": cls._round_ms(sorted_values[-1]),
+            "mean": round_ms(sum(sorted_values) / value_count),
+            "p50": round_ms(ordered_percentile(sorted_values, 50.0)),
+            "p95": round_ms(ordered_percentile(sorted_values, 95.0)),
+            "max": round_ms(sorted_values[-1]),
         }
 
     @staticmethod
