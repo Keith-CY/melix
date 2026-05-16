@@ -1968,6 +1968,11 @@ public final class RuntimeViewModel {
     public private(set) var syntheticDatasetProviderTypeDraft = "openai"
     public private(set) var syntheticDatasetModelAliasDraft = "generator"
     public private(set) var syntheticDatasetModelDraft = ""
+    public private(set) var syntheticDatasetColumnNameDraft = ""
+    public private(set) var syntheticDatasetColumnTypeDraft = "llm_text"
+    public private(set) var syntheticDatasetColumnPayloadDraft = ""
+    public private(set) var syntheticDatasetColumns: [RuntimeSyntheticDatasetColumnState] = []
+    public private(set) var syntheticDatasetColumnEditorErrorMessage = ""
     public private(set) var batchRunModelListText = ""
     public private(set) var batchRunConfigText = ""
     public private(set) var batchRunReports: [RuntimeBatchRunReportState] = []
@@ -2137,6 +2142,39 @@ public final class RuntimeViewModel {
     }
     public var syntheticDatasetBaseFormCanContinue: Bool {
         syntheticDatasetBaseFormValidationMessages.isEmpty
+    }
+    public var normalizedSyntheticDatasetColumnName: String {
+        syntheticDatasetColumnNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetColumnType: String {
+        syntheticDatasetColumnTypeDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetColumnPayload: String {
+        syntheticDatasetColumnPayloadDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var syntheticDatasetColumnDraftValidationMessages: [RuntimeSyntheticDatasetValidationMessageState] {
+        var messages: [RuntimeSyntheticDatasetValidationMessageState] = []
+        if normalizedSyntheticDatasetColumnName.isEmpty {
+            messages.append(.init(field: "Column Name", message: "Enter a column name."))
+        }
+        if normalizedSyntheticDatasetColumnType.isEmpty {
+            messages.append(.init(field: "Column Type", message: "Enter a column type."))
+        }
+        if normalizedSyntheticDatasetColumnPayload.isEmpty {
+            messages.append(.init(field: "Column Payload", message: "Enter JSON or a source path."))
+        } else if syntheticDatasetColumnPayloadIsMalformedJSON {
+            messages.append(.init(
+                field: "Column Payload",
+                message: "Column payload must be a JSON object or file path."
+            ))
+        }
+        return messages
+    }
+    public var syntheticDatasetColumnDraftCanAdd: Bool {
+        syntheticDatasetColumnDraftValidationMessages.isEmpty
+    }
+    public var syntheticDatasetColumnCommandArguments: [String] {
+        syntheticDatasetColumns.map(\.commandArgument)
     }
     public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
     public private(set) var models: [RuntimeModelRow] = [] {
@@ -3017,6 +3055,18 @@ public final class RuntimeViewModel {
 
     private var normalizedWorkflowRecipeApplyFromStep: String {
         workflowRecipeApplyFromStepDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var syntheticDatasetColumnPayloadIsMalformedJSON: Bool {
+        let payload = normalizedSyntheticDatasetColumnPayload
+        guard payload.first == "{" else { return false }
+        guard let data = payload.data(using: .utf8),
+              let decoded = try? JSONSerialization.jsonObject(with: data),
+              decoded is [String: Any]
+        else {
+            return true
+        }
+        return false
     }
 
     private func reloadHuggingFaceTokenHint() {
@@ -4128,6 +4178,48 @@ public final class RuntimeViewModel {
 
     public func updateSyntheticDatasetModelDraft(_ model: String) {
         syntheticDatasetModelDraft = model
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetColumnNameDraft(_ name: String) {
+        syntheticDatasetColumnNameDraft = name
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetColumnTypeDraft(_ type: String) {
+        syntheticDatasetColumnTypeDraft = type
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetColumnPayloadDraft(_ payload: String) {
+        syntheticDatasetColumnPayloadDraft = payload
+        notifyStateChanged()
+    }
+
+    public func addSyntheticDatasetColumnDraft() {
+        let messages = syntheticDatasetColumnDraftValidationMessages
+        guard messages.isEmpty else {
+            syntheticDatasetColumnEditorErrorMessage = messages.map { "\($0.field): \($0.message)" }.joined(separator: " ")
+            notifyStateChanged()
+            return
+        }
+
+        syntheticDatasetColumns.append(
+            RuntimeSyntheticDatasetColumnState(
+                name: normalizedSyntheticDatasetColumnName,
+                type: normalizedSyntheticDatasetColumnType,
+                payload: normalizedSyntheticDatasetColumnPayload
+            )
+        )
+        syntheticDatasetColumnNameDraft = ""
+        syntheticDatasetColumnPayloadDraft = ""
+        syntheticDatasetColumnTypeDraft = normalizedSyntheticDatasetColumnType
+        syntheticDatasetColumnEditorErrorMessage = ""
+        notifyStateChanged()
+    }
+
+    public func removeSyntheticDatasetColumn(id: String) {
+        syntheticDatasetColumns.removeAll { $0.id == id }
         notifyStateChanged()
     }
 

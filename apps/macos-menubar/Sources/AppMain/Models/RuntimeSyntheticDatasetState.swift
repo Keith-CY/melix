@@ -13,3 +13,23 @@ public struct RuntimeSyntheticDatasetValidationMessageState: Identifiable, Equat
         "\(field):\(message)"
     }
 }
+
+public struct RuntimeSyntheticDatasetColumnState: Identifiable, Equatable, Sendable {
+    public let name: String
+    public let type: String
+    public let payload: String
+
+    public init(name: String, type: String, payload: String) {
+        self.name = name
+        self.type = type
+        self.payload = payload
+    }
+
+    public var id: String {
+        commandArgument
+    }
+
+    public var commandArgument: String {
+        "\(name):\(type):\(payload)"
+    }
+}

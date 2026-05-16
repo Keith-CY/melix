@@ -3376,6 +3376,10 @@ struct DesktopSyntheticDatasetToolSectionView: View {
                 }
             }
 
+            MelixSectionCard("Columns") {
+                columnEditorPanel
+            }
+
             MelixSectionCard("Validation") {
                 if viewModel.syntheticDatasetBaseFormValidationMessages.isEmpty {
                     Text("Ready to configure columns before preview or create.")
@@ -3397,6 +3401,85 @@ struct DesktopSyntheticDatasetToolSectionView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    func addColumnAction() {
+        viewModel.addSyntheticDatasetColumnDraft()
+    }
+
+    func removeColumn(id: String) {
+        viewModel.removeSyntheticDatasetColumn(id: id)
+    }
+
+    private var columnEditorPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .bottom, spacing: 10) {
+                formField(
+                    "Column Name",
+                    text: Binding(
+                        get: { viewModel.syntheticDatasetColumnNameDraft },
+                        set: { viewModel.updateSyntheticDatasetColumnNameDraft($0) }
+                    )
+                )
+                formField(
+                    "Column Type",
+                    text: Binding(
+                        get: { viewModel.syntheticDatasetColumnTypeDraft },
+                        set: { viewModel.updateSyntheticDatasetColumnTypeDraft($0) }
+                    )
+                )
+                formField(
+                    "JSON or Path",
+                    text: Binding(
+                        get: { viewModel.syntheticDatasetColumnPayloadDraft },
+                        set: { viewModel.updateSyntheticDatasetColumnPayloadDraft($0) }
+                    )
+                )
+                Button("Add Column", action: addColumnAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.syntheticDatasetColumnDraftCanAdd == false)
+            }
+
+            if viewModel.syntheticDatasetColumnEditorErrorMessage.isEmpty == false {
+                Text(viewModel.syntheticDatasetColumnEditorErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            }
+
+            if viewModel.syntheticDatasetColumnDraftValidationMessages.isEmpty == false {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(viewModel.syntheticDatasetColumnDraftValidationMessages) { message in
+                        Text("\(message.field): \(message.message)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            if viewModel.syntheticDatasetColumns.isEmpty {
+                Text("No synthetic columns configured.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(viewModel.syntheticDatasetColumns) { column in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Text(column.commandArgument)
+                                .font(.caption.monospaced())
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
+                            Spacer()
+                            Button("Remove Column") {
+                                removeColumn(id: column.id)
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private func formField(_ label: String, text: Binding<String>) -> some View {
@@ -3437,8 +3520,28 @@ struct DesktopSyntheticDatasetToolSectionView: View {
             "Model Alias",
             viewModel.normalizedSyntheticDatasetModelAlias,
             viewModel.normalizedSyntheticDatasetModel,
+            "Columns",
+            "Column Name",
+            viewModel.normalizedSyntheticDatasetColumnName,
+            "Column Type",
+            viewModel.normalizedSyntheticDatasetColumnType,
+            "JSON or Path",
+            viewModel.normalizedSyntheticDatasetColumnPayload,
+            "Add Column",
             "Validation",
         ]
+        if viewModel.syntheticDatasetColumnEditorErrorMessage.isEmpty == false {
+            values.append(viewModel.syntheticDatasetColumnEditorErrorMessage)
+        }
+        values.append(contentsOf: viewModel.syntheticDatasetColumnDraftValidationMessages.flatMap {
+            [$0.field, $0.message]
+        })
+        if viewModel.syntheticDatasetColumns.isEmpty {
+            values.append("No synthetic columns configured.")
+        } else {
+            values.append(contentsOf: viewModel.syntheticDatasetColumnCommandArguments)
+            values.append("Remove Column")
+        }
         if viewModel.syntheticDatasetBaseFormValidationMessages.isEmpty {
             values.append("Ready to configure columns before preview or create.")
         } else {

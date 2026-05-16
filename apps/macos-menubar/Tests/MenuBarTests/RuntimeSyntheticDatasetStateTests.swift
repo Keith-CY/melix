@@ -89,6 +89,83 @@ struct RuntimeSyntheticDatasetStateTests {
         ])
     }
 
+    @Test("synthetic dataset column editor builds NAME TYPE payload arguments")
+    @MainActor
+    func syntheticDatasetColumnEditorBuildsNameTypePayloadArguments() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+
+        #expect(viewModel.syntheticDatasetColumnTypeDraft == "llm_text")
+        #expect(viewModel.syntheticDatasetColumnDraftCanAdd == false)
+        #expect(viewModel.syntheticDatasetColumnDraftValidationMessages.map(\.field) == [
+            "Column Name",
+            "Column Payload",
+        ])
+
+        viewModel.updateSyntheticDatasetColumnNameDraft(" prompt ")
+        viewModel.updateSyntheticDatasetColumnTypeDraft(" llm_text ")
+        viewModel.updateSyntheticDatasetColumnPayloadDraft(#"{"prompt":"write a concise answer"}"#)
+        viewModel.addSyntheticDatasetColumnDraft()
+
+        #expect(viewModel.syntheticDatasetColumns == [
+            RuntimeSyntheticDatasetColumnState(
+                name: "prompt",
+                type: "llm_text",
+                payload: #"{"prompt":"write a concise answer"}"#
+            ),
+        ])
+        #expect(viewModel.syntheticDatasetColumnCommandArguments == [
+            #"prompt:llm_text:{"prompt":"write a concise answer"}"#,
+        ])
+        #expect(viewModel.syntheticDatasetColumnNameDraft.isEmpty)
+        #expect(viewModel.syntheticDatasetColumnPayloadDraft.isEmpty)
+        #expect(viewModel.syntheticDatasetColumnTypeDraft == "llm_text")
+        #expect(viewModel.syntheticDatasetColumnEditorErrorMessage.isEmpty)
+
+        viewModel.updateSyntheticDatasetColumnNameDraft("broken")
+        viewModel.updateSyntheticDatasetColumnPayloadDraft(#"{"prompt":"unterminated""#)
+
+        #expect(viewModel.syntheticDatasetColumnDraftCanAdd == false)
+        #expect(viewModel.syntheticDatasetColumnDraftValidationMessages == [
+            RuntimeSyntheticDatasetValidationMessageState(
+                field: "Column Payload",
+                message: "Column payload must be a JSON object or file path."
+            ),
+        ])
+
+        viewModel.updateSyntheticDatasetColumnTypeDraft(" ")
+        #expect(viewModel.syntheticDatasetColumnDraftValidationMessages == [
+            RuntimeSyntheticDatasetValidationMessageState(
+                field: "Column Type",
+                message: "Enter a column type."
+            ),
+            RuntimeSyntheticDatasetValidationMessageState(
+                field: "Column Payload",
+                message: "Column payload must be a JSON object or file path."
+            ),
+        ])
+
+        viewModel.addSyntheticDatasetColumnDraft()
+        #expect(viewModel.syntheticDatasetColumnEditorErrorMessage.contains("Column Type: Enter a column type."))
+        #expect(viewModel.syntheticDatasetColumnCommandArguments == [
+            #"prompt:llm_text:{"prompt":"write a concise answer"}"#,
+        ])
+
+        viewModel.updateSyntheticDatasetColumnTypeDraft("llm_text")
+        viewModel.updateSyntheticDatasetColumnPayloadDraft("/tmp/source-seeds.jsonl")
+        viewModel.addSyntheticDatasetColumnDraft()
+
+        #expect(viewModel.syntheticDatasetColumnCommandArguments == [
+            #"prompt:llm_text:{"prompt":"write a concise answer"}"#,
+            "broken:llm_text:/tmp/source-seeds.jsonl",
+        ])
+
+        viewModel.removeSyntheticDatasetColumn(id: "prompt:llm_text:{\"prompt\":\"write a concise answer\"}")
+
+        #expect(viewModel.syntheticDatasetColumnCommandArguments == [
+            "broken:llm_text:/tmp/source-seeds.jsonl",
+        ])
+    }
+
     @Test("synthetic dataset tool section renders identity output provider model form")
     @MainActor
     func syntheticDatasetToolSectionRendersIdentityOutputProviderModelForm() throws {
@@ -129,6 +206,49 @@ struct RuntimeSyntheticDatasetStateTests {
         #expect(emptySummary.contains("Enter a dataset ID."))
         #expect(emptySummary.contains("Provider Endpoint"))
         #expect(emptySummary.contains("Enter a model."))
+    }
+
+    @Test("synthetic dataset tool section renders and drives column editor")
+    @MainActor
+    func syntheticDatasetToolSectionRendersAndDrivesColumnEditor() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.updateSyntheticDatasetColumnNameDraft("response")
+        viewModel.updateSyntheticDatasetColumnTypeDraft("llm_text")
+        viewModel.updateSyntheticDatasetColumnPayloadDraft(#"{"prompt":"answer"}"#)
+
+        let section = DesktopSyntheticDatasetToolSectionView(viewModel: viewModel)
+        _ = hostSyntheticDatasetView(section)
+        let initialSummary = section.accessibilitySummary
+
+        #expect(initialSummary.contains("Columns"))
+        #expect(initialSummary.contains("Column Name"))
+        #expect(initialSummary.contains("Column Type"))
+        #expect(initialSummary.contains("JSON or Path"))
+        #expect(initialSummary.contains("Add Column"))
+
+        section.addColumnAction()
+
+        let addedSection = DesktopSyntheticDatasetToolSectionView(viewModel: viewModel)
+        _ = hostSyntheticDatasetView(addedSection)
+        let addedSummary = addedSection.accessibilitySummary
+
+        #expect(addedSummary.contains(#"response:llm_text:{"prompt":"answer"}"#))
+        #expect(addedSummary.contains("Remove Column"))
+
+        addedSection.removeColumn(id: #"response:llm_text:{"prompt":"answer"}"#)
+
+        let removedSummary = DesktopSyntheticDatasetToolSectionView(viewModel: viewModel).accessibilitySummary
+        #expect(removedSummary.contains("No synthetic columns configured."))
+
+        let invalidViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        let invalidSection = DesktopSyntheticDatasetToolSectionView(viewModel: invalidViewModel)
+        invalidSection.addColumnAction()
+        let invalidRenderedSection = DesktopSyntheticDatasetToolSectionView(viewModel: invalidViewModel)
+        _ = hostSyntheticDatasetView(invalidRenderedSection)
+        let invalidSummary = invalidRenderedSection.accessibilitySummary
+
+        #expect(invalidSummary.contains("Column Name: Enter a column name."))
+        #expect(invalidSummary.contains("Column Payload: Enter JSON or a source path."))
     }
 
     @Test("synthetic dataset navigation has icon category and session persistence mapping")
