@@ -18,11 +18,6 @@ RESIDENT_MEMORY_OVERHEAD_FACTOR = 1.35
 _SIZE_HINT_KB = 1024
 _SIZE_HINT_MB = _SIZE_HINT_KB * 1024
 _SIZE_HINT_GB = _SIZE_HINT_MB * 1024
-_SIZE_HINT_MULTIPLIERS = {
-    "kb": _SIZE_HINT_KB,
-    "mb": _SIZE_HINT_MB,
-    "gb": _SIZE_HINT_GB,
-}
 
 _BARE_SIZE_HINT_RE = re.compile(r"(?:model\s+size\s*[:|]?\s*)?(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
 _EXPLICIT_SIZE_HINT_RE = re.compile(r"\bmodel\s+size\s*[:|]?\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
@@ -627,8 +622,13 @@ def _direct_size_hint_from_text(text: str) -> int:
         return 0
     value_text, unit_text = parts
     unit = unit_text.lower()
-    multiplier = _SIZE_HINT_MULTIPLIERS.get(unit)
-    if multiplier is None:
+    if unit == "mb":
+        multiplier = _SIZE_HINT_MB
+    elif unit == "gb":
+        multiplier = _SIZE_HINT_GB
+    elif unit == "kb":
+        multiplier = _SIZE_HINT_KB
+    else:
         return 0
     try:
         value = float(value_text)
@@ -645,7 +645,13 @@ def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:
     if not match:
         return 0
     value = float(match.group(1))
-    multiplier = _SIZE_HINT_MULTIPLIERS[match.group(2).lower()]
+    unit = match.group(2).lower()
+    if unit == "mb":
+        multiplier = _SIZE_HINT_MB
+    elif unit == "gb":
+        multiplier = _SIZE_HINT_GB
+    else:
+        multiplier = _SIZE_HINT_KB
     return int(value * multiplier)
 
 
