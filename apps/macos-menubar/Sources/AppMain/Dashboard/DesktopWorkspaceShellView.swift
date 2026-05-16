@@ -3380,6 +3380,10 @@ struct DesktopSyntheticDatasetToolSectionView: View {
                 columnEditorPanel
             }
 
+            MelixSectionCard("Generation Controls") {
+                generationControlsPanel
+            }
+
             MelixSectionCard("Validation") {
                 if viewModel.syntheticDatasetBaseFormValidationMessages.isEmpty {
                     Text("Ready to configure columns before preview or create.")
@@ -3482,6 +3486,69 @@ struct DesktopSyntheticDatasetToolSectionView: View {
         }
     }
 
+    private var generationControlsPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                formField(
+                    "Seed Source Kind",
+                    text: Binding(
+                        get: { viewModel.syntheticDatasetSeedSourceKindDraft },
+                        set: { viewModel.updateSyntheticDatasetSeedSourceKindDraft($0) }
+                    )
+                )
+                formField(
+                    "Seed Source Path",
+                    text: Binding(
+                        get: { viewModel.syntheticDatasetSeedSourcePathDraft },
+                        set: { viewModel.updateSyntheticDatasetSeedSourcePathDraft($0) }
+                    )
+                )
+            }
+
+            HStack(alignment: .top, spacing: 10) {
+                formField(
+                    "Validation Ratio",
+                    text: Binding(
+                        get: { viewModel.syntheticDatasetValidationRatioDraft },
+                        set: { viewModel.updateSyntheticDatasetValidationRatioDraft($0) }
+                    )
+                )
+                formField(
+                    "Resume",
+                    text: Binding(
+                        get: { viewModel.syntheticDatasetResumeModeDraft },
+                        set: { viewModel.updateSyntheticDatasetResumeModeDraft($0) }
+                    )
+                )
+                Toggle(
+                    "DataDesigner Telemetry",
+                    isOn: Binding(
+                        get: { viewModel.syntheticDatasetDataDesignerTelemetryEnabled },
+                        set: { viewModel.updateSyntheticDatasetDataDesignerTelemetryEnabled($0) }
+                    )
+                )
+                .toggleStyle(.checkbox)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if viewModel.syntheticDatasetGenerationControlValidationMessages.isEmpty == false {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(viewModel.syntheticDatasetGenerationControlValidationMessages) { message in
+                        Text("\(message.field): \(message.message)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            Text(viewModel.syntheticDatasetGenerationControlCommandArguments.joined(separator: " "))
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .textSelection(.enabled)
+        }
+    }
+
     private func formField(_ label: String, text: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
@@ -3528,6 +3595,17 @@ struct DesktopSyntheticDatasetToolSectionView: View {
             "JSON or Path",
             viewModel.normalizedSyntheticDatasetColumnPayload,
             "Add Column",
+            "Generation Controls",
+            "Seed Source Kind",
+            viewModel.normalizedSyntheticDatasetSeedSourceKind,
+            "Seed Source Path",
+            viewModel.normalizedSyntheticDatasetSeedSourcePath,
+            "Validation Ratio",
+            viewModel.normalizedSyntheticDatasetValidationRatio,
+            "Resume",
+            viewModel.normalizedSyntheticDatasetResumeMode,
+            "DataDesigner Telemetry",
+            viewModel.syntheticDatasetDataDesignerTelemetryEnabled ? "enabled" : "disabled",
             "Validation",
         ]
         if viewModel.syntheticDatasetColumnEditorErrorMessage.isEmpty == false {
@@ -3542,6 +3620,10 @@ struct DesktopSyntheticDatasetToolSectionView: View {
             values.append(contentsOf: viewModel.syntheticDatasetColumnCommandArguments)
             values.append("Remove Column")
         }
+        values.append(contentsOf: viewModel.syntheticDatasetGenerationControlValidationMessages.flatMap {
+            [$0.field, $0.message]
+        })
+        values.append(contentsOf: viewModel.syntheticDatasetGenerationControlCommandArguments)
         if viewModel.syntheticDatasetBaseFormValidationMessages.isEmpty {
             values.append("Ready to configure columns before preview or create.")
         } else {

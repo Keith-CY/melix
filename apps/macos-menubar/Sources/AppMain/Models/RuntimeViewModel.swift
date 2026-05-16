@@ -1973,6 +1973,11 @@ public final class RuntimeViewModel {
     public private(set) var syntheticDatasetColumnPayloadDraft = ""
     public private(set) var syntheticDatasetColumns: [RuntimeSyntheticDatasetColumnState] = []
     public private(set) var syntheticDatasetColumnEditorErrorMessage = ""
+    public private(set) var syntheticDatasetSeedSourceKindDraft = ""
+    public private(set) var syntheticDatasetSeedSourcePathDraft = ""
+    public private(set) var syntheticDatasetValidationRatioDraft = ""
+    public private(set) var syntheticDatasetResumeModeDraft = "never"
+    public private(set) var syntheticDatasetDataDesignerTelemetryEnabled = false
     public private(set) var batchRunModelListText = ""
     public private(set) var batchRunConfigText = ""
     public private(set) var batchRunReports: [RuntimeBatchRunReportState] = []
@@ -2175,6 +2180,65 @@ public final class RuntimeViewModel {
     }
     public var syntheticDatasetColumnCommandArguments: [String] {
         syntheticDatasetColumns.map(\.commandArgument)
+    }
+    public var normalizedSyntheticDatasetSeedSourceKind: String {
+        syntheticDatasetSeedSourceKindDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetSeedSourcePath: String {
+        syntheticDatasetSeedSourcePathDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetValidationRatio: String {
+        syntheticDatasetValidationRatioDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetResumeMode: String {
+        syntheticDatasetResumeModeDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var syntheticDatasetGenerationControlValidationMessages: [RuntimeSyntheticDatasetValidationMessageState] {
+        var messages: [RuntimeSyntheticDatasetValidationMessageState] = []
+        if normalizedSyntheticDatasetSeedSourceKind.isEmpty, normalizedSyntheticDatasetSeedSourcePath.isEmpty == false {
+            messages.append(.init(field: "Seed Source Kind", message: "Choose a seed source kind."))
+        }
+        if normalizedSyntheticDatasetSeedSourceKind.isEmpty == false, normalizedSyntheticDatasetSeedSourcePath.isEmpty {
+            messages.append(.init(field: "Seed Source Path", message: "Enter a seed source path."))
+        }
+        if normalizedSyntheticDatasetValidationRatio.isEmpty == false {
+            guard let ratio = Double(normalizedSyntheticDatasetValidationRatio),
+                  ratio >= 0.0,
+                  ratio < 1.0
+            else {
+                messages.append(.init(
+                    field: "Validation Ratio",
+                    message: "Enter a decimal from 0.0 up to but not including 1.0."
+                ))
+                return messages + syntheticDatasetResumeValidationMessages
+            }
+        }
+        messages.append(contentsOf: syntheticDatasetResumeValidationMessages)
+        return messages
+    }
+    public var syntheticDatasetGenerationControlCommandArguments: [String] {
+        var arguments: [String] = []
+        if normalizedSyntheticDatasetSeedSourceKind.isEmpty == false,
+           normalizedSyntheticDatasetSeedSourcePath.isEmpty == false
+        {
+            arguments.append(contentsOf: [
+                "--seed-source-kind",
+                normalizedSyntheticDatasetSeedSourceKind,
+                "--seed-source-path",
+                normalizedSyntheticDatasetSeedSourcePath,
+            ])
+        }
+        if normalizedSyntheticDatasetValidationRatio.isEmpty == false {
+            arguments.append(contentsOf: ["--validation-ratio", normalizedSyntheticDatasetValidationRatio])
+        }
+        arguments.append(contentsOf: [
+            "--resume",
+            normalizedSyntheticDatasetResumeMode.isEmpty ? "never" : normalizedSyntheticDatasetResumeMode,
+        ])
+        if syntheticDatasetDataDesignerTelemetryEnabled {
+            arguments.append("--enable-datadesigner-telemetry")
+        }
+        return arguments
     }
     public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
     public private(set) var models: [RuntimeModelRow] = [] {
@@ -3067,6 +3131,15 @@ public final class RuntimeViewModel {
             return true
         }
         return false
+    }
+
+    private var syntheticDatasetResumeValidationMessages: [RuntimeSyntheticDatasetValidationMessageState] {
+        guard ["never", "if_possible", "always"].contains(normalizedSyntheticDatasetResumeMode) else {
+            return [
+                .init(field: "Resume", message: "Choose never, if_possible, or always."),
+            ]
+        }
+        return []
     }
 
     private func reloadHuggingFaceTokenHint() {
@@ -4220,6 +4293,31 @@ public final class RuntimeViewModel {
 
     public func removeSyntheticDatasetColumn(id: String) {
         syntheticDatasetColumns.removeAll { $0.id == id }
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetSeedSourceKindDraft(_ kind: String) {
+        syntheticDatasetSeedSourceKindDraft = kind
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetSeedSourcePathDraft(_ path: String) {
+        syntheticDatasetSeedSourcePathDraft = path
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetValidationRatioDraft(_ ratio: String) {
+        syntheticDatasetValidationRatioDraft = ratio
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetResumeModeDraft(_ mode: String) {
+        syntheticDatasetResumeModeDraft = mode
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetDataDesignerTelemetryEnabled(_ enabled: Bool) {
+        syntheticDatasetDataDesignerTelemetryEnabled = enabled
         notifyStateChanged()
     }
 

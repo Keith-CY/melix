@@ -166,6 +166,69 @@ struct RuntimeSyntheticDatasetStateTests {
         ])
     }
 
+    @Test("synthetic dataset generation controls validate seed ratio resume and telemetry")
+    @MainActor
+    func syntheticDatasetGenerationControlsValidateSeedRatioResumeAndTelemetry() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+
+        #expect(viewModel.syntheticDatasetSeedSourceKindDraft.isEmpty)
+        #expect(viewModel.syntheticDatasetSeedSourcePathDraft.isEmpty)
+        #expect(viewModel.syntheticDatasetValidationRatioDraft.isEmpty)
+        #expect(viewModel.syntheticDatasetResumeModeDraft == "never")
+        #expect(viewModel.syntheticDatasetDataDesignerTelemetryEnabled == false)
+        #expect(viewModel.syntheticDatasetGenerationControlValidationMessages.isEmpty)
+        #expect(viewModel.syntheticDatasetGenerationControlCommandArguments == ["--resume", "never"])
+
+        viewModel.updateSyntheticDatasetSeedSourceKindDraft(" local_jsonl ")
+        #expect(viewModel.syntheticDatasetGenerationControlValidationMessages == [
+            RuntimeSyntheticDatasetValidationMessageState(
+                field: "Seed Source Path",
+                message: "Enter a seed source path."
+            ),
+        ])
+
+        viewModel.updateSyntheticDatasetSeedSourcePathDraft(" /tmp/seeds.jsonl ")
+        viewModel.updateSyntheticDatasetValidationRatioDraft(" 0.25 ")
+        viewModel.updateSyntheticDatasetResumeModeDraft(" if_possible ")
+        viewModel.updateSyntheticDatasetDataDesignerTelemetryEnabled(true)
+
+        #expect(viewModel.normalizedSyntheticDatasetSeedSourceKind == "local_jsonl")
+        #expect(viewModel.normalizedSyntheticDatasetSeedSourcePath == "/tmp/seeds.jsonl")
+        #expect(viewModel.normalizedSyntheticDatasetValidationRatio == "0.25")
+        #expect(viewModel.normalizedSyntheticDatasetResumeMode == "if_possible")
+        #expect(viewModel.syntheticDatasetGenerationControlValidationMessages.isEmpty)
+        #expect(viewModel.syntheticDatasetGenerationControlCommandArguments == [
+            "--seed-source-kind",
+            "local_jsonl",
+            "--seed-source-path",
+            "/tmp/seeds.jsonl",
+            "--validation-ratio",
+            "0.25",
+            "--resume",
+            "if_possible",
+            "--enable-datadesigner-telemetry",
+        ])
+
+        viewModel.updateSyntheticDatasetSeedSourceKindDraft("")
+        viewModel.updateSyntheticDatasetValidationRatioDraft("1.0")
+        viewModel.updateSyntheticDatasetResumeModeDraft("sometimes")
+
+        #expect(viewModel.syntheticDatasetGenerationControlValidationMessages == [
+            RuntimeSyntheticDatasetValidationMessageState(
+                field: "Seed Source Kind",
+                message: "Choose a seed source kind."
+            ),
+            RuntimeSyntheticDatasetValidationMessageState(
+                field: "Validation Ratio",
+                message: "Enter a decimal from 0.0 up to but not including 1.0."
+            ),
+            RuntimeSyntheticDatasetValidationMessageState(
+                field: "Resume",
+                message: "Choose never, if_possible, or always."
+            ),
+        ])
+    }
+
     @Test("synthetic dataset tool section renders identity output provider model form")
     @MainActor
     func syntheticDatasetToolSectionRendersIdentityOutputProviderModelForm() throws {
@@ -249,6 +312,46 @@ struct RuntimeSyntheticDatasetStateTests {
 
         #expect(invalidSummary.contains("Column Name: Enter a column name."))
         #expect(invalidSummary.contains("Column Payload: Enter JSON or a source path."))
+    }
+
+    @Test("synthetic dataset tool section renders generation controls")
+    @MainActor
+    func syntheticDatasetToolSectionRendersGenerationControls() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.updateSyntheticDatasetSeedSourceKindDraft("training_package")
+        viewModel.updateSyntheticDatasetSeedSourcePathDraft("/tmp/training-package")
+        viewModel.updateSyntheticDatasetValidationRatioDraft("0.2")
+        viewModel.updateSyntheticDatasetResumeModeDraft("always")
+        viewModel.updateSyntheticDatasetDataDesignerTelemetryEnabled(true)
+
+        let section = DesktopSyntheticDatasetToolSectionView(viewModel: viewModel)
+        let hosted = hostSyntheticDatasetView(section)
+        let summary = section.accessibilitySummary
+
+        #expect(hosted.subviews.isEmpty == false)
+        #expect(summary.contains("Generation Controls"))
+        #expect(summary.contains("Seed Source Kind"))
+        #expect(summary.contains("Seed Source Path"))
+        #expect(summary.contains("Validation Ratio"))
+        #expect(summary.contains("Resume"))
+        #expect(summary.contains("DataDesigner Telemetry"))
+        #expect(summary.contains("training_package"))
+        #expect(summary.contains("/tmp/training-package"))
+        #expect(summary.contains("0.2"))
+        #expect(summary.contains("always"))
+        #expect(summary.contains("--enable-datadesigner-telemetry"))
+
+        let invalidViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        invalidViewModel.updateSyntheticDatasetSeedSourcePathDraft("/tmp/seeds.jsonl")
+        invalidViewModel.updateSyntheticDatasetValidationRatioDraft("1.0")
+        invalidViewModel.updateSyntheticDatasetResumeModeDraft("sometimes")
+        let invalidSection = DesktopSyntheticDatasetToolSectionView(viewModel: invalidViewModel)
+        _ = hostSyntheticDatasetView(invalidSection)
+        let invalidSummary = invalidSection.accessibilitySummary
+
+        #expect(invalidSummary.contains("Seed Source Kind Choose a seed source kind."))
+        #expect(invalidSummary.contains("Validation Ratio Enter a decimal from 0.0 up to but not including 1.0."))
+        #expect(invalidSummary.contains("Resume Choose never, if_possible, or always."))
     }
 
     @Test("synthetic dataset navigation has icon category and session persistence mapping")
