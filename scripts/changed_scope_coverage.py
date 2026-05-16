@@ -47,19 +47,23 @@ def _parse_hunk_new_start(line: str) -> int | None:
 
 def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
     changed_by_path: dict[str, set[int]] = {}
+    header_prefix = _DIFF_HEADER_PREFIX
+    header_separator = _DIFF_HEADER_SEPARATOR
+    header_prefix_len = len(header_prefix)
+    header_separator_len = len(header_separator)
     add_changed_line = None
     new_line: int | None = None
     for line in diff_text.split("\n"):
         first_char = line[0] if line else ""
-        if first_char == "d" and line.startswith(_DIFF_HEADER_PREFIX):
-            separator_index = line.find(_DIFF_HEADER_SEPARATOR, len(_DIFF_HEADER_PREFIX))
+        if first_char == "d" and line.startswith(header_prefix):
+            separator_index = line.find(header_separator, header_prefix_len)
             add_changed_line = None
             if separator_index >= 0:
-                current_path = line[separator_index + len(_DIFF_HEADER_SEPARATOR) :]
+                current_path = line[separator_index + header_separator_len :]
                 add_changed_line = changed_by_path.setdefault(current_path, set()).add
             new_line = None
             continue
-        if first_char == "@" and line.startswith("@@"):
+        if first_char == "@" and len(line) > 1 and line[1] == "@":
             new_range_index = line.find(" +")
             if new_range_index < 0:
                 new_line = None
