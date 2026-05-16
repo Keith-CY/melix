@@ -1699,7 +1699,8 @@
         "key": "restore_elapsed_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "warn_pct": 5.0,
+        "warn_abs": 5.0
       }
     ]
   },
@@ -1928,19 +1929,22 @@
         "key": "load_probe_registry_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "warn_pct": 5.0,
+        "warn_abs": 0.5
       },
       {
         "key": "cold_load_probe_registry_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "warn_pct": 5.0,
+        "warn_abs": 10.0
       },
       {
         "key": "build_scope_report_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "warn_pct": 5.0,
+        "warn_abs": 0.5
       }
     ]
   },
