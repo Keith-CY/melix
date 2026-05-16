@@ -7,8 +7,9 @@ from functools import lru_cache
 def whitespace_token_count(text: str) -> int:
     token_count = 0
     in_token = False
+    is_space = str.isspace
     for character in text:
-        if character.isspace():
+        if is_space(character):
             in_token = False
         elif not in_token:
             token_count += 1
