@@ -14,6 +14,24 @@ public struct RuntimeSyntheticDatasetValidationMessageState: Identifiable, Equat
     }
 }
 
+public struct RuntimeSyntheticDatasetErrorState: Identifiable, Equatable, Sendable {
+    public let source: String
+    public let title: String
+    public let detail: String
+    public let recoveryHint: String
+
+    public init(source: String, title: String, detail: String, recoveryHint: String) {
+        self.source = source
+        self.title = title
+        self.detail = detail
+        self.recoveryHint = recoveryHint
+    }
+
+    public var id: String {
+        "\(source)|\(title)|\(detail)"
+    }
+}
+
 public struct RuntimeSyntheticDatasetColumnState: Identifiable, Equatable, Sendable {
     public let name: String
     public let type: String

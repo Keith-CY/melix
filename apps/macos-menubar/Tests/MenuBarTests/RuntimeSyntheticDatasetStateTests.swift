@@ -401,6 +401,83 @@ struct RuntimeSyntheticDatasetStateTests {
         #expect(malformedViewModel.syntheticDatasetCreateErrorMessage == "dataset.synthetic.create returned malformed JSON.")
     }
 
+    @Test("synthetic dataset error states classify dependency provider and invalid column failures")
+    @MainActor
+    func syntheticDatasetErrorStatesClassifyDependencyProviderAndInvalidColumnFailures() async throws {
+        let runner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await runner.configureFailure(
+            .processFailed(
+                commandID: "dataset.synthetic.preview",
+                surface: .subprocess,
+                exitCode: 2,
+                stderr: "DataDesigner extra is not installed. Install melix[datadesigner]."
+            ),
+            for: Self.syntheticPreviewCommand()
+        )
+        await runner.configureFailure(
+            .processFailed(
+                commandID: "dataset.synthetic.create",
+                surface: .subprocess,
+                exitCode: 503,
+                stderr: "Provider request failed: HTTP 503 upstream unavailable."
+            ),
+            for: Self.syntheticCreateCommand()
+        )
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        configureValidSyntheticDatasetPreviewRequest(viewModel)
+
+        await viewModel.previewSyntheticDataset()
+        await viewModel.createSyntheticDataset()
+        viewModel.updateSyntheticDatasetColumnNameDraft("broken")
+        viewModel.updateSyntheticDatasetColumnPayloadDraft(#"{"prompt":"unterminated""#)
+
+        let errorStates = viewModel.syntheticDatasetErrorStates
+        let titles = errorStates.map(\.title)
+
+        #expect(titles == [
+            "Invalid Column Payload",
+            "Missing DataDesigner Extra",
+            "Provider Failure",
+        ])
+
+        let invalidColumn = try #require(errorStates.first { $0.title == "Invalid Column Payload" })
+        #expect(invalidColumn.source == "Column Editor")
+        #expect(invalidColumn.recoveryHint == "Use a JSON object such as {\"prompt\":\"...\"} or a readable source path.")
+
+        let missingExtra = try #require(errorStates.first { $0.title == "Missing DataDesigner Extra" })
+        #expect(missingExtra.source == "Preview")
+        #expect(missingExtra.detail.contains("DataDesigner extra is not installed."))
+        #expect(missingExtra.recoveryHint == "Install the DataDesigner extra, then retry preview or create.")
+
+        let providerFailure = try #require(errorStates.first { $0.title == "Provider Failure" })
+        #expect(providerFailure.source == "Create")
+        #expect(providerFailure.detail.contains("HTTP 503"))
+        #expect(providerFailure.recoveryHint == "Check provider endpoint, model, credentials, and availability before retrying.")
+
+        let invalidPayloadRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await invalidPayloadRunner.configureFailure(
+            .processFailed(
+                commandID: "dataset.synthetic.create",
+                surface: .subprocess,
+                exitCode: 2,
+                stderr: "Column payload must be a JSON object or file path."
+            ),
+            for: Self.syntheticCreateCommand()
+        )
+        let invalidPayloadViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            cliWorkflowRunner: invalidPayloadRunner
+        )
+        configureValidSyntheticDatasetPreviewRequest(invalidPayloadViewModel)
+        await invalidPayloadViewModel.createSyntheticDataset()
+
+        let cliInvalidPayload = try #require(
+            invalidPayloadViewModel.syntheticDatasetErrorStates.first { $0.title == "Invalid Column Payload" }
+        )
+        #expect(cliInvalidPayload.source == "Create")
+        #expect(cliInvalidPayload.detail.contains("Column payload"))
+    }
+
     @Test("synthetic dataset tool section renders identity output provider model form")
     @MainActor
     func syntheticDatasetToolSectionRendersIdentityOutputProviderModelForm() throws {
@@ -607,6 +684,49 @@ struct RuntimeSyntheticDatasetStateTests {
         let emptySummary = DesktopSyntheticDatasetToolSectionView(viewModel: emptyResultViewModel).accessibilitySummary
         #expect(emptySummary.contains("Create result did not include manifest fields."))
         #expect(emptySummary.contains("Create result did not include artifact paths."))
+    }
+
+    @Test("synthetic dataset tool section renders classified error states")
+    @MainActor
+    func syntheticDatasetToolSectionRendersClassifiedErrorStates() async throws {
+        let runner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await runner.configureFailure(
+            .processFailed(
+                commandID: "dataset.synthetic.preview",
+                surface: .subprocess,
+                exitCode: 2,
+                stderr: "DataDesigner extra is not installed. Install melix[datadesigner]."
+            ),
+            for: Self.syntheticPreviewCommand()
+        )
+        await runner.configureFailure(
+            .processFailed(
+                commandID: "dataset.synthetic.create",
+                surface: .subprocess,
+                exitCode: 503,
+                stderr: "Provider request failed: HTTP 503 upstream unavailable."
+            ),
+            for: Self.syntheticCreateCommand()
+        )
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        configureValidSyntheticDatasetPreviewRequest(viewModel)
+
+        await viewModel.previewSyntheticDataset()
+        await viewModel.createSyntheticDataset()
+        viewModel.updateSyntheticDatasetColumnNameDraft("broken")
+        viewModel.updateSyntheticDatasetColumnPayloadDraft(#"{"prompt":"unterminated""#)
+
+        let section = DesktopSyntheticDatasetToolSectionView(viewModel: viewModel)
+        let hosted = hostSyntheticDatasetView(section)
+        let summary = section.accessibilitySummary
+
+        #expect(hosted.subviews.isEmpty == false)
+        #expect(summary.contains("Error States"))
+        #expect(summary.contains("Invalid Column Payload"))
+        #expect(summary.contains("Missing DataDesigner Extra"))
+        #expect(summary.contains("Provider Failure"))
+        #expect(summary.contains("Install the DataDesigner extra, then retry preview or create."))
+        #expect(summary.contains("Check provider endpoint, model, credentials, and availability before retrying."))
     }
 
     @Test("synthetic dataset navigation has icon category and session persistence mapping")

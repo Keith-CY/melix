@@ -3409,6 +3409,12 @@ struct DesktopSyntheticDatasetToolSectionView: View {
                 generationControlsPanel
             }
 
+            if viewModel.syntheticDatasetErrorStates.isEmpty == false {
+                MelixSectionCard("Error States") {
+                    errorStatesPanel
+                }
+            }
+
             MelixSectionCard("Preview") {
                 previewPanel
             }
@@ -3588,6 +3594,34 @@ struct DesktopSyntheticDatasetToolSectionView: View {
                 .lineLimit(2)
                 .textSelection(.enabled)
         }
+    }
+
+    private var errorStatesPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(viewModel.syntheticDatasetErrorStates) { state in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(state.title)
+                            .font(.caption.weight(.semibold))
+                        Text(state.source)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(state.detail)
+                        .font(.caption)
+                        .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                        .textSelection(.enabled)
+                    Text(state.recoveryHint)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var previewPanel: some View {
@@ -3835,6 +3869,12 @@ struct DesktopSyntheticDatasetToolSectionView: View {
             [$0.field, $0.message]
         })
         values.append(contentsOf: viewModel.syntheticDatasetGenerationControlCommandArguments)
+        if viewModel.syntheticDatasetErrorStates.isEmpty == false {
+            values.append("Error States")
+            values.append(contentsOf: viewModel.syntheticDatasetErrorStates.flatMap {
+                [$0.source, $0.title, $0.detail, $0.recoveryHint]
+            })
+        }
         if let preview = viewModel.syntheticDatasetPreview {
             values.append(contentsOf: [
                 preview.schemaVersion,

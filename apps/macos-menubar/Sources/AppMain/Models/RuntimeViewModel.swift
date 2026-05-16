@@ -2267,6 +2267,32 @@ public final class RuntimeViewModel {
             && syntheticDatasetCreateInProgress == false
             && syntheticDatasetPreviewInProgress == false
     }
+    public var syntheticDatasetErrorStates: [RuntimeSyntheticDatasetErrorState] {
+        var states: [RuntimeSyntheticDatasetErrorState] = []
+        if syntheticDatasetColumnDraftValidationMessages.contains(where: {
+            $0.field == "Column Payload" && $0.message.contains("JSON object")
+        }) {
+            states.append(.init(
+                source: "Column Editor",
+                title: "Invalid Column Payload",
+                detail: "Column payload must be a JSON object or file path.",
+                recoveryHint: #"Use a JSON object such as {"prompt":"..."} or a readable source path."#
+            ))
+        }
+        if let previewState = Self.syntheticDatasetErrorState(
+            source: "Preview",
+            message: syntheticDatasetPreviewErrorMessage
+        ) {
+            states.append(previewState)
+        }
+        if let createState = Self.syntheticDatasetErrorState(
+            source: "Create",
+            message: syntheticDatasetCreateErrorMessage
+        ) {
+            states.append(createState)
+        }
+        return states
+    }
     public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
     public private(set) var models: [RuntimeModelRow] = [] {
         didSet { refreshModelRegistryEntries() }
@@ -3146,6 +3172,45 @@ public final class RuntimeViewModel {
 
     private var normalizedWorkflowRecipeApplyFromStep: String {
         workflowRecipeApplyFromStepDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func syntheticDatasetErrorState(
+        source: String,
+        message: String
+    ) -> RuntimeSyntheticDatasetErrorState? {
+        let detail = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard detail.isEmpty == false else {
+            return nil
+        }
+
+        let lowered = detail.lowercased()
+        if lowered.contains("datadesigner"),
+           lowered.contains("extra") || lowered.contains("install") || lowered.contains("missing")
+        {
+            return .init(
+                source: source,
+                title: "Missing DataDesigner Extra",
+                detail: detail,
+                recoveryHint: "Install the DataDesigner extra, then retry preview or create."
+            )
+        }
+        if lowered.contains("provider") || lowered.contains("upstream") || lowered.contains("http ") {
+            return .init(
+                source: source,
+                title: "Provider Failure",
+                detail: detail,
+                recoveryHint: "Check provider endpoint, model, credentials, and availability before retrying."
+            )
+        }
+        if lowered.contains("column payload") || lowered.contains("json object or file path") {
+            return .init(
+                source: source,
+                title: "Invalid Column Payload",
+                detail: detail,
+                recoveryHint: #"Use a JSON object such as {"prompt":"..."} or a readable source path."#
+            )
+        }
+        return nil
     }
 
     private var syntheticDatasetColumnPayloadIsMalformedJSON: Bool {
