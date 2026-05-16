@@ -3275,6 +3275,19 @@ struct DesktopSyntheticDatasetToolSectionView: View {
             Text("Synthetic Dataset Studio")
                 .font(.title3.weight(.semibold))
 
+            if viewModel.syntheticDatasetPreviewMessage.isEmpty == false {
+                Text(viewModel.syntheticDatasetPreviewMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                    .textSelection(.enabled)
+            }
+            if viewModel.syntheticDatasetPreviewErrorMessage.isEmpty == false {
+                Text(viewModel.syntheticDatasetPreviewErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            }
+
             HStack(alignment: .top, spacing: 14) {
                 MelixSectionCard("Dataset Identity") {
                     VStack(alignment: .leading, spacing: 10) {
@@ -3384,6 +3397,10 @@ struct DesktopSyntheticDatasetToolSectionView: View {
                 generationControlsPanel
             }
 
+            MelixSectionCard("Preview") {
+                previewPanel
+            }
+
             MelixSectionCard("Validation") {
                 if viewModel.syntheticDatasetBaseFormValidationMessages.isEmpty {
                     Text("Ready to configure columns before preview or create.")
@@ -3413,6 +3430,10 @@ struct DesktopSyntheticDatasetToolSectionView: View {
 
     func removeColumn(id: String) {
         viewModel.removeSyntheticDatasetColumn(id: id)
+    }
+
+    func previewDatasetAction() {
+        Task { await viewModel.previewSyntheticDataset() }
     }
 
     private var columnEditorPanel: some View {
@@ -3549,6 +3570,87 @@ struct DesktopSyntheticDatasetToolSectionView: View {
         }
     }
 
+    private var previewPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Button("Preview Dataset", action: previewDatasetAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.syntheticDatasetCanPreview == false)
+                if viewModel.syntheticDatasetPreviewInProgress {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            if let preview = viewModel.syntheticDatasetPreview {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(preview.summaryText)
+                            .font(.headline)
+                        Spacer()
+                        if preview.schemaVersion.isEmpty == false {
+                            Text(preview.schemaVersion)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text([preview.outputKind, preview.outputFormat]
+                        .filter { $0.isEmpty == false }
+                        .joined(separator: " | "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if preview.artifactRows.isEmpty == false {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Artifacts")
+                            .font(.caption.weight(.semibold))
+                        ForEach(preview.artifactRows) { row in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(row.name)
+                                    .font(.caption.weight(.semibold))
+                                Text(row.path)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
+
+                if preview.previewRows.isEmpty {
+                    Text("Preview returned no rows.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Preview Rows")
+                            .font(.caption.weight(.semibold))
+                        ForEach(preview.previewRows) { row in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Row \(row.index)")
+                                    .font(.caption.weight(.semibold))
+                                Text(row.summaryText)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(3)
+                                    .textSelection(.enabled)
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
+                }
+            } else {
+                Text("Run a preview to inspect generated rows before creating a package.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func formField(_ label: String, text: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
@@ -3606,6 +3708,10 @@ struct DesktopSyntheticDatasetToolSectionView: View {
             viewModel.normalizedSyntheticDatasetResumeMode,
             "DataDesigner Telemetry",
             viewModel.syntheticDatasetDataDesignerTelemetryEnabled ? "enabled" : "disabled",
+            "Preview",
+            "Preview Dataset",
+            viewModel.syntheticDatasetPreviewMessage,
+            viewModel.syntheticDatasetPreviewErrorMessage,
             "Validation",
         ]
         if viewModel.syntheticDatasetColumnEditorErrorMessage.isEmpty == false {
@@ -3624,6 +3730,27 @@ struct DesktopSyntheticDatasetToolSectionView: View {
             [$0.field, $0.message]
         })
         values.append(contentsOf: viewModel.syntheticDatasetGenerationControlCommandArguments)
+        if let preview = viewModel.syntheticDatasetPreview {
+            values.append(contentsOf: [
+                preview.schemaVersion,
+                preview.datasetID,
+                preview.datasetName,
+                preview.outputKind,
+                preview.outputFormat,
+                String(preview.sampleCount),
+                String(preview.previewCount),
+            ])
+            values.append(contentsOf: preview.artifactRows.flatMap { [$0.name, $0.path] })
+            if preview.previewRows.isEmpty {
+                values.append("Preview returned no rows.")
+            } else {
+                values.append(contentsOf: preview.previewRows.flatMap { row in
+                    ["Row \(row.index)", row.summaryText]
+                })
+            }
+        } else {
+            values.append("Run a preview to inspect generated rows before creating a package.")
+        }
         if viewModel.syntheticDatasetBaseFormValidationMessages.isEmpty {
             values.append("Ready to configure columns before preview or create.")
         } else {

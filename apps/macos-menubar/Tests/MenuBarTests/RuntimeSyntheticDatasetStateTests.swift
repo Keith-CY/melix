@@ -3,9 +3,64 @@ import SwiftUI
 import Testing
 
 @testable import AppMain
+import MelixCLICore
 
 @Suite("Runtime Synthetic Dataset State", .serialized)
 struct RuntimeSyntheticDatasetStateTests {
+    @Test("synthetic dataset preview decoder maps manifest rows and artifact paths")
+    func syntheticDatasetPreviewDecoderMapsManifestRowsAndArtifactPaths() throws {
+        let preview = try RuntimeSyntheticDatasetPayloadDecoder.decodePreview(Self.syntheticPreviewJSON)
+
+        #expect(preview.schemaVersion == "melix.synthetic_dataset_preview.v1")
+        #expect(preview.datasetID == "synthetic.chat.v1")
+        #expect(preview.datasetName == "Synthetic Chat")
+        #expect(preview.outputKind == "training")
+        #expect(preview.outputFormat == "prompt_completion")
+        #expect(preview.sampleCount == 2)
+        #expect(preview.previewCount == 3)
+        #expect(preview.previewRows.count == 2)
+        #expect(preview.previewRows.first?.fields.map(\.name) == ["completion", "prompt"])
+        #expect(preview.previewRows.first?.fields.first?.id == "completion")
+        #expect(preview.previewRows.first?.summaryText.contains("prompt=What is Melix?") == true)
+        #expect(preview.artifactRows.map(\.name) == [
+            "artifact_path",
+            "config_path",
+            "generated_jsonl_path",
+            "manifest_path",
+        ])
+    }
+
+    @Test("synthetic dataset preview decoder maps fallback value shapes and rejects non objects")
+    func syntheticDatasetPreviewDecoderMapsFallbackValueShapesAndRejectsNonObjects() throws {
+        let preview = try RuntimeSyntheticDatasetPayloadDecoder.decodePreview(Self.syntheticPreviewVariantJSON)
+
+        #expect(preview.datasetID == "123")
+        #expect(preview.datasetName == "456")
+        #expect(preview.outputKind == "true")
+        #expect(preview.outputFormat == "1.5")
+        #expect(preview.rowCount == 7)
+        #expect(preview.sampleCount == 2)
+        #expect(preview.previewOnly)
+        #expect(preview.artifactRows.map(\.name) == ["output_path"])
+
+        let row = try #require(preview.previewRows.first)
+        #expect(row.fields.first { $0.name == "nullable" }?.valueText == "null")
+        #expect(row.fields.first { $0.name == "flag" }?.valueText == "true")
+        #expect(row.fields.first { $0.name == "count" }?.valueText == "2")
+        #expect(row.fields.first { $0.name == "score" }?.valueText == "1.5")
+        #expect(row.fields.first { $0.name == "nested" }?.valueText == #"{"a":1,"b":2}"#)
+        #expect(row.fields.first { $0.name == "items" }?.valueText == #"["b","a"]"#)
+
+        let emptyPreview = try RuntimeSyntheticDatasetPayloadDecoder.decodePreview(Self.syntheticEmptyPreviewJSON)
+        #expect(emptyPreview.sampleCount == 0)
+        #expect(emptyPreview.previewOnly == false)
+        #expect(emptyPreview.previewRows.isEmpty)
+
+        #expect(throws: DecodingError.self) {
+            _ = try RuntimeSyntheticDatasetPayloadDecoder.decodePreview("[]")
+        }
+    }
+
     @Test("synthetic dataset identity output provider model form validates required inputs")
     @MainActor
     func syntheticDatasetIdentityOutputProviderModelFormValidatesRequiredInputs() throws {
@@ -229,6 +284,42 @@ struct RuntimeSyntheticDatasetStateTests {
         ])
     }
 
+    @Test("runtime view model previews synthetic dataset through cli runner")
+    @MainActor
+    func runtimeViewModelPreviewsSyntheticDatasetThroughCLIRunner() async throws {
+        let runner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        let expectedCommand = Self.syntheticPreviewCommand()
+        await runner.configureOutput(Self.syntheticPreviewJSON, for: expectedCommand)
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        configureValidSyntheticDatasetPreviewRequest(viewModel)
+
+        #expect(viewModel.syntheticDatasetCanPreview)
+        await viewModel.previewSyntheticDataset()
+
+        #expect(viewModel.syntheticDatasetPreview?.datasetID == "synthetic.chat.v1")
+        #expect(viewModel.syntheticDatasetPreview?.previewRows.count == 2)
+        #expect(viewModel.syntheticDatasetPreviewMessage == "Previewed synthetic.chat.v1 with 2 rows.")
+        #expect(viewModel.syntheticDatasetPreviewErrorMessage.isEmpty)
+        #expect(viewModel.syntheticDatasetPreviewInProgress == false)
+        #expect(await runner.snapshotRecordedCommands() == [expectedCommand])
+
+        let invalidViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        await invalidViewModel.previewSyntheticDataset()
+        #expect(invalidViewModel.syntheticDatasetPreviewErrorMessage == "Resolve synthetic dataset validation errors before preview.")
+
+        let noRunnerViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        configureValidSyntheticDatasetPreviewRequest(noRunnerViewModel)
+        await noRunnerViewModel.previewSyntheticDataset()
+        #expect(noRunnerViewModel.syntheticDatasetPreviewErrorMessage == "Synthetic Dataset CLI runner is unavailable.")
+
+        let malformedRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await malformedRunner.configureOutput("not-json\n", for: expectedCommand)
+        let malformedViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: malformedRunner)
+        configureValidSyntheticDatasetPreviewRequest(malformedViewModel)
+        await malformedViewModel.previewSyntheticDataset()
+        #expect(malformedViewModel.syntheticDatasetPreviewErrorMessage == "dataset.synthetic.preview returned malformed JSON.")
+    }
+
     @Test("synthetic dataset tool section renders identity output provider model form")
     @MainActor
     func syntheticDatasetToolSectionRendersIdentityOutputProviderModelForm() throws {
@@ -354,6 +445,49 @@ struct RuntimeSyntheticDatasetStateTests {
         #expect(invalidSummary.contains("Resume Choose never, if_possible, or always."))
     }
 
+    @Test("synthetic dataset tool section renders and drives preview rows")
+    @MainActor
+    func syntheticDatasetToolSectionRendersAndDrivesPreviewRows() async throws {
+        let runner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await runner.configureOutput(Self.syntheticPreviewJSON, for: Self.syntheticPreviewCommand())
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        configureValidSyntheticDatasetPreviewRequest(viewModel)
+
+        let section = DesktopSyntheticDatasetToolSectionView(viewModel: viewModel)
+        _ = hostSyntheticDatasetView(section)
+        section.previewDatasetAction()
+
+        try await waitForSyntheticDatasetCondition("synthetic preview action completes") {
+            viewModel.syntheticDatasetPreview?.previewRows.count == 2
+        }
+
+        let renderedSection = DesktopSyntheticDatasetToolSectionView(viewModel: viewModel)
+        let hosted = hostSyntheticDatasetView(renderedSection)
+        let summary = renderedSection.accessibilitySummary
+
+        #expect(hosted.subviews.isEmpty == false)
+        #expect(summary.contains("Preview"))
+        #expect(summary.contains("Preview Dataset"))
+        #expect(summary.contains("Previewed synthetic.chat.v1 with 2 rows."))
+        #expect(summary.contains("What is Melix?"))
+        #expect(summary.contains("Local-first runtime."))
+        #expect(summary.contains("/tmp/synthetic-chat/data_designer/generated.jsonl"))
+
+        let emptyPreviewViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        emptyPreviewViewModel.applySyntheticDatasetPreview(
+            try RuntimeSyntheticDatasetPayloadDecoder.decodePreview(Self.syntheticEmptyPreviewJSON)
+        )
+        let emptySummary = DesktopSyntheticDatasetToolSectionView(viewModel: emptyPreviewViewModel).accessibilitySummary
+        #expect(emptySummary.contains("Preview returned no rows."))
+
+        let errorViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        configureValidSyntheticDatasetPreviewRequest(errorViewModel)
+        await errorViewModel.previewSyntheticDataset()
+        let errorSection = DesktopSyntheticDatasetToolSectionView(viewModel: errorViewModel)
+        _ = hostSyntheticDatasetView(errorSection)
+        #expect(errorSection.accessibilitySummary.contains("Synthetic Dataset CLI runner is unavailable."))
+    }
+
     @Test("synthetic dataset navigation has icon category and session persistence mapping")
     func syntheticDatasetNavigationHasIconCategoryAndSessionPersistenceMapping() throws {
         #expect(DesktopToolSection.syntheticDatasets.symbolName == "sparkles.rectangle.stack")
@@ -372,6 +506,99 @@ struct RuntimeSyntheticDatasetStateTests {
         #expect(decoded.selectedToolSection == .syntheticDatasets)
         #expect(payload["selected_tool_section"] as? String == "syntheticDatasets")
     }
+
+    private static func syntheticPreviewCommand() -> MelixCLICommand {
+        .datasetSynthetic(.init(
+            mode: "preview",
+            datasetID: "synthetic.chat.v1",
+            datasetName: "Synthetic Chat",
+            numRecords: 4,
+            outputKind: "training",
+            outputFormat: "prompt_completion",
+            outputDir: "/tmp/synthetic-chat",
+            providerEndpoint: "http://127.0.0.1:11434/v1",
+            providerName: "melix",
+            providerType: "openai",
+            modelAlias: "generator",
+            model: "melix-dev-text",
+            columns: [
+                #"prompt:llm_text:{"prompt":"Write a concise answer."}"#,
+            ],
+            seedSourceKind: "local_jsonl",
+            seedSourcePath: "/tmp/seeds.jsonl",
+            validationRatio: "0.2",
+            resume: "if_possible",
+            enableDataDesignerTelemetry: true,
+            json: true
+        ))
+    }
+
+    private static let syntheticPreviewJSON = #"""
+    {
+      "schema_version": "melix.synthetic_dataset_preview.v1",
+      "dataset_id": "synthetic.chat.v1",
+      "dataset_name": "Synthetic Chat",
+      "output_kind": "training",
+      "output_format": "prompt_completion",
+      "row_count": 2,
+      "sample_count": 2,
+      "preview_count": 3,
+      "preview_only": true,
+      "manifest_path": "/tmp/synthetic-chat/synthetic_dataset.preview.json",
+      "preview_samples": [
+        {
+          "prompt": "What is Melix?",
+          "completion": "Local-first runtime."
+        },
+        {
+          "prompt": "Summarize Apple Silicon serving",
+          "completion": "Keep memory fit visible before dispatch."
+        }
+      ],
+      "datadesigner": {
+        "config_path": "/tmp/synthetic-chat/data_designer/config.json",
+        "artifact_path": "/tmp/synthetic-chat/data_designer/artifacts",
+        "generated_jsonl_path": "/tmp/synthetic-chat/data_designer/generated.jsonl"
+      }
+    }
+    """#
+
+    private static let syntheticPreviewVariantJSON = #"""
+    {
+      "schema_version": "melix.synthetic_dataset_preview.v1",
+      "dataset_id": 123,
+      "dataset_name": 456,
+      "output_kind": true,
+      "output_format": 1.5,
+      "row_count": "7",
+      "sample_count": "2",
+      "preview_count": "1",
+      "preview_only": "yes",
+      "output_path": "/tmp/synthetic-chat/data_designer/generated.jsonl",
+      "preview_samples": [
+        {
+          "nullable": null,
+          "flag": true,
+          "count": 2,
+          "score": 1.5,
+          "nested": {"b": 2, "a": 1},
+          "items": ["b", "a"]
+        }
+      ]
+    }
+    """#
+
+    private static let syntheticEmptyPreviewJSON = #"""
+    {
+      "schema_version": "melix.synthetic_dataset_preview.v1",
+      "dataset_id": "synthetic.empty.v1",
+      "dataset_name": "Synthetic Empty",
+      "output_kind": "training",
+      "output_format": "prompt_completion",
+      "preview_only": 0,
+      "preview_samples": []
+    }
+    """#
 }
 
 @MainActor
@@ -380,4 +607,44 @@ private func hostSyntheticDatasetView<Content: View>(_ rootView: Content) -> NSV
     hostingView.frame = CGRect(origin: .zero, size: CGSize(width: 960, height: 720))
     hostingView.layoutSubtreeIfNeeded()
     return hostingView
+}
+
+@MainActor
+private func configureValidSyntheticDatasetPreviewRequest(_ viewModel: RuntimeViewModel) {
+    viewModel.updateSyntheticDatasetIDDraft(" synthetic.chat.v1 ")
+    viewModel.updateSyntheticDatasetNameDraft(" Synthetic Chat ")
+    viewModel.updateSyntheticDatasetNumRecordsDraft("4")
+    viewModel.updateSyntheticDatasetOutputKindDraft("training")
+    viewModel.updateSyntheticDatasetOutputFormatDraft("prompt_completion")
+    viewModel.updateSyntheticDatasetOutputDirDraft(" /tmp/synthetic-chat ")
+    viewModel.updateSyntheticDatasetProviderEndpointDraft(" http://127.0.0.1:11434/v1 ")
+    viewModel.updateSyntheticDatasetProviderNameDraft("melix")
+    viewModel.updateSyntheticDatasetProviderTypeDraft("openai")
+    viewModel.updateSyntheticDatasetModelAliasDraft("generator")
+    viewModel.updateSyntheticDatasetModelDraft(" melix-dev-text ")
+    viewModel.updateSyntheticDatasetColumnNameDraft("prompt")
+    viewModel.updateSyntheticDatasetColumnTypeDraft("llm_text")
+    viewModel.updateSyntheticDatasetColumnPayloadDraft(#"{"prompt":"Write a concise answer."}"#)
+    viewModel.addSyntheticDatasetColumnDraft()
+    viewModel.updateSyntheticDatasetSeedSourceKindDraft("local_jsonl")
+    viewModel.updateSyntheticDatasetSeedSourcePathDraft("/tmp/seeds.jsonl")
+    viewModel.updateSyntheticDatasetValidationRatioDraft("0.2")
+    viewModel.updateSyntheticDatasetResumeModeDraft("if_possible")
+    viewModel.updateSyntheticDatasetDataDesignerTelemetryEnabled(true)
+}
+
+@MainActor
+private func waitForSyntheticDatasetCondition(
+    _ description: String,
+    timeoutNanoseconds: UInt64 = 2_000_000_000,
+    condition: @escaping @MainActor () -> Bool
+) async throws {
+    let start = ContinuousClock.now
+    while condition() == false {
+        if start.duration(to: .now) > .nanoseconds(Int64(timeoutNanoseconds)) {
+            Issue.record("Timed out waiting for \(description)")
+            return
+        }
+        try await Task.sleep(nanoseconds: 10_000_000)
+    }
 }

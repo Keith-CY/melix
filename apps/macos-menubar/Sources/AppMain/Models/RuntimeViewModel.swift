@@ -1978,6 +1978,10 @@ public final class RuntimeViewModel {
     public private(set) var syntheticDatasetValidationRatioDraft = ""
     public private(set) var syntheticDatasetResumeModeDraft = "never"
     public private(set) var syntheticDatasetDataDesignerTelemetryEnabled = false
+    public private(set) var syntheticDatasetPreview: RuntimeSyntheticDatasetPreviewState?
+    public private(set) var syntheticDatasetPreviewInProgress = false
+    public private(set) var syntheticDatasetPreviewMessage = ""
+    public private(set) var syntheticDatasetPreviewErrorMessage = ""
     public private(set) var batchRunModelListText = ""
     public private(set) var batchRunConfigText = ""
     public private(set) var batchRunReports: [RuntimeBatchRunReportState] = []
@@ -2239,6 +2243,17 @@ public final class RuntimeViewModel {
             arguments.append("--enable-datadesigner-telemetry")
         }
         return arguments
+    }
+    public var syntheticDatasetPreviewValidationMessages: [RuntimeSyntheticDatasetValidationMessageState] {
+        var messages = syntheticDatasetBaseFormValidationMessages
+        if syntheticDatasetColumns.isEmpty {
+            messages.append(.init(field: "Columns", message: "Add at least one synthetic column."))
+        }
+        messages.append(contentsOf: syntheticDatasetGenerationControlValidationMessages)
+        return messages
+    }
+    public var syntheticDatasetCanPreview: Bool {
+        syntheticDatasetPreviewValidationMessages.isEmpty && syntheticDatasetPreviewInProgress == false
     }
     public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
     public private(set) var models: [RuntimeModelRow] = [] {
@@ -3140,6 +3155,30 @@ public final class RuntimeViewModel {
             ]
         }
         return []
+    }
+
+    private func syntheticDatasetRequestOptions(mode: String) -> DatasetSyntheticOptions {
+        DatasetSyntheticOptions(
+            mode: mode,
+            datasetID: normalizedSyntheticDatasetID,
+            datasetName: normalizedSyntheticDatasetName,
+            numRecords: normalizedSyntheticDatasetNumRecords ?? 0,
+            outputKind: normalizedSyntheticDatasetOutputKind,
+            outputFormat: normalizedSyntheticDatasetOutputFormat,
+            outputDir: normalizedSyntheticDatasetOutputDir,
+            providerEndpoint: normalizedSyntheticDatasetProviderEndpoint,
+            providerName: normalizedSyntheticDatasetProviderName,
+            providerType: normalizedSyntheticDatasetProviderType,
+            modelAlias: normalizedSyntheticDatasetModelAlias,
+            model: normalizedSyntheticDatasetModel,
+            columns: syntheticDatasetColumnCommandArguments,
+            seedSourceKind: normalizedSyntheticDatasetSeedSourceKind,
+            seedSourcePath: normalizedSyntheticDatasetSeedSourcePath,
+            validationRatio: normalizedSyntheticDatasetValidationRatio,
+            resume: normalizedSyntheticDatasetResumeMode.isEmpty ? "never" : normalizedSyntheticDatasetResumeMode,
+            enableDataDesignerTelemetry: syntheticDatasetDataDesignerTelemetryEnabled,
+            json: true
+        )
     }
 
     private func reloadHuggingFaceTokenHint() {
@@ -4318,6 +4357,44 @@ public final class RuntimeViewModel {
 
     public func updateSyntheticDatasetDataDesignerTelemetryEnabled(_ enabled: Bool) {
         syntheticDatasetDataDesignerTelemetryEnabled = enabled
+        notifyStateChanged()
+    }
+
+    public func previewSyntheticDataset() async {
+        guard syntheticDatasetPreviewValidationMessages.isEmpty else {
+            failSyntheticDatasetPreview("Resolve synthetic dataset validation errors before preview.")
+            return
+        }
+        guard let commandWorkflowRunner else {
+            failSyntheticDatasetPreview("Synthetic Dataset CLI runner is unavailable.")
+            return
+        }
+
+        syntheticDatasetPreviewInProgress = true
+        syntheticDatasetPreviewMessage = ""
+        syntheticDatasetPreviewErrorMessage = ""
+        notifyStateChanged()
+
+        do {
+            let preview = try await commandWorkflowRunner.previewSyntheticDataset(
+                options: syntheticDatasetRequestOptions(mode: "preview")
+            )
+            syntheticDatasetPreviewInProgress = false
+            let label = preview.datasetID.isEmpty ? preview.datasetName : preview.datasetID
+            let rowLabel = preview.sampleCount == 1 ? "row" : "rows"
+            syntheticDatasetPreviewMessage = "Previewed \(label) with \(preview.sampleCount) \(rowLabel)."
+            syntheticDatasetPreviewErrorMessage = ""
+            clearCLIWorkflowFailure()
+            applySyntheticDatasetPreview(preview)
+        } catch {
+            syntheticDatasetPreviewInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            failSyntheticDatasetPreview(workflowErrorMessage(error))
+        }
+    }
+
+    public func applySyntheticDatasetPreview(_ preview: RuntimeSyntheticDatasetPreviewState) {
+        syntheticDatasetPreview = preview
         notifyStateChanged()
     }
 
@@ -12746,6 +12823,14 @@ public final class RuntimeViewModel {
         workflowRecipeApplyInProgress = false
         workflowRecipeApplyMessage = ""
         workflowRecipeApplyErrorMessage = message
+        recordLocalError(message)
+        notifyStateChanged()
+    }
+
+    private func failSyntheticDatasetPreview(_ message: String) {
+        syntheticDatasetPreviewInProgress = false
+        syntheticDatasetPreviewMessage = ""
+        syntheticDatasetPreviewErrorMessage = message
         recordLocalError(message)
         notifyStateChanged()
     }

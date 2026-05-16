@@ -312,6 +312,12 @@ extension MelixCLIWorkflowRunning {
         let output = try await run(command)
         return try decodeWorkflowRecipeApplyResult(output: output, command: command, surface: surface)
     }
+
+    func previewSyntheticDataset(options: DatasetSyntheticOptions) async throws -> RuntimeSyntheticDatasetPreviewState {
+        let command = MelixCLICommand.datasetSynthetic(options)
+        let output = try await run(command)
+        return try decodeSyntheticDatasetPreview(output: output, command: command, surface: surface)
+    }
 }
 
 func decodeMelixCLIJSON<Value: Decodable>(
@@ -508,6 +514,22 @@ private func decodeWorkflowRecipeApplyResult(
 ) throws -> RuntimeWorkflowRecipeApplyResultState {
     do {
         return try RuntimeWorkflowRecipesPayloadDecoder.decodeApplyResult(output)
+    } catch {
+        throw MelixCLIWorkflowError.invalidJSON(
+            commandID: command.workflowCommandID,
+            surface: surface,
+            output: output
+        )
+    }
+}
+
+private func decodeSyntheticDatasetPreview(
+    output: String,
+    command: MelixCLICommand,
+    surface: MelixCLIWorkflowSurface
+) throws -> RuntimeSyntheticDatasetPreviewState {
+    do {
+        return try RuntimeSyntheticDatasetPayloadDecoder.decodePreview(output)
     } catch {
         throw MelixCLIWorkflowError.invalidJSON(
             commandID: command.workflowCommandID,
