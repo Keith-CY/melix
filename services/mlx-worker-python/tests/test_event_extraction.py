@@ -718,6 +718,7 @@ def test_evaluate_event_extraction_semantic_judge_matches_event_and_values(tmp_p
 def test_semantic_field_values_reuses_cached_group_actor_aliases(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    event_extraction_module._cached_semantic_actor_field_values.cache_clear()
     event_extraction_module._expanded_semantic_actor_values.cache_clear()
     event_extraction_module._is_group_actor_alias.cache_clear()
     calls: list[str] = []
@@ -734,6 +735,7 @@ def test_semantic_field_values_reuses_cached_group_actor_aliases(
         {"actor": [" 我们 ", "我们", "我 们", "speaker_1", "speaker_1", "咱们", "speaker_2", "双方"]},
     ) == ["speaker_1", "speaker_2"]
     assert calls == ["我 们"]
+    event_extraction_module._cached_semantic_actor_field_values.cache_clear()
     event_extraction_module._expanded_semantic_actor_values.cache_clear()
     event_extraction_module._is_group_actor_alias.cache_clear()
 
@@ -741,6 +743,7 @@ def test_semantic_field_values_reuses_cached_group_actor_aliases(
 def test_semantic_field_values_caches_repeated_group_actor_expansion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    event_extraction_module._cached_semantic_actor_field_values.cache_clear()
     event_extraction_module._expanded_semantic_actor_values.cache_clear()
     event_extraction_module._is_group_actor_alias.cache_clear()
     calls: list[str] = []
@@ -756,6 +759,7 @@ def test_semantic_field_values_caches_repeated_group_actor_expansion(
     assert event_extraction_module._semantic_field_values("actor", event) == ["speaker_1", "speaker_2"]
     assert event_extraction_module._semantic_field_values("actor", event) == ["speaker_1", "speaker_2"]
     assert calls == ["我 们"]
+    event_extraction_module._cached_semantic_actor_field_values.cache_clear()
     event_extraction_module._expanded_semantic_actor_values.cache_clear()
     event_extraction_module._is_group_actor_alias.cache_clear()
 
@@ -774,6 +778,11 @@ def test_semantic_field_values_normalizes_and_deduplicates_in_one_pass(monkeypat
         {"action": [" 见面 ", "", "见面", "吃饭"]},
     ) == ["见面", "吃饭"]
     assert event_extraction_module._semantic_field_values("time", {"time": None}) == []
+    assert event_extraction_module._semantic_field_values("actor", {"actor": None}) == []
+    with pytest.raises(ValueError):
+        event_extraction_module._semantic_field_values("actor", {"actor": "我们"})
+    with pytest.raises(ValueError):
+        event_extraction_module._semantic_field_values("actor", {"actor": ["我们", 1]})
     with pytest.raises(ValueError):
         event_extraction_module._semantic_field_values("time", {"time": "明天"})
     with pytest.raises(ValueError):
