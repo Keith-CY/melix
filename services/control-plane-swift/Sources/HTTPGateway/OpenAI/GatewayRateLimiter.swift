@@ -39,7 +39,6 @@ public actor GatewayRateLimiter {
         guard activeWindow.count < limit else {
             let elapsed = currentTime.timeIntervalSince(activeWindow.startedAt)
             let retryAfter = UInt32(max(1, ceil(60 - elapsed)))
-            windows[normalizedIdentity] = activeWindow
             return GatewayRateLimitDecision(
                 allowed: false,
                 identity: normalizedIdentity,
@@ -63,6 +62,9 @@ public actor GatewayRateLimiter {
 
     private static func normalizedIdentity(_ identity: String) -> String {
         let trimmed = identity.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Empty credential identity (unauthenticated local clients) share a single
+        // "local-trust" rate-limit bucket. This is intentional for the local-operator
+        // trust model where all unauthenticated requests originate from the same host.
         return trimmed.isEmpty ? "local-trust" : trimmed
     }
 }
