@@ -992,16 +992,28 @@ struct DesktopMemoryFitReceiptRowsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(rows) { row in
-                Text(Self.displayText(for: row))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(Self.displayText(for: row))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                    ForEach(row.detailRows, id: \.self) { detail in
+                        Text(detail)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(2)
+                    }
+                }
             }
         }
     }
 
     static func displayText(for row: RuntimeMemoryFitReceiptRow) -> String {
         "Fit \(row.title): \(row.statusText) • \(row.reasonText)"
+    }
+
+    static func displayTexts(for row: RuntimeMemoryFitReceiptRow) -> [String] {
+        [displayText(for: row)] + row.detailRows
     }
 }
 
@@ -1831,6 +1843,9 @@ func desktopModelInfoSummaryContent(
     }
     for row in info.memoryFitReceiptRows {
         detailLines.append("memory fit \(row.title.lowercased()): \(row.statusText) • \(row.reasonText)")
+        for detail in row.detailRows {
+            detailLines.append("memory fit \(row.title.lowercased()) detail: \(detail)")
+        }
     }
     detailLines.append("pin on load: \(info.pinOnLoad ? "yes" : "no")")
     if info.ttlSeconds > 0 {

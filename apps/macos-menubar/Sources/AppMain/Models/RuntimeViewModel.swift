@@ -48,19 +48,22 @@ public struct RuntimeMemoryFitReceiptRow: Identifiable, Equatable, Sendable {
     public let status: String
     public let statusText: String
     public let reasonText: String
+    public let detailRows: [String]
 
     public init(
         target: String,
         title: String,
         status: String,
         statusText: String,
-        reasonText: String
+        reasonText: String,
+        detailRows: [String] = []
     ) {
         self.target = target
         self.title = title
         self.status = status
         self.statusText = statusText
         self.reasonText = reasonText
+        self.detailRows = detailRows
     }
 
     public var id: String { target }
@@ -16678,8 +16681,12 @@ private func runtimeModelMemoryFitReceiptRows(
             target: target.key,
             field: "reason"
         )
+        let detailRows = runtimeMemoryFitReceiptDetailRows(
+            in: model.settings.ext,
+            target: target.key
+        )
         let normalizedStatus = runtimeMemoryFitStatus(status)
-        guard status.isEmpty == false || reason.isEmpty == false else {
+        guard status.isEmpty == false || reason.isEmpty == false || detailRows.isEmpty == false else {
             return nil
         }
         return RuntimeMemoryFitReceiptRow(
@@ -16687,9 +16694,111 @@ private func runtimeModelMemoryFitReceiptRows(
             title: target.title,
             status: normalizedStatus,
             statusText: runtimeMemoryFitStatusText(normalizedStatus),
-            reasonText: reason.isEmpty ? "No fit reason reported." : reason
+            reasonText: reason.isEmpty ? "No fit reason reported." : reason,
+            detailRows: detailRows
         )
     }
+}
+
+private func runtimeMemoryFitReceiptDetailRows(
+    in values: [String: String],
+    target: String
+) -> [String] {
+    var rows: [String] = []
+    if let activeMemoryBytes = runtimeMemoryFitReceiptBytesValue(
+        in: values,
+        target: target,
+        fields: ["estimated_active_memory_bytes", "active_memory_bytes"]
+    ) {
+        rows.append("active memory \(runtimeMemoryFitBytesText(activeMemoryBytes))")
+    }
+
+    let estimatedDiskBytes = runtimeMemoryFitReceiptBytesValue(
+        in: values,
+        target: target,
+        fields: ["estimated_disk_usage_bytes", "disk_usage_bytes"]
+    )
+    let availableDiskBytes = runtimeMemoryFitReceiptBytesValue(
+        in: values,
+        target: target,
+        fields: ["available_disk_bytes"]
+    )
+    let diskFitStatus = runtimeMemoryFitReceiptValue(
+        in: values,
+        target: target,
+        field: "disk_fit_status"
+    )
+    let diskParts = [
+        estimatedDiskBytes.map { "\(runtimeMemoryFitBytesText($0)) required" },
+        availableDiskBytes.map { "\(runtimeMemoryFitBytesText($0)) available" },
+        diskFitStatus.isEmpty ? nil : runtimeMemoryFitStatusText(runtimeMemoryFitStatus(diskFitStatus)),
+    ].compactMap { $0 }
+    if diskParts.isEmpty == false {
+        rows.append("disk \(diskParts.joined(separator: " • "))")
+    }
+
+    if let unifiedMemoryBytes = runtimeMemoryFitReceiptBytesValue(
+        in: values,
+        target: target,
+        fields: ["total_unified_memory_bytes", "unified_memory_bytes"]
+    ) {
+        rows.append("unified memory \(runtimeMemoryFitBytesText(unifiedMemoryBytes))")
+    }
+
+    if let thresholdFraction = runtimeMemoryFitReceiptDoubleValue(
+        in: values,
+        target: target,
+        fields: ["safety_threshold_fraction", "threshold_fraction"]
+    ) {
+        rows.append("threshold \(runtimeMemoryFitThresholdText(thresholdFraction))")
+    }
+
+    let unknownFields = runtimeMemoryFitReceiptListValue(
+        in: values,
+        target: target,
+        field: "unknown_fields"
+    )
+    if unknownFields.isEmpty == false {
+        rows.append("unknown fields \(unknownFields.joined(separator: ", "))")
+    }
+    return rows
+}
+
+private func runtimeMemoryFitReceiptBytesValue(
+    in values: [String: String],
+    target: String,
+    fields: [String]
+) -> UInt64? {
+    runtimeMemoryFitReceiptFirstValue(in: values, target: target, fields: fields).flatMap(UInt64.init)
+}
+
+private func runtimeMemoryFitReceiptDoubleValue(
+    in values: [String: String],
+    target: String,
+    fields: [String]
+) -> Double? {
+    runtimeMemoryFitReceiptFirstValue(in: values, target: target, fields: fields).flatMap(Double.init)
+}
+
+private func runtimeMemoryFitReceiptListValue(
+    in values: [String: String],
+    target: String,
+    field: String
+) -> [String] {
+    runtimeMemoryFitReceiptValue(in: values, target: target, field: field)
+        .split(whereSeparator: { $0 == "," || $0 == "|" })
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { $0.isEmpty == false }
+}
+
+private func runtimeMemoryFitReceiptFirstValue(
+    in values: [String: String],
+    target: String,
+    fields: [String]
+) -> String? {
+    fields.lazy
+        .map { runtimeMemoryFitReceiptValue(in: values, target: target, field: $0) }
+        .first { $0.isEmpty == false }
 }
 
 private func runtimeMemoryFitReceiptValue(
@@ -16697,10 +16806,13 @@ private func runtimeMemoryFitReceiptValue(
     target: String,
     field: String
 ) -> String {
-    let candidateKeys = [
+    var candidateKeys = [
         "melix.memory_fit.\(target).\(field)",
         "memory_fit_\(target)_\(field)",
     ]
+    if values["memory_fit_target_kind"]?.trimmingCharacters(in: .whitespacesAndNewlines) == target {
+        candidateKeys.append("memory_fit_\(field)")
+    }
     for key in candidateKeys {
         let value = values[key]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if value.isEmpty == false {
@@ -16708,6 +16820,28 @@ private func runtimeMemoryFitReceiptValue(
         }
     }
     return ""
+}
+
+private func runtimeMemoryFitBytesText(_ bytes: UInt64) -> String {
+    let units = ["B", "KB", "MB", "GB", "TB"]
+    var value = Double(bytes)
+    var unitIndex = 0
+    while value >= 1024.0 && unitIndex < units.count - 1 {
+        value /= 1024.0
+        unitIndex += 1
+    }
+    guard unitIndex > 0 else {
+        return "\(bytes) B"
+    }
+    return String(format: "%.2f %@", locale: Locale(identifier: "en_US_POSIX"), value, units[unitIndex])
+}
+
+private func runtimeMemoryFitThresholdText(_ fraction: Double) -> String {
+    let percentage = fraction <= 1 ? fraction * 100 : fraction
+    if percentage.rounded() == percentage {
+        return String(format: "%.0f%%", locale: Locale(identifier: "en_US_POSIX"), percentage)
+    }
+    return String(format: "%.1f%%", locale: Locale(identifier: "en_US_POSIX"), percentage)
 }
 
 private func runtimeMemoryFitStatus(_ status: String) -> String {

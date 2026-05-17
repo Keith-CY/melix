@@ -10968,6 +10968,39 @@ struct RuntimeViewModelTests {
         #expect(noFitRow.memoryFitReceiptRows.isEmpty)
     }
 
+    @Test("model memory fit receipts include resource summaries")
+    @MainActor
+    func modelMemoryFitReceiptsIncludeResourceSummaries() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        var model = makeModelSummary(modelID: "melix-fit-resources", state: .modelWarm)
+        model.settings.ext["melix.memory_fit.benchmark.status"] = "heavy"
+        model.settings.ext["melix.memory_fit.benchmark.reason"] = "Benchmark KV cache may exceed comfort budget."
+        model.settings.ext["melix.memory_fit.benchmark.estimated_active_memory_bytes"] = "34359738368"
+        model.settings.ext["melix.memory_fit.benchmark.estimated_disk_usage_bytes"] = "8589934592"
+        model.settings.ext["melix.memory_fit.benchmark.available_disk_bytes"] = "17179869184"
+        model.settings.ext["melix.memory_fit.benchmark.disk_fit_status"] = "good"
+        model.settings.ext["melix.memory_fit.benchmark.total_unified_memory_bytes"] = "68719476736"
+        model.settings.ext["melix.memory_fit.benchmark.safety_threshold_fraction"] = "0.85"
+        model.settings.ext["melix.memory_fit.benchmark.unknown_fields"] = "kv_cache,dataset_cache"
+        snapshot.models = [model]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let row = try #require(viewModel.primaryModel?.memoryFitReceiptRows.first)
+        #expect(row.title == "Benchmark")
+        #expect(row.detailRows == [
+            "active memory 32.00 GB",
+            "disk 8.00 GB required • 16.00 GB available • Good",
+            "unified memory 64.00 GB",
+            "threshold 85%",
+            "unknown fields kv_cache, dataset_cache",
+        ])
+    }
+
     @Test("model settings drafts map require and unknown disk streaming modes")
     @MainActor
     func modelSettingsDraftsMapRequireAndUnknownDiskStreamingModes() async throws {

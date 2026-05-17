@@ -1795,6 +1795,47 @@ struct DesktopFoundationViewTests {
         #expect(summary.detailLines.contains("memory fit import: Blocked • Import requires 42 GB active memory."))
     }
 
+    @Test("model registry local card renders memory fit resource summaries")
+    @MainActor
+    func modelRegistryLocalCardRendersMemoryFitResourceSummaries() async throws {
+        let row = RuntimeMemoryFitReceiptRow(
+            target: "benchmark",
+            title: "Benchmark",
+            status: "heavy",
+            statusText: "Heavy",
+            reasonText: "Benchmark KV cache may exceed comfort budget.",
+            detailRows: [
+                "active memory 32.00 GB",
+                "disk 8.00 GB required • 16.00 GB available • Good",
+                "unified memory 64.00 GB",
+                "threshold 85%",
+                "unknown fields kv_cache, dataset_cache",
+            ]
+        )
+        let view = hostView(DesktopMemoryFitReceiptRowsView(rows: [row]))
+        let displayTexts = DesktopMemoryFitReceiptRowsView.displayTexts(for: row)
+        let summary = desktopModelInfoSummaryContent(RuntimeModelInfoState(
+            modelID: "melix-local-fit",
+            modelKind: "text",
+            maxContext: 8_192,
+            supportedParsers: ["text"],
+            supportedModalities: ["text"],
+            memoryFitReceiptRows: [row]
+        ))
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(displayTexts == [
+            "Fit Benchmark: Heavy • Benchmark KV cache may exceed comfort budget.",
+            "active memory 32.00 GB",
+            "disk 8.00 GB required • 16.00 GB available • Good",
+            "unified memory 64.00 GB",
+            "threshold 85%",
+            "unknown fields kv_cache, dataset_cache",
+        ])
+        #expect(summary.detailLines.contains("memory fit benchmark detail: active memory 32.00 GB"))
+        #expect(summary.detailLines.contains("memory fit benchmark detail: unknown fields kv_cache, dataset_cache"))
+    }
+
     @Test("model registry covers cache missing managed blocked unknown and gated branches")
     @MainActor
     func modelRegistryCoversCacheMissingManagedBlockedUnknownAndGatedBranches() async throws {
