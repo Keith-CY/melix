@@ -181,22 +181,14 @@ def _validate_remote_video_reference(reference: ParsedVideoReference) -> None:
     authority = reference.authority
     if not authority:
         raise VideoPreprocessError("Remote video URI requires a host.")
-    first_character = authority[0]
-    if (
-        first_character != "["
-        and not first_character.isdigit()
-        and "@" not in authority
-        and ":" not in authority
-        and "l" not in authority
-        and "L" not in authority
-    ):
+    if _is_plain_allowed_remote_authority(authority):
         return
     authority = authority.rsplit("@", 1)[-1].strip()
     if not authority:
         raise VideoPreprocessError("Remote video URI requires a host.")
     first_character = authority[0]
     if first_character != "[" and not first_character.isdigit() and ":" not in authority:
-        if not _authority_may_be_localhost(authority):
+        if _is_plain_allowed_remote_authority(authority):
             return
         authority_lower = authority.lower()
     else:
@@ -216,12 +208,15 @@ def _validate_remote_video_reference(reference: ParsedVideoReference) -> None:
         raise VideoPreprocessError(f"Remote video URI host is not allowed: {host}.")
 
 
-def _authority_may_be_localhost(authority: str) -> bool:
+def _is_plain_allowed_remote_authority(authority: str) -> bool:
+    first_character = authority[0]
+    if first_character == "[" or first_character.isdigit() or "@" in authority or ":" in authority:
+        return False
     if len(authority) < len("localhost"):
-        return False
-    if authority[0] not in {"l", "L", "."} and ".l" not in authority and ".L" not in authority:
-        return False
-    return _authority_mentions_localhost(authority.lower())
+        return True
+    if authority[-1] not in {"t", "T"}:
+        return True
+    return not _authority_mentions_localhost(authority.lower())
 
 
 def _authority_mentions_localhost(authority: str) -> bool:

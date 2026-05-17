@@ -99,6 +99,18 @@ def test_prepare_video_input_accepts_uri_and_infers_format_from_reference() -> N
     assert len(prepared.sha256_hex) == 64
 
 
+def test_prepare_video_input_accepts_short_public_remote_authority_fast_path() -> None:
+    part = common_pb2.MessagePart(
+        video_uri="https://ex.co/media/demo.mov",
+        media=common_pb2.MediaMetadata(format="mov"),
+    )
+
+    prepared = prepare_video_input(part)
+
+    assert prepared.reference == "https://ex.co/media/demo.mov"
+    assert prepared.filename == "demo.mov"
+
+
 def test_prepare_video_input_accepts_local_uri_and_mime_type_resolution() -> None:
     part = common_pb2.MessagePart(
         video_uri="/tmp/local-demo",
