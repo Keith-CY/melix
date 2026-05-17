@@ -36,3 +36,19 @@ by the probe and the registry entry provides focused `test_command`,
 - Changed-scope coverage for touched files remains at least 95%.
 - Registered probe shows stable or improved `build_scope_report_ms_mean` and no
   regression in registry load metrics against `origin/main`.
+
+## Follow-up: Sub-ms Probe Tolerance
+
+The 2026-05-17 PR-scoped performance rerun after merging the latest `origin/main`
+reported direct regressions for `changed-scope-coverage-empty-path-short-circuit`
+and `dataset-registry-preview-limit-short-circuit` even though their structural
+metrics stayed stable. Both elapsed deltas were below `0.05ms`, so the registry
+now gives those two synthetic sub-ms elapsed metrics an explicit `warn_abs:
+0.05` while keeping their functional metrics strict:
+
+- `source_read_calls_mean` remains `warn_pct: 0.0` for changed-scope coverage.
+- `peak_bytes_mean` remains `warn_pct: 5.0` for dataset preview.
+
+The intent is to keep direct gates actionable: real path reads, allocation
+growth, or larger elapsed regressions still block, while timer jitter below the
+smallest practical local optimization unit does not.

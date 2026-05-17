@@ -2400,6 +2400,20 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
     assert release_gate_metrics["endswith_checks_mean"]["warn_pct"] == 0.0
     assert release_gate_metrics["elapsed_ms_mean"]["direction"] == "informational"
 
+    changed_scope_metrics = {
+        metric["key"]: metric
+        for metric in by_id["changed-scope-coverage-empty-path-short-circuit"]["metrics"]
+    }
+    assert changed_scope_metrics["elapsed_ms_mean"]["warn_abs"] == 0.05
+    assert changed_scope_metrics["source_read_calls_mean"]["warn_pct"] == 0.0
+
+    dataset_preview_metrics = {
+        metric["key"]: metric
+        for metric in by_id["dataset-registry-preview-limit-short-circuit"]["metrics"]
+    }
+    assert dataset_preview_metrics["elapsed_ms_mean"]["warn_abs"] == 0.05
+    assert dataset_preview_metrics["peak_bytes_mean"]["warn_pct"] == 5.0
+
 
 def test_scope_report_selects_probe_policy_overhead_probe() -> None:
     scope = build_scope_report(
