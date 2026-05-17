@@ -1691,7 +1691,7 @@ def test_multimodal_preprocessing_uri_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["iteration_count"] == 3.0
     assert metrics["sample_count"] == 1.0
-    assert metrics["urlparse_calls_mean"] == 3.0
+    assert metrics["urlparse_calls_mean"] == 0.0
     assert metrics["read_bytes_calls_mean"] == 3.0
     assert metrics["image_parts_per_iteration"] == 2.0
     assert metrics["elapsed_ms_mean"] >= 0
@@ -1705,7 +1705,7 @@ def test_multimodal_image_uri_parse_probe_script_emits_metrics(capsys: pytest.Ca
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["sample_count"] == 5.0
     assert metrics["prepared_image_count"] == 640.0
-    assert metrics["urlparse_calls_mean"] == 320.0
+    assert metrics["urlparse_calls_mean"] == 0.0
     assert metrics["unquote_calls_mean"] == 0.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0

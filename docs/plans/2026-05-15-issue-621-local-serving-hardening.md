@@ -89,6 +89,10 @@ Post-merge `origin/main` focused results:
   `mcp.refused_tool_count=1`, and `mcp.tool_injection_success_rate=1`.
 - Phase 5 metrics smoke: passed with public liveness and authenticated health
   diagnostics metrics recorded.
+- PR-scoped performance follow-up: local unescaped `file://` image URI
+  preprocessing now avoids generic URL parsing; the
+  `multimodal-preprocessing-local-uri-parse-elision` probe reports
+  `urlparse_calls_mean == 0.0` while preserving duplicate local read caching.
 
 Code-review follow-up results:
 

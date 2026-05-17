@@ -15,6 +15,7 @@ from worker.runtime.video_preprocessing import PreparedVideoInput, prepare_video
 
 
 _LOCAL_IMAGE_PARSE = ParseResult("", "", "", "", "", "")
+_LOCAL_FILE_IMAGE_PARSE = ParseResult("file", "", "", "", "", "")
 
 
 class MultimodalPreprocessError(ValueError):
@@ -220,6 +221,17 @@ def _parse_image_reference(uri: str) -> ParsedImageReference:
             raw=uri,
             parsed=_LOCAL_IMAGE_PARSE,
             decoded_path=uri,
+            path=path,
+            filename=path.name,
+            format=path.suffix.lstrip("."),
+        )
+    if uri.startswith("file:///") and "%" not in uri:
+        decoded_path = uri[7:]
+        path = Path(decoded_path)
+        return ParsedImageReference(
+            raw=uri,
+            parsed=_LOCAL_FILE_IMAGE_PARSE,
+            decoded_path=decoded_path,
             path=path,
             filename=path.name,
             format=path.suffix.lstrip("."),
