@@ -1736,6 +1736,13 @@ public struct RuntimeAdapterCapabilityReceiptState: Equatable, Sendable {
         quantizedBaseSupported == false ? "Unsupported quantized base" : supportText(quantizedBaseSupported)
     }
 
+    public var fusedActivationUnavailableText: String {
+        let reason = unsupportedReason.isEmpty
+            ? "non_mergeable_adapter"
+            : unsupportedReason
+        return "Fused activation is disabled for \(adapterFamilyText): \(reason). Use Adapter-backed Runtime instead."
+    }
+
     private func supportText(_ value: Bool?) -> String {
         value.map { $0 ? "Supported" : "Unsupported" } ?? ""
     }
@@ -6558,6 +6565,10 @@ public final class RuntimeViewModel {
         return loraTrainingJobs.first(where: { $0.id == selectedLoraTrainingJobID }) ?? loraTrainingJobs.first
     }
 
+    public var loraFusedActivationUnavailableText: String? {
+        loraFusedActivationUnavailableText(for: selectedLoraTrainingJob)
+    }
+
     public static func adapterCapabilityReceipt(from job: LoraTrainingJobRecord) -> RuntimeAdapterCapabilityReceiptState? {
         let payload = jsonPayload(from: job.latestOutputText)
         let adapterFamily = stringValue("adapter_family", from: payload)
@@ -8852,7 +8863,7 @@ public final class RuntimeViewModel {
             )
             return
         }
-        if let fusedActivationUnavailableText = loraFusedActivationUnavailableText(for: selectedLoraTrainingJob) {
+        if let fusedActivationUnavailableText = loraFusedActivationUnavailableText {
             surfaceLoraWorkflowGuardFailure(
                 .activateAdapter,
                 message: fusedActivationUnavailableText
@@ -10713,10 +10724,7 @@ public final class RuntimeViewModel {
         else {
             return nil
         }
-        let reason = receipt.unsupportedReason.isEmpty
-            ? "non_mergeable_adapter"
-            : receipt.unsupportedReason
-        return "Fused activation is disabled for \(receipt.adapterFamilyText): \(reason). Use Adapter-backed Runtime instead."
+        return receipt.fusedActivationUnavailableText
     }
 
     private func beginLoraWorkflow(

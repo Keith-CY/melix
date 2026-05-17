@@ -4941,7 +4941,11 @@ struct DesktopTrainingToolSectionView: View {
 
                 Button("Activate Adapter", action: startActivateAdapterTask)
                     .buttonStyle(.bordered)
-                    .disabled(viewModel.selectedAdapterPackage == nil || viewModel.isLoraWorkflowActionInProgress)
+                    .disabled(
+                        viewModel.selectedAdapterPackage == nil
+                        || viewModel.loraFusedActivationUnavailableText != nil
+                        || viewModel.isLoraWorkflowActionInProgress
+                    )
 
                 Menu {
                     Button("Publish Adapter", action: startPublishAdapterTask)
@@ -4969,6 +4973,9 @@ struct DesktopTrainingToolSectionView: View {
             return "One LoRA action is currently running. Wait for it to finish before starting another workflow."
         }
         if let adapter = viewModel.selectedAdapterPackage {
+            if let fusedActivationUnavailableText = viewModel.loraFusedActivationUnavailableText {
+                return fusedActivationUnavailableText
+            }
             return adapter.derivedModelID.isEmpty
                 ? "Activate the selected adapter when you want to expose it as a runtime target."
                 : "The selected adapter already has a derived runtime target available."
@@ -5285,6 +5292,13 @@ struct DesktopTrainingToolSectionView: View {
                         }
                     }
                     .font(.caption)
+                }
+
+                if let fusedActivationUnavailableText = savedJobFusedActivationUnavailableText(job) {
+                    DesktopPassiveCaptionLabel(
+                        title: fusedActivationUnavailableText,
+                        foregroundStyle: MelixDesignTokens.StatusColor.error
+                    )
                 }
 
                 followUpActionsContent
@@ -5994,6 +6008,16 @@ struct DesktopTrainingToolSectionView: View {
         ].filter { item in
             item.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         }
+    }
+
+    private func savedJobFusedActivationUnavailableText(_ job: LoraTrainingJobRecord) -> String? {
+        guard job.config.activationMode == RuntimeLoraActivationMode.fusedDerivedModel.rawValue,
+              let receipt = RuntimeViewModel.adapterCapabilityReceipt(from: job),
+              receipt.mergeable == false
+        else {
+            return nil
+        }
+        return receipt.fusedActivationUnavailableText
     }
 
     private func savedJobFollowUpArtifactItems(_ job: LoraTrainingJobRecord) -> [DesktopTrainingSummaryItem] {

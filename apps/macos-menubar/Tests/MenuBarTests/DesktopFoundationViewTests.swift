@@ -3835,6 +3835,81 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("unsupported_quantized_base"))
     }
 
+    @Test("training surface renders saved job follow-up activation gating from adapter receipts")
+    @MainActor
+    func trainingSurfaceRendersSavedJobFollowUpActivationGatingFromAdapterReceipts() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeRegistrySnapshotManifest(
+                    publishedRepo: "",
+                    targetRepo: "melix/adapters/non-mergeable-adapter"
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        var config = LoraTrainingJobConfig(
+            modelID: "melix-dev-text",
+            datasetSourceKind: "local_package",
+            datasetURI: "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+            adapterName: "non-mergeable-adapter",
+            targetRepo: "melix/adapters/non-mergeable-adapter",
+            trainingMode: "qlora",
+            activationMode: RuntimeLoraActivationMode.fusedDerivedModel.rawValue
+        )
+        config.derivedModelAlias = "melix-dev-text-fused"
+        var job = LoraTrainingJobRecord(
+            id: "adapter-gating-job",
+            title: "Adapter Gating Job",
+            config: config,
+            status: .succeeded,
+            lastRunJobID: "model-ops-adapter-gating",
+            outputPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+            manifestPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+            latestOutputText: #"""
+            {
+              "operation": "train_lora",
+              "adapter_family": "fake_relora",
+              "adapter_algorithm": "fake_relora",
+              "backend_supported": true,
+              "unsupported_reason": "non_mergeable_adapter",
+              "adapter_capabilities": {
+                "lora_like": true,
+                "mergeable": false,
+                "relora_compatible": true,
+                "quantized_base_supported": true
+              }
+            }
+            """#,
+            terminalMessage: "Training completed."
+        )
+        job.followUpArtifacts.adapterManifestPath = "/tmp/melix-train-lora/train_lora.adapter.json"
+        let viewModel = RuntimeViewModel(
+            client: client,
+            loraTrainingJobStore: FakeLoraTrainingJobStore(jobs: [job])
+        )
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+        viewModel.prepareSelectedLoraTrainingJobFollowUp(RuntimeLoraTrainingJobFollowUpAction.activation)
+        let disabledReason = "Fused activation is disabled for fake_relora: non_mergeable_adapter. Use Adapter-backed Runtime instead."
+        #expect(viewModel.loraFusedActivationUnavailableText == disabledReason)
+
+        let view = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1280, height: 1800)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Adapter Gating Job"))
+        #expect(renderedTexts.contains("Follow-up Actions"))
+        #expect(renderedTexts.contains("Activation"))
+        #expect(renderedTexts.contains("Adapter Capability"))
+        #expect(renderedTexts.contains("Mergeable"))
+        #expect(renderedTexts.contains(disabledReason))
+    }
+
     @Test("training keeps Hugging Face dataset mapping fields folded behind a secondary reveal by default")
     @MainActor
     func trainingKeepsHFDatasetMappingFoldedByDefault() async throws {
