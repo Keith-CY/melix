@@ -1168,7 +1168,7 @@ def test_scope_report_selects_dev_up_mlx_metal_dist_info_probe() -> None:
     assert "dev-up-mlx-metal-dist-info-scandir" in probe_ids
 
 
-def test_scope_report_selects_registry_cache_probe() -> None:
+def test_scope_report_selects_registry_cache_probe(tmp_path: Path) -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
         changed_files=["services/mlx-worker-python/worker/productization/pr_scoped_performance.py"],
@@ -1176,6 +1176,33 @@ def test_scope_report_selects_registry_cache_probe() -> None:
 
     probe_ids = {probe["id"] for probe in scope["selected_probes"]}
     assert "pr-scoped-performance-registry-cache" in probe_ids
+
+    registry_path = tmp_path / "registry.json"
+    registry_payload = []
+    for probe_id, watch_globs in (
+        ("alpha", ["src/a.py"]),
+        ("beta", ["src/b.py"]),
+        ("gamma", ["src/c.py"]),
+    ):
+        registry_payload.append(
+            {
+                "id": probe_id,
+                "name": probe_id.title(),
+                "watch_globs": watch_globs,
+                "test_command": "true",
+                "coverage_command": "true",
+                "probe_impl": "command_json",
+                "probe_command": "python3 -c 'print({})'",
+                "metrics": [{"key": "elapsed_ms_mean", "direction": "lower_is_better"}],
+            }
+        )
+    registry_path.write_text(json.dumps(registry_payload), encoding="utf-8")
+
+    sparse_scope = build_scope_report(registry_path=registry_path, changed_files=["src/c.py", "src/a.py"])
+
+    assert sparse_scope["matched_probe_ids"] == ["alpha", "gamma"]
+    assert [probe["id"] for probe in sparse_scope["selected_probes"]] == ["alpha", "gamma"]
+    assert sparse_scope["selected_count"] == 2
 
 
 def test_scope_report_force_selects_all_on_infra_change() -> None:

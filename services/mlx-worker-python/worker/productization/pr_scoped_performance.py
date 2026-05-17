@@ -237,11 +237,12 @@ def build_scope_report(
         if not direct_changed_path_set
         else _match_probe_indexes(changed_paths=direct_changed_path_set, probes=probes)
     )
+    matched_probe_indexes_ordered = tuple(sorted(matched_probe_indexes))
     if force_all:
         selected = probes
     else:
-        selected = tuple(probe for index, probe in enumerate(probes) if index in matched_probe_indexes)
-    matched_probe_ids = [probe.probe_id for index, probe in enumerate(probes) if index in matched_probe_indexes]
+        selected = tuple(probes[index] for index in matched_probe_indexes_ordered)
+    matched_probe_ids = [probes[index].probe_id for index in matched_probe_indexes_ordered]
     changed_paths = tuple(sorted(changed_path_set))
     return {
         "schema_version": _SCOPE_SCHEMA_VERSION,
