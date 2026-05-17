@@ -1707,9 +1707,33 @@ public struct RuntimeAdapterCapabilityReceiptState: Equatable, Sendable {
     public let adapterAlgorithm: String
     public let backendSupported: Bool?
     public let unsupportedReason: String
+    public let loraLike: Bool?
+    public let mergeable: Bool?
+    public let reloraCompatible: Bool?
+    public let quantizedBaseSupported: Bool?
 
     public var backendSupportText: String {
         backendSupported.map { $0 ? "Supported" : "Unsupported" } ?? ""
+    }
+
+    public var loraLikeText: String {
+        supportText(loraLike)
+    }
+
+    public var mergeableText: String {
+        supportText(mergeable)
+    }
+
+    public var reloraCompatibleText: String {
+        supportText(reloraCompatible)
+    }
+
+    public var quantizedBaseSupportedText: String {
+        supportText(quantizedBaseSupported)
+    }
+
+    private func supportText(_ value: Bool?) -> String {
+        value.map { $0 ? "Supported" : "Unsupported" } ?? ""
     }
 }
 
@@ -6539,11 +6563,20 @@ public final class RuntimeViewModel {
         let backendSupported = payload["backend_supported"] as? Bool
         let unsupportedReason = stringValue("unsupported_reason", from: payload)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let adapterCapabilities = dictionaryValue("adapter_capabilities", from: payload)
+        let loraLike = adapterCapabilities["lora_like"] as? Bool
+        let mergeable = adapterCapabilities["mergeable"] as? Bool
+        let reloraCompatible = adapterCapabilities["relora_compatible"] as? Bool
+        let quantizedBaseSupported = adapterCapabilities["quantized_base_supported"] as? Bool
 
         if adapterFamily.isEmpty,
            adapterAlgorithm.isEmpty,
            backendSupported == nil,
-           unsupportedReason.isEmpty
+           unsupportedReason.isEmpty,
+           loraLike == nil,
+           mergeable == nil,
+           reloraCompatible == nil,
+           quantizedBaseSupported == nil
         {
             return nil
         }
@@ -6552,7 +6585,11 @@ public final class RuntimeViewModel {
             adapterFamily: adapterFamily,
             adapterAlgorithm: adapterAlgorithm,
             backendSupported: backendSupported,
-            unsupportedReason: unsupportedReason
+            unsupportedReason: unsupportedReason,
+            loraLike: loraLike,
+            mergeable: mergeable,
+            reloraCompatible: reloraCompatible,
+            quantizedBaseSupported: quantizedBaseSupported
         )
     }
 

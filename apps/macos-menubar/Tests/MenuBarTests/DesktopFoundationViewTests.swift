@@ -3725,6 +3725,62 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("unsupported_backend"))
     }
 
+    @Test("training surface renders saved lora adapter support matrix receipt")
+    @MainActor
+    func trainingSurfaceRendersSavedLoraAdapterSupportMatrixReceipt() async throws {
+        let config = LoraTrainingJobConfig(
+            modelID: "melix-dev-text",
+            datasetSourceKind: "local_package",
+            datasetURI: "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+            adapterName: "relora-adapter",
+            trainingMode: "qlora",
+            activationMode: "adapter_backed_runtime"
+        )
+        let job = LoraTrainingJobRecord(
+            id: "adapter-support-matrix-job",
+            title: "Adapter Support Matrix Job",
+            config: config,
+            status: .succeeded,
+            lastRunJobID: "model-ops-adapter-support-matrix",
+            outputPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+            manifestPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+            latestOutputText: #"""
+            {
+              "operation": "train_lora",
+              "adapter_family": "fake_relora",
+              "adapter_algorithm": "fake_relora",
+              "backend_supported": true,
+              "unsupported_reason": "",
+              "adapter_capabilities": {
+                "lora_like": true,
+                "mergeable": false,
+                "relora_compatible": true,
+                "quantized_base_supported": false
+              }
+            }
+            """#,
+            terminalMessage: "Training completed."
+        )
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            loraTrainingJobStore: FakeLoraTrainingJobStore(jobs: [job])
+        )
+
+        let view = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1280, height: 1600)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Adapter Capability"))
+        #expect(renderedTexts.contains("LoRA-like"))
+        #expect(renderedTexts.contains("Mergeable"))
+        #expect(renderedTexts.contains("ReLoRA-compatible"))
+        #expect(renderedTexts.contains("Quantized Base"))
+        #expect(renderedTexts.contains("Supported"))
+        #expect(renderedTexts.contains("Unsupported"))
+    }
+
     @Test("training keeps Hugging Face dataset mapping fields folded behind a secondary reveal by default")
     @MainActor
     func trainingKeepsHFDatasetMappingFoldedByDefault() async throws {

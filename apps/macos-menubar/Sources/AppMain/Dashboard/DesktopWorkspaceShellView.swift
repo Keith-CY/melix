@@ -5987,6 +5987,10 @@ struct DesktopTrainingToolSectionView: View {
             DesktopTrainingSummaryItem(title: "Algorithm", value: receipt.adapterAlgorithm, detail: ""),
             DesktopTrainingSummaryItem(title: "Backend Support", value: receipt.backendSupportText, detail: ""),
             DesktopTrainingSummaryItem(title: "Unsupported Reason", value: receipt.unsupportedReason, detail: ""),
+            DesktopTrainingSummaryItem(title: "LoRA-like", value: receipt.loraLikeText, detail: ""),
+            DesktopTrainingSummaryItem(title: "Mergeable", value: receipt.mergeableText, detail: ""),
+            DesktopTrainingSummaryItem(title: "ReLoRA-compatible", value: receipt.reloraCompatibleText, detail: ""),
+            DesktopTrainingSummaryItem(title: "Quantized Base", value: receipt.quantizedBaseSupportedText, detail: ""),
         ].filter { item in
             item.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         }
