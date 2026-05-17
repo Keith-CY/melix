@@ -60,6 +60,22 @@ def test_probe_policy_empty_env_uses_production_default() -> None:
     assert policy.telemetry_enabled is False
 
 
+def test_probe_policy_empty_values_reuse_default_policy_cache() -> None:
+    minimal_policy = ProbePolicy.from_value("")
+
+    assert ProbePolicy.from_value(None) is minimal_policy
+    assert probe_policy_from_env({}) is minimal_policy
+    assert minimal_policy.source_value == ""
+    assert minimal_policy.fallback_applied is False
+    assert minimal_policy is not ProbePolicy.from_value(ProbeMode.MINIMAL)
+
+    debug_policy = ProbePolicy.from_value("", default_mode=ProbeMode.DEBUG)
+    assert ProbePolicy.from_value(None, default_mode=ProbeMode.DEBUG) is debug_policy
+    assert debug_policy.mode is ProbeMode.DEBUG
+    assert debug_policy.source_value == ""
+    assert debug_policy.telemetry_enabled is True
+
+
 def test_probe_policy_telemetry_enabled_only_for_sampling_modes() -> None:
     assert ProbePolicy(mode=ProbeMode.OFF).telemetry_enabled is False
     assert ProbePolicy(mode=ProbeMode.MINIMAL).telemetry_enabled is False
@@ -106,9 +122,11 @@ def test_no_op_probe_policy_overhead_metrics_are_thresholded() -> None:
     assert "no_op_recorder_delta_ms" in payload
     assert "no_op_policy_check_delta_ms" in payload
     assert "no_op_reason_delta_ms" in payload
+    assert "mode_parse_empty_call_ms_mean" in payload
     assert "mode_parse_valid_call_ms_mean" in payload
     assert "mode_parse_invalid_call_ms_mean" in payload
     assert "mode_parse_invalid_delta_ms" in payload
+    assert payload["mode_parse_empty_call_ms_mean"] >= 0.0
     assert payload["mode_parse_valid_call_ms_mean"] >= 0.0
     assert payload["mode_parse_invalid_call_ms_mean"] >= 0.0
     assert payload["absolute_tolerance_ms"] > 0.0
