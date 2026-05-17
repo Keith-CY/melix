@@ -1836,6 +1836,54 @@ struct DesktopFoundationViewTests {
         #expect(summary.detailLines.contains("memory fit benchmark detail: unknown fields kv_cache, dataset_cache"))
     }
 
+    @Test("model registry memory fit receipt rows expose visual states")
+    @MainActor
+    func modelRegistryMemoryFitReceiptRowsExposeVisualStates() async throws {
+        let rows = [
+            RuntimeMemoryFitReceiptRow(
+                target: "import",
+                title: "Import",
+                status: "blocked",
+                statusText: "Blocked",
+                reasonText: "Import exceeds unified memory."
+            ),
+            RuntimeMemoryFitReceiptRow(
+                target: "benchmark",
+                title: "Benchmark",
+                status: "heavy",
+                statusText: "Heavy",
+                reasonText: "Benchmark may need swap."
+            ),
+            RuntimeMemoryFitReceiptRow(
+                target: "eval",
+                title: "Eval",
+                status: "good",
+                statusText: "Good",
+                reasonText: "Eval fits the memory budget."
+            ),
+            RuntimeMemoryFitReceiptRow(
+                target: "train",
+                title: "Train",
+                status: "unexpected-state",
+                statusText: "Unknown",
+                reasonText: "Training estimate is missing."
+            ),
+        ]
+        let view = hostView(DesktopMemoryFitReceiptRowsView(rows: rows))
+        let visualStates = rows.map(DesktopMemoryFitReceiptRowsView.visualState(for:))
+        let accessibilityLabels = rows.map(DesktopMemoryFitReceiptRowsView.accessibilityLabel(for:))
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(visualStates == [.blocked, .heavy, .good, .unknown])
+        #expect(visualStates.map(\.badgeTitle) == ["Blocked", "Heavy", "Good", "Unknown"])
+        #expect(accessibilityLabels == [
+            "Memory fit Import: Blocked, Import exceeds unified memory.",
+            "Memory fit Benchmark: Heavy, Benchmark may need swap.",
+            "Memory fit Eval: Good, Eval fits the memory budget.",
+            "Memory fit Train: Unknown, Training estimate is missing.",
+        ])
+    }
+
     @Test("model registry covers cache missing managed blocked unknown and gated branches")
     @MainActor
     func modelRegistryCoversCacheMissingManagedBlockedUnknownAndGatedBranches() async throws {

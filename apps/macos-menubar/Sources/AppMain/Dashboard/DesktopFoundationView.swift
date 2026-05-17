@@ -986,17 +986,58 @@ struct DesktopRegistryEntryCardContent: View {
     }
 }
 
+enum DesktopMemoryFitReceiptVisualState: Equatable {
+    case blocked
+    case heavy
+    case good
+    case unknown
+
+    init(status: String) {
+        switch status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "blocked":
+            self = .blocked
+        case "heavy":
+            self = .heavy
+        case "good":
+            self = .good
+        default:
+            self = .unknown
+        }
+    }
+
+    var badgeTitle: String {
+        switch self {
+        case .blocked:
+            return "Blocked"
+        case .heavy:
+            return "Heavy"
+        case .good:
+            return "Good"
+        case .unknown:
+            return "Unknown"
+        }
+    }
+
+    var tint: Color {
+        DesktopRegistryVisuals.fitColor(badgeTitle)
+    }
+}
+
 struct DesktopMemoryFitReceiptRowsView: View {
     let rows: [RuntimeMemoryFitReceiptRow]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(rows) { row in
+                let visualState = Self.visualState(for: row)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(Self.displayText(for: row))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        DesktopRegistryBadgeView(title: visualState.badgeTitle, tint: visualState.tint)
+                        Text(Self.displayText(for: row))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
                     ForEach(row.detailRows, id: \.self) { detail in
                         Text(detail)
                             .font(.caption2)
@@ -1004,8 +1045,13 @@ struct DesktopMemoryFitReceiptRowsView: View {
                             .lineLimit(2)
                     }
                 }
+                .accessibilityLabel(Self.accessibilityLabel(for: row))
             }
         }
+    }
+
+    static func visualState(for row: RuntimeMemoryFitReceiptRow) -> DesktopMemoryFitReceiptVisualState {
+        DesktopMemoryFitReceiptVisualState(status: row.status)
     }
 
     static func displayText(for row: RuntimeMemoryFitReceiptRow) -> String {
@@ -1014,6 +1060,11 @@ struct DesktopMemoryFitReceiptRowsView: View {
 
     static func displayTexts(for row: RuntimeMemoryFitReceiptRow) -> [String] {
         [displayText(for: row)] + row.detailRows
+    }
+
+    static func accessibilityLabel(for row: RuntimeMemoryFitReceiptRow) -> String {
+        let visualState = visualState(for: row)
+        return "Memory fit \(row.title): \(visualState.badgeTitle), \(row.reasonText)"
     }
 }
 
