@@ -237,6 +237,7 @@ public actor GatewayConfigStore {
     func apply(
         command: Melix_Controlplane_V1_ApplyGatewayConfig
     ) throws {
+        // Validates then persists a listener record for the given server session.
         let serverSessionID = Self.trimmed(command.serverSessionID)
         guard !serverSessionID.isEmpty else {
             throw GatewayConfigValidationError.missingServerSessionID
