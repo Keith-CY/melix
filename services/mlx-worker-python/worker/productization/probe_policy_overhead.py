@@ -29,6 +29,7 @@ class ProbeOverheadMetrics:
     mode_parse_empty_call_ms_mean: float
     mode_parse_valid_call_ms_mean: float
     mode_parse_invalid_call_ms_mean: float
+    env_parse_empty_call_ms_mean: float
     evidence_policy_call_ms_mean: float
     debug_policy_call_ms_mean: float
     no_op_recorder_overhead_pct: float
@@ -58,6 +59,7 @@ class ProbeOverheadMetrics:
             "mode_parse_empty_call_ms_mean": self.mode_parse_empty_call_ms_mean,
             "mode_parse_valid_call_ms_mean": self.mode_parse_valid_call_ms_mean,
             "mode_parse_invalid_call_ms_mean": self.mode_parse_invalid_call_ms_mean,
+            "env_parse_empty_call_ms_mean": self.env_parse_empty_call_ms_mean,
             "evidence_policy_call_ms_mean": self.evidence_policy_call_ms_mean,
             "debug_policy_call_ms_mean": self.debug_policy_call_ms_mean,
             "no_op_recorder_overhead_pct": self.no_op_recorder_overhead_pct,
@@ -121,6 +123,12 @@ def measure_no_op_probe_policy_overhead(
         iterations=iteration_count,
         samples=sample_count,
     )
+    empty_env: dict[str, str] = {}
+    env_parse_empty_samples = _sample_call_ms(
+        lambda: ProbePolicy.from_env(empty_env),
+        iterations=iteration_count,
+        samples=sample_count,
+    )
     evidence_policy_samples = _sample_call_ms(
         ProbePolicy.evidence,
         iterations=iteration_count,
@@ -138,6 +146,7 @@ def measure_no_op_probe_policy_overhead(
     parse_empty_mean = _mean(parse_empty_samples)
     parse_valid_mean = _mean(parse_valid_samples)
     parse_invalid_mean = _mean(parse_invalid_samples)
+    env_parse_empty_mean = _mean(env_parse_empty_samples)
     evidence_policy_mean = _mean(evidence_policy_samples)
     debug_policy_mean = _mean(debug_policy_samples)
     recorder_overhead_pct = _overhead_pct(recorder_mean, baseline_mean)
@@ -162,6 +171,7 @@ def measure_no_op_probe_policy_overhead(
         mode_parse_empty_call_ms_mean=parse_empty_mean,
         mode_parse_valid_call_ms_mean=parse_valid_mean,
         mode_parse_invalid_call_ms_mean=parse_invalid_mean,
+        env_parse_empty_call_ms_mean=env_parse_empty_mean,
         evidence_policy_call_ms_mean=evidence_policy_mean,
         debug_policy_call_ms_mean=debug_policy_mean,
         no_op_recorder_overhead_pct=recorder_overhead_pct,
