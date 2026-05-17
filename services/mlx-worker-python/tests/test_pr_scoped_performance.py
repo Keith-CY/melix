@@ -1481,7 +1481,7 @@ def test_event_extraction_semantic_value_group_probe_script_emits_metrics(
     assert metrics["iterations_per_sample"] == 3.0
     assert metrics["sample_count"] == 1.0
     assert metrics["group_count_per_sample"] > 0
-    assert metrics["combination_build_calls_mean"] > 0
+    assert metrics["combination_build_calls_mean"] == 0.0
     assert metrics["elapsed_ms_mean"] >= 0
 
 

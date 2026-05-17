@@ -1310,7 +1310,7 @@ def test_evaluate_event_extraction_semantic_matches_bidirectional_action_split_m
         assert action["semantic_matches"][0]["score"] == 0.96
 
 
-def test_semantic_value_groups_are_cached_and_ordered() -> None:
+def test_semantic_value_groups_are_cached_and_ordered(monkeypatch: pytest.MonkeyPatch) -> None:
     event_extraction_module._semantic_value_groups.cache_clear()
 
     first = event_extraction_module._semantic_value_groups(4)
@@ -1330,6 +1330,11 @@ def test_semantic_value_groups_are_cached_and_ordered() -> None:
         (1, 2, 3),
     )
     assert event_extraction_module._semantic_value_groups(1) == ()
+
+    event_extraction_module._semantic_value_groups.cache_clear()
+    monkeypatch.setattr(event_extraction_module, "SEMANTIC_ACTION_GROUP_MAX_SIZE", 4)
+    assert event_extraction_module._semantic_value_groups(4)[-1] == (0, 1, 2, 3)
+    event_extraction_module._semantic_value_groups.cache_clear()
 
 
 def test_evaluate_event_extraction_semantic_matches_specific_check_action(tmp_path: Path) -> None:
