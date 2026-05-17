@@ -2607,8 +2607,10 @@ def test_build_scope_report_reuses_scope_cached_registry_without_double_stat(
     stat_calls = 0
     original_stat = Path.stat
     cache = pr_scoped_performance_module._PROBE_REGISTRY_CACHE
+    selected_cache = pr_scoped_performance_module._SCOPE_SELECTED_PROBES_WITH_COVERAGE_CACHE
     pr_scoped_performance_module._load_probe_registry_for_scope_cached.cache_clear()
     cache.clear()
+    selected_cache.clear()
 
     def tracked_stat(self: Path, *args: object, **kwargs: object) -> os.stat_result:
         nonlocal stat_calls
@@ -2627,13 +2629,16 @@ def test_build_scope_report_reuses_scope_cached_registry_without_double_stat(
             registry_path=registry_path,
             changed_files=["services/mlx-worker-python/worker/productization/pr_scoped_performance.py"],
         )
+        selected_cache_populated = bool(selected_cache)
     finally:
         pr_scoped_performance_module._load_probe_registry_for_scope_cached.cache_clear()
         cache.clear()
+        selected_cache.clear()
 
     assert stat_calls == 2
     assert first["selected_count"] == 1
     assert second["selected_probes"] == first["selected_probes"]
+    assert selected_cache_populated
     assert build_scope_report(registry_path=registry_path, changed_files=[])["selected_probes"] == []
 
 

@@ -63,6 +63,10 @@ _SCOPE_SELECTION_CACHE: dict[
     tuple[int, int, tuple[str, ...]],
     tuple[bool, tuple[str, ...], tuple[dict[str, object], ...]],
 ] = {}
+_SCOPE_SELECTED_PROBES_WITH_COVERAGE_CACHE: dict[
+    tuple[int, int, tuple[str, ...]],
+    tuple[dict[str, object], ...],
+] = {}
 
 
 def _log_progress(message: str) -> None:
@@ -249,23 +253,17 @@ def build_scope_report(
         probes=probes,
         changed_paths=changed_paths,
     )
-    probe_by_id = {probe.probe_id: probe for probe in probes}
-    coverage_paths_by_probe_id = _coverage_paths_by_probe_id(
-        changed_paths=changed_paths,
+    selected_probes_with_coverage_paths = _selected_probes_with_coverage_paths(
         probes=probes,
+        changed_paths=changed_paths,
+        selected_probes=selected_probes,
     )
-    selected_probes_with_coverage_paths = []
-    for probe_entry in selected_probes:
-        probe = probe_by_id[str(probe_entry["id"])]
-        scoped_entry = dict(probe_entry)
-        scoped_entry["coverage_paths"] = list(coverage_paths_by_probe_id.get(probe.probe_id, ()))
-        selected_probes_with_coverage_paths.append(scoped_entry)
     return {
         "schema_version": _SCOPE_SCHEMA_VERSION,
         "changed_files": list(changed_paths),
         "force_all": force_all,
         "matched_probe_ids": list(matched_probe_ids),
-        "selected_probes": selected_probes_with_coverage_paths,
+        "selected_probes": list(selected_probes_with_coverage_paths),
         "selected_count": len(selected_probes_with_coverage_paths),
     }
 
@@ -2448,6 +2446,31 @@ def _coverage_paths_by_probe_id(
         probes[probe_index].probe_id: tuple(coverage_paths)
         for probe_index, coverage_paths in coverage_paths_by_probe_index.items()
     }
+
+
+def _selected_probes_with_coverage_paths(
+    *,
+    probes: tuple[ProbeDefinition, ...],
+    changed_paths: tuple[str, ...],
+    selected_probes: tuple[dict[str, object], ...],
+) -> tuple[dict[str, object], ...]:
+    cache_key = (id(probes), len(probes), changed_paths)
+    cached = _SCOPE_SELECTED_PROBES_WITH_COVERAGE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    coverage_paths_by_probe_id = _coverage_paths_by_probe_id(
+        changed_paths=changed_paths,
+        probes=probes,
+    )
+    cached = tuple(
+        {
+            **probe_entry,
+            "coverage_paths": list(coverage_paths_by_probe_id.get(str(probe_entry["id"]), ())),
+        }
+        for probe_entry in selected_probes
+    )
+    _SCOPE_SELECTED_PROBES_WITH_COVERAGE_CACHE[cache_key] = cached
+    return cached
 
 
 def _match_probe_indexes(
