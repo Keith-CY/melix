@@ -48,6 +48,8 @@ class ProbePolicy:
     ) -> ProbePolicy:
         values = os.environ if env is None else env
         raw_value = values.get(MELIX_PROBE_MODE_ENV, "")
+        if not raw_value:
+            return _PROBE_POLICY_BY_DEFAULT_MODE[default_mode]
         return cls.from_value(raw_value, default_mode=default_mode)
 
     @classmethod

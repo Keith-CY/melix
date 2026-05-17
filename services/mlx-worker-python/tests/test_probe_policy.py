@@ -81,12 +81,15 @@ def test_probe_policy_empty_values_reuse_default_policy_cache() -> None:
 
     assert ProbePolicy.from_value(None) is minimal_policy
     assert probe_policy_from_env({}) is minimal_policy
+    assert ProbePolicy.from_env({}) is minimal_policy
+    assert ProbePolicy.from_env({"MELIX_PROBE_MODE": None}) is minimal_policy  # type: ignore[dict-item]
     assert minimal_policy.source_value == ""
     assert minimal_policy.fallback_applied is False
     assert minimal_policy is not ProbePolicy.from_value(ProbeMode.MINIMAL)
 
     debug_policy = ProbePolicy.from_value("", default_mode=ProbeMode.DEBUG)
     assert ProbePolicy.from_value(None, default_mode=ProbeMode.DEBUG) is debug_policy
+    assert ProbePolicy.from_env({}, default_mode=ProbeMode.DEBUG) is debug_policy
     assert debug_policy.mode is ProbeMode.DEBUG
     assert debug_policy.source_value == ""
     assert debug_policy.telemetry_enabled is True
@@ -146,6 +149,7 @@ def test_no_op_probe_policy_overhead_metrics_are_thresholded() -> None:
     assert "mode_parse_empty_call_ms_mean" in payload
     assert "mode_parse_valid_call_ms_mean" in payload
     assert "mode_parse_invalid_call_ms_mean" in payload
+    assert "env_parse_empty_call_ms_mean" in payload
     assert "evidence_policy_call_ms_mean" in payload
     assert "debug_policy_call_ms_mean" in payload
     assert "mode_parse_invalid_delta_ms" in payload
@@ -154,6 +158,7 @@ def test_no_op_probe_policy_overhead_metrics_are_thresholded() -> None:
     assert payload["mode_parse_empty_call_ms_mean"] >= 0.0
     assert payload["mode_parse_valid_call_ms_mean"] >= 0.0
     assert payload["mode_parse_invalid_call_ms_mean"] >= 0.0
+    assert payload["env_parse_empty_call_ms_mean"] >= 0.0
     assert payload["evidence_policy_call_ms_mean"] >= 0.0
     assert payload["debug_policy_call_ms_mean"] >= 0.0
     assert payload["absolute_tolerance_ms"] > 0.0
