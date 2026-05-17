@@ -26,6 +26,19 @@ _SIZE_HINT_MULTIPLIERS = {
 
 _BARE_SIZE_HINT_RE = re.compile(r"(?:model\s+size\s*[:|]?\s*)?(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
 _EXPLICIT_SIZE_HINT_RE = re.compile(r"\bmodel\s+size\s*[:|]?\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
+
+
+def _size_hint_multiplier(unit_text: str) -> int | None:
+    unit_prefix = unit_text[0]
+    if unit_prefix == "k" or unit_prefix == "K":
+        return _SIZE_HINT_KB
+    if unit_prefix == "m" or unit_prefix == "M":
+        return _SIZE_HINT_MB
+    if unit_prefix == "g" or unit_prefix == "G":
+        return _SIZE_HINT_GB
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class HubModelSummaryRecord:
     repo_id: str
@@ -626,7 +639,7 @@ def _direct_size_hint_from_text(text: str) -> int:
         value_text, unit_text = text.split()
     except ValueError:
         return 0
-    multiplier = _SIZE_HINT_MULTIPLIERS.get(unit_text.lower())
+    multiplier = _size_hint_multiplier(unit_text)
     if multiplier is None:
         return 0
     try:
@@ -643,7 +656,7 @@ def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:
     if not match:
         return 0
     value = float(match.group(1))
-    multiplier = _SIZE_HINT_MULTIPLIERS[match.group(2).lower()]
+    multiplier = _size_hint_multiplier(match.group(2))
     return int(value * multiplier)
 
 
