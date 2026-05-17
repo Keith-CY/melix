@@ -551,6 +551,43 @@ def test_adapter_freeze_audit_deduplicates_live_and_serialized_leaks(tmp_path: P
     assert audit.unexpected_trainable_param_counts == {leaked_name: 64}
 
 
+def test_adapter_freeze_audit_does_not_block_on_live_only_trainable_noise(tmp_path: Path) -> None:
+    weights_path = tmp_path / "clean-adapter-with-live-noise.safetensors"
+    _write_safetensors_header(
+        weights_path,
+        {
+            "language_model.model.layers.58.self_attn.q_proj.lora_a": {
+                "dtype": "F16",
+                "shape": [2, 4],
+                "data_offsets": [0, 16],
+            },
+            "language_model.model.layers.58.self_attn.q_proj.lora_b": {
+                "dtype": "F16",
+                "shape": [4, 2],
+                "data_offsets": [16, 32],
+            },
+        },
+    )
+
+    audit = audit_adapter_checkpoint(
+        weights_path=weights_path,
+        allowed_target_modules=["model.layers.58.self_attn.q_proj"],
+        source_model_kind="text",
+        source_model_ext={},
+        live_audit={
+            "unexpected_trainable_param_count": 8,
+            "unexpected_trainable_parameters": ["adapter_noise.internal_state"],
+            "unexpected_trainable_param_counts": {"adapter_noise.internal_state": 8},
+            "trainable_param_count_by_component": {"adapter_noise": 8},
+        },
+    )
+
+    assert audit.unexpected_serialized_param_count == 0
+    assert audit.unexpected_trainable_param_count == 8
+    assert audit.unexpected_frozen_param_count == 0
+    assert audit.unexpected_trainable_param_counts == {"adapter_noise.internal_state": 8}
+
+
 def test_adapter_freeze_audit_rejects_full_base_weights_under_allowed_target(tmp_path: Path) -> None:
     weights_path = tmp_path / "base-weight-leak.safetensors"
     _write_safetensors_header(
@@ -3978,6 +4015,82 @@ def test_mlx_lm_runner_train_native_collects_checkpoint_throughput_and_peak_memo
     assert result.metrics.resume_ready is True
     assert result.metrics.tokens_per_second == pytest.approx(60.0)
     assert result.metrics.peak_memory_gb == pytest.approx(3.0)
+
+
+def test_mlx_lm_runner_train_native_fails_when_response_only_labels_are_truncated(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_mlx_lm = types.ModuleType("mlx_lm")
+    fake_mlx_lm.__path__ = []
+    fake_lora = types.ModuleType("mlx_lm.lora")
+    fake_callbacks = types.ModuleType("mlx_lm.tuner.callbacks")
+    fake_datasets = types.ModuleType("mlx_lm.tuner.datasets")
+    fake_utils = types.ModuleType("mlx_lm.utils")
+    train_calls: list[str] = []
+
+    class FakeTrainingCallback:
+        pass
+
+    class FakeTrainSet:
+        def __len__(self) -> int:
+            return 2
+
+        def __getitem__(self, index: int) -> dict[str, int]:
+            return {"index": index}
+
+        def process(self, sample: dict[str, int]) -> tuple[list[int], int]:
+            _ = sample
+            return list(range(10)), 8
+
+    def fake_load(model_source: str, *, lazy: bool = False):
+        _ = model_source, lazy
+        return object(), object()
+
+    def fake_load_local_dataset(dataset_dir: Path, tokenizer, args):
+        _ = dataset_dir, tokenizer, args
+        return FakeTrainSet(), [], None
+
+    def fake_train_model(args, model, train_set, valid_set, training_callback) -> None:
+        _ = args, model, train_set, valid_set, training_callback
+        train_calls.append("called")
+
+    fake_lora.train_model = fake_train_model
+    fake_callbacks.TrainingCallback = FakeTrainingCallback
+    fake_datasets.load_local_dataset = fake_load_local_dataset
+    fake_utils.load = fake_load
+    monkeypatch.setitem(sys.modules, "mlx_lm", fake_mlx_lm)
+    monkeypatch.setitem(sys.modules, "mlx_lm.lora", fake_lora)
+    monkeypatch.setitem(sys.modules, "mlx_lm.tuner.callbacks", fake_callbacks)
+    monkeypatch.setitem(sys.modules, "mlx_lm.tuner.datasets", fake_datasets)
+    monkeypatch.setitem(sys.modules, "mlx_lm.utils", fake_utils)
+
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={"max_seq_length": "8", "response_only": "true", "mask_prompt": "true"},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-truncated-labels",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=tmp_path / "normalized",
+        config=config,
+        dataset_format="chat_messages",
+    )
+
+    with pytest.raises(ModelOperationError) as exc:
+        mlx_lm_runner_module.MLXLMRunner().train_native(request)
+
+    assert exc.value.code == "response_only_labels_truncated"
+    assert exc.value.details["max_seq_length"] == "8"
+    assert exc.value.details["response_only_boundary_sample_count"] == "2"
+    assert exc.value.details["response_only_trainable_response_token_count"] == "0"
+    assert train_calls == []
 
 
 def test_mlx_lm_runner_train_native_retries_quantized_load_with_relaxed_strictness(
