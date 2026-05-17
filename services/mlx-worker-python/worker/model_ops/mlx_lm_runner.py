@@ -31,6 +31,10 @@ from worker.model_ops.training_dataset_chunker import (
 
 _RESULT_PREFIX = "__MELIX_MLX_RESULT__="
 _NUMERIC_TOKEN_RE = re.compile(r"\d+")
+# Sentinel tied to mlx-lm's internal error wording. Keep the mlx-lm pin in
+# pyproject.toml tight: any upstream wording change would silently disable the
+# no-strict retry for QLoRA loads. Update both the sentinel and tests together
+# when bumping the mlx-lm version.
 _MLX_LM_UNMATCHED_WEIGHT_MARKERS = ("parameters not in model",)
 _LOGGER = logging.getLogger("melix.lora.mlx_lm_runner")
 

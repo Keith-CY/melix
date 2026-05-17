@@ -14,7 +14,7 @@ Reduce repeated derived-model target resolution cost in `ModelOpsJobRegistry` wh
 
 The existing active-derived-model row cache avoids rebuilding the active row list, and the first derived-model ID slice added a cache-derived `derived_model_id -> active row` lookup. This follow-up slice keeps the resolved activation manifest path inside the cached lookup row so repeated `resolve_derived_model_target(derived_model_id=...)` calls do not re-run `Path(...).expanduser().resolve()` while constructing the response payload. Manifest-path-only lookups keep the existing normalized manifest-path cache semantics.
 
-The probe resolves an older active model ID (`melix-dev-derived-0001`) so the registered metric exercises the cached-ID path instead of mostly measuring the newest-row fast case.
+The probe resolves an older active model ID (`melix-dev-derived-0001`) so the registered metric exercises the cached-ID path instead of mostly measuring the newest-row fast case. The direct lookup and manifest-path lookup timing metrics use a 0.01 ms absolute noise floor because their optimized warm-cache values are intentionally in the low microsecond range. `restore_elapsed_ms_mean` remains the larger end-to-end restore signal, with a 5 ms absolute warning floor so filesystem and scheduler variance from the temp restore workload does not override the warm lookup signals.
 
 ## Validation Plan
 

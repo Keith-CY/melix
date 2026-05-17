@@ -1579,8 +1579,11 @@ class EvaluationCore:
 
         request_latencies = cls._numeric_trace_values(traces, "request_duration_ms")
         total_latencies = cls._numeric_trace_values(traces, "total_duration_ms")
-        raw_response_chars = cls._numeric_trace_values(traces, "raw_response_chars")
-        throttle_sleep_values = cls._numeric_trace_values(traces, "throttle_sleep_ms")
+        raw_response_char_count, raw_response_char_sum, raw_response_char_max = cls._numeric_trace_sum_count_max(
+            traces,
+            "raw_response_chars",
+        )
+        throttle_sleep_total = cls._numeric_trace_sum(traces, "throttle_sleep_ms")
         provider_usage_totals: dict[str, int] = {}
         for trace in traces:
             usage = trace.get("provider_usage")
@@ -1613,10 +1616,12 @@ class EvaluationCore:
             "dialogue_status_counts": status_counts,
             "request_duration_ms": cls._latency_stats(request_latencies),
             "total_duration_ms": cls._latency_stats(total_latencies),
-            "total_throttle_sleep_ms": cls._round_ms(sum(throttle_sleep_values)),
+            "total_throttle_sleep_ms": cls._round_ms(throttle_sleep_total),
             "raw_response_chars": {
-                "mean": cls._round_ms(sum(raw_response_chars) / len(raw_response_chars)) if raw_response_chars else 0.0,
-                "max": cls._round_ms(max(raw_response_chars)) if raw_response_chars else 0.0,
+                "mean": cls._round_ms(raw_response_char_sum / raw_response_char_count)
+                if raw_response_char_count
+                else 0.0,
+                "max": cls._round_ms(raw_response_char_max) if raw_response_char_count else 0.0,
             },
             "provider_usage_totals": provider_usage_totals,
             "slowest_dialogues": slowest_dialogues,
@@ -1716,17 +1721,50 @@ class EvaluationCore:
                 values.append(float(value))
         return values
 
+    @staticmethod
+    def _numeric_trace_sum(traces: list[dict[str, object]], field_name: str) -> float:
+        total = 0.0
+        for trace in traces:
+            value = trace.get(field_name)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)):
+                total += float(value)
+        return total
+
+    @staticmethod
+    def _numeric_trace_sum_count_max(
+        traces: list[dict[str, object]],
+        field_name: str,
+    ) -> tuple[int, float, float]:
+        count = 0
+        total = 0.0
+        max_value = 0.0
+        for trace in traces:
+            value = trace.get(field_name)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)):
+                numeric_value = float(value)
+                total += numeric_value
+                if count == 0 or numeric_value > max_value:
+                    max_value = numeric_value
+                count += 1
+        return count, total, max_value
+
     @classmethod
     def _latency_stats(cls, values: list[float]) -> dict[str, float]:
         if not values:
             return {"mean": 0.0, "p50": 0.0, "p95": 0.0, "max": 0.0}
         sorted_values = sorted(values)
         value_count = len(sorted_values)
+        round_ms = cls._round_ms
+        ordered_percentile = cls._ordered_percentile
         return {
-            "mean": cls._round_ms(sum(sorted_values) / value_count),
-            "p50": cls._round_ms(cls._ordered_percentile(sorted_values, 50.0)),
-            "p95": cls._round_ms(cls._ordered_percentile(sorted_values, 95.0)),
-            "max": cls._round_ms(sorted_values[-1]),
+            "mean": round_ms(sum(sorted_values) / value_count),
+            "p50": round_ms(ordered_percentile(sorted_values, 50.0)),
+            "p95": round_ms(ordered_percentile(sorted_values, 95.0)),
+            "max": round_ms(sorted_values[-1]),
         }
 
     @staticmethod
@@ -2502,19 +2540,23 @@ class EvaluationCore:
     def _sample_probe_means(samples: Any, field_names: tuple[str, ...]) -> dict[str, float]:
         if not field_names:
             return {}
-        totals = [0.0] * len(field_names)
+        field_count = len(field_names)
+        totals = [0.0] * field_count
+        field_indexes = range(field_count)
+        get_field = getattr
+        to_float = float
         sample_count = 0
         for sample in samples:
             sample_count += 1
-            for index, field_name in enumerate(field_names):
-                value = getattr(sample, field_name, 0.0)
+            for index in field_indexes:
+                value = get_field(sample, field_names[index], 0.0)
                 if value:
-                    totals[index] += float(value)
+                    totals[index] += to_float(value)
         if sample_count == 0:
             return {field_name: 0.0 for field_name in field_names}
         return {
-            field_name: round(totals[index] / sample_count, 4)
-            for index, field_name in enumerate(field_names)
+            field_names[index]: round(totals[index] / sample_count, 4)
+            for index in field_indexes
         }
 
     @staticmethod
@@ -3385,14 +3427,14 @@ class EvaluationCore:
     @staticmethod
     def _normalized_answer(value: str) -> str:
         stripped = EvaluationCore._strip_wrapping(value)
+        if len(stripped) == 1:
+            option = EvaluationCore._extract_option_value(stripped)
+            if option is not None:
+                return option
         if EvaluationCore._looks_like_numeric(stripped):
             numeric = EvaluationCore._extract_numeric_value(stripped)
             if numeric is not None:
                 return numeric
-        if EvaluationCore._looks_like_option(stripped):
-            option = EvaluationCore._extract_option_value(stripped)
-            if option is not None:
-                return option
         if (
             "  " in stripped
             or "\t" in stripped

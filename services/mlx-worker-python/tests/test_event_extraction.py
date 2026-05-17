@@ -718,6 +718,7 @@ def test_evaluate_event_extraction_semantic_judge_matches_event_and_values(tmp_p
 def test_semantic_field_values_reuses_cached_group_actor_aliases(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    event_extraction_module._cached_semantic_actor_field_values.cache_clear()
     event_extraction_module._expanded_semantic_actor_values.cache_clear()
     event_extraction_module._is_group_actor_alias.cache_clear()
     calls: list[str] = []
@@ -734,6 +735,7 @@ def test_semantic_field_values_reuses_cached_group_actor_aliases(
         {"actor": [" 我们 ", "我们", "我 们", "speaker_1", "speaker_1", "咱们", "speaker_2", "双方"]},
     ) == ["speaker_1", "speaker_2"]
     assert calls == ["我 们"]
+    event_extraction_module._cached_semantic_actor_field_values.cache_clear()
     event_extraction_module._expanded_semantic_actor_values.cache_clear()
     event_extraction_module._is_group_actor_alias.cache_clear()
 
@@ -741,6 +743,7 @@ def test_semantic_field_values_reuses_cached_group_actor_aliases(
 def test_semantic_field_values_caches_repeated_group_actor_expansion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    event_extraction_module._cached_semantic_actor_field_values.cache_clear()
     event_extraction_module._expanded_semantic_actor_values.cache_clear()
     event_extraction_module._is_group_actor_alias.cache_clear()
     calls: list[str] = []
@@ -756,6 +759,7 @@ def test_semantic_field_values_caches_repeated_group_actor_expansion(
     assert event_extraction_module._semantic_field_values("actor", event) == ["speaker_1", "speaker_2"]
     assert event_extraction_module._semantic_field_values("actor", event) == ["speaker_1", "speaker_2"]
     assert calls == ["我 们"]
+    event_extraction_module._cached_semantic_actor_field_values.cache_clear()
     event_extraction_module._expanded_semantic_actor_values.cache_clear()
     event_extraction_module._is_group_actor_alias.cache_clear()
 
@@ -774,6 +778,11 @@ def test_semantic_field_values_normalizes_and_deduplicates_in_one_pass(monkeypat
         {"action": [" 见面 ", "", "见面", "吃饭"]},
     ) == ["见面", "吃饭"]
     assert event_extraction_module._semantic_field_values("time", {"time": None}) == []
+    assert event_extraction_module._semantic_field_values("actor", {"actor": None}) == []
+    with pytest.raises(ValueError):
+        event_extraction_module._semantic_field_values("actor", {"actor": "我们"})
+    with pytest.raises(ValueError):
+        event_extraction_module._semantic_field_values("actor", {"actor": ["我们", 1]})
     with pytest.raises(ValueError):
         event_extraction_module._semantic_field_values("time", {"time": "明天"})
     with pytest.raises(ValueError):
@@ -2303,6 +2312,51 @@ def test_event_extraction_dialogue_diagnostics_uses_top_k_for_slowest_dialogues(
         {"dialogue_id": "dlg-8", "line_number": 8, "duration_ms": 8.0, "status": "ok"},
         {"dialogue_id": "dlg-7", "line_number": 7, "duration_ms": 7.0, "status": "ok"},
     ]
+
+
+def test_event_extraction_dialogue_diagnostics_streams_raw_response_and_throttle_aggregates(monkeypatch) -> None:
+    original_numeric_trace_values = EvaluationCore._numeric_trace_values
+
+    def fail_materialized_numeric_values(traces, field_name):
+        if field_name in {"raw_response_chars", "throttle_sleep_ms"}:
+            raise AssertionError(f"{field_name} should be streamed without materializing a list")  # pragma: no cover
+        return original_numeric_trace_values(traces, field_name)
+
+    monkeypatch.setattr(EvaluationCore, "_numeric_trace_values", staticmethod(fail_materialized_numeric_values))
+    traces = [
+        {
+            "dialogue_id": "dlg-1",
+            "line_number": 1,
+            "status": "ok",
+            "request_duration_ms": 2.0,
+            "total_duration_ms": 7.0,
+            "raw_response_chars": 10,
+            "throttle_sleep_ms": 1.25,
+        },
+        {
+            "dialogue_id": "dlg-2",
+            "line_number": 2,
+            "status": "failed",
+            "request_duration_ms": 4.0,
+            "total_duration_ms": 5.0,
+            "raw_response_chars": 40,
+            "throttle_sleep_ms": 2,
+        },
+        {
+            "dialogue_id": "dlg-3",
+            "line_number": 3,
+            "status": "aborted",
+            "request_duration_ms": 6.0,
+            "total_duration_ms": 3.0,
+            "raw_response_chars": True,
+            "throttle_sleep_ms": False,
+        },
+    ]
+
+    diagnostics = EvaluationCore._event_extraction_dialogue_diagnostics(traces)
+
+    assert diagnostics["total_throttle_sleep_ms"] == 3.25
+    assert diagnostics["raw_response_chars"] == {"mean": 25.0, "max": 40.0}
 
 
 def test_evaluation_core_writes_semantic_judge_artifacts_without_persisting_judge_secret(

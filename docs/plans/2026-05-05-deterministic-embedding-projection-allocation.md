@@ -22,6 +22,10 @@ This slice is Python-only under `services/mlx-worker-python` and is verifiable o
 
 Compute the repeated-pattern L2 norm from the eight digest-derived base values, then emit the normalized output directly from the base pattern. This preserves ordering and rounding semantics while avoiding the full pre-normalization vector materialization.
 
+## Follow-up unpack-cache slice
+
+A later narrow slice keeps the same digest projection semantics but binds the fixed `struct.Struct("<8I").unpack` callable at module import time. `_project_digest(...)` unpacks exactly eight uint32 values for every projection, so reusing the precompiled `Struct` removes repeated format parsing and trims a small amount of per-call allocation in the registered projection probe.
+
 ## Performance probe
 
 Register `deterministic-embedding-project-digest-allocation` as a `command_json` PR-scoped probe.

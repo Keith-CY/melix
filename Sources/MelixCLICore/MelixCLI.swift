@@ -6232,6 +6232,174 @@ public actor MelixCLIRunner {
         )
     }
 
+    private func runLoraTrainOperation(
+        _ options: LoraTrainOptions,
+        outputDir: String = "",
+        trainingModeOverride: String = ""
+    ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        var ext = options.parameters
+        if options.preflightFitCheck {
+            guard options.modelID.trimmingCharacters(in: .whitespacesAndNewlines).contains("/") else {
+                throw MelixCLIError.runtime("--preflight-fit-check is currently supported for melix lora train --model-id Hugging Face repo targets.")
+            }
+            let receipt = try await makeMemoryFitReceipt(repoID: options.modelID, targetKind: "train")
+            try enforceMemoryFitPreflight(
+                receipt,
+                allowMemoryRisk: options.allowMemoryRisk,
+                commandName: "training"
+            )
+            ext.merge(try receipt.runParameters(schemaVersion: Self.memoryFitSchemaVersion)) { _, new in new }
+        }
+        ext["adapter_name"] = options.adapterName
+        ext["dataset_source_kind"] = options.datasetSourceKind
+        if !options.datasetURI.isEmpty {
+            ext["dataset_uri"] = options.datasetURI
+        }
+        if !options.targetRepo.isEmpty {
+            ext["target_repo"] = options.targetRepo
+        }
+        let trainingMode = trainingModeOverride.isEmpty ? options.trainingMode : trainingModeOverride
+        if !trainingMode.isEmpty {
+            ext["training_mode"] = trainingMode
+        }
+        return try await performModelOperation(
+            modelID: options.modelID,
+            operation: "train_lora",
+            outputDir: outputDir,
+            ext: ext
+        )
+    }
+
+    private func runLoraActivateOperation(
+        _ options: LoraActivateOptions,
+        outputDir: String = ""
+    ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
+        var ext = ["artifact_path": options.adapterPath]
+        if !options.derivedModelAlias.isEmpty {
+            ext["derived_model_alias"] = options.derivedModelAlias
+        }
+        if !options.activationMode.isEmpty {
+            ext["activation_mode"] = options.activationMode
+        }
+        return try await performModelOperation(
+            modelID: options.modelID,
+            operation: "activate_adapter",
+            outputDir: outputDir,
+            ext: ext
+        )
+    }
+
+    private func runLoraRun(_ options: LoraRunOptions) async throws -> String {
+        let outputRoot = try loraRunOutputRoot(options)
+        let trainOutputDir = outputRoot.appendingPathComponent("train", isDirectory: true)
+        let activationOutputDir = outputRoot.appendingPathComponent("activate", isDirectory: true)
+        let evaluationOutputDir = outputRoot.appendingPathComponent("evaluation", isDirectory: true)
+        try FileManager.default.createDirectory(at: evaluationOutputDir, withIntermediateDirectories: true)
+
+        let resolvedTrainingMode = Self.resolvedLoraRunTrainingMode(
+            requested: options.training.trainingMode,
+            modelID: options.training.modelID,
+            parameters: options.training.parameters
+        )
+        let trainResult = try await runLoraTrainOperation(
+            options.training,
+            outputDir: trainOutputDir.path,
+            trainingModeOverride: resolvedTrainingMode
+        )
+        let adapterManifestPath = try Self.resolveLoraAdapterManifestPath(
+            from: trainResult,
+            fallbackOutputDir: trainOutputDir.path
+        )
+        let alias = options.training.parameters["derived_model_alias"].flatMap { $0.isEmpty ? nil : $0 }
+            ?? "\(options.training.adapterName)-runtime"
+        let activationResult = try await runLoraActivateOperation(
+            LoraActivateOptions(
+                modelID: options.training.modelID,
+                adapterPath: adapterManifestPath,
+                derivedModelAlias: alias,
+                activationMode: options.activationMode
+            ),
+            outputDir: activationOutputDir.path
+        )
+        let compareOptions = EvalCompareOptions(
+            modelID: options.evaluation.modelID,
+            hfRepoID: options.evaluation.hfRepoID,
+            targetModelIDs: options.evaluation.targetModelIDs,
+            targetAdapterManifestPaths: [adapterManifestPath] + options.evaluation.targetAdapterManifestPaths,
+            suites: options.evaluation.suites,
+            datasetID: options.evaluation.datasetID,
+            sampleSize: options.evaluation.sampleSize,
+            source: options.evaluation.source,
+            fieldMapping: options.evaluation.fieldMapping,
+            profile: options.evaluation.profile,
+            parameters: options.evaluation.parameters,
+            json: true
+        )
+        let compareResults = try await runEvaluationCompare(compareOptions)
+        let compareJobID = compareResults.first?.job.jobID ?? ""
+        let summaryPath = evaluationOutputDir.appendingPathComponent("compare-summary.csv").path
+        let samplesPath = evaluationOutputDir.appendingPathComponent("compare-samples.jsonl").path
+        var exportedSummaryPath = ""
+        var exportedSamplesPath = ""
+        if compareJobID.isEmpty == false {
+            _ = try await exportEvaluationArtifact(
+                options: EvalExportOptions(jobID: compareJobID, outputPath: summaryPath, json: false),
+                missingRowsMessage: "No evaluation compare summary rows were found for job \(compareJobID).",
+                rowCount: { bundle in bundle.evaluationCompareSummaryRows(jobID: compareJobID).count },
+                contents: { bundle in bundle.evaluationCompareSummaryCSV(jobID: compareJobID) }
+            )
+            exportedSummaryPath = summaryPath
+            _ = try await exportEvaluationArtifact(
+                options: EvalExportOptions(jobID: compareJobID, outputPath: samplesPath, json: false),
+                missingRowsMessage: "No evaluation compare sample rows were found for job \(compareJobID).",
+                rowCount: { bundle in bundle.evaluationCompareSampleRows(jobID: compareJobID).count },
+                contents: { bundle in try bundle.evaluationCompareSamplesJSONL(jobID: compareJobID) }
+            )
+            exportedSamplesPath = samplesPath
+        }
+
+        let activationPayload = Self.jsonObject(from: activationResult.manifestJson) ?? [:]
+        let receipt: [String: Any] = [
+            "schema_version": "melix.lora_run_receipt.v1",
+            "status": "completed",
+            "model_id": options.training.modelID,
+            "adapter_name": options.training.adapterName,
+            "training_mode": resolvedTrainingMode,
+            "activation_mode": options.activationMode,
+            "output_dir": outputRoot.path,
+            "adapter_manifest_path": adapterManifestPath,
+            "activation_manifest_path": Self.resolveLoraActivationManifestPath(
+                from: activationResult,
+                fallbackOutputDir: activationOutputDir.path
+            ),
+            "derived_model_id": Self.stringValue("derived_model_id", from: activationPayload),
+            "train": Self.modelOperationPayload(trainResult),
+            "activation": Self.modelOperationPayload(activationResult),
+            "evaluation": [
+                "job_ids": compareResults.map(\.job.jobID),
+                "summary_csv_path": exportedSummaryPath,
+                "samples_jsonl_path": exportedSamplesPath,
+                "results": compareResults.map(makeEvaluationPayload),
+            ],
+        ]
+        if options.json {
+            return try prettyJSON(receipt)
+        }
+        var lines = [
+            "LoRA run completed.",
+            "output_dir: \(outputRoot.path)",
+            "training_mode: \(resolvedTrainingMode)",
+            "adapter_manifest: \(adapterManifestPath)",
+            "activation_manifest: \(receipt["activation_manifest_path"] as? String ?? "")",
+        ]
+        if compareJobID.isEmpty == false {
+            lines.append("evaluation_job: \(compareJobID)")
+            lines.append("summary_csv: \(exportedSummaryPath)")
+            lines.append("samples_jsonl: \(exportedSamplesPath)")
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
     private func runBenchmarkWithLiveDisplay(_ options: BenchRunOptions) async throws -> ControlPlaneBenchResult {
         guard shouldUseLiveDisplay(json: options.json, enabled: options.liveProgress) else {
             return try await runBenchmark(options)
@@ -6583,174 +6751,7 @@ public actor MelixCLIRunner {
             return 0
         }
         return values.reduce(0, +) / Double(values.count)
-    }
 
-    private func runLoraTrainOperation(
-        _ options: LoraTrainOptions,
-        outputDir: String = "",
-        trainingModeOverride: String = ""
-    ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
-        var ext = options.parameters
-        if options.preflightFitCheck {
-            guard options.modelID.trimmingCharacters(in: .whitespacesAndNewlines).contains("/") else {
-                throw MelixCLIError.runtime("--preflight-fit-check is currently supported for melix lora train --model-id Hugging Face repo targets.")
-            }
-            let receipt = try await makeMemoryFitReceipt(repoID: options.modelID, targetKind: "train")
-            try enforceMemoryFitPreflight(
-                receipt,
-                allowMemoryRisk: options.allowMemoryRisk,
-                commandName: "training"
-            )
-            ext.merge(try receipt.runParameters(schemaVersion: Self.memoryFitSchemaVersion)) { _, new in new }
-        }
-        ext["adapter_name"] = options.adapterName
-        ext["dataset_source_kind"] = options.datasetSourceKind
-        if !options.datasetURI.isEmpty {
-            ext["dataset_uri"] = options.datasetURI
-        }
-        if !options.targetRepo.isEmpty {
-            ext["target_repo"] = options.targetRepo
-        }
-        let trainingMode = trainingModeOverride.isEmpty ? options.trainingMode : trainingModeOverride
-        if !trainingMode.isEmpty {
-            ext["training_mode"] = trainingMode
-        }
-        return try await performModelOperation(
-            modelID: options.modelID,
-            operation: "train_lora",
-            outputDir: outputDir,
-            ext: ext
-        )
-    }
-
-    private func runLoraActivateOperation(
-        _ options: LoraActivateOptions,
-        outputDir: String = ""
-    ) async throws -> Melix_Controlplane_V1_ModelOperationResult {
-        var ext = ["artifact_path": options.adapterPath]
-        if !options.derivedModelAlias.isEmpty {
-            ext["derived_model_alias"] = options.derivedModelAlias
-        }
-        if !options.activationMode.isEmpty {
-            ext["activation_mode"] = options.activationMode
-        }
-        return try await performModelOperation(
-            modelID: options.modelID,
-            operation: "activate_adapter",
-            outputDir: outputDir,
-            ext: ext
-        )
-    }
-
-    private func runLoraRun(_ options: LoraRunOptions) async throws -> String {
-        let outputRoot = try loraRunOutputRoot(options)
-        let trainOutputDir = outputRoot.appendingPathComponent("train", isDirectory: true)
-        let activationOutputDir = outputRoot.appendingPathComponent("activate", isDirectory: true)
-        let evaluationOutputDir = outputRoot.appendingPathComponent("evaluation", isDirectory: true)
-        try FileManager.default.createDirectory(at: evaluationOutputDir, withIntermediateDirectories: true)
-
-        let resolvedTrainingMode = Self.resolvedLoraRunTrainingMode(
-            requested: options.training.trainingMode,
-            modelID: options.training.modelID,
-            parameters: options.training.parameters
-        )
-        let trainResult = try await runLoraTrainOperation(
-            options.training,
-            outputDir: trainOutputDir.path,
-            trainingModeOverride: resolvedTrainingMode
-        )
-        let adapterManifestPath = try Self.resolveLoraAdapterManifestPath(
-            from: trainResult,
-            fallbackOutputDir: trainOutputDir.path
-        )
-        let alias = options.training.parameters["derived_model_alias"].flatMap { $0.isEmpty ? nil : $0 }
-            ?? "\(options.training.adapterName)-runtime"
-        let activationResult = try await runLoraActivateOperation(
-            LoraActivateOptions(
-                modelID: options.training.modelID,
-                adapterPath: adapterManifestPath,
-                derivedModelAlias: alias,
-                activationMode: options.activationMode
-            ),
-            outputDir: activationOutputDir.path
-        )
-        let compareOptions = EvalCompareOptions(
-            modelID: options.evaluation.modelID,
-            hfRepoID: options.evaluation.hfRepoID,
-            targetModelIDs: options.evaluation.targetModelIDs,
-            targetAdapterManifestPaths: [adapterManifestPath] + options.evaluation.targetAdapterManifestPaths,
-            suites: options.evaluation.suites,
-            datasetID: options.evaluation.datasetID,
-            sampleSize: options.evaluation.sampleSize,
-            source: options.evaluation.source,
-            fieldMapping: options.evaluation.fieldMapping,
-            profile: options.evaluation.profile,
-            parameters: options.evaluation.parameters,
-            json: true
-        )
-        let compareResults = try await runEvaluationCompare(compareOptions)
-        let compareJobID = compareResults.first?.job.jobID ?? ""
-        let summaryPath = evaluationOutputDir.appendingPathComponent("compare-summary.csv").path
-        let samplesPath = evaluationOutputDir.appendingPathComponent("compare-samples.jsonl").path
-        var exportedSummaryPath = ""
-        var exportedSamplesPath = ""
-        if compareJobID.isEmpty == false {
-            _ = try await exportEvaluationArtifact(
-                options: EvalExportOptions(jobID: compareJobID, outputPath: summaryPath, json: false),
-                missingRowsMessage: "No evaluation compare summary rows were found for job \(compareJobID).",
-                rowCount: { bundle in bundle.evaluationCompareSummaryRows(jobID: compareJobID).count },
-                contents: { bundle in bundle.evaluationCompareSummaryCSV(jobID: compareJobID) }
-            )
-            exportedSummaryPath = summaryPath
-            _ = try await exportEvaluationArtifact(
-                options: EvalExportOptions(jobID: compareJobID, outputPath: samplesPath, json: false),
-                missingRowsMessage: "No evaluation compare sample rows were found for job \(compareJobID).",
-                rowCount: { bundle in bundle.evaluationCompareSampleRows(jobID: compareJobID).count },
-                contents: { bundle in try bundle.evaluationCompareSamplesJSONL(jobID: compareJobID) }
-            )
-            exportedSamplesPath = samplesPath
-        }
-
-        let activationPayload = Self.jsonObject(from: activationResult.manifestJson) ?? [:]
-        let receipt: [String: Any] = [
-            "schema_version": "melix.lora_run_receipt.v1",
-            "status": "completed",
-            "model_id": options.training.modelID,
-            "adapter_name": options.training.adapterName,
-            "training_mode": resolvedTrainingMode,
-            "activation_mode": options.activationMode,
-            "output_dir": outputRoot.path,
-            "adapter_manifest_path": adapterManifestPath,
-            "activation_manifest_path": Self.resolveLoraActivationManifestPath(
-                from: activationResult,
-                fallbackOutputDir: activationOutputDir.path
-            ),
-            "derived_model_id": Self.stringValue("derived_model_id", from: activationPayload),
-            "train": Self.modelOperationPayload(trainResult),
-            "activation": Self.modelOperationPayload(activationResult),
-            "evaluation": [
-                "job_ids": compareResults.map(\.job.jobID),
-                "summary_csv_path": exportedSummaryPath,
-                "samples_jsonl_path": exportedSamplesPath,
-                "results": compareResults.map(makeEvaluationPayload),
-            ],
-        ]
-        if options.json {
-            return try prettyJSON(receipt)
-        }
-        var lines = [
-            "LoRA run completed.",
-            "output_dir: \(outputRoot.path)",
-            "training_mode: \(resolvedTrainingMode)",
-            "adapter_manifest: \(adapterManifestPath)",
-            "activation_manifest: \(receipt["activation_manifest_path"] as? String ?? "")",
-        ]
-        if compareJobID.isEmpty == false {
-            lines.append("evaluation_job: \(compareJobID)")
-            lines.append("summary_csv: \(exportedSummaryPath)")
-            lines.append("samples_jsonl: \(exportedSamplesPath)")
-        }
-        return lines.joined(separator: "\n") + "\n"
     }
 
     public func run(_ command: MelixCLICommand) async throws -> String {

@@ -48,6 +48,29 @@ def test_prepare_video_input_accepts_inline_bytes_with_explicit_metadata() -> No
     )
 
 
+def test_prepared_video_records_use_slots_without_changing_fields() -> None:
+    prepared = PreparedVideoInput(
+        source_kind="uri",
+        reference="https://example.com/media/demo.mov",
+        bytes_data=b"",
+        mime_type="video/quicktime",
+        format="mov",
+        filename="demo.mov",
+        byte_length=123,
+        duration_ms=1_000,
+        frame_budget=4,
+        start_ms=0,
+        end_ms=1_000,
+        sha256_hex="a" * 64,
+    )
+    parsed = _parse_video_reference("https://example.com/media/demo.mov")
+
+    assert not hasattr(prepared, "__dict__")
+    assert not hasattr(parsed, "__dict__")
+    assert prepared.filename == "demo.mov"
+    assert parsed.path_suffix == "mov"
+
+
 def test_prepare_video_input_accepts_uri_and_infers_format_from_reference() -> None:
     part = common_pb2.MessagePart(
         video_uri="https://example.com/media/demo.mov",

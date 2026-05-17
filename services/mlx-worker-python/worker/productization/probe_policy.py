@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from enum import StrEnum
+from functools import lru_cache
 from typing import Mapping
 
 
@@ -57,18 +58,20 @@ class ProbePolicy:
         default_mode: ProbeMode = ProbeMode.MINIMAL,
     ) -> ProbePolicy:
         if isinstance(value, ProbeMode):
-            return cls(mode=value, source_value=value.value)
-        raw_value = str(value or "").strip().lower()
+            return _PROBE_POLICY_BY_VALUE[value.value]
+        if isinstance(value, str):
+            policy = _PROBE_POLICY_BY_VALUE.get(value)
+            if policy is not None:
+                return policy
+            raw_value = value.strip().lower()
+        else:
+            raw_value = str(value or "").strip().lower()
         if not raw_value:
-            return cls(mode=default_mode)
-        try:
-            return cls(mode=ProbeMode(raw_value), source_value=raw_value)
-        except ValueError:
-            return cls(
-                mode=default_mode,
-                source_value=raw_value,
-                fallback_applied=True,
-            )
+            return _PROBE_POLICY_BY_DEFAULT_MODE[default_mode]
+        policy = _PROBE_POLICY_BY_VALUE.get(raw_value)
+        if policy is not None:
+            return policy
+        return _invalid_probe_policy(raw_value, default_mode)
 
     @classmethod
     def evidence(cls) -> ProbePolicy:
@@ -77,6 +80,23 @@ class ProbePolicy:
     @classmethod
     def debug(cls) -> ProbePolicy:
         return cls(mode=ProbeMode.DEBUG, source_value=ProbeMode.DEBUG.value)
+
+
+_PROBE_POLICY_BY_VALUE: dict[str, ProbePolicy] = {
+    mode.value: ProbePolicy(mode=mode, source_value=mode.value) for mode in ProbeMode
+}
+_PROBE_POLICY_BY_DEFAULT_MODE: dict[ProbeMode, ProbePolicy] = {
+    mode: ProbePolicy(mode=mode) for mode in ProbeMode
+}
+
+
+@lru_cache(maxsize=64)
+def _invalid_probe_policy(raw_value: str, default_mode: ProbeMode) -> ProbePolicy:
+    return ProbePolicy(
+        mode=default_mode,
+        source_value=raw_value,
+        fallback_applied=True,
+    )
 
 
 def probe_policy_from_env(env: Mapping[str, str] | None = None) -> ProbePolicy:

@@ -73,10 +73,10 @@ public enum ModelCatalogPresentation {
         var metadata: [String: String] = [
             "melix.capability.receipt_present": "true",
             "melix.capability.receipt_schema": receipt.schemaVersion,
-            "melix.acceleration.requested_mode": ModelCapabilityReceipts.accelerationModeIdentifier(
+            "melix.acceleration.requested_acceleration_mode": ModelCapabilityReceipts.accelerationModeIdentifier(
                 receipt.acceleration.requestedAccelerationMode
             ),
-            "melix.acceleration.resolved_mode": ModelCapabilityReceipts.accelerationModeIdentifier(
+            "melix.acceleration.resolved_acceleration_mode": ModelCapabilityReceipts.accelerationModeIdentifier(
                 receipt.acceleration.resolvedAccelerationMode
             ),
             "melix.acceleration.supported_modes": receipt.acceleration.supportedModes

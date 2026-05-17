@@ -2,7 +2,7 @@
 
 ## Goal
 
-Reduce redundant work in event-extraction dialogue diagnostics by avoiding a full descending sort of every dialogue trace when the summary only retains the five slowest dialogues.
+Reduce redundant work in event-extraction dialogue diagnostics by avoiding a full descending sort of every dialogue trace when the summary only retains the five slowest dialogues. This follow-up aggregate-streaming slice also avoids materializing numeric vectors for raw response size and throttle-sleep totals when only sum/count/max summary values are needed.
 
 ## Linux-only constraint
 
@@ -29,13 +29,14 @@ Register `evaluation-dialogue-diagnostics-top-k` in `infra/perf/pr_scoped_probes
 ## Success metrics
 
 - Preserve dialogue diagnostics output shape and top-five slowest dialogue ordering.
+- Preserve raw response `mean`/`max` and throttle sleep total semantics while streaming those aggregates in a single pass without intermediate lists.
 - Changed executable line coverage for touched Python/test scope is at least 95%.
-- Local base-vs-head probe shows lower elapsed time and/or peak traced memory for the top-k diagnostics path.
+- Local base-vs-head probe shows lower elapsed time and/or peak traced memory for the top-k diagnostics path and streamed numeric aggregate path.
 
 ## Verification commands
 
 - `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python pytest -q ...focused tests...`
-- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage run -m pytest -q ...focused tests... && ... coverage json ... && python scripts/changed_scope_coverage.py ...`
-- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python python -c "...registered probe command..."`
-- `python scripts/pr_scoped_performance_run.py --probe evaluation-dialogue-diagnostics-top-k ...` for base-vs-head evidence when available.
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python coverage run -m pytest -q ...focused tests... && ... coverage json ... && python3 scripts/changed_scope_coverage.py ...`
+- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python python3 -c "...registered probe command..."`
+- `python3 scripts/pr_scoped_performance_run.py --probe evaluation-dialogue-diagnostics-top-k ...` for base-vs-head evidence when available.
 - `git diff --check`

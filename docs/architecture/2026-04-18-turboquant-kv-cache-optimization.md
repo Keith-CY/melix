@@ -93,6 +93,12 @@ Sources:
 
 ## Current Melix State
 
+User-facing 4-bit active-KV acceleration now normalizes to `turboquant-q4`.
+The plain `q4` profile remains supported as an explicit affine q4 comparison
+path for probes and diagnostics, but an empty active-KV profile no longer means
+affine q4. Worker capability metadata advertises the active-KV profiles in this
+order: `turboquant-q4`, `q4`, `q8`.
+
 Melix exposes a `turboquant-q4` profile for probes. Before the vendored runtime
 patch, the profile used Swift MLX LM affine `QuantizedKVCache` through upstream
 quantized attention. The historical post-optimization probe correctly reported:
@@ -196,7 +202,7 @@ tests preserve GQA, bfloat16, and storage-fastpath correctness.
 This slice adds a decode-side guard:
 
 - `shouldAttemptActiveKVDecodeQuantization(...)` checks active-KV mode, `kvBits`,
-  cache offset, and whether the first cache is already `QuantizedKVCacheProtocol`
+  cache offset, and whether any `KVCacheSimple` layer still needs conversion
 - the decode loop calls `maybeQuantizeKVCache(...)` only while that call can
   still mutate the cache
 - after the cache becomes quantized, later decode tokens skip the maintenance call

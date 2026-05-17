@@ -881,33 +881,66 @@ def _inferred_split_and_config(relative_path: str) -> tuple[str, str]:
 
 
 def _split_alias_from_candidate(candidate: str) -> str:
-    prefix = candidate.split("-", 1)[0].split("_", 1)[0].lower()
+    delimiter_index = _first_split_alias_delimiter(candidate)
+    prefix = candidate[:delimiter_index].lower() if delimiter_index >= 0 else candidate.lower()
     return _SPLIT_ALIASES.get(prefix, "")
+
+
+def _first_split_alias_delimiter(candidate: str) -> int:
+    dash_index = candidate.find("-")
+    underscore_index = candidate.find("_")
+    if dash_index < 0:
+        return underscore_index
+    if underscore_index < 0:
+        return dash_index
+    return dash_index if dash_index < underscore_index else underscore_index
 
 
 def _path_matches_split(relative_path: Path, split: str) -> bool:
     normalized_split = split.lower()
     split_dash_prefix = f"{normalized_split}-"
     split_underscore_prefix = f"{normalized_split}_"
-    for part in relative_path.parts:
-        lowered = part.lower()
-        if (
-            lowered == normalized_split
-            or lowered.startswith(split_dash_prefix)
-            or lowered.startswith(split_underscore_prefix)
-        ):
-            return True
-        dot_index = lowered.rfind(".")
-        if dot_index <= 0 or dot_index == len(lowered) - 1:
-            continue
-        stem = lowered[:dot_index]
-        if (
-            stem == normalized_split
-            or stem.startswith(split_dash_prefix)
-            or stem.startswith(split_underscore_prefix)
+    if _path_part_matches_split(
+        relative_path.name,
+        normalized_split,
+        split_dash_prefix,
+        split_underscore_prefix,
+    ):
+        return True
+    parts = relative_path.parts
+    for part in parts[:-1]:
+        if _path_part_matches_split(
+            part,
+            normalized_split,
+            split_dash_prefix,
+            split_underscore_prefix,
         ):
             return True
     return False
+
+
+def _path_part_matches_split(
+    part: str,
+    normalized_split: str,
+    split_dash_prefix: str,
+    split_underscore_prefix: str,
+) -> bool:
+    lowered = part.lower()
+    if (
+        lowered == normalized_split
+        or lowered.startswith(split_dash_prefix)
+        or lowered.startswith(split_underscore_prefix)
+    ):
+        return True
+    dot_index = lowered.rfind(".")
+    if dot_index <= 0 or dot_index == len(lowered) - 1:
+        return False
+    stem = lowered[:dot_index]
+    return (
+        stem == normalized_split
+        or stem.startswith(split_dash_prefix)
+        or stem.startswith(split_underscore_prefix)
+    )
 
 
 def _string_stem(name: str) -> str:
