@@ -3431,7 +3431,7 @@ class EvaluationCore:
             option = EvaluationCore._extract_option_value(stripped)
             if option is not None:
                 return option
-        if EvaluationCore._looks_like_numeric(stripped):
+        if stripped and stripped[0] in "+-0123456789" and EvaluationCore._looks_like_numeric(stripped):
             numeric = EvaluationCore._extract_numeric_value(stripped)
             if numeric is not None:
                 return numeric
@@ -3497,6 +3497,10 @@ class EvaluationCore:
 
     @staticmethod
     def _extract_option_value(value: str) -> str | None:
+        normalized = value.strip()
+        if len(normalized) == 1:
+            upper = normalized.upper()
+            return upper if upper.isalpha() else None
         matches = _OPTION_TOKEN_PATTERN.findall(value.upper())
         if not matches:
             return None
