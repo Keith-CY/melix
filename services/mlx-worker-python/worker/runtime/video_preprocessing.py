@@ -172,17 +172,17 @@ def _validate_parsed_video_uri(reference: ParsedVideoReference) -> None:
     if scheme in {"", "file"}:
         return
     if scheme == "https":
-        _validate_remote_video_reference(reference)
+        authority = reference.authority
+        if not authority:
+            raise VideoPreprocessError("Remote video URI requires a host.")
+        if _is_plain_allowed_remote_authority(authority):
+            return
+        _validate_non_plain_remote_video_reference(authority)
         return
     raise VideoPreprocessError(f"Unsupported video URI scheme: {scheme}.")
 
 
-def _validate_remote_video_reference(reference: ParsedVideoReference) -> None:
-    authority = reference.authority
-    if not authority:
-        raise VideoPreprocessError("Remote video URI requires a host.")
-    if _is_plain_allowed_remote_authority(authority):
-        return
+def _validate_non_plain_remote_video_reference(authority: str) -> None:
     authority = authority.rsplit("@", 1)[-1].strip()
     if not authority:
         raise VideoPreprocessError("Remote video URI requires a host.")
