@@ -2510,6 +2510,8 @@ public final class RuntimeViewModel {
     public var preferredDiagnosticsStage: RuntimeDiagnosticsStagePreference?
     public var selectedDiagnosticsServerTargetID = ""
     public var selectedBenchmarkSuiteIDs: Set<String> = ["smoke"]
+    public var benchmarkPreflightFitCheck = false
+    public var benchmarkAllowMemoryRisk = false
     public var selectedBenchContextLengths: [UInt32] = [1024, 4096]
     public var selectedBenchBatchSizes: [UInt32] = [2, 4]
     public var benchRepeats = "3"
@@ -2565,6 +2567,8 @@ public final class RuntimeViewModel {
     public var selectedEvaluationMode: RuntimeEvaluationMode = .standard
     public var selectedEvaluationCompareTargetModelIDs: Set<String> = []
     public var selectedEvaluationHistoryJobID = ""
+    public var evaluationPreflightFitCheck = false
+    public var evaluationAllowMemoryRisk = false
     public var loraDatasetSourceKind: RuntimeLoraDatasetSourceKind = .localPackage
     public var loraTrainingMode: RuntimeLoraTrainingMode = .lora
     public var selectedLoraTrainingPreset: RuntimeLoraTrainingPreset = .custom
@@ -2603,6 +2607,8 @@ public final class RuntimeViewModel {
     public var loraMaskPrompt = false
     public var loraGradientCheckpointing = false
     public var loraDerivedModelAlias = ""
+    public var trainingPreflightFitCheck = false
+    public var trainingAllowMemoryRisk = false
     public var selectedAdapterPackageID = ""
     public var selectedLoraTrainingJobID = ""
     public var loraTrainingJobExportPath = ""
@@ -8647,6 +8653,8 @@ public final class RuntimeViewModel {
                         targetRepo: trainingExt["target_repo"] ?? "",
                         trainingMode: trainingExt["training_mode"] ?? "",
                         parameters: loraTrainingCLIParameters(),
+                        preflightFitCheck: trainingPreflightFitCheck,
+                        allowMemoryRisk: trainingAllowMemoryRisk,
                         json: true
                     )
                 )
@@ -9532,6 +9540,8 @@ public final class RuntimeViewModel {
                             reasoningMode: normalizedBenchReasoningMode(),
                             structuredOutputMode: normalizedBenchStructuredOutputMode(),
                             parameters: benchmarkParameters(),
+                            preflightFitCheck: benchmarkPreflightFitCheck,
+                            allowMemoryRisk: benchmarkAllowMemoryRisk,
                             json: true
                         )
                     )
@@ -10093,6 +10103,8 @@ public final class RuntimeViewModel {
                             evalPromptRevisionID: evaluationPromptSnapshot?.revisionID ?? "",
                             semanticJudgeRemoteServerID: selectedEvaluationSemanticJudgeRemoteServerID,
                             semanticJudgeModelID: evaluationSemanticJudgeModelID,
+                            preflightFitCheck: evaluationPreflightFitCheck,
+                            allowMemoryRisk: evaluationAllowMemoryRisk,
                             json: true
                         )
                     )
@@ -11983,6 +11995,11 @@ public final class RuntimeViewModel {
         if accelerationProfile.isEmpty == false {
             parameters["acceleration_profile"] = accelerationProfile
         }
+        Self.assignMemoryFitPreflightParameters(
+            preflightFitCheck: benchmarkPreflightFitCheck,
+            allowMemoryRisk: benchmarkAllowMemoryRisk,
+            into: &parameters
+        )
         return parameters
     }
 
@@ -12030,6 +12047,11 @@ public final class RuntimeViewModel {
             parameters.merge(evaluationPromptParameters(from: promptSnapshot)) { _, new in new }
         }
         parameters.merge(semanticJudgeParameters) { _, new in new }
+        Self.assignMemoryFitPreflightParameters(
+            preflightFitCheck: evaluationPreflightFitCheck,
+            allowMemoryRisk: evaluationAllowMemoryRisk,
+            into: &parameters
+        )
         return parameters
     }
 
@@ -13870,13 +13892,26 @@ public final class RuntimeViewModel {
         ext["response_only"] = loraResponseOnly ? "true" : "false"
         ext["mask_prompt"] = loraMaskPrompt ? "true" : "false"
         ext["gradient_checkpointing"] = loraGradientCheckpointing ? "true" : "false"
+        Self.assignMemoryFitPreflightParameters(
+            preflightFitCheck: trainingPreflightFitCheck,
+            allowMemoryRisk: trainingAllowMemoryRisk,
+            into: &ext
+        )
         return ext
     }
 
     private func loraTrainingCLIParameters() -> [String: String] {
         let ext = loraTrainingExt()
         return ext.filter { key, _ in
-            ["adapter_name", "dataset_source_kind", "dataset_uri", "target_repo", "training_mode"].contains(key) == false
+            [
+                "adapter_name",
+                "dataset_source_kind",
+                "dataset_uri",
+                "target_repo",
+                "training_mode",
+                "preflight_fit_check",
+                "allow_memory_risk",
+            ].contains(key) == false
         }
     }
 
@@ -14156,6 +14191,19 @@ public final class RuntimeViewModel {
             return
         }
         ext[key] = normalized
+    }
+
+    private static func assignMemoryFitPreflightParameters(
+        preflightFitCheck: Bool,
+        allowMemoryRisk: Bool,
+        into parameters: inout [String: String]
+    ) {
+        if preflightFitCheck {
+            parameters["preflight_fit_check"] = "true"
+        }
+        if allowMemoryRisk {
+            parameters["allow_memory_risk"] = "true"
+        }
     }
 
     private func appendAssistantDelta(_ text: String, requestID: String) {

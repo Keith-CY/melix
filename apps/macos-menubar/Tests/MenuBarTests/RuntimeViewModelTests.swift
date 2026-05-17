@@ -6126,6 +6126,150 @@ struct RuntimeViewModelTests {
         #expect(noReceiptViewModel.diagnosticsBenchmarkUnavailableText == nil)
     }
 
+    @Test("memory fit preflight toggles flow into benchmark evaluation and training dispatch")
+    @MainActor
+    func memoryFitPreflightTogglesFlowIntoDispatch() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: testReadyModelID, state: .modelWarm)],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "train_lora",
+                outputPath: "/tmp/melix-train-lora/memory-fit.adapter.json",
+                manifestJSON: #"{"operation":"train_lora","job_id":"model-ops-memory-fit"}"#,
+                artifactKind: "adapter",
+                manifestPath: "/tmp/melix-train-lora/memory-fit.adapter.json"
+            ),
+            forNamedOperation: "train_lora"
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionModelID(testReadyModelID)
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        viewModel.selectedLoraModelID = testReadyModelID
+        viewModel.loraDatasetSourceKind = .localPackage
+        viewModel.loraDatasetURI = "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+        viewModel.loraAdapterName = "memory-fit-adapter"
+
+        #expect(viewModel.benchmarkPreflightFitCheck == false)
+        #expect(viewModel.benchmarkAllowMemoryRisk == false)
+        #expect(viewModel.evaluationPreflightFitCheck == false)
+        #expect(viewModel.evaluationAllowMemoryRisk == false)
+        #expect(viewModel.trainingPreflightFitCheck == false)
+        #expect(viewModel.trainingAllowMemoryRisk == false)
+
+        viewModel.benchmarkPreflightFitCheck = true
+        viewModel.benchmarkAllowMemoryRisk = true
+        viewModel.evaluationPreflightFitCheck = true
+        viewModel.evaluationAllowMemoryRisk = true
+        viewModel.trainingPreflightFitCheck = true
+        viewModel.trainingAllowMemoryRisk = true
+
+        await viewModel.runBench()
+        await viewModel.runEvaluation()
+        await viewModel.trainPrimaryModel()
+
+        let benchRequest = try #require(await client.recordedBenchRequests.last)
+        #expect(benchRequest.parameters["preflight_fit_check"] == "true")
+        #expect(benchRequest.parameters["allow_memory_risk"] == "true")
+
+        let evaluationRequest = try #require(await client.recordedEvaluationRequests.last)
+        #expect(evaluationRequest.parameters["preflight_fit_check"] == "true")
+        #expect(evaluationRequest.parameters["allow_memory_risk"] == "true")
+
+        let trainRequest = try #require(await client.recordedModelOperationRequests.first { $0.operation == "train_lora" })
+        #expect(trainRequest.ext["preflight_fit_check"] == "true")
+        #expect(trainRequest.ext["allow_memory_risk"] == "true")
+
+        let cliClient = FakeControlPlaneXPCClient()
+        await cliClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: testReadyModelID, state: .modelWarm)],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await workflowRunner.configureHandler { command in
+            switch command {
+            case .benchRun:
+                return .success(makeCLIBenchRunJSON())
+            case .evalRun:
+                return .success(makeCLIEvaluationRunJSON())
+            case .loraTrain:
+                return .success(
+                    """
+                    {
+                      "operation": "train_lora",
+                      "job_id": "cli-memory-fit",
+                      "output_path": "/tmp/melix-train-lora/cli-memory-fit.adapter.json",
+                      "adapter_name": "memory-fit-adapter",
+                      "dataset_uri": "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+                    }
+                    """
+                )
+            default:
+                return .success("{}\n")
+            }
+        }
+        let cliViewModel = RuntimeViewModel(
+            client: cliClient,
+            cliWorkflowRunner: workflowRunner
+        )
+        await cliViewModel.start()
+        cliViewModel.updateSelectedServerSessionModelID(testReadyModelID)
+        cliViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        cliViewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        cliViewModel.selectedLoraModelID = testReadyModelID
+        cliViewModel.loraDatasetSourceKind = .localPackage
+        cliViewModel.loraDatasetURI = "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+        cliViewModel.loraAdapterName = "memory-fit-adapter"
+        cliViewModel.benchmarkPreflightFitCheck = true
+        cliViewModel.benchmarkAllowMemoryRisk = true
+        cliViewModel.evaluationPreflightFitCheck = true
+        cliViewModel.evaluationAllowMemoryRisk = true
+        cliViewModel.trainingPreflightFitCheck = true
+        cliViewModel.trainingAllowMemoryRisk = true
+
+        await cliViewModel.runBench()
+        await cliViewModel.runEvaluation()
+        await cliViewModel.trainPrimaryModel()
+
+        let commands = await workflowRunner.snapshotRecordedCommands()
+        let benchOptions = try #require(commands.compactMap { command -> BenchRunOptions? in
+            if case .benchRun(let options) = command {
+                return options
+            }
+            return nil
+        }.last)
+        #expect(benchOptions.preflightFitCheck)
+        #expect(benchOptions.allowMemoryRisk)
+
+        let evalOptions = try #require(commands.compactMap { command -> EvalRunOptions? in
+            if case .evalRun(let options) = command {
+                return options
+            }
+            return nil
+        }.last)
+        #expect(evalOptions.preflightFitCheck)
+        #expect(evalOptions.allowMemoryRisk)
+
+        let loraOptions = try #require(commands.compactMap { command -> LoraTrainOptions? in
+            if case .loraTrain(let options) = command {
+                return options
+            }
+            return nil
+        }.last)
+        #expect(loraOptions.preflightFitCheck)
+        #expect(loraOptions.allowMemoryRisk)
+    }
+
     @Test("capability guards explain unsupported tools and acceleration disabled states")
     @MainActor
     func capabilityGuardsExplainUnsupportedToolsAndAccelerationDisabledStates() async throws {
