@@ -622,6 +622,55 @@ def test_serving_diagnostics_events_jsonl_streams_default_attribute_rows(
     )
 
 
+def test_serving_diagnostics_events_jsonl_writes_bytearray_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    summary = ServingDiagnosticsRequestSummary(
+        request_id="req-bytearray-jsonl",
+        task_kind="text-generation",
+        model_id="melix-dev-text",
+        runtime_kind="deterministic",
+        acceleration_mode="baseline",
+        prompt_protocol_id="chat.completions.v1",
+        prompt_digest="sha256:prompt",
+        prompt_template_digest="sha256:template",
+        generation_config={},
+        status="completed",
+        finish_reason="stop",
+    )
+    event = ServingDiagnosticsEvent(
+        request_id="req-bytearray-jsonl",
+        phase="decode",
+        event_index=8,
+        status="completed",
+        duration_ms=0.25,
+    )
+    observed_payload_types: list[type[object]] = []
+    original_write_bytes = Path.write_bytes
+
+    def tracked_write_bytes(path: Path, data: bytes) -> int:
+        if path.name == "events.jsonl":
+            observed_payload_types.append(type(data))
+        return original_write_bytes(path, data)
+
+    monkeypatch.setattr(Path, "write_bytes", tracked_write_bytes)
+
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-bytearray-jsonl",
+        invocation={},
+        effective_config={},
+        model_refs={},
+        request_summary=summary,
+        events=(event,),
+        diagnostics_mode="debug",
+    )
+
+    assert observed_payload_types == [bytearray]
+    assert paths["events"].read_text(encoding="utf-8").endswith('"status":"completed"}\n')
+
+
 def test_serving_diagnostics_events_jsonl_falls_back_for_non_exact_numeric_fields(
     tmp_path: Path,
 ) -> None:
