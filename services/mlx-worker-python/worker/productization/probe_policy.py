@@ -58,7 +58,13 @@ class ProbePolicy:
     ) -> ProbePolicy:
         if isinstance(value, ProbeMode):
             return _PROBE_POLICY_BY_VALUE[value.value]
-        raw_value = str(value or "").strip().lower()
+        if isinstance(value, str):
+            policy = _PROBE_POLICY_BY_VALUE.get(value)
+            if policy is not None:
+                return policy
+            raw_value = value.strip().lower()
+        else:
+            raw_value = str(value or "").strip().lower()
         if not raw_value:
             return cls(mode=default_mode)
         policy = _PROBE_POLICY_BY_VALUE.get(raw_value)
