@@ -41,6 +41,7 @@ class ServingDiagnosticsQueueSnapshot:
 
 class BoundedServingDiagnosticsEventQueue:
     __slots__ = (
+        "_append_event",
         "_dropped_count",
         "_events",
         "_is_saturated",
@@ -52,6 +53,7 @@ class BoundedServingDiagnosticsEventQueue:
     def __init__(self, *, max_events: int = 256) -> None:
         self._max_events = max(int(max_events), 1)
         self._events: deque[ServingDiagnosticsEvent] = deque(maxlen=self._max_events)
+        self._append_event = self._events.append
         self._dropped_count = 0
         self._is_saturated = False
         self._retained_count = 0
@@ -61,12 +63,10 @@ class BoundedServingDiagnosticsEventQueue:
         lock = self._lock
         lock.acquire()
         try:
-            events = self._events
+            self._append_event(event)
             if self._is_saturated:
                 self._dropped_count += 1
-                events.append(event)
                 return False
-            events.append(event)
             retained_count = self._retained_count + 1
             self._retained_count = retained_count
             self._is_saturated = retained_count >= self._max_events
