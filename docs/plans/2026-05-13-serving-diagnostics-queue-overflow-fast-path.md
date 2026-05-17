@@ -22,6 +22,12 @@ as an exact `float`, so `ServingDiagnosticsEvent.to_dict()` can skip redundant
 numeric constructor calls while retaining the previous coercion behavior for
 non-exact numeric inputs.
 
+The 2026-05-15 follow-up keeps the same debug-event JSONL bytes but coalesces
+the serialized row and newline into one `write()` call per row. The registered
+probe's serialization phase writes retained queue rows on every sample, so this
+slice reduces Python-level file-write dispatch without changing queue overflow
+semantics or the emitted diagnostics artifact shape.
+
 ## Affected Paths
 
 - `services/mlx-worker-python/worker/productization/serving_diagnostics.py`

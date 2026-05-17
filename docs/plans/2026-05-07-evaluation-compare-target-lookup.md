@@ -27,6 +27,8 @@ The current resolver builds a dictionary for every loaded model before checking 
 
 Register `evaluation-compare-target-lookup-early-stop` in `infra/perf/pr_scoped_probes.json` with a synthetic registry containing many loaded handles and a small requested target set near the front of the scan. The probe reports elapsed time and `get_loaded_model` calls; lower is better for both.
 
+The elapsed metric uses a `0.2 ms` absolute warning floor in addition to the percentage threshold because the optimized path is intentionally a low-millisecond lookup benchmark. Sub-millisecond CI variance should not override the structural `get_loaded_model` call-count signal.
+
 ## Success metrics
 
 - Focused tests pass.

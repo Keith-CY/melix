@@ -139,6 +139,18 @@ def test_compare_versions_identical_clean_values_skip_part_parsing(
     assert compare_versions(" v1.2.3+build ", "v1.2.3+build") == 0
 
 
+def test_compare_versions_v_prefix_equivalent_values_skip_part_parsing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_next_part(value: str, index: int):  # pragma: no cover - sentinel
+        raise AssertionError(f"compare_versions parsed v-prefix equivalent values for {value} at {index}")
+
+    monkeypatch.setattr(startup_signals_module, "_next_normalized_version_part", fail_next_part)
+
+    assert compare_versions("v1.2.3+build", "1.2.3+build") == 0
+    assert compare_versions("2.10.0", "v2.10.0") == 0
+
+
 def test_resolve_http_port_can_pick_an_available_port_when_requested_is_busy() -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -200,6 +212,31 @@ def test_classify_startup_failure_reports_host_port_conflict(tmp_path: Path) -> 
     assert report.classification == "host_port_conflict"
     assert "11434" in report.summary
     assert "Address already in use" in report.log_excerpt
+
+
+def test_startup_failure_report_uses_slots_without_changing_dict_payload(tmp_path: Path) -> None:
+    control_plane_stderr = tmp_path / "control-plane.stderr.log"
+    control_plane_stderr.write_text("fatal error: boot failed\n", encoding="utf-8")
+
+    report = classify_startup_failure(
+        {
+            "http_port": 11434,
+            "ready_probe_url": "http://127.0.0.1:11434/v1/models",
+            "control_plane_stderr_path": str(control_plane_stderr),
+        },
+        error_text="handshake failed",
+    )
+
+    assert not hasattr(report, "__dict__")
+    assert report.to_dict() == {
+        "classification": "control_plane_crash",
+        "summary": "Control plane crashed before startup completed.",
+        "detail": "Melix never reached http://127.0.0.1:11434/v1/models. Inspect the control-plane logs for the crash cause.",
+        "http_port": 11434,
+        "ready_probe_url": "http://127.0.0.1:11434/v1/models",
+        "primary_log_path": str(control_plane_stderr),
+        "log_excerpt": "fatal error: boot failed",
+    }
 
 
 def test_classify_startup_failure_skips_log_reads_when_error_text_reports_port_conflict(

@@ -99,6 +99,14 @@ def test_dataset_catalog_inferred_split_and_config_preserves_legacy_helpers() ->
     assert catalog._inferred_split_and_config("") == ("", "default")
 
 
+def test_dataset_catalog_split_alias_prefix_scan_matches_legacy_delimiters() -> None:
+    assert catalog._split_alias_from_candidate("train-00000-of-00001") == "train"
+    assert catalog._split_alias_from_candidate("validation_shard_00000") == "validation"
+    assert catalog._split_alias_from_candidate("test-mixed_00000") == "test"
+    assert catalog._split_alias_from_candidate("dev_00000-extra") == "validation"
+    assert catalog._split_alias_from_candidate("custom-train") == ""
+
+
 def test_dataset_catalog_reports_unavailable_roots_and_filters_snapshots(tmp_path: Path) -> None:
     home = tmp_path / "home"
     _write_hf_dataset_snapshot(home)
@@ -210,6 +218,29 @@ def test_dataset_catalog_selected_split_filters_during_iteration(
     assert catalog._selected_dataset_files(snapshot_dir, split="missing") == ()
     assert catalog._selected_dataset_files(snapshot_dir, split="") == supported_paths[1:]
     assert list(catalog._iter_matching_dataset_files(snapshot_dir, split="")) == []
+
+
+def test_dataset_catalog_path_match_checks_filename_before_parent_parts() -> None:
+    class FilenameOnlyPath:
+        name = "validation-00000.jsonl"
+
+        @property
+        def parts(self) -> tuple[str, ...]:
+            raise AssertionError("filename split matches should not inspect parent parts")
+
+    assert catalog._path_matches_split(FilenameOnlyPath(), "validation") is True  # type: ignore[arg-type]
+    assert (
+        catalog._path_matches_split(Path("custom/validation-00000.jsonl"), "validation")
+        is True
+    )
+    assert (
+        catalog._path_matches_split(Path("validation/shard-00000.jsonl"), "validation")
+        is True
+    )
+    assert (
+        catalog._path_matches_split(Path("custom/train-00000.jsonl"), "validation")
+        is False
+    )
 
 
 def test_dataset_catalog_row_reader_respects_limit(tmp_path: Path) -> None:

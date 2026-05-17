@@ -18,8 +18,9 @@ from worker.engine import code_eval_runner
 def _build_response(block_count: int) -> str:
     blocks = []
     for index in range(block_count):
+        tag = "PyThOn" if index % 2 else "python"
         blocks.append(
-            f"analysis chunk {index}\n```python\ndef candidate_{index}():\n    return {index}\n```"
+            f"analysis chunk {index}\n```{tag}\ndef candidate_{index}():\n    return {index}\n```"
         )
     trailing_commentary = "\n".join(f"post answer note {index}" for index in range(block_count))
     return "\n\n".join(blocks) + "\n" + trailing_commentary

@@ -23,10 +23,10 @@ This slice also updates the probe and coverage commands for this entry to use
 ## Optimization Hypothesis
 
 URI video preprocessing builds a stable identity hash for every URI input. The
-previous implementation repeatedly encoded each field and called
-`digest.update()` twice per field. Building the NUL-framed payload as one string
-and encoding it once preserves the exact digest bytes while reducing per-call
-Python hashing overhead.
+current single-encode implementation still allocates a tuple and dispatches
+through `str.join(...)` for each call. Rendering the same NUL-framed payload with
+adjacent f-strings preserves the exact digest bytes while avoiding the per-call
+tuple/join overhead in the hot path.
 
 ## Behavior Guard
 

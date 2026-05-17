@@ -867,6 +867,10 @@ def _gemma4_component_lora_metadata(
         "melix.lora.base_model_path": model_path,
         "melix.lora.component_model_type": "gemma4_text",
     }
+    text_layer_count = _config_positive_int(text_config, "num_hidden_layers")
+    if text_layer_count > 0:
+        ext["text_layer_count"] = str(text_layer_count)
+        ext["melix.component.text_backbone.layer_count"] = str(text_layer_count)
     if has_vision_component:
         config_payload = config_payload or {}
         vision_config = config_payload.get("vision_config")
@@ -883,6 +887,16 @@ def _gemma4_component_lora_metadata(
             }
         )
     return ext
+
+
+def _config_positive_int(config_payload: Mapping[str, object] | None, key: str) -> int:
+    if not isinstance(config_payload, Mapping):
+        return 0
+    try:
+        value = int(config_payload.get(key, 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+    return value if value > 0 else 0
 
 
 def _gemma4_index_has_vision_weights(

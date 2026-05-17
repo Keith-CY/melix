@@ -278,7 +278,7 @@ struct MelixRuntimeDiscoveryBuilder {
     }
 
     func capabilitiesPayload(modelQuery: String = "") -> [String: Any] {
-        let seedModels = ModelCatalog.phaseFiveSeedModels().map { model in
+        let seedModels = ModelCatalog.phaseSevenContractSeedModels().map { model in
             [
                 "model_id": model.modelID,
                 "kind": model.kind,

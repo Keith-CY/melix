@@ -14,6 +14,10 @@ from worker.productization.evaluation_schemas import (
     build_evaluation_compare_sample_record,
     build_evaluation_compare_summary_record,
 )
+from worker.model_ops.lora_runtime_metadata import (
+    adapter_runtime_ext_fields,
+    build_adapter_runtime_manifest_fields,
+)
 
 _LOGGER = logging.getLogger(__name__)
 from worker.productization.statistical_evidence import (
@@ -43,6 +47,7 @@ class AdapterTargetSpec:
     derived_from_model_id: str
     derived_from_model_path: str
     ephemeral_derived_model_id: str
+    runtime_manifest_fields: dict[str, str]
 
 _DEFAULT_COMPARE_EFFECT_THRESHOLD = 0.1
 _DEFAULT_COMPARE_CONFIDENCE_LEVEL = 0.95
@@ -157,6 +162,37 @@ def load_adapter_target_spec(
     ephemeral_derived_model_id = (
         f"{derived_from_model_id}-lora-{adapter_set_hash[:8]}-compare-{job_suffix}"
     )
+    from packages.protocol.python.worker.v1 import common_pb2
+
+    source_model = common_pb2.ModelSpec(
+        model_id=derived_from_model_id,
+        model_path=derived_from_model_path,
+        model_kind=str(payload.get("source_model_kind", "")).strip() or "text",
+        revision=str(payload.get("source_model_revision", "")).strip(),
+        tokenizer_hash=str(payload.get("source_model_tokenizer_hash", "")).strip(),
+        quant_profile_id=str(payload.get("source_model_quant_profile_id", "")).strip(),
+        parser_mode=str(payload.get("source_model_parser_mode", "")).strip(),
+        reasoning_mode=str(payload.get("source_model_reasoning_mode", "")).strip(),
+    )
+    adapter_scope = {
+        "adapter_scope": str(payload.get("adapter_scope", "")).strip()
+        or ("model" if source_model.model_kind == "text" else ""),
+        "training_surface": str(payload.get("training_surface", "")).strip()
+        or str(payload.get("adapter_scope", "")).strip()
+        or ("model" if source_model.model_kind == "text" else ""),
+        "component_model_type": str(payload.get("component_model_type", "")).strip(),
+        "component_family": str(payload.get("component_family", "")).strip(),
+        "component_model_path": str(payload.get("component_model_path", "")).strip()
+        or derived_from_model_path,
+    }
+    runtime_manifest_fields = build_adapter_runtime_manifest_fields(
+        source_model=source_model,
+        adapter_manifest=payload,
+        adapter_manifest_path=manifest_path,
+        adapter_weights_path=weights_path,
+        activation_mode="adapter_backed_runtime",
+        adapter_scope=adapter_scope,
+    )
     return AdapterTargetSpec(
         manifest_path=str(manifest_path),
         adapter_set_hash=adapter_set_hash,
@@ -164,6 +200,7 @@ def load_adapter_target_spec(
         derived_from_model_id=derived_from_model_id,
         derived_from_model_path=derived_from_model_path,
         ephemeral_derived_model_id=ephemeral_derived_model_id,
+        runtime_manifest_fields=runtime_manifest_fields,
     )
 
 
@@ -247,6 +284,7 @@ def resolve_compare_target_adapters(
             model_spec.ext["melix.adapter_set_hash"] = spec.adapter_set_hash
             model_spec.ext["melix.derived_from_model_id"] = spec.derived_from_model_id
             model_spec.ext["melix.derived_from_adapter"] = "true"
+            model_spec.ext.update(adapter_runtime_ext_fields(spec.runtime_manifest_fields))
             loaded = registry.load_model(model_spec)
             handle = getattr(loaded, "handle", "")
             if not handle:

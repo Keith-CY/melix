@@ -36,7 +36,7 @@ class UpdateCheckResult:
     detail: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class StartupFailureReport:
     classification: str
     summary: str
@@ -132,6 +132,13 @@ def compare_versions(left: str, right: str) -> int:
         return 0
     left_index = 1 if left_cleaned and left_cleaned[0] == "v" else 0
     right_index = 1 if right_cleaned and right_cleaned[0] == "v" else 0
+    if left_index != right_index:
+        left_length = len(left_cleaned)
+        right_length = len(right_cleaned)
+        if left_index and left_length == right_length + 1 and left_cleaned.startswith(right_cleaned, 1):
+            return 0
+        if right_index and right_length == left_length + 1 and right_cleaned.startswith(left_cleaned, 1):
+            return 0
     while True:
         left_value, left_index, left_done = _next_normalized_version_part(left_cleaned, left_index)
         right_value, right_index, right_done = _next_normalized_version_part(right_cleaned, right_index)

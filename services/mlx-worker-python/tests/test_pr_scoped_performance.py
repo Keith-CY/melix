@@ -784,7 +784,12 @@ def test_scope_report_selects_changed_scope_coverage_probe() -> None:
     )
 
     selected_ids = {probe["id"] for probe in scope["selected_probes"]}
-    assert "changed-scope-coverage-empty-path-short-circuit" in selected_ids
+    assert scope["selected_count"] == 2
+    assert scope["force_all"] is False
+    assert selected_ids == {
+        "changed-scope-coverage-empty-path-short-circuit",
+        "changed-scope-coverage-diff-parser",
+    }
 
 
 def test_scope_report_selects_changed_scope_coverage_parser_probe() -> None:
@@ -1164,7 +1169,7 @@ def test_scope_report_selects_dev_up_mlx_metal_dist_info_probe() -> None:
     assert "dev-up-mlx-metal-dist-info-scandir" in probe_ids
 
 
-def test_scope_report_selects_registry_cache_probe() -> None:
+def test_scope_report_selects_registry_cache_probe(tmp_path: Path) -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
         changed_files=["services/mlx-worker-python/worker/productization/pr_scoped_performance.py"],
@@ -1172,6 +1177,33 @@ def test_scope_report_selects_registry_cache_probe() -> None:
 
     probe_ids = {probe["id"] for probe in scope["selected_probes"]}
     assert "pr-scoped-performance-registry-cache" in probe_ids
+
+    registry_path = tmp_path / "registry.json"
+    registry_payload = []
+    for probe_id, watch_globs in (
+        ("alpha", ["src/a.py"]),
+        ("beta", ["src/b.py"]),
+        ("gamma", ["src/c.py"]),
+    ):
+        registry_payload.append(
+            {
+                "id": probe_id,
+                "name": probe_id.title(),
+                "watch_globs": watch_globs,
+                "test_command": "true",
+                "coverage_command": "true",
+                "probe_impl": "command_json",
+                "probe_command": "python3 -c 'print({})'",
+                "metrics": [{"key": "elapsed_ms_mean", "direction": "lower_is_better"}],
+            }
+        )
+    registry_path.write_text(json.dumps(registry_payload), encoding="utf-8")
+
+    sparse_scope = build_scope_report(registry_path=registry_path, changed_files=["src/c.py", "src/a.py"])
+
+    assert sparse_scope["matched_probe_ids"] == ["alpha", "gamma"]
+    assert [probe["id"] for probe in sparse_scope["selected_probes"]] == ["alpha", "gamma"]
+    assert sparse_scope["selected_count"] == 2
 
 
 def test_scope_report_force_selects_all_on_infra_change() -> None:
@@ -2249,7 +2281,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert "test_has_mlx_signal_skips_config_text_fallback_for_nonempty_payload_without_mlx_signal" in registry_probe.test_command
     assert "test_metadata_payload_has_mlx_signal_does_not_request_sorted_json" in registry_probe.test_command
     assert "test_has_mlx_signal_config_payload_fast_path_avoids_json_dump" in registry_probe.test_command
-    assert "scripts/changed_scope_coverage.py" in registry_probe.watch_globs
+    assert "scripts/changed_scope_coverage.py" not in registry_probe.watch_globs
     assert "test_registry_snapshot_reuses_hf_cache_config_payload" in registry_probe.coverage_command
     assert "test_raw_model_spec_loads_config_payload_when_not_supplied" in registry_probe.coverage_command
     assert "test_has_mlx_signal_falls_back_to_config_text_for_empty_supplied_payload" in registry_probe.coverage_command
@@ -2309,7 +2341,8 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
     for probe_id in ("probe-policy-noop-overhead", "serving-diagnostics-debug-queue-bounds"):
         watch_globs = by_id[probe_id]["watch_globs"]
         probe_command = by_id[probe_id]["probe_command"]
-        assert "scripts/changed_scope_coverage.py" in watch_globs
+        assert "scripts/changed_scope_coverage.py" not in watch_globs
+        assert "scripts/changed_scope_coverage.py" in by_id[probe_id]["coverage_command"]
         assert "services/mlx-worker-python/tests/test_pr_scoped_performance.py" in watch_globs
         assert "../head/$SCRIPT" in probe_command
         assert "${GITHUB_WORKSPACE:-}/head/$SCRIPT" in probe_command
@@ -2385,6 +2418,9 @@ def test_probe_policy_noop_overhead_probe_script_emits_metrics(
     assert "no_op_policy_check_overhead_pct" in metrics
     assert "no_op_reason_overhead_pct" in metrics
     assert "no_op_reason_call_ms_mean" in metrics
+    assert "mode_parse_valid_call_ms_mean" in metrics
+    assert "mode_parse_invalid_call_ms_mean" in metrics
+    assert "mode_parse_invalid_overhead_pct" in metrics
 
 
 def test_serving_diagnostics_queue_probe_script_emits_metrics(
@@ -2804,6 +2840,10 @@ def test_code_eval_count_tests_probe_script_emits_metrics(
     assert metrics["sample_count"] == 7.0
     assert metrics["syntax_count"] == 5334.0
     assert metrics["no_assert_count"] == 6002.0
+    assert metrics["assert_elapsed_ms_mean"] > 0
+    assert metrics["assert_line_count"] == 8000.0
+    assert metrics["assert_node_iterations"] == 20.0
+    assert metrics["assert_count"] == 8000.0
 
 
 def test_code_eval_test_count_probe_script_emits_metrics(
@@ -3141,6 +3181,9 @@ def test_startup_signals_probe_script_emits_metrics(capsys: pytest.CaptureFixtur
     assert payload["worker_crash_elapsed_ms_mean"] > 0
     assert payload["worker_crash_log_path_exists_checks_mean"] == 0.0
     assert payload["worker_crash_log_reads_mean"] == 1.0
+    assert payload["report_alloc_elapsed_ms_mean"] > 0
+    assert payload["report_alloc_peak_bytes_mean"] > 0
+    assert payload["report_has_dict_mean"] == 0.0
     assert payload["tail_scan_elapsed_ms_mean"] > 0
     assert payload["tail_scan_peak_bytes_mean"] > 0
     assert payload["trailing_whitespace_bytes"] == 80000.0

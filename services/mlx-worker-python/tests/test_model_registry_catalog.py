@@ -13,6 +13,7 @@ from worker.model_registry import catalog as catalog_module
 from worker.model_registry.catalog import (
     WorkerModelCatalog,
     _apply_registry_identity_metadata,
+    _config_positive_int,
     _default_embedding_family_for_backend,
     _gemma4_mtp_assistant_metadata,
     _gemma4_index_has_vision_weights,
@@ -2701,6 +2702,45 @@ def test_registry_snapshot_uses_gemma4_weight_index_to_keep_multimodal_mode(tmp_
     assert gemma4.model_kind == "vlm"
     assert gemma4.ext["vision_family_id"] == "gemma4-v1"
     assert gemma4.ext.get("melix.vlm.execution_mode", "") == ""
+
+
+def test_registry_snapshot_records_gemma4_text_backbone_layer_count(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "unsloth" / "gemma-4-E4B-it-MLX-8bit" / "main"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="unsloth/gemma-4-E4B-it-MLX-8bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {
+                "model_type": "gemma4_text",
+                "num_hidden_layers": 42,
+            },
+            "image_token_id": 258880,
+        },
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    gemma4 = discovered["unsloth/gemma-4-E4B-it-MLX-8bit"]
+
+    assert gemma4.model_kind == "vlm"
+    assert gemma4.ext["text_layer_count"] == "42"
+    assert gemma4.ext["melix.component.text_backbone.layer_count"] == "42"
+    assert gemma4.ext["melix.lora.adapter_scope"] == "text_backbone"
+
+
+def test_config_positive_int_rejects_missing_invalid_and_non_positive_values() -> None:
+    assert _config_positive_int(None, "num_hidden_layers") == 0
+    assert _config_positive_int({"num_hidden_layers": "invalid"}, "num_hidden_layers") == 0
+    assert _config_positive_int({"num_hidden_layers": -1}, "num_hidden_layers") == 0
+    assert _config_positive_int({"num_hidden_layers": "42"}, "num_hidden_layers") == 42
 
 
 def test_gemma4_weight_index_detection_handles_missing_or_invalid_payloads(tmp_path: Path) -> None:

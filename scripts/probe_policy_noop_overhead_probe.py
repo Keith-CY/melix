@@ -22,6 +22,9 @@ def main() -> int:
         iterations=iterations,
         samples=samples,
         threshold_pct=threshold_pct,
+        absolute_tolerance_ms=float(
+            os.environ.get("MELIX_PROBE_POLICY_OVERHEAD_ABSOLUTE_TOLERANCE_MS", "0.00002")
+        ),
     ).to_dict()
     print(json.dumps(metrics, sort_keys=True))
     return 0

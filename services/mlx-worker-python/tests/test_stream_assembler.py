@@ -113,6 +113,54 @@ def test_next_structural_tag_prefers_earliest_pipe_channel_tag() -> None:
     )
 
 
+def test_next_structural_tag_after_returns_earliest_enabled_boundary() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-after-earliest",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    assembler._buffer = "body <think>hidden</think> text <|tool_call>call:search()</tool_call>"
+
+    assert assembler._next_structural_tag_after(6) == 32
+
+
+def test_next_structural_tag_after_ignores_tool_boundary_when_parser_disabled() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-after-parser-disabled",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+    assembler._buffer = "body <tool_call>{}</tool_call> text"
+
+    assert assembler._next_structural_tag_after(0) == -1
+
+
+def test_next_structural_tag_after_can_return_regular_tool_boundary() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-after-regular-tool",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    assembler._buffer = "visible <tool_call>{}</tool_call> <|tool_call>call:search()"
+
+    assert assembler._next_structural_tag_after(0) == 8
+
+
+def test_next_structural_tag_after_returns_without_marker_tail_scans() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-after-no-marker-tail",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    assembler._buffer = "prefix <think>hidden</think> plain visible tail"
+
+    assert assembler._next_structural_tag_after(29) == -1
+
+
 def test_plain_buffer_without_tag_marker_flushes_without_structural_scans(monkeypatch) -> None:
     assembler = RequestStreamAssembler(
         request_id="req-no-marker-fast-path",

@@ -19,7 +19,7 @@ SUPPORTED_VIDEO_MIME_TYPES = {
 MAX_VIDEO_FRAME_BUDGET = 128
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PreparedVideoInput:
     source_kind: str
     reference: str
@@ -35,7 +35,7 @@ class PreparedVideoInput:
     sha256_hex: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ParsedVideoReference:
     raw: str
     scheme: str
@@ -216,19 +216,9 @@ def _uri_identity_hash(
     start_ms: int,
     end_ms: int,
 ) -> str:
-    framed_payload = "\0".join(
-        (
-            uri,
-            mime_type,
-            format_name,
-            filename,
-            str(byte_length),
-            str(duration_ms),
-            str(frame_budget),
-            str(start_ms),
-            str(end_ms),
-            "",
-        )
+    framed_payload = (
+        f"{uri}\0{mime_type}\0{format_name}\0{filename}\0"
+        f"{byte_length}\0{duration_ms}\0{frame_budget}\0{start_ms}\0{end_ms}\0"
     )
     return hashlib.sha256(framed_payload.encode("utf-8")).hexdigest()
 
