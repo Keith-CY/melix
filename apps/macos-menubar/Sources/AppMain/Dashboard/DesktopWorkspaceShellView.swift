@@ -7213,6 +7213,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                             )
                         }
                     )
+                    evidenceValidityRows(report)
                     evidenceReportFilterField
                     evidenceMetricRows(
                         report.metricRows(matching: evidenceReportFilter)
@@ -7438,6 +7439,54 @@ struct DesktopDiagnosticsToolSectionView: View {
             viewModel.clearEvidenceReportOpenError()
         } else {
             viewModel.recordEvidenceReportOpenError("Could not open evidence artifact at \(trimmedPath).")
+        }
+    }
+
+    @ViewBuilder
+    private func evidenceValidityRows(_ report: RuntimeEvidenceReportState) -> some View {
+        if report.requiredEvidenceRows.isEmpty == false || report.evidenceValidityRows.isEmpty == false {
+            VStack(alignment: .leading, spacing: 8) {
+                DesktopPassiveCaptionLabel(title: "Required Evidence Status")
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 8)], spacing: 8) {
+                    ForEach(report.requiredEvidenceRows) { row in
+                        VStack(alignment: .leading, spacing: 4) {
+                            DesktopPassiveStaticTextLabel(
+                                title: "\(row.title) • \(row.statusText)",
+                                font: .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+                                textColor: .secondaryLabelColor,
+                                lineBreakMode: .byWordWrapping,
+                                maximumNumberOfLines: 2
+                            )
+                            DesktopPassiveStaticTextLabel(
+                                title: row.detailText,
+                                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                                textColor: .secondaryLabelColor,
+                                lineBreakMode: .byWordWrapping,
+                                maximumNumberOfLines: 2
+                            )
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(
+                            Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
+                            in: RoundedRectangle(cornerRadius: 8)
+                        )
+                    }
+                }
+
+                if report.evidenceValidityRows.isEmpty == false {
+                    DesktopPassiveCaptionLabel(title: "Evidence Validity Metrics")
+                    ForEach(report.evidenceValidityRows) { row in
+                        DesktopPassiveStaticTextLabel(
+                            title: "\(row.id) • \(row.metric) • \(row.valueText)",
+                            font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                            textColor: .secondaryLabelColor,
+                            lineBreakMode: .byWordWrapping,
+                            maximumNumberOfLines: 2
+                        )
+                    }
+                }
+            }
         }
     }
 

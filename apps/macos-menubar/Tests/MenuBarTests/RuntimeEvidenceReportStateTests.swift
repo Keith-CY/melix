@@ -28,6 +28,17 @@ struct RuntimeEvidenceReportStateTests {
         #expect(report.evidenceValidityRows.contains {
             $0.id == "required_evidence_present" && $0.valueText == "1.0000"
         })
+        #expect(report.requiredEvidenceRows.map(\.id) == [
+            "required_evidence_present",
+            "required_probe_phases_present",
+            "required_telemetry_present",
+        ])
+        #expect(report.requiredEvidenceRows.allSatisfy { $0.statusText == "Present" })
+        #expect(report.requiredEvidenceRows.contains {
+            $0.title == "Required Telemetry"
+                && $0.valueText == "1.0000"
+                && $0.detailText.contains("required_telemetry_present")
+        })
         #expect(report.summaryItems.first { $0.id == "evidence-validity" }?.value == "Present")
         #expect(report.processRows.contains { row in
             row.roleText == "Primary Runtime"
@@ -49,6 +60,7 @@ struct RuntimeEvidenceReportStateTests {
         #expect(report.reportKindText == "Unknown")
         #expect(report.summaryItems.first?.value == "Unknown")
         #expect(report.summaryItems.first { $0.id == "evidence-validity" }?.value == "Missing")
+        #expect(report.requiredEvidenceRows.map(\.statusText) == ["Missing", "Missing", "Missing"])
         #expect(report.metricRows.map(\.metric) == ["alpha.metric", "zeta.metric"])
         #expect(report.metricRows.first?.baselineText == "-")
         #expect(report.metricRows.first?.deltaText == "-")
@@ -99,6 +111,9 @@ struct RuntimeEvidenceReportStateTests {
         #expect(renderedTexts.contains { $0.contains(url.lastPathComponent) })
         #expect(renderedTexts.contains("fixture open warning"))
         #expect(renderedTexts.contains { $0.contains("report-desktop-fixture") })
+        #expect(renderedTexts.contains("Required Evidence Status"))
+        #expect(renderedTexts.contains { $0.contains("Required Telemetry") && $0.contains("Present") })
+        #expect(renderedTexts.contains { $0.contains("required_telemetry_present") && $0.contains("1.0000") })
         #expect(renderedTexts.contains { $0.contains("powermetrics_failed:fixture") })
         #expect(renderedTexts.contains { $0.contains("telemetry_summary.csv") })
     }

@@ -71,6 +71,14 @@ public struct RuntimeEvidenceReportValidityRow: Identifiable, Equatable, Sendabl
     public let valueText: String
 }
 
+public struct RuntimeEvidenceReportRequiredEvidenceRow: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let title: String
+    public let statusText: String
+    public let valueText: String
+    public let detailText: String
+}
+
 public struct RuntimeEvidenceReportProcessRow: Identifiable, Equatable, Sendable {
     public let id: String
     public let side: String
@@ -100,6 +108,7 @@ public struct RuntimeEvidenceReportState: Equatable, Sendable {
     public let probeRows: [RuntimeEvidenceReportProbeRow]
     public let telemetryRows: [RuntimeEvidenceReportTelemetryRow]
     public let evidenceValidityRows: [RuntimeEvidenceReportValidityRow]
+    public let requiredEvidenceRows: [RuntimeEvidenceReportRequiredEvidenceRow]
     public let processRows: [RuntimeEvidenceReportProcessRow]
     public let artifactRows: [RuntimeEvidenceReportArtifactRow]
     public let csvArtifactRows: [RuntimeEvidenceReportArtifactRow]
@@ -191,7 +200,9 @@ public struct RuntimeEvidenceReportState: Equatable, Sendable {
 
         probeRows = Self.makeProbeRows(payload.probeSummary)
         telemetryRows = Self.makeTelemetryRows(payload.telemetrySummary)
-        evidenceValidityRows = Self.makeEvidenceValidityRows(payload.gateResult)
+        let gate = payload.gateResult
+        evidenceValidityRows = Self.makeEvidenceValidityRows(gate)
+        requiredEvidenceRows = Self.makeRequiredEvidenceRows(gate)
         processRows = Self.makeProcessRows(payload.processAttribution)
         artifactRows = Self.makeArtifactRows(payload.artifacts)
         csvArtifactRows = artifactRows.filter { $0.detailText == "CSV export" }
@@ -199,7 +210,6 @@ public struct RuntimeEvidenceReportState: Equatable, Sendable {
         instrumentationGapRows = payload.instrumentationGaps.sorted()
 
         let summary = payload.summary
-        let gate = payload.gateResult
         summaryItems = [
             RuntimeEvidenceReportSummaryItem(
                 id: "status",
@@ -246,6 +256,41 @@ public struct RuntimeEvidenceReportState: Equatable, Sendable {
                     valueText: metricValueText(value)
                 )
             }
+    }
+
+    private static func makeRequiredEvidenceRows(
+        _ gate: RuntimeEvidenceReportGateResultPayload
+    ) -> [RuntimeEvidenceReportRequiredEvidenceRow] {
+        [
+            (
+                id: "required_evidence_present",
+                title: "Required Evidence",
+                isPresent: gate.requiredEvidencePresent
+            ),
+            (
+                id: "required_probe_phases_present",
+                title: "Required Probe Phases",
+                isPresent: gate.requiredProbePhasesPresent
+            ),
+            (
+                id: "required_telemetry_present",
+                title: "Required Telemetry",
+                isPresent: gate.requiredTelemetryPresent
+            ),
+        ].map { item in
+            let metricValue = gate.evidenceValidityMetrics[item.id]
+            let statusIsPresent = item.isPresent ?? metricValue.map { $0 >= 1.0 } ?? false
+            let valueText = metricValue.map(metricValueText) ?? "-"
+            return RuntimeEvidenceReportRequiredEvidenceRow(
+                id: item.id,
+                title: item.title,
+                statusText: statusIsPresent ? "Present" : "Missing",
+                valueText: valueText,
+                detailText: metricValue == nil
+                    ? "\(item.id) missing"
+                    : "\(item.id) = \(valueText)"
+            )
+        }
     }
 
     private static func evidenceValidityValue(
@@ -955,6 +1000,9 @@ private struct RuntimeEvidenceReportGateResultPayload: Decodable {
     let blockingFailures: [RuntimeEvidenceReportMetricPayload]
     let informationalResults: [RuntimeEvidenceReportMetricPayload]
     let evidenceValidityMetrics: [String: Double]
+    let requiredEvidencePresent: Bool?
+    let requiredProbePhasesPresent: Bool?
+    let requiredTelemetryPresent: Bool?
 
     static let empty = RuntimeEvidenceReportGateResultPayload(
         overallResult: "",
@@ -968,18 +1016,27 @@ private struct RuntimeEvidenceReportGateResultPayload: Decodable {
         case blockingFailures = "blocking_failures"
         case informationalResults = "informational_results"
         case evidenceValidityMetrics = "evidence_validity_metrics"
+        case requiredEvidencePresent = "required_evidence_present"
+        case requiredProbePhasesPresent = "required_probe_phases_present"
+        case requiredTelemetryPresent = "required_telemetry_present"
     }
 
     init(
         overallResult: String,
         blockingFailures: [RuntimeEvidenceReportMetricPayload],
         informationalResults: [RuntimeEvidenceReportMetricPayload],
-        evidenceValidityMetrics: [String: Double]
+        evidenceValidityMetrics: [String: Double],
+        requiredEvidencePresent: Bool? = nil,
+        requiredProbePhasesPresent: Bool? = nil,
+        requiredTelemetryPresent: Bool? = nil
     ) {
         self.overallResult = overallResult
         self.blockingFailures = blockingFailures
         self.informationalResults = informationalResults
         self.evidenceValidityMetrics = evidenceValidityMetrics
+        self.requiredEvidencePresent = requiredEvidencePresent
+        self.requiredProbePhasesPresent = requiredProbePhasesPresent
+        self.requiredTelemetryPresent = requiredTelemetryPresent
     }
 
     init(from decoder: Decoder) throws {
@@ -997,6 +1054,18 @@ private struct RuntimeEvidenceReportGateResultPayload: Decodable {
             [String: Double].self,
             forKey: .evidenceValidityMetrics
         ) ?? [:]
+        requiredEvidencePresent = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .requiredEvidencePresent
+        )
+        requiredProbePhasesPresent = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .requiredProbePhasesPresent
+        )
+        requiredTelemetryPresent = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .requiredTelemetryPresent
+        )
     }
 }
 
