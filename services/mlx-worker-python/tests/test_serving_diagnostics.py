@@ -219,6 +219,7 @@ def test_serving_diagnostics_queue_append_uses_retained_count_without_len() -> N
     queue = BoundedServingDiagnosticsEventQueue(max_events=2)
     buffer = NoLenBuffer()
     queue._events = buffer  # type: ignore[assignment]
+    queue._append_event = buffer.append  # type: ignore[method-assign]
 
     assert queue.append(event) is True
     assert buffer.events == [event]
@@ -351,6 +352,7 @@ def test_serving_diagnostics_bounded_queue_serializes_append_during_snapshot() -
     queue = BoundedServingDiagnosticsEventQueue(max_events=8)
     instrumented = InstrumentedBuffer()
     queue._events = instrumented  # type: ignore[assignment]
+    queue._append_event = instrumented.append  # type: ignore[method-assign]
     errors: list[BaseException] = []
     snapshots: list[tuple[int, ...]] = []
 
