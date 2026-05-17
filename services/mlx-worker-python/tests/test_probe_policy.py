@@ -92,6 +92,11 @@ def test_probe_policy_empty_values_reuse_default_policy_cache() -> None:
     assert debug_policy.telemetry_enabled is True
 
 
+def test_probe_policy_factory_helpers_reuse_cached_instances() -> None:
+    assert ProbePolicy.evidence() is ProbePolicy.from_value(ProbeMode.EVIDENCE)
+    assert ProbePolicy.debug() is ProbePolicy.from_value(ProbeMode.DEBUG)
+
+
 def test_probe_policy_telemetry_enabled_only_for_sampling_modes() -> None:
     assert ProbePolicy(mode=ProbeMode.OFF).telemetry_enabled is False
     assert ProbePolicy(mode=ProbeMode.MINIMAL).telemetry_enabled is False
@@ -141,9 +146,15 @@ def test_no_op_probe_policy_overhead_metrics_are_thresholded() -> None:
     assert "mode_parse_empty_call_ms_mean" in payload
     assert "mode_parse_valid_call_ms_mean" in payload
     assert "mode_parse_invalid_call_ms_mean" in payload
+    assert "evidence_policy_call_ms_mean" in payload
+    assert "debug_policy_call_ms_mean" in payload
     assert "mode_parse_invalid_delta_ms" in payload
+    assert "evidence_policy_delta_ms" in payload
+    assert "debug_policy_delta_ms" in payload
     assert payload["mode_parse_empty_call_ms_mean"] >= 0.0
     assert payload["mode_parse_valid_call_ms_mean"] >= 0.0
     assert payload["mode_parse_invalid_call_ms_mean"] >= 0.0
+    assert payload["evidence_policy_call_ms_mean"] >= 0.0
+    assert payload["debug_policy_call_ms_mean"] >= 0.0
     assert payload["absolute_tolerance_ms"] > 0.0
     assert payload["threshold_passed"] == 1.0
