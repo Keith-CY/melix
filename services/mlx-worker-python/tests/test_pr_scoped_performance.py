@@ -23,6 +23,7 @@ from worker.productization.pr_scoped_performance import (
     _build_probe_details,
     _closure_index_text,
     _compiled_glob_pattern,
+    _coverage_paths_by_probe_id,
     _dict_list,
     _dispatch_probe_impl,
     _float_or_none,
@@ -1183,7 +1184,7 @@ def test_scope_report_selects_registry_cache_probe(tmp_path: Path) -> None:
     registry_payload = []
     for probe_id, watch_globs in (
         ("alpha", ["src/a.py"]),
-        ("beta", ["src/b.py"]),
+        ("beta", ["src/*.py"]),
         ("gamma", ["src/c.py"]),
     ):
         registry_payload.append(
@@ -1200,11 +1201,23 @@ def test_scope_report_selects_registry_cache_probe(tmp_path: Path) -> None:
         )
     registry_path.write_text(json.dumps(registry_payload), encoding="utf-8")
 
-    sparse_scope = build_scope_report(registry_path=registry_path, changed_files=["src/c.py", "src/a.py"])
+    sparse_scope = build_scope_report(
+        registry_path=registry_path,
+        changed_files=["src/c.py", "src/a.py", "src/b.py", "other.py"],
+    )
 
-    assert sparse_scope["matched_probe_ids"] == ["alpha", "gamma"]
-    assert [probe["id"] for probe in sparse_scope["selected_probes"]] == ["alpha", "gamma"]
-    assert sparse_scope["selected_count"] == 2
+    assert sparse_scope["matched_probe_ids"] == ["alpha", "beta", "gamma"]
+    assert [probe["id"] for probe in sparse_scope["selected_probes"]] == ["alpha", "beta", "gamma"]
+    assert sparse_scope["selected_count"] == 3
+    coverage_paths_by_probe = {
+        str(probe["id"]): probe["coverage_paths"]
+        for probe in sparse_scope["selected_probes"]
+    }
+    assert coverage_paths_by_probe == {
+        "alpha": ["src/a.py"],
+        "beta": ["src/a.py", "src/b.py", "src/c.py"],
+        "gamma": ["src/c.py"],
+    }
 
 
 def test_scope_report_force_selects_all_on_infra_change() -> None:
@@ -1271,6 +1284,8 @@ def test_scope_report_empty_direct_paths_skips_probe_matching(monkeypatch: pytes
     assert scope["selected_probes"] == []
     assert scope["matched_probe_ids"] == []
 
+    assert _coverage_paths_by_probe_id(changed_paths=(), probes=()) == {}
+
 
 def test_scope_report_large_changed_set_preserves_exact_selection_semantics() -> None:
     changed_files = _build_large_scope_probe_changed_files() + [
@@ -1291,6 +1306,7 @@ def test_scope_report_large_changed_set_preserves_exact_selection_semantics() ->
         == SCOPE_MATCHER_SELECTED_PROBE_IDS
     )
     assert scope["selected_count"] == len(SCOPE_MATCHER_SELECTED_PROBE_IDS)
+    assert any(probe["coverage_paths"] for probe in scope["selected_probes"])
 
 
 def test_match_probe_indexes_deduplicates_repeated_watch_globs() -> None:
@@ -1332,6 +1348,15 @@ def test_match_probe_indexes_deduplicates_repeated_watch_globs() -> None:
     matched = _match_probe_indexes(changed_paths=("shared.py", "services/b.py", "unmatched.py"), probes=probes)
 
     assert matched == {0, 1, 2}
+    coverage_paths = _coverage_paths_by_probe_id(
+        changed_paths=("shared.py", "services/b.py", "unmatched.py"),
+        probes=probes,
+    )
+    assert coverage_paths == {
+        "alpha": ("shared.py",),
+        "beta": ("shared.py", "services/b.py"),
+        "gamma": ("shared.py",),
+    }
 
 
 def test_match_probe_indexes_exact_only_intersects_changed_paths() -> None:
@@ -2609,6 +2634,7 @@ def test_build_scope_report_reuses_scope_cached_registry_without_double_stat(
     assert stat_calls == 2
     assert first["selected_count"] == 1
     assert second["selected_probes"] == first["selected_probes"]
+    assert build_scope_report(registry_path=registry_path, changed_files=[])["selected_probes"] == []
 
 
 def test_probe_id_index_reuses_cached_mapping_without_reiterating() -> None:

@@ -250,13 +250,15 @@ def build_scope_report(
         changed_paths=changed_paths,
     )
     probe_by_id = {probe.probe_id: probe for probe in probes}
+    coverage_paths_by_probe_id = _coverage_paths_by_probe_id(
+        changed_paths=changed_paths,
+        probes=probes,
+    )
     selected_probes_with_coverage_paths = []
     for probe_entry in selected_probes:
         probe = probe_by_id[str(probe_entry["id"])]
         scoped_entry = dict(probe_entry)
-        scoped_entry["coverage_paths"] = list(
-            coverage_paths_for_probe(probe=probe, changed_files=changed_paths)
-        )
+        scoped_entry["coverage_paths"] = list(coverage_paths_by_probe_id.get(probe.probe_id, ()))
         selected_probes_with_coverage_paths.append(scoped_entry)
     return {
         "schema_version": _SCOPE_SCHEMA_VERSION,
@@ -2412,6 +2414,40 @@ def _scope_selection_uncached(
         if index in matched_probe_indexes
     )
     return force_all, matched_probe_ids, selected_probes
+
+
+def _coverage_paths_by_probe_id(
+    *,
+    changed_paths: tuple[str, ...],
+    probes: tuple[ProbeDefinition, ...],
+) -> dict[str, tuple[str, ...]]:
+    if not changed_paths:
+        return {}
+    exact_path_to_probe_indexes, wildcard_glob_matchers = _probe_match_indexes(probes)
+    coverage_paths_by_probe_index: dict[int, list[str]] = {}
+    for path in changed_paths:
+        direct_probe_ids = _FORCE_ALL_DIRECT_PROBE_IDS_BY_EXACT_PATH.get(path)
+        if path in _FORCE_ALL_CONTEXT_ONLY_PATHS:
+            if direct_probe_ids:
+                probe_id_to_index = _probe_id_to_index(probes)
+                for probe_id in direct_probe_ids:
+                    if (probe_index := probe_id_to_index.get(probe_id)) is not None:
+                        coverage_paths_by_probe_index.setdefault(probe_index, []).append(path)
+            continue
+        probe_indexes = exact_path_to_probe_indexes.get(path)
+        if probe_indexes is not None:
+            for probe_index in probe_indexes:
+                coverage_paths_by_probe_index.setdefault(probe_index, []).append(path)
+        for prefix, pattern, probe_indexes in wildcard_glob_matchers:
+            if prefix and not path.startswith(prefix):
+                continue
+            if pattern.match(path) is not None:
+                for probe_index in probe_indexes:
+                    coverage_paths_by_probe_index.setdefault(probe_index, []).append(path)
+    return {
+        probes[probe_index].probe_id: tuple(coverage_paths)
+        for probe_index, coverage_paths in coverage_paths_by_probe_index.items()
+    }
 
 
 def _match_probe_indexes(
