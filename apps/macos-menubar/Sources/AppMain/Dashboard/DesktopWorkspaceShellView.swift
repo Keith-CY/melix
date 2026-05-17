@@ -6874,6 +6874,10 @@ struct DesktopDiagnosticsToolSectionView: View {
         await viewModel.refreshModelOpsProductState()
     }
 
+    func createDebugBundle() async {
+        await viewModel.runDiagnosticsDebugBundle()
+    }
+
     func toggleBenchmarkSuiteSelection(_ suiteID: String) {
         viewModel.toggleBenchmarkSuite(suiteID)
     }
@@ -6972,6 +6976,10 @@ struct DesktopDiagnosticsToolSectionView: View {
         Task { await refreshTooling() }
     }
 
+    private func startDebugBundleTask() {
+        Task { await createDebugBundle() }
+    }
+
     private var benchmarkRunDisabled: Bool {
         viewModel.canRunDiagnosticsBenchmark == false
     }
@@ -7046,6 +7054,113 @@ struct DesktopDiagnosticsToolSectionView: View {
         case .evaluation:
             return "Evaluation Report"
         }
+    }
+
+    @ViewBuilder
+    private var debugBundleSections: some View {
+        DesktopEditorialSectionCard("Debug Bundle") {
+            VStack(alignment: .leading, spacing: 12) {
+                TextField(
+                    "Run or Job ID",
+                    text: Binding(
+                        get: { viewModel.diagnosticsDebugBundleRunIDDraft },
+                        set: { viewModel.updateDiagnosticsDebugBundleRunIDDraft($0) }
+                    )
+                )
+                .textFieldStyle(.roundedBorder)
+
+                HStack(spacing: 8) {
+                    TextField(
+                        "Source path",
+                        text: Binding(
+                            get: { viewModel.diagnosticsDebugBundleSourcePathDraft },
+                            set: { viewModel.updateDiagnosticsDebugBundleSourcePathDraft($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+
+                    TextField(
+                        "Output path",
+                        text: Binding(
+                            get: { viewModel.diagnosticsDebugBundleOutputPathDraft },
+                            set: { viewModel.updateDiagnosticsDebugBundleOutputPathDraft($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+
+                HStack(spacing: 8) {
+                    Button(action: startDebugBundleTask) {
+                        Label("Create Debug Bundle", systemImage: "shippingbox")
+                    }
+                    .disabled(viewModel.diagnosticsDebugBundleCanRun == false)
+
+                    if viewModel.diagnosticsDebugBundleInProgress {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+
+                if viewModel.diagnosticsDebugBundleMessage.isEmpty == false {
+                    DesktopPassiveStaticTextLabel(
+                        title: viewModel.diagnosticsDebugBundleMessage,
+                        font: .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+                        textColor: .secondaryLabelColor,
+                        lineBreakMode: .byWordWrapping,
+                        maximumNumberOfLines: 2
+                    )
+                }
+
+                if viewModel.diagnosticsDebugBundleErrorMessage.isEmpty == false {
+                    DesktopPassiveStaticTextLabel(
+                        title: viewModel.diagnosticsDebugBundleErrorMessage,
+                        font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                        textColor: .secondaryLabelColor,
+                        lineBreakMode: .byWordWrapping,
+                        maximumNumberOfLines: 2
+                    )
+                }
+
+                if let result = viewModel.diagnosticsDebugBundleResult {
+                    debugBundleResultRows(result)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func debugBundleResultRows(_ result: RuntimeDiagnosticsDebugBundleState) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            debugBundleResultRow(title: "Bundle Path", value: result.bundlePath)
+            debugBundleResultRow(title: "Manifest", value: result.manifestPath)
+            debugBundleResultRow(title: "Redaction", value: result.redactionSummaryText)
+            ForEach(Array(result.artifactRows.prefix(6))) { row in
+                debugBundleResultRow(title: row.kindText, value: row.path)
+            }
+        }
+    }
+
+    private func debugBundleResultRow(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            DesktopPassiveStaticTextLabel(
+                title: title,
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+                textColor: .secondaryLabelColor
+            )
+            DesktopPassiveStaticTextLabel(
+                title: value.isEmpty ? "-" : value,
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                textColor: .secondaryLabelColor,
+                lineBreakMode: .byWordWrapping,
+                maximumNumberOfLines: 2
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(
+            Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
+            in: RoundedRectangle(cornerRadius: 8)
+        )
     }
 
     @ViewBuilder
@@ -7777,6 +7892,7 @@ struct DesktopDiagnosticsToolSectionView: View {
             }
 
             evidenceReportSections
+            debugBundleSections
 
             if selectedStage != .evaluation {
                 DesktopEditorialSectionCard(selectedStage == .matrix ? "Matrix Configuration" : "Bench Configuration") {

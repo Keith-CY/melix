@@ -2466,6 +2466,13 @@ public final class RuntimeViewModel {
     public private(set) var evidenceReportLoadError = ""
     public private(set) var evidenceReportOpenError = ""
     public private(set) var evidenceReportSourcePath = ""
+    public private(set) var diagnosticsDebugBundleRunIDDraft = ""
+    public private(set) var diagnosticsDebugBundleSourcePathDraft = ""
+    public private(set) var diagnosticsDebugBundleOutputPathDraft = ""
+    public private(set) var diagnosticsDebugBundleInProgress = false
+    public private(set) var diagnosticsDebugBundleMessage = ""
+    public private(set) var diagnosticsDebugBundleErrorMessage = ""
+    public private(set) var diagnosticsDebugBundleResult: RuntimeDiagnosticsDebugBundleState?
     public private(set) var adapterPackages: [RuntimeAdapterPackageState] = []
     public private(set) var trainingHistory: [RuntimeTrainingHistoryEntryState] = []
     public private(set) var loraExperimentGroups: [RuntimeLoraExperimentGroupState] = []
@@ -6863,6 +6870,11 @@ public final class RuntimeViewModel {
         selectedLoraTrainingJob?.followUpArtifacts.memoryFitSummaryText ?? ""
     }
 
+    public var diagnosticsDebugBundleCanRun: Bool {
+        diagnosticsDebugBundleRunIDDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            && diagnosticsDebugBundleInProgress == false
+    }
+
     public func loadEvidenceReport(json: String) throws {
         try loadEvidenceReport(json: json, sourcePath: "")
     }
@@ -6904,6 +6916,68 @@ public final class RuntimeViewModel {
     public func clearEvidenceReportOpenError() {
         evidenceReportOpenError = ""
         notifyStateChanged()
+    }
+
+    public func updateDiagnosticsDebugBundleRunIDDraft(_ runID: String) {
+        diagnosticsDebugBundleRunIDDraft = sanitizedRichText(runID)
+        notifyStateChanged()
+    }
+
+    public func updateDiagnosticsDebugBundleSourcePathDraft(_ path: String) {
+        diagnosticsDebugBundleSourcePathDraft = sanitizedRichText(path)
+        notifyStateChanged()
+    }
+
+    public func updateDiagnosticsDebugBundleOutputPathDraft(_ path: String) {
+        diagnosticsDebugBundleOutputPathDraft = sanitizedRichText(path)
+        notifyStateChanged()
+    }
+
+    public func applyDiagnosticsDebugBundleResult(_ result: RuntimeDiagnosticsDebugBundleState) {
+        diagnosticsDebugBundleResult = result
+        diagnosticsDebugBundleMessage = result.bundlePath.isEmpty
+            ? "Debug bundle ready."
+            : "Debug bundle ready at \(result.bundlePath)."
+        diagnosticsDebugBundleErrorMessage = ""
+        diagnosticsDebugBundleInProgress = false
+        notifyStateChanged()
+    }
+
+    public func runDiagnosticsDebugBundle() async {
+        let runID = diagnosticsDebugBundleRunIDDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard runID.isEmpty == false else {
+            failDiagnosticsDebugBundle("Enter a run or job ID before creating a debug bundle.")
+            return
+        }
+        guard let commandWorkflowRunner else {
+            failDiagnosticsDebugBundle("Diagnostics CLI runner is unavailable.")
+            return
+        }
+
+        let sourcePath = diagnosticsDebugBundleSourcePathDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let outputPath = diagnosticsDebugBundleOutputPathDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        diagnosticsDebugBundleRunIDDraft = runID
+        diagnosticsDebugBundleSourcePathDraft = sourcePath
+        diagnosticsDebugBundleOutputPathDraft = outputPath
+        diagnosticsDebugBundleInProgress = true
+        diagnosticsDebugBundleMessage = ""
+        diagnosticsDebugBundleErrorMessage = ""
+        notifyStateChanged()
+
+        do {
+            let result = try await commandWorkflowRunner.createDiagnosticsDebugBundle(
+                runID: runID,
+                sourcePath: sourcePath,
+                outputPath: outputPath
+            )
+            diagnosticsDebugBundleInProgress = false
+            clearCLIWorkflowFailure()
+            applyDiagnosticsDebugBundleResult(result)
+        } catch {
+            diagnosticsDebugBundleInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            failDiagnosticsDebugBundle(workflowErrorMessage(error))
+        }
     }
 
     private var selectedServerSessionID = ""
@@ -13607,6 +13681,14 @@ public final class RuntimeViewModel {
         workflowRecipeApplyInProgress = false
         workflowRecipeApplyMessage = ""
         workflowRecipeApplyErrorMessage = message
+        recordLocalError(message)
+        notifyStateChanged()
+    }
+
+    private func failDiagnosticsDebugBundle(_ message: String) {
+        diagnosticsDebugBundleInProgress = false
+        diagnosticsDebugBundleMessage = ""
+        diagnosticsDebugBundleErrorMessage = message
         recordLocalError(message)
         notifyStateChanged()
     }

@@ -151,6 +151,54 @@ struct RuntimeEvidenceReportStateTests {
         #expect(renderedTexts.contains { $0.contains("utilization telemetry missing") && $0.contains("used 512 B") })
     }
 
+    @Test("diagnostics renders debug bundle result state")
+    @MainActor
+    func diagnosticsRendersDebugBundleResultState() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.applyDiagnosticsDebugBundleResult(
+            try RuntimeDiagnosticsDebugBundleState.decode(json: makeDiagnosticsDebugBundleJSON())
+        )
+
+        let view = evidenceHostView(
+            DesktopDiagnosticsToolSectionView(
+                viewModel: viewModel,
+                foundation: viewModel.desktopFoundationState
+            ),
+            size: CGSize(width: 1280, height: 2400)
+        )
+        let renderedTexts = evidenceRenderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Debug Bundle"))
+        #expect(renderedTexts.contains("Bundle Path"))
+        #expect(renderedTexts.contains("/tmp/melix-debug/bench-1"))
+        #expect(renderedTexts.contains("Manifest"))
+        #expect(renderedTexts.contains("/tmp/melix-debug/bench-1/manifest.json"))
+        #expect(renderedTexts.contains("Effective Config"))
+        #expect(renderedTexts.contains("Debug bundle ready at /tmp/melix-debug/bench-1."))
+    }
+
+    @Test("diagnostics renders debug bundle error state")
+    @MainActor
+    func diagnosticsRendersDebugBundleErrorState() async throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.updateDiagnosticsDebugBundleRunIDDraft("bench-missing-runner")
+        let diagnosticsView = DesktopDiagnosticsToolSectionView(
+            viewModel: viewModel,
+            foundation: viewModel.desktopFoundationState
+        )
+        await diagnosticsView.createDebugBundle()
+
+        let view = evidenceHostView(diagnosticsView, size: CGSize(width: 1280, height: 2000))
+        let renderedTexts = evidenceRenderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Debug Bundle"))
+        #expect(renderedTexts.contains("Diagnostics CLI runner is unavailable."))
+    }
+
     @Test("view model loads clears and records evidence report errors")
     @MainActor
     func viewModelLoadsClearsAndRecordsEvidenceReportErrors() async throws {

@@ -2744,6 +2744,37 @@ func makeCLIBenchRunJSON(
     """
 }
 
+func makeDiagnosticsDebugBundleJSON(
+    bundleID: String = "bench-1",
+    bundlePath: String = "/tmp/melix-debug/bench-1"
+) -> String {
+    """
+    {
+      "schema_version": "melix.diagnostics.bundle.v1",
+      "bundle_id": "\(bundleID)",
+      "bundle_path": "\(bundlePath)",
+      "diagnostics_consent_state": "local_only",
+      "debug_artifact_policy": "explicit_cli_command",
+      "debug_jsonl_enabled": true,
+      "debug_jsonl_event_limit": 256,
+      "redaction_schema_version": "melix.diagnostics.redaction.v1",
+      "redacted_field_count": 3,
+      "source_run_record_path": "/tmp/melix/jobs/\(bundleID)/run-record.json",
+      "artifacts": {
+        "command": "command.txt",
+        "redacted_env": "redacted-env.json",
+        "effective_config": "effective-config.json",
+        "system": "system.json",
+        "capability_receipts": "capability-receipts.json",
+        "memory_estimate": "memory-estimate.json",
+        "logs": "logs.txt",
+        "metrics": "metrics.json",
+        "error": "error.json"
+      }
+    }
+    """
+}
+
 func makeCLIBenchmarkMatrixRunJSON(
     jobID: String = "matrix-newer",
     outputDir: String = "/tmp/melix/bench/matrix-runs/matrix-newer"

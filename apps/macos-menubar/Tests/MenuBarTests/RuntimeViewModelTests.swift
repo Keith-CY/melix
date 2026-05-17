@@ -5866,6 +5866,77 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.bench_export_csv_ms"] != nil)
     }
 
+    @Test("diagnostics debug bundle action dispatches CLI and stores artifact result")
+    @MainActor
+    func diagnosticsDebugBundleActionDispatchesCLIAndStoresArtifactResult() async throws {
+        let cliRunner = RecordingCLIWorkflowRunner()
+        let expectedCommand = MelixCLICommand.debugBundle(
+            .init(
+                runID: "bench-1",
+                sourcePath: "/tmp/melix/jobs",
+                outputPath: "/tmp/melix-debug/bench-1",
+                json: true
+            )
+        )
+        await cliRunner.configureOutput(
+            makeDiagnosticsDebugBundleJSON(
+                bundleID: "bench-1",
+                bundlePath: "/tmp/melix-debug/bench-1"
+            ),
+            for: expectedCommand
+        )
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            cliWorkflowRunner: cliRunner
+        )
+
+        viewModel.updateDiagnosticsDebugBundleRunIDDraft(" bench-1 ")
+        viewModel.updateDiagnosticsDebugBundleSourcePathDraft(" /tmp/melix/jobs ")
+        viewModel.updateDiagnosticsDebugBundleOutputPathDraft(" /tmp/melix-debug/bench-1 ")
+        await viewModel.runDiagnosticsDebugBundle()
+
+        #expect(await cliRunner.snapshotRecordedCommands() == [expectedCommand])
+        let result = try #require(viewModel.diagnosticsDebugBundleResult)
+        #expect(result.bundleID == "bench-1")
+        #expect(result.bundlePath == "/tmp/melix-debug/bench-1")
+        #expect(result.manifestPath == "/tmp/melix-debug/bench-1/manifest.json")
+        #expect(result.artifactRows.map(\.kindText).contains("Effective Config"))
+        #expect(result.artifactRows.map(\.path).contains("/tmp/melix-debug/bench-1/effective-config.json"))
+        #expect(viewModel.diagnosticsDebugBundleMessage == "Debug bundle ready at /tmp/melix-debug/bench-1.")
+        #expect(viewModel.diagnosticsDebugBundleErrorMessage.isEmpty)
+        #expect(viewModel.diagnosticsDebugBundleInProgress == false)
+    }
+
+    @Test("diagnostics debug bundle reports validation runner and decode failures")
+    @MainActor
+    func diagnosticsDebugBundleReportsValidationRunnerAndDecodeFailures() async throws {
+        let missingRunIDViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        await missingRunIDViewModel.runDiagnosticsDebugBundle()
+        #expect(
+            missingRunIDViewModel.diagnosticsDebugBundleErrorMessage
+                == "Enter a run or job ID before creating a debug bundle."
+        )
+
+        let missingRunnerViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        missingRunnerViewModel.updateDiagnosticsDebugBundleRunIDDraft("bench-1")
+        await missingRunnerViewModel.runDiagnosticsDebugBundle()
+        #expect(missingRunnerViewModel.diagnosticsDebugBundleErrorMessage == "Diagnostics CLI runner is unavailable.")
+
+        let cliRunner = RecordingCLIWorkflowRunner()
+        let expectedCommand = MelixCLICommand.debugBundle(.init(runID: "bench-bad", json: true))
+        await cliRunner.configureOutput("{", for: expectedCommand)
+        let decodeFailureViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            cliWorkflowRunner: cliRunner
+        )
+        decodeFailureViewModel.updateDiagnosticsDebugBundleRunIDDraft("bench-bad")
+        await decodeFailureViewModel.runDiagnosticsDebugBundle()
+
+        #expect(await cliRunner.snapshotRecordedCommands() == [expectedCommand])
+        #expect(decodeFailureViewModel.diagnosticsDebugBundleErrorMessage == "debug.bundle returned malformed JSON.")
+        #expect(decodeFailureViewModel.diagnosticsDebugBundleInProgress == false)
+    }
+
     @Test("benchmark configuration forwards canonical context lengths batch sizes repeats cache reasoning and structured output controls")
     @MainActor
     func benchmarkConfigurationForwardsCanonicalControls() async throws {

@@ -250,6 +250,22 @@ extension MelixCLIWorkflowRunning {
         return try decodeRuntimeJobCancelResult(output: output, command: command, surface: surface)
     }
 
+    func createDiagnosticsDebugBundle(
+        runID: String,
+        sourcePath: String = "",
+        outputPath: String = ""
+    ) async throws -> RuntimeDiagnosticsDebugBundleState {
+        let command = MelixCLICommand.debugBundle(
+            .init(runID: runID, sourcePath: sourcePath, outputPath: outputPath, json: true)
+        )
+        let output = try await run(command)
+        do {
+            return try RuntimeDiagnosticsDebugBundleState.decode(json: output)
+        } catch {
+            throw MelixCLIWorkflowError.invalidJSON(commandID: command.workflowCommandID, surface: surface, output: output)
+        }
+    }
+
     func listWorkflowRecipes(task: String) async throws -> RuntimeWorkflowRecipeCatalogState {
         let command = MelixCLICommand.recipesList(.init(task: task, json: true))
         let output = try await run(command)
