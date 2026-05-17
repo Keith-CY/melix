@@ -3613,6 +3613,21 @@
         "direction": "lower_is_better"
       },
       {
+        "key": "mode_parse_valid_call_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better"
+      },
+      {
+        "key": "mode_parse_invalid_call_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better"
+      },
+      {
+        "key": "mode_parse_invalid_overhead_pct",
+        "unit": "pct",
+        "direction": "informational"
+      },
+      {
         "key": "threshold_passed",
         "unit": "bool",
         "direction": "higher_is_better",

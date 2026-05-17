@@ -17,6 +17,9 @@ class ProbeMode(StrEnum):
     DEBUG = "debug"
 
 
+_PROBE_MODE_BY_VALUE: dict[str, ProbeMode] = {mode.value: mode for mode in ProbeMode}
+
+
 @dataclass(frozen=True, slots=True)
 class ProbePolicy:
     mode: ProbeMode = ProbeMode.MINIMAL
@@ -61,14 +64,14 @@ class ProbePolicy:
         raw_value = str(value or "").strip().lower()
         if not raw_value:
             return cls(mode=default_mode)
-        try:
-            return cls(mode=ProbeMode(raw_value), source_value=raw_value)
-        except ValueError:
-            return cls(
-                mode=default_mode,
-                source_value=raw_value,
-                fallback_applied=True,
-            )
+        mode = _PROBE_MODE_BY_VALUE.get(raw_value)
+        if mode is not None:
+            return cls(mode=mode, source_value=raw_value)
+        return cls(
+            mode=default_mode,
+            source_value=raw_value,
+            fallback_applied=True,
+        )
 
     @classmethod
     def evidence(cls) -> ProbePolicy:

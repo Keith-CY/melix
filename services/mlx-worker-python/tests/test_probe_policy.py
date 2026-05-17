@@ -24,6 +24,14 @@ def test_probe_policy_invalid_env_falls_back_to_production_default() -> None:
     assert policy.telemetry_enabled is False
 
 
+def test_probe_policy_parses_modes_with_cached_value_lookup() -> None:
+    for mode in ProbeMode:
+        policy = ProbePolicy.from_value(f"  {mode.value.upper()}  ")
+        assert policy.mode is mode
+        assert policy.source_value == mode.value
+        assert policy.fallback_applied is False
+
+
 def test_probe_policy_empty_env_uses_production_default() -> None:
     policy = probe_policy_from_env({"MELIX_PROBE_MODE": ""})
 
@@ -79,5 +87,10 @@ def test_no_op_probe_policy_overhead_metrics_are_thresholded() -> None:
     assert "no_op_recorder_delta_ms" in payload
     assert "no_op_policy_check_delta_ms" in payload
     assert "no_op_reason_delta_ms" in payload
+    assert "mode_parse_valid_call_ms_mean" in payload
+    assert "mode_parse_invalid_call_ms_mean" in payload
+    assert "mode_parse_invalid_delta_ms" in payload
+    assert payload["mode_parse_valid_call_ms_mean"] >= 0.0
+    assert payload["mode_parse_invalid_call_ms_mean"] >= 0.0
     assert payload["absolute_tolerance_ms"] > 0.0
     assert payload["threshold_passed"] == 1.0
