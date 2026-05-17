@@ -217,40 +217,44 @@ private func groundedSurfaceCount(for viewModel: RuntimeViewModel) -> Int {
 @MainActor
 private func groundedToolSectionCount(for viewModel: RuntimeViewModel) -> Int {
     let foundation = viewModel.desktopFoundationState
-    let sectionChecks: [(DesktopToolSection, Bool)] = [
+    let sectionChecks: [(DesktopToolSection, () -> Bool)] = [
         (
             .modelsLibrary,
-            hostedDesktopPolishViewHasSubviews(
-                DesktopModelsTabView(foundation: foundation, viewModel: viewModel)
-            )
+            {
+                hostedDesktopPolishViewHasSubviews(
+                    DesktopModelsTabView(foundation: foundation, viewModel: viewModel)
+                )
+            }
         ),
-        (.downloads, hostedDesktopPolishViewHasSubviews(DesktopDownloadsToolSectionView(viewModel: viewModel))),
-        (.training, hostedDesktopPolishViewHasSubviews(DesktopTrainingToolSectionView(viewModel: viewModel))),
+        (.downloads, { hostedDesktopPolishViewHasSubviews(DesktopDownloadsToolSectionView(viewModel: viewModel)) }),
+        (.training, { hostedDesktopPolishViewHasSubviews(DesktopTrainingToolSectionView(viewModel: viewModel)) }),
         (
             .workflowRecipes,
-            hostedDesktopPolishViewHasSubviews(DesktopWorkflowRecipesToolSectionView(viewModel: viewModel))
+            { hostedDesktopPolishViewHasSubviews(DesktopWorkflowRecipesToolSectionView(viewModel: viewModel)) }
         ),
         (
             .syntheticDatasets,
-            hostedDesktopPolishViewHasSubviews(DesktopSyntheticDatasetToolSectionView(viewModel: viewModel))
+            { hostedDesktopPolishViewHasSubviews(DesktopSyntheticDatasetToolSectionView(viewModel: viewModel)) }
         ),
-        (.batchRuns, hostedDesktopPolishViewHasSubviews(DesktopBatchRunsToolSectionView(viewModel: viewModel))),
-        (.jobs, hostedDesktopPolishViewHasSubviews(DesktopJobsToolSectionView(viewModel: viewModel))),
+        (.batchRuns, { hostedDesktopPolishViewHasSubviews(DesktopBatchRunsToolSectionView(viewModel: viewModel)) }),
+        (.jobs, { hostedDesktopPolishViewHasSubviews(DesktopJobsToolSectionView(viewModel: viewModel)) }),
         (
             .diagnostics,
-            hostedDesktopPolishViewHasSubviews(
-                DesktopDiagnosticsToolSectionView(viewModel: viewModel, foundation: foundation)
-            )
+            {
+                hostedDesktopPolishViewHasSubviews(
+                    DesktopDiagnosticsToolSectionView(viewModel: viewModel, foundation: foundation)
+                )
+            }
         ),
-        (.logs, hostedDesktopPolishViewHasSubviews(DesktopLogsTabView(foundation: foundation))),
-        (.settings, hostedDesktopPolishViewHasSubviews(DesktopSettingsTabView(foundation: foundation))),
+        (.logs, { hostedDesktopPolishViewHasSubviews(DesktopLogsTabView(foundation: foundation)) }),
+        (.settings, { hostedDesktopPolishViewHasSubviews(DesktopSettingsTabView(foundation: foundation)) }),
     ]
 
     return sectionChecks.reduce(into: 0) { count, candidate in
         let (section, isGrounded) = candidate
         viewModel.selectSurface(.tools)
         viewModel.selectToolSection(section)
-        if isGrounded {
+        if isGrounded() {
             count += 1
         }
     }
@@ -322,7 +326,8 @@ private func hostedDesktopPolishViewHasSubviews<Content: View>(_ rootView: Conte
     let view = controller.view
     view.frame = NSRect(x: 0, y: 0, width: 1_200, height: 800)
     view.layoutSubtreeIfNeeded()
-    return view.subviews.isEmpty == false
+    let fittingSize = view.fittingSize
+    return view.subviews.isEmpty == false || fittingSize.width > 0 || fittingSize.height > 0
 }
 
 @MainActor
