@@ -484,18 +484,21 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
 
 def _write_jsonl(path: Path, rows: Any) -> None:
     encode = _JSONL_ENCODER.encode
-    lines: list[str] = []
-    append_line = lines.append
+    payload = bytearray()
+    append_line = payload.extend
+    newline = b"\n"
     request_id_literals: dict[str, str] = {}
     for row in rows:
         if isinstance(row, ServingDiagnosticsEvent):
             fast_line = _empty_attribute_event_json_line(row, request_id_literals)
             if fast_line is not None:
-                append_line(fast_line + "\n")
+                append_line(fast_line.encode("utf-8"))
+                append_line(newline)
                 continue
             row = row.to_dict()
-        append_line(encode(row) + "\n")
-    path.write_bytes("".join(lines).encode("utf-8"))
+        append_line(encode(row).encode("utf-8"))
+        append_line(newline)
+    path.write_bytes(payload)
 
 
 def _empty_attribute_event_json_line(
