@@ -26,6 +26,7 @@ class ProbeOverheadMetrics:
     no_op_recorder_call_ms_mean: float
     no_op_policy_check_call_ms_mean: float
     no_op_reason_call_ms_mean: float
+    mode_parse_empty_call_ms_mean: float
     mode_parse_valid_call_ms_mean: float
     mode_parse_invalid_call_ms_mean: float
     no_op_recorder_overhead_pct: float
@@ -48,6 +49,7 @@ class ProbeOverheadMetrics:
             "no_op_recorder_call_ms_mean": self.no_op_recorder_call_ms_mean,
             "no_op_policy_check_call_ms_mean": self.no_op_policy_check_call_ms_mean,
             "no_op_reason_call_ms_mean": self.no_op_reason_call_ms_mean,
+            "mode_parse_empty_call_ms_mean": self.mode_parse_empty_call_ms_mean,
             "mode_parse_valid_call_ms_mean": self.mode_parse_valid_call_ms_mean,
             "mode_parse_invalid_call_ms_mean": self.mode_parse_invalid_call_ms_mean,
             "no_op_recorder_overhead_pct": self.no_op_recorder_overhead_pct,
@@ -92,6 +94,11 @@ def measure_no_op_probe_policy_overhead(
         iterations=iteration_count,
         samples=sample_count,
     )
+    parse_empty_samples = _sample_call_ms(
+        lambda: ProbePolicy.from_value(""),
+        iterations=iteration_count,
+        samples=sample_count,
+    )
     parse_valid_samples = _sample_call_ms(
         lambda: ProbePolicy.from_value("debug"),
         iterations=iteration_count,
@@ -106,6 +113,7 @@ def measure_no_op_probe_policy_overhead(
     recorder_mean = _mean(recorder_samples)
     policy_mean = _mean(policy_samples)
     reason_mean = _mean(reason_samples)
+    parse_empty_mean = _mean(parse_empty_samples)
     parse_valid_mean = _mean(parse_valid_samples)
     parse_invalid_mean = _mean(parse_invalid_samples)
     recorder_overhead_pct = _overhead_pct(recorder_mean, baseline_mean)
@@ -123,6 +131,7 @@ def measure_no_op_probe_policy_overhead(
         no_op_recorder_call_ms_mean=recorder_mean,
         no_op_policy_check_call_ms_mean=policy_mean,
         no_op_reason_call_ms_mean=reason_mean,
+        mode_parse_empty_call_ms_mean=parse_empty_mean,
         mode_parse_valid_call_ms_mean=parse_valid_mean,
         mode_parse_invalid_call_ms_mean=parse_invalid_mean,
         no_op_recorder_overhead_pct=recorder_overhead_pct,

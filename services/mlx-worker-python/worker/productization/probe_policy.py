@@ -66,7 +66,7 @@ class ProbePolicy:
         else:
             raw_value = str(value or "").strip().lower()
         if not raw_value:
-            return cls(mode=default_mode)
+            return _PROBE_POLICY_BY_DEFAULT_MODE[default_mode]
         policy = _PROBE_POLICY_BY_VALUE.get(raw_value)
         if policy is not None:
             return policy
@@ -87,6 +87,9 @@ class ProbePolicy:
 
 _PROBE_POLICY_BY_VALUE: dict[str, ProbePolicy] = {
     mode.value: ProbePolicy(mode=mode, source_value=mode.value) for mode in ProbeMode
+}
+_PROBE_POLICY_BY_DEFAULT_MODE: dict[ProbeMode, ProbePolicy] = {
+    mode: ProbePolicy(mode=mode) for mode in ProbeMode
 }
 
 
