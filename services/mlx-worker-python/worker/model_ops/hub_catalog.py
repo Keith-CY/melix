@@ -622,6 +622,18 @@ def _size_hint_bytes(payload: dict[str, Any]) -> int:
 
 
 def _direct_size_hint_from_text(text: str) -> int:
+    if text.endswith(" MB"):
+        value_text = text[:-3]
+        if value_text.isdecimal():
+            return int(value_text) * _SIZE_HINT_MB
+    if text.endswith(" GB"):
+        value_text = text[:-3]
+        if value_text.isdecimal():
+            return int(value_text) * _SIZE_HINT_GB
+    if text.endswith(" KB"):
+        value_text = text[:-3]
+        if value_text.isdecimal():
+            return int(value_text) * _SIZE_HINT_KB
     try:
         value_text, unit_text = text.split()
     except ValueError:

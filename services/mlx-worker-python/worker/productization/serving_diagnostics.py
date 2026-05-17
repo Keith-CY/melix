@@ -22,6 +22,14 @@ _JSON_COMPACT_SEPARATORS = (",", ":")
 _JSONL_ENCODER = json.JSONEncoder(sort_keys=True, separators=_JSON_COMPACT_SEPARATORS)
 _JSON_STRING_ENCODER = json.encoder.encode_basestring_ascii
 _SET_FROZEN_ATTR = object.__setattr__
+_EMPTY_EVENT_JSON_DECODE_COMPLETED_PREFIX = b'{"attributes":{},"duration_ms":'
+_EMPTY_EVENT_JSON_DECODE_COMPLETED_MID = b',"event_index":'
+_EMPTY_EVENT_JSON_DECODE_COMPLETED_REQUEST_PREFIX = (
+    b',"phase":"decode","request_id":'
+)
+_EMPTY_EVENT_JSON_DECODE_COMPLETED_SUFFIX = (
+    b',"schema_version":"melix.serving_diagnostics.event.v1","status":"completed"}'
+)
 
 
 @lru_cache(maxsize=1024)
@@ -31,6 +39,11 @@ def _json_string_literal(value: str) -> str:
 
 @lru_cache(maxsize=1024)
 def _ascii_float_literal(value: float) -> bytes:
+    return str(value).encode("ascii")
+
+
+@lru_cache(maxsize=4096)
+def _ascii_int_literal(value: int) -> bytes:
     return str(value).encode("ascii")
 
 
@@ -531,16 +544,6 @@ def _empty_attribute_event_json_line_bytes(
     phase = event.phase
     request_id = event.request_id
     status = event.status
-    encoded_phase = (
-        b'"decode"'
-        if phase == "decode"
-        else _json_string_literal(phase).encode("utf-8")
-    )
-    encoded_status = (
-        b'"completed"'
-        if status == "completed"
-        else _json_string_literal(status).encode("utf-8")
-    )
     if request_id_literals is None:
         encoded_request_id = _json_string_literal(request_id).encode("utf-8")
     else:
@@ -548,16 +551,32 @@ def _empty_attribute_event_json_line_bytes(
         if encoded_request_id is None:
             encoded_request_id = _json_string_literal(request_id).encode("utf-8")
             request_id_literals[request_id] = encoded_request_id
-    return (
-        b'{"attributes":{},"duration_ms":'
-        + _ascii_float_literal(duration_ms)
-        + b',"event_index":'
-        + str(event_index).encode("ascii")
-        + b',"phase":'
-        + encoded_phase
-        + b',"request_id":'
-        + encoded_request_id
-        + b',"schema_version":"melix.serving_diagnostics.event.v1","status":'
-        + encoded_status
-        + b"}"
+    if phase == "decode" and status == "completed":
+        return b"".join(
+            (
+                _EMPTY_EVENT_JSON_DECODE_COMPLETED_PREFIX,
+                _ascii_float_literal(duration_ms),
+                _EMPTY_EVENT_JSON_DECODE_COMPLETED_MID,
+                _ascii_int_literal(event_index),
+                _EMPTY_EVENT_JSON_DECODE_COMPLETED_REQUEST_PREFIX,
+                encoded_request_id,
+                _EMPTY_EVENT_JSON_DECODE_COMPLETED_SUFFIX,
+            )
+        )
+    encoded_phase = _json_string_literal(phase).encode("utf-8")
+    encoded_status = _json_string_literal(status).encode("utf-8")
+    return b"".join(
+        (
+            b'{"attributes":{},"duration_ms":',
+            _ascii_float_literal(duration_ms),
+            b',"event_index":',
+            _ascii_int_literal(event_index),
+            b',"phase":',
+            encoded_phase,
+            b',"request_id":',
+            encoded_request_id,
+            b',"schema_version":"melix.serving_diagnostics.event.v1","status":',
+            encoded_status,
+            b"}",
+        )
     )

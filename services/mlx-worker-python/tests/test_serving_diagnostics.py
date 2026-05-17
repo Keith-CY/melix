@@ -388,6 +388,44 @@ def test_serving_diagnostics_jsonl_fast_path_reuses_duration_literal_cache() -> 
     assert cache_info.hits == 2
 
 
+def test_serving_diagnostics_jsonl_fast_path_reuses_event_index_literal_cache() -> None:
+    serving_diagnostics_module._ascii_int_literal.cache_clear()
+    rows = tuple(
+        ServingDiagnosticsEvent(
+            request_id=f"req-index-cache-{sample_index}",
+            phase="decode",
+            event_index=4032,
+            status="completed",
+            duration_ms=0.001,
+        )
+        for sample_index in range(3)
+    )
+
+    for row in rows:
+        line = serving_diagnostics_module._empty_attribute_event_json_line_bytes(row)
+        assert line is not None
+        assert json.loads(line)["event_index"] == 4032
+
+    cache_info = serving_diagnostics_module._ascii_int_literal.cache_info()
+    assert cache_info.misses == 1
+    assert cache_info.hits == 2
+
+
+def test_serving_diagnostics_jsonl_fast_path_preserves_generic_phase_status() -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-generic-phase-status",
+        phase="prefill",
+        event_index=13,
+        status="started",
+        duration_ms=0.5,
+    )
+
+    line = serving_diagnostics_module._empty_attribute_event_json_line_bytes(event)
+
+    assert line is not None
+    assert json.loads(line) == event.to_dict()
+
+
 def test_serving_diagnostics_jsonl_fast_path_direct_helper_preserves_fallback() -> None:
     event = ServingDiagnosticsEvent(
         request_id="req-direct-fallback",

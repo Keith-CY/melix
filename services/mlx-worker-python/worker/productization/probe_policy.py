@@ -57,10 +57,15 @@ class ProbePolicy:
         *,
         default_mode: ProbeMode = ProbeMode.MINIMAL,
     ) -> ProbePolicy:
-        if isinstance(value, ProbeMode):
-            return _PROBE_POLICY_BY_VALUE[value.value]
-        if isinstance(value, str):
-            policy = _PROBE_POLICY_BY_VALUE.get(value)
+        if type(value) is str:
+            policy = _PROBE_POLICY_BY_VALUE_GET(value)
+            if policy is not None:
+                return policy
+            raw_value = value.strip().lower()
+        elif isinstance(value, ProbeMode):
+            return _PROBE_POLICY_BY_MODE[value]
+        elif isinstance(value, str):
+            policy = _PROBE_POLICY_BY_VALUE_GET(value)
             if policy is not None:
                 return policy
             raw_value = value.strip().lower()
@@ -68,26 +73,32 @@ class ProbePolicy:
             raw_value = str(value or "").strip().lower()
         if not raw_value:
             return _PROBE_POLICY_BY_DEFAULT_MODE[default_mode]
-        policy = _PROBE_POLICY_BY_VALUE.get(raw_value)
+        policy = _PROBE_POLICY_BY_VALUE_GET(raw_value)
         if policy is not None:
             return policy
         return _invalid_probe_policy(raw_value, default_mode)
 
     @classmethod
     def evidence(cls) -> ProbePolicy:
-        return cls(mode=ProbeMode.EVIDENCE, source_value=ProbeMode.EVIDENCE.value)
+        return _EVIDENCE_PROBE_POLICY
 
     @classmethod
     def debug(cls) -> ProbePolicy:
-        return cls(mode=ProbeMode.DEBUG, source_value=ProbeMode.DEBUG.value)
+        return _DEBUG_PROBE_POLICY
 
 
 _PROBE_POLICY_BY_VALUE: dict[str, ProbePolicy] = {
     mode.value: ProbePolicy(mode=mode, source_value=mode.value) for mode in ProbeMode
 }
+_PROBE_POLICY_BY_VALUE_GET = _PROBE_POLICY_BY_VALUE.get
+_PROBE_POLICY_BY_MODE: dict[ProbeMode, ProbePolicy] = {
+    mode: _PROBE_POLICY_BY_VALUE[mode.value] for mode in ProbeMode
+}
 _PROBE_POLICY_BY_DEFAULT_MODE: dict[ProbeMode, ProbePolicy] = {
     mode: ProbePolicy(mode=mode) for mode in ProbeMode
 }
+_EVIDENCE_PROBE_POLICY = _PROBE_POLICY_BY_MODE[ProbeMode.EVIDENCE]
+_DEBUG_PROBE_POLICY = _PROBE_POLICY_BY_MODE[ProbeMode.DEBUG]
 
 
 @lru_cache(maxsize=64)
