@@ -7134,6 +7134,20 @@ struct DesktopDiagnosticsToolSectionView: View {
             debugBundleResultRow(title: "Bundle Path", value: result.bundlePath)
             debugBundleResultRow(title: "Manifest", value: result.manifestPath)
             debugBundleResultRow(title: "Redaction", value: result.redactionSummaryText)
+            if result.servingDiagnosticsQueueSummaryText.isEmpty == false {
+                debugBundleResultRow(
+                    title: "Serving Diagnostics Queue",
+                    value: result.servingDiagnosticsQueueSummaryText
+                )
+                debugBundleResultRow(
+                    title: "Serving Diagnostics Retention",
+                    value: result.servingDiagnosticsRetentionSummaryText
+                )
+                debugBundleResultRow(
+                    title: "Serving Diagnostics Drops",
+                    value: result.servingDiagnosticsDropSummaryText
+                )
+            }
             ForEach(Array(result.artifactRows.prefix(6))) { row in
                 debugBundleResultRow(title: row.kindText, value: row.path)
             }

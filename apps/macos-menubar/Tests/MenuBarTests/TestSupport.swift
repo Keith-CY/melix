@@ -2746,9 +2746,26 @@ func makeCLIBenchRunJSON(
 
 func makeDiagnosticsDebugBundleJSON(
     bundleID: String = "bench-1",
-    bundlePath: String = "/tmp/melix-debug/bench-1"
+    bundlePath: String = "/tmp/melix-debug/bench-1",
+    servingDiagnosticsEventCount: Int? = nil,
+    servingDiagnosticsDroppedEventCount: Int? = nil,
+    servingDiagnosticsMode: String = "debug"
 ) -> String {
-    """
+    let servingDiagnosticsJSON: String
+    if let servingDiagnosticsEventCount, let servingDiagnosticsDroppedEventCount {
+        servingDiagnosticsJSON = """
+          ,
+          "serving_diagnostics": {
+            "schema_version": "melix.serving_diagnostics.manifest.v1",
+            "diagnostics_mode": "\(servingDiagnosticsMode)",
+            "event_count": \(servingDiagnosticsEventCount),
+            "dropped_event_count": \(servingDiagnosticsDroppedEventCount)
+          }
+        """
+    } else {
+        servingDiagnosticsJSON = ""
+    }
+    return """
     {
       "schema_version": "melix.diagnostics.bundle.v1",
       "bundle_id": "\(bundleID)",
@@ -2771,6 +2788,7 @@ func makeDiagnosticsDebugBundleJSON(
         "metrics": "metrics.json",
         "error": "error.json"
       }
+      \(servingDiagnosticsJSON)
     }
     """
 }

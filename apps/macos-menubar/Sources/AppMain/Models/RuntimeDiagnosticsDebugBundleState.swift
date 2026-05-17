@@ -15,6 +15,32 @@ public struct RuntimeDiagnosticsDebugBundleArtifactRow: Equatable, Identifiable,
     }
 }
 
+public struct RuntimeDiagnosticsServingDiagnosticsSummary: Equatable, Sendable, Decodable {
+    public let schemaVersion: String
+    public let diagnosticsMode: String
+    public let eventCount: Int
+    public let droppedEventCount: Int
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = RichOutputSanitizer.sanitized(
+            try container.decodeIfPresent(String.self, forKey: .schemaVersion) ?? ""
+        )
+        diagnosticsMode = RichOutputSanitizer.sanitized(
+            try container.decodeIfPresent(String.self, forKey: .diagnosticsMode) ?? ""
+        )
+        eventCount = max(0, try container.decodeIfPresent(Int.self, forKey: .eventCount) ?? 0)
+        droppedEventCount = max(0, try container.decodeIfPresent(Int.self, forKey: .droppedEventCount) ?? 0)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case diagnosticsMode = "diagnostics_mode"
+        case eventCount = "event_count"
+        case droppedEventCount = "dropped_event_count"
+    }
+}
+
 public struct RuntimeDiagnosticsDebugBundleState: Equatable, Sendable, Decodable {
     public let schemaVersion: String
     public let bundleID: String
@@ -27,6 +53,7 @@ public struct RuntimeDiagnosticsDebugBundleState: Equatable, Sendable, Decodable
     public let redactedFieldCount: Int
     public let sourceRunRecordPath: String
     public let artifacts: [String: String]
+    public let servingDiagnostics: RuntimeDiagnosticsServingDiagnosticsSummary?
 
     public var manifestPath: String {
         guard bundlePath.isEmpty == false else {
@@ -65,6 +92,35 @@ public struct RuntimeDiagnosticsDebugBundleState: Equatable, Sendable, Decodable
         return "\(redaction) • \(redactedFieldCount) fields redacted"
     }
 
+    public var servingDiagnosticsQueueSummaryText: String {
+        guard let servingDiagnostics else {
+            return ""
+        }
+        let observed = servingDiagnostics.eventCount + servingDiagnostics.droppedEventCount
+        return "\(servingDiagnostics.eventCount) retained / \(servingDiagnostics.droppedEventCount) dropped / \(observed) observed"
+    }
+
+    public var servingDiagnosticsRetentionSummaryText: String {
+        guard let servingDiagnostics else {
+            return ""
+        }
+        let mode = servingDiagnostics.diagnosticsMode.isEmpty ? "debug" : servingDiagnostics.diagnosticsMode
+        guard debugJSONLEventLimit > 0 else {
+            return "\(mode) mode retention limit unknown"
+        }
+        return "\(mode) mode retains up to \(debugJSONLEventLimit) events"
+    }
+
+    public var servingDiagnosticsDropSummaryText: String {
+        guard let servingDiagnostics else {
+            return ""
+        }
+        guard servingDiagnostics.droppedEventCount > 0 else {
+            return "No debug events were dropped."
+        }
+        return "\(servingDiagnostics.droppedEventCount) debug events were dropped; diagnosis may be partial."
+    }
+
     public static func decode(json: String) throws -> RuntimeDiagnosticsDebugBundleState {
         try JSONDecoder().decode(Self.self, from: Data(json.utf8))
     }
@@ -82,6 +138,10 @@ public struct RuntimeDiagnosticsDebugBundleState: Equatable, Sendable, Decodable
         redactedFieldCount = try container.decodeIfPresent(Int.self, forKey: .redactedFieldCount) ?? 0
         sourceRunRecordPath = try container.decodeIfPresent(String.self, forKey: .sourceRunRecordPath) ?? ""
         artifacts = try container.decodeIfPresent([String: String].self, forKey: .artifacts) ?? [:]
+        servingDiagnostics = try container.decodeIfPresent(
+            RuntimeDiagnosticsServingDiagnosticsSummary.self,
+            forKey: .servingDiagnostics
+        )
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -96,6 +156,7 @@ public struct RuntimeDiagnosticsDebugBundleState: Equatable, Sendable, Decodable
         case redactedFieldCount = "redacted_field_count"
         case sourceRunRecordPath = "source_run_record_path"
         case artifacts
+        case servingDiagnostics = "serving_diagnostics"
     }
 
     private func artifactPath(_ relativePath: String) -> String {

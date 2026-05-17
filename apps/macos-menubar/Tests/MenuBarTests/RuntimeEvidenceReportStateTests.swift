@@ -179,6 +179,41 @@ struct RuntimeEvidenceReportStateTests {
         #expect(renderedTexts.contains("Debug bundle ready at /tmp/melix-debug/bench-1."))
     }
 
+    @Test("diagnostics summarizes serving diagnostics queue retention and drops")
+    @MainActor
+    func diagnosticsSummarizesServingDiagnosticsQueueRetentionAndDrops() throws {
+        let result = try RuntimeDiagnosticsDebugBundleState.decode(
+            json: makeDiagnosticsDebugBundleJSON(
+                servingDiagnosticsEventCount: 8,
+                servingDiagnosticsDroppedEventCount: 24
+            )
+        )
+        #expect(result.servingDiagnosticsQueueSummaryText == "8 retained / 24 dropped / 32 observed")
+        #expect(result.servingDiagnosticsRetentionSummaryText == "debug mode retains up to 256 events")
+        #expect(result.servingDiagnosticsDropSummaryText == "24 debug events were dropped; diagnosis may be partial.")
+
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.applyDiagnosticsDebugBundleResult(result)
+
+        let view = evidenceHostView(
+            DesktopDiagnosticsToolSectionView(
+                viewModel: viewModel,
+                foundation: viewModel.desktopFoundationState
+            ),
+            size: CGSize(width: 1280, height: 2400)
+        )
+        let renderedTexts = evidenceRenderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Serving Diagnostics Queue"))
+        #expect(renderedTexts.contains("8 retained / 24 dropped / 32 observed"))
+        #expect(renderedTexts.contains("Serving Diagnostics Retention"))
+        #expect(renderedTexts.contains("debug mode retains up to 256 events"))
+        #expect(renderedTexts.contains("Serving Diagnostics Drops"))
+        #expect(renderedTexts.contains("24 debug events were dropped; diagnosis may be partial."))
+    }
+
     @Test("diagnostics renders debug bundle error state")
     @MainActor
     func diagnosticsRendersDebugBundleErrorState() async throws {
