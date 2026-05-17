@@ -7555,9 +7555,13 @@ struct DesktopDiagnosticsToolSectionView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if row.issueText.isEmpty == false {
-                Text(row.issueText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                DesktopPassiveStaticTextLabel(
+                    title: row.issueText,
+                    font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                    textColor: .secondaryLabelColor,
+                    lineBreakMode: .byWordWrapping,
+                    maximumNumberOfLines: 2
+                )
             }
             if row.artifactRoot.isEmpty == false {
                 Text(row.artifactRoot)

@@ -123,6 +123,8 @@ struct RuntimeEvidenceReportStateTests {
         #expect(renderedTexts.contains { $0.contains("Required Telemetry") && $0.contains("Present") })
         #expect(renderedTexts.contains { $0.contains("required_telemetry_present") && $0.contains("1.0000") })
         #expect(renderedTexts.contains("duration missing"))
+        #expect(renderedTexts.contains("failure: failed=true, stage=decode"))
+        #expect(renderedTexts.contains("fallback: fallback_count=1, fallbacks=1"))
         #expect(renderedTexts.contains { $0.contains("powermetrics_failed:fixture") })
         #expect(renderedTexts.contains { $0.contains("telemetry_summary.csv") })
     }
