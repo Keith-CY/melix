@@ -29,6 +29,11 @@ def _json_string_literal(value: str) -> str:
     return _JSON_STRING_ENCODER(value)
 
 
+@lru_cache(maxsize=1024)
+def _ascii_float_literal(value: float) -> bytes:
+    return str(value).encode("ascii")
+
+
 class ServingDiagnosticsComparisonError(ValueError):
     pass
 
@@ -545,7 +550,7 @@ def _empty_attribute_event_json_line_bytes(
             request_id_literals[request_id] = encoded_request_id
     return (
         b'{"attributes":{},"duration_ms":'
-        + str(duration_ms).encode("ascii")
+        + _ascii_float_literal(duration_ms)
         + b',"event_index":'
         + str(event_index).encode("ascii")
         + b',"phase":'
