@@ -2,7 +2,7 @@
 
 ## Goal
 
-Reduce overhead in event-extraction semantic action split/merge scoring by removing redundant tuple reconstruction around `itertools.combinations` results in `_semantic_value_groups`.
+Reduce overhead in event-extraction semantic action split/merge scoring by reusing precomputed two- and three-value semantic action groups for the common bounded action sizes instead of rebuilding those combinations after every cache clear.
 
 ## Scope
 

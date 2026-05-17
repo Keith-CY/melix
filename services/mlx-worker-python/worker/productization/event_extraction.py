@@ -31,6 +31,14 @@ SEMANTIC_JUDGE_PREFILTER_SCORE_THRESHOLD = 0.15
 SEMANTIC_JUDGE_MAX_ATTEMPTS = 3
 SEMANTIC_LOW_QUALITY_ALIGNMENT_WEIGHTED_F1_THRESHOLD = 0.30
 SEMANTIC_ACTION_GROUP_MAX_SIZE = 3
+_PRECOMPUTED_SEMANTIC_VALUE_GROUPS = {
+    value_count: tuple(
+        group
+        for group_size in range(2, min(SEMANTIC_ACTION_GROUP_MAX_SIZE, value_count) + 1)
+        for group in combinations(range(value_count), group_size)
+    )
+    for value_count in range(2, 17)
+}
 SEMANTIC_JUDGE_PROMPT_VERSION = "semantic-judge.v4"
 _GROUP_ACTOR_ALIASES = {"我们", "双方", "咱们", "咱俩", "咱两", "我俩", "两人", "二人"}
 _GROUP_ACTOR_ALIAS_CHARS = frozenset("".join(_GROUP_ACTOR_ALIASES))
@@ -1617,6 +1625,13 @@ def _semantic_action_group_score(
 
 @lru_cache(maxsize=32)
 def _semantic_value_groups(value_count: int) -> tuple[tuple[int, ...], ...]:
+    if value_count < 2:
+        return ()
+    if SEMANTIC_ACTION_GROUP_MAX_SIZE == 3:
+        precomputed = _PRECOMPUTED_SEMANTIC_VALUE_GROUPS.get(value_count)
+        if precomputed is not None:
+            return precomputed
+
     max_size = min(SEMANTIC_ACTION_GROUP_MAX_SIZE, value_count)
     value_indices = range(value_count)
     return tuple(
