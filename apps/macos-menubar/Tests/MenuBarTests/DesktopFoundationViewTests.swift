@@ -3781,6 +3781,60 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Unsupported"))
     }
 
+    @Test("training surface renders unknown family and unsupported quantized base states")
+    @MainActor
+    func trainingSurfaceRendersUnknownFamilyAndUnsupportedQuantizedBaseStates() async throws {
+        let config = LoraTrainingJobConfig(
+            modelID: "melix-dev-text",
+            datasetSourceKind: "local_package",
+            datasetURI: "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+            adapterName: "unknown-family-adapter",
+            trainingMode: "custom",
+            activationMode: "adapter_backed_runtime"
+        )
+        let job = LoraTrainingJobRecord(
+            id: "adapter-unknown-family-job",
+            title: "Adapter Unknown Family Job",
+            config: config,
+            status: .failed,
+            lastRunJobID: "model-ops-adapter-unknown-family",
+            outputPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+            manifestPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+            latestOutputText: #"""
+            {
+              "operation": "train_lora",
+              "adapter_algorithm": "custom_adapter",
+              "backend_supported": true,
+              "unsupported_reason": "unsupported_quantized_base",
+              "adapter_capabilities": {
+                "lora_like": true,
+                "mergeable": true,
+                "relora_compatible": false,
+                "quantized_base_supported": false
+              }
+            }
+            """#,
+            terminalMessage: "Training failed."
+        )
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            loraTrainingJobStore: FakeLoraTrainingJobStore(jobs: [job])
+        )
+
+        let view = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1280, height: 1600)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Adapter Capability"))
+        #expect(renderedTexts.contains("Family"))
+        #expect(renderedTexts.contains("Unknown Family"))
+        #expect(renderedTexts.contains("Quantized Base"))
+        #expect(renderedTexts.contains("Unsupported quantized base"))
+        #expect(renderedTexts.contains("unsupported_quantized_base"))
+    }
+
     @Test("training keeps Hugging Face dataset mapping fields folded behind a secondary reveal by default")
     @MainActor
     func trainingKeepsHFDatasetMappingFoldedByDefault() async throws {

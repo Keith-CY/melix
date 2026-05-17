@@ -1712,6 +1712,10 @@ public struct RuntimeAdapterCapabilityReceiptState: Equatable, Sendable {
     public let reloraCompatible: Bool?
     public let quantizedBaseSupported: Bool?
 
+    public var adapterFamilyText: String {
+        adapterFamily.isEmpty ? "Unknown Family" : adapterFamily
+    }
+
     public var backendSupportText: String {
         backendSupported.map { $0 ? "Supported" : "Unsupported" } ?? ""
     }
@@ -1729,7 +1733,7 @@ public struct RuntimeAdapterCapabilityReceiptState: Equatable, Sendable {
     }
 
     public var quantizedBaseSupportedText: String {
-        supportText(quantizedBaseSupported)
+        quantizedBaseSupported == false ? "Unsupported quantized base" : supportText(quantizedBaseSupported)
     }
 
     private func supportText(_ value: Bool?) -> String {

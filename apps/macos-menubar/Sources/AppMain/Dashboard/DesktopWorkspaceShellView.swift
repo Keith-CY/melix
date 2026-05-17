@@ -5983,7 +5983,7 @@ struct DesktopTrainingToolSectionView: View {
             return []
         }
         return [
-            DesktopTrainingSummaryItem(title: "Family", value: receipt.adapterFamily, detail: ""),
+            DesktopTrainingSummaryItem(title: "Family", value: receipt.adapterFamilyText, detail: ""),
             DesktopTrainingSummaryItem(title: "Algorithm", value: receipt.adapterAlgorithm, detail: ""),
             DesktopTrainingSummaryItem(title: "Backend Support", value: receipt.backendSupportText, detail: ""),
             DesktopTrainingSummaryItem(title: "Unsupported Reason", value: receipt.unsupportedReason, detail: ""),
