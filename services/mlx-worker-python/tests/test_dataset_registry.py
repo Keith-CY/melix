@@ -314,6 +314,7 @@ def test_dataset_catalog_limited_json_text_helper_edges() -> None:
     assert catalog._json_text_first_array_start('{"metadata": 1 x}') is None
     assert catalog._json_text_first_array_start("{") is None
     assert catalog._json_text_first_array_start('{"items": []}') is None
+    assert catalog._json_text_first_array_start('{"rows": {}}') is None
 
 
 def test_dataset_catalog_limited_json_text_reuses_shared_decoder(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -341,6 +342,27 @@ def test_dataset_catalog_limited_json_text_reuses_shared_row_array_keys() -> Non
         '{"metadata":{"name":"probe"},"data":[{"prompt":"first"},{"prompt":"second"}]}',
         limit=1,
     ) == [{"prompt": "first"}]
+
+
+def test_dataset_catalog_limited_json_text_fast_paths_first_row_array_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw_decode_calls = 0
+    original_decoder = catalog._JSON_DECODER
+
+    class CountingDecoder:
+        def raw_decode(self, text: str, index: int = 0):
+            nonlocal raw_decode_calls
+            raw_decode_calls += 1
+            return original_decoder.raw_decode(text, index)
+
+    monkeypatch.setattr(catalog, "_JSON_DECODER", CountingDecoder())
+
+    assert catalog._limited_rows_from_json_text(
+        '{"rows":[{"prompt":"first"},{"prompt":"second"}]}',
+        limit=1,
+    ) == [{"prompt": "first"}]
+    assert raw_decode_calls == 1
 
 
 def test_dataset_catalog_limited_json_file_streams_before_full_read(
