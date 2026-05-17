@@ -20,6 +20,12 @@ struct RuntimeEvidenceReportStateTests {
         #expect(report.metricRows.first?.resultText == "Fail")
         #expect(report.probeRows.contains { $0.kind == "Failed" && $0.phase == "Decode" })
         #expect(report.probeRows.contains { $0.kind == "Fallback" && $0.phase == "Fallback Enter" })
+        #expect(report.probeRows.contains {
+            $0.kind == "Skipped"
+                && $0.phase == "Score Compute"
+                && $0.durationText == "duration missing"
+                && $0.detailText.contains("duration missing")
+        })
         #expect(report.telemetryRows.contains { row in
             row.collectorStatusText == "Partial"
                 && row.powerText.contains("17.50 W avg")
@@ -65,6 +71,8 @@ struct RuntimeEvidenceReportStateTests {
         #expect(report.metricRows.first?.baselineText == "-")
         #expect(report.metricRows.first?.deltaText == "-")
         #expect(report.telemetryRows.first?.memoryText.contains("512 B") == true)
+        #expect(report.telemetryRows.first?.powerText == "system power missing")
+        #expect(report.telemetryRows.first?.utilizationText == "utilization telemetry missing")
         #expect(report.processRows.contains { row in
             row.roleText == "Worker 1"
                 && row.nameText == "Unknown process"
@@ -114,8 +122,31 @@ struct RuntimeEvidenceReportStateTests {
         #expect(renderedTexts.contains("Required Evidence Status"))
         #expect(renderedTexts.contains { $0.contains("Required Telemetry") && $0.contains("Present") })
         #expect(renderedTexts.contains { $0.contains("required_telemetry_present") && $0.contains("1.0000") })
+        #expect(renderedTexts.contains("duration missing"))
         #expect(renderedTexts.contains { $0.contains("powermetrics_failed:fixture") })
         #expect(renderedTexts.contains { $0.contains("telemetry_summary.csv") })
+    }
+
+    @Test("diagnostics renders sparse telemetry gaps explicitly")
+    @MainActor
+    func diagnosticsRendersSparseTelemetryGapsExplicitly() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        try viewModel.loadEvidenceReport(json: makeSparseStructuredEvidenceReportJSON())
+
+        let view = evidenceHostView(
+            DesktopDiagnosticsToolSectionView(
+                viewModel: viewModel,
+                foundation: viewModel.desktopFoundationState
+            ),
+            size: CGSize(width: 1280, height: 2600)
+        )
+        let renderedTexts = evidenceRenderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Hardware Monitor"))
+        #expect(renderedTexts.contains("system power missing"))
+        #expect(renderedTexts.contains { $0.contains("utilization telemetry missing") && $0.contains("used 512 B") })
     }
 
     @Test("view model loads clears and records evidence report errors")

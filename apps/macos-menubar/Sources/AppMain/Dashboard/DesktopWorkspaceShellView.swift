@@ -7580,9 +7580,11 @@ struct DesktopDiagnosticsToolSectionView: View {
                 Text("\(row.kind) • \(row.component) • \(row.phase)")
                     .font(.headline)
                 Spacer()
-                Text(row.durationText)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                DesktopPassiveStaticTextLabel(
+                    title: row.durationText,
+                    font: .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+                    textColor: .secondaryLabelColor
+                )
             }
             Text("\(row.side) • \(row.runID) • \(row.statusText)")
                 .font(.caption)
@@ -7607,16 +7609,26 @@ struct DesktopDiagnosticsToolSectionView: View {
                 Text("\(row.side) • \(row.runID)")
                     .font(.headline)
                 Spacer()
-                Text(row.collectorStatusText)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                DesktopPassiveStaticTextLabel(
+                    title: row.collectorStatusText,
+                    font: .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+                    textColor: .secondaryLabelColor
+                )
             }
-            Text(row.powerText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text([row.utilizationText, row.memoryText].filter { $0.isEmpty == false }.joined(separator: " • "))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            DesktopPassiveStaticTextLabel(
+                title: row.powerText,
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                textColor: .secondaryLabelColor,
+                lineBreakMode: .byWordWrapping,
+                maximumNumberOfLines: 2
+            )
+            DesktopPassiveStaticTextLabel(
+                title: [row.utilizationText, row.memoryText].filter { $0.isEmpty == false }.joined(separator: " • "),
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                textColor: .secondaryLabelColor,
+                lineBreakMode: .byWordWrapping,
+                maximumNumberOfLines: 2
+            )
             if row.failureText.isEmpty == false {
                 Text(row.failureText)
                     .font(.caption)

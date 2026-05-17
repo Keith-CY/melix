@@ -389,14 +389,9 @@ public struct RuntimeEvidenceReportState: Equatable, Sendable {
                     runID: phase.runID,
                     component: titleText(phase.component),
                     phase: titleText(phase.phase),
-                    durationText: durationText(milliseconds: phase.durationMS),
+                    durationText: probeDurationText(phase),
                     statusText: titleText(phase.status),
-                    detailText: [
-                        phase.errorStage.isEmpty ? "" : "stage \(phase.errorStage)",
-                        phase.errorCode.isEmpty ? "" : "code \(phase.errorCode)",
-                    ]
-                    .filter { $0.isEmpty == false }
-                    .joined(separator: " | ")
+                    detailText: probeDetailText(phase)
                 )
             }
         }
@@ -607,20 +602,49 @@ public struct RuntimeEvidenceReportState: Equatable, Sendable {
     }
 
     private static func utilizationText(_ row: RuntimeEvidenceReportTelemetryPayload) -> String {
-        [
+        let values = [
             row.averageCPUUtilizationPercent.map { String(format: "CPU %.1f%%", $0) } ?? "",
             row.averageGPUUtilizationPercent.map { String(format: "GPU %.1f%%", $0) } ?? "",
             row.averageGPUFrequencyMHz.map { String(format: "GPU %.0f MHz", $0) } ?? "",
         ]
         .filter { $0.isEmpty == false }
-        .joined(separator: " | ")
+        guard values.isEmpty == false else {
+            return "utilization telemetry missing"
+        }
+        return values.joined(separator: " | ")
     }
 
     private static func memoryText(_ row: RuntimeEvidenceReportTelemetryPayload) -> String {
+        let usedText = row.memoryUsedBytes.map { bytes in "used \(byteText(bytes))" } ?? ""
+        let totalText = row.memoryTotalBytes.map { bytes in "total \(byteText(bytes))" } ?? ""
+        let processText = row.peakProcessMemoryBytes.map { bytes in "process peak \(byteText(bytes))" } ?? ""
+        let values = [
+            usedText,
+            totalText,
+            processText,
+        ]
+        .filter { $0.isEmpty == false }
+        guard values.isEmpty == false else {
+            return "memory telemetry missing"
+        }
+        return values.joined(separator: " | ")
+    }
+
+    private static func probeDurationText(_ phase: RuntimeEvidenceReportProbePhasePayload) -> String {
+        if phase.durationMS <= 0 {
+            return "duration missing"
+        }
+        if phase.durationMS < 0.01 {
+            return "<0.01 ms"
+        }
+        return durationText(milliseconds: phase.durationMS)
+    }
+
+    private static func probeDetailText(_ phase: RuntimeEvidenceReportProbePhasePayload) -> String {
         [
-            row.memoryUsedBytes.map { "used \(byteText($0))" } ?? "",
-            row.memoryTotalBytes.map { "total \(byteText($0))" } ?? "",
-            row.peakProcessMemoryBytes.map { "process peak \(byteText($0))" } ?? "",
+            phase.durationMS <= 0 ? "duration missing" : "",
+            phase.errorStage.isEmpty ? "" : "stage \(phase.errorStage)",
+            phase.errorCode.isEmpty ? "" : "code \(phase.errorCode)",
         ]
         .filter { $0.isEmpty == false }
         .joined(separator: " | ")
