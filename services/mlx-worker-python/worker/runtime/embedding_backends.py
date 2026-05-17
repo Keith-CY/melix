@@ -6,6 +6,8 @@ import math
 import struct
 import unicodedata
 
+_UNPACK_DIGEST_UINT32 = struct.Struct("<8I").unpack
+
 
 @dataclass(frozen=True)
 class EmbeddingBackendDescriptor:
@@ -45,7 +47,7 @@ class DeterministicEmbeddingBackend:
         digest = hashlib.sha256(seed_text.encode("utf-8")).digest()
         base_values: list[float] = []
         base_squared_sum = 0.0
-        for raw in struct.unpack("<8I", digest):
+        for raw in _UNPACK_DIGEST_UINT32(digest):
             value = (raw / 0xFFFFFFFF) * 2.0 - 1.0
             base_values.append(value)
             base_squared_sum += value * value
