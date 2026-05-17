@@ -865,6 +865,7 @@ public struct RuntimeDiagnosticsServerTargetState: Identifiable, Equatable, Send
     public let kind: RuntimeDiagnosticsServerTargetKind
     public let title: String
     public let detailText: String
+    public let profileSummaryText: String
     public let modelID: String
     public let serverID: String
 
@@ -873,6 +874,7 @@ public struct RuntimeDiagnosticsServerTargetState: Identifiable, Equatable, Send
         kind: RuntimeDiagnosticsServerTargetKind,
         title: String,
         detailText: String,
+        profileSummaryText: String = "",
         modelID: String,
         serverID: String
     ) {
@@ -880,6 +882,7 @@ public struct RuntimeDiagnosticsServerTargetState: Identifiable, Equatable, Send
         self.kind = kind
         self.title = title
         self.detailText = detailText
+        self.profileSummaryText = profileSummaryText
         self.modelID = modelID
         self.serverID = serverID
     }
@@ -2748,11 +2751,18 @@ public final class RuntimeViewModel {
             guard target.kind == .localServer, target.isRunning else {
                 return nil
             }
+            let profileSummaryText = Self.diagnosticsProfileSummaryText(
+                for: serverSessions.first(where: { $0.id == target.serverID })
+            )
+            let detailText = [target.detailText, target.statusText, profileSummaryText]
+                .filter { $0.isEmpty == false }
+                .joined(separator: " • ")
             return RuntimeDiagnosticsServerTargetState(
                 id: Self.diagnosticsLocalServerTargetID(serverID: target.serverID),
                 kind: .localServer,
                 title: target.title,
-                detailText: "\(target.detailText) • \(target.statusText)",
+                detailText: detailText,
+                profileSummaryText: profileSummaryText,
                 modelID: target.modelID,
                 serverID: target.serverID
             )
@@ -2790,6 +2800,20 @@ public final class RuntimeViewModel {
             return selected
         }
         return targets.first
+    }
+
+    private static func diagnosticsProfileSummaryText(for session: DesktopServerSessionState?) -> String {
+        guard let session else {
+            return ""
+        }
+        let profile = ServingAccelerationProfiles.profile(id: session.servingDefaults.effectiveAccelerationProfile)
+        return "profile \(profile.label)"
+    }
+
+    private static func diagnosticsProfileSummarySuffix(
+        for target: RuntimeDiagnosticsServerTargetState
+    ) -> String {
+        target.profileSummaryText.isEmpty ? "" : " • \(target.profileSummaryText)"
     }
 
     public var diagnosticsTargetSummaryText: String {
@@ -6591,9 +6615,9 @@ public final class RuntimeViewModel {
         switch target.kind {
         case .localServer:
             guard let model = catalogModelRow(for: target.modelID) else {
-                return "\(benchmarkTargetTaskTitle) • \(target.title) • \(target.modelID)"
+                return "\(benchmarkTargetTaskTitle) • \(target.title) • \(target.modelID)\(Self.diagnosticsProfileSummarySuffix(for: target))"
             }
-            return "\(benchmarkTargetTaskTitle) • \(target.title) • \(model.displayNameWithID)"
+            return "\(benchmarkTargetTaskTitle) • \(target.title) • \(model.displayNameWithID)\(Self.diagnosticsProfileSummarySuffix(for: target))"
         case .remoteServer:
             return "\(benchmarkTargetTaskTitle) • \(target.title) • Remote Server"
         case .startNewServer:
@@ -6642,9 +6666,9 @@ public final class RuntimeViewModel {
         switch target.kind {
         case .localServer:
             guard let model = catalogModelRow(for: target.modelID) else {
-                return "\(evaluationTargetTaskTitle) • \(target.title) • \(target.modelID)"
+                return "\(evaluationTargetTaskTitle) • \(target.title) • \(target.modelID)\(Self.diagnosticsProfileSummarySuffix(for: target))"
             }
-            return "\(evaluationTargetTaskTitle) • \(target.title) • \(model.displayNameWithID)"
+            return "\(evaluationTargetTaskTitle) • \(target.title) • \(model.displayNameWithID)\(Self.diagnosticsProfileSummarySuffix(for: target))"
         case .remoteServer:
             return "\(evaluationTargetTaskTitle) • \(target.title) • \(target.modelID)"
         case .startNewServer:

@@ -6336,6 +6336,56 @@ struct RuntimeViewModelTests {
         #expect(evaluationRequest.remoteTarget == nil)
     }
 
+    @Test("diagnostics summaries include serving acceleration profile metadata")
+    @MainActor
+    func diagnosticsSummariesIncludeServingAccelerationProfileMetadata() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let localModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(modelID: localModelID, state: .modelWarm)],
+            runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+        )
+        var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
+        servingDefaults.serverSessionID = "server-session-1"
+        servingDefaults.servedModelID = localModelID
+        servingDefaults.requestedTemperature = 0.4
+        servingDefaults.requestedTopP = 0.9
+        servingDefaults.requestedMaxTokens = 512
+        servingDefaults.requestedStreamIntervalTokens = 2
+        servingDefaults.requestedMaxConcurrentRequests = 8
+        servingDefaults.requestedConcurrentProcessingEnabled = true
+        servingDefaults.requestedPrefillBatchSize = 4
+        servingDefaults.requestedCompletionBatchSize = 4
+        servingDefaults.requestedAccelerationMode = .speculativeDecode
+        servingDefaults.requestedNumDraftTokens = 6
+        servingDefaults.requestedAccelerationProfile = "throughput"
+        servingDefaults.effectiveTemperature = 0.4
+        servingDefaults.effectiveTopP = 0.9
+        servingDefaults.effectiveMaxTokens = 512
+        servingDefaults.effectiveStreamIntervalTokens = 2
+        servingDefaults.effectiveMaxConcurrentRequests = 8
+        servingDefaults.effectiveConcurrentProcessingEnabled = true
+        servingDefaults.effectivePrefillBatchSize = 4
+        servingDefaults.effectiveCompletionBatchSize = 4
+        servingDefaults.effectiveAccelerationMode = .speculativeDecode
+        servingDefaults.effectiveNumDraftTokens = 6
+        servingDefaults.effectiveAccelerationProfile = "throughput"
+        servingDefaults.accelerationProfileIntent = "Throughput-first serving with speculative decode when a draft model is supplied."
+        snapshot.servingDefaults.sessions = [servingDefaults]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        let localTarget = try #require(viewModel.diagnosticsServerTargets.first { $0.kind == .localServer })
+        viewModel.selectDiagnosticsServerTarget(id: localTarget.id)
+
+        #expect(localTarget.detailText.contains("profile Throughput"))
+        #expect(viewModel.diagnosticsTargetSummaryText.contains("profile Throughput"))
+        #expect(viewModel.benchmarkTargetSummaryText.contains("profile Throughput"))
+        #expect(viewModel.evaluationTargetSummaryText.contains("profile Throughput"))
+    }
+
     @Test("server model options hide placeholders and create from ready registry models")
     @MainActor
     func serverModelOptionsHidePlaceholdersAndCreateFromReadyRegistryModels() async throws {

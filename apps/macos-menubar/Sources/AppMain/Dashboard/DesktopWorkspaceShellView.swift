@@ -955,6 +955,7 @@ private struct DesktopServerOverviewCardsView: View {
             DesktopServerMetricCard(title: "Port", value: "\(session.effectivePort)", detail: session.gatewayConfigSourceText)
             DesktopServerMetricCard(title: "Context", value: "\(session.servingDefaults.effectiveMaxTokens)", detail: "max tokens")
             DesktopServerMetricCard(title: "Acceleration", value: desktopAccelerationModeText(session.servingDefaults.effectiveAccelerationMode), detail: "serving mode")
+            DesktopServerMetricCard(title: "Profile", value: servingAccelerationProfileLabel(session.servingDefaults.effectiveAccelerationProfile), detail: "acceleration defaults")
             DesktopServerMetricCard(title: "State", value: session.lifecycle.rawValue, detail: session.powerState.rawValue)
             DesktopServerMetricCard(title: "Base URL", value: session.effectiveBaseURL, detail: "effective listener")
         }
@@ -968,15 +969,23 @@ private struct DesktopServerMetricCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(title).melixSectionLabel()
-            Text(value)
-                .font(title == "Base URL" ? .caption.monospaced() : .headline)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Text(detail)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            DesktopPassiveStaticTextLabel(
+                title: title,
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+                textColor: .secondaryLabelColor
+            )
+            DesktopPassiveStaticTextLabel(
+                title: value,
+                font: title == "Base URL"
+                    ? .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+                    : .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold),
+                textColor: .labelColor
+            )
+            DesktopPassiveStaticTextLabel(
+                title: detail,
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                textColor: .secondaryLabelColor
+            )
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)

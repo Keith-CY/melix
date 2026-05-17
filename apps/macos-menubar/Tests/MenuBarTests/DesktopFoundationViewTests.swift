@@ -440,9 +440,9 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedServerSession?.servingDefaults.modelOverrideApplied == true)
     }
 
-    @Test("workspace server surface renders projected serving defaults values")
+    @Test("workspace server surface renders projected serving defaults profile metadata")
     @MainActor
-    func workspaceServerSurfaceRendersProjectedServingDefaultsValues() async throws {
+    func workspaceServerSurfaceRendersProjectedServingDefaultsProfileMetadata() async throws {
         let client = FakeControlPlaneXPCClient()
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
@@ -459,6 +459,7 @@ struct DesktopFoundationViewTests {
         servingDefaults.requestedConcurrentProcessingEnabled = false
         servingDefaults.requestedPrefillBatchSize = 4
         servingDefaults.requestedCompletionBatchSize = 3
+        servingDefaults.requestedAccelerationProfile = "low-memory"
         servingDefaults.effectiveTemperature = 0.25
         servingDefaults.effectiveTopP = 0.85
         servingDefaults.effectiveMaxTokens = 512
@@ -467,6 +468,8 @@ struct DesktopFoundationViewTests {
         servingDefaults.effectiveConcurrentProcessingEnabled = false
         servingDefaults.effectivePrefillBatchSize = 1
         servingDefaults.effectiveCompletionBatchSize = 1
+        servingDefaults.effectiveAccelerationProfile = "low-memory"
+        servingDefaults.accelerationProfileIntent = "Conservative single-request serving for constrained local memory."
         servingDefaults.source = .environmentDefaults
         snapshot.servingDefaults.sessions = [servingDefaults]
         await client.configureSnapshot(snapshot)
@@ -476,8 +479,11 @@ struct DesktopFoundationViewTests {
         viewModel.selectSurface(.server)
 
         let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let renderedTexts = renderedTextValues(in: view)
 
         #expect(view.subviews.isEmpty == false)
+        #expect(renderedTexts.contains("Profile"))
+        #expect(renderedTexts.contains("Low Memory"))
         #expect(viewModel.selectedServerSession?.servingDefaults.temperature == 0.44)
         #expect(viewModel.selectedServerSession?.servingDefaults.topP == 0.91)
         #expect(viewModel.selectedServerSession?.servingDefaults.maxTokens == 320)
