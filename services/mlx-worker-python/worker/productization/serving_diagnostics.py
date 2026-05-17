@@ -487,12 +487,12 @@ def _write_jsonl(path: Path, rows: Any) -> None:
     payload = bytearray()
     append_line = payload.extend
     newline = b"\n"
-    request_id_literals: dict[str, str] = {}
+    request_id_literals: dict[str, bytes] = {}
     for row in rows:
         if isinstance(row, ServingDiagnosticsEvent):
-            fast_line = _empty_attribute_event_json_line(row, request_id_literals)
+            fast_line = _empty_attribute_event_json_line_bytes(row, request_id_literals)
             if fast_line is not None:
-                append_line(fast_line.encode("utf-8"))
+                append_line(fast_line)
                 append_line(newline)
                 continue
             row = row.to_dict()
@@ -505,6 +505,16 @@ def _empty_attribute_event_json_line(
     event: ServingDiagnosticsEvent,
     request_id_literals: dict[str, str] | None = None,
 ) -> str | None:
+    line = _empty_attribute_event_json_line_bytes(event, request_id_literals)
+    if line is None:
+        return None
+    return line.decode("utf-8")
+
+
+def _empty_attribute_event_json_line_bytes(
+    event: ServingDiagnosticsEvent,
+    request_id_literals: dict[str, bytes] | None = None,
+) -> bytes | None:
     if event.attributes is not _EMPTY_EVENT_ATTRIBUTES:
         return None
     event_index = event.event_index
@@ -513,29 +523,36 @@ def _empty_attribute_event_json_line(
         return None
     if not math.isfinite(duration_ms):
         return None
-    encode_string = _json_string_literal
     phase = event.phase
     request_id = event.request_id
     status = event.status
-    encoded_phase = '"decode"' if phase == "decode" else encode_string(phase)
-    encoded_status = '"completed"' if status == "completed" else encode_string(status)
+    encoded_phase = (
+        b'"decode"'
+        if phase == "decode"
+        else _json_string_literal(phase).encode("utf-8")
+    )
+    encoded_status = (
+        b'"completed"'
+        if status == "completed"
+        else _json_string_literal(status).encode("utf-8")
+    )
     if request_id_literals is None:
-        encoded_request_id = encode_string(request_id)
+        encoded_request_id = _json_string_literal(request_id).encode("utf-8")
     else:
         encoded_request_id = request_id_literals.get(request_id)
         if encoded_request_id is None:
-            encoded_request_id = encode_string(request_id)
+            encoded_request_id = _json_string_literal(request_id).encode("utf-8")
             request_id_literals[request_id] = encoded_request_id
     return (
-        '{"attributes":{},"duration_ms":'
-        f"{duration_ms}"
-        ',"event_index":'
-        f"{event_index}"
-        ',"phase":'
-        f"{encoded_phase}"
-        ',"request_id":'
-        f"{encoded_request_id}"
-        ',"schema_version":"melix.serving_diagnostics.event.v1","status":'
-        f"{encoded_status}"
-        "}"
+        b'{"attributes":{},"duration_ms":'
+        + str(duration_ms).encode("ascii")
+        + b',"event_index":'
+        + str(event_index).encode("ascii")
+        + b',"phase":'
+        + encoded_phase
+        + b',"request_id":'
+        + encoded_request_id
+        + b',"schema_version":"melix.serving_diagnostics.event.v1","status":'
+        + encoded_status
+        + b"}"
     )
