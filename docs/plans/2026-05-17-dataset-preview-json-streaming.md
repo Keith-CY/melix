@@ -37,5 +37,7 @@ reports `elapsed_ms_mean` plus `peak_bytes_mean` for a synthetic large JSON prev
 
 - Behavior remains identical for supported JSON/JSONL/CSV/Parquet/Arrow preview tests.
 - Limited canonical JSON preview no longer requires `Path.read_text(...)`.
+- For wrapper objects whose first key is `rows` or `data`, the limited parser should find
+  the preview array without an extra `JSONDecoder.raw_decode(...)` call for the key.
 - The local registered probe shows lower mean elapsed time and/or peak bytes without
   changing returned rows.

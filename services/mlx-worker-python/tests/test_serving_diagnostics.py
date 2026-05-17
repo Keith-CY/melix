@@ -411,6 +411,21 @@ def test_serving_diagnostics_jsonl_fast_path_reuses_event_index_literal_cache() 
     assert cache_info.hits == 2
 
 
+def test_serving_diagnostics_jsonl_fast_path_preserves_generic_phase_status() -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-generic-phase-status",
+        phase="prefill",
+        event_index=13,
+        status="started",
+        duration_ms=0.5,
+    )
+
+    line = serving_diagnostics_module._empty_attribute_event_json_line_bytes(event)
+
+    assert line is not None
+    assert json.loads(line) == event.to_dict()
+
+
 def test_serving_diagnostics_jsonl_fast_path_direct_helper_preserves_fallback() -> None:
     event = ServingDiagnosticsEvent(
         request_id="req-direct-fallback",
