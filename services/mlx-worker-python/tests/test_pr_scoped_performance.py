@@ -2411,7 +2411,7 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
         metric["key"]: metric
         for metric in by_id["dataset-registry-preview-limit-short-circuit"]["metrics"]
     }
-    assert dataset_preview_metrics["elapsed_ms_mean"]["warn_abs"] == 0.05
+    assert dataset_preview_metrics["elapsed_ms_mean"]["warn_abs"] == 0.5
     assert dataset_preview_metrics["peak_bytes_mean"]["warn_pct"] == 5.0
 
 

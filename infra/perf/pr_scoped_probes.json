@@ -3270,7 +3270,7 @@
         "unit": "ms",
         "direction": "lower_is_better",
         "warn_pct": 5.0,
-        "warn_abs": 0.05
+        "warn_abs": 0.5
       },
       {
         "key": "peak_bytes_mean",

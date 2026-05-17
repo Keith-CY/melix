@@ -42,9 +42,12 @@ by the probe and the registry entry provides focused `test_command`,
 The 2026-05-17 PR-scoped performance rerun after merging the latest `origin/main`
 reported direct regressions for `changed-scope-coverage-empty-path-short-circuit`
 and `dataset-registry-preview-limit-short-circuit` even though their structural
-metrics stayed stable. Both elapsed deltas were below `0.05ms`, so the registry
-now gives those two synthetic sub-ms elapsed metrics an explicit `warn_abs:
-0.05` while keeping their functional metrics strict:
+metrics stayed stable. The first rerun showed elapsed deltas below `0.05ms`,
+so the registry gives `changed-scope-coverage-empty-path-short-circuit` an
+explicit `warn_abs: 0.05`. A follow-up CI rerun showed
+`dataset-registry-preview-limit-short-circuit` can drift by `0.334ms` while
+`peak_bytes_mean` remains unchanged, so that synthetic preview elapsed metric
+uses `warn_abs: 0.5` while keeping its functional metric strict:
 
 - `source_read_calls_mean` remains `warn_pct: 0.0` for changed-scope coverage.
 - `peak_bytes_mean` remains `warn_pct: 5.0` for dataset preview.
