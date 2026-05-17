@@ -910,7 +910,7 @@ private struct DesktopHubModelCardContent: View {
     }
 }
 
-private struct DesktopRegistryEntryCardContent: View {
+struct DesktopRegistryEntryCardContent: View {
     let entry: RuntimeRegistryEntryState
     let localModel: RuntimeModelRow?
 
@@ -964,6 +964,7 @@ private struct DesktopRegistryEntryCardContent: View {
                             .font(.caption2)
                             .foregroundStyle(MelixDesignTokens.StatusColor.error)
                     }
+                    DesktopMemoryFitReceiptRowsView(rows: localModel.memoryFitReceiptRows)
                     Text("\(localModel.memoryPolicyText) • \(localModel.diskStreamingModeText) • \(localModel.accelerationModeText)")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
@@ -982,6 +983,25 @@ private struct DesktopRegistryEntryCardContent: View {
             reasons.append(localModel.runtimeCacheDetailText)
         }
         return reasons
+    }
+}
+
+struct DesktopMemoryFitReceiptRowsView: View {
+    let rows: [RuntimeMemoryFitReceiptRow]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(rows) { row in
+                Text(Self.displayText(for: row))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+    }
+
+    static func displayText(for row: RuntimeMemoryFitReceiptRow) -> String {
+        "Fit \(row.title): \(row.statusText) • \(row.reasonText)"
     }
 }
 
@@ -1808,6 +1828,9 @@ func desktopModelInfoSummaryContent(
     }
     for row in info.capabilityReceiptRows {
         detailLines.append("capability \(row)")
+    }
+    for row in info.memoryFitReceiptRows {
+        detailLines.append("memory fit \(row.title.lowercased()): \(row.statusText) • \(row.reasonText)")
     }
     detailLines.append("pin on load: \(info.pinOnLoad ? "yes" : "no")")
     if info.ttlSeconds > 0 {

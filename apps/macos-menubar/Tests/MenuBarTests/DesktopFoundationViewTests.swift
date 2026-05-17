@@ -1750,6 +1750,51 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Recommended action: warm") == false)
     }
 
+    @Test("model registry local card renders memory fit receipt rows")
+    @MainActor
+    func modelRegistryLocalCardRendersMemoryFitReceiptRows() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        var model = makeMenuBarModelSummary(modelID: "melix-local-fit", state: .modelWarm)
+        model.settings.ext["melix.memory_fit.import.status"] = "blocked"
+        model.settings.ext["melix.memory_fit.import.reason"] = "Import requires 42 GB active memory."
+        model.settings.ext["melix.memory_fit.benchmark.status"] = "heavy"
+        model.settings.ext["melix.memory_fit.benchmark.reason"] = "Benchmark KV cache may exceed comfort budget."
+        model.settings.ext["melix.memory_fit.eval.status"] = "good"
+        model.settings.ext["melix.memory_fit.eval.reason"] = "Eval sample size fits available memory."
+        model.settings.ext["melix.memory_fit.train.status"] = "unknown"
+        model.settings.ext["melix.memory_fit.train.reason"] = "Training optimizer estimate is unavailable."
+        snapshot.models = [model]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let rows = try #require(viewModel.primaryModel?.memoryFitReceiptRows)
+        let localEntry = try #require(viewModel.modelRegistryEntries.first)
+        _ = hostView(DesktopRegistryEntryCardContent(entry: localEntry, localModel: viewModel.primaryModel))
+        let view = hostView(DesktopMemoryFitReceiptRowsView(rows: rows))
+        let displayTexts = rows.map(DesktopMemoryFitReceiptRowsView.displayText(for:))
+        let summary = desktopModelInfoSummaryContent(RuntimeModelInfoState(
+            modelID: "melix-local-fit",
+            modelKind: "text",
+            maxContext: 8_192,
+            supportedParsers: ["text"],
+            supportedModalities: ["text"],
+            memoryFitReceiptRows: rows
+        ))
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(displayTexts == [
+            "Fit Import: Blocked • Import requires 42 GB active memory.",
+            "Fit Benchmark: Heavy • Benchmark KV cache may exceed comfort budget.",
+            "Fit Eval: Good • Eval sample size fits available memory.",
+            "Fit Train: Unknown • Training optimizer estimate is unavailable.",
+        ])
+        #expect(summary.detailLines.contains("memory fit import: Blocked • Import requires 42 GB active memory."))
+    }
+
     @Test("model registry covers cache missing managed blocked unknown and gated branches")
     @MainActor
     func modelRegistryCoversCacheMissingManagedBlockedUnknownAndGatedBranches() async throws {

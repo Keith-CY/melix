@@ -10922,6 +10922,52 @@ struct RuntimeViewModelTests {
         #expect(viewModel.primaryModel?.accelerationProfileID == "kv-q8")
     }
 
+    @Test("model memory fit receipts include import benchmark eval and train rows")
+    @MainActor
+    func modelMemoryFitReceiptsIncludeImportBenchmarkEvalAndTrainRows() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        var model = makeModelSummary(modelID: "melix-fit-receipts", state: .modelWarm)
+        model.settings.alias = "Fit Receipts"
+        model.settings.ext["melix.memory_fit.import.status"] = "blocked"
+        model.settings.ext["melix.memory_fit.import.reason"] = "Import requires 42 GB active memory."
+        model.settings.ext["melix.memory_fit.benchmark.status"] = "heavy"
+        model.settings.ext["melix.memory_fit.benchmark.reason"] = "Benchmark KV cache may exceed comfort budget."
+        model.settings.ext["melix.memory_fit.eval.status"] = "good"
+        model.settings.ext["melix.memory_fit.eval.reason"] = "Eval sample size fits available memory."
+        model.settings.ext["melix.memory_fit.train.status"] = "unknown"
+        model.settings.ext["melix.memory_fit.train.reason"] = "Training optimizer estimate is unavailable."
+        snapshot.models = [model]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let rows = try #require(viewModel.primaryModel?.memoryFitReceiptRows)
+        #expect(rows.map(\.title) == ["Import", "Benchmark", "Eval", "Train"])
+        #expect(rows.map(\.statusText) == ["Blocked", "Heavy", "Good", "Unknown"])
+        #expect(rows.map(\.reasonText) == [
+            "Import requires 42 GB active memory.",
+            "Benchmark KV cache may exceed comfort budget.",
+            "Eval sample size fits available memory.",
+            "Training optimizer estimate is unavailable.",
+        ])
+
+        var info = Melix_Controlplane_V1_ModelInfo()
+        info.ok = true
+        info.modelKind = "text"
+        info.maxContext = 8_192
+        info.supportedParsers = ["text"]
+        info.supportedModalities = ["text"]
+        await client.configureModelInfo(info)
+        await viewModel.fetchModelInfo(modelID: "melix-fit-receipts")
+        #expect(viewModel.selectedModelInfo?.memoryFitReceiptRows == rows)
+
+        let noFitRow = makeRuntimeModelRow(makeModelSummary(modelID: "melix-no-fit", state: .modelWarm))
+        #expect(noFitRow.memoryFitReceiptRows.isEmpty)
+    }
+
     @Test("model settings drafts map require and unknown disk streaming modes")
     @MainActor
     func modelSettingsDraftsMapRequireAndUnknownDiskStreamingModes() async throws {

@@ -42,6 +42,30 @@ public struct RuntimeCLIWorkflowFailureState: Equatable, Sendable {
     }
 }
 
+public struct RuntimeMemoryFitReceiptRow: Identifiable, Equatable, Sendable {
+    public let target: String
+    public let title: String
+    public let status: String
+    public let statusText: String
+    public let reasonText: String
+
+    public init(
+        target: String,
+        title: String,
+        status: String,
+        statusText: String,
+        reasonText: String
+    ) {
+        self.target = target
+        self.title = title
+        self.status = status
+        self.statusText = statusText
+        self.reasonText = reasonText
+    }
+
+    public var id: String { target }
+}
+
 public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public let modelID: String
     public let kind: String
@@ -88,6 +112,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public let restoreRevision: String
     public let loadTrustReceiptRows: [String]
     public let capabilityReceiptRows: [String]
+    public let memoryFitReceiptRows: [RuntimeMemoryFitReceiptRow]
 
     public init(
         modelID: String,
@@ -126,7 +151,8 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         restoreRepoID: String = "",
         restoreRevision: String = "main",
         loadTrustReceiptRows: [String] = [],
-        capabilityReceiptRows: [String] = []
+        capabilityReceiptRows: [String] = [],
+        memoryFitReceiptRows: [RuntimeMemoryFitReceiptRow] = []
     ) {
         self.modelID = modelID
         self.kind = kind
@@ -165,6 +191,7 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         self.restoreRevision = restoreRevision
         self.loadTrustReceiptRows = loadTrustReceiptRows
         self.capabilityReceiptRows = capabilityReceiptRows
+        self.memoryFitReceiptRows = memoryFitReceiptRows
     }
 
     public var id: String {
@@ -243,6 +270,7 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
     public let loadTrustReloadRequiredText: String
     public let loadTrustRuntimeGuidanceText: String
     public let capabilityReceiptRows: [String]
+    public let memoryFitReceiptRows: [RuntimeMemoryFitReceiptRow]
     public let ocrPromptProfileText: String
     public let ocrSamplingProfileText: String
     public let ocrTemperatureText: String
@@ -311,6 +339,7 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         loadTrustReloadRequiredText: String = "",
         loadTrustRuntimeGuidanceText: String = "",
         capabilityReceiptRows: [String] = [],
+        memoryFitReceiptRows: [RuntimeMemoryFitReceiptRow] = [],
         ocrPromptProfileText: String = "",
         ocrSamplingProfileText: String = "",
         ocrTemperatureText: String = "",
@@ -378,6 +407,7 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         self.loadTrustReloadRequiredText = loadTrustReloadRequiredText
         self.loadTrustRuntimeGuidanceText = loadTrustRuntimeGuidanceText
         self.capabilityReceiptRows = capabilityReceiptRows
+        self.memoryFitReceiptRows = memoryFitReceiptRows
         self.ocrPromptProfileText = ocrPromptProfileText
         self.ocrSamplingProfileText = ocrSamplingProfileText
         self.ocrTemperatureText = ocrTemperatureText
@@ -7809,6 +7839,9 @@ public final class RuntimeViewModel {
                 } ?? "",
                 capabilityReceiptRows: snapshotModel.map {
                     runtimeModelCapabilityReceiptRows(for: $0)
+                } ?? [],
+                memoryFitReceiptRows: snapshotModel.map {
+                    runtimeModelMemoryFitReceiptRows(for: $0)
                 } ?? [],
                 ocrPromptProfileText: snapshotModel?.settings.ext["ocr_prompt_profile_id"] ?? "",
                 ocrSamplingProfileText: snapshotModel.map {
@@ -16226,7 +16259,8 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
         restoreRepoID: ModelRuntimeAvailability.restoreRepoID(for: model),
         restoreRevision: ModelRuntimeAvailability.restoreRevision(for: model),
         loadTrustReceiptRows: runtimeModelLoadTrustReceiptRows(for: model),
-        capabilityReceiptRows: runtimeModelCapabilityReceiptRows(for: model)
+        capabilityReceiptRows: runtimeModelCapabilityReceiptRows(for: model),
+        memoryFitReceiptRows: runtimeModelMemoryFitReceiptRows(for: model)
     )
 }
 
@@ -16616,6 +16650,90 @@ private func runtimeModelLoadTrustReceiptRows(
         rows.append("guidance \(runtimeLowercasedFirstSentence(runtimeGuidance))")
     }
     return rows
+}
+
+private struct RuntimeMemoryFitReceiptTarget {
+    let key: String
+    let title: String
+}
+
+private let runtimeMemoryFitReceiptTargets: [RuntimeMemoryFitReceiptTarget] = [
+    RuntimeMemoryFitReceiptTarget(key: "import", title: "Import"),
+    RuntimeMemoryFitReceiptTarget(key: "benchmark", title: "Benchmark"),
+    RuntimeMemoryFitReceiptTarget(key: "eval", title: "Eval"),
+    RuntimeMemoryFitReceiptTarget(key: "train", title: "Train"),
+]
+
+private func runtimeModelMemoryFitReceiptRows(
+    for model: Melix_Controlplane_V1_ModelSummary
+) -> [RuntimeMemoryFitReceiptRow] {
+    runtimeMemoryFitReceiptTargets.compactMap { target in
+        let status = runtimeMemoryFitReceiptValue(
+            in: model.settings.ext,
+            target: target.key,
+            field: "status"
+        )
+        let reason = runtimeMemoryFitReceiptValue(
+            in: model.settings.ext,
+            target: target.key,
+            field: "reason"
+        )
+        let normalizedStatus = runtimeMemoryFitStatus(status)
+        guard status.isEmpty == false || reason.isEmpty == false else {
+            return nil
+        }
+        return RuntimeMemoryFitReceiptRow(
+            target: target.key,
+            title: target.title,
+            status: normalizedStatus,
+            statusText: runtimeMemoryFitStatusText(normalizedStatus),
+            reasonText: reason.isEmpty ? "No fit reason reported." : reason
+        )
+    }
+}
+
+private func runtimeMemoryFitReceiptValue(
+    in values: [String: String],
+    target: String,
+    field: String
+) -> String {
+    let candidateKeys = [
+        "melix.memory_fit.\(target).\(field)",
+        "memory_fit_\(target)_\(field)",
+    ]
+    for key in candidateKeys {
+        let value = values[key]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if value.isEmpty == false {
+            return value
+        }
+    }
+    return ""
+}
+
+private func runtimeMemoryFitStatus(_ status: String) -> String {
+    switch status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "good", "fits", "fit", "ok", "pass", "passed":
+        return "good"
+    case "heavy", "risk", "risky", "warning", "warn":
+        return "heavy"
+    case "blocked", "block", "fail", "failed", "unsafe":
+        return "blocked"
+    default:
+        return "unknown"
+    }
+}
+
+private func runtimeMemoryFitStatusText(_ status: String) -> String {
+    switch status {
+    case "good":
+        return "Good"
+    case "heavy":
+        return "Heavy"
+    case "blocked":
+        return "Blocked"
+    default:
+        return "Unknown"
+    }
 }
 
 private func runtimeModelCapabilityReceiptRows(
