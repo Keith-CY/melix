@@ -350,6 +350,57 @@ def test_serving_diagnostics_jsonl_fast_path_preserves_direct_helper_call() -> N
     assert json.loads(line)["request_id"] == "req-direct-fast-path"
 
 
+def test_serving_diagnostics_jsonl_fast_path_builds_direct_bytes() -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-direct-bytes",
+        phase="decode",
+        event_index=11,
+        status="completed",
+        duration_ms=0.25,
+    )
+
+    line = serving_diagnostics_module._empty_attribute_event_json_line_bytes(event)
+
+    assert isinstance(line, bytes)
+    assert json.loads(line)["request_id"] == "req-direct-bytes"
+
+
+def test_serving_diagnostics_jsonl_fast_path_reuses_duration_literal_cache() -> None:
+    serving_diagnostics_module._ascii_float_literal.cache_clear()
+    rows = tuple(
+        ServingDiagnosticsEvent(
+            request_id="req-duration-cache",
+            phase="decode",
+            event_index=event_index,
+            status="completed",
+            duration_ms=0.001,
+        )
+        for event_index in range(3)
+    )
+
+    for row in rows:
+        line = serving_diagnostics_module._empty_attribute_event_json_line_bytes(row)
+        assert line is not None
+        assert json.loads(line)["duration_ms"] == 0.001
+
+    cache_info = serving_diagnostics_module._ascii_float_literal.cache_info()
+    assert cache_info.misses == 1
+    assert cache_info.hits == 2
+
+
+def test_serving_diagnostics_jsonl_fast_path_direct_helper_preserves_fallback() -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-direct-fallback",
+        phase="decode",
+        event_index=11,
+        status="completed",
+        duration_ms=0.25,
+        attributes={"extra": True},
+    )
+
+    assert serving_diagnostics_module._empty_attribute_event_json_line(event) is None
+
+
 def test_serving_diagnostics_event_to_dict_preserves_numeric_coercion() -> None:
     event = ServingDiagnosticsEvent(
         request_id="req-numeric-coercion",
