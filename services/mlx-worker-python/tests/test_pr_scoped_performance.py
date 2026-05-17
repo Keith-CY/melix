@@ -2418,8 +2418,10 @@ def test_probe_policy_noop_overhead_probe_script_emits_metrics(
     assert "no_op_policy_check_overhead_pct" in metrics
     assert "no_op_reason_overhead_pct" in metrics
     assert "no_op_reason_call_ms_mean" in metrics
+    assert "mode_parse_empty_call_ms_mean" in metrics
     assert "mode_parse_valid_call_ms_mean" in metrics
     assert "mode_parse_invalid_call_ms_mean" in metrics
+    assert "env_parse_empty_call_ms_mean" in metrics
     assert "mode_parse_invalid_overhead_pct" in metrics
 
 
