@@ -75,11 +75,11 @@ class ProbePolicy:
 
     @classmethod
     def evidence(cls) -> ProbePolicy:
-        return cls(mode=ProbeMode.EVIDENCE, source_value=ProbeMode.EVIDENCE.value)
+        return _PROBE_POLICY_BY_VALUE[ProbeMode.EVIDENCE.value]
 
     @classmethod
     def debug(cls) -> ProbePolicy:
-        return cls(mode=ProbeMode.DEBUG, source_value=ProbeMode.DEBUG.value)
+        return _PROBE_POLICY_BY_VALUE[ProbeMode.DEBUG.value]
 
 
 _PROBE_POLICY_BY_VALUE: dict[str, ProbePolicy] = {
