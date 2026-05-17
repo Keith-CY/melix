@@ -15,7 +15,7 @@ from worker.productization.probe_policy_overhead import measure_no_op_probe_poli
 
 
 def main() -> int:
-    iterations = int(os.environ.get("MELIX_PROBE_POLICY_OVERHEAD_ITERATIONS", "200000"))
+    iterations = int(os.environ.get("MELIX_PROBE_POLICY_OVERHEAD_ITERATIONS", "1000000"))
     samples = int(os.environ.get("MELIX_PROBE_POLICY_OVERHEAD_SAMPLES", "5"))
     threshold_pct = float(os.environ.get("MELIX_PROBE_POLICY_OVERHEAD_THRESHOLD_PCT", "5.0"))
     metrics = measure_no_op_probe_policy_overhead(
