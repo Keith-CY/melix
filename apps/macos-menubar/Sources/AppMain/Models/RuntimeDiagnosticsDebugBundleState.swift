@@ -92,6 +92,14 @@ public struct RuntimeDiagnosticsDebugBundleState: Equatable, Sendable, Decodable
         return "\(redaction) • \(redactedFieldCount) fields redacted"
     }
 
+    public var debugJSONLSummaryText: String {
+        let enabledText = debugJSONLEnabled ? "enabled" : "disabled"
+        guard debugJSONLEventLimit > 0 else {
+            return "\(enabledText), limit unknown"
+        }
+        return "\(enabledText), limit \(debugJSONLEventLimit) events"
+    }
+
     public var servingDiagnosticsQueueSummaryText: String {
         guard let servingDiagnostics else {
             return ""

@@ -6943,6 +6943,18 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    public func recordDiagnosticsDebugBundleArtifactMessage(_ message: String) {
+        diagnosticsDebugBundleMessage = sanitizedRichText(message)
+        diagnosticsDebugBundleErrorMessage = ""
+        notifyStateChanged()
+    }
+
+    public func recordDiagnosticsDebugBundleArtifactError(_ message: String) {
+        diagnosticsDebugBundleMessage = ""
+        diagnosticsDebugBundleErrorMessage = sanitizedRichText(message)
+        notifyStateChanged()
+    }
+
     public func runDiagnosticsDebugBundle() async {
         let runID = diagnosticsDebugBundleRunIDDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard runID.isEmpty == false else {

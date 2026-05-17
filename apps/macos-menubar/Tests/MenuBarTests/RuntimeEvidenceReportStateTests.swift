@@ -214,6 +214,87 @@ struct RuntimeEvidenceReportStateTests {
         #expect(renderedTexts.contains("24 debug events were dropped; diagnosis may be partial."))
     }
 
+    @Test("diagnostics renders debug bundle redaction state")
+    @MainActor
+    func diagnosticsRendersDebugBundleRedactionState() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.applyDiagnosticsDebugBundleResult(
+            try RuntimeDiagnosticsDebugBundleState.decode(json: makeDiagnosticsDebugBundleJSON())
+        )
+
+        let view = evidenceHostView(
+            DesktopDiagnosticsToolSectionView(
+                viewModel: viewModel,
+                foundation: viewModel.desktopFoundationState
+            ),
+            size: CGSize(width: 1280, height: 2600)
+        )
+        let renderedTexts = evidenceRenderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Redaction State"))
+        #expect(renderedTexts.contains("Consent"))
+        #expect(renderedTexts.contains("local_only"))
+        #expect(renderedTexts.contains("Artifact Policy"))
+        #expect(renderedTexts.contains("explicit_cli_command"))
+        #expect(renderedTexts.contains("Debug JSONL"))
+        #expect(renderedTexts.contains("enabled, limit 256 events"))
+    }
+
+    @Test("diagnostics debug bundle artifact helpers copy and open paths")
+    @MainActor
+    func diagnosticsDebugBundleArtifactHelpersCopyAndOpenPaths() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        let diagnosticsView = DesktopDiagnosticsToolSectionView(
+            viewModel: viewModel,
+            foundation: viewModel.desktopFoundationState
+        )
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("melix.debug-bundle.copy.\(UUID().uuidString)"))
+
+        #expect(RuntimeDiagnosticsArtifactClipboard.copy(" /tmp/melix-debug/bench-1/manifest.json ", to: pasteboard))
+        #expect(pasteboard.string(forType: .string) == "/tmp/melix-debug/bench-1/manifest.json")
+        #expect(RuntimeDiagnosticsArtifactClipboard.copy("   ", to: pasteboard) == false)
+
+        #expect(diagnosticsView.copyDebugBundleArtifactPath(" /tmp/melix-debug/bench-1/events.jsonl ", to: pasteboard))
+        #expect(pasteboard.string(forType: .string) == "/tmp/melix-debug/bench-1/events.jsonl")
+        #expect(viewModel.diagnosticsDebugBundleMessage == "Copied debug bundle artifact path: /tmp/melix-debug/bench-1/events.jsonl.")
+        #expect(viewModel.diagnosticsDebugBundleErrorMessage.isEmpty)
+
+        #expect(diagnosticsView.copyDebugBundleArtifactPath(
+            "/tmp/melix-debug/bench-1/failing-artifact.json",
+            to: pasteboard,
+            clipboardWriter: { _, _ in false }
+        ) == false)
+        #expect(viewModel.diagnosticsDebugBundleErrorMessage.contains("Could not copy"))
+
+        var openedURL: URL?
+        diagnosticsView.openDebugBundleArtifact(path: " /tmp/melix-debug/bench-1/events.jsonl ") { url in
+            openedURL = url
+            return true
+        }
+        #expect(openedURL?.path == "/tmp/melix-debug/bench-1/events.jsonl")
+        #expect(viewModel.diagnosticsDebugBundleMessage == "Opened debug bundle artifact: /tmp/melix-debug/bench-1/events.jsonl.")
+        #expect(viewModel.diagnosticsDebugBundleErrorMessage.isEmpty)
+
+        #expect(diagnosticsView.copyDebugBundleArtifactPath("   ", to: pasteboard) == false)
+        #expect(viewModel.diagnosticsDebugBundleErrorMessage.contains("empty"))
+
+        diagnosticsView.openDebugBundleArtifact(path: "   ") { _ in true }
+        #expect(viewModel.diagnosticsDebugBundleErrorMessage.contains("empty"))
+
+        diagnosticsView.openDebugBundleArtifact(path: "/tmp/missing-debug-artifact.json") { _ in false }
+        #expect(viewModel.diagnosticsDebugBundleErrorMessage.contains("Could not open"))
+
+        let unknownLimitJSON = makeDiagnosticsDebugBundleJSON()
+            .replacingOccurrences(
+                of: #""debug_jsonl_event_limit": 256"#,
+                with: #""debug_jsonl_event_limit": 0"#
+            )
+        let unknownLimitResult = try RuntimeDiagnosticsDebugBundleState.decode(json: unknownLimitJSON)
+        #expect(unknownLimitResult.debugJSONLSummaryText == "enabled, limit unknown")
+    }
+
     @Test("diagnostics renders debug bundle error state")
     @MainActor
     func diagnosticsRendersDebugBundleErrorState() async throws {

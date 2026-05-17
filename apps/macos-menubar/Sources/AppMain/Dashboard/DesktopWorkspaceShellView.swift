@@ -7131,9 +7131,12 @@ struct DesktopDiagnosticsToolSectionView: View {
 
     private func debugBundleResultRows(_ result: RuntimeDiagnosticsDebugBundleState) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            debugBundleResultRow(title: "Bundle Path", value: result.bundlePath)
-            debugBundleResultRow(title: "Manifest", value: result.manifestPath)
-            debugBundleResultRow(title: "Redaction", value: result.redactionSummaryText)
+            debugBundleResultRow(title: "Bundle Path", value: result.bundlePath, allowsArtifactActions: true)
+            debugBundleResultRow(title: "Manifest", value: result.manifestPath, allowsArtifactActions: true)
+            debugBundleResultRow(title: "Redaction State", value: result.redactionSummaryText)
+            debugBundleResultRow(title: "Consent", value: result.diagnosticsConsentState)
+            debugBundleResultRow(title: "Artifact Policy", value: result.debugArtifactPolicy)
+            debugBundleResultRow(title: "Debug JSONL", value: result.debugJSONLSummaryText)
             if result.servingDiagnosticsQueueSummaryText.isEmpty == false {
                 debugBundleResultRow(
                     title: "Serving Diagnostics Queue",
@@ -7149,13 +7152,18 @@ struct DesktopDiagnosticsToolSectionView: View {
                 )
             }
             ForEach(Array(result.artifactRows.prefix(6))) { row in
-                debugBundleResultRow(title: row.kindText, value: row.path)
+                debugBundleResultRow(title: row.kindText, value: row.path, allowsArtifactActions: true)
             }
         }
     }
 
-    private func debugBundleResultRow(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+    private func debugBundleResultRow(
+        title: String,
+        value: String,
+        allowsArtifactActions: Bool = false
+    ) -> some View {
+        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return VStack(alignment: .leading, spacing: 3) {
             DesktopPassiveStaticTextLabel(
                 title: title,
                 font: .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
@@ -7168,6 +7176,18 @@ struct DesktopDiagnosticsToolSectionView: View {
                 lineBreakMode: .byWordWrapping,
                 maximumNumberOfLines: 2
             )
+            if allowsArtifactActions && trimmedValue.isEmpty == false {
+                HStack(spacing: 8) {
+                    Button("Copy Path", systemImage: "doc.on.doc") {
+                        copyDebugBundleArtifactPath(value)
+                    }
+                    Button("Open Artifact", systemImage: "folder") {
+                        openDebugBundleArtifact(path: value, opener: NSWorkspace.shared.open)
+                    }
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
@@ -7568,6 +7588,46 @@ struct DesktopDiagnosticsToolSectionView: View {
             viewModel.clearEvidenceReportOpenError()
         } else {
             viewModel.recordEvidenceReportOpenError("Could not open evidence artifact at \(trimmedPath).")
+        }
+    }
+
+    @discardableResult
+    func copyDebugBundleArtifactPath(
+        _ path: String,
+        to pasteboard: NSPasteboard = .general,
+        clipboardWriter: (String, NSPasteboard) -> Bool = RuntimeDiagnosticsArtifactClipboard.copy(_:to:)
+    ) -> Bool {
+        let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedPath.isEmpty == false else {
+            viewModel.recordDiagnosticsDebugBundleArtifactError("Debug bundle artifact path is empty.")
+            return false
+        }
+
+        guard clipboardWriter(trimmedPath, pasteboard) else {
+            viewModel.recordDiagnosticsDebugBundleArtifactError(
+                "Could not copy debug bundle artifact path: \(trimmedPath)."
+            )
+            return false
+        }
+        viewModel.recordDiagnosticsDebugBundleArtifactMessage(
+            "Copied debug bundle artifact path: \(trimmedPath)."
+        )
+        return true
+    }
+
+    func openDebugBundleArtifact(path: String, opener: (URL) -> Bool) {
+        let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedPath.isEmpty == false else {
+            viewModel.recordDiagnosticsDebugBundleArtifactError("Debug bundle artifact path is empty.")
+            return
+        }
+
+        if opener(URL(fileURLWithPath: trimmedPath)) {
+            viewModel.recordDiagnosticsDebugBundleArtifactMessage("Opened debug bundle artifact: \(trimmedPath).")
+        } else {
+            viewModel.recordDiagnosticsDebugBundleArtifactError(
+                "Could not open debug bundle artifact at \(trimmedPath)."
+            )
         }
     }
 
@@ -10249,6 +10309,18 @@ func desktopAPIAuthenticationReferenceText(selectedExport: AgentIntegrationExpor
         return "Selected target: \(export.target.rawValue). Use \(export.authPlaceholder) as the reproducible credential placeholder for \(export.baseURL)."
     }
     return "Select a server session to render auth guidance."
+}
+
+enum RuntimeDiagnosticsArtifactClipboard {
+    @discardableResult
+    static func copy(_ value: String, to pasteboard: NSPasteboard = .general) -> Bool {
+        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedValue.isEmpty == false else {
+            return false
+        }
+        pasteboard.clearContents()
+        return pasteboard.setString(trimmedValue, forType: .string)
+    }
 }
 
 private func copyToPasteboard(_ value: String) {
