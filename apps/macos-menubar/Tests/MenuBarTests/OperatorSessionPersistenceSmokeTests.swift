@@ -99,6 +99,16 @@ struct OperatorSessionPersistenceSmokeTests {
                         id: "server-session-shared",
                         title: "Shared Server",
                         modelID: "melix-dev-vlm",
+                        servingDefaults: DesktopServerServingDefaultsState(
+                            maxConcurrentRequests: 3,
+                            concurrentProcessingEnabled: false,
+                            prefillBatchSize: 1,
+                            completionBatchSize: 1,
+                            accelerationProfile: "long-session",
+                            accelerationMode: "sparse_prefill",
+                            draftModelID: "melix-dev-draft",
+                            numDraftTokens: 2
+                        ),
                         lifecycle: .paused,
                         autoSleepEnabled: true,
                         lightSleepAfterSeconds: 60,
@@ -134,6 +144,17 @@ struct OperatorSessionPersistenceSmokeTests {
         #expect(restoredAppState.selectedRuntimeJobID == "job-shared-selection")
         #expect(sharedState.selectedServerSessionID == "server-session-shared")
         #expect(sharedState.serverSessions.first?.modelID == "melix-dev-vlm")
+        #expect(sharedState.serverSessions.first?.servingDefaults.accelerationProfile == "long-session")
+        #expect(sharedState.serverSessions.first?.servingDefaults.accelerationMode == "sparse_prefill")
+        #expect(sharedState.serverSessions.first?.servingDefaults.maxConcurrentRequests == 3)
+        #expect(sharedState.serverSessions.first?.servingDefaults.concurrentProcessingEnabled == false)
+        #expect(sharedState.serverSessions.first?.servingDefaults.prefillBatchSize == 1)
+        #expect(sharedState.serverSessions.first?.servingDefaults.completionBatchSize == 1)
+        #expect(restoredAppState.serverSessions.first?.servingDefaults.accelerationProfile == "long-session")
+        #expect(restoredAppState.serverSessions.first?.servingDefaults.effectiveAccelerationProfile == "long-session")
+        #expect(restoredAppState.serverSessions.first?.servingDefaults.accelerationProfileIntent ==
+            "Repeated-session serving with bounded batching and baseline decode."
+        )
         #expect(sharedState.serverSessions.first?.autoSleepEnabled == true)
         #expect(sharedState.serverSessions.first?.lightSleepAfterSeconds == 60)
         #expect(sharedState.serverSessions.first?.deepSleepAfterSeconds == 600)
@@ -144,6 +165,11 @@ struct OperatorSessionPersistenceSmokeTests {
         #expect(uiPayload["server_sessions"] == nil)
         #expect(uiPayload["registry_roots"] == nil)
         #expect((serverSessionsPayload["server_sessions"] as? [[String: Any]])?.first?["id"] as? String == "server-session-shared")
+        let persistedServingDefaults = try #require(
+            (serverSessionsPayload["server_sessions"] as? [[String: Any]])?.first?["serving_defaults"] as? [String: Any]
+        )
+        #expect(persistedServingDefaults["acceleration_profile"] as? String == "long-session")
+        #expect(persistedServingDefaults["acceleration_mode"] as? String == "sparse_prefill")
         #expect(modelRootsPayload["registry_roots"] as? [String] == ["/tmp/models-a", "/tmp/models-b"])
     }
 

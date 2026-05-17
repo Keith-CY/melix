@@ -586,6 +586,36 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Resolved defaults: None • sequences 1 • prefill 1 • completion 1"))
     }
 
+    @Test("profile regression renders requested effective and resolved serving receipts")
+    @MainActor
+    func profileRegressionRendersRequestedEffectiveAndResolvedServingReceipts() throws {
+        let servingDefaults = DesktopServerServingDefaultsState(
+            maxConcurrentRequests: 2,
+            concurrentProcessingEnabled: true,
+            prefillBatchSize: 2,
+            completionBatchSize: 1,
+            accelerationProfile: "long-session",
+            accelerationMode: "sparse_prefill",
+            effectiveMaxConcurrentRequests: 1,
+            effectiveConcurrentProcessingEnabled: false,
+            effectivePrefillBatchSize: 1,
+            effectiveCompletionBatchSize: 1,
+            effectiveAccelerationProfile: "low-memory",
+            accelerationProfileIntent: "Runtime selected low-memory after model constraints.",
+            effectiveAccelerationMode: "baseline"
+        )
+        let view = hostView(
+            DesktopServingAccelerationProfileSummary(servingDefaults: servingDefaults),
+            size: CGSize(width: 520, height: 160)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Requested profile: Long Session"))
+        #expect(renderedTexts.contains("Effective profile: Low Memory"))
+        #expect(renderedTexts.contains("Intent: Runtime selected low-memory after model constraints."))
+        #expect(renderedTexts.contains("Resolved defaults: None • sequences 1 • prefill 1 • completion 1"))
+    }
+
     @Test("workspace server surface renders remote server picker and editor")
     @MainActor
     func workspaceServerSurfaceRendersRemoteServerPickerAndEditor() async throws {
