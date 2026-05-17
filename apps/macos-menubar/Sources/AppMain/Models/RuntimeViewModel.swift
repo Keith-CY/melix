@@ -8852,6 +8852,13 @@ public final class RuntimeViewModel {
             )
             return
         }
+        if let fusedActivationUnavailableText = loraFusedActivationUnavailableText(for: selectedLoraTrainingJob) {
+            surfaceLoraWorkflowGuardFailure(
+                .activateAdapter,
+                message: fusedActivationUnavailableText
+            )
+            return
+        }
 
         if let cliWorkflowRunner {
             let startedAt = Date()
@@ -10695,6 +10702,21 @@ public final class RuntimeViewModel {
             return ""
         }
         return Self.normalizedOptionalString(lastModelOperation?.outputPath ?? "") ?? ""
+    }
+
+    private func loraFusedActivationUnavailableText(for job: LoraTrainingJobRecord?) -> String? {
+        guard loraActivationMode == .fusedDerivedModel else {
+            return nil
+        }
+        guard let receipt = job.flatMap(Self.adapterCapabilityReceipt(from:)),
+              receipt.mergeable == false
+        else {
+            return nil
+        }
+        let reason = receipt.unsupportedReason.isEmpty
+            ? "non_mergeable_adapter"
+            : receipt.unsupportedReason
+        return "Fused activation is disabled for \(receipt.adapterFamilyText): \(reason). Use Adapter-backed Runtime instead."
     }
 
     private func beginLoraWorkflow(

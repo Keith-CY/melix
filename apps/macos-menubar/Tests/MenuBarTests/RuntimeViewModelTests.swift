@@ -9769,6 +9769,74 @@ struct RuntimeViewModelTests {
         #expect(fallbackViewModel.selectedBenchmarkModelID == "melix-dev-text")
     }
 
+    @Test("lora fused activation blocks non mergeable adapter receipts before dispatch")
+    @MainActor
+    func loraFusedActivationBlocksNonMergeableAdapterReceiptsBeforeDispatch() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeRegistrySnapshotManifest(
+                    publishedRepo: "",
+                    targetRepo: "melix/adapters/non-mergeable-adapter"
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "activate_adapter",
+                outputPath: "/tmp/melix-activate/activate_adapter.derived_model.json",
+                manifestJSON: #"{"operation":"activate_adapter","derived_model_id":"should-not-dispatch"}"#
+            ),
+            forNamedOperation: "activate_adapter"
+        )
+        var config = makeDesktopLoraTrainingConfig(adapterName: "non-mergeable-adapter")
+        config.activationMode = RuntimeLoraActivationMode.fusedDerivedModel.rawValue
+        var job = makeDesktopLoraTrainingJobRecord(
+            id: "non-mergeable-job",
+            title: "Non Mergeable Adapter",
+            config: config,
+            status: .succeeded
+        )
+        job.latestOutputText = #"""
+        {
+          "operation": "train_lora",
+          "adapter_family": "fake_relora",
+          "adapter_algorithm": "fake_relora",
+          "backend_supported": true,
+          "unsupported_reason": "non_mergeable_adapter",
+          "adapter_capabilities": {
+            "lora_like": true,
+            "mergeable": false,
+            "relora_compatible": true,
+            "quantized_base_supported": true
+          }
+        }
+        """#
+        let store = FakeLoraTrainingJobStore(jobs: [job])
+        let viewModel = RuntimeViewModel(
+            client: client,
+            loraTrainingJobStore: store
+        )
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+
+        viewModel.prepareSelectedLoraTrainingJobFollowUp(.activation)
+        #expect(viewModel.loraActivationMode == .fusedDerivedModel)
+        #expect(viewModel.selectedAdapterPackageID == "melix-dev-adapter@model-ops-0001")
+
+        await viewModel.activateLatestAdapter()
+
+        let disabledReason = "Fused activation is disabled for fake_relora: non_mergeable_adapter. Use Adapter-backed Runtime instead."
+        #expect(viewModel.lastError == disabledReason)
+        #expect(viewModel.loraWorkflowStatus?.phase == .failed)
+        #expect(viewModel.loraWorkflowStatus?.detail == disabledReason)
+        let modelOperationRequests = await client.recordedModelOperationRequests
+        #expect(modelOperationRequests.contains { $0.operation == "activate_adapter" } == false)
+    }
+
     @Test("lora saved draft fills a blank selected title from the current config")
     @MainActor
     func loraSavedDraftFillsBlankSelectedTitleFromCurrentConfig() async throws {
