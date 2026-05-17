@@ -9837,6 +9837,76 @@ struct RuntimeViewModelTests {
         #expect(modelOperationRequests.contains { $0.operation == "activate_adapter" } == false)
     }
 
+    @Test("lora adapter-backed activation remains available for backend supported receipts")
+    @MainActor
+    func loraAdapterBackedActivationRemainsAvailableForBackendSupportedReceipts() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeRegistrySnapshotManifest(
+                    publishedRepo: "",
+                    targetRepo: "melix/adapters/non-mergeable-adapter"
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "activate_adapter",
+                outputPath: "/tmp/melix-activate/activate_adapter.adapter_backed.json",
+                manifestJSON: #"{"operation":"activate_adapter","adapter_runtime_id":"adapter-backed-runtime"}"#
+            ),
+            forNamedOperation: "activate_adapter"
+        )
+        var config = makeDesktopLoraTrainingConfig(adapterName: "non-mergeable-adapter")
+        config.activationMode = RuntimeLoraActivationMode.adapterBackedRuntime.rawValue
+        var job = makeDesktopLoraTrainingJobRecord(
+            id: "backend-supported-job",
+            title: "Backend Supported Adapter",
+            config: config,
+            status: .succeeded
+        )
+        job.latestOutputText = #"""
+        {
+          "operation": "train_lora",
+          "adapter_family": "fake_relora",
+          "adapter_algorithm": "fake_relora",
+          "backend_supported": true,
+          "unsupported_reason": "non_mergeable_adapter",
+          "adapter_capabilities": {
+            "lora_like": true,
+            "mergeable": false,
+            "relora_compatible": true,
+            "quantized_base_supported": true
+          }
+        }
+        """#
+        let store = FakeLoraTrainingJobStore(jobs: [job])
+        let viewModel = RuntimeViewModel(
+            client: client,
+            loraTrainingJobStore: store
+        )
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+
+        viewModel.prepareSelectedLoraTrainingJobFollowUp(.activation)
+        #expect(viewModel.loraActivationMode == .adapterBackedRuntime)
+        #expect(viewModel.selectedAdapterPackageID == "melix-dev-adapter@model-ops-0001")
+
+        await viewModel.activateLatestAdapter()
+
+        #expect(viewModel.lastError == nil)
+        #expect(viewModel.loraWorkflowStatus?.phase == .succeeded)
+        let activateRequest = try #require(
+            await client.recordedModelOperationRequests.first { $0.operation == "activate_adapter" }
+        )
+        #expect(activateRequest.modelID == "melix-dev-text")
+        #expect(activateRequest.ext["artifact_path"] == "/tmp/melix-train-lora/train_lora.adapter.json")
+        #expect(activateRequest.ext["activation_mode"] == "adapter_backed_runtime")
+    }
+
     @Test("lora saved draft fills a blank selected title from the current config")
     @MainActor
     func loraSavedDraftFillsBlankSelectedTitleFromCurrentConfig() async throws {
