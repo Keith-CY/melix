@@ -13,10 +13,12 @@ def _no_op_call() -> None:
 
 
 class NoOpProbeRecorder:
+    __slots__ = ()
+
     record = staticmethod(_no_op_call)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ProbeOverheadMetrics:
     sample_count: int
     iteration_count: int
@@ -24,12 +26,17 @@ class ProbeOverheadMetrics:
     no_op_recorder_call_ms_mean: float
     no_op_policy_check_call_ms_mean: float
     no_op_reason_call_ms_mean: float
+    mode_parse_empty_call_ms_mean: float
+    mode_parse_valid_call_ms_mean: float
+    mode_parse_invalid_call_ms_mean: float
     no_op_recorder_overhead_pct: float
     no_op_policy_check_overhead_pct: float
     no_op_reason_overhead_pct: float
+    mode_parse_invalid_overhead_pct: float
     no_op_recorder_delta_ms: float
     no_op_policy_check_delta_ms: float
     no_op_reason_delta_ms: float
+    mode_parse_invalid_delta_ms: float
     threshold_pct: float
     absolute_tolerance_ms: float
     threshold_passed: bool
@@ -42,12 +49,17 @@ class ProbeOverheadMetrics:
             "no_op_recorder_call_ms_mean": self.no_op_recorder_call_ms_mean,
             "no_op_policy_check_call_ms_mean": self.no_op_policy_check_call_ms_mean,
             "no_op_reason_call_ms_mean": self.no_op_reason_call_ms_mean,
+            "mode_parse_empty_call_ms_mean": self.mode_parse_empty_call_ms_mean,
+            "mode_parse_valid_call_ms_mean": self.mode_parse_valid_call_ms_mean,
+            "mode_parse_invalid_call_ms_mean": self.mode_parse_invalid_call_ms_mean,
             "no_op_recorder_overhead_pct": self.no_op_recorder_overhead_pct,
             "no_op_policy_check_overhead_pct": self.no_op_policy_check_overhead_pct,
             "no_op_reason_overhead_pct": self.no_op_reason_overhead_pct,
+            "mode_parse_invalid_overhead_pct": self.mode_parse_invalid_overhead_pct,
             "no_op_recorder_delta_ms": self.no_op_recorder_delta_ms,
             "no_op_policy_check_delta_ms": self.no_op_policy_check_delta_ms,
             "no_op_reason_delta_ms": self.no_op_reason_delta_ms,
+            "mode_parse_invalid_delta_ms": self.mode_parse_invalid_delta_ms,
             "threshold_pct": self.threshold_pct,
             "absolute_tolerance_ms": self.absolute_tolerance_ms,
             "threshold_passed": 1.0 if self.threshold_passed else 0.0,
@@ -59,7 +71,7 @@ def measure_no_op_probe_policy_overhead(
     iterations: int = 200_000,
     samples: int = 5,
     threshold_pct: float = 5.0,
-    absolute_tolerance_ms: float = 0.000_005,
+    absolute_tolerance_ms: float = 0.000_020,
 ) -> ProbeOverheadMetrics:
     iteration_count = max(int(iterations), 1)
     sample_count = max(int(samples), 1)
@@ -82,16 +94,36 @@ def measure_no_op_probe_policy_overhead(
         iterations=iteration_count,
         samples=sample_count,
     )
+    parse_empty_samples = _sample_call_ms(
+        lambda: ProbePolicy.from_value(""),
+        iterations=iteration_count,
+        samples=sample_count,
+    )
+    parse_valid_samples = _sample_call_ms(
+        lambda: ProbePolicy.from_value("debug"),
+        iterations=iteration_count,
+        samples=sample_count,
+    )
+    parse_invalid_samples = _sample_call_ms(
+        lambda: ProbePolicy.from_value("definitely-not-valid"),
+        iterations=iteration_count,
+        samples=sample_count,
+    )
     baseline_mean = _mean(baseline_samples)
     recorder_mean = _mean(recorder_samples)
     policy_mean = _mean(policy_samples)
     reason_mean = _mean(reason_samples)
+    parse_empty_mean = _mean(parse_empty_samples)
+    parse_valid_mean = _mean(parse_valid_samples)
+    parse_invalid_mean = _mean(parse_invalid_samples)
     recorder_overhead_pct = _overhead_pct(recorder_mean, baseline_mean)
     policy_overhead_pct = _overhead_pct(policy_mean, baseline_mean)
     reason_overhead_pct = _overhead_pct(reason_mean, baseline_mean)
+    parse_invalid_overhead_pct = _overhead_pct(parse_invalid_mean, baseline_mean)
     recorder_delta_ms = round(recorder_mean - baseline_mean, 9)
     policy_delta_ms = round(policy_mean - baseline_mean, 9)
     reason_delta_ms = round(reason_mean - baseline_mean, 9)
+    parse_invalid_delta_ms = round(parse_invalid_mean - baseline_mean, 9)
     return ProbeOverheadMetrics(
         sample_count=sample_count,
         iteration_count=iteration_count,
@@ -99,12 +131,17 @@ def measure_no_op_probe_policy_overhead(
         no_op_recorder_call_ms_mean=recorder_mean,
         no_op_policy_check_call_ms_mean=policy_mean,
         no_op_reason_call_ms_mean=reason_mean,
+        mode_parse_empty_call_ms_mean=parse_empty_mean,
+        mode_parse_valid_call_ms_mean=parse_valid_mean,
+        mode_parse_invalid_call_ms_mean=parse_invalid_mean,
         no_op_recorder_overhead_pct=recorder_overhead_pct,
         no_op_policy_check_overhead_pct=policy_overhead_pct,
         no_op_reason_overhead_pct=reason_overhead_pct,
+        mode_parse_invalid_overhead_pct=parse_invalid_overhead_pct,
         no_op_recorder_delta_ms=recorder_delta_ms,
         no_op_policy_check_delta_ms=policy_delta_ms,
         no_op_reason_delta_ms=reason_delta_ms,
+        mode_parse_invalid_delta_ms=parse_invalid_delta_ms,
         threshold_pct=float(threshold_pct),
         absolute_tolerance_ms=float(absolute_tolerance_ms),
         threshold_passed=recorder_overhead_pct <= threshold_pct

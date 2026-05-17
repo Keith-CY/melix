@@ -348,6 +348,9 @@ def _normalized_target_fragments(target_modules: Iterable[str]) -> tuple[str, ..
         fragments.append(normalized)
         fragments.append(normalized.removeprefix("model."))
         fragments.append(normalized.removeprefix("language_model."))
+        leaf = _target_module_leaf(normalized)
+        if leaf:
+            fragments.append(leaf)
     return tuple(dict.fromkeys(fragment for fragment in fragments if fragment))
 
 
@@ -365,7 +368,19 @@ def _is_unexpected_adapter_parameter(name: str, allowed_fragments: tuple[str, ..
         return not adapter_owned
     if not adapter_owned:
         return True
-    return not any(fragment in normalized for fragment in allowed_fragments)
+    return not any(_adapter_parameter_matches_fragment(normalized, fragment) for fragment in allowed_fragments)
+
+
+def _adapter_parameter_matches_fragment(normalized_name: str, fragment: str) -> bool:
+    normalized_fragment = _normalize_parameter_name(fragment)
+    if not normalized_fragment:
+        return False
+    if normalized_fragment in normalized_name:
+        return True
+    leaf = _target_module_leaf(normalized_fragment)
+    if not leaf:
+        return False
+    return f".{leaf}." in normalized_name or normalized_name.startswith(f"{leaf}.")
 
 
 def _component_for_parameter_name(name: str) -> str:
@@ -381,10 +396,32 @@ def _component_for_parameter_name(name: str) -> str:
 
 def _normalize_parameter_name(name: str) -> str:
     normalized = name.replace("/", ".").replace("..", ".").strip(".").lower()
-    for prefix in ("base_model.", "model.model."):
+    for prefix in ("base_model.", "language_model.", "model.model."):
         if normalized.startswith(prefix):
             normalized = normalized[len(prefix):]
     return normalized
+
+
+def _target_module_leaf(name: str) -> str:
+    normalized = _normalize_parameter_name(name)
+    ignored_tokens = {
+        "model",
+        "layers",
+        "self_attn",
+        "mlp",
+        "experts",
+        "weight",
+        "bias",
+        "lora_a",
+        "lora_b",
+        "m",
+        "magnitude",
+    }
+    tokens = [token for token in normalized.split(".") if token and not token.isdigit()]
+    for token in reversed(tokens):
+        if token not in ignored_tokens:
+            return token
+    return tokens[-1] if tokens else ""
 
 
 def _iter_trainable_parameters(model: Any) -> Iterable[tuple[str, Any]]:

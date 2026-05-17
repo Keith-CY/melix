@@ -726,6 +726,7 @@ def test_size_hint_parsers_cover_units_and_invalid_values() -> None:
     assert hub_catalog_module._direct_size_hint_from_text("512 tb") == 0
     assert hub_catalog_module._direct_size_hint_from_text("not-a-number MB") == 0
     assert hub_catalog_module._direct_size_hint_from_text("model size 512 MB") == 0
+    assert hub_catalog_module._direct_size_hint_from_text("512 MB extra") == 0
 
     assert _size_hint_from_text("Model size: 512 kb", allow_bare=False) == 512 * KB
     assert _size_hint_from_text("Model size: 1.5 MB", allow_bare=False) == int(1.5 * MB)

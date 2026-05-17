@@ -422,7 +422,7 @@ public actor ControlPlaneService {
             modelSamplingPolicy: modelSamplingPolicy,
             gatewayServingDefaults: await gatewayServingDefaultsStore.requestedDefaults(
                 serverSessionID: ServerSessionRuntimeStore.defaultServerSessionID
-            ),
+            ).resolvingAccelerationCompatibility(for: resolvedModel),
             mcpToolCatalog: mcpToolCatalog
         )
         let execution = try await requestCoordinator.startChatCompletion(translated)

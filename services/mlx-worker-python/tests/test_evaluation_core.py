@@ -15,7 +15,7 @@ from worker.engine.evaluation_core import EvaluationCore
 from worker.grpc_server import WorkerMaintenanceService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
-from worker.productization.event_extraction import EventExtractionClientResult
+from worker.productization.event_extraction import EventExtractionClientResult, default_event_extraction_prompt_spec
 from worker.productization.evaluation_schemas import EvaluationCompareJob, build_evaluation_sample_record
 from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent
 
@@ -1337,6 +1337,286 @@ def test_event_extraction_weighted_f1_can_use_local_loaded_model(
     assert registry.vision_probes == [("vlm", {"images": 0})]
     assert metrics["eval.event_extraction.overall_weighted_f1"] == 1.0
     assert run.result.primary_score_value == 1.0
+    assert run.samples[0].sample_id == "1"
+    assert run.samples[0].typed_score == 1.0
+    assert run.samples[0].extraction_status == "extracted"
+    assert "出差" in run.samples[0].target
+
+
+def test_event_extraction_compare_uses_adapter_target_and_persists_compare_artifacts(
+    tmp_path: Path,
+) -> None:
+    source_jsonl = tmp_path / "event-samples.jsonl"
+    source_jsonl.write_text(
+        json.dumps(
+            {
+                "dialogue_id": "dlg-1",
+                "dialogue": ["speaker_1: 周末去南京出差"],
+                "events": [
+                    {
+                        "actor": ["speaker_1"],
+                        "time": ["周末"],
+                        "location": ["南京"],
+                        "action": ["出差"],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    adapter_manifest = _write_adapter_manifest(
+        tmp_path=tmp_path,
+        adapter_name="event-alpha",
+        source_model_id="unsloth/gemma-4-E4B-it-MLX-8bit",
+    )
+    registry = FakeEvaluationRegistry(
+        runtime=ProbeRuntime('{"events":[]}', {"images": 0}),
+        model_id="unsloth/gemma-4-E4B-it-MLX-8bit",
+        runtime_kind="vlm",
+        ephemeral_runtime=ProbeRuntime(
+            '{"events":[{"actor":["speaker_1"],"time":["周末"],"location":["南京"],"action":["出差"]}]}',
+            {"images": 0},
+        ),
+    )
+    runner = EvaluationCore(jobs_root=tmp_path / "runs" / "event", registry=registry)
+
+    run = runner.run_local_suite(
+        model_id="unsloth/gemma-4-E4B-it-MLX-8bit",
+        model_handle=registry.handle,
+        suite_id="event_extraction",
+        dataset_root=tmp_path,
+        sample_size=1,
+        scoring_mode="event_extraction_weighted_f1",
+        parameters={
+            "dataset_id": "local.event.v1",
+            "event_source_jsonl": str(source_jsonl),
+            "compare_mode": "base_vs_targets",
+            "compare_target_adapter_manifest_paths": str(adapter_manifest),
+        },
+    )
+
+    assert isinstance(run.job, EvaluationCompareJob)
+    assert len(registry.load_model_calls) == 1
+    assert len(registry.unload_model_calls) == 1
+    ephemeral_id = registry.load_model_calls[0]
+    assert ephemeral_id in run.job.target_model_ids
+    assert run.results[0].target_model_id == ephemeral_id
+    assert run.results[0].win_count == 1
+    assert run.results[0].base_accuracy == 0.0
+    assert run.results[0].target_accuracy == 1.0
+    assert run.results[0].delta_accuracy == 1.0
+    assert run.samples[0].target_typed_score == 1.0
+    assert run.samples[0].base_typed_score == 0.0
+    compare_summary = Path(run.persisted_paths["summary_csv"]).read_text(encoding="utf-8")
+    assert "evaluation-compare-summary" not in compare_summary
+    assert ephemeral_id in compare_summary
+    assert Path(run.persisted_paths["samples_jsonl"]).read_text(encoding="utf-8").count("\n") == 1
+
+
+def test_event_extraction_compare_rejects_missing_loaded_base(tmp_path: Path) -> None:
+    source_jsonl = tmp_path / "event-samples.jsonl"
+    source_jsonl.write_text(
+        json.dumps(
+            {
+                "dialogue_id": "dlg-1",
+                "dialogue": ["speaker_1: 周末去南京出差"],
+                "events": [{"actor": ["speaker_1"], "time": ["周末"], "location": ["南京"], "action": ["出差"]}],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    runner = EvaluationCore(jobs_root=tmp_path / "runs" / "event", registry=None)
+
+    with pytest.raises(ValueError, match="requires a loaded local base model"):
+        runner.run_local_suite(
+            model_id="unsloth/gemma-4-E4B-it-MLX-8bit",
+            suite_id="event_extraction",
+            dataset_root=tmp_path,
+            sample_size=1,
+            scoring_mode="event_extraction_weighted_f1",
+            parameters={
+                "dataset_id": "local.event.v1",
+                "event_source_jsonl": str(source_jsonl),
+                "compare_mode": "base_vs_targets",
+                "compare_target_adapter_manifest_paths": "/tmp/adapter.adapter.json",
+            },
+        )
+
+
+def test_event_extraction_compare_rejects_empty_target_set(tmp_path: Path) -> None:
+    source_jsonl = tmp_path / "event-samples.jsonl"
+    source_jsonl.write_text(
+        json.dumps(
+            {
+                "dialogue_id": "dlg-1",
+                "dialogue": ["speaker_1: 周末去南京出差"],
+                "events": [{"actor": ["speaker_1"], "time": ["周末"], "location": ["南京"], "action": ["出差"]}],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    registry = FakeEvaluationRegistry(
+        runtime=ProbeRuntime('{"events":[]}', {"images": 0}),
+        model_id="unsloth/gemma-4-E4B-it-MLX-8bit",
+    )
+    runner = EvaluationCore(jobs_root=tmp_path / "runs" / "event", registry=registry)
+
+    with pytest.raises(ValueError, match="requires at least one target"):
+        runner.run_local_suite(
+            model_id="unsloth/gemma-4-E4B-it-MLX-8bit",
+            model_handle=registry.handle,
+            suite_id="event_extraction",
+            dataset_root=tmp_path,
+            sample_size=1,
+            scoring_mode="event_extraction_weighted_f1",
+            parameters={
+                "dataset_id": "local.event.v1",
+                "event_source_jsonl": str(source_jsonl),
+                "compare_mode": "base_vs_targets",
+            },
+        )
+
+
+def test_event_extraction_compare_logs_ephemeral_unload_failure(
+    tmp_path: Path,
+    caplog,
+) -> None:
+    source_jsonl = tmp_path / "event-samples.jsonl"
+    source_jsonl.write_text(
+        json.dumps(
+            {
+                "dialogue_id": "dlg-1",
+                "dialogue": ["speaker_1: 周末去南京出差"],
+                "events": [
+                    {
+                        "actor": ["speaker_1"],
+                        "time": ["周末"],
+                        "location": ["南京"],
+                        "action": ["出差"],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    adapter_manifest = _write_adapter_manifest(
+        tmp_path=tmp_path,
+        adapter_name="event-unload-failure",
+        source_model_id="unsloth/gemma-4-E4B-it-MLX-8bit",
+    )
+
+    class UnloadFailingRegistry(FakeEvaluationRegistry):
+        def unload_model(self, handle: str) -> bool:
+            self.unload_model_calls.append(handle)
+            raise RuntimeError("cannot unload")
+
+    registry = UnloadFailingRegistry(
+        runtime=ProbeRuntime('{"events":[]}', {"images": 0}),
+        model_id="unsloth/gemma-4-E4B-it-MLX-8bit",
+        ephemeral_runtime=ProbeRuntime(
+            '{"events":[{"actor":["speaker_1"],"time":["周末"],"location":["南京"],"action":["出差"]}]}',
+            {"images": 0},
+        ),
+    )
+    runner = EvaluationCore(jobs_root=tmp_path / "runs" / "event", registry=registry)
+
+    with caplog.at_level("WARNING", logger=evaluation_core_module.__name__):
+        run = runner.run_local_suite(
+            model_id="unsloth/gemma-4-E4B-it-MLX-8bit",
+            model_handle=registry.handle,
+            suite_id="event_extraction",
+            dataset_root=tmp_path,
+            sample_size=1,
+            scoring_mode="event_extraction_weighted_f1",
+            parameters={
+                "dataset_id": "local.event.v1",
+                "event_source_jsonl": str(source_jsonl),
+                "compare_mode": "base_vs_targets",
+                "compare_target_adapter_manifest_paths": str(adapter_manifest),
+            },
+        )
+
+    assert isinstance(run.job, EvaluationCompareJob)
+    assert len(registry.unload_model_calls) == 1
+    assert "Failed to unload ephemeral adapter compare target" in caplog.text
+
+
+def test_event_extraction_sample_records_normalize_invalid_event_fields_and_traces(
+    tmp_path: Path,
+) -> None:
+    raw_response_path = tmp_path / "raw.txt"
+    raw_response_path.write_text('{"events":[]}', encoding="utf-8")
+    details_path = tmp_path / "details.jsonl"
+    details_path.write_text(
+        "\n".join(
+            [
+                "",
+                "not-json",
+                json.dumps(["not-a-dict"]),
+                json.dumps({"weighted_f1": 1.0}),
+                json.dumps({"dialogue_id": "dlg-1", "weighted_f1": 0.75}),
+                json.dumps({"dialogue_id": "dlg-1", "weighted_f1": 0.25}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    records = EvaluationCore._event_extraction_sample_records(
+        job_id="eval-0001",
+        suite_id="event_extraction",
+        dataset_id="local.event.v1",
+        task_kind="image-text-to-text",
+        rows=[
+            {
+                "dialogue_id": "dlg-1",
+                "dialogue": "speaker_1: 周末去南京出差",
+                "events": "not-a-list",
+            }
+        ],
+        prediction_rows=[{"dialogue_id": "dlg-1", "events": "not-a-list"}],
+        dialogue_traces=[
+            {
+                "dialogue_id": "dlg-1",
+                "status": "failed",
+                "failure_reason": "bad json",
+                "total_duration_ms": 12.5,
+                "raw_response_path": str(raw_response_path),
+            }
+        ],
+        details_path=details_path,
+        prompt_spec=default_event_extraction_prompt_spec(),
+    )
+
+    assert records[0].sample_id == "dlg-1"
+    assert records[0].typed_score == 0.5
+    assert records[0].target == "[]"
+    assert records[0].extracted_result == "[]"
+    assert records[0].raw_response == '{"events":[]}'
+    assert records[0].failure_stage == "extraction"
+    assert records[0].time_s == pytest.approx(0.0125)
+
+
+def test_event_extraction_helpers_tolerate_missing_score_and_raw_response_files(
+    tmp_path: Path,
+) -> None:
+    assert EvaluationCore._event_extraction_dialogue_scores(tmp_path / "missing-details.jsonl") == {}
+    assert EvaluationCore._event_extraction_raw_response_from_trace({}) == ""
+    assert EvaluationCore._event_extraction_raw_response_from_trace({"raw_response_path": ""}) == ""
+    assert (
+        EvaluationCore._event_extraction_raw_response_from_trace(
+            {"raw_response_path": str(tmp_path / "missing-raw.txt")}
+        )
+        == ""
+    )
 
 
 def test_event_extraction_ad_hoc_prompt_writes_prompt_snapshot(tmp_path: Path, monkeypatch) -> None:

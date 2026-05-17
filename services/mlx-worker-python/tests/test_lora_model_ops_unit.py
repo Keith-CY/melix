@@ -30,7 +30,10 @@ from worker.model_ops.lora_training_pipeline import (
     _resolve_adapter_scope_metadata,
     _validated_resume_path,
 )
+from worker.model_ops.lora_runtime_metadata import build_adapter_runtime_manifest_fields
+from worker.model_ops.lora_runtime_metadata import build_quantized_lora_manifest_fields
 from worker.model_ops.multimodal_lora_contracts import (
+    _adapter_parameter_matches_fragment,
     audit_adapter_checkpoint,
     finite_masked_softmax,
 )
@@ -153,11 +156,82 @@ def test_lora_training_pipeline_uses_component_scope_metadata_for_gemma4_vlm(tmp
     assert result.manifest["adapter_checkpoint_bytes"] == result.manifest["adapter_artifact_bytes"]
     assert result.manifest["training.multimodal_lora_nan_guard_triggered"] is False
     assert result.manifest["training.unexpected_frozen_param_count"] == 0
+
+
+def test_lora_training_manifest_records_quantized_qlora_compatibility_for_gemma8bit(
+    tmp_path: Path,
+) -> None:
+    dataset_dir = _write_dataset_package(tmp_path / "dataset")
+
+    result = LoRATrainingPipeline(runner=DeterministicLoRARunner()).run(
+        job_id="train-gemma8bit-qlora",
+        request_ext={
+            "operation": "train_lora",
+            "training_mode": "qlora",
+            "adapter_name": "gemma8bit-dialogue-adapter",
+            "dataset_uri": str(dataset_dir),
+        },
+        source_model=_text_model(
+            model_path="unsloth/gemma-4-E4B-it-MLX-8bit",
+            family_id="gemma",
+        ),
+        output_dir=tmp_path / "output",
+        jobs_root=tmp_path / "jobs",
+    )
+
+    assert result.manifest["training_mode"] == "qlora"
+    assert result.manifest["quantization_mode"] == "quantized_base"
+    assert result.manifest["quantized_base_detected"] is True
+    assert result.manifest["quantized_base_kind"] == "8bit"
+    assert result.manifest["quantization_profile_id"] == ""
+    assert result.manifest["quantized_base_evidence_source"] == "model_identity"
+    assert result.manifest["qlora_compatibility_status"] == "compatible"
+    assert result.manifest["quantized_target_module_guard"] == "accepted"
     assert result.manifest["training.adapter_checkpoint_bytes"] == result.manifest["adapter_checkpoint_bytes"]
     freeze_audit = result.manifest["adapter_freeze_audit"]
     assert freeze_audit["unexpected_serialized_param_count"] == 0
     assert freeze_audit["unexpected_trainable_param_count"] == 0
     assert freeze_audit["adapter_checkpoint_size_within_target"] is True
+
+
+def test_quantized_lora_metadata_does_not_treat_fp_profile_as_quantized() -> None:
+    source_model = _text_model(
+        model_path="mlx-community/plain-gemma-bf16",
+        quant_profile_id="bf16",
+        family_id="gemma",
+    )
+
+    fields = build_quantized_lora_manifest_fields(
+        source_model=source_model,
+        training_mode="lora",
+        quantization_mode="none",
+        target_modules=["model.layers.0.self_attn.q_proj"],
+    )
+
+    assert fields["quantized_base_detected"] is False
+    assert fields["quantized_base_kind"] == "unknown"
+    assert fields["quantization_profile_id"] == "bf16"
+    assert fields["quantized_base_evidence_source"] == ""
+    assert fields["qlora_compatibility_status"] == "not_applicable"
+    assert fields["quantized_target_module_guard"] == "not_required"
+
+
+def test_normalize_training_config_rejects_qlora_for_non_quantized_profile() -> None:
+    with pytest.raises(ModelOperationError) as exc:
+        training_config_module.normalize_training_config(
+            source_model=_text_model(
+                model_path="models/plain-gemma-bf16",
+                quant_profile_id="bf16",
+                family_id="gemma",
+            ),
+            ext={"training_mode": "qlora"},
+            dataset_format="chat_messages",
+            response_only_supported=True,
+            sample_count=1,
+        )
+
+    assert exc.value.code == "unsupported_quantized_base"
+    assert "requires a quantized base model" in exc.value.message
 
 
 def test_multimodal_lora_finite_mask_handles_fully_padded_vision_rows() -> None:
@@ -333,6 +407,109 @@ def test_adapter_freeze_audit_rejects_serialized_vision_tower_weights(tmp_path: 
     assert exc.value.code == "adapter_freeze_audit_failed"
     assert exc.value.details["unexpected_serialized_param_count"] == "64"
     assert "vision_tower.encoder.layers.0.weight" in exc.value.details["unexpected_serialized_parameters"]
+
+
+def test_adapter_freeze_audit_accepts_language_model_lora_suffix_for_last_layer(
+    tmp_path: Path,
+) -> None:
+    weights_path = tmp_path / "gemma4-last-layer-adapter.safetensors"
+    _write_safetensors_header(
+        weights_path,
+        {
+            "language_model.model.layers.41.self_attn.q_proj.lora_a": {
+                "dtype": "F32",
+                "shape": [2560, 4],
+                "data_offsets": [0, 40960],
+            },
+            "language_model.model.layers.41.self_attn.q_proj.lora_b": {
+                "dtype": "F32",
+                "shape": [4, 4096],
+                "data_offsets": [40960, 106496],
+            },
+        },
+    )
+
+    audit = audit_adapter_checkpoint(
+        weights_path=weights_path,
+        allowed_target_modules=["model.layers.0.self_attn.q_proj"],
+        source_model_kind="vlm",
+        source_model_ext={},
+        live_audit={
+            "unexpected_trainable_param_count": 0,
+            "unexpected_trainable_parameters": [],
+            "unexpected_trainable_param_counts": {},
+            "trainable_param_count_by_component": {"text_backbone": 26624},
+        },
+    )
+
+    assert audit.unexpected_frozen_param_count == 0
+    assert audit.unexpected_serialized_param_count == 0
+    assert audit.unexpected_trainable_param_count == 0
+    assert audit.serialized_param_count_by_component["text_backbone"] == 26624
+
+
+def test_adapter_freeze_audit_accepts_leaf_target_module_names(tmp_path: Path) -> None:
+    weights_path = tmp_path / "leaf-target-adapter.safetensors"
+    _write_safetensors_header(
+        weights_path,
+        {
+            "language_model.model.layers.41.self_attn.q_proj.lora_a.weight": {
+                "dtype": "F16",
+                "shape": [2, 4],
+                "data_offsets": [0, 16],
+            },
+        },
+    )
+
+    audit = audit_adapter_checkpoint(
+        weights_path=weights_path,
+        allowed_target_modules=["q_proj"],
+        source_model_kind="vlm",
+        source_model_ext={},
+    )
+
+    assert audit.unexpected_serialized_param_count == 0
+    assert audit.unexpected_frozen_param_count == 0
+    assert audit.serialized_param_count_by_component["text_backbone"] == 8
+
+
+def test_adapter_parameter_fragment_matching_handles_empty_and_generic_fragments() -> None:
+    assert _adapter_parameter_matches_fragment(
+        "model.layers.0.self_attn.q_proj.lora_a.weight",
+        "",
+    ) is False
+    assert _adapter_parameter_matches_fragment(
+        "model.layers.0.self_attn.q_proj.lora_a.weight",
+        "model.layers.self_attn.weight",
+    ) is False
+
+
+def test_adapter_freeze_audit_rejects_wrong_target_fragment_for_adapter_weight(
+    tmp_path: Path,
+) -> None:
+    weights_path = tmp_path / "wrong-target-fragment.safetensors"
+    _write_safetensors_header(
+        weights_path,
+        {
+            "model.layers.0.self_attn.q_proj.lora_a.weight": {
+                "dtype": "F16",
+                "shape": [2, 4],
+                "data_offsets": [0, 16],
+            },
+        },
+    )
+
+    audit = audit_adapter_checkpoint(
+        weights_path=weights_path,
+        allowed_target_modules=["k_proj"],
+        source_model_kind="vlm",
+        source_model_ext={},
+    )
+
+    assert audit.unexpected_serialized_param_count == 8
+    assert audit.unexpected_serialized_parameters == (
+        "model.layers.0.self_attn.q_proj.lora_a.weight",
+    )
 
 
 def test_adapter_freeze_audit_deduplicates_live_and_serialized_leaks(tmp_path: Path) -> None:
@@ -3803,6 +3980,132 @@ def test_mlx_lm_runner_train_native_collects_checkpoint_throughput_and_peak_memo
     assert result.metrics.peak_memory_gb == pytest.approx(3.0)
 
 
+def test_mlx_lm_runner_train_native_retries_quantized_load_with_relaxed_strictness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_mlx_lm = types.ModuleType("mlx_lm")
+    fake_mlx_lm.__path__ = []
+    fake_lora = types.ModuleType("mlx_lm.lora")
+    fake_callbacks = types.ModuleType("mlx_lm.tuner.callbacks")
+    fake_datasets = types.ModuleType("mlx_lm.tuner.datasets")
+    fake_utils = types.ModuleType("mlx_lm.utils")
+    calls: list[tuple[str, object]] = []
+    fake_model = object()
+    fake_tokenizer = object()
+
+    class FakeTrainingCallback:
+        pass
+
+    def fake_load(model_source: str, *, lazy: bool = False):
+        calls.append(("load", (model_source, lazy)))
+        raise ValueError("Received 126 parameters not in model: language_model.model.layers.24.self_attn.k_proj.biases")
+
+    def fake_download(model_source: str, revision: str | None = None):
+        calls.append(("download", (model_source, revision)))
+        return tmp_path / "downloaded-model"
+
+    def fake_load_model(model_path: Path, *, lazy: bool = False, strict: bool = True):
+        calls.append(("load_model", (model_path, lazy, strict)))
+        return fake_model, {"eos_token_id": [1, 2]}
+
+    def fake_load_tokenizer(model_path: Path, tokenizer_config_extra=None, eos_token_ids=None):
+        calls.append(("load_tokenizer", (model_path, tokenizer_config_extra, eos_token_ids)))
+        return fake_tokenizer
+
+    def fake_load_local_dataset(dataset_dir: Path, tokenizer, args):
+        _ = args
+        calls.append(("dataset", (dataset_dir, tokenizer)))
+        return ["train"], [], None
+
+    def fake_train_model(args, model, train_set, valid_set, training_callback) -> None:
+        _ = args
+        assert model is fake_model
+        assert train_set == ["train"]
+        assert valid_set == []
+        training_callback.on_train_loss_report(
+            {
+                "train_loss": 0.7,
+                "learning_rate": 2e-4,
+                "trained_tokens": 10,
+            }
+        )
+
+    fake_lora.train_model = fake_train_model
+    fake_callbacks.TrainingCallback = FakeTrainingCallback
+    fake_datasets.load_local_dataset = fake_load_local_dataset
+    fake_utils.load = fake_load
+    fake_utils._download = fake_download
+    fake_utils.load_model = fake_load_model
+    fake_utils.load_tokenizer = fake_load_tokenizer
+    monkeypatch.setitem(sys.modules, "mlx_lm", fake_mlx_lm)
+    monkeypatch.setitem(sys.modules, "mlx_lm.lora", fake_lora)
+    monkeypatch.setitem(sys.modules, "mlx_lm.tuner.callbacks", fake_callbacks)
+    monkeypatch.setitem(sys.modules, "mlx_lm.tuner.datasets", fake_datasets)
+    monkeypatch.setitem(sys.modules, "mlx_lm.utils", fake_utils)
+
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(
+            model_path="unsloth/gemma-4-E4B-it-MLX-8bit",
+            quant_profile_id="8bit",
+        ),
+        ext={"training_mode": "qlora"},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-quantized-retry",
+        base_model_id="gemma4-8bit",
+        model_path=Path("unsloth/gemma-4-E4B-it-MLX-8bit"),
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=tmp_path / "normalized",
+        config=config,
+        dataset_format="chat_messages",
+    )
+
+    result = mlx_lm_runner_module.MLXLMRunner().train_native(request)
+
+    assert result.metrics.loss_final == pytest.approx(0.7)
+    assert calls[:4] == [
+        ("load", ("unsloth/gemma-4-E4B-it-MLX-8bit", False)),
+        ("download", ("unsloth/gemma-4-E4B-it-MLX-8bit", "main")),
+        ("load_model", (tmp_path / "downloaded-model", False, False)),
+        ("load_tokenizer", (tmp_path / "downloaded-model", None, [1, 2])),
+    ]
+    assert calls[4] == ("dataset", (tmp_path / "normalized", fake_tokenizer))
+
+
+def test_mlx_lm_runner_quantized_load_retry_preserves_unrelated_value_errors(
+    tmp_path: Path,
+) -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-plain-load-failure",
+        base_model_id="plain",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=tmp_path / "normalized",
+        config=config,
+        dataset_format="chat_messages",
+    )
+
+    def fake_load(_model_source: str, *, lazy: bool = False):
+        _ = lazy
+        raise ValueError("Tokenizer config is invalid.")
+
+    with pytest.raises(ValueError, match="Tokenizer config is invalid"):
+        mlx_lm_runner_module._load_lora_training_model(request, fake_load)
+
+
 @pytest.mark.parametrize("weights_path_value", [None, ""])
 def test_adapter_backed_runtime_manifest_requires_adapter_weights_path(
     tmp_path: Path,
@@ -3853,6 +4156,9 @@ def test_adapter_backed_runtime_activation_writes_explicit_runtime_contract(tmp_
                 "adapter_name": "demo-adapter",
                 "weights_path": str(adapter_weights_path),
                 "desired_derived_model_alias": "Demo Alias",
+                "training_mode": "qlora",
+                "quantization_mode": "quantized_base",
+                "target_modules": ["model.layers.0.self_attn.q_proj"],
             }
         ) + "\n",
         encoding="utf-8",
@@ -3869,7 +4175,10 @@ def test_adapter_backed_runtime_activation_writes_explicit_runtime_contract(tmp_
             "artifact_path": str(adapter_manifest_path),
             "activation_mode": "adapter_backed_runtime",
         },
-        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        source_model=_text_model(
+            model_path=str(tmp_path / "base-model"),
+            quant_profile_id="q4",
+        ),
         output_dir=tmp_path / "activate",
     )
 
@@ -3880,4 +4189,159 @@ def test_adapter_backed_runtime_activation_writes_explicit_runtime_contract(tmp_
     assert result.manifest["adapter_weights_path"] == str(adapter_weights_path)
     assert result.manifest["derived_model_path"] == str(tmp_path / "base-model")
     assert result.manifest["derived_model_alias"] == "Demo Alias"
+    assert result.manifest["adapter_runtime.switch_mode"] == "base_reuse_adapter_swap"
+    assert result.manifest["adapter_runtime.sharing_policy"] == "shared_base_isolated_adapter"
+    assert result.manifest["adapter_runtime.compatibility_status"] == "compatible"
+    assert len(result.manifest["adapter_runtime.base_reuse_key"]) == 64
+    assert len(result.manifest["adapter_runtime.adapter_isolation_key"]) == 64
+    assert result.manifest["quantized_base_detected"] is True
+    assert result.manifest["quantized_base_kind"] == "q4"
+    assert result.manifest["quantization_profile_id"] == "q4"
+    assert result.manifest["quantized_base_evidence_source"] == "quant_profile_id"
+    assert result.manifest["qlora_compatibility_status"] == "compatible"
+    assert result.manifest["quantized_target_module_guard"] == "accepted"
     assert result.manifest_path.exists()
+
+
+def test_adapter_backed_runtime_activation_tolerates_legacy_scalar_targets(tmp_path: Path) -> None:
+    adapter_weights_path = tmp_path / "weights" / "adapters.safetensors"
+    adapter_weights_path.parent.mkdir(parents=True, exist_ok=True)
+    adapter_weights_path.write_text("adapter", encoding="utf-8")
+    adapter_manifest_path = tmp_path / "train_lora.adapter.json"
+    adapter_manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.lora_adapter_package.v1",
+                "source_model": "melix-test-text",
+                "adapter_set_hash": "adapter-legacy",
+                "adapter_name": "legacy-adapter",
+                "weights_path": str(adapter_weights_path),
+                "training_mode": "qlora",
+                "quantization_mode": "quantized_base",
+                "target_modules": "model.layers.0.self_attn.q_proj",
+            }
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+    result = AdapterActivationPipeline().run(
+        job_id="activate-legacy",
+        request_ext={
+            "artifact_path": str(adapter_manifest_path),
+            "activation_mode": "adapter_backed_runtime",
+        },
+        source_model=_text_model(
+            model_path=str(tmp_path / "base-model"),
+            quant_profile_id="q4",
+        ),
+        output_dir=tmp_path / "activate",
+    )
+
+    assert result.manifest["quantized_target_module_guard"] == "accepted"
+
+
+def test_adapter_backed_runtime_activation_normalizes_legacy_csv_targets(tmp_path: Path) -> None:
+    adapter_weights_path = tmp_path / "weights" / "adapters.safetensors"
+    adapter_weights_path.parent.mkdir(parents=True, exist_ok=True)
+    adapter_weights_path.write_text("adapter", encoding="utf-8")
+    adapter_manifest_path = tmp_path / "train_lora.adapter.json"
+    adapter_manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.lora_adapter_package.v1",
+                "source_model": "melix-test-text",
+                "adapter_set_hash": "adapter-legacy",
+                "adapter_name": "legacy-adapter",
+                "weights_path": str(adapter_weights_path),
+                "training_mode": "qlora",
+                "quantization_mode": "quantized_base",
+                "target_modules": " model.layers.0.self_attn.q_proj, model.layers.0.mlp.gate_proj ",
+            }
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+    result = AdapterActivationPipeline().run(
+        job_id="activate-legacy",
+        request_ext={
+            "artifact_path": str(adapter_manifest_path),
+            "activation_mode": "adapter_backed_runtime",
+        },
+        source_model=_text_model(
+            model_path=str(tmp_path / "base-model"),
+            quant_profile_id="q4",
+        ),
+        output_dir=tmp_path / "activate",
+    )
+
+    assert result.manifest["quantized_target_module_guard"] == "accepted"
+
+
+def test_adapter_runtime_plan_reuses_base_and_isolates_adapters(tmp_path: Path) -> None:
+    source_model = _text_model(model_path=str(tmp_path / "base-model"), quant_profile_id="q4")
+    adapter_scope = {
+        "adapter_scope": "model",
+        "training_surface": "model",
+        "component_model_type": "",
+        "component_family": "gemma",
+        "component_model_path": str(tmp_path / "base-model"),
+    }
+    first = build_adapter_runtime_manifest_fields(
+        source_model=source_model,
+        adapter_manifest={
+            "adapter_name": "alpha",
+            "adapter_set_hash": "adapter-alpha",
+            "job_id": "train-alpha",
+        },
+        adapter_manifest_path=tmp_path / "alpha.adapter.json",
+        adapter_weights_path=str(tmp_path / "alpha" / "adapters.safetensors"),
+        activation_mode="adapter_backed_runtime",
+        adapter_scope=adapter_scope,
+    )
+    second = build_adapter_runtime_manifest_fields(
+        source_model=source_model,
+        adapter_manifest={
+            "adapter_name": "beta",
+            "adapter_set_hash": "adapter-beta",
+            "job_id": "train-beta",
+        },
+        adapter_manifest_path=tmp_path / "beta.adapter.json",
+        adapter_weights_path=str(tmp_path / "beta" / "adapters.safetensors"),
+        activation_mode="adapter_backed_runtime",
+        adapter_scope=adapter_scope,
+    )
+
+    assert first["adapter_runtime.base_reuse_key"] == second["adapter_runtime.base_reuse_key"]
+    assert first["adapter_runtime.adapter_isolation_key"] != second["adapter_runtime.adapter_isolation_key"]
+    assert first["adapter_runtime.switch_mode"] == "base_reuse_adapter_swap"
+    assert second["adapter_runtime.sharing_policy"] == "shared_base_isolated_adapter"
+
+
+def test_adapter_runtime_plan_marks_fused_activation_as_full_model_load(tmp_path: Path) -> None:
+    source_model = _text_model(model_path=str(tmp_path / "base-model"), quant_profile_id="q4")
+    adapter_scope = {
+        "adapter_scope": "model",
+        "training_surface": "model",
+        "component_model_type": "",
+        "component_family": "gemma",
+        "component_model_path": str(tmp_path / "base-model"),
+    }
+
+    runtime_fields = build_adapter_runtime_manifest_fields(
+        source_model=source_model,
+        adapter_manifest={
+            "adapter_name": "alpha",
+            "adapter_set_hash": "adapter-alpha",
+            "job_id": "train-alpha",
+        },
+        adapter_manifest_path=tmp_path / "alpha.adapter.json",
+        adapter_weights_path=str(tmp_path / "alpha" / "adapters.safetensors"),
+        activation_mode="fused_derived_model",
+        adapter_scope=adapter_scope,
+    )
+
+    assert runtime_fields["adapter_runtime.switch_mode"] == "full_model_load"
+    assert runtime_fields["adapter_runtime.sharing_policy"] == "isolated_fused_model"
+    assert runtime_fields["adapter_runtime.compatibility_status"] == "not_applicable"
+    assert len(runtime_fields["adapter_runtime.base_reuse_key"]) == 64
+    assert len(runtime_fields["adapter_runtime.adapter_isolation_key"]) == 64

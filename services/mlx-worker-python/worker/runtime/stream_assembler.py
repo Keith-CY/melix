@@ -224,7 +224,11 @@ class RequestStreamAssembler:
         token_count = 0
         byte_delta = None
         token_bytes = fragment.token_bytes
-        if fragment.token_ids or fragment.token_logprobs or token_bytes is not None:
+        if token_bytes is not None and not fragment.token_ids and not fragment.token_logprobs:
+            token_count = 1
+            self._metrics["generated_token_count"] += 1
+            byte_delta = self._token_byte_delta(token_bytes)
+        elif fragment.token_ids or fragment.token_logprobs:
             token_count = self._record_token_metadata(fragment)
             if token_bytes is not None:
                 byte_delta = self._token_byte_delta(token_bytes)
@@ -323,8 +327,9 @@ class RequestStreamAssembler:
     def _unseen_delta(self, raw: str) -> str:
         if self._raw_seen_assistant_part_count:
             self._materialized_raw_seen()
-        if raw.startswith(self._raw_seen):
-            delta = raw[len(self._raw_seen) :]
+        raw_seen = self._raw_seen
+        if raw.startswith(raw_seen):
+            delta = raw[len(raw_seen) :]
             self._raw_seen = raw
             return delta
 
@@ -568,44 +573,43 @@ class RequestStreamAssembler:
                 return None if think_index < 0 else (self._THINK_OPEN, think_index)
 
             tool_index = buffer.find(self._TOOL_OPEN)
-            return self._earliest_structural_tag(
-                ((self._THINK_OPEN, think_index), (self._TOOL_OPEN, tool_index))
-            )
+            if tool_index >= 0 and (think_index < 0 or tool_index < think_index):
+                return (self._TOOL_OPEN, tool_index)
+            return None if think_index < 0 else (self._THINK_OPEN, think_index)
 
-        candidates = [
-            (self._THINK_OPEN, think_index),
-            (self._PIPE_CHANNEL_OPEN, buffer.find(self._PIPE_CHANNEL_OPEN)),
-        ]
+        pipe_channel_index = buffer.find(self._PIPE_CHANNEL_OPEN)
+        earliest_tag = self._THINK_OPEN
+        earliest_index = think_index
+        if pipe_channel_index >= 0 and (earliest_index < 0 or pipe_channel_index < earliest_index):
+            earliest_tag = self._PIPE_CHANNEL_OPEN
+            earliest_index = pipe_channel_index
         if self._tool_parsing_enabled_value:
-            candidates.extend(
-                (
-                    (self._TOOL_OPEN, buffer.find(self._TOOL_OPEN)),
-                    (self._PIPE_TOOL_OPEN, buffer.find(self._PIPE_TOOL_OPEN)),
-                )
-            )
-        return self._earliest_structural_tag(candidates)
-
-    @staticmethod
-    def _earliest_structural_tag(
-        candidates: list[tuple[str, int]] | tuple[tuple[str, int], ...],
-    ) -> tuple[str, int] | None:
-        matches = [candidate for candidate in candidates if candidate[1] >= 0]
-        return min(matches, key=lambda item: item[1]) if matches else None
+            tool_index = buffer.find(self._TOOL_OPEN)
+            if tool_index >= 0 and (earliest_index < 0 or tool_index < earliest_index):
+                earliest_tag = self._TOOL_OPEN
+                earliest_index = tool_index
+            pipe_tool_index = buffer.find(self._PIPE_TOOL_OPEN)
+            if pipe_tool_index >= 0 and (earliest_index < 0 or pipe_tool_index < earliest_index):
+                earliest_tag = self._PIPE_TOOL_OPEN
+                earliest_index = pipe_tool_index
+        return None if earliest_index < 0 else (earliest_tag, earliest_index)
 
     def _next_structural_tag_after(self, start: int) -> int:
-        candidates = [
-            index
-            for index in (
-                self._buffer.find(self._THINK_OPEN, start),
-                self._buffer.find(self._PIPE_CHANNEL_OPEN, start),
-                self._buffer.find(self._TOOL_OPEN, start)
-                if self._tool_parsing_enabled_value else -1,
-                self._buffer.find(self._PIPE_TOOL_OPEN, start)
-                if self._tool_parsing_enabled_value else -1,
-            )
-            if index >= 0
-        ]
-        return min(candidates) if candidates else -1
+        buffer = self._buffer
+        if buffer.find("<", start) < 0:
+            return -1
+        earliest = buffer.find(self._THINK_OPEN, start)
+        pipe_channel_index = buffer.find(self._PIPE_CHANNEL_OPEN, start)
+        if pipe_channel_index >= 0 and (earliest < 0 or pipe_channel_index < earliest):
+            earliest = pipe_channel_index
+        if self._tool_parsing_enabled_value:
+            tool_index = buffer.find(self._TOOL_OPEN, start)
+            if tool_index >= 0 and (earliest < 0 or tool_index < earliest):
+                earliest = tool_index
+            pipe_tool_index = buffer.find(self._PIPE_TOOL_OPEN, start)
+            if pipe_tool_index >= 0 and (earliest < 0 or pipe_tool_index < earliest):
+                earliest = pipe_tool_index
+        return earliest
 
     def _has_partial_structural_tag_suffix(self) -> bool:
         return bool(self._partial_structural_tag_suffix())

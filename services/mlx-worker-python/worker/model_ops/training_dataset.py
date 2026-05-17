@@ -1743,9 +1743,10 @@ def _deterministic_validation_split(
     validation_count = int(round(sample_count * validation_ratio))
     validation_count = max(1, min(sample_count - 1, validation_count))
     train_count = sample_count - validation_count
+    canonical_sample_digest = _canonical_sample_digest
     ranked_samples = (
         (
-            _canonical_sample_digest(sample),
+            canonical_sample_digest(sample),
             index,
         )
         for index, sample in enumerate(samples)

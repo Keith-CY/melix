@@ -3508,6 +3508,74 @@ struct RequestCoordinatorTests {
         _ = await consumer.result
     }
 
+    @Test("gateway speculative defaults downgrade unsupported routed models before worker dispatch")
+    func gatewaySpeculativeDefaultsDowngradeUnsupportedRoutedModelsBeforeWorkerDispatch() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var vlmModel = ModelCatalog.devVLMModel()
+        vlmModel.state = .modelWarm
+        let catalog = ModelCatalog(seedModels: [vlmModel])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: workerClient,
+                pythonCompatibilityClient: workerClient,
+                modelCatalog: catalog
+            ),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        let gatewayDefaults = GatewayServingDefaultsPolicy(
+            temperature: nil,
+            topP: nil,
+            maxTokens: nil,
+            streamIntervalTokens: nil,
+            maxConcurrentRequests: 6,
+            concurrentProcessingEnabled: true,
+            prefillBatchSize: 3,
+            completionBatchSize: 3,
+            accelerationMode: .speculativeDecode,
+            draftModelID: "melix-dev-text",
+            numDraftTokens: 7,
+            accelerationProfile: "throughput"
+        ).resolvingAccelerationCompatibility(for: vlmModel)
+        let translator = ChatRequestTranslator(
+            requestIDGenerator: { "req-gateway-speculative-vlm-downgrade" }
+        )
+        let normalized = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-vlm",
+                messages: [.init(role: "user", content: "Describe this.")]
+            )
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-vlm::python",
+            gatewayServingDefaults: gatewayDefaults
+        )
+
+        let execution = try await coordinator.startChatCompletion(translated)
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {}
+            } catch {}
+        }
+
+        let generatedRequest = try #require(await workerClient.generatedRequests.last)
+
+        #expect(translated.workerRequest.execution.ext["melix.gateway.acceleration_mode"] == "baseline")
+        #expect(translated.workerRequest.execution.ext["melix.gateway.acceleration_profile"] == "throughput")
+        #expect(translated.workerRequest.execution.ext["melix.gateway.max_concurrent_requests"] == "6")
+        #expect(translated.workerRequest.execution.ext["melix.gateway.draft_model_id"] == nil)
+        #expect(translated.workerRequest.execution.ext["melix.gateway.num_draft_tokens"] == "0")
+        #expect(generatedRequest.execution.acceleration.mode == .baseline)
+        #expect(generatedRequest.execution.acceleration.profileID == "throughput")
+        #expect(generatedRequest.execution.acceleration.draftModelID.isEmpty)
+        #expect(generatedRequest.execution.acceleration.numDraftTokens == 0)
+
+        await workerClient.finish(requestID: "req-gateway-speculative-vlm-downgrade")
+        _ = await consumer.result
+    }
+
     @Test("model active KV defaults populate TurboQuant Q4 when profile is empty")
     func modelActiveKVDefaultsPopulateTurboQuantQ4WhenProfileIsEmpty() async throws {
         let workerClient = PhaseAwareWorkerClient()

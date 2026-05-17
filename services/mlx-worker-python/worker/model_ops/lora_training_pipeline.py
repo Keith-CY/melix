@@ -12,6 +12,7 @@ from typing import Any, Callable
 from packages.protocol.python.worker.v1 import common_pb2
 
 from worker.model_ops.errors import ModelOperationError
+from worker.model_ops.lora_runtime_metadata import build_quantized_lora_manifest_fields
 from worker.model_ops.multimodal_lora_contracts import (
     audit_adapter_checkpoint,
     audit_manifest_fields,
@@ -157,6 +158,12 @@ class LoRATrainingPipeline:
             or (experiment_group_id if request_ext.get("experiment_group_id", "").strip() else config.adapter_name)
         )
         persisted_at_unix_ms = int(time.time() * 1000)
+        quantized_lora_fields = build_quantized_lora_manifest_fields(
+            source_model=source_model,
+            training_mode=config.training_mode,
+            quantization_mode=config.quantization_mode,
+            target_modules=config.expanded_target_modules,
+        )
 
         emit("write_manifest", 0.97)
         manifest = {
@@ -200,6 +207,7 @@ class LoRATrainingPipeline:
             "dora_enabled": config.adapter_algorithm == "dora",
             "quantization_mode": config.quantization_mode,
             "base_quantization_method": config.base_quantization_method,
+            **quantized_lora_fields,
             "training_backend": training_result.execution_backend,
             "adapter_set_hash": adapter_set_hash,
             "weights_path": str(training_result.weights_path),
@@ -524,26 +532,34 @@ def _alignment_manifest_payload(
 
 def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
     scores: list[float] = []
+    scores_append = scores.append
+    scores_extend = scores.extend
+    to_float = float
+    is_instance = isinstance
+    dict_type = dict
+    list_type = list
     score_total = 0.0
     candidate_group_margins: list[float] = []
+    candidate_group_margins_append = candidate_group_margins.append
     candidate_group_margin_total = 0.0
     candidate_group_variance_total = 0.0
     for sample in samples:
         if "reward_score" in sample:
-            reward_score = float(sample["reward_score"])
-            scores.append(reward_score)
+            reward_score = to_float(sample["reward_score"])
+            scores_append(reward_score)
             score_total += reward_score
         candidates = sample.get("candidates")
         candidate_scores: list[float] = []
+        candidate_scores_append = candidate_scores.append
         candidate_score_min: float | None = None
         candidate_score_max: float | None = None
         candidate_score_total = 0.0
         candidate_score_square_total = 0.0
-        if isinstance(candidates, list):
+        if is_instance(candidates, list_type):
             for candidate in candidates:
-                if isinstance(candidate, dict) and "score" in candidate:
-                    candidate_score = float(candidate["score"])
-                    candidate_scores.append(candidate_score)
+                if is_instance(candidate, dict_type) and "score" in candidate:
+                    candidate_score = to_float(candidate["score"])
+                    candidate_scores_append(candidate_score)
                     candidate_score_total += candidate_score
                     candidate_score_square_total += candidate_score * candidate_score
                     if candidate_score_min is None or candidate_score < candidate_score_min:
@@ -551,7 +567,7 @@ def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
                     if candidate_score_max is None or candidate_score > candidate_score_max:
                         candidate_score_max = candidate_score
         if candidate_scores:
-            scores.extend(candidate_scores)
+            scores_extend(candidate_scores)
             score_total += candidate_score_total
         candidate_score_count = len(candidate_scores)
         if candidate_score_count >= 2:
@@ -562,7 +578,7 @@ def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
             candidate_group_variance = (
                 candidate_score_square_total / candidate_score_count
             ) - (group_mean * group_mean)
-            candidate_group_margins.append(candidate_group_margin)
+            candidate_group_margins_append(candidate_group_margin)
             candidate_group_margin_total += candidate_group_margin
             candidate_group_variance_total += candidate_group_variance
     if not scores:

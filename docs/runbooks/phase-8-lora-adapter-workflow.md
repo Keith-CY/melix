@@ -30,6 +30,19 @@ The same workflow is available through the public `melix` CLI:
 ```bash
 swift run melix lora list
 
+swift run melix lora run \
+  --model-id unsloth/gemma-4-E4B-it-MLX-8bit \
+  --dataset-uri /absolute/path/to/dialogue-training-package \
+  --adapter-name dialogue-extraction-quality \
+  --training-mode auto \
+  --activation-mode adapter_backed_runtime \
+  --eval-suite event_extraction \
+  --eval-dataset-id top200.event-extraction.top20.v1 \
+  --eval-dataset-root /absolute/path/to/evaluation \
+  --scoring-mode event_extraction_weighted_f1 \
+  --output-dir /absolute/path/to/lora-run \
+  --json
+
 swift run melix lora train \
   --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --dataset-uri /absolute/path/to/dataset-package \
@@ -57,6 +70,12 @@ swift run melix lora remove-derived \
   --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
   --derived-model-id melix-qwen35-acceptance
 ```
+
+`melix lora run` is the recommended operator path for quality training and
+acceptance. It trains the adapter, activates it, evaluates base versus the
+fresh adapter manifest, and writes compare summary/sample artifacts under the
+run output directory. `--training-mode auto` resolves quantized model ids such
+as 4-bit and 8-bit MLX repos to QLoRA; non-quantized targets resolve to LoRA.
 
 ## Dataset Package Layout
 

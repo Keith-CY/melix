@@ -27,6 +27,12 @@ The affected path is covered by the registered `runtime-utils-top-level-weight-s
 
 Replace the fallback top-level `Path.iterdir()` scan with an `os.scandir()` pass that uses `DirEntry.name`, `DirEntry.is_file()`, and `DirEntry.stat()` directly. This preserves the existing top-level-only semantics while avoiding `Path` object allocation and extra path method dispatch for each directory entry.
 
+## 2026-05-15 Follow-up Slice: Suffix Fast Path
+
+The next focused Python slice keeps the same registered probe and narrows suffix classification overhead in `runtime_utils` weight scans. It replaces `os.path.splitext(entry.name)[1].lower() in suffixes` and `Path.suffix.lower()` checks with direct lowercase filename `endswith(...)` checks against the existing suffix tuple.
+
+The behavior remains top-level-only and uses the same accepted weight suffixes (`.safetensors`, `.npz`, `.bin`, `.gguf`). The goal is to avoid per-entry `splitext` tuple allocation and reduce path property dispatch during large flat-bundle scans.
+
 ## Success Metrics
 
 - Functional behavior remains unchanged for indexed bundles, flat bundles, malformed indexes, missing paths, and stat/listing errors.

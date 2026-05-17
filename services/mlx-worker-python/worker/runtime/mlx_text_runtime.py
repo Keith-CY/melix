@@ -148,6 +148,7 @@ _TEXT_STOP_SEQUENCE_KEYS = (
 _STREAM_STOP_KWARG_NAMES = ("stop", "stop_words", "stop_sequences")
 _SAMPLER_PENALTY_KWARG_NAMES = ("frequency_penalty", "presence_penalty")
 _STOP_CONTRACT_CACHE_FIELD = "_melix.resolved_text_stop_contract_cache"
+_STOP_KWARGS_CACHE_FIELD = "_melix.resolved_text_stop_kwargs_cache"
 
 
 def _split_stop_sequence_value(value: Any) -> list[str]:
@@ -251,6 +252,31 @@ def _cached_resolve_text_stop_contract(
         contract = resolve_text_stop_contract(loaded_model, sampling, execution_ext)
         cache[cache_key] = contract
     return contract
+
+
+def _cached_stream_stop_kwargs(
+    loaded_model: Any,
+    sampling: Any,
+    execution_ext: dict[str, str] | None,
+    stream_stop_kwarg: str,
+) -> dict[str, Any]:
+    if not stream_stop_kwarg:
+        return {}
+    cache_key = _stop_contract_cache_key(loaded_model, sampling, execution_ext)
+    if cache_key is None or not isinstance(loaded_model, dict):
+        contract = resolve_text_stop_contract(loaded_model, sampling, execution_ext)
+        return {stream_stop_kwarg: list(contract.sequences)} if contract.sequences else {}
+
+    cache = loaded_model.get(_STOP_KWARGS_CACHE_FIELD)
+    if not isinstance(cache, dict):
+        cache = {}
+        loaded_model[_STOP_KWARGS_CACHE_FIELD] = cache
+    kwargs = cache.get((stream_stop_kwarg, cache_key))
+    if kwargs is None:
+        contract = _cached_resolve_text_stop_contract(loaded_model, sampling, execution_ext)
+        kwargs = {stream_stop_kwarg: list(contract.sequences)} if contract.sequences else {}
+        cache[(stream_stop_kwarg, cache_key)] = kwargs
+    return kwargs
 
 
 def _int_tuple(value: Any) -> tuple[int, ...]:
@@ -524,6 +550,42 @@ def _resolve_adapter_backed_metadata(model_spec) -> dict[str, str]:
     return contract.to_runtime_metadata()
 
 
+def _is_mlx_lm_unmatched_weight_error(exc: ValueError) -> bool:
+    return "parameters not in model" in str(exc).lower()
+
+
+def _load_adapter_backed_model_without_strict(
+    *,
+    model_spec: Any,
+    adapter_metadata: dict[str, str],
+    trust_remote_code: bool,
+) -> tuple[Any, Any]:
+    try:
+        from mlx_lm.utils import _download, load_adapters, load_model, load_tokenizer
+    except ModuleNotFoundError:
+        raise
+
+    download_kwargs: dict[str, Any] = {"revision": model_spec.revision or None}
+    if trust_remote_code and _callable_accepts_kwarg(_download, "trust_remote_code"):
+        download_kwargs["trust_remote_code"] = True
+    model_path = _download(str(model_spec.model_path), **download_kwargs)
+    load_kwargs: dict[str, Any] = {
+        "lazy": False,
+        "strict": False,
+    }
+    if trust_remote_code and _callable_accepts_kwarg(load_model, "trust_remote_code"):
+        load_kwargs["trust_remote_code"] = True
+    model, config = load_model(model_path, **load_kwargs)
+    model = load_adapters(model, adapter_metadata["adapter_dir"])
+    model.eval()
+    tokenizer = load_tokenizer(
+        model_path,
+        None,
+        eos_token_ids=config.get("eos_token_id", None) if isinstance(config, dict) else None,
+    )
+    return model, tokenizer
+
+
 def _declared_kwargs(callable_obj: Any, names: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(name for name in names if _callable_accepts_kwarg(callable_obj, name))
 
@@ -593,7 +655,17 @@ class AutoMLXBackend:
             load_kwargs["trust_remote_code"] = True
         if adapter_metadata:
             load_kwargs["adapter_path"] = adapter_metadata["adapter_dir"]
-        loaded = self._load_fn(model_spec.model_path, **load_kwargs)
+        try:
+            loaded = self._load_fn(model_spec.model_path, **load_kwargs)
+        except ValueError as exc:
+            if not adapter_metadata or not _is_mlx_lm_unmatched_weight_error(exc):
+                raise
+            model, tokenizer = _load_adapter_backed_model_without_strict(
+                model_spec=model_spec,
+                adapter_metadata=adapter_metadata,
+                trust_remote_code=trust_remote_code,
+            )
+            loaded = (model, tokenizer)
         model, tokenizer = loaded[:2]
         family_config = resolve_text_family_config(
             dict(model_spec.ext),
@@ -665,10 +737,12 @@ class AutoMLXBackend:
             sampler_kwargs[penalty_name] = float(getattr(sampling, penalty_name, 0.0))
         sampler = self._sampler_factory(**sampler_kwargs)
         max_tokens = int(sampling.max_output_tokens) if int(sampling.max_output_tokens) > 0 else 256
-        stop_contract = _cached_resolve_text_stop_contract(loaded_model, sampling, execution_ext)
-        stream_kwargs: dict[str, Any] = {}
-        if stop_contract.sequences and self._stream_stop_kwarg:
-            stream_kwargs[self._stream_stop_kwarg] = list(stop_contract.sequences)
+        stream_kwargs = _cached_stream_stop_kwargs(
+            loaded_model,
+            sampling,
+            execution_ext,
+            self._stream_stop_kwarg,
+        )
 
         for response in self._stream_generate_fn(
             loaded_model["model"],
@@ -928,6 +1002,7 @@ class MLXTextRuntime:
             return
 
         max_stop_prefix_length = _stop_sequence_max_prefix_length(stop_sequences)
+        stop_prefixes = _stop_sequence_prefixes(stop_sequences, max_stop_prefix_length)
         pending = ""
         last_token_event: RuntimeTokenEvent | None = None
         for event in events:
@@ -948,7 +1023,7 @@ class MLXTextRuntime:
                 yield replace(event, text="", raw_text="", finish_reason="stop_sequence")
                 return
 
-            held_suffix = _viable_stop_prefix_suffix(candidate, stop_sequences, max_stop_prefix_length)
+            held_suffix = _viable_stop_prefix_suffix(candidate, stop_sequences, max_stop_prefix_length, stop_prefixes)
             if held_suffix:
                 visible = candidate[: -len(held_suffix)]
                 pending = held_suffix
@@ -990,16 +1065,29 @@ def _stop_sequence_max_prefix_length(stop_sequences: tuple[str, ...]) -> int:
     return max((len(sequence) for sequence in stop_sequences), default=0) - 1
 
 
+def _stop_sequence_prefixes(stop_sequences: tuple[str, ...], max_stop_prefix_length: int) -> frozenset[str]:
+    if max_stop_prefix_length <= 0:
+        return frozenset()
+    return frozenset(
+        sequence[:length]
+        for sequence in stop_sequences
+        for length in range(1, min(len(sequence), max_stop_prefix_length) + 1)
+    )
+
+
 def _viable_stop_prefix_suffix(
     text: str,
     stop_sequences: tuple[str, ...],
     max_stop_prefix_length: int | None = None,
+    stop_prefixes: frozenset[str] | None = None,
 ) -> str:
     if max_stop_prefix_length is None:
         max_stop_prefix_length = _stop_sequence_max_prefix_length(stop_sequences)
+    if stop_prefixes is None:
+        stop_prefixes = _stop_sequence_prefixes(stop_sequences, max_stop_prefix_length)
     max_prefix_length = min(len(text), max_stop_prefix_length)
     for length in range(max_prefix_length, 0, -1):
         suffix = text[-length:]
-        if any(sequence.startswith(suffix) for sequence in stop_sequences):
+        if suffix in stop_prefixes:
             return suffix
     return ""

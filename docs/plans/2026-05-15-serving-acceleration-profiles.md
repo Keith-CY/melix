@@ -31,6 +31,12 @@ operator to provide `--draft-model-id` when the resolved profile selects
 speculative decode. That preserves capability visibility and avoids silently
 claiming acceleration for unsupported target/draft pairings.
 
+Request shaping preserves non-acceleration gateway defaults for every routed
+model. When a server-session default requests `speculative_decode`, the XPC and
+OpenAI HTTP request paths apply that acceleration only to routed Swift text
+models; unsupported routed models receive the same serving defaults with
+baseline acceleration, an empty draft model, and zero draft tokens.
+
 ## Resolution Model
 
 Resolution order is:

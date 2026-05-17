@@ -1717,10 +1717,30 @@ def _semantic_action_match_payload(
 
 
 def _semantic_field_values(field_name: str, event: dict[str, object]) -> list[str]:
-    values = _normalize_unique_event_field(event.get(field_name))
-    if field_name != "actor":
-        return values
-    return list(_expanded_semantic_actor_values(tuple(values)))
+    value = event.get(field_name)
+    if field_name == "actor":
+        return list(_cached_semantic_actor_field_values(_event_field_cache_key(value)))
+    return _normalize_unique_event_field(value)
+
+
+def _event_field_cache_key(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ValueError("event field values must be null or a list of strings")
+    values: list[str] = []
+    values_append = values.append
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError("event field values must be null or a list of strings")
+        values_append(item)
+    return tuple(values)
+
+
+@lru_cache(maxsize=1024)
+def _cached_semantic_actor_field_values(values: tuple[str, ...]) -> tuple[str, ...]:
+    normalized_values = _normalize_unique_event_field(list(values))
+    return _expanded_semantic_actor_values(tuple(normalized_values))
 
 
 def _normalize_unique_event_field(value: object) -> list[str]:

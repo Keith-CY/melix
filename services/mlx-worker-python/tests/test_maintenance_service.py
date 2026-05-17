@@ -3736,6 +3736,11 @@ def test_derived_model_registration_preserves_component_scoped_adapter_metadata(
             "component_model_type": "gemma4_text",
             "component_family": "gemma",
             "component_model_path": source_model.model_path,
+            "adapter_runtime.base_reuse_key": "base-key-123",
+            "adapter_runtime.adapter_isolation_key": "adapter-key-456",
+            "adapter_runtime.switch_mode": "base_reuse_adapter_swap",
+            "adapter_runtime.sharing_policy": "shared_base_isolated_adapter",
+            "adapter_runtime.compatibility_status": "compatible",
         }
     )
 
@@ -3752,6 +3757,11 @@ def test_derived_model_registration_preserves_component_scoped_adapter_metadata(
     assert model_spec.ext["melix.lora.component_model_type"] == "gemma4_text"
     assert model_spec.ext["melix.lora.family_id"] == "gemma"
     assert model_spec.ext["melix.lora.base_model_path"] == source_model.model_path
+    assert model_spec.ext["melix.adapter_runtime.base_reuse_key"] == "base-key-123"
+    assert model_spec.ext["melix.adapter_runtime.adapter_isolation_key"] == "adapter-key-456"
+    assert model_spec.ext["melix.adapter_runtime.switch_mode"] == "base_reuse_adapter_swap"
+    assert model_spec.ext["melix.adapter_runtime.sharing_policy"] == "shared_base_isolated_adapter"
+    assert model_spec.ext["melix.adapter_runtime.compatibility_status"] == "compatible"
 
 
 def test_job_registry_snapshot_exposes_download_rows_with_machine_readable_status(tmp_path: Path) -> None:
@@ -5814,7 +5824,15 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
     assert shaped_repeated_prompt == "one two one two one two"
     assert shaped_repeated_prompt.tokens == ("one", "two", "one", "two", "one", "two")
     assert shaped_repeated_prompt.token_count == 6
-    assert shaped_repeated_prompt.split() == ["one", "two", "one", "two", "one", "two"]
+    split_tokens = shaped_repeated_prompt.split()
+    assert isinstance(split_tokens, list)
+    assert split_tokens == ["one", "two", "one", "two", "one", "two"]
+    assert split_tokens[0] == "one"
+    assert split_tokens[:2] == ["one", "two"]
+    with pytest.raises(TypeError, match="immutable"):
+        split_tokens.append("three")
+    with pytest.raises(TypeError, match="immutable"):
+        split_tokens[0] = "three"
     assert shaped_repeated_prompt.split(" ", 1) == ["one", "two one two one two"]
     assert core._benchmark_prompt_token_count(shaped_repeated_prompt) == 6
     assert core._benchmark_prompt_token_count("") == 1
