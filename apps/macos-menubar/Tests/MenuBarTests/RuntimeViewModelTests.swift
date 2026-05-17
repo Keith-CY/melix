@@ -6270,6 +6270,83 @@ struct RuntimeViewModelTests {
         #expect(loraOptions.allowMemoryRisk)
     }
 
+    @Test("memory fit preflight blocks unsafe dispatch until allow memory risk override")
+    @MainActor
+    func memoryFitPreflightBlocksUnsafeDispatchUntilOverride() async throws {
+        var model = makeModelSummary(modelID: testReadyModelID, state: .modelWarm)
+        model.settings.ext["melix.memory_fit.benchmark.status"] = "heavy"
+        model.settings.ext["melix.memory_fit.benchmark.reason"] = "Benchmark KV cache may exceed comfort budget."
+        model.settings.ext["melix.memory_fit.eval.status"] = "blocked"
+        model.settings.ext["melix.memory_fit.eval.reason"] = "Evaluation prompt batch exceeds safe memory."
+        model.settings.ext["melix.memory_fit.train.status"] = "blocked"
+        model.settings.ext["melix.memory_fit.train.reason"] = "Training optimizer estimate exceeds unified memory."
+
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [model],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "train_lora",
+                outputPath: "/tmp/melix-train-lora/memory-fit.adapter.json",
+                manifestJSON: #"{"operation":"train_lora","job_id":"model-ops-memory-fit"}"#,
+                artifactKind: "adapter",
+                manifestPath: "/tmp/melix-train-lora/memory-fit.adapter.json"
+            ),
+            forNamedOperation: "train_lora"
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionModelID(testReadyModelID)
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        viewModel.selectedLoraModelID = testReadyModelID
+        viewModel.loraDatasetSourceKind = .localPackage
+        viewModel.loraDatasetURI = "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+        viewModel.loraAdapterName = "memory-fit-adapter"
+        viewModel.benchmarkPreflightFitCheck = true
+        viewModel.evaluationPreflightFitCheck = true
+        viewModel.trainingPreflightFitCheck = true
+
+        let benchmarkMessage = try #require(viewModel.diagnosticsBenchmarkUnavailableText)
+        #expect(benchmarkMessage == "Benchmark memory fit preflight blocked for \(testReadyModelID): Heavy - Benchmark KV cache may exceed comfort budget. Enable Allow Memory Risk to override.")
+        await viewModel.runBench()
+        #expect(await client.recordedBenchRequests.isEmpty)
+        #expect(viewModel.lastError == benchmarkMessage)
+
+        let evaluationMessage = try #require(viewModel.diagnosticsEvaluationUnavailableText)
+        #expect(evaluationMessage == "Evaluation memory fit preflight blocked for \(testReadyModelID): Blocked - Evaluation prompt batch exceeds safe memory. Enable Allow Memory Risk to override.")
+        await viewModel.runEvaluation()
+        #expect(await client.recordedEvaluationRequests.isEmpty)
+        #expect(viewModel.lastError == evaluationMessage)
+
+        let trainingMessage = try #require(viewModel.loraTrainingMemoryFitUnavailableText)
+        #expect(trainingMessage == "LoRA training memory fit preflight blocked for \(testReadyModelID): Blocked - Training optimizer estimate exceeds unified memory. Enable Allow Memory Risk to override.")
+        await viewModel.trainPrimaryModel()
+        #expect(await client.recordedModelOperationRequests.isEmpty)
+        #expect(viewModel.lastError == trainingMessage)
+
+        viewModel.benchmarkAllowMemoryRisk = true
+        viewModel.evaluationAllowMemoryRisk = true
+        viewModel.trainingAllowMemoryRisk = true
+
+        #expect(viewModel.diagnosticsBenchmarkUnavailableText == nil)
+        #expect(viewModel.diagnosticsEvaluationUnavailableText == nil)
+        #expect(viewModel.loraTrainingMemoryFitUnavailableText == nil)
+
+        await viewModel.runBench()
+        await viewModel.runEvaluation()
+        await viewModel.trainPrimaryModel()
+
+        #expect(await client.recordedBenchRequests.isEmpty == false)
+        #expect(await client.recordedEvaluationRequests.isEmpty == false)
+        #expect(await client.recordedModelOperationRequests.contains { $0.operation == "train_lora" })
+    }
+
     @Test("capability guards explain unsupported tools and acceleration disabled states")
     @MainActor
     func capabilityGuardsExplainUnsupportedToolsAndAccelerationDisabledStates() async throws {

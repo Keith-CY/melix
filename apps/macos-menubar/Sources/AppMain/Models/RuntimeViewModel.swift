@@ -2890,6 +2890,15 @@ public final class RuntimeViewModel {
             ) {
                 return unsupportedMessage
             }
+            if let memoryFitMessage = memoryFitPreflightDispatchMessage(
+                actionTitle: "Benchmark",
+                modelID: target.modelID,
+                target: "benchmark",
+                preflightFitCheck: benchmarkPreflightFitCheck,
+                allowMemoryRisk: benchmarkAllowMemoryRisk
+            ) {
+                return memoryFitMessage
+            }
             return nil
         case .remoteServer:
             return Self.remoteBenchmarkUnsupportedMessage
@@ -2917,6 +2926,15 @@ public final class RuntimeViewModel {
             ) {
                 return unsupportedMessage
             }
+            if let memoryFitMessage = memoryFitPreflightDispatchMessage(
+                actionTitle: "Evaluation",
+                modelID: target.modelID,
+                target: "eval",
+                preflightFitCheck: evaluationPreflightFitCheck,
+                allowMemoryRisk: evaluationAllowMemoryRisk
+            ) {
+                return memoryFitMessage
+            }
             return nil
         case .remoteServer:
             if selectedEvaluationSuiteIDs.isEmpty {
@@ -2940,6 +2958,16 @@ public final class RuntimeViewModel {
 
     public var canRunDiagnosticsEvaluation: Bool {
         diagnosticsEvaluationUnavailableText == nil
+    }
+
+    public var loraTrainingMemoryFitUnavailableText: String? {
+        memoryFitPreflightDispatchMessage(
+            actionTitle: "LoRA training",
+            modelID: resolvedLoraModelID(),
+            target: "train",
+            preflightFitCheck: trainingPreflightFitCheck,
+            allowMemoryRisk: trainingAllowMemoryRisk
+        )
     }
 
     public var modelSettingsToolParserXMLFallbackDisabledReason: String? {
@@ -8623,6 +8651,10 @@ public final class RuntimeViewModel {
             surfaceLoraWorkflowGuardFailure(.trainLoRA, message: unsupportedMessage)
             return
         }
+        if let memoryFitMessage = loraTrainingMemoryFitUnavailableText {
+            surfaceLoraWorkflowGuardFailure(.trainLoRA, message: memoryFitMessage)
+            return
+        }
         guard persistLoraTrainingLaunch(modelID: modelID) != nil else {
             return
         }
@@ -11792,6 +11824,44 @@ public final class RuntimeViewModel {
         }
 
         return nil
+    }
+
+    private func memoryFitPreflightDispatchMessage(
+        actionTitle: String,
+        modelID: String,
+        target: String,
+        preflightFitCheck: Bool,
+        allowMemoryRisk: Bool
+    ) -> String? {
+        guard preflightFitCheck, allowMemoryRisk == false else {
+            return nil
+        }
+        let normalizedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedModelID.isEmpty == false,
+              let row = memoryFitReceiptRow(modelID: normalizedModelID, target: target),
+              Self.memoryFitReceiptBlocksDispatch(row)
+        else {
+            return nil
+        }
+        return "\(actionTitle) memory fit preflight blocked for \(normalizedModelID): \(row.statusText) - \(row.reasonText) Enable Allow Memory Risk to override."
+    }
+
+    private func memoryFitReceiptRow(modelID: String, target: String) -> RuntimeMemoryFitReceiptRow? {
+        let normalizedTarget = target.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let model = latestSnapshot.models.first(where: { $0.modelID == modelID }) else {
+            return nil
+        }
+        return runtimeModelMemoryFitReceiptRows(for: model)
+            .first { $0.target.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedTarget }
+    }
+
+    private static func memoryFitReceiptBlocksDispatch(_ row: RuntimeMemoryFitReceiptRow) -> Bool {
+        switch row.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "blocked", "heavy":
+            return true
+        default:
+            return false
+        }
     }
 
     private func unsupportedAccelerationModeMessage(
