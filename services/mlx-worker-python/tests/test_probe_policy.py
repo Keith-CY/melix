@@ -32,6 +32,25 @@ def test_probe_policy_parses_modes_with_cached_value_lookup() -> None:
         assert policy.fallback_applied is False
 
 
+def test_probe_policy_exact_lowercase_strings_keep_source_value() -> None:
+    for mode in ProbeMode:
+        policy = ProbePolicy.from_value(mode.value)
+        assert policy.mode is mode
+        assert policy.source_value == mode.value
+        assert policy.fallback_applied is False
+        assert ProbePolicy.from_value(mode) is policy
+
+    invalid_policy = ProbePolicy.from_value("definitely-not-valid")
+    assert invalid_policy.mode is ProbeMode.MINIMAL
+    assert invalid_policy.source_value == "definitely-not-valid"
+    assert invalid_policy.fallback_applied is True
+
+    non_string_policy = ProbePolicy.from_value(123)  # type: ignore[arg-type]
+    assert non_string_policy.mode is ProbeMode.MINIMAL
+    assert non_string_policy.source_value == "123"
+    assert non_string_policy.fallback_applied is True
+
+
 def test_probe_policy_empty_env_uses_production_default() -> None:
     policy = probe_policy_from_env({"MELIX_PROBE_MODE": ""})
 
