@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from enum import StrEnum
+from functools import lru_cache
 from typing import Mapping
 
 
@@ -70,11 +71,7 @@ class ProbePolicy:
         policy = _PROBE_POLICY_BY_VALUE.get(raw_value)
         if policy is not None:
             return policy
-        return cls(
-            mode=default_mode,
-            source_value=raw_value,
-            fallback_applied=True,
-        )
+        return _invalid_probe_policy(raw_value, default_mode)
 
     @classmethod
     def evidence(cls) -> ProbePolicy:
@@ -91,6 +88,15 @@ _PROBE_POLICY_BY_VALUE: dict[str, ProbePolicy] = {
 _PROBE_POLICY_BY_DEFAULT_MODE: dict[ProbeMode, ProbePolicy] = {
     mode: ProbePolicy(mode=mode) for mode in ProbeMode
 }
+
+
+@lru_cache(maxsize=64)
+def _invalid_probe_policy(raw_value: str, default_mode: ProbeMode) -> ProbePolicy:
+    return ProbePolicy(
+        mode=default_mode,
+        source_value=raw_value,
+        fallback_applied=True,
+    )
 
 
 def probe_policy_from_env(env: Mapping[str, str] | None = None) -> ProbePolicy:
