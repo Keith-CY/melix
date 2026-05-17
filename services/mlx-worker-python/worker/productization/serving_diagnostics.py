@@ -553,16 +553,18 @@ def _empty_attribute_event_json_line_bytes(
         if encoded_request_id is None:
             encoded_request_id = _json_string_literal(request_id).encode("utf-8")
             request_id_literals[request_id] = encoded_request_id
-    return (
-        b'{"attributes":{},"duration_ms":'
-        + _ascii_float_literal(duration_ms)
-        + b',"event_index":'
-        + _ascii_int_literal(event_index)
-        + b',"phase":'
-        + encoded_phase
-        + b',"request_id":'
-        + encoded_request_id
-        + b',"schema_version":"melix.serving_diagnostics.event.v1","status":'
-        + encoded_status
-        + b"}"
+    return b"".join(
+        (
+            b'{"attributes":{},"duration_ms":',
+            _ascii_float_literal(duration_ms),
+            b',"event_index":',
+            _ascii_int_literal(event_index),
+            b',"phase":',
+            encoded_phase,
+            b',"request_id":',
+            encoded_request_id,
+            b',"schema_version":"melix.serving_diagnostics.event.v1","status":',
+            encoded_status,
+            b"}",
+        )
     )
