@@ -50,6 +50,16 @@ def test_probe_policy_exact_lowercase_strings_keep_source_value() -> None:
     assert invalid_policy.mode is ProbeMode.MINIMAL
     assert invalid_policy.source_value == "definitely-not-valid"
     assert invalid_policy.fallback_applied is True
+    assert ProbePolicy.from_value("definitely-not-valid") is invalid_policy
+    assert ProbePolicy.from_value(" definitely-not-valid ") is invalid_policy
+
+    debug_invalid_policy = ProbePolicy.from_value(
+        "definitely-not-valid",
+        default_mode=ProbeMode.DEBUG,
+    )
+    assert debug_invalid_policy is not invalid_policy
+    assert debug_invalid_policy.mode is ProbeMode.DEBUG
+    assert debug_invalid_policy.fallback_applied is True
 
     non_string_policy = ProbePolicy.from_value(123)  # type: ignore[arg-type]
     assert non_string_policy.mode is ProbeMode.MINIMAL
