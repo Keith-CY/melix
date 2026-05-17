@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from worker.productization.probe_policy_overhead import measure_no_op_probe_policy_overhead
+from worker.productization.probe_policy_overhead import (
+    NoOpProbeRecorder,
+    measure_no_op_probe_policy_overhead,
+)
 from worker.productization.probe_policy import ProbeMode, ProbePolicy, probe_policy_from_env
 
 
@@ -21,6 +24,49 @@ def test_probe_policy_invalid_env_falls_back_to_production_default() -> None:
     assert policy.telemetry_enabled is False
 
 
+def test_probe_policy_parses_modes_with_cached_value_lookup() -> None:
+    for mode in ProbeMode:
+        policy = ProbePolicy.from_value(f"  {mode.value.upper()}  ")
+        assert policy.mode is mode
+        assert policy.source_value == mode.value
+        assert policy.fallback_applied is False
+
+
+def test_probe_policy_exact_lowercase_strings_keep_source_value() -> None:
+    for mode in ProbeMode:
+        policy = ProbePolicy.from_value(mode.value)
+        assert policy.mode is mode
+        assert policy.source_value == mode.value
+        assert policy.fallback_applied is False
+        assert ProbePolicy.from_value(mode) is policy
+
+    class ExactModeString(str):
+        def strip(self, chars: str | None = None) -> str:  # pragma: no cover - should not run
+            raise AssertionError("exact supported modes should skip string normalization")
+
+    assert ProbePolicy.from_value(ExactModeString(ProbeMode.MINIMAL.value)).mode is ProbeMode.MINIMAL
+
+    invalid_policy = ProbePolicy.from_value("definitely-not-valid")
+    assert invalid_policy.mode is ProbeMode.MINIMAL
+    assert invalid_policy.source_value == "definitely-not-valid"
+    assert invalid_policy.fallback_applied is True
+    assert ProbePolicy.from_value("definitely-not-valid") is invalid_policy
+    assert ProbePolicy.from_value(" definitely-not-valid ") is invalid_policy
+
+    debug_invalid_policy = ProbePolicy.from_value(
+        "definitely-not-valid",
+        default_mode=ProbeMode.DEBUG,
+    )
+    assert debug_invalid_policy is not invalid_policy
+    assert debug_invalid_policy.mode is ProbeMode.DEBUG
+    assert debug_invalid_policy.fallback_applied is True
+
+    non_string_policy = ProbePolicy.from_value(123)  # type: ignore[arg-type]
+    assert non_string_policy.mode is ProbeMode.MINIMAL
+    assert non_string_policy.source_value == "123"
+    assert non_string_policy.fallback_applied is True
+
+
 def test_probe_policy_empty_env_uses_production_default() -> None:
     policy = probe_policy_from_env({"MELIX_PROBE_MODE": ""})
 
@@ -28,6 +74,22 @@ def test_probe_policy_empty_env_uses_production_default() -> None:
     assert policy.source_value == ""
     assert policy.fallback_applied is False
     assert policy.telemetry_enabled is False
+
+
+def test_probe_policy_empty_values_reuse_default_policy_cache() -> None:
+    minimal_policy = ProbePolicy.from_value("")
+
+    assert ProbePolicy.from_value(None) is minimal_policy
+    assert probe_policy_from_env({}) is minimal_policy
+    assert minimal_policy.source_value == ""
+    assert minimal_policy.fallback_applied is False
+    assert minimal_policy is not ProbePolicy.from_value(ProbeMode.MINIMAL)
+
+    debug_policy = ProbePolicy.from_value("", default_mode=ProbeMode.DEBUG)
+    assert ProbePolicy.from_value(None, default_mode=ProbeMode.DEBUG) is debug_policy
+    assert debug_policy.mode is ProbeMode.DEBUG
+    assert debug_policy.source_value == ""
+    assert debug_policy.telemetry_enabled is True
 
 
 def test_probe_policy_telemetry_enabled_only_for_sampling_modes() -> None:
@@ -55,6 +117,15 @@ def test_probe_policy_uses_slots_for_hot_path_instances() -> None:
     assert ProbePolicy(mode=ProbeMode.EVIDENCE).no_op_reason == ""
 
 
+def test_no_op_probe_recorder_and_metrics_use_slots_for_hot_path() -> None:
+    recorder = NoOpProbeRecorder()
+    metrics = measure_no_op_probe_policy_overhead(iterations=1, samples=1)
+
+    assert not hasattr(recorder, "__dict__")
+    assert not hasattr(metrics, "__dict__")
+    assert recorder.record() is None
+
+
 def test_no_op_probe_policy_overhead_metrics_are_thresholded() -> None:
     metrics = measure_no_op_probe_policy_overhead(iterations=16, samples=1, threshold_pct=10_000.0)
     payload = metrics.to_dict()
@@ -67,5 +138,12 @@ def test_no_op_probe_policy_overhead_metrics_are_thresholded() -> None:
     assert "no_op_recorder_delta_ms" in payload
     assert "no_op_policy_check_delta_ms" in payload
     assert "no_op_reason_delta_ms" in payload
+    assert "mode_parse_empty_call_ms_mean" in payload
+    assert "mode_parse_valid_call_ms_mean" in payload
+    assert "mode_parse_invalid_call_ms_mean" in payload
+    assert "mode_parse_invalid_delta_ms" in payload
+    assert payload["mode_parse_empty_call_ms_mean"] >= 0.0
+    assert payload["mode_parse_valid_call_ms_mean"] >= 0.0
+    assert payload["mode_parse_invalid_call_ms_mean"] >= 0.0
     assert payload["absolute_tolerance_ms"] > 0.0
     assert payload["threshold_passed"] == 1.0

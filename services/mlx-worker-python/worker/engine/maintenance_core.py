@@ -30,6 +30,7 @@ from worker.model_ops.hub_catalog import (
     HubModelSummaryRecord,
 )
 from worker.model_ops.job_registry import ModelOpsJobRegistry
+from worker.model_ops.lora_runtime_metadata import ADAPTER_RUNTIME_EXT_KEY_MAP
 from worker.model_ops.lora_training_pipeline import LoRATrainingPipeline
 from worker.model_ops.local_import_pipeline import LocalImportPipeline
 from worker.model_ops.operation_locks import ModelOpsConflictRegistry
@@ -58,6 +59,30 @@ _CAPABILITY_SUPPORTED_PARSERS_KEY = "melix.capability.supported_parsers"
 logger = logging.getLogger(__name__)
 
 
+class ImmutableBenchmarkTokens(list[str]):
+    __slots__ = ()
+
+    def __init__(self, tokens: tuple[str, ...]) -> None:
+        super().__init__(tokens)
+
+    @staticmethod
+    def _raise_immutable(*_: object, **__: object) -> NoReturn:
+        raise TypeError("Shaped benchmark prompt tokens are immutable")
+
+    append = _raise_immutable
+    clear = _raise_immutable
+    extend = _raise_immutable
+    insert = _raise_immutable
+    pop = _raise_immutable
+    remove = _raise_immutable
+    reverse = _raise_immutable
+    sort = _raise_immutable
+    __delitem__ = _raise_immutable
+    __iadd__ = _raise_immutable
+    __imul__ = _raise_immutable
+    __setitem__ = _raise_immutable
+
+
 class ShapedBenchmarkPrompt(str):
     __slots__ = ("_tokens", "token_count")
 
@@ -74,7 +99,8 @@ class ShapedBenchmarkPrompt(str):
 
     def split(self, sep: str | None = None, maxsplit: int = -1) -> list[str]:
         if sep is None and maxsplit == -1:
-            return list(self.tokens)
+            # Preserve the shaped-token cache on the hot path; callers must treat it as read-only.
+            return ImmutableBenchmarkTokens(self.tokens)
         return str(self).split(sep, maxsplit)
 
     @property
@@ -82,7 +108,6 @@ class ShapedBenchmarkPrompt(str):
         if self._tokens is None:
             self._tokens = tuple(str(self).split())
         return self._tokens
-
 
 @dataclass(frozen=True)
 class BenchMetricSpec:
@@ -2531,6 +2556,10 @@ class MaintenanceCore:
             ("component_family", "melix.lora.family_id"),
             ("component_model_path", "melix.lora.base_model_path"),
         ):
+            value = str(manifest.get(manifest_key, "")).strip()
+            if value:
+                model_spec.ext[ext_key] = value
+        for manifest_key, ext_key in ADAPTER_RUNTIME_EXT_KEY_MAP:
             value = str(manifest.get(manifest_key, "")).strip()
             if value:
                 model_spec.ext[ext_key] = value

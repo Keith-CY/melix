@@ -34,6 +34,8 @@ Register `maintenance-prompt-shape-vector-repeat` in the PR-scoped performance r
 - `token_count_mean` — structural guard that the shaped prompt still reaches the requested token counts
 - `iteration_count` / `sample_count` — workload description
 
+The elapsed metric uses a `0.05 ms` absolute warning floor in addition to the percentage threshold because the optimized cached path runs in a sub-millisecond range on CI. The `token_count_mean` structural guard remains exact and must not regress.
+
 ## Success metrics
 
 - Focused pytest passes for prompt-shaping behavior and PR-scoped probe selection.

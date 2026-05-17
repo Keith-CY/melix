@@ -16,6 +16,7 @@ from worker.model_ops.adapter_capabilities import (
     AdapterCapabilityRegistry,
 )
 from worker.model_ops.errors import ModelOperationError
+from worker.model_ops.quantization_metadata import EXPLICIT_QUANTIZED_PROFILE_IDS
 
 
 @dataclass(frozen=True)
@@ -1046,6 +1047,8 @@ def _resolve_target_modules(raw_value: str, *, profile: dict[str, object]) -> li
         profile[_NORMALIZED_TARGET_MODULES_CACHE_KEY] = cache
     cached_targets = cache.get(raw_value)
     if isinstance(cached_targets, tuple):
+        # Cache stores immutable tuples; list() produces a fresh copy per call so
+        # callers can safely iterate without risk of mutating shared cache state.
         return list(cached_targets)
 
     presets = profile.get(_NORMALIZED_TARGET_MODULE_PRESETS_KEY)
@@ -1160,7 +1163,11 @@ def _base_quantization_method(source_model: common_pb2.ModelSpec) -> str:
     if ext_method:
         return ext_method
 
-    if source_model.quant_profile_id.strip():
+    profile_id = source_model.quant_profile_id.strip().lower()
+    if profile_id and (
+        profile_id in EXPLICIT_QUANTIZED_PROFILE_IDS
+        or _QUANTIZED_MODEL_PATTERN.search(profile_id) is not None
+    ):
         return "quant_profile"
 
     searchable = " ".join(

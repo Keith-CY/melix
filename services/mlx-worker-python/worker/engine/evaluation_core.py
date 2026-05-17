@@ -305,6 +305,16 @@ class EvaluationCore:
         )
         if suite_id == "event_extraction" or requested_scoring_mode == "event_extraction_weighted_f1":
             loaded_model = self._loaded_model_for_execution(model_handle)
+            if str((parameters or {}).get("compare_mode", "")).strip():
+                return self._run_event_extraction_compare_suite(
+                    model_id=model_id,
+                    suite_id=suite_id,
+                    dataset_id=(parameters or {}).get("dataset_id", ""),
+                    sample_size=sample_size,
+                    scoring_mode=requested_scoring_mode or "event_extraction_weighted_f1",
+                    parameters=dict(parameters or {}),
+                    loaded_model=loaded_model,
+                )
             return self._run_event_extraction_suite(
                 model_id=model_id,
                 suite_id=suite_id,
@@ -993,6 +1003,7 @@ class EvaluationCore:
             "evaluation_materialized_dataset_root",
             "",
         )
+        resolved_dataset_id = dataset_id or "top200"
         job_parameters["dataset_root"] = (
             str(Path(event_dataset_root).resolve())
             if event_dataset_root
@@ -1059,7 +1070,6 @@ class EvaluationCore:
                     result_metrics[metric_name] = float(values.get("f1", 0.0))
                     result_units[metric_name] = "ratio"
 
-        resolved_dataset_id = dataset_id or "top200"
         job = build_evaluation_job_record(
             job_id=job_id,
             model_id=resolved_model_id,
@@ -1091,6 +1101,17 @@ class EvaluationCore:
             report_path=str(summary_path),
             units=result_units,
         )
+        sample_records = self._event_extraction_sample_records(
+            job_id=job.job_id,
+            suite_id=suite_id,
+            dataset_id=resolved_dataset_id,
+            task_kind=event_task_kind,
+            rows=rows,
+            prediction_rows=prediction_rows,
+            dialogue_traces=dialogue_traces,
+            details_path=details_path,
+            prompt_spec=prompt_spec,
+        )
         persisted_paths: dict[str, Path] = {}
         if self._jobs_root is not None:
             queue_root = self._jobs_root / "queue"
@@ -1117,7 +1138,7 @@ class EvaluationCore:
                 jobs_root=self._jobs_root,
                 job=job,
                 result=result,
-                samples=(),
+                samples=sample_records,
                 model_memory_summary=self._model_memory_summary(loaded_model=loaded_model),
             )
             self._queue_store.transition(
@@ -1126,7 +1147,341 @@ class EvaluationCore:
                 status="completed",
                 updated_at_unix_ms=int(time.time() * 1000),
             )
-        return EvaluationRun(job=job, results=(result,), samples=(), persisted_paths=persisted_paths)
+        return EvaluationRun(job=job, results=(result,), samples=sample_records, persisted_paths=persisted_paths)
+
+    def _run_event_extraction_compare_suite(
+        self,
+        *,
+        model_id: str,
+        suite_id: str,
+        dataset_id: str,
+        sample_size: int,
+        scoring_mode: str,
+        parameters: dict[str, str],
+        loaded_model: Any | None = None,
+    ) -> EvaluationRun:
+        if loaded_model is None or self._registry is None:
+            raise ValueError("event extraction compare requires a loaded local base model.")
+        target_model_ids = parse_compare_target_model_ids(parameters)
+        adapter_manifest_paths = parse_compare_target_adapter_manifest_paths(parameters)
+        if not target_model_ids and not adapter_manifest_paths:
+            raise ValueError(
+                "evaluation compare requires at least one target - pass "
+                "compare_target_model_ids and/or compare_target_adapter_manifest_paths."
+            )
+
+        created_at_unix_ms = int(time.time() * 1000)
+        job_id = self._next_job_id()
+        run_root = self._run_root(job_id)
+        adapter_target_specs: tuple[AdapterTargetSpec, ...] = tuple(
+            load_adapter_target_spec(manifest_path=path, job_id=job_id)
+            for path in adapter_manifest_paths
+        )
+        registered_targets = resolve_compare_target_models(
+            registry=self._registry,
+            target_model_ids=target_model_ids,
+        )
+        ephemeral_targets, ephemeral_unload_handles = resolve_compare_target_adapters(
+            registry=self._registry,
+            adapter_target_specs=adapter_target_specs,
+        )
+        compare_parameters = dict(parameters)
+        single_run_parameters = {
+            key: value
+            for key, value in parameters.items()
+            if key
+            not in {
+                "compare_mode",
+                "compare_target_model_ids",
+                "compare_target_adapter_manifest_paths",
+            }
+        }
+        try:
+            base_run = self._run_event_extraction_suite(
+                model_id=model_id,
+                suite_id=suite_id,
+                dataset_id=dataset_id,
+                sample_size=sample_size,
+                scoring_mode=scoring_mode,
+                parameters=single_run_parameters,
+                remote_target=None,
+                loaded_model=loaded_model,
+            )
+            resolved_model_id = str(getattr(base_run.job, "model_id", "") or model_id)
+            target_models: dict[str, Any] = {**registered_targets, **ephemeral_targets}
+            combined_target_ids: tuple[str, ...] = (
+                target_model_ids
+                + tuple(spec.ephemeral_derived_model_id for spec in adapter_target_specs)
+            )
+            compare_samples: list[EvaluationCompareSample] = []
+            compare_summaries: list[EvaluationCompareSummary] = []
+            threshold = self._resolve_float_parameter(
+                parameters=parameters,
+                key="threshold",
+                default_value=0.5,
+            )
+            started_at = time.perf_counter()
+            report_path = run_root / "evaluation-compare-report.md"
+            for target_model_id in combined_target_ids:
+                target_run = self._run_event_extraction_suite(
+                    model_id=target_model_id,
+                    suite_id=suite_id,
+                    dataset_id=dataset_id,
+                    sample_size=sample_size,
+                    scoring_mode=scoring_mode,
+                    parameters=single_run_parameters,
+                    remote_target=None,
+                    loaded_model=target_models[target_model_id],
+                )
+                target_compare_samples = build_compare_samples(
+                    job_id=job_id,
+                    suite_id=suite_id,
+                    dataset_id=str(getattr(base_run.job, "dataset_id", "") or dataset_id or "top200"),
+                    target_model_id=target_model_id,
+                    threshold=threshold,
+                    base_samples=base_run.samples,
+                    target_samples=target_run.samples,
+                )
+                compare_samples.extend(target_compare_samples)
+                compare_summaries.append(
+                    build_compare_summary(
+                        job_id=job_id,
+                        base_model_id=resolved_model_id,
+                        target_model_id=target_model_id,
+                        suite_id=suite_id,
+                        dataset_id=str(getattr(base_run.job, "dataset_id", "") or dataset_id or "top200"),
+                        sample_size=len(base_run.samples),
+                        scoring_mode=scoring_mode,
+                        threshold=threshold,
+                        base_samples=base_run.samples,
+                        compare_samples=target_compare_samples,
+                        effect_threshold=self._resolve_float_parameter(
+                            parameters=parameters,
+                            key="effect_threshold",
+                            default_value=_DEFAULT_COMPARE_EFFECT_THRESHOLD,
+                        ),
+                        confidence_level=self._resolve_float_parameter(
+                            parameters=parameters,
+                            key="confidence_level",
+                            default_value=_DEFAULT_COMPARE_CONFIDENCE_LEVEL,
+                        ),
+                        bootstrap_iterations=self._resolve_int_parameter(
+                            explicit_value=None,
+                            parameters=parameters,
+                            key="bootstrap_iterations",
+                        )
+                        or _DEFAULT_COMPARE_BOOTSTRAP_ITERATIONS,
+                        bootstrap_seed=self._resolve_int_parameter(
+                            explicit_value=None,
+                            parameters=parameters,
+                            key="bootstrap_seed",
+                        )
+                        or _DEFAULT_COMPARE_BOOTSTRAP_SEED,
+                        duration_seconds=round(time.perf_counter() - started_at, 6),
+                        report_path=str(report_path),
+                    )
+                )
+
+            target_lineage_entries: list[EvaluationCompareTargetLineage] = [
+                EvaluationCompareTargetLineage(
+                    target_model_id=target_model_id,
+                    materialization_kind="registered",
+                )
+                for target_model_id in target_model_ids
+            ]
+            for adapter_spec in adapter_target_specs:
+                target_lineage_entries.append(
+                    EvaluationCompareTargetLineage(
+                        target_model_id=adapter_spec.ephemeral_derived_model_id,
+                        materialization_kind="ephemeral_adapter",
+                        adapter_manifest_path=adapter_spec.manifest_path,
+                        adapter_weights_path=adapter_spec.adapter_weights_path,
+                        adapter_set_hash=adapter_spec.adapter_set_hash,
+                        derived_from_model_id=adapter_spec.derived_from_model_id,
+                    )
+                )
+            compare_parameters.setdefault("sample_size", str(len(base_run.samples)))
+            compare_job = build_evaluation_compare_job_record(
+                job_id=job_id,
+                base_model_id=resolved_model_id,
+                target_model_ids=combined_target_ids,
+                target_lineage=tuple(target_lineage_entries),
+                task_kind=str(getattr(base_run.job, "task_kind", "event_extraction") or "event_extraction"),
+                source_repo=str(getattr(base_run.job, "source_repo", "") or ""),
+                suite_id=suite_id,
+                dataset_id=str(getattr(base_run.job, "dataset_id", "") or dataset_id or "top200"),
+                sample_size=len(base_run.samples),
+                scoring_mode=scoring_mode,
+                parameters=compare_parameters,
+                status="completed",
+                output_dir=str(run_root),
+                created_at_unix_ms=created_at_unix_ms,
+                updated_at_unix_ms=created_at_unix_ms,
+            )
+            persisted_paths: dict[str, Path] = {}
+            if self._jobs_root is not None:
+                queue_root = self._jobs_root / "queue"
+                self._queue_store.enqueue(
+                    queue_root=queue_root,
+                    record=BenchmarkQueueRecord(
+                        queue_item_id=compare_job.job_id,
+                        job_kind="evaluation",
+                        model_id=model_id,
+                        suite_ids=(suite_id,),
+                        parameters=compare_parameters,
+                        status="queued",
+                        created_at_unix_ms=created_at_unix_ms,
+                        updated_at_unix_ms=created_at_unix_ms,
+                    ),
+                )
+                self._queue_store.transition(
+                    queue_root=queue_root,
+                    queue_item_id=compare_job.job_id,
+                    status="running",
+                    updated_at_unix_ms=created_at_unix_ms + 1,
+                )
+                persisted_paths = self._store.persist_compare_result(
+                    jobs_root=self._jobs_root,
+                    job=compare_job,
+                    summaries=tuple(compare_summaries),
+                    samples=tuple(compare_samples),
+                )
+                self._queue_store.transition(
+                    queue_root=queue_root,
+                    queue_item_id=compare_job.job_id,
+                    status="completed",
+                    updated_at_unix_ms=int(time.time() * 1000),
+                )
+            return EvaluationRun(
+                job=compare_job,
+                results=tuple(compare_summaries),
+                samples=tuple(compare_samples),
+                persisted_paths=persisted_paths,
+            )
+        finally:
+            for handle in ephemeral_unload_handles:
+                try:
+                    self._registry.unload_model(handle)
+                except Exception as unload_exc:  # noqa: BLE001
+                    _logger.warning(
+                        "Failed to unload ephemeral adapter compare target "
+                        "(handle=%s): %s",
+                        handle,
+                        unload_exc,
+                    )
+
+    @staticmethod
+    def _event_extraction_sample_records(
+        *,
+        job_id: str,
+        suite_id: str,
+        dataset_id: str,
+        task_kind: str,
+        rows: list[dict[str, object]],
+        prediction_rows: list[dict[str, object]],
+        dialogue_traces: list[dict[str, object]],
+        details_path: Path,
+        prompt_spec: EventExtractionPromptSpec,
+    ) -> tuple[EvaluationSample, ...]:
+        predictions_by_dialogue = {
+            str(row.get("dialogue_id") or ""): row
+            for row in prediction_rows
+            if isinstance(row, dict)
+        }
+        traces_by_dialogue = {
+            str(trace.get("dialogue_id") or ""): trace
+            for trace in dialogue_traces
+            if isinstance(trace, dict)
+        }
+        scores_by_dialogue = EvaluationCore._event_extraction_dialogue_scores(details_path)
+        sample_records: list[EvaluationSample] = []
+        for index, row in enumerate(rows, start=1):
+            dialogue_id = str(row.get("dialogue_id") or index)
+            dialogue = EvaluationCore._dialogue_lines(row.get("dialogue"))
+            prediction = predictions_by_dialogue.get(dialogue_id, {})
+            predicted_events = prediction.get("events", []) if isinstance(prediction, dict) else []
+            if not isinstance(predicted_events, list):
+                predicted_events = []
+            trace = traces_by_dialogue.get(dialogue_id, {})
+            trace_status = str(trace.get("status") or "failed") if isinstance(trace, dict) else "failed"
+            raw_response = EvaluationCore._event_extraction_raw_response_from_trace(trace)
+            failure_reason = str(trace.get("failure_reason") or "") if isinstance(trace, dict) else ""
+            duration_ms = float(trace.get("total_duration_ms", 0.0) or 0.0) if isinstance(trace, dict) else 0.0
+            validation_status = "validated" if trace_status == "ok" else "not_validated"
+            extraction_status = "extracted" if trace_status == "ok" else trace_status
+            target_events = row.get("events", [])
+            if not isinstance(target_events, list):
+                target_events = []
+            extracted_result = json.dumps(
+                predicted_events,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            sample_records.append(
+                build_evaluation_sample_record(
+                    job_id=job_id,
+                    suite_id=suite_id,
+                    dataset_id=dataset_id,
+                    sample_id=dialogue_id,
+                    system=prompt_spec.system_prompt,
+                    input_text="\n".join(dialogue),
+                    target=json.dumps(
+                        target_events,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                    raw_response=raw_response,
+                    extracted_result=extracted_result,
+                    typed_score=float(scores_by_dialogue.get(dialogue_id, 0.0)),
+                    time_s=round(duration_ms / 1_000.0, 6),
+                    extraction_status=extraction_status,
+                    validation_status=validation_status,
+                    failure_reason=failure_reason,
+                    task_kind=task_kind,
+                    input_modalities=("text",),
+                    raw_response_chars=len(raw_response),
+                    extracted_result_chars=len(extracted_result),
+                    failure_stage="" if trace_status == "ok" else "extraction",
+                )
+            )
+        return tuple(sample_records)
+
+    @staticmethod
+    def _event_extraction_dialogue_scores(details_path: Path) -> dict[str, float]:
+        scores: dict[str, list[float]] = {}
+        if not details_path.is_file():
+            return {}
+        with details_path.open("r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                dialogue_id = str(row.get("dialogue_id") or "").strip()
+                if not dialogue_id:
+                    continue
+                scores.setdefault(dialogue_id, []).append(float(row.get("weighted_f1", 0.0) or 0.0))
+        return {
+            dialogue_id: round(sum(values) / max(len(values), 1), 4)
+            for dialogue_id, values in scores.items()
+        }
+
+    @staticmethod
+    def _event_extraction_raw_response_from_trace(trace: dict[str, object]) -> str:
+        raw_path = trace.get("raw_response_path") if isinstance(trace, dict) else None
+        if not isinstance(raw_path, str) or not raw_path:
+            return ""
+        try:
+            return Path(raw_path).read_text(encoding="utf-8")
+        except OSError:
+            return ""
 
     @staticmethod
     def _event_extraction_provider_error_code(exc: Exception) -> str:
@@ -1403,11 +1758,13 @@ class EvaluationCore:
             return {"mean": 0.0, "p50": 0.0, "p95": 0.0, "max": 0.0}
         sorted_values = sorted(values)
         value_count = len(sorted_values)
+        round_ms = cls._round_ms
+        ordered_percentile = cls._ordered_percentile
         return {
-            "mean": cls._round_ms(sum(sorted_values) / value_count),
-            "p50": cls._round_ms(cls._ordered_percentile(sorted_values, 50.0)),
-            "p95": cls._round_ms(cls._ordered_percentile(sorted_values, 95.0)),
-            "max": cls._round_ms(sorted_values[-1]),
+            "mean": round_ms(sum(sorted_values) / value_count),
+            "p50": round_ms(ordered_percentile(sorted_values, 50.0)),
+            "p95": round_ms(ordered_percentile(sorted_values, 95.0)),
+            "max": round_ms(sorted_values[-1]),
         }
 
     @staticmethod
@@ -2183,19 +2540,23 @@ class EvaluationCore:
     def _sample_probe_means(samples: Any, field_names: tuple[str, ...]) -> dict[str, float]:
         if not field_names:
             return {}
-        totals = [0.0] * len(field_names)
+        field_count = len(field_names)
+        totals = [0.0] * field_count
+        field_indexes = range(field_count)
+        get_field = getattr
+        to_float = float
         sample_count = 0
         for sample in samples:
             sample_count += 1
-            for index, field_name in enumerate(field_names):
-                value = getattr(sample, field_name, 0.0)
+            for index in field_indexes:
+                value = get_field(sample, field_names[index], 0.0)
                 if value:
-                    totals[index] += float(value)
+                    totals[index] += to_float(value)
         if sample_count == 0:
             return {field_name: 0.0 for field_name in field_names}
         return {
-            field_name: round(totals[index] / sample_count, 4)
-            for index, field_name in enumerate(field_names)
+            field_names[index]: round(totals[index] / sample_count, 4)
+            for index in field_indexes
         }
 
     @staticmethod
@@ -3066,14 +3427,14 @@ class EvaluationCore:
     @staticmethod
     def _normalized_answer(value: str) -> str:
         stripped = EvaluationCore._strip_wrapping(value)
+        if len(stripped) == 1:
+            option = EvaluationCore._extract_option_value(stripped)
+            if option is not None:
+                return option
         if EvaluationCore._looks_like_numeric(stripped):
             numeric = EvaluationCore._extract_numeric_value(stripped)
             if numeric is not None:
                 return numeric
-        if EvaluationCore._looks_like_option(stripped):
-            option = EvaluationCore._extract_option_value(stripped)
-            if option is not None:
-                return option
         if (
             "  " in stripped
             or "\t" in stripped

@@ -219,6 +219,7 @@ def test_serving_diagnostics_queue_append_uses_retained_count_without_len() -> N
     queue = BoundedServingDiagnosticsEventQueue(max_events=2)
     buffer = NoLenBuffer()
     queue._events = buffer  # type: ignore[assignment]
+    queue._append_event = buffer.append  # type: ignore[method-assign]
 
     assert queue.append(event) is True
     assert buffer.events == [event]
@@ -298,6 +299,57 @@ def test_serving_diagnostics_empty_event_attributes_skip_stable_json_object(
     assert event.to_dict()["attributes"] == {}
 
 
+def test_serving_diagnostics_jsonl_fast_path_reuses_request_id_literal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    original_encoder = serving_diagnostics_module._json_string_literal
+
+    def counting_encoder(value: str) -> str:
+        calls.append(value)
+        return original_encoder(value)
+
+    monkeypatch.setattr(
+        serving_diagnostics_module,
+        "_json_string_literal",
+        counting_encoder,
+    )
+    rows = tuple(
+        ServingDiagnosticsEvent(
+            request_id="req-shared-fast-path",
+            phase="decode",
+            event_index=event_index,
+            status="completed",
+            duration_ms=0.001,
+        )
+        for event_index in range(3)
+    )
+    path = tmp_path / "events.jsonl"
+
+    serving_diagnostics_module._write_jsonl(path, rows)
+
+    payloads = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert [payload["event_index"] for payload in payloads] == [0, 1, 2]
+    assert {payload["request_id"] for payload in payloads} == {"req-shared-fast-path"}
+    assert calls == ["req-shared-fast-path"]
+
+
+def test_serving_diagnostics_jsonl_fast_path_preserves_direct_helper_call() -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-direct-fast-path",
+        phase="decode",
+        event_index=7,
+        status="completed",
+        duration_ms=0.001,
+    )
+
+    line = serving_diagnostics_module._empty_attribute_event_json_line(event)
+
+    assert line is not None
+    assert json.loads(line)["request_id"] == "req-direct-fast-path"
+
+
 def test_serving_diagnostics_event_to_dict_preserves_numeric_coercion() -> None:
     event = ServingDiagnosticsEvent(
         request_id="req-numeric-coercion",
@@ -351,6 +403,7 @@ def test_serving_diagnostics_bounded_queue_serializes_append_during_snapshot() -
     queue = BoundedServingDiagnosticsEventQueue(max_events=8)
     instrumented = InstrumentedBuffer()
     queue._events = instrumented  # type: ignore[assignment]
+    queue._append_event = instrumented.append  # type: ignore[method-assign]
     errors: list[BaseException] = []
     snapshots: list[tuple[int, ...]] = []
 
@@ -538,7 +591,7 @@ def test_serving_diagnostics_events_jsonl_streams_default_attribute_rows(
     )
     event = ServingDiagnosticsEvent(
         request_id='req-"quoted"',
-        phase="decode",
+        phase="decode-音声",
         event_index=7,
         status="completed",
         duration_ms=0.001,
@@ -563,10 +616,59 @@ def test_serving_diagnostics_events_jsonl_streams_default_attribute_rows(
     line = paths["events"].read_text(encoding="utf-8")
     assert line == (
         '{"attributes":{},"duration_ms":0.001,"event_index":7,'
-        '"phase":"decode","request_id":"req-\\"quoted\\"",'
+        '"phase":"decode-\\u97f3\\u58f0","request_id":"req-\\"quoted\\"",'
         '"schema_version":"melix.serving_diagnostics.event.v1",'
         '"status":"completed"}\n'
     )
+
+
+def test_serving_diagnostics_events_jsonl_writes_bytearray_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    summary = ServingDiagnosticsRequestSummary(
+        request_id="req-bytearray-jsonl",
+        task_kind="text-generation",
+        model_id="melix-dev-text",
+        runtime_kind="deterministic",
+        acceleration_mode="baseline",
+        prompt_protocol_id="chat.completions.v1",
+        prompt_digest="sha256:prompt",
+        prompt_template_digest="sha256:template",
+        generation_config={},
+        status="completed",
+        finish_reason="stop",
+    )
+    event = ServingDiagnosticsEvent(
+        request_id="req-bytearray-jsonl",
+        phase="decode",
+        event_index=8,
+        status="completed",
+        duration_ms=0.25,
+    )
+    observed_payload_types: list[type[object]] = []
+    original_write_bytes = Path.write_bytes
+
+    def tracked_write_bytes(path: Path, data: bytes) -> int:
+        if path.name == "events.jsonl":
+            observed_payload_types.append(type(data))
+        return original_write_bytes(path, data)
+
+    monkeypatch.setattr(Path, "write_bytes", tracked_write_bytes)
+
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-bytearray-jsonl",
+        invocation={},
+        effective_config={},
+        model_refs={},
+        request_summary=summary,
+        events=(event,),
+        diagnostics_mode="debug",
+    )
+
+    assert observed_payload_types == [bytearray]
+    assert paths["events"].read_text(encoding="utf-8").endswith('"status":"completed"}\n')
 
 
 def test_serving_diagnostics_events_jsonl_falls_back_for_non_exact_numeric_fields(

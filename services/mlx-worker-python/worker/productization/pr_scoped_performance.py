@@ -72,14 +72,18 @@ class MetricDefinition:
     unit: str
     direction: str
     warn_pct: float = 5.0
+    warn_abs: float = 0.0
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "key": self.key,
             "unit": self.unit,
             "direction": self.direction,
             "warn_pct": self.warn_pct,
         }
+        if self.warn_abs:
+            payload["warn_abs"] = self.warn_abs
+        return payload
 
 
 @dataclass(frozen=True)
@@ -138,6 +142,7 @@ def _parse_probe_registry_payload(payload: object) -> tuple[ProbeDefinition, ...
                 unit=str_value(raw_metric.get("unit", "value")),
                 direction=str_value(raw_metric["direction"]),
                 warn_pct=float_value(raw_metric.get("warn_pct", 5.0)),
+                warn_abs=float_value(raw_metric.get("warn_abs", 0.0)),
             )
             for raw_metric in raw_metrics
             if isinstance(raw_metric, dict)
@@ -232,11 +237,12 @@ def build_scope_report(
         if not direct_changed_path_set
         else _match_probe_indexes(changed_paths=direct_changed_path_set, probes=probes)
     )
+    matched_probe_indexes_ordered = tuple(sorted(matched_probe_indexes))
     if force_all:
         selected = probes
     else:
-        selected = tuple(probe for index, probe in enumerate(probes) if index in matched_probe_indexes)
-    matched_probe_ids = [probe.probe_id for index, probe in enumerate(probes) if index in matched_probe_indexes]
+        selected = tuple(probes[index] for index in matched_probe_indexes_ordered)
+    matched_probe_ids = [probes[index].probe_id for index in matched_probe_indexes_ordered]
     changed_paths = tuple(sorted(changed_path_set))
     return {
         "schema_version": _SCOPE_SCHEMA_VERSION,
@@ -2093,6 +2099,7 @@ def _build_probe_report_row(result: dict[str, object]) -> dict[str, object]:
             unit=str(metric_definition.get("unit", "value")),
             direction=str(metric_definition.get("direction", "lower_is_better")),
             warn_pct=float(metric_definition.get("warn_pct", 5.0)),
+            warn_abs=float(metric_definition.get("warn_abs", 0.0)),
             base_metrics=result.get("base_probe", {}).get("metrics", {}),
             head_metrics=result.get("head_probe", {}).get("metrics", {}),
         )
@@ -2133,6 +2140,7 @@ def _build_metric_row(
     warn_pct: float,
     base_metrics: object,
     head_metrics: object,
+    warn_abs: float = 0.0,
 ) -> dict[str, object]:
     if direction not in {"informational", "lower_is_better", "higher_is_better"}:
         raise ValueError(f"Unknown metric direction: {direction!r}")
@@ -2144,6 +2152,7 @@ def _build_metric_row(
             "unit": unit,
             "direction": direction,
             "warn_pct": warn_pct,
+            "warn_abs": warn_abs,
             "base": base_value,
             "head": head_value,
             "delta": None,
@@ -2153,7 +2162,7 @@ def _build_metric_row(
     delta = head_value - base_value
     delta_pct = None if base_value == 0 else (delta / base_value) * 100.0
     status = "neutral"
-    threshold = abs(base_value) * (warn_pct / 100.0)
+    threshold = max(abs(base_value) * (warn_pct / 100.0), max(0.0, warn_abs))
     if direction == "informational":
         status = "neutral"
     elif direction == "lower_is_better":
@@ -2171,6 +2180,7 @@ def _build_metric_row(
         "unit": unit,
         "direction": direction,
         "warn_pct": warn_pct,
+        "warn_abs": warn_abs,
         "base": base_value,
         "head": head_value,
         "delta": delta,
@@ -2330,10 +2340,11 @@ def _match_probe_indexes_uncached(
     changed_paths: tuple[str, ...],
 ) -> frozenset[int]:
     exact_path_to_probe_indexes, wildcard_glob_matchers = _probe_match_indexes(probes)
-    changed_path_set = frozenset(changed_paths)
     matched_probe_indexes: set[int] = set()
-    for path in exact_path_to_probe_indexes.keys() & changed_path_set:
-        matched_probe_indexes.update(exact_path_to_probe_indexes[path])
+    for path in changed_paths:
+        probe_indexes = exact_path_to_probe_indexes.get(path)
+        if probe_indexes is not None:
+            matched_probe_indexes.update(probe_indexes)
     if not wildcard_glob_matchers:
         return frozenset(matched_probe_indexes)
     for path in changed_paths:

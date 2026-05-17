@@ -622,19 +622,17 @@ def _size_hint_bytes(payload: dict[str, Any]) -> int:
 
 
 def _direct_size_hint_from_text(text: str) -> int:
-    parts = text.split(maxsplit=2)
-    if len(parts) != 2:
+    try:
+        value_text, unit_text = text.split()
+    except ValueError:
         return 0
-    value_text, unit_text = parts
-    unit = unit_text.lower()
-    multiplier = _SIZE_HINT_MULTIPLIERS.get(unit)
+    multiplier = _SIZE_HINT_MULTIPLIERS.get(unit_text.lower())
     if multiplier is None:
         return 0
     try:
-        value = float(value_text)
+        return int(float(value_text) * multiplier)
     except ValueError:
         return 0
-    return int(value * multiplier)
 
 
 def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:

@@ -176,8 +176,20 @@ def _top_level_weight_file_bytes(model_dir: Path) -> int:
     return total
 
 
+def _is_model_weight_filename(name: str) -> bool:
+    if name.endswith(_MODEL_WEIGHT_SUFFIXES):
+        return name not in _MODEL_WEIGHT_SUFFIXES
+    if name.islower():
+        return False
+    lower_name = name.lower()
+    return (
+        lower_name not in _MODEL_WEIGHT_SUFFIXES
+        and lower_name.endswith(_MODEL_WEIGHT_SUFFIXES)
+    )
+
+
 def _weight_dir_entry_file_size(entry: os.DirEntry[str]) -> int:
-    if os.path.splitext(entry.name)[1].lower() not in _MODEL_WEIGHT_SUFFIXES:
+    if not _is_model_weight_filename(entry.name):
         return 0
     try:
         if not entry.is_file():
@@ -188,7 +200,7 @@ def _weight_dir_entry_file_size(entry: os.DirEntry[str]) -> int:
 
 
 def _weight_file_size(path: Path) -> int:
-    if path.suffix.lower() not in _MODEL_WEIGHT_SUFFIXES:
+    if not _is_model_weight_filename(path.name):
         return 0
     try:
         if not path.is_file():

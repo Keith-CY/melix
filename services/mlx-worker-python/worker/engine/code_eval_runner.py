@@ -16,6 +16,25 @@ import textwrap
 _DEFAULT_STDIO_LIMIT_BYTES = 32_768
 _JSON_LOADS = json.loads
 _JSON_DECODE_ERROR = json.JSONDecodeError
+_PYTHON_CODE_BLOCK_TAG_LENGTH = len("python")
+_PYTHON_CODE_BLOCK_TAG_VARIANTS = (
+    "python",
+    "Python",
+    "PYTHON",
+    "PyThOn",
+    "pYtHoN",
+    *(
+        variant
+        for variant in (
+            "".join(
+                upper if bitmask & (1 << offset) else lower
+                for offset, (lower, upper) in enumerate(zip("python", "PYTHON"))
+            )
+            for bitmask in range(1 << _PYTHON_CODE_BLOCK_TAG_LENGTH)
+        )
+        if variant not in {"python", "Python", "PYTHON", "PyThOn", "pYtHoN"}
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -63,8 +82,8 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
 
 
 def _code_block_content_start(text: str, start: int) -> int:
-    if text[start : start + 6].lower() == "python":
-        start += 6
+    if text.startswith(_PYTHON_CODE_BLOCK_TAG_VARIANTS, start):
+        start += _PYTHON_CODE_BLOCK_TAG_LENGTH
     while start < len(text) and text[start].isspace():
         start += 1
     return start
@@ -241,8 +260,38 @@ def _count_tests(test_code: str) -> int:
         module = ast.parse(test_code, filename="<tests>", mode="exec")
     except SyntaxError:
         return _count_nonblank_test_lines(test_code)
-    assert_count = sum(1 for node in ast.walk(module) if isinstance(node, ast.Assert))
+    assert_count = _count_assert_nodes(module)
     return assert_count or _count_nonblank_test_lines(test_code)
+
+
+def _count_assert_nodes(
+    module: ast.AST,
+    *,
+    _stmt_container_types=(ast.stmt, ast.ExceptHandler, ast.match_case),
+    _assert_type=ast.Assert,
+    _isinstance=isinstance,
+) -> int:
+    count = 0
+    stack: list[ast.AST] = []
+    stack_append = stack.append
+    for node in getattr(module, "body", ()):
+        if _isinstance(node, _assert_type):
+            count += 1
+        elif _isinstance(node, _stmt_container_types):
+            stack_append(node)
+    stack_pop = stack.pop
+    while stack:
+        node = stack_pop()
+        if _isinstance(node, _assert_type):
+            count += 1
+            continue
+        for field_name in node._fields:
+            child = getattr(node, field_name, None)
+            if _isinstance(child, list):
+                for item in child:
+                    if _isinstance(item, _stmt_container_types):
+                        stack_append(item)
+    return count
 
 
 def _count_nonblank_test_lines(test_code: str) -> int:
@@ -295,6 +344,17 @@ _REQUIRED_CODE_EVAL_PAYLOAD_STRING_KEYS = (
     "test_status",
     "failure_detail",
 )
+
+
+def _code_eval_payload_has_required_string_fields(payload: dict[str, object]) -> bool:
+    return (
+        "runtime_status" in payload
+        and "timeout_status" in payload
+        and "test_status" in payload
+        and "failure_detail" in payload
+    )
+
+
 _CODE_EVAL_PAYLOAD_KEY_TOKENS = {
     key: json.dumps(key, separators=(",", ":")).encode("utf-8")
     for key in (*_CODE_EVAL_PAYLOAD_STRING_KEYS, *_CODE_EVAL_PAYLOAD_INT_KEYS)
@@ -371,13 +431,14 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
                 search_start = value_start + len(value) + 1
             continue
 
-        value = _extract_json_int_field_at(payload_bytes, value_start)
-        if value is None:
+        int_result = _extract_json_int_field_value_and_end(payload_bytes, value_start)
+        if int_result is None:
             return None
+        value, value_end = int_result
         payload[key] = value
-        search_start = value_start + len(str(value))
+        search_start = value_end
 
-    if all(key in payload for key in _REQUIRED_CODE_EVAL_PAYLOAD_STRING_KEYS):
+    if _code_eval_payload_has_required_string_fields(payload):
         return payload
     return None
 
@@ -450,6 +511,17 @@ def _extract_json_int_field_with_token(payload_bytes: bytes, key_token: bytes) -
 
 
 def _extract_json_int_field_at(payload_bytes: bytes, start: int | None) -> int | None:
+    result = _extract_json_int_field_value_and_end(payload_bytes, start)
+    if result is None:
+        return None
+    value, _end = result
+    return value
+
+
+def _extract_json_int_field_value_and_end(
+    payload_bytes: bytes,
+    start: int | None,
+) -> tuple[int, int] | None:
     if start is None:
         return None
     cursor = start
@@ -471,7 +543,7 @@ def _extract_json_int_field_at(payload_bytes: bytes, start: int | None) -> int |
         cursor += 1
     if digit_count == 0:
         return None
-    return sign * value
+    return sign * value, cursor
 
 
 def _read_limited_stdio(path: Path, byte_limit: int) -> tuple[str, int]:

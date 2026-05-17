@@ -7,6 +7,7 @@ import time
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -19,8 +20,13 @@ SERVING_DIAGNOSTICS_COMPARISON_SCHEMA_VERSION = "melix.serving_diagnostics.compa
 _EMPTY_EVENT_ATTRIBUTES: Mapping[str, object] = MappingProxyType({})
 _JSON_COMPACT_SEPARATORS = (",", ":")
 _JSONL_ENCODER = json.JSONEncoder(sort_keys=True, separators=_JSON_COMPACT_SEPARATORS)
-_JSON_STRING_ENCODER = json.JSONEncoder(separators=_JSON_COMPACT_SEPARATORS).encode
+_JSON_STRING_ENCODER = json.encoder.encode_basestring_ascii
 _SET_FROZEN_ATTR = object.__setattr__
+
+
+@lru_cache(maxsize=1024)
+def _json_string_literal(value: str) -> str:
+    return _JSON_STRING_ENCODER(value)
 
 
 class ServingDiagnosticsComparisonError(ValueError):
@@ -35,6 +41,7 @@ class ServingDiagnosticsQueueSnapshot:
 
 class BoundedServingDiagnosticsEventQueue:
     __slots__ = (
+        "_append_event",
         "_dropped_count",
         "_events",
         "_is_saturated",
@@ -46,6 +53,7 @@ class BoundedServingDiagnosticsEventQueue:
     def __init__(self, *, max_events: int = 256) -> None:
         self._max_events = max(int(max_events), 1)
         self._events: deque[ServingDiagnosticsEvent] = deque(maxlen=self._max_events)
+        self._append_event = self._events.append
         self._dropped_count = 0
         self._is_saturated = False
         self._retained_count = 0
@@ -55,12 +63,10 @@ class BoundedServingDiagnosticsEventQueue:
         lock = self._lock
         lock.acquire()
         try:
-            events = self._events
+            self._append_event(event)
             if self._is_saturated:
                 self._dropped_count += 1
-                events.append(event)
                 return False
-            events.append(event)
             retained_count = self._retained_count + 1
             self._retained_count = retained_count
             self._is_saturated = retained_count >= self._max_events
@@ -158,14 +164,14 @@ class ServingDiagnosticsEvent:
         status: str,
         duration_ms: float = 0.0,
         attributes: Mapping[str, object] = _EMPTY_EVENT_ATTRIBUTES,
+        _set_attr: Any = _SET_FROZEN_ATTR,
     ) -> None:
-        set_attr = _SET_FROZEN_ATTR
-        set_attr(self, "request_id", request_id)
-        set_attr(self, "phase", phase)
-        set_attr(self, "event_index", event_index)
-        set_attr(self, "status", status)
-        set_attr(self, "duration_ms", duration_ms)
-        set_attr(self, "attributes", attributes)
+        _set_attr(self, "request_id", request_id)
+        _set_attr(self, "phase", phase)
+        _set_attr(self, "event_index", event_index)
+        _set_attr(self, "status", status)
+        _set_attr(self, "duration_ms", duration_ms)
+        _set_attr(self, "attributes", attributes)
 
     def to_dict(self) -> dict[str, object]:
         attributes = self.attributes
@@ -477,22 +483,28 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
 
 
 def _write_jsonl(path: Path, rows: Any) -> None:
-    with path.open("w", encoding="utf-8") as handle:
-        encode = _JSONL_ENCODER.encode
-        write = handle.write
-        for row in rows:
-            if isinstance(row, ServingDiagnosticsEvent):
-                fast_line = _empty_attribute_event_json_line(row)
-                if fast_line is not None:
-                    write(fast_line)
-                    write("\n")
-                    continue
-                row = row.to_dict()
-            write(encode(row))
-            write("\n")
+    encode = _JSONL_ENCODER.encode
+    payload = bytearray()
+    append_line = payload.extend
+    newline = b"\n"
+    request_id_literals: dict[str, str] = {}
+    for row in rows:
+        if isinstance(row, ServingDiagnosticsEvent):
+            fast_line = _empty_attribute_event_json_line(row, request_id_literals)
+            if fast_line is not None:
+                append_line(fast_line.encode("utf-8"))
+                append_line(newline)
+                continue
+            row = row.to_dict()
+        append_line(encode(row).encode("utf-8"))
+        append_line(newline)
+    path.write_bytes(payload)
 
 
-def _empty_attribute_event_json_line(event: ServingDiagnosticsEvent) -> str | None:
+def _empty_attribute_event_json_line(
+    event: ServingDiagnosticsEvent,
+    request_id_literals: dict[str, str] | None = None,
+) -> str | None:
     if event.attributes is not _EMPTY_EVENT_ATTRIBUTES:
         return None
     event_index = event.event_index
@@ -501,17 +513,29 @@ def _empty_attribute_event_json_line(event: ServingDiagnosticsEvent) -> str | No
         return None
     if not math.isfinite(duration_ms):
         return None
-    encode_string = _JSON_STRING_ENCODER
+    encode_string = _json_string_literal
+    phase = event.phase
+    request_id = event.request_id
+    status = event.status
+    encoded_phase = '"decode"' if phase == "decode" else encode_string(phase)
+    encoded_status = '"completed"' if status == "completed" else encode_string(status)
+    if request_id_literals is None:
+        encoded_request_id = encode_string(request_id)
+    else:
+        encoded_request_id = request_id_literals.get(request_id)
+        if encoded_request_id is None:
+            encoded_request_id = encode_string(request_id)
+            request_id_literals[request_id] = encoded_request_id
     return (
         '{"attributes":{},"duration_ms":'
-        f"{duration_ms!r}"
+        f"{duration_ms}"
         ',"event_index":'
         f"{event_index}"
         ',"phase":'
-        f"{encode_string(event.phase)}"
+        f"{encoded_phase}"
         ',"request_id":'
-        f"{encode_string(event.request_id)}"
+        f"{encoded_request_id}"
         ',"schema_version":"melix.serving_diagnostics.event.v1","status":'
-        f"{encode_string(event.status)}"
+        f"{encoded_status}"
         "}"
     )
