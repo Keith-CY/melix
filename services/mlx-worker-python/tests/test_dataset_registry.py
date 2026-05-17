@@ -343,6 +343,44 @@ def test_dataset_catalog_limited_json_text_reuses_shared_row_array_keys() -> Non
     ) == [{"prompt": "first"}]
 
 
+def test_dataset_catalog_limited_json_file_streams_before_full_read(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    json_path = tmp_path / "preview.json"
+    json_path.write_text(
+        '{"metadata":{"name":"probe"},"rows":[{"prompt":"first","answer":"a"},{"prompt":"second","answer":"b"}]}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(catalog, "_JSON_LIMITED_PREVIEW_CHUNK_CHARS", 32)
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        _ = (self, args, kwargs)
+        raise AssertionError("limited JSON previews should not read the full file text")
+
+    with pytest.raises(AssertionError):
+        fail_read_text(json_path)
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+
+    assert catalog._read_rows_from_file(json_path, limit=1) == [
+        {"prompt": "first", "answer": "a"}
+    ]
+
+
+def test_dataset_catalog_limited_json_file_helper_edges(tmp_path: Path) -> None:
+    empty_path = tmp_path / "empty.json"
+    empty_path.write_text("", encoding="utf-8")
+    invalid_path = tmp_path / "invalid.json"
+    invalid_path.write_text("not json", encoding="utf-8")
+    empty_rows_path = tmp_path / "empty-rows.json"
+    empty_rows_path.write_text('{"rows": []}', encoding="utf-8")
+
+    assert catalog._limited_rows_from_json_file(invalid_path, limit=0) == []
+    assert catalog._limited_rows_from_json_file(empty_path, limit=1) is None
+    assert catalog._limited_rows_from_json_file(empty_rows_path, limit=1) == []
+
+
+
 class _FakeColumnarBatch:
     def __init__(self, rows: list[object]) -> None:
         self._rows = rows
