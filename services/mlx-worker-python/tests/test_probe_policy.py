@@ -40,6 +40,12 @@ def test_probe_policy_exact_lowercase_strings_keep_source_value() -> None:
         assert policy.fallback_applied is False
         assert ProbePolicy.from_value(mode) is policy
 
+    class ExactModeString(str):
+        def strip(self, chars: str | None = None) -> str:  # pragma: no cover - should not run
+            raise AssertionError("exact supported modes should skip string normalization")
+
+    assert ProbePolicy.from_value(ExactModeString(ProbeMode.MINIMAL.value)).mode is ProbeMode.MINIMAL
+
     invalid_policy = ProbePolicy.from_value("definitely-not-valid")
     assert invalid_policy.mode is ProbeMode.MINIMAL
     assert invalid_policy.source_value == "definitely-not-valid"
