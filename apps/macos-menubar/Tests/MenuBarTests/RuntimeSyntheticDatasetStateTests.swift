@@ -401,6 +401,59 @@ struct RuntimeSyntheticDatasetStateTests {
         #expect(malformedViewModel.syntheticDatasetCreateErrorMessage == "dataset.synthetic.create returned malformed JSON.")
     }
 
+    @Test("synthetic dataset workflow runner rejects mismatched modes before dispatch")
+    func syntheticDatasetWorkflowRunnerRejectsMismatchedModesBeforeDispatch() async throws {
+        let runner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        let createOptions: DatasetSyntheticOptions
+        let previewOptions: DatasetSyntheticOptions
+        if case .datasetSynthetic(let options) = Self.syntheticCreateCommand() {
+            createOptions = options
+        } else {
+            Issue.record("Expected synthetic create command options.")
+            return
+        }
+        if case .datasetSynthetic(let options) = Self.syntheticPreviewCommand() {
+            previewOptions = options
+        } else {
+            Issue.record("Expected synthetic preview command options.")
+            return
+        }
+
+        do {
+            _ = try await runner.previewSyntheticDataset(options: createOptions)
+            Issue.record("Expected preview to reject create-mode options.")
+        } catch let error as MelixCLIWorkflowError {
+            switch error {
+            case .invalidOption(let commandID, let surface, let field, let expected, let actual):
+                #expect(commandID == "dataset.synthetic.create")
+                #expect(surface == .subprocess)
+                #expect(field == "mode")
+                #expect(expected == "preview")
+                #expect(actual == "create")
+            default:
+                Issue.record("Expected invalidOption, got \(error)")
+            }
+        }
+
+        do {
+            _ = try await runner.createSyntheticDataset(options: previewOptions)
+            Issue.record("Expected create to reject preview-mode options.")
+        } catch let error as MelixCLIWorkflowError {
+            switch error {
+            case .invalidOption(let commandID, let surface, let field, let expected, let actual):
+                #expect(commandID == "dataset.synthetic.preview")
+                #expect(surface == .subprocess)
+                #expect(field == "mode")
+                #expect(expected == "create")
+                #expect(actual == "preview")
+            default:
+                Issue.record("Expected invalidOption, got \(error)")
+            }
+        }
+
+        #expect(await runner.snapshotRecordedCommands().isEmpty)
+    }
+
     @Test("synthetic dataset error states classify dependency provider and invalid column failures")
     @MainActor
     func syntheticDatasetErrorStatesClassifyDependencyProviderAndInvalidColumnFailures() async throws {

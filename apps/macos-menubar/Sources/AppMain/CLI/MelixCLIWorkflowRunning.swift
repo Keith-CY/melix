@@ -10,6 +10,7 @@ public enum MelixCLIWorkflowFailureKind: String, Equatable, Sendable {
     case processFailed = "process_failed"
     case invalidJSON = "invalid_json"
     case missingField = "missing_field"
+    case invalidOption = "invalid_option"
     case unsupportedCommand = "unsupported_command"
 }
 
@@ -17,6 +18,13 @@ public enum MelixCLIWorkflowError: Error, Equatable, Sendable, LocalizedError {
     case processFailed(commandID: String, surface: MelixCLIWorkflowSurface, exitCode: Int32, stderr: String)
     case invalidJSON(commandID: String, surface: MelixCLIWorkflowSurface, output: String)
     case missingField(commandID: String, surface: MelixCLIWorkflowSurface, field: String)
+    case invalidOption(
+        commandID: String,
+        surface: MelixCLIWorkflowSurface,
+        field: String,
+        expected: String,
+        actual: String
+    )
     case unsupportedCommand(commandID: String, surface: MelixCLIWorkflowSurface)
 
     public var failureKind: MelixCLIWorkflowFailureKind {
@@ -27,6 +35,8 @@ public enum MelixCLIWorkflowError: Error, Equatable, Sendable, LocalizedError {
             return .invalidJSON
         case .missingField:
             return .missingField
+        case .invalidOption:
+            return .invalidOption
         case .unsupportedCommand:
             return .unsupportedCommand
         }
@@ -43,6 +53,8 @@ public enum MelixCLIWorkflowError: Error, Equatable, Sendable, LocalizedError {
             return "\(commandID) returned malformed JSON."
         case .missingField(let commandID, _, let field):
             return "\(commandID) did not return required field \(field)."
+        case .invalidOption(let commandID, _, let field, let expected, let actual):
+            return "\(commandID) expected \(field) \(expected), got \(actual)."
         case .unsupportedCommand(let commandID, _):
             return "\(commandID) is not supported by the CLI subprocess bridge."
         }
@@ -330,15 +342,30 @@ extension MelixCLIWorkflowRunning {
     }
 
     func previewSyntheticDataset(options: DatasetSyntheticOptions) async throws -> RuntimeSyntheticDatasetPreviewState {
-        let command = MelixCLICommand.datasetSynthetic(options)
+        let command = try syntheticDatasetCommand(options: options, expectedMode: "preview")
         let output = try await run(command)
         return try decodeSyntheticDatasetPreview(output: output, command: command, surface: surface)
     }
 
     func createSyntheticDataset(options: DatasetSyntheticOptions) async throws -> RuntimeSyntheticDatasetCreateResultState {
-        let command = MelixCLICommand.datasetSynthetic(options)
+        let command = try syntheticDatasetCommand(options: options, expectedMode: "create")
         let output = try await run(command)
         return try decodeSyntheticDatasetCreate(output: output, command: command, surface: surface)
+    }
+
+    private func syntheticDatasetCommand(options: DatasetSyntheticOptions, expectedMode: String) throws -> MelixCLICommand {
+        let command = MelixCLICommand.datasetSynthetic(options)
+        // DatasetSyntheticOptions.mode is the CLI subcommand selector; the decoder must match it.
+        guard options.mode == expectedMode else {
+            throw MelixCLIWorkflowError.invalidOption(
+                commandID: command.workflowCommandID,
+                surface: surface,
+                field: "mode",
+                expected: expectedMode,
+                actual: options.mode
+            )
+        }
+        return command
     }
 }
 

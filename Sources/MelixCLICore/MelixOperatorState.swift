@@ -309,6 +309,8 @@ public struct MelixOperatorDownloadQueueEntryState: Codable, Equatable, Sendable
 }
 
 public struct MelixOperatorSessionState: Codable, Equatable, Sendable {
+    // Aggregate operator-session compatibility floor. Split on-disk UI documents
+    // may advance their own schema independently when only UI state changes.
     public var schemaVersion: Int
     public var selectedSurfaceID: String
     public var selectedToolSectionID: String
@@ -576,6 +578,9 @@ public struct MelixOperatorSessionStore: MelixOperatorSessionStoring {
 }
 
 private struct OperatorSessionUIDocument: Codable, Equatable, Sendable {
+    // File-format version for the UI document shard. It is mapped back into
+    // MelixOperatorSessionState on load/save but is intentionally not the same
+    // counter as every aggregate operator-state schema version.
     var schemaVersion: Int
     var selectedSurfaceID: String
     var selectedToolSectionID: String

@@ -13526,6 +13526,7 @@ public final class RuntimeViewModel {
                 case .processFailed(let commandID, _, _, _),
                      .invalidJSON(let commandID, _, _),
                      .missingField(let commandID, _, _),
+                     .invalidOption(let commandID, _, _, _, _),
                      .unsupportedCommand(let commandID, _):
                     return commandID
                 }
@@ -13535,6 +13536,7 @@ public final class RuntimeViewModel {
                 case .processFailed(_, let surface, _, _),
                      .invalidJSON(_, let surface, _),
                      .missingField(_, let surface, _),
+                     .invalidOption(_, let surface, _, _, _),
                      .unsupportedCommand(_, let surface):
                     return surface
                 }

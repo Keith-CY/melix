@@ -3800,6 +3800,7 @@ struct DesktopSyntheticDatasetToolSectionView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
     }
 
     private func formField(_ label: String, text: Binding<String>) -> some View {
@@ -3812,6 +3813,7 @@ struct DesktopSyntheticDatasetToolSectionView: View {
         }
     }
 
+    // Deterministic smoke-test projection; rendered accessibility is grouped from child views.
     var accessibilitySummary: String {
         var values = [
             "Synthetic Dataset Studio",
@@ -4476,9 +4478,21 @@ struct DesktopJobsToolSectionView: View {
                         DesktopJobSummaryField(title: "Run", value: detail.summary.runKind)
                         DesktopJobSummaryField(title: "Status", value: detail.summary.status)
                         DesktopJobSummaryField(title: "Phase", value: detail.summary.phase)
-                        DesktopJobSummaryField(title: "Started", value: timestampText(detail.timestamps.startedAtUnixMS))
-                        DesktopJobSummaryField(title: "Updated", value: timestampText(detail.timestamps.updatedAtUnixMS))
-                        DesktopJobSummaryField(title: "Ended", value: timestampText(detail.timestamps.endedAtUnixMS))
+                        DesktopJobSummaryField(
+                            title: "Started",
+                            value: timestampText(detail.timestamps.startedAtUnixMS),
+                            secondaryValue: rawTimestampText(detail.timestamps.startedAtUnixMS)
+                        )
+                        DesktopJobSummaryField(
+                            title: "Updated",
+                            value: timestampText(detail.timestamps.updatedAtUnixMS),
+                            secondaryValue: rawTimestampText(detail.timestamps.updatedAtUnixMS)
+                        )
+                        DesktopJobSummaryField(
+                            title: "Ended",
+                            value: timestampText(detail.timestamps.endedAtUnixMS),
+                            secondaryValue: rawTimestampText(detail.timestamps.endedAtUnixMS)
+                        )
                         DesktopJobSummaryField(title: "Duration", value: durationText(detail.timestamps.durationMS))
                         DesktopJobSummaryField(title: "Model", value: detail.summary.modelID)
                         DesktopJobSummaryField(title: "Task", value: detail.summary.taskKind)
@@ -4610,7 +4624,18 @@ struct DesktopJobsToolSectionView: View {
     }
 
     private func timestampText(_ unixMS: Int64) -> String {
-        unixMS == 0 ? "N/A" : String(unixMS)
+        guard unixMS > 0 else {
+            return "N/A"
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss zzz"
+        return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(unixMS) / 1_000))
+    }
+
+    private func rawTimestampText(_ unixMS: Int64) -> String? {
+        unixMS == 0 ? nil : "raw \(unixMS) ms"
     }
 
     private func durationText(_ durationMS: Int64) -> String {
@@ -4731,6 +4756,13 @@ private struct DesktopBatchRunMissingOnlyToggle: NSViewRepresentable {
 private struct DesktopJobSummaryField: View {
     let title: String
     let value: String
+    let secondaryValue: String?
+
+    init(title: String, value: String, secondaryValue: String? = nil) {
+        self.title = title
+        self.value = value
+        self.secondaryValue = secondaryValue
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -4741,6 +4773,13 @@ private struct DesktopJobSummaryField: View {
                 .font(.caption)
                 .textSelection(.enabled)
                 .lineLimit(2)
+            if let secondaryValue, secondaryValue.isEmpty == false {
+                Text(secondaryValue)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .lineLimit(1)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

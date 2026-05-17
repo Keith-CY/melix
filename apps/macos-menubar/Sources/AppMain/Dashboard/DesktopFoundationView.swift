@@ -2053,7 +2053,6 @@ struct DesktopSettingsTabView: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(accessibilitySummary)
     }
 
     private func runtimeSettingsControls(_ viewModel: RuntimeViewModel) -> some View {
@@ -2196,7 +2195,7 @@ struct DesktopSettingsTabView: View {
                     Text(payload.schemaVersion)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Button(action: { RuntimeDiscoveryClipboard.copy(payload.schemaVersion) }) {
+                    Button(action: { copyRuntimeDiscoveryValue(payload.schemaVersion) }) {
                         Label("Copy Schema Version", systemImage: "doc.on.doc")
                     }
                     .buttonStyle(.borderless)
@@ -2307,7 +2306,7 @@ struct DesktopSettingsTabView: View {
             Text(link.url)
                 .font(.caption)
                 .textSelection(.enabled)
-            Button(action: { RuntimeDiscoveryClipboard.copy(link.url) }) {
+            Button(action: { copyRuntimeDiscoveryValue(link.url) }) {
                 Label("Copy Endpoint", systemImage: "doc.on.doc")
             }
             .buttonStyle(.borderless)
@@ -2324,12 +2323,12 @@ struct DesktopSettingsTabView: View {
             Text(path.path)
                 .font(.caption)
                 .textSelection(.enabled)
-            Button(action: { RuntimeDiscoveryClipboard.copy(path.path) }) {
+            Button(action: { copyRuntimeDiscoveryValue(path.path) }) {
                 Label("Copy Schema Path", systemImage: "doc.on.doc")
             }
             .buttonStyle(.borderless)
             .controlSize(.small)
-            Button(action: { openRuntimeDiscoveryPath(path.path) }) {
+            Button(action: { RuntimeDiscoveryClipboard.open(path.path) }) {
                 Label("Open Schema Path", systemImage: "folder")
             }
             .buttonStyle(.borderless)
@@ -2337,6 +2336,14 @@ struct DesktopSettingsTabView: View {
         }
     }
 
+    private func copyRuntimeDiscoveryValue(_ value: String) {
+        let didCopy = RuntimeDiscoveryClipboard.copy(value)
+        if didCopy == false {
+            assertionFailure("Runtime discovery copy failed for a non-empty value.")
+        }
+    }
+
+    // Deterministic smoke-test projection; rendered accessibility is grouped from child views.
     var accessibilitySummary: String {
         if let viewModel, viewModel.runtimeSettingRows.isEmpty == false {
             var values = [
@@ -2437,44 +2444,19 @@ struct DesktopSettingsTabView: View {
     }
 }
 
-private struct DesktopSettingsOperationButton: NSViewRepresentable {
+private struct DesktopSettingsOperationButton: View {
     let title: String
     let isEnabled: Bool
     let action: () -> Void
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(action: action)
-    }
-
-    func makeNSView(context: Context) -> NSButton {
-        let button = NSButton(
-            title: title,
-            target: context.coordinator,
-            action: #selector(Coordinator.performAction(_:))
-        )
-        button.bezelStyle = .rounded
-        button.controlSize = .small
-        button.setAccessibilityLabel(title)
-        return button
-    }
-
-    func updateNSView(_ button: NSButton, context: Context) {
-        context.coordinator.action = action
-        button.title = title
-        button.isEnabled = isEnabled
-        button.setAccessibilityLabel(title)
-    }
-
-    final class Coordinator: NSObject {
-        var action: () -> Void
-
-        init(action: @escaping () -> Void) {
-            self.action = action
-        }
-
-        @objc func performAction(_ sender: NSButton) {
+    var body: some View {
+        Button(title) {
             action()
         }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .disabled(isEnabled == false)
+        .accessibilityLabel(title)
     }
 }
 
@@ -2591,16 +2573,16 @@ enum RuntimeDiscoveryClipboard {
         pasteboard.clearContents()
         return pasteboard.setString(trimmedValue, forType: .string)
     }
-}
 
-@discardableResult
-func openRuntimeDiscoveryPath(
-    _ path: String,
-    opener: (URL) -> Bool = { NSWorkspace.shared.open($0) }
-) -> Bool {
-    let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard trimmedPath.isEmpty == false else {
-        return false
+    @discardableResult
+    static func open(
+        _ path: String,
+        opener: (URL) -> Bool = { NSWorkspace.shared.open($0) }
+    ) -> Bool {
+        let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedPath.isEmpty == false else {
+            return false
+        }
+        return opener(URL(fileURLWithPath: (trimmedPath as NSString).expandingTildeInPath))
     }
-    return opener(URL(fileURLWithPath: trimmedPath))
 }

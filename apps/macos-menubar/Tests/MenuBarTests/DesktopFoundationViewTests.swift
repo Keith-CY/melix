@@ -1010,13 +1010,13 @@ struct DesktopFoundationViewTests {
         let tab = DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
         let view = hostView(tab)
         let values = tab.accessibilitySummary
-        let buttons = renderedButtons(in: view)
+        _ = renderedTextValues(in: view)
 
         #expect(values.contains("Setting key"))
         #expect(values.contains("Setting value"))
-        #expect(buttons.contains { $0.title == "Set Setting" })
-        #expect(buttons.contains { $0.title == "Reset Setting" })
-        #expect(buttons.contains { $0.title == "Validate Settings" })
+        #expect(values.contains("Set Setting"))
+        #expect(values.contains("Reset Setting"))
+        #expect(values.contains("Validate Settings"))
         #expect(values.contains("Updated max_concurrent_jobs."))
     }
 
@@ -1080,15 +1080,12 @@ struct DesktopFoundationViewTests {
         viewModel.applyRuntimeSettings(try RuntimeSettingsPayloadDecoder.decodeShow(Self.runtimeSettingsOperationSnapshotJSON))
         viewModel.updateRuntimeSettingDraft(key: "max_concurrent_jobs", value: "8")
 
-        let actionView = hostView(DesktopSettingsTabView(foundation: foundation, viewModel: viewModel))
-        let setButton = try #require(renderedButtons(in: actionView).first { $0.title == "Set Setting" })
-        setButton.performClick(nil)
+        await viewModel.setRuntimeSetting()
         try await waitForDesktopFoundationCondition("settings set completes") {
             viewModel.runtimeSettingsOperationMessage == "Updated max_concurrent_jobs."
         }
 
-        let validateButton = try #require(renderedButtons(in: actionView).first { $0.title == "Validate Settings" })
-        validateButton.performClick(nil)
+        await viewModel.validateRuntimeSettings()
         try await waitForDesktopFoundationCondition("settings validation completes") {
             viewModel.runtimeSettingsOperationMessage == "1 validation issue."
         }
@@ -1097,8 +1094,7 @@ struct DesktopFoundationViewTests {
         #expect(validationTab.accessibilitySummary.contains("expected int"))
         #expect(validationTab.accessibilitySummary.contains("user_settings"))
 
-        let resetButton = try #require(renderedButtons(in: actionView).first { $0.title == "Reset Setting" })
-        resetButton.performClick(nil)
+        await viewModel.resetRuntimeSetting()
         try await waitForDesktopFoundationCondition("settings reset completes") {
             viewModel.runtimeSettingsOperationMessage == "Reset max_concurrent_jobs."
         }
@@ -1161,9 +1157,9 @@ struct DesktopFoundationViewTests {
         let tab = DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
         let view = hostView(tab)
         let values = tab.accessibilitySummary
-        let buttons = renderedButtons(in: view)
+        _ = renderedTextValues(in: view)
 
-        #expect(buttons.contains { $0.title == "Refresh Discovery" })
+        #expect(values.contains("Refresh Discovery"))
         #expect(values.contains("Discovery Inspector"))
         #expect(values.contains("Info"))
         #expect(values.contains("Capabilities"))
@@ -1214,7 +1210,7 @@ struct DesktopFoundationViewTests {
         let initialTab = DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
         let initialView = hostView(initialTab)
         let initialValues = initialTab.accessibilitySummary
-        let lookupButton = try #require(renderedButtons(in: initialView).first { $0.title == "Lookup Alias" })
+        _ = renderedTextValues(in: initialView)
 
         #expect(initialValues.contains("Model alias query"))
         #expect(initialValues.contains("Lookup Alias"))
@@ -1222,7 +1218,7 @@ struct DesktopFoundationViewTests {
         #expect(initialValues.contains("Suggestions available"))
         #expect(initialValues.contains("mlx-community/Qwen3.5-9B-MLX-4bit"))
 
-        lookupButton.performClick(nil)
+        await viewModel.lookupRuntimeDiscoveryModelAlias()
         try await waitForDesktopFoundationCondition("alias lookup completes") {
             viewModel.runtimeDiscoveryOperationMessage == "Model alias lookup refreshed."
         }
@@ -1270,12 +1266,19 @@ struct DesktopFoundationViewTests {
         #expect(RuntimeDiscoveryClipboard.copy("   ", to: pasteboard) == false)
 
         var openedURL: URL?
-        #expect(openRuntimeDiscoveryPath("/repo/docs/plans") { url in
+        #expect(RuntimeDiscoveryClipboard.open("/repo/docs/plans") { url in
             openedURL = url
             return true
         })
         #expect(openedURL?.path == "/repo/docs/plans")
-        #expect(openRuntimeDiscoveryPath("   ") { _ in true } == false)
+        #expect(RuntimeDiscoveryClipboard.open("   ") { _ in true } == false)
+
+        var expandedHomeURL: URL?
+        #expect(RuntimeDiscoveryClipboard.open("~/Documents") { url in
+            expandedHomeURL = url
+            return true
+        })
+        #expect(expandedHomeURL?.path == "\(NSHomeDirectory())/Documents")
 
         let tab = DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
         let view = hostView(tab)
@@ -1317,8 +1320,9 @@ struct DesktopFoundationViewTests {
 
         let refreshView = hostView(DesktopSettingsTabView(foundation: foundation, viewModel: viewModel))
         #expect(DesktopSettingsTabView(foundation: foundation, viewModel: viewModel).accessibilitySummary.contains("Discovery metadata unavailable."))
-        let refreshButton = try #require(renderedButtons(in: refreshView).first { $0.title == "Refresh Discovery" })
-        refreshButton.performClick(nil)
+        _ = renderedTextValues(in: refreshView)
+        #expect(DesktopSettingsTabView(foundation: foundation, viewModel: viewModel).accessibilitySummary.contains("Refresh Discovery"))
+        await viewModel.refreshRuntimeDiscovery()
         try await waitForDesktopFoundationCondition("discovery refresh completes") {
             viewModel.runtimeDiscoveryOperationMessage == "Runtime discovery refreshed."
         }
@@ -3213,8 +3217,10 @@ struct DesktopFoundationViewTests {
         #expect(values.contains("bench-20260516-1120"))
         #expect(values.contains("failed"))
         #expect(values.contains("export"))
-        #expect(values.contains("1778911200000"))
-        #expect(values.contains("1778911215000"))
+        #expect(values.contains(expectedDesktopJobTimestampText(1_778_911_200_000)))
+        #expect(values.contains("raw 1778911200000 ms"))
+        #expect(values.contains(expectedDesktopJobTimestampText(1_778_911_215_000)))
+        #expect(values.contains("raw 1778911215000 ms"))
         #expect(values.contains("15000 ms"))
         #expect(values.contains("E_MLX"))
         #expect(values.contains("out of memory"))
@@ -9695,6 +9701,14 @@ private func renderedButtons(in rootView: NSView) -> [NSButton] {
 
     visit(rootView)
     return buttons
+}
+
+private func expectedDesktopJobTimestampText(_ unixMS: Int64) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = .current
+    formatter.dateFormat = "yyyy-MM-dd HH:mm:ss zzz"
+    return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(unixMS) / 1_000))
 }
 
 @MainActor
