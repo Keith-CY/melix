@@ -684,6 +684,28 @@ def _limited_rows_from_json_text(json_text: str, *, limit: int) -> list[dict[str
     return None
 
 
+def _direct_first_row_array_start(json_text: str, object_start: int, text_length: int) -> int | None:
+    cursor = object_start + 1
+    while cursor < text_length and json_text[cursor].isspace():
+        cursor += 1
+    if json_text.startswith('"rows"', cursor):
+        cursor += 6
+    elif json_text.startswith('"data"', cursor):
+        cursor += 6
+    else:
+        return None
+    while cursor < text_length and json_text[cursor].isspace():
+        cursor += 1
+    if cursor >= text_length or json_text[cursor] != ":":
+        return None
+    cursor += 1
+    while cursor < text_length and json_text[cursor].isspace():
+        cursor += 1
+    if cursor < text_length and json_text[cursor] == "[":
+        return cursor
+    return None
+
+
 def _json_text_first_array_start(json_text: str) -> int | None:
     cursor = 0
     text_length = len(json_text)
@@ -695,6 +717,9 @@ def _json_text_first_array_start(json_text: str) -> int | None:
         return cursor
     if json_text[cursor] != "{":
         return None
+    direct_array_start = _direct_first_row_array_start(json_text, cursor, text_length)
+    if direct_array_start is not None:
+        return direct_array_start
 
     decoder = _JSON_DECODER
     cursor += 1
