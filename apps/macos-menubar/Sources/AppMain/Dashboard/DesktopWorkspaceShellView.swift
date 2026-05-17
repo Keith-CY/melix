@@ -5972,6 +5972,7 @@ struct DesktopTrainingToolSectionView: View {
             DesktopTrainingSummaryItem(title: "Benchmark Job", value: artifacts.benchmarkJobID, detail: ""),
             DesktopTrainingSummaryItem(title: "Evaluation Job", value: artifacts.evaluationJobID, detail: ""),
             DesktopTrainingSummaryItem(title: "Published Repo", value: artifacts.publishedRepo, detail: ""),
+            DesktopTrainingSummaryItem(title: "Memory Fit", value: artifacts.memoryFitSummaryText, detail: ""),
         ].filter { item in
             item.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         }
@@ -7011,6 +7012,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 profileSummaryLabel(entry.profileSummaryText)
+                memoryFitEvidenceLabel(entry.memoryFitSummaryText)
             }
 
             if benchmarkSnapshotItems.isEmpty {
@@ -7060,6 +7062,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                 Text(evaluationSelectionSubtitle(for: entry))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                memoryFitEvidenceLabel(entry.memoryFitSummaryText)
             }
 
             if evaluationSnapshotItems.isEmpty {
@@ -7111,7 +7114,21 @@ struct DesktopDiagnosticsToolSectionView: View {
 
     private func evaluationSelectionSubtitle(for entry: RuntimeEvaluationHistoryEntryState) -> String {
         let selectedSource = entry.sourceRepo.isEmpty ? entry.modelID : entry.sourceRepo
-        return "\(entry.taskTitle) • \(selectedSource) • \(entry.datasetID)"
+        return [entry.taskTitle, selectedSource, entry.datasetID]
+            .filter { $0.isEmpty == false }
+            .joined(separator: " • ")
+    }
+
+    @ViewBuilder
+    private func memoryFitEvidenceLabel(_ text: String) -> some View {
+        if text.isEmpty == false {
+            DesktopPassiveStaticTextLabel(
+                title: "Memory fit: \(text)",
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+                textColor: .secondaryLabelColor
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     @ViewBuilder

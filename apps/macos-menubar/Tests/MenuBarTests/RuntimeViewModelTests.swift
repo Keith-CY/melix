@@ -6347,6 +6347,140 @@ struct RuntimeViewModelTests {
         #expect(await client.recordedModelOperationRequests.contains { $0.operation == "train_lora" })
     }
 
+    @Test("memory fit receipt summaries persist into selected run and training evidence")
+    @MainActor
+    func memoryFitReceiptSummariesPersistIntoSelectedRunAndTrainingEvidence() async throws {
+        let modelID = "melix-dev-text-lora"
+        var model = makeModelSummary(modelID: modelID, state: .modelWarm)
+        model.settings.ext["melix.memory_fit.benchmark.status"] = "heavy"
+        model.settings.ext["melix.memory_fit.benchmark.reason"] = "Benchmark KV cache may exceed comfort budget."
+        model.settings.ext["melix.memory_fit.benchmark.estimated_active_memory_bytes"] = "34359738368"
+        model.settings.ext["melix.memory_fit.eval.status"] = "good"
+        model.settings.ext["melix.memory_fit.eval.reason"] = "Eval sample size fits available memory."
+        model.settings.ext["melix.memory_fit.eval.total_unified_memory_bytes"] = "68719476736"
+        model.settings.ext["melix.memory_fit.train.status"] = "blocked"
+        model.settings.ext["melix.memory_fit.train.reason"] = "Training optimizer estimate exceeds unified memory."
+        model.settings.ext["melix.memory_fit.train.safety_threshold_fraction"] = "0.85"
+        let legacyArtifactsData = try #require(
+            #"{"adapter_manifest_path":"/tmp/legacy.adapter.json"}"#.data(using: .utf8)
+        )
+        let legacyArtifacts = try JSONDecoder().decode(
+            LoraTrainingFollowUpArtifacts.self,
+            from: legacyArtifactsData
+        )
+        #expect(legacyArtifacts.adapterManifestPath == "/tmp/legacy.adapter.json")
+        #expect(legacyArtifacts.memoryFitSummaryText == "")
+        let encodedArtifacts = try JSONEncoder().encode(
+            LoraTrainingFollowUpArtifacts(
+                memoryFitSummaryText: "Heavy - Benchmark KV cache may exceed comfort budget."
+            )
+        )
+        let encodedPayload = try #require(
+            JSONSerialization.jsonObject(with: encodedArtifacts) as? [String: Any]
+        )
+        #expect(encodedPayload["memory_fit_summary_text"] as? String == "Heavy - Benchmark KV cache may exceed comfort budget.")
+
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [model],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "train_lora",
+                outputPath: "/tmp/melix-train-lora/memory-fit-evidence.adapter.json",
+                manifestJSON: #"{"operation":"train_lora","job_id":"model-ops-memory-fit-evidence"}"#,
+                artifactKind: "adapter",
+                manifestPath: "/tmp/melix-train-lora/memory-fit-evidence.adapter.json"
+            ),
+            forNamedOperation: "train_lora"
+        )
+        let store = FakeLoraTrainingJobStore()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            loraTrainingJobStore: store
+        )
+        await viewModel.start()
+
+        await viewModel.refreshBenchmarkHistory()
+        await viewModel.refreshEvaluationHistory()
+
+        let benchmarkEvidence = try #require(viewModel.selectedBenchmarkHistoryEntry?.memoryFitSummaryText)
+        #expect(benchmarkEvidence == "Heavy - Benchmark KV cache may exceed comfort budget. • active memory 32.00 GB")
+        #expect(viewModel.selectedBenchmarkMemoryFitEvidenceText == benchmarkEvidence)
+
+        let evaluationEvidence = try #require(viewModel.selectedEvaluationHistoryEntry?.memoryFitSummaryText)
+        #expect(evaluationEvidence == "Good - Eval sample size fits available memory. • unified memory 64.00 GB")
+        #expect(viewModel.selectedEvaluationMemoryFitEvidenceText == evaluationEvidence)
+
+        let pendingClient = FakeControlPlaneXPCClient()
+        await pendingClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [model],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-2")]
+            )
+        )
+        await pendingClient.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSONWithoutResults())
+        )
+        var pendingEvaluationJob = Melix_Controlplane_V1_EvaluationJobSummary()
+        pendingEvaluationJob.jobID = "eval-memory-fit-pending"
+        pendingEvaluationJob.modelID = modelID
+        pendingEvaluationJob.taskKind = "text-generation"
+        pendingEvaluationJob.sourceRepo = "cais/mmlu"
+        pendingEvaluationJob.suiteID = "mmlu"
+        pendingEvaluationJob.datasetID = "mmlu.dev.v1"
+        pendingEvaluationJob.sampleSize = 8
+        pendingEvaluationJob.scoringMode = "multiple_choice_accuracy"
+        pendingEvaluationJob.status = "completed"
+        pendingEvaluationJob.outputDir = "/tmp/melix/evaluation/runs/eval-memory-fit-pending"
+        pendingEvaluationJob.createdAtUnixMs = 1_712_600_000_000
+        pendingEvaluationJob.updatedAtUnixMs = 1_712_600_001_000
+        var pendingMetric = Melix_Controlplane_V1_BenchmarkMetricValue()
+        pendingMetric.name = "eval.mmlu.typed_score_mean"
+        pendingMetric.value = 0.75
+        pendingMetric.unit = "ratio"
+        var pendingSummary = Melix_Controlplane_V1_EvaluationResultSummary()
+        pendingSummary.jobID = "eval-memory-fit-pending"
+        pendingSummary.suiteID = "mmlu"
+        pendingSummary.datasetID = "mmlu.dev.v1"
+        pendingSummary.sampleSize = 8
+        pendingSummary.metrics = [pendingMetric]
+        await pendingClient.configureEvaluationResponse(
+            ControlPlaneEvaluationResult(job: pendingEvaluationJob, results: [pendingSummary])
+        )
+        let pendingViewModel = RuntimeViewModel(client: pendingClient)
+        await pendingViewModel.start()
+        pendingViewModel.updateSelectedServerSessionModelID(modelID)
+        pendingViewModel.selectedEvaluationModelID = modelID
+        pendingViewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+
+        await pendingViewModel.runEvaluation()
+
+        let pendingEvidence = try #require(pendingViewModel.selectedEvaluationHistoryEntry?.memoryFitSummaryText)
+        #expect(pendingViewModel.selectedEvaluationHistoryJobID == "eval-memory-fit-pending")
+        #expect(pendingEvidence == evaluationEvidence)
+        #expect(pendingViewModel.selectedEvaluationMemoryFitEvidenceText == pendingEvidence)
+
+        viewModel.selectedLoraModelID = modelID
+        viewModel.loraDatasetSourceKind = .localPackage
+        viewModel.loraDatasetURI = "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+        viewModel.loraAdapterName = "memory-fit-evidence-adapter"
+
+        await viewModel.trainPrimaryModel()
+
+        let saved = try #require(store.savedRecords.last)
+        #expect(saved.followUpArtifacts.memoryFitSummaryText == "Blocked - Training optimizer estimate exceeds unified memory. • threshold 85%")
+        #expect(viewModel.selectedLoraTrainingJobMemoryFitEvidenceText == saved.followUpArtifacts.memoryFitSummaryText)
+    }
+
     @Test("capability guards explain unsupported tools and acceleration disabled states")
     @MainActor
     func capabilityGuardsExplainUnsupportedToolsAndAccelerationDisabledStates() async throws {

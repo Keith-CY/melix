@@ -1584,6 +1584,7 @@ public struct RuntimeBenchmarkHistoryEntryState: Identifiable, Equatable, Sendab
     public let createdAtText: String
     public let createdAtUnixMS: Int64
     public let reportPath: String
+    public let memoryFitSummaryText: String
 }
 
 public struct RuntimeBenchmarkMetricCardState: Identifiable, Equatable, Sendable {
@@ -1698,6 +1699,7 @@ public struct RuntimeEvaluationHistoryEntryState: Identifiable, Equatable, Senda
     public let createdAtText: String
     public let createdAtUnixMS: Int64
     public let reportPath: String
+    public let memoryFitSummaryText: String
 }
 
 public struct RuntimeEvaluationMetricCardState: Identifiable, Equatable, Sendable {
@@ -6750,6 +6752,10 @@ public final class RuntimeViewModel {
             ?? benchmarkHistory.first
     }
 
+    public var selectedBenchmarkMemoryFitEvidenceText: String {
+        selectedBenchmarkHistoryEntry?.memoryFitSummaryText ?? ""
+    }
+
     public var selectedBenchmarkMatrixHistoryEntry: RuntimeBenchmarkMatrixHistoryEntryState? {
         benchmarkMatrixHistory.first(where: { $0.jobID == selectedBenchmarkMatrixHistoryJobID })
             ?? benchmarkMatrixHistory.first
@@ -6758,6 +6764,14 @@ public final class RuntimeViewModel {
     public var selectedEvaluationHistoryEntry: RuntimeEvaluationHistoryEntryState? {
         evaluationHistory.first(where: { $0.jobID == selectedEvaluationHistoryJobID })
             ?? evaluationHistory.first
+    }
+
+    public var selectedEvaluationMemoryFitEvidenceText: String {
+        selectedEvaluationHistoryEntry?.memoryFitSummaryText ?? ""
+    }
+
+    public var selectedLoraTrainingJobMemoryFitEvidenceText: String {
+        selectedLoraTrainingJob?.followUpArtifacts.memoryFitSummaryText ?? ""
     }
 
     public func loadEvidenceReport(json: String) throws {
@@ -11558,7 +11572,12 @@ public final class RuntimeViewModel {
 
     private func applyBenchmarkExportBundle(_ bundle: ControlPlaneBenchmarkExportBundle) {
         benchmarkExportBundle = bundle
-        benchmarkHistory = bundle.benchmarkHistoryEntries().map(Self.makeBenchmarkHistoryEntryState)
+        benchmarkHistory = bundle.benchmarkHistoryEntries().map { entry in
+            Self.makeBenchmarkHistoryEntryState(
+                from: entry,
+                memoryFitSummaryText: memoryFitReceiptSummary(modelID: entry.modelID, target: "benchmark")
+            )
+        }
         if benchmarkHistory.contains(where: { $0.jobID == selectedBenchmarkHistoryJobID }) == false {
             selectedBenchmarkHistoryJobID = benchmarkHistory.first?.jobID ?? ""
         }
@@ -11655,14 +11674,22 @@ public final class RuntimeViewModel {
     private func rebuildEvaluationDerivedState() {
         let exportedHistory = benchmarkExportBundle?
             .evaluationHistoryEntries()
-            .map(Self.makeEvaluationHistoryEntryState) ?? []
+            .map { entry in
+                Self.makeEvaluationHistoryEntryState(
+                    from: entry,
+                    memoryFitSummaryText: memoryFitReceiptSummary(modelID: entry.modelID, target: "eval")
+                )
+            } ?? []
         let exportedJobIDs = Set(exportedHistory.map(\.jobID))
         let pendingHistory = pendingEvaluationSummaryRows.values
             .compactMap { rows -> RuntimeEvaluationHistoryEntryState? in
                 guard let row = rows.first, exportedJobIDs.contains(row.jobID) == false else {
                     return nil
                 }
-                return Self.makeEvaluationHistoryEntryState(fromPendingSummaryRow: row)
+                return Self.makeEvaluationHistoryEntryState(
+                    fromPendingSummaryRow: row,
+                    memoryFitSummaryText: memoryFitReceiptSummary(modelID: row.modelID, target: "eval")
+                )
             }
         evaluationHistory = (exportedHistory + pendingHistory).sorted {
             if $0.createdAtUnixMS == $1.createdAtUnixMS {
@@ -11853,6 +11880,19 @@ public final class RuntimeViewModel {
         }
         return runtimeModelMemoryFitReceiptRows(for: model)
             .first { $0.target.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedTarget }
+    }
+
+    private func memoryFitReceiptSummary(modelID: String, target: String) -> String {
+        guard let row = memoryFitReceiptRow(modelID: modelID, target: target) else {
+            return ""
+        }
+        return Self.memoryFitReceiptSummary(row)
+    }
+
+    private static func memoryFitReceiptSummary(_ row: RuntimeMemoryFitReceiptRow) -> String {
+        ([ "\(row.statusText) - \(row.reasonText)" ] + row.detailRows)
+            .filter { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
+            .joined(separator: " • ")
     }
 
     private static func memoryFitReceiptBlocksDispatch(_ row: RuntimeMemoryFitReceiptRow) -> Bool {
@@ -14023,6 +14063,7 @@ public final class RuntimeViewModel {
     private func persistLoraTrainingLaunch(modelID: String) -> LoraTrainingJobRecord? {
         do {
             let config = currentLoraTrainingConfig(modelID: modelID)
+            let memoryFitSummaryText = memoryFitReceiptSummary(modelID: modelID, target: "train")
             let now = Date()
             var record: LoraTrainingJobRecord
             if selectedLoraTrainingJobLoadedForEditing,
@@ -14053,6 +14094,7 @@ public final class RuntimeViewModel {
                 record.completedAt = nil
                 record.terminalMessage = "Training launched from the desktop training studio."
             }
+            record.followUpArtifacts.memoryFitSummaryText = memoryFitSummaryText
             let saved = try loraTrainingJobStore.save(record)
             reloadLoraTrainingJobs()
             selectedLoraTrainingJobID = saved.id
@@ -15136,7 +15178,8 @@ public final class RuntimeViewModel {
     }
 
     private static func makeBenchmarkHistoryEntryState(
-        from entry: ControlPlaneBenchmarkHistoryEntry
+        from entry: ControlPlaneBenchmarkHistoryEntry,
+        memoryFitSummaryText: String = ""
     ) -> RuntimeBenchmarkHistoryEntryState {
         let datasetParts = [entry.datasetRepo, entry.datasetConfig]
             .filter { $0.isEmpty == false }
@@ -15159,7 +15202,8 @@ public final class RuntimeViewModel {
             metricCountText: "\(entry.metricCount) metrics",
             createdAtText: benchmarkTimestampLabel(entry.createdAtUnixMS),
             createdAtUnixMS: entry.createdAtUnixMS,
-            reportPath: entry.reportPath
+            reportPath: entry.reportPath,
+            memoryFitSummaryText: memoryFitSummaryText
         )
     }
 
@@ -15365,7 +15409,8 @@ public final class RuntimeViewModel {
     }
 
     private static func makeEvaluationHistoryEntryState(
-        from entry: ControlPlaneEvaluationHistoryEntry
+        from entry: ControlPlaneEvaluationHistoryEntry,
+        memoryFitSummaryText: String = ""
     ) -> RuntimeEvaluationHistoryEntryState {
         RuntimeEvaluationHistoryEntryState(
             id: "\(entry.jobID):\(entry.suiteID)",
@@ -15383,12 +15428,14 @@ public final class RuntimeViewModel {
             metricCountText: "\(entry.metricCount) metrics",
             createdAtText: benchmarkTimestampLabel(entry.createdAtUnixMS),
             createdAtUnixMS: entry.createdAtUnixMS,
-            reportPath: entry.reportPath
+            reportPath: entry.reportPath,
+            memoryFitSummaryText: memoryFitSummaryText
         )
     }
 
     private static func makeEvaluationHistoryEntryState(
-        fromPendingSummaryRow row: ControlPlaneEvaluationSummaryCSVRow
+        fromPendingSummaryRow row: ControlPlaneEvaluationSummaryCSVRow,
+        memoryFitSummaryText: String = ""
     ) -> RuntimeEvaluationHistoryEntryState {
         RuntimeEvaluationHistoryEntryState(
             id: "\(row.jobID):\(row.suiteID)",
@@ -15406,7 +15453,8 @@ public final class RuntimeViewModel {
             metricCountText: "1 metrics",
             createdAtText: benchmarkTimestampLabel(row.createdAtUnixMS),
             createdAtUnixMS: row.createdAtUnixMS,
-            reportPath: ""
+            reportPath: "",
+            memoryFitSummaryText: memoryFitSummaryText
         )
     }
 

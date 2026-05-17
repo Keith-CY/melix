@@ -3639,7 +3639,8 @@ struct DesktopFoundationViewTests {
                 quantizedArtifactPath: "/tmp/melix-quantize/saved-adapter/quantized.artifact",
                 convertedArtifactPath: "/tmp/melix-convert/saved-adapter/converted.artifact",
                 benchmarkJobID: "bench-saved-adapter",
-                evaluationJobID: "eval-saved-adapter"
+                evaluationJobID: "eval-saved-adapter",
+                memoryFitSummaryText: "Blocked - Training optimizer estimate exceeds unified memory. • threshold 85%"
             )
         )
         let viewModel = RuntimeViewModel(
@@ -3662,6 +3663,8 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Converted Artifact"))
         #expect(renderedTexts.contains("Benchmark Job"))
         #expect(renderedTexts.contains("Evaluation Job"))
+        #expect(renderedTexts.contains("Memory Fit"))
+        #expect(renderedTexts.contains("Blocked - Training optimizer estimate exceeds unified memory. • threshold 85%"))
         #expect(renderedTexts.contains("Activation"))
         #expect(renderedTexts.contains("Quantization"))
         #expect(renderedTexts.contains("Benchmark"))
@@ -5084,6 +5087,9 @@ struct DesktopFoundationViewTests {
         let client = FakeControlPlaneXPCClient()
         var derivedModel = ModelCatalog.devTextModel()
         derivedModel.modelID = "melix-dev-text-lora"
+        derivedModel.settings.ext["melix.memory_fit.benchmark.status"] = "heavy"
+        derivedModel.settings.ext["melix.memory_fit.benchmark.reason"] = "Benchmark KV cache may exceed comfort budget."
+        derivedModel.settings.ext["melix.memory_fit.benchmark.estimated_active_memory_bytes"] = "34359738368"
         await client.configureSnapshot(
             makeAudioSetupSnapshot(
                 models: [
@@ -5114,6 +5120,7 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.benchmarkHistory.count == 3)
         #expect(viewModel.selectedBenchmarkHistoryEntry?.profileSummaryText == "Profile: Throughput")
         #expect(renderedTexts.contains("Profile: Throughput"))
+        #expect(renderedTexts.contains { $0.contains("Memory fit: Heavy - Benchmark KV cache may exceed comfort budget.") })
         #expect(viewModel.benchmarkMetricCards.isEmpty == false)
         #expect(viewModel.benchmarkChartPoints.count == 2)
     }
@@ -5697,6 +5704,19 @@ struct DesktopFoundationViewTests {
     @MainActor
     func workspaceDiagnosticsRendersEvaluationConfigurationHistoryAndSamples() async throws {
         let client = FakeControlPlaneXPCClient()
+        var derivedModel = ModelCatalog.devTextModel()
+        derivedModel.modelID = "melix-dev-text-lora"
+        derivedModel.settings.ext["melix.memory_fit.eval.status"] = "good"
+        derivedModel.settings.ext["melix.memory_fit.eval.reason"] = "Eval sample size fits available memory."
+        derivedModel.settings.ext["melix.memory_fit.eval.total_unified_memory_bytes"] = "68719476736"
+        await client.configureSnapshot(
+            makeAudioSetupSnapshot(
+                models: [
+                    ModelCatalog.devTextModel(),
+                    derivedModel,
+                ]
+            )
+        )
         await client.configureExportResult(
             ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
         )
@@ -5718,6 +5738,7 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Compare"))
         #expect(renderedTexts.contains("multiple_choice_accuracy"))
         #expect(renderedTexts.contains("sandboxed"))
+        #expect(renderedTexts.contains { $0.contains("Memory fit: Good - Eval sample size fits available memory.") })
         #expect(viewModel.evaluationHistory.count == 1)
         #expect(viewModel.evaluationMetricCards.count == 1)
         #expect(viewModel.evaluationSamplePreview.count == 2)
