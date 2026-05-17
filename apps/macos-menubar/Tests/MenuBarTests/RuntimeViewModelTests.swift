@@ -6386,6 +6386,55 @@ struct RuntimeViewModelTests {
         #expect(viewModel.evaluationTargetSummaryText.contains("profile Throughput"))
     }
 
+    @Test("benchmark and matrix profile fields appear in setup and history rows")
+    @MainActor
+    func benchmarkAndMatrixProfileFieldsAppearInSetupAndHistoryRows() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let localModelID = "melix-dev-text-lora"
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(modelID: localModelID, state: .modelWarm)],
+            runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+        )
+        var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
+        servingDefaults.serverSessionID = "server-session-1"
+        servingDefaults.servedModelID = localModelID
+        servingDefaults.requestedAccelerationProfile = "throughput"
+        servingDefaults.effectiveAccelerationProfile = "throughput"
+        servingDefaults.accelerationProfileIntent = "Throughput-first serving with speculative decode when a draft model is supplied."
+        snapshot.servingDefaults.sessions = [servingDefaults]
+        await client.configureSnapshot(snapshot)
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+        await client.configureBenchResponse(
+            ControlPlaneBenchResult(
+                reportPath: "/tmp/melix/bench/runs/bench-profile/bench-report.md",
+                reportMarkdown: "# Melix Bench\n",
+                metrics: ["bench.smoke.tokens_per_second": 61.20]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        let localTarget = try #require(viewModel.diagnosticsServerTargets.first { $0.kind == .localServer })
+        viewModel.selectDiagnosticsServerTarget(id: localTarget.id)
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+
+        await viewModel.runBench()
+
+        let benchRequest = try #require(await client.recordedBenchRequests.last)
+        let benchmarkEntry = try #require(viewModel.benchmarkHistory.first { $0.jobID == "bench-newer" })
+        let matrixEntry = try #require(viewModel.benchmarkMatrixHistory.first { $0.jobID == "matrix-newer" })
+        let matrixSummaryRow = try #require(viewModel.benchmarkMatrixSummaryRows.first { $0.id.contains("matrix-newer") })
+
+        #expect(viewModel.benchmarkTargetSummaryText.contains("profile Throughput"))
+        #expect(benchRequest.parameters["acceleration_profile"] == "throughput")
+        #expect(benchmarkEntry.profileSummaryText == "Profile: Throughput")
+        #expect(matrixEntry.profileSummaryText == "Profile: Low Memory")
+        #expect(matrixSummaryRow.configurationSummary.contains("Low Memory"))
+    }
+
     @Test("server model options hide placeholders and create from ready registry models")
     @MainActor
     func serverModelOptionsHidePlaceholdersAndCreateFromReadyRegistryModels() async throws {

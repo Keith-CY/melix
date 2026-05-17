@@ -1545,6 +1545,7 @@ public struct RuntimeBenchmarkHistoryEntryState: Identifiable, Equatable, Sendab
     public let datasetLabel: String
     public let sampleSizeText: String
     public let batchFactorText: String
+    public let profileSummaryText: String
     public let statusText: String
     public let metricCountText: String
     public let createdAtText: String
@@ -1590,6 +1591,7 @@ public struct RuntimeBenchmarkMatrixHistoryEntryState: Identifiable, Equatable, 
     public let suiteSummary: String
     public let cellCountText: String
     public let loadBudgetText: String
+    public let profileSummaryText: String
     public let statusText: String
     public let createdAtText: String
     public let createdAtUnixMS: Int64
@@ -11941,7 +11943,21 @@ public final class RuntimeViewModel {
         if batchFactor.isEmpty == false {
             parameters["batch_factor"] = batchFactor
         }
+        let accelerationProfile = selectedDiagnosticsEffectiveAccelerationProfileID()
+        if accelerationProfile.isEmpty == false {
+            parameters["acceleration_profile"] = accelerationProfile
+        }
         return parameters
+    }
+
+    private func selectedDiagnosticsEffectiveAccelerationProfileID() -> String {
+        guard let target = selectedDiagnosticsServerTarget,
+              target.kind == .localServer,
+              let session = serverSessions.first(where: { $0.id == target.serverID })
+        else {
+            return ""
+        }
+        return session.servingDefaults.effectiveAccelerationProfile.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func evaluationParameters(
@@ -14984,6 +15000,7 @@ public final class RuntimeViewModel {
             datasetLabel: datasetParts + splitSuffix,
             sampleSizeText: entry.sampleSize.map(String.init) ?? "default",
             batchFactorText: entry.batchFactor.map(String.init) ?? "default",
+            profileSummaryText: benchmarkProfileSummaryText(for: entry.accelerationProfile),
             statusText: humanizeStatus(entry.status),
             metricCountText: "\(entry.metricCount) metrics",
             createdAtText: benchmarkTimestampLabel(entry.createdAtUnixMS),
@@ -15049,6 +15066,7 @@ public final class RuntimeViewModel {
                     suiteSummary: suiteSummary,
                     cellCountText: "\(group.count) cells",
                     loadBudgetText: loadBudgetText,
+                    profileSummaryText: benchmarkProfileSummaryText(for: representative.accelerationProfile),
                     statusText: humanizeStatus(representative.status),
                     createdAtText: benchmarkTimestampLabel(representative.createdAtUnixMS),
                     createdAtUnixMS: representative.createdAtUnixMS
@@ -15122,7 +15140,7 @@ public final class RuntimeViewModel {
         RuntimeBenchmarkMatrixSummaryRowState(
             id: "\(row.jobID):\(row.suiteID):\(row.contextLength):\(row.generationLength):\(row.batchSize):\(row.concurrencyLevel)",
             suiteTitle: benchmarkSuiteTitle(for: row.suiteID, taskKind: row.taskKind),
-            configurationSummary: "ctx \(row.contextLength) • gen \(row.generationLength) • batch \(row.batchSize) • conc \(row.concurrencyLevel) • \(humanizedControlTitle(row.cacheProfile)) • \(humanizedControlTitle(row.reasoningMode)) • \(humanizedControlTitle(row.structuredOutputMode))",
+            configurationSummary: benchmarkMatrixConfigurationSummary(for: row),
             latencyText: String(format: "TTFT %.2f ms • Lat %.2f ms", row.ttftMeanMS, row.requestLatencyMeanMS),
             throughputText: String(format: "Prefill %.2f • Decode %.2f • Req %.2f", row.prefillTokensPerSecondMean, row.decodeTokensPerSecondMean, row.throughputRequestsPerSecond),
             successRateText: String(format: "%.1f%% success", row.successRate * 100),
@@ -15134,6 +15152,36 @@ public final class RuntimeViewModel {
             ttftMeanMS: row.ttftMeanMS,
             throughputTokensPerSecond: row.throughputTokensPerSecond
         )
+    }
+
+    private static func benchmarkMatrixConfigurationSummary(
+        for row: ControlPlaneBenchmarkMatrixSummaryCSVRow
+    ) -> String {
+        var parts = [
+            "ctx \(row.contextLength)",
+            "gen \(row.generationLength)",
+            "batch \(row.batchSize)",
+            "conc \(row.concurrencyLevel)",
+            humanizedControlTitle(row.cacheProfile),
+        ]
+        let profileSummary = benchmarkProfileSummaryText(for: row.accelerationProfile)
+        if profileSummary.isEmpty == false {
+            parts.append(profileSummary)
+        }
+        parts.append(humanizedControlTitle(row.reasoningMode))
+        parts.append(humanizedControlTitle(row.structuredOutputMode))
+        return parts.joined(separator: " • ")
+    }
+
+    private static func benchmarkProfileSummaryText(for rawProfileID: String) -> String {
+        let trimmed = rawProfileID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else {
+            return ""
+        }
+        let label = ServingAccelerationProfiles.normalizeProfileID(trimmed)
+            .map { ServingAccelerationProfiles.profile(id: $0).label }
+            ?? humanizedControlTitle(trimmed)
+        return "Profile: \(label)"
     }
 
     private static func makeBenchmarkMatrixContextChartPointState(

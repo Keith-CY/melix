@@ -4948,6 +4948,8 @@ struct DesktopFoundationViewTests {
         #expect(DesktopDiagnosticsToolSectionView.initialStage(for: viewModel) == .benchmark)
         #expect(selectedRunIndex < configIndex)
         #expect(viewModel.benchmarkHistory.count == 3)
+        #expect(viewModel.selectedBenchmarkHistoryEntry?.profileSummaryText == "Profile: Throughput")
+        #expect(renderedTexts.contains("Profile: Throughput"))
         #expect(viewModel.benchmarkMetricCards.isEmpty == false)
         #expect(viewModel.benchmarkChartPoints.count == 2)
     }
@@ -5050,7 +5052,10 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Requests"))
         #expect(renderedTexts.contains("Duration"))
         #expect(viewModel.benchmarkMatrixHistory.count == 2)
+        #expect(viewModel.selectedBenchmarkMatrixHistoryEntry?.profileSummaryText == "Profile: Low Memory")
+        #expect(renderedTexts.contains("Profile: Low Memory"))
         #expect(viewModel.benchmarkMatrixSummaryRows.count == 2)
+        #expect(viewModel.benchmarkMatrixSummaryRows.contains { $0.configurationSummary.contains("Low Memory") })
         #expect(viewModel.benchmarkMatrixContextChartPoints.count == 2)
         #expect(viewModel.benchmarkMatrixThroughputChartPoints.count == 2)
     }

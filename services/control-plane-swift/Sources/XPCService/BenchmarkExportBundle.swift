@@ -263,6 +263,7 @@ public struct ControlPlaneBenchmarkHistoryEntry: Codable, Equatable, Sendable {
     public let datasetSplit: String
     public let sampleSize: Int?
     public let batchFactor: Int?
+    public let accelerationProfile: String
     public let status: String
     public let metricCount: Int
     public let createdAtUnixMS: Int64
@@ -614,6 +615,7 @@ public struct ControlPlaneBenchmarkMatrixHistoryEntry: Codable, Equatable, Senda
     public let generationLength: Int
     public let batchSize: Int
     public let cacheProfile: String
+    public let accelerationProfile: String
     public let reasoningMode: String
     public let structuredOutputMode: String
     public let concurrencyLevel: Int
@@ -1526,6 +1528,10 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
                         datasetSplit: metadata?.datasetSplit ?? "",
                         sampleSize: metadata?.sampleSize ?? Self.parameterInt(job.parameters["sample_size"]),
                         batchFactor: metadata?.batchFactor ?? Self.parameterInt(job.parameters["batch_factor"]),
+                        accelerationProfile: Self.parameterString(
+                            job.parameters,
+                            keys: ["acceleration_profile", "acceleration_profile_id"]
+                        ),
                         status: job.status,
                         metricCount: result?.metrics.count ?? 0,
                         createdAtUnixMS: job.createdAtUnixMS,
@@ -1619,6 +1625,14 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
             }
             .map { row in
                 let job = jobsByID[row.jobID]
+                let accelerationProfile = row.accelerationProfile.trimmedNonEmpty
+                    ?? job.flatMap {
+                        Self.parameterString(
+                            $0.parameters,
+                            keys: ["acceleration_profile", "acceleration_profile_id"]
+                        ).trimmedNonEmpty
+                    }
+                    ?? ""
                 return ControlPlaneBenchmarkMatrixHistoryEntry(
                     benchmarkMode: job?.benchmarkMode.isEmpty == false ? (job?.benchmarkMode ?? "") : "matrix",
                     jobID: row.jobID,
@@ -1630,6 +1644,7 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
                     generationLength: row.generationLength,
                     batchSize: row.batchSize,
                     cacheProfile: row.cacheProfile,
+                    accelerationProfile: accelerationProfile,
                     reasoningMode: row.reasoningMode,
                     structuredOutputMode: row.structuredOutputMode,
                     concurrencyLevel: row.concurrencyLevel,

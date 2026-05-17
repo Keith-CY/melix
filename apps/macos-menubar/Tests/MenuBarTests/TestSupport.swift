@@ -2010,7 +2010,8 @@ func makeBenchmarkExportBundleJSON() -> String {
           "suites": ["smoke"],
           "parameters": {
             "sample_size": "2",
-            "batch_factor": "1"
+            "batch_factor": "1",
+            "acceleration_profile": "balanced"
           },
           "status": "completed",
           "output_dir": "/tmp/melix/bench/runs/bench-older",
@@ -2036,7 +2037,8 @@ func makeBenchmarkExportBundleJSON() -> String {
           "suites": ["smoke", "latency"],
           "parameters": {
             "sample_size": "6",
-            "batch_factor": "2"
+            "batch_factor": "2",
+            "acceleration_profile": "throughput"
           },
           "status": "completed",
           "output_dir": "/tmp/melix/bench/runs/bench-newer",
@@ -2108,7 +2110,10 @@ func makeBenchmarkExportBundleJSON() -> String {
           "status": "completed",
           "output_dir": "/tmp/melix/bench/matrix-runs/matrix-older",
           "created_at_unix_ms": 1712150000000,
-          "updated_at_unix_ms": 1712150005000
+          "updated_at_unix_ms": 1712150005000,
+          "parameters": {
+            "acceleration_profile": "balanced"
+          }
         },
         {
           "schema_version": "melix.benchmark_matrix_job.v1",
@@ -2121,7 +2126,10 @@ func makeBenchmarkExportBundleJSON() -> String {
           "status": "completed",
           "output_dir": "/tmp/melix/bench/matrix-runs/matrix-newer",
           "created_at_unix_ms": 1712250000000,
-          "updated_at_unix_ms": 1712250005000
+          "updated_at_unix_ms": 1712250005000,
+          "parameters": {
+            "acceleration_profile": "low-memory"
+          }
         }
       ],
       "benchmark_matrix_summary_rows": [
@@ -2226,6 +2234,7 @@ func makeBenchmarkExportBundleJSON() -> String {
           "generation_length": 128,
           "batch_size": 2,
           "cache_profile": "warm",
+          "acceleration_profile": "low-memory",
           "reasoning_mode": "enabled",
           "structured_output_mode": "json_schema",
           "concurrency_level": 1,
@@ -2250,6 +2259,7 @@ func makeBenchmarkExportBundleJSON() -> String {
           "generation_length": 256,
           "batch_size": 4,
           "cache_profile": "warm",
+          "acceleration_profile": "low-memory",
           "reasoning_mode": "enabled",
           "structured_output_mode": "json_schema",
           "concurrency_level": 2,

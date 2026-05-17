@@ -7010,6 +7010,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                 Text(benchmarkSelectionSubtitle(for: entry))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                profileSummaryLabel(entry.profileSummaryText)
             }
 
             if benchmarkSnapshotItems.isEmpty {
@@ -7034,6 +7035,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                 Text(matrixSelectionSubtitle(for: entry))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                profileSummaryLabel(entry.profileSummaryText)
             }
 
             if matrixSnapshotItems.isEmpty {
@@ -7083,12 +7085,28 @@ struct DesktopDiagnosticsToolSectionView: View {
 
     private func benchmarkSelectionSubtitle(for entry: RuntimeBenchmarkHistoryEntryState) -> String {
         let selectedSource = entry.sourceRepo.isEmpty ? entry.modelID : entry.sourceRepo
-        return "\(entry.taskTitle) • \(selectedSource) • \(entry.datasetLabel)"
+        return [entry.taskTitle, selectedSource, entry.datasetLabel, entry.profileSummaryText]
+            .filter { $0.isEmpty == false }
+            .joined(separator: " • ")
     }
 
     private func matrixSelectionSubtitle(for entry: RuntimeBenchmarkMatrixHistoryEntryState) -> String {
         let selectedSource = entry.sourceRepo.isEmpty ? entry.modelID : entry.sourceRepo
-        return "\(entry.taskTitle) • \(selectedSource) • \(entry.suiteSummary) • \(entry.cellCountText)"
+        return [entry.taskTitle, selectedSource, entry.suiteSummary, entry.cellCountText, entry.profileSummaryText]
+            .filter { $0.isEmpty == false }
+            .joined(separator: " • ")
+    }
+
+    @ViewBuilder
+    private func profileSummaryLabel(_ text: String) -> some View {
+        if text.isEmpty == false {
+            DesktopPassiveStaticTextLabel(
+                title: text,
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+                textColor: .secondaryLabelColor
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func evaluationSelectionSubtitle(for entry: RuntimeEvaluationHistoryEntryState) -> String {
