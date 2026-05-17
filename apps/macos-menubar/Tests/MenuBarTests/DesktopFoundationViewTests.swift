@@ -3673,6 +3673,58 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Export Config Path"))
     }
 
+    @Test("training surface renders saved lora adapter capability receipt")
+    @MainActor
+    func trainingSurfaceRendersSavedLoraAdapterCapabilityReceipt() async throws {
+        let config = LoraTrainingJobConfig(
+            modelID: "melix-dev-text",
+            datasetSourceKind: "local_package",
+            datasetURI: "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+            adapterName: "unsupported-adapter",
+            trainingMode: "dora",
+            activationMode: "adapter_backed_runtime"
+        )
+        let job = LoraTrainingJobRecord(
+            id: "adapter-capability-job",
+            title: "Adapter Capability Job",
+            config: config,
+            status: .failed,
+            lastRunJobID: "model-ops-adapter-capability",
+            outputPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+            manifestPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+            latestOutputText: #"""
+            {
+              "operation": "train_lora",
+              "adapter_family": "unsupported_adapter",
+              "adapter_algorithm": "dora",
+              "backend_supported": false,
+              "unsupported_reason": "unsupported_backend"
+            }
+            """#,
+            terminalMessage: "Training failed."
+        )
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            loraTrainingJobStore: FakeLoraTrainingJobStore(jobs: [job])
+        )
+
+        let view = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1280, height: 1600)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Adapter Capability"))
+        #expect(renderedTexts.contains("Family"))
+        #expect(renderedTexts.contains("unsupported_adapter"))
+        #expect(renderedTexts.contains("Algorithm"))
+        #expect(renderedTexts.contains("dora"))
+        #expect(renderedTexts.contains("Backend Support"))
+        #expect(renderedTexts.contains("Unsupported"))
+        #expect(renderedTexts.contains("Unsupported Reason"))
+        #expect(renderedTexts.contains("unsupported_backend"))
+    }
+
     @Test("training keeps Hugging Face dataset mapping fields folded behind a secondary reveal by default")
     @MainActor
     func trainingKeepsHFDatasetMappingFoldedByDefault() async throws {

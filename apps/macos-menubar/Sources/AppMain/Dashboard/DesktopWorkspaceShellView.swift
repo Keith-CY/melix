@@ -5253,6 +5253,23 @@ struct DesktopTrainingToolSectionView: View {
                     .font(.caption)
                 }
 
+                let adapterCapabilityItems = savedJobAdapterCapabilityItems(job)
+                if adapterCapabilityItems.isEmpty == false {
+                    VStack(alignment: .leading, spacing: 6) {
+                        DesktopPassiveCaptionLabel(title: "Adapter Capability")
+                        ForEach(adapterCapabilityItems) { item in
+                            VStack(alignment: .leading, spacing: 2) {
+                                DesktopPassiveCaptionLabel(title: item.title)
+                                Text(item.value)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                    .font(.caption)
+                }
+
                 let followUpArtifacts = savedJobFollowUpArtifactItems(job)
                 if followUpArtifacts.isEmpty == false {
                     VStack(alignment: .leading, spacing: 6) {
@@ -5959,6 +5976,20 @@ struct DesktopTrainingToolSectionView: View {
         let model = job.config.modelID.isEmpty ? "No base model" : job.config.modelID
         let activation = job.config.activationMode.replacingOccurrences(of: "_", with: " ")
         return "\(model) • \(job.config.trainingMode.uppercased()) • \(activation)"
+    }
+
+    private func savedJobAdapterCapabilityItems(_ job: LoraTrainingJobRecord) -> [DesktopTrainingSummaryItem] {
+        guard let receipt = RuntimeViewModel.adapterCapabilityReceipt(from: job) else {
+            return []
+        }
+        return [
+            DesktopTrainingSummaryItem(title: "Family", value: receipt.adapterFamily, detail: ""),
+            DesktopTrainingSummaryItem(title: "Algorithm", value: receipt.adapterAlgorithm, detail: ""),
+            DesktopTrainingSummaryItem(title: "Backend Support", value: receipt.backendSupportText, detail: ""),
+            DesktopTrainingSummaryItem(title: "Unsupported Reason", value: receipt.unsupportedReason, detail: ""),
+        ].filter { item in
+            item.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
     }
 
     private func savedJobFollowUpArtifactItems(_ job: LoraTrainingJobRecord) -> [DesktopTrainingSummaryItem] {

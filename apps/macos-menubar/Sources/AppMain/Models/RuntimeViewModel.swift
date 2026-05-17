@@ -1702,6 +1702,17 @@ public struct RuntimeEvaluationHistoryEntryState: Identifiable, Equatable, Senda
     public let memoryFitSummaryText: String
 }
 
+public struct RuntimeAdapterCapabilityReceiptState: Equatable, Sendable {
+    public let adapterFamily: String
+    public let adapterAlgorithm: String
+    public let backendSupported: Bool?
+    public let unsupportedReason: String
+
+    public var backendSupportText: String {
+        backendSupported.map { $0 ? "Supported" : "Unsupported" } ?? ""
+    }
+}
+
 public struct RuntimeEvaluationMetricCardState: Identifiable, Equatable, Sendable {
     public let id: String
     public let suiteTitle: String
@@ -6517,6 +6528,32 @@ public final class RuntimeViewModel {
             return loraTrainingJobs.first
         }
         return loraTrainingJobs.first(where: { $0.id == selectedLoraTrainingJobID }) ?? loraTrainingJobs.first
+    }
+
+    public static func adapterCapabilityReceipt(from job: LoraTrainingJobRecord) -> RuntimeAdapterCapabilityReceiptState? {
+        let payload = jsonPayload(from: job.latestOutputText)
+        let adapterFamily = stringValue("adapter_family", from: payload)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let adapterAlgorithm = stringValue("adapter_algorithm", from: payload)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let backendSupported = payload["backend_supported"] as? Bool
+        let unsupportedReason = stringValue("unsupported_reason", from: payload)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if adapterFamily.isEmpty,
+           adapterAlgorithm.isEmpty,
+           backendSupported == nil,
+           unsupportedReason.isEmpty
+        {
+            return nil
+        }
+
+        return RuntimeAdapterCapabilityReceiptState(
+            adapterFamily: adapterFamily,
+            adapterAlgorithm: adapterAlgorithm,
+            backendSupported: backendSupported,
+            unsupportedReason: unsupportedReason
+        )
     }
 
     public var registryRootSummaryText: String {
