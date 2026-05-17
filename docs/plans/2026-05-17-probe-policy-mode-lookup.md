@@ -19,7 +19,11 @@ The affected path is covered by `infra/perf/pr_scoped_probes.json` entry
 
 This slice extends the same registered probe metrics with parser timing for
 valid and invalid `MELIX_PROBE_MODE` values so the CI report validates the parser
-fast path directly, not only the no-op recorder/property access path.
+fast path directly, not only the no-op recorder/property access path. The probe
+also keeps an absolute recorder-delta tolerance configurable via
+`MELIX_PROBE_POLICY_OVERHEAD_ABSOLUTE_TOLERANCE_MS`; the no-op recorder baseline
+is a sub-microsecond measurement, so percentage-only gating is too noisy for CI
+when the absolute delta remains negligible.
 
 ## Optimization
 

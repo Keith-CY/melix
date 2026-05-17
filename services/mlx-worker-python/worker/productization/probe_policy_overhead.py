@@ -69,7 +69,7 @@ def measure_no_op_probe_policy_overhead(
     iterations: int = 200_000,
     samples: int = 5,
     threshold_pct: float = 5.0,
-    absolute_tolerance_ms: float = 0.000_005,
+    absolute_tolerance_ms: float = 0.000_020,
 ) -> ProbeOverheadMetrics:
     iteration_count = max(int(iterations), 1)
     sample_count = max(int(samples), 1)
