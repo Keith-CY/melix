@@ -486,9 +486,10 @@ def _write_jsonl(path: Path, rows: Any) -> None:
     encode = _JSONL_ENCODER.encode
     lines: list[str] = []
     append_line = lines.append
+    request_id_literals: dict[str, str] = {}
     for row in rows:
         if isinstance(row, ServingDiagnosticsEvent):
-            fast_line = _empty_attribute_event_json_line(row)
+            fast_line = _empty_attribute_event_json_line(row, request_id_literals)
             if fast_line is not None:
                 append_line(fast_line + "\n")
                 continue
@@ -497,7 +498,10 @@ def _write_jsonl(path: Path, rows: Any) -> None:
     path.write_bytes("".join(lines).encode("utf-8"))
 
 
-def _empty_attribute_event_json_line(event: ServingDiagnosticsEvent) -> str | None:
+def _empty_attribute_event_json_line(
+    event: ServingDiagnosticsEvent,
+    request_id_literals: dict[str, str] | None = None,
+) -> str | None:
     if event.attributes is not _EMPTY_EVENT_ATTRIBUTES:
         return None
     event_index = event.event_index
@@ -512,6 +516,13 @@ def _empty_attribute_event_json_line(event: ServingDiagnosticsEvent) -> str | No
     status = event.status
     encoded_phase = '"decode"' if phase == "decode" else encode_string(phase)
     encoded_status = '"completed"' if status == "completed" else encode_string(status)
+    if request_id_literals is None:
+        encoded_request_id = encode_string(request_id)
+    else:
+        encoded_request_id = request_id_literals.get(request_id)
+        if encoded_request_id is None:
+            encoded_request_id = encode_string(request_id)
+            request_id_literals[request_id] = encoded_request_id
     return (
         '{"attributes":{},"duration_ms":'
         f"{duration_ms}"
@@ -520,7 +531,7 @@ def _empty_attribute_event_json_line(event: ServingDiagnosticsEvent) -> str | No
         ',"phase":'
         f"{encoded_phase}"
         ',"request_id":'
-        f"{encode_string(request_id)}"
+        f"{encoded_request_id}"
         ',"schema_version":"melix.serving_diagnostics.event.v1","status":'
         f"{encoded_status}"
         "}"

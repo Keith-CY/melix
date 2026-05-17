@@ -299,6 +299,57 @@ def test_serving_diagnostics_empty_event_attributes_skip_stable_json_object(
     assert event.to_dict()["attributes"] == {}
 
 
+def test_serving_diagnostics_jsonl_fast_path_reuses_request_id_literal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    original_encoder = serving_diagnostics_module._json_string_literal
+
+    def counting_encoder(value: str) -> str:
+        calls.append(value)
+        return original_encoder(value)
+
+    monkeypatch.setattr(
+        serving_diagnostics_module,
+        "_json_string_literal",
+        counting_encoder,
+    )
+    rows = tuple(
+        ServingDiagnosticsEvent(
+            request_id="req-shared-fast-path",
+            phase="decode",
+            event_index=event_index,
+            status="completed",
+            duration_ms=0.001,
+        )
+        for event_index in range(3)
+    )
+    path = tmp_path / "events.jsonl"
+
+    serving_diagnostics_module._write_jsonl(path, rows)
+
+    payloads = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    assert [payload["event_index"] for payload in payloads] == [0, 1, 2]
+    assert {payload["request_id"] for payload in payloads} == {"req-shared-fast-path"}
+    assert calls == ["req-shared-fast-path"]
+
+
+def test_serving_diagnostics_jsonl_fast_path_preserves_direct_helper_call() -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-direct-fast-path",
+        phase="decode",
+        event_index=7,
+        status="completed",
+        duration_ms=0.001,
+    )
+
+    line = serving_diagnostics_module._empty_attribute_event_json_line(event)
+
+    assert line is not None
+    assert json.loads(line)["request_id"] == "req-direct-fast-path"
+
+
 def test_serving_diagnostics_event_to_dict_preserves_numeric_coercion() -> None:
     event = ServingDiagnosticsEvent(
         request_id="req-numeric-coercion",
