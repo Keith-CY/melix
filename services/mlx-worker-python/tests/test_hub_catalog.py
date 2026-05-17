@@ -720,6 +720,7 @@ def test_size_hint_bytes_falls_back_for_labeled_direct_card_model_size(
 
 
 def test_size_hint_parsers_cover_units_and_invalid_values() -> None:
+    assert hub_catalog_module._direct_size_hint_from_text("512 KB") == 512 * KB
     assert hub_catalog_module._direct_size_hint_from_text("512 kb") == 512 * KB
     assert hub_catalog_module._direct_size_hint_from_text("1.5 MB") == int(1.5 * MB)
     assert hub_catalog_module._direct_size_hint_from_text("2 GB") == 2 * GB
