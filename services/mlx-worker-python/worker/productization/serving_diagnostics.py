@@ -34,6 +34,11 @@ def _ascii_float_literal(value: float) -> bytes:
     return str(value).encode("ascii")
 
 
+@lru_cache(maxsize=4096)
+def _ascii_int_literal(value: int) -> bytes:
+    return str(value).encode("ascii")
+
+
 class ServingDiagnosticsComparisonError(ValueError):
     pass
 
@@ -552,7 +557,7 @@ def _empty_attribute_event_json_line_bytes(
         b'{"attributes":{},"duration_ms":'
         + _ascii_float_literal(duration_ms)
         + b',"event_index":'
-        + str(event_index).encode("ascii")
+        + _ascii_int_literal(event_index)
         + b',"phase":'
         + encoded_phase
         + b',"request_id":'

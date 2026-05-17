@@ -21,4 +21,4 @@ The first helper-cache slice exposed a direct CI regression on the same register
 
 ## Verification plan
 
-Run the focused probe-policy tests, changed-scope coverage, and the registered probe locally on Linux. Compare the registered probe output against an `origin/main` baseline captured in the same worktree before pushing.
+Run the focused probe-policy tests, changed-scope coverage, and the registered probe locally on Linux. Compare the registered probe output against an `origin/main` baseline captured in the same worktree before pushing. The probe script defaults to 1,000,000 iterations so the sub-microsecond factory-helper timings are less sensitive to scheduler noise.
