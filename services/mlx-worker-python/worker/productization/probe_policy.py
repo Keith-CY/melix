@@ -17,9 +17,6 @@ class ProbeMode(StrEnum):
     DEBUG = "debug"
 
 
-_PROBE_MODE_BY_VALUE: dict[str, ProbeMode] = {mode.value: mode for mode in ProbeMode}
-
-
 @dataclass(frozen=True, slots=True)
 class ProbePolicy:
     mode: ProbeMode = ProbeMode.MINIMAL
@@ -60,13 +57,13 @@ class ProbePolicy:
         default_mode: ProbeMode = ProbeMode.MINIMAL,
     ) -> ProbePolicy:
         if isinstance(value, ProbeMode):
-            return cls(mode=value, source_value=value.value)
+            return _PROBE_POLICY_BY_VALUE[value.value]
         raw_value = str(value or "").strip().lower()
         if not raw_value:
             return cls(mode=default_mode)
-        mode = _PROBE_MODE_BY_VALUE.get(raw_value)
-        if mode is not None:
-            return cls(mode=mode, source_value=raw_value)
+        policy = _PROBE_POLICY_BY_VALUE.get(raw_value)
+        if policy is not None:
+            return policy
         return cls(
             mode=default_mode,
             source_value=raw_value,
@@ -80,6 +77,11 @@ class ProbePolicy:
     @classmethod
     def debug(cls) -> ProbePolicy:
         return cls(mode=ProbeMode.DEBUG, source_value=ProbeMode.DEBUG.value)
+
+
+_PROBE_POLICY_BY_VALUE: dict[str, ProbePolicy] = {
+    mode.value: ProbePolicy(mode=mode, source_value=mode.value) for mode in ProbeMode
+}
 
 
 def probe_policy_from_env(env: Mapping[str, str] | None = None) -> ProbePolicy:
