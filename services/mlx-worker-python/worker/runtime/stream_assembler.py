@@ -596,6 +596,8 @@ class RequestStreamAssembler:
 
     def _next_structural_tag_after(self, start: int) -> int:
         buffer = self._buffer
+        if buffer.find("<", start) < 0:
+            return -1
         earliest = buffer.find(self._THINK_OPEN, start)
         pipe_channel_index = buffer.find(self._PIPE_CHANNEL_OPEN, start)
         if pipe_channel_index >= 0 and (earliest < 0 or pipe_channel_index < earliest):
