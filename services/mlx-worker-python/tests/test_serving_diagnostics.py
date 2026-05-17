@@ -350,6 +350,34 @@ def test_serving_diagnostics_jsonl_fast_path_preserves_direct_helper_call() -> N
     assert json.loads(line)["request_id"] == "req-direct-fast-path"
 
 
+def test_serving_diagnostics_jsonl_fast_path_builds_direct_bytes() -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-direct-bytes",
+        phase="decode",
+        event_index=11,
+        status="completed",
+        duration_ms=0.25,
+    )
+
+    line = serving_diagnostics_module._empty_attribute_event_json_line_bytes(event)
+
+    assert isinstance(line, bytes)
+    assert json.loads(line)["request_id"] == "req-direct-bytes"
+
+
+def test_serving_diagnostics_jsonl_fast_path_direct_helper_preserves_fallback() -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-direct-fallback",
+        phase="decode",
+        event_index=11,
+        status="completed",
+        duration_ms=0.25,
+        attributes={"extra": True},
+    )
+
+    assert serving_diagnostics_module._empty_attribute_event_json_line(event) is None
+
+
 def test_serving_diagnostics_event_to_dict_preserves_numeric_coercion() -> None:
     event = ServingDiagnosticsEvent(
         request_id="req-numeric-coercion",
