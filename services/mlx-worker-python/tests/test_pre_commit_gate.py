@@ -579,7 +579,7 @@ def test_run_performance_report_exports_requested_base_ref(monkeypatch, tmp_path
     monkeypatch.setattr(
         pre_commit_gate,
         "load_probe_registry",
-        lambda registry_path: (SimpleNamespace(probe_id="probe-one"),),
+        lambda registry_path: (SimpleNamespace(probe_id="probe-one", watch_globs=()),),
     )
     def export_head(root: Path, destination: Path, base_ref: str | None) -> None:
         observed_head_base_refs.append(base_ref)
