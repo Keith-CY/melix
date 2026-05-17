@@ -3614,6 +3614,12 @@
         "warn_abs": 2e-05
       },
       {
+        "key": "mode_parse_empty_call_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_abs": 2e-05
+      },
+      {
         "key": "mode_parse_valid_call_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
@@ -3621,6 +3627,12 @@
       },
       {
         "key": "mode_parse_invalid_call_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_abs": 2e-05
+      },
+      {
+        "key": "env_parse_empty_call_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
         "warn_abs": 2e-05
