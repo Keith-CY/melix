@@ -3610,20 +3610,45 @@
       {
         "key": "no_op_reason_call_ms_mean",
         "unit": "ms",
-        "direction": "lower_is_better"
+        "direction": "lower_is_better",
+        "warn_abs": 2e-05
       },
       {
         "key": "mode_parse_valid_call_ms_mean",
         "unit": "ms",
-        "direction": "lower_is_better"
+        "direction": "lower_is_better",
+        "warn_abs": 2e-05
       },
       {
         "key": "mode_parse_invalid_call_ms_mean",
         "unit": "ms",
-        "direction": "lower_is_better"
+        "direction": "lower_is_better",
+        "warn_abs": 2e-05
       },
       {
         "key": "mode_parse_invalid_overhead_pct",
+        "unit": "pct",
+        "direction": "informational"
+      },
+      {
+        "key": "evidence_policy_call_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_abs": 2e-05
+      },
+      {
+        "key": "debug_policy_call_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_abs": 2e-05
+      },
+      {
+        "key": "evidence_policy_overhead_pct",
+        "unit": "pct",
+        "direction": "informational"
+      },
+      {
+        "key": "debug_policy_overhead_pct",
         "unit": "pct",
         "direction": "informational"
       },
