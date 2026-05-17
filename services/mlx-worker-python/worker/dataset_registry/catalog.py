@@ -37,6 +37,7 @@ _SPLIT_ALIASES = {
 }
 _JSON_DECODER = json.JSONDecoder()
 _JSON_ROW_ARRAY_KEYS = frozenset({"rows", "data"})
+_JSON_LIMITED_PREVIEW_CHUNK_CHARS = 64 * 1024
 
 
 @dataclass(frozen=True)
@@ -547,11 +548,11 @@ def _read_rows_from_file(path: Path, *, limit: int | None = None) -> list[dict[s
                         break
         return rows
     if suffix == ".json":
-        json_text = path.read_text(encoding="utf-8")
         if limit is not None:
-            limited_rows = _limited_rows_from_json_text(json_text, limit=limit)
+            limited_rows = _limited_rows_from_json_file(path, limit=limit)
             if limited_rows is not None:
                 return limited_rows
+        json_text = path.read_text(encoding="utf-8")
         payload = json.loads(json_text)
         return _rows_from_json_payload(payload, limit=limit)
     if suffix == ".csv":
@@ -629,6 +630,24 @@ def _limit_rows(rows: list[dict[str, Any]], limit: int | None) -> list[dict[str,
     if limit is None:
         return rows
     return rows[:limit]
+
+
+def _limited_rows_from_json_file(path: Path, *, limit: int) -> list[dict[str, Any]] | None:
+    if limit <= 0:
+        return []
+    chunks: list[str] = []
+    with path.open("r", encoding="utf-8") as handle:
+        while True:
+            chunk = handle.read(_JSON_LIMITED_PREVIEW_CHUNK_CHARS)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            limited_rows = _limited_rows_from_json_text("".join(chunks), limit=limit)
+            if limited_rows is not None and len(limited_rows) >= limit:
+                return limited_rows
+    if not chunks:
+        return None
+    return _limited_rows_from_json_text("".join(chunks), limit=limit)
 
 
 def _limited_rows_from_json_text(json_text: str, *, limit: int) -> list[dict[str, Any]] | None:
