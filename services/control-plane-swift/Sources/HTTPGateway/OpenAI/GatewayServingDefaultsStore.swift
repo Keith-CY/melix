@@ -130,6 +130,40 @@ public struct GatewayServingDefaultsPolicy: Sendable, Equatable {
         self.numDraftTokens = numDraftTokens
         self.accelerationProfile = accelerationProfile
     }
+
+    public func resolvingAccelerationCompatibility(
+        for model: Melix_Controlplane_V1_ModelSummary?
+    ) -> GatewayServingDefaultsPolicy {
+        guard accelerationMode == .speculativeDecode else {
+            return self
+        }
+        guard
+            let model,
+            Self.modelSupportsSpeculativeDefaults(model)
+        else {
+            return GatewayServingDefaultsPolicy(
+                temperature: temperature,
+                topP: topP,
+                maxTokens: maxTokens,
+                streamIntervalTokens: streamIntervalTokens,
+                maxConcurrentRequests: maxConcurrentRequests,
+                concurrentProcessingEnabled: concurrentProcessingEnabled,
+                prefillBatchSize: prefillBatchSize,
+                completionBatchSize: completionBatchSize,
+                accelerationMode: .baseline,
+                draftModelID: "",
+                numDraftTokens: 0,
+                accelerationProfile: accelerationProfile
+            )
+        }
+        return self
+    }
+
+    private static func modelSupportsSpeculativeDefaults(
+        _ model: Melix_Controlplane_V1_ModelSummary
+    ) -> Bool {
+        model.capabilityClass == .modelCapabilityText && model.routeClass == .workerRouteSwiftText
+    }
 }
 
 private struct GatewayServingDefaultsResolvedDefaults: Equatable, Sendable {

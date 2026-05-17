@@ -268,7 +268,7 @@ def test_performance_probe_failure_writes_traceback(monkeypatch, tmp_path: Path)
     monkeypatch.setattr(
         pre_commit_gate,
         "load_probe_registry",
-        lambda registry_path: (SimpleNamespace(probe_id="probe-one"),),
+        lambda registry_path: (SimpleNamespace(probe_id="probe-one", watch_globs=()),),
     )
     monkeypatch.setattr(pre_commit_gate, "export_head_comparison_snapshot", lambda root, destination, base_ref: destination.mkdir())
     monkeypatch.setattr(pre_commit_gate, "export_base_snapshot", lambda root, destination, base_ref, **kwargs: destination.mkdir())
@@ -315,20 +315,22 @@ def test_performance_probe_runs_with_scrubbed_git_environment(monkeypatch, tmp_p
     monkeypatch.setattr(
         pre_commit_gate,
         "load_probe_registry",
-        lambda registry_path: (SimpleNamespace(probe_id="probe-one"),),
+        lambda registry_path: (SimpleNamespace(probe_id="probe-one", watch_globs=()),),
     )
     monkeypatch.setattr(pre_commit_gate, "export_head_comparison_snapshot", lambda root, destination, base_ref: destination.mkdir())
     monkeypatch.setattr(pre_commit_gate, "export_base_snapshot", lambda root, destination, base_ref, **kwargs: destination.mkdir())
     observed_env: dict[str, str | None] = {}
     observed_base_root: str | None = None
     observed_base_root_exists = False
+    observed_coverage_paths: str | None = None
 
     def run_probe(**kwargs):
-        nonlocal observed_base_root, observed_base_root_exists
+        nonlocal observed_base_root, observed_base_root_exists, observed_coverage_paths
         env = kwargs["env"]
         for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
             observed_env[name] = env.get(name)
         observed_base_root = env.get("MELIX_CHANGED_SCOPE_BASE_ROOT")
+        observed_coverage_paths = env.get("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON")
         observed_base_root_exists = (
             observed_base_root is not None and Path(observed_base_root).is_dir()
         )
@@ -354,6 +356,7 @@ def test_performance_probe_runs_with_scrubbed_git_environment(monkeypatch, tmp_p
     assert observed_base_root is not None
     assert Path(observed_base_root).name == "base"
     assert observed_base_root_exists is True
+    assert observed_coverage_paths == "[]"
     assert pre_commit_gate.os.environ.get("GIT_DIR") == "/tmp/melix-hook-git-dir"
     assert pre_commit_gate.os.environ.get("GIT_WORK_TREE") == "/tmp/melix-hook-work-tree"
     assert pre_commit_gate.os.environ.get("GIT_INDEX_FILE") == "/tmp/melix-hook-index"

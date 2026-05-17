@@ -61,6 +61,7 @@ from worker.productization.pr_scoped_performance import (
     build_performance_report,
     build_scope_report,
     build_sticky_comment_body,
+    coverage_paths_for_probe,
     load_probe_registry,
     render_markdown_report,
     render_terminal_report,
@@ -4685,6 +4686,41 @@ def test_scope_report_treats_framework_force_all_paths_as_context_for_domain_pro
         "pr-scoped-performance-scope-matcher",
     }
     assert scope["matched_probe_ids"] == ["pr-scoped-performance-scope-matcher"]
+    coverage_paths_by_probe = {
+        str(probe["id"]): probe["coverage_paths"]
+        for probe in scope["selected_probes"]
+    }
+    assert coverage_paths_by_probe["evaluation-store-samples-csv-streaming"] == []
+    assert coverage_paths_by_probe["pr-scoped-performance-scope-matcher"] == [
+        "services/mlx-worker-python/worker/productization/pr_scoped_performance.py"
+    ]
+
+
+def test_coverage_paths_for_probe_keeps_force_all_context_off_domain_probes() -> None:
+    probe = ProbeDefinition(
+        probe_id="evaluation-sample-probe-aggregation",
+        name="Evaluation sample probe aggregation",
+        runner="ubuntu-latest",
+        watch_globs=(
+            "services/mlx-worker-python/worker/engine/evaluation_core.py",
+            "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+        ),
+        test_command="true",
+        coverage_command="true",
+        probe_impl="command_json",
+        probe_command='python3 -c "{}"',
+        metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+    )
+
+    paths = coverage_paths_for_probe(
+        probe=probe,
+        changed_files=[
+            "services/mlx-worker-python/worker/engine/evaluation_core.py",
+            "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+        ],
+    )
+
+    assert paths == ("services/mlx-worker-python/worker/engine/evaluation_core.py",)
 
 
 def test_force_all_context_regressions_do_not_fail_direct_probe_gate() -> None:

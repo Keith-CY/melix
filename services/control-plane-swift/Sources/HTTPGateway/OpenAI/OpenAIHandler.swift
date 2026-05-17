@@ -1861,7 +1861,7 @@ public struct OpenAIHandler: Sendable {
             modelSamplingPolicy: modelSamplingPolicy,
             gatewayServingDefaults: await gatewayServingDefaultsStore.requestedDefaults(
                 serverSessionID: gatewayRuntimeBinding.activeServerSessionID
-            ),
+            ).resolvingAccelerationCompatibility(for: resolvedModel),
             mcpToolCatalog: mcpToolCatalog
         )
         await recordShapingMetrics(for: translated, startedAt: shapingStartedAt)

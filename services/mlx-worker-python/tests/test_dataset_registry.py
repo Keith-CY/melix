@@ -747,18 +747,18 @@ def test_dataset_catalog_split_matching_skips_stem_for_direct_prefix_hits(
 
 
 def test_dataset_catalog_string_stem_matches_pathlib_for_split_names() -> None:
-    names = [
-        "train.jsonl",
-        "validation_foo.parquet",
-        "test-00000-of-00001.arrow",
-        "archive.train.jsonl",
-        ".hidden",
-        "train.",
-        "train..jsonl",
-    ]
+    expected = {
+        "train.jsonl": "train",
+        "validation_foo.parquet": "validation_foo",
+        "test-00000-of-00001.arrow": "test-00000-of-00001",
+        "archive.train.jsonl": "archive.train",
+        ".hidden": ".hidden",
+        "train.": "train",
+        "train..jsonl": "train.",
+    }
 
-    for name in names:
-        assert catalog._string_stem(name) == Path(name).stem
+    for name, stem in expected.items():
+        assert catalog._string_stem(name) == stem
 
 
 def test_dataset_catalog_reads_parquet_and_arrow_with_fake_pyarrow(

@@ -133,7 +133,8 @@ _PROBE_REGISTRY_CACHE: dict[str, tuple[int, int, tuple[ProbeDefinition, ...]]] =
 
 
 def _probe_registry_cache_key(path: str | Path) -> str:
-    return os.path.abspath(os.fspath(path))
+    raw_path = os.fspath(path)
+    return raw_path if os.path.isabs(raw_path) else os.path.abspath(raw_path)
 
 
 def _parse_probe_registry_payload(payload: object) -> tuple[ProbeDefinition, ...]:
@@ -193,15 +194,14 @@ def _load_probe_registry_uncached(
 
 
 def load_probe_registry(path: str | Path) -> tuple[ProbeDefinition, ...]:
-    path_obj = Path(path)
-    cache_key = _probe_registry_cache_key(path_obj)
-    stat_result = path_obj.stat()
+    cache_key = _probe_registry_cache_key(path)
+    stat_result = os.stat(cache_key)
     cached = _PROBE_REGISTRY_CACHE.get(cache_key)
     if cached is not None and cached[0] == stat_result.st_mtime_ns and cached[1] == stat_result.st_size:
         return cached[2]
 
     return _load_probe_registry_uncached(
-        path_obj=path_obj,
+        path_obj=Path(cache_key),
         cache_key=cache_key,
         mtime_ns=stat_result.st_mtime_ns,
         size=stat_result.st_size,
@@ -249,13 +249,22 @@ def build_scope_report(
         probes=probes,
         changed_paths=changed_paths,
     )
+    probe_by_id = {probe.probe_id: probe for probe in probes}
+    selected_probes_with_coverage_paths = []
+    for probe_entry in selected_probes:
+        probe = probe_by_id[str(probe_entry["id"])]
+        scoped_entry = dict(probe_entry)
+        scoped_entry["coverage_paths"] = list(
+            coverage_paths_for_probe(probe=probe, changed_files=changed_paths)
+        )
+        selected_probes_with_coverage_paths.append(scoped_entry)
     return {
         "schema_version": _SCOPE_SCHEMA_VERSION,
         "changed_files": list(changed_paths),
         "force_all": force_all,
         "matched_probe_ids": list(matched_probe_ids),
-        "selected_probes": list(selected_probes),
-        "selected_count": len(selected_probes),
+        "selected_probes": selected_probes_with_coverage_paths,
+        "selected_count": len(selected_probes_with_coverage_paths),
     }
 
 
@@ -2457,6 +2466,23 @@ def _force_all_direct_probe_indexes(
         for probe_id in direct_probe_ids
         if (index := probe_id_to_index.get(probe_id)) is not None
     )
+
+
+def coverage_paths_for_probe(
+    *,
+    probe: ProbeDefinition,
+    changed_files: list[str] | tuple[str, ...],
+) -> tuple[str, ...]:
+    coverage_paths: list[str] = []
+    for path in sorted({path for path in changed_files if path}):
+        direct_probe_ids = _FORCE_ALL_DIRECT_PROBE_IDS_BY_EXACT_PATH.get(path)
+        if path in _FORCE_ALL_CONTEXT_ONLY_PATHS:
+            if direct_probe_ids and probe.probe_id in direct_probe_ids:
+                coverage_paths.append(path)
+            continue
+        if any(_glob_matches_path(path, glob) for glob in probe.watch_globs):
+            coverage_paths.append(path)
+    return tuple(coverage_paths)
 
 
 def _probe_id_to_index(probes: tuple[ProbeDefinition, ...]) -> dict[str, int]:

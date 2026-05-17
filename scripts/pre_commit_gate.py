@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT / "services/mlx-worker-python"))
 from worker.productization.pr_scoped_performance import (  # noqa: E402
     build_performance_report,
     build_scope_report,
+    coverage_paths_for_probe,
     load_probe_registry,
     render_terminal_report,
     run_probe_job,
@@ -413,6 +414,14 @@ def run_performance_report(root: Path, changed_files: list[str], *, base_ref: st
                 probe_id = str(probe_entry.get("id", "")).strip()
                 if not probe_id:
                     continue
+                probe_definition = probes.get(probe_id)
+                if probe_definition is None:
+                    coverage_paths: tuple[str, ...] = ()
+                else:
+                    coverage_paths = coverage_paths_for_probe(
+                        probe=probe_definition,
+                        changed_files=changed_files,
+                    )
                 print(f"[pre-commit] running performance probe: {probe_id}", flush=True)
                 try:
                     result, _success = run_probe_job(
@@ -421,7 +430,10 @@ def run_performance_report(root: Path, changed_files: list[str], *, base_ref: st
                         base_repo=base_repo,
                         head_repo=head_repo,
                         env=scrubbed_git_environment(
-                            {"MELIX_CHANGED_SCOPE_BASE_ROOT": os.fspath(base_repo)}
+                            {
+                                "MELIX_CHANGED_SCOPE_BASE_ROOT": os.fspath(base_repo),
+                                "MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": json.dumps(coverage_paths),
+                            }
                         ),
                     )
                     results.append(result)
