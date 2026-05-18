@@ -732,6 +732,27 @@ def test_size_hint_parsers_cover_units_and_invalid_values() -> None:
     assert _size_hint_from_text("Model size: 512 kb", allow_bare=False) == 512 * KB
     assert _size_hint_from_text("Model size: 1.5 MB", allow_bare=False) == int(1.5 * MB)
     assert _size_hint_from_text("Model size: 2 GB", allow_bare=False) == 2 * GB
+    assert _size_hint_from_text("Model size: 3 mB", allow_bare=False) == 3 * MB
+
+
+def test_size_hint_from_text_integer_value_skips_float_conversion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    float_parser = Mock(side_effect=AssertionError("integer hint should not call float"))
+    monkeypatch.setattr(hub_catalog_module, "float", float_parser, raising=False)
+
+    assert _size_hint_from_text("Model size: 512 kb", allow_bare=False) == 512 * KB
+    float_parser.assert_not_called()
+
+
+def test_size_hint_from_text_decimal_value_preserves_float_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    float_parser = Mock(return_value=1.5)
+    monkeypatch.setattr(hub_catalog_module, "float", float_parser, raising=False)
+
+    assert _size_hint_from_text("Model size: 1.5 MB", allow_bare=False) == int(1.5 * MB)
+    float_parser.assert_called_once_with("1.5")
 
 
 @pytest.mark.parametrize(
