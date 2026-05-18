@@ -86,10 +86,11 @@ class BoundedServingDiagnosticsEventQueue:
         lock = self._lock
         lock.acquire()
         try:
-            self._append_event(event)
             if self._is_saturated:
+                self._append_event(event)
                 self._dropped_count += 1
                 return False
+            self._append_event(event)
             retained_count = self._retained_count + 1
             self._retained_count = retained_count
             self._is_saturated = retained_count >= self._max_events
