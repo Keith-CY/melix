@@ -35,6 +35,11 @@ changed_scope_coverage_probe = importlib.util.module_from_spec(EMPTY_PROBE_MODUL
 EMPTY_PROBE_MODULE_SPEC.loader.exec_module(changed_scope_coverage_probe)
 
 
+@pytest.fixture(autouse=True)
+def clear_probe_coverage_path_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON", raising=False)
+
+
 def test_parse_changed_lines_handles_multiple_files_and_hunks() -> None:
     diff_text = "\n".join(
         [
@@ -96,6 +101,72 @@ def test_changed_lines_by_path_uses_one_batched_git_diff(monkeypatch, tmp_path: 
         "bar.py": {5},
         "baz.py": set(),
     }
+
+
+def test_changed_lines_by_path_short_circuits_empty_paths(monkeypatch, tmp_path: Path) -> None:
+    def fail_run(*args: object, **kwargs: object) -> None:  # pragma: no cover
+        raise AssertionError("git diff should not run when no paths remain")
+
+    monkeypatch.setattr(changed_scope_coverage.subprocess, "run", fail_run)
+
+    assert changed_scope_coverage._changed_lines_by_path(tmp_path, []) == {}
+
+
+def test_main_filters_paths_to_probe_specific_allowlist(monkeypatch, tmp_path: Path, capsys) -> None:
+    (tmp_path / "direct.py").write_text("covered\n", encoding="utf-8")
+    (tmp_path / "context.py").write_text("missed\n", encoding="utf-8")
+    coverage_json = tmp_path / "coverage.json"
+    coverage_json.write_text(
+        json.dumps(
+            {
+                "files": {
+                    "direct.py": {"executed_lines": [1], "missing_lines": []},
+                    "context.py": {"executed_lines": [], "missing_lines": [1]},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON", '["direct.py"]')
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "changed_scope_coverage.py",
+            "--coverage-json",
+            str(coverage_json),
+            "direct.py",
+            "context.py",
+        ],
+    )
+    monkeypatch.setattr(changed_scope_coverage.Path, "cwd", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(
+        changed_scope_coverage,
+        "_changed_lines_by_path",
+        lambda repo_root, rel_paths: {"direct.py": {1}, "context.py": {1}},
+    )
+
+    assert changed_scope_coverage.main() == 0
+
+    output = capsys.readouterr().out
+    assert "direct.py" in output
+    assert "context.py" not in output
+    assert "TOTAL 1 0 100%" in output
+
+
+def test_coverage_path_allowlist_rejects_invalid_json() -> None:
+    with pytest.raises(SystemExit, match="invalid MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON"):
+        changed_scope_coverage._coverage_path_allowlist(
+            {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": "not-json"}
+        )
+
+
+def test_coverage_path_allowlist_rejects_non_list_payload() -> None:
+    with pytest.raises(SystemExit, match="must be a JSON list"):
+        changed_scope_coverage._coverage_path_allowlist(
+            {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": '{"path": "direct.py"}'}
+        )
 
 
 def test_parse_changed_lines_ignores_no_newline_marker_and_keeps_line_numbers() -> None:

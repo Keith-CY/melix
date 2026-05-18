@@ -115,7 +115,8 @@
       "args": {
         "server_session_id": "${inputs.server_session_id}",
         "title": "${inputs.server_title}",
-        "model_id": "${inputs.model_id}",
+        "default_model_id": "${inputs.model_id}",
+        "served_model_ids": ["${inputs.model_id}"],
         "host": "${inputs.host}",
         "port": "${inputs.port}",
         "rate_limit_per_minute": "${inputs.rate_limit_per_minute}",
