@@ -4087,6 +4087,8 @@ class MaintenanceCore:
             and "\v" not in prompt
             and "\f" not in prompt
         ):
+            # Only ASCII normalized prompts can use this count shortcut; Unicode
+            # whitespace must keep Python's split() semantics.
             return prompt.count(" ") + 1
         return len(prompt.split())
 
