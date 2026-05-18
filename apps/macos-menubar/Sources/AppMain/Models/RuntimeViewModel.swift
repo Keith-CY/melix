@@ -42,6 +42,33 @@ public struct RuntimeCLIWorkflowFailureState: Equatable, Sendable {
     }
 }
 
+public struct RuntimeMemoryFitReceiptRow: Identifiable, Equatable, Sendable {
+    public let target: String
+    public let title: String
+    public let status: String
+    public let statusText: String
+    public let reasonText: String
+    public let detailRows: [String]
+
+    public init(
+        target: String,
+        title: String,
+        status: String,
+        statusText: String,
+        reasonText: String,
+        detailRows: [String] = []
+    ) {
+        self.target = target
+        self.title = title
+        self.status = status
+        self.statusText = statusText
+        self.reasonText = reasonText
+        self.detailRows = detailRows
+    }
+
+    public var id: String { target }
+}
+
 public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public let modelID: String
     public let kind: String
@@ -86,6 +113,9 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
     public let restoreCommandText: String
     public let restoreRepoID: String
     public let restoreRevision: String
+    public let loadTrustReceiptRows: [String]
+    public let capabilityReceiptRows: [String]
+    public let memoryFitReceiptRows: [RuntimeMemoryFitReceiptRow]
 
     public init(
         modelID: String,
@@ -122,7 +152,10 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         registryDescriptorPathText: String = "",
         restoreCommandText: String = "",
         restoreRepoID: String = "",
-        restoreRevision: String = "main"
+        restoreRevision: String = "main",
+        loadTrustReceiptRows: [String] = [],
+        capabilityReceiptRows: [String] = [],
+        memoryFitReceiptRows: [RuntimeMemoryFitReceiptRow] = []
     ) {
         self.modelID = modelID
         self.kind = kind
@@ -159,6 +192,9 @@ public struct RuntimeModelRow: Identifiable, Equatable, Sendable {
         self.restoreCommandText = restoreCommandText
         self.restoreRepoID = restoreRepoID
         self.restoreRevision = restoreRevision
+        self.loadTrustReceiptRows = loadTrustReceiptRows
+        self.capabilityReceiptRows = capabilityReceiptRows
+        self.memoryFitReceiptRows = memoryFitReceiptRows
     }
 
     public var id: String {
@@ -230,6 +266,14 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
     public let accelerationModeText: String
     public let accelerationProfileID: String
     public let toolParserFallbackText: String
+    public let requestedLoadTrustModeText: String
+    public let effectiveLoadTrustModeText: String
+    public let loadTrustCustomLoaderText: String
+    public let loadTrustBlockReasonText: String
+    public let loadTrustReloadRequiredText: String
+    public let loadTrustRuntimeGuidanceText: String
+    public let capabilityReceiptRows: [String]
+    public let memoryFitReceiptRows: [RuntimeMemoryFitReceiptRow]
     public let ocrPromptProfileText: String
     public let ocrSamplingProfileText: String
     public let ocrTemperatureText: String
@@ -291,6 +335,14 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         accelerationModeText: String = "Unspecified",
         accelerationProfileID: String = "",
         toolParserFallbackText: String = "Off",
+        requestedLoadTrustModeText: String = "",
+        effectiveLoadTrustModeText: String = "",
+        loadTrustCustomLoaderText: String = "",
+        loadTrustBlockReasonText: String = "",
+        loadTrustReloadRequiredText: String = "",
+        loadTrustRuntimeGuidanceText: String = "",
+        capabilityReceiptRows: [String] = [],
+        memoryFitReceiptRows: [RuntimeMemoryFitReceiptRow] = [],
         ocrPromptProfileText: String = "",
         ocrSamplingProfileText: String = "",
         ocrTemperatureText: String = "",
@@ -351,6 +403,14 @@ public struct RuntimeModelInfoState: Equatable, Sendable {
         self.accelerationModeText = accelerationModeText
         self.accelerationProfileID = accelerationProfileID
         self.toolParserFallbackText = toolParserFallbackText
+        self.requestedLoadTrustModeText = requestedLoadTrustModeText
+        self.effectiveLoadTrustModeText = effectiveLoadTrustModeText
+        self.loadTrustCustomLoaderText = loadTrustCustomLoaderText
+        self.loadTrustBlockReasonText = loadTrustBlockReasonText
+        self.loadTrustReloadRequiredText = loadTrustReloadRequiredText
+        self.loadTrustRuntimeGuidanceText = loadTrustRuntimeGuidanceText
+        self.capabilityReceiptRows = capabilityReceiptRows
+        self.memoryFitReceiptRows = memoryFitReceiptRows
         self.ocrPromptProfileText = ocrPromptProfileText
         self.ocrSamplingProfileText = ocrSamplingProfileText
         self.ocrTemperatureText = ocrTemperatureText
@@ -838,6 +898,7 @@ public struct RuntimeDiagnosticsServerTargetState: Identifiable, Equatable, Send
     public let kind: RuntimeDiagnosticsServerTargetKind
     public let title: String
     public let detailText: String
+    public let profileSummaryText: String
     public let modelID: String
     public let serverID: String
 
@@ -846,6 +907,7 @@ public struct RuntimeDiagnosticsServerTargetState: Identifiable, Equatable, Send
         kind: RuntimeDiagnosticsServerTargetKind,
         title: String,
         detailText: String,
+        profileSummaryText: String = "",
         modelID: String,
         serverID: String
     ) {
@@ -853,6 +915,7 @@ public struct RuntimeDiagnosticsServerTargetState: Identifiable, Equatable, Send
         self.kind = kind
         self.title = title
         self.detailText = detailText
+        self.profileSummaryText = profileSummaryText
         self.modelID = modelID
         self.serverID = serverID
     }
@@ -1515,11 +1578,13 @@ public struct RuntimeBenchmarkHistoryEntryState: Identifiable, Equatable, Sendab
     public let datasetLabel: String
     public let sampleSizeText: String
     public let batchFactorText: String
+    public let profileSummaryText: String
     public let statusText: String
     public let metricCountText: String
     public let createdAtText: String
     public let createdAtUnixMS: Int64
     public let reportPath: String
+    public let memoryFitSummaryText: String
 }
 
 public struct RuntimeBenchmarkMetricCardState: Identifiable, Equatable, Sendable {
@@ -1560,6 +1625,7 @@ public struct RuntimeBenchmarkMatrixHistoryEntryState: Identifiable, Equatable, 
     public let suiteSummary: String
     public let cellCountText: String
     public let loadBudgetText: String
+    public let profileSummaryText: String
     public let statusText: String
     public let createdAtText: String
     public let createdAtUnixMS: Int64
@@ -1633,6 +1699,53 @@ public struct RuntimeEvaluationHistoryEntryState: Identifiable, Equatable, Senda
     public let createdAtText: String
     public let createdAtUnixMS: Int64
     public let reportPath: String
+    public let memoryFitSummaryText: String
+}
+
+public struct RuntimeAdapterCapabilityReceiptState: Equatable, Sendable {
+    public let adapterFamily: String
+    public let adapterAlgorithm: String
+    public let backendSupported: Bool?
+    public let unsupportedReason: String
+    public let loraLike: Bool?
+    public let mergeable: Bool?
+    public let reloraCompatible: Bool?
+    public let quantizedBaseSupported: Bool?
+
+    public var adapterFamilyText: String {
+        adapterFamily.isEmpty ? "Unknown Family" : adapterFamily
+    }
+
+    public var backendSupportText: String {
+        backendSupported.map { $0 ? "Supported" : "Unsupported" } ?? ""
+    }
+
+    public var loraLikeText: String {
+        supportText(loraLike)
+    }
+
+    public var mergeableText: String {
+        supportText(mergeable)
+    }
+
+    public var reloraCompatibleText: String {
+        supportText(reloraCompatible)
+    }
+
+    public var quantizedBaseSupportedText: String {
+        quantizedBaseSupported == false ? "Unsupported quantized base" : supportText(quantizedBaseSupported)
+    }
+
+    public var fusedActivationUnavailableText: String {
+        let reason = unsupportedReason.isEmpty
+            ? "non_mergeable_adapter"
+            : unsupportedReason
+        return "Fused activation is disabled for \(adapterFamilyText): \(reason). Use Adapter-backed Runtime instead."
+    }
+
+    private func supportText(_ value: Bool?) -> String {
+        value.map { $0 ? "Supported" : "Unsupported" } ?? ""
+    }
 }
 
 public struct RuntimeEvaluationMetricCardState: Identifiable, Equatable, Sendable {
@@ -1796,6 +1909,7 @@ private struct ServingDefaultsProjection: Equatable, Sendable {
     let concurrentProcessingEnabled: Bool
     let prefillBatchSize: Int
     let completionBatchSize: Int
+    let accelerationProfile: String
     let accelerationMode: String
     let draftModelID: String
     let numDraftTokens: Int
@@ -1807,6 +1921,8 @@ private struct ServingDefaultsProjection: Equatable, Sendable {
     let effectiveConcurrentProcessingEnabled: Bool
     let effectivePrefillBatchSize: Int
     let effectiveCompletionBatchSize: Int
+    let effectiveAccelerationProfile: String
+    let accelerationProfileIntent: String
     let effectiveAccelerationMode: String
     let effectiveDraftModelID: String
     let effectiveNumDraftTokens: Int
@@ -1890,6 +2006,11 @@ private enum RuntimeLoraWorkflowOperation: String, Sendable {
     }
 }
 
+private struct BatchRunRequestFiles {
+    let modelListPath: String
+    let configPath: String
+}
+
 @MainActor
 @Observable
 public final class RuntimeViewModel {
@@ -1899,6 +2020,395 @@ public final class RuntimeViewModel {
     public private(set) var connectionDetailText = "Awaiting handshake"
     public var selectedSurface: DesktopSurface = .chat
     public var selectedToolSection: DesktopToolSection = .modelsLibrary
+    public private(set) var runtimeJobs: [RuntimeJobSummaryState] = []
+    public private(set) var runtimeJobDetailsByID: [String: RuntimeJobDetailState] = [:]
+    public private(set) var runtimeJobLogSnapshotsByID: [String: RuntimeJobLogSnapshotState] = [:]
+    public private(set) var runtimeJobArtifactSnapshotsByID: [String: RuntimeJobArtifactSnapshotState] = [:]
+    public private(set) var runtimeJobCancelResultsByID: [String: RuntimeJobCancelResultState] = [:]
+    public private(set) var selectedRuntimeJobID = ""
+    public private(set) var runtimeSettingsSnapshot = RuntimeSettingsSnapshotState.empty
+    public private(set) var runtimeSettingKeyDraft = ""
+    public private(set) var runtimeSettingValueDraft = ""
+    public private(set) var runtimeSettingsOperationInProgress = false
+    public private(set) var runtimeSettingsOperationMessage = ""
+    public private(set) var runtimeSettingsOperationErrorMessage = ""
+    public private(set) var runtimeSettingsValidationResult: RuntimeSettingsValidationResultState?
+    public private(set) var runtimeDiscoverySnapshot = RuntimeDiscoverySnapshotState.empty
+    public private(set) var runtimeDiscoveryAliasQueryDraft = ""
+    public private(set) var runtimeDiscoveryOperationInProgress = false
+    public private(set) var runtimeDiscoveryOperationMessage = ""
+    public private(set) var runtimeDiscoveryOperationErrorMessage = ""
+    public private(set) var workflowRecipeCatalog = RuntimeWorkflowRecipeCatalogState.empty
+    public private(set) var workflowRecipeDetailsByID: [String: RuntimeWorkflowRecipeDetailState] = [:]
+    public private(set) var selectedWorkflowRecipeID = ""
+    public private(set) var workflowRecipeTaskFilterDraft = ""
+    public private(set) var workflowRecipeURIInspectDraft = ""
+    public private(set) var workflowRecipeInitTaskDraft = ""
+    public private(set) var workflowRecipeSetKeyDraft = ""
+    public private(set) var workflowRecipeSetValueDraft = ""
+    public private(set) var workflowRecipeSetValues: [String: String] = [:]
+    public private(set) var workflowRecipePlanOutputPathDraft = ""
+    public private(set) var workflowRecipeApplyDryRun = true
+    public private(set) var workflowRecipeApplyResume = false
+    public private(set) var workflowRecipeApplyFromStepDraft = ""
+    public private(set) var workflowRecipeURIInspection: RuntimeWorkflowURIInspectionState?
+    public private(set) var workflowRecipeInitPreview: RuntimeWorkflowRecipeInitPreviewState?
+    public private(set) var workflowRecipePlan: RuntimeWorkflowRecipePlanState?
+    public private(set) var workflowRecipeApplyResult: RuntimeWorkflowRecipeApplyResultState?
+    public private(set) var workflowRecipeCatalogInProgress = false
+    public private(set) var workflowRecipeDetailInProgress = false
+    public private(set) var workflowRecipeURIInspectInProgress = false
+    public private(set) var workflowRecipeInitPreviewInProgress = false
+    public private(set) var workflowRecipePlanInProgress = false
+    public private(set) var workflowRecipeApplyInProgress = false
+    public private(set) var workflowRecipeCatalogMessage = ""
+    public private(set) var workflowRecipeCatalogErrorMessage = ""
+    public private(set) var workflowRecipeURIInspectMessage = ""
+    public private(set) var workflowRecipeURIInspectErrorMessage = ""
+    public private(set) var workflowRecipeInitPreviewMessage = ""
+    public private(set) var workflowRecipeInitPreviewErrorMessage = ""
+    public private(set) var workflowRecipeSetEditorMessage = ""
+    public private(set) var workflowRecipeSetEditorErrorMessage = ""
+    public private(set) var workflowRecipePlanMessage = ""
+    public private(set) var workflowRecipePlanErrorMessage = ""
+    public private(set) var workflowRecipeApplyMessage = ""
+    public private(set) var workflowRecipeApplyErrorMessage = ""
+    public private(set) var syntheticDatasetIDDraft = ""
+    public private(set) var syntheticDatasetNameDraft = ""
+    public private(set) var syntheticDatasetNumRecordsDraft = "100"
+    public private(set) var syntheticDatasetOutputKindDraft = "training"
+    public private(set) var syntheticDatasetOutputFormatDraft = "prompt_completion"
+    public private(set) var syntheticDatasetOutputDirDraft = ""
+    public private(set) var syntheticDatasetProviderEndpointDraft = ""
+    public private(set) var syntheticDatasetProviderNameDraft = "melix"
+    public private(set) var syntheticDatasetProviderTypeDraft = "openai"
+    public private(set) var syntheticDatasetModelAliasDraft = "generator"
+    public private(set) var syntheticDatasetModelDraft = ""
+    public private(set) var syntheticDatasetColumnNameDraft = ""
+    public private(set) var syntheticDatasetColumnTypeDraft = "llm_text"
+    public private(set) var syntheticDatasetColumnPayloadDraft = ""
+    public private(set) var syntheticDatasetColumns: [RuntimeSyntheticDatasetColumnState] = []
+    public private(set) var syntheticDatasetColumnEditorErrorMessage = ""
+    public private(set) var syntheticDatasetSeedSourceKindDraft = ""
+    public private(set) var syntheticDatasetSeedSourcePathDraft = ""
+    public private(set) var syntheticDatasetValidationRatioDraft = ""
+    public private(set) var syntheticDatasetResumeModeDraft = "never"
+    public private(set) var syntheticDatasetDataDesignerTelemetryEnabled = false
+    public private(set) var syntheticDatasetPreview: RuntimeSyntheticDatasetPreviewState?
+    public private(set) var syntheticDatasetPreviewInProgress = false
+    public private(set) var syntheticDatasetPreviewMessage = ""
+    public private(set) var syntheticDatasetPreviewErrorMessage = ""
+    public private(set) var syntheticDatasetCreateResult: RuntimeSyntheticDatasetCreateResultState?
+    public private(set) var syntheticDatasetCreateInProgress = false
+    public private(set) var syntheticDatasetCreateMessage = ""
+    public private(set) var syntheticDatasetCreateErrorMessage = ""
+    public private(set) var batchRunModelListText = ""
+    public private(set) var batchRunConfigText = ""
+    public private(set) var batchRunReports: [RuntimeBatchRunReportState] = []
+    public private(set) var selectedBatchRunReportID = ""
+    public private(set) var batchRunPreflightInProgress = false
+    public private(set) var batchRunPreflightErrorMessage = ""
+    public private(set) var batchRunStatusInProgress = false
+    public private(set) var batchRunStatusErrorMessage = ""
+    public private(set) var batchRunResumeMissingOnly = true
+    public private(set) var batchRunResumeInProgress = false
+    public private(set) var batchRunResumeErrorMessage = ""
+    public private(set) var runtimeJobsRefreshInProgress = false
+    public private(set) var selectedRuntimeJobDetailRefreshInProgress = false
+    public private(set) var selectedRuntimeJobLogsRefreshInProgress = false
+    public private(set) var selectedRuntimeJobArtifactsRefreshInProgress = false
+    public private(set) var selectedRuntimeJobCancelInProgress = false
+    public let runtimeJobsEmptyStateTitle = "No Jobs Yet"
+    public let runtimeJobsEmptyStateDetail = "Run a benchmark, evaluation, training, or synthetic workflow to populate Jobs."
+    public var runtimeSettingRows: [RuntimeSettingRowState] {
+        runtimeSettingsSnapshot.rows
+    }
+    public var runtimeSettingSources: [RuntimeSettingSourceState] {
+        runtimeSettingsSnapshot.sources
+    }
+    public var runtimeSettingMetrics: [RuntimeSettingMetricState] {
+        runtimeSettingsSnapshot.metrics
+    }
+    public var runtimeSettingsCanSet: Bool {
+        normalizedRuntimeSettingKey.isEmpty == false
+            && normalizedRuntimeSettingValue.isEmpty == false
+            && runtimeSettingsOperationInProgress == false
+    }
+    public var runtimeSettingsCanReset: Bool {
+        normalizedRuntimeSettingKey.isEmpty == false
+            && runtimeSettingsOperationInProgress == false
+    }
+    public var runtimeSettingsCanValidate: Bool {
+        runtimeSettingsOperationInProgress == false
+    }
+    public var runtimeDiscoveryPayloads: [RuntimeDiscoveryPayloadState] {
+        runtimeDiscoverySnapshot.payloads
+    }
+    public var runtimeDiscoveryRefreshInProgress: Bool {
+        runtimeDiscoveryOperationInProgress
+    }
+    public var runtimeDiscoveryAliasLookupCanRun: Bool {
+        normalizedRuntimeDiscoveryAliasQuery.isEmpty == false
+            && runtimeDiscoveryOperationInProgress == false
+    }
+    public var workflowRecipeFilteredRecipes: [RuntimeWorkflowRecipeSummaryState] {
+        let filter = normalizedWorkflowRecipeTaskFilter
+        guard filter.isEmpty == false else {
+            return workflowRecipeCatalog.recipes
+        }
+        return workflowRecipeCatalog.recipes.filter { recipe in
+            recipe.tasks.contains(filter)
+                || recipe.id.localizedCaseInsensitiveContains(filter)
+                || recipe.title.localizedCaseInsensitiveContains(filter)
+        }
+    }
+    public var selectedWorkflowRecipeDetail: RuntimeWorkflowRecipeDetailState? {
+        workflowRecipeDetailsByID[selectedWorkflowRecipeID]
+    }
+    public var workflowRecipeURIInspectCanRun: Bool {
+        normalizedWorkflowRecipeURIInspectDraft.isEmpty == false
+            && workflowRecipeURIInspectInProgress == false
+    }
+    public var workflowRecipeInitPreviewSourceURI: String {
+        let inspectedURI = workflowRecipeURIInspection?.originalURI.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return inspectedURI.isEmpty ? normalizedWorkflowRecipeURIInspectDraft : inspectedURI
+    }
+    public var workflowRecipeInitPreviewCanRun: Bool {
+        workflowRecipeInitPreviewSourceURI.isEmpty == false
+            && normalizedWorkflowRecipeInitTask.isEmpty == false
+            && workflowRecipeInitPreviewInProgress == false
+    }
+    public var workflowRecipeSetEditorCanAdd: Bool {
+        normalizedWorkflowRecipeSetKey.isEmpty == false
+    }
+    public var workflowRecipeSetRows: [RuntimeWorkflowRecipeSetValueRowState] {
+        workflowRecipeSetValues.keys.sorted().map { key in
+            RuntimeWorkflowRecipeSetValueRowState(key: key, value: workflowRecipeSetValues[key] ?? "")
+        }
+    }
+    public var workflowRecipeSetArgumentSummaryText: String {
+        workflowRecipeSetRows.map(\.argumentText).joined(separator: " ")
+    }
+    public var workflowRecipePlanCanRun: Bool {
+        selectedWorkflowRecipeID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            && workflowRecipePlanInProgress == false
+    }
+    public var workflowRecipeApplyCanRun: Bool {
+        selectedWorkflowRecipeID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            && workflowRecipeApplyInProgress == false
+    }
+    public var normalizedSyntheticDatasetID: String {
+        syntheticDatasetIDDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetName: String {
+        syntheticDatasetNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetNumRecords: UInt32? {
+        let text = syntheticDatasetNumRecordsDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value = UInt32(text), value > 0 else { return nil }
+        return value
+    }
+    public var normalizedSyntheticDatasetOutputKind: String {
+        syntheticDatasetOutputKindDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetOutputFormat: String {
+        syntheticDatasetOutputFormatDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetOutputDir: String {
+        syntheticDatasetOutputDirDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetProviderEndpoint: String {
+        syntheticDatasetProviderEndpointDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetProviderName: String {
+        syntheticDatasetProviderNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetProviderType: String {
+        syntheticDatasetProviderTypeDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetModelAlias: String {
+        syntheticDatasetModelAliasDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetModel: String {
+        syntheticDatasetModelDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var syntheticDatasetBaseFormValidationMessages: [RuntimeSyntheticDatasetValidationMessageState] {
+        var messages: [RuntimeSyntheticDatasetValidationMessageState] = []
+        if normalizedSyntheticDatasetID.isEmpty {
+            messages.append(.init(field: "Dataset ID", message: "Enter a dataset ID."))
+        }
+        if normalizedSyntheticDatasetName.isEmpty {
+            messages.append(.init(field: "Dataset Name", message: "Enter a dataset name."))
+        }
+        if normalizedSyntheticDatasetNumRecords == nil {
+            messages.append(.init(field: "Records", message: "Enter a positive record count."))
+        }
+        if normalizedSyntheticDatasetOutputKind.isEmpty {
+            messages.append(.init(field: "Output Kind", message: "Enter an output kind."))
+        }
+        if normalizedSyntheticDatasetOutputFormat.isEmpty {
+            messages.append(.init(field: "Output Format", message: "Enter an output format."))
+        }
+        if normalizedSyntheticDatasetOutputDir.isEmpty {
+            messages.append(.init(field: "Output Directory", message: "Enter an output directory."))
+        }
+        if normalizedSyntheticDatasetProviderEndpoint.isEmpty {
+            messages.append(.init(field: "Provider Endpoint", message: "Enter a provider endpoint."))
+        }
+        if normalizedSyntheticDatasetProviderName.isEmpty {
+            messages.append(.init(field: "Provider Name", message: "Enter a provider name."))
+        }
+        if normalizedSyntheticDatasetProviderType.isEmpty {
+            messages.append(.init(field: "Provider Type", message: "Enter a provider type."))
+        }
+        if normalizedSyntheticDatasetModelAlias.isEmpty {
+            messages.append(.init(field: "Model Alias", message: "Enter a model alias."))
+        }
+        if normalizedSyntheticDatasetModel.isEmpty {
+            messages.append(.init(field: "Model", message: "Enter a model."))
+        }
+        return messages
+    }
+    public var syntheticDatasetBaseFormCanContinue: Bool {
+        syntheticDatasetBaseFormValidationMessages.isEmpty
+    }
+    public var normalizedSyntheticDatasetColumnName: String {
+        syntheticDatasetColumnNameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetColumnType: String {
+        syntheticDatasetColumnTypeDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetColumnPayload: String {
+        syntheticDatasetColumnPayloadDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var syntheticDatasetColumnDraftValidationMessages: [RuntimeSyntheticDatasetValidationMessageState] {
+        var messages: [RuntimeSyntheticDatasetValidationMessageState] = []
+        if normalizedSyntheticDatasetColumnName.isEmpty {
+            messages.append(.init(field: "Column Name", message: "Enter a column name."))
+        }
+        if normalizedSyntheticDatasetColumnType.isEmpty {
+            messages.append(.init(field: "Column Type", message: "Enter a column type."))
+        }
+        if normalizedSyntheticDatasetColumnPayload.isEmpty {
+            messages.append(.init(field: "Column Payload", message: "Enter JSON or a source path."))
+        } else if syntheticDatasetColumnPayloadIsMalformedJSON {
+            messages.append(.init(
+                field: "Column Payload",
+                message: "Column payload must be a JSON object or file path."
+            ))
+        }
+        return messages
+    }
+    public var syntheticDatasetColumnDraftCanAdd: Bool {
+        syntheticDatasetColumnDraftValidationMessages.isEmpty
+    }
+    public var syntheticDatasetColumnCommandArguments: [String] {
+        syntheticDatasetColumns.map(\.commandArgument)
+    }
+    public var normalizedSyntheticDatasetSeedSourceKind: String {
+        syntheticDatasetSeedSourceKindDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetSeedSourcePath: String {
+        syntheticDatasetSeedSourcePathDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetValidationRatio: String {
+        syntheticDatasetValidationRatioDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var normalizedSyntheticDatasetResumeMode: String {
+        syntheticDatasetResumeModeDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var syntheticDatasetGenerationControlValidationMessages: [RuntimeSyntheticDatasetValidationMessageState] {
+        var messages: [RuntimeSyntheticDatasetValidationMessageState] = []
+        if normalizedSyntheticDatasetSeedSourceKind.isEmpty, normalizedSyntheticDatasetSeedSourcePath.isEmpty == false {
+            messages.append(.init(field: "Seed Source Kind", message: "Choose a seed source kind."))
+        }
+        if normalizedSyntheticDatasetSeedSourceKind.isEmpty == false, normalizedSyntheticDatasetSeedSourcePath.isEmpty {
+            messages.append(.init(field: "Seed Source Path", message: "Enter a seed source path."))
+        }
+        if normalizedSyntheticDatasetValidationRatio.isEmpty == false {
+            guard let ratio = Double(normalizedSyntheticDatasetValidationRatio),
+                  ratio >= 0.0,
+                  ratio < 1.0
+            else {
+                messages.append(.init(
+                    field: "Validation Ratio",
+                    message: "Enter a decimal from 0.0 up to but not including 1.0."
+                ))
+                return messages + syntheticDatasetResumeValidationMessages
+            }
+        }
+        messages.append(contentsOf: syntheticDatasetResumeValidationMessages)
+        return messages
+    }
+    public var syntheticDatasetGenerationControlCommandArguments: [String] {
+        var arguments: [String] = []
+        if normalizedSyntheticDatasetSeedSourceKind.isEmpty == false,
+           normalizedSyntheticDatasetSeedSourcePath.isEmpty == false
+        {
+            arguments.append(contentsOf: [
+                "--seed-source-kind",
+                normalizedSyntheticDatasetSeedSourceKind,
+                "--seed-source-path",
+                normalizedSyntheticDatasetSeedSourcePath,
+            ])
+        }
+        if normalizedSyntheticDatasetValidationRatio.isEmpty == false {
+            arguments.append(contentsOf: ["--validation-ratio", normalizedSyntheticDatasetValidationRatio])
+        }
+        arguments.append(contentsOf: [
+            "--resume",
+            normalizedSyntheticDatasetResumeMode.isEmpty ? "never" : normalizedSyntheticDatasetResumeMode,
+        ])
+        if syntheticDatasetDataDesignerTelemetryEnabled {
+            arguments.append("--enable-datadesigner-telemetry")
+        }
+        return arguments
+    }
+    public var syntheticDatasetPreviewValidationMessages: [RuntimeSyntheticDatasetValidationMessageState] {
+        var messages = syntheticDatasetBaseFormValidationMessages
+        if syntheticDatasetColumns.isEmpty {
+            messages.append(.init(field: "Columns", message: "Add at least one synthetic column."))
+        }
+        messages.append(contentsOf: syntheticDatasetGenerationControlValidationMessages)
+        return messages
+    }
+    public var syntheticDatasetCanPreview: Bool {
+        syntheticDatasetPreviewValidationMessages.isEmpty && syntheticDatasetPreviewInProgress == false
+    }
+    public var syntheticDatasetCreateValidationMessages: [RuntimeSyntheticDatasetValidationMessageState] {
+        syntheticDatasetPreviewValidationMessages
+    }
+    public var syntheticDatasetCanCreate: Bool {
+        syntheticDatasetCreateValidationMessages.isEmpty
+            && syntheticDatasetCreateInProgress == false
+            && syntheticDatasetPreviewInProgress == false
+    }
+    public var syntheticDatasetErrorStates: [RuntimeSyntheticDatasetErrorState] {
+        var states: [RuntimeSyntheticDatasetErrorState] = []
+        if syntheticDatasetColumnDraftValidationMessages.contains(where: {
+            $0.field == "Column Payload" && $0.message.contains("JSON object")
+        }) {
+            states.append(.init(
+                source: "Column Editor",
+                title: "Invalid Column Payload",
+                detail: "Column payload must be a JSON object or file path.",
+                recoveryHint: #"Use a JSON object such as {"prompt":"..."} or a readable source path."#
+            ))
+        }
+        if let previewState = Self.syntheticDatasetErrorState(
+            source: "Preview",
+            message: syntheticDatasetPreviewErrorMessage
+        ) {
+            states.append(previewState)
+        }
+        if let createState = Self.syntheticDatasetErrorState(
+            source: "Create",
+            message: syntheticDatasetCreateErrorMessage
+        ) {
+            states.append(createState)
+        }
+        return states
+    }
     public private(set) var desktopPaneVisibility = DesktopPaneVisibilityState.defaultStates
     public private(set) var models: [RuntimeModelRow] = [] {
         didSet { refreshModelRegistryEntries() }
@@ -1956,6 +2466,13 @@ public final class RuntimeViewModel {
     public private(set) var evidenceReportLoadError = ""
     public private(set) var evidenceReportOpenError = ""
     public private(set) var evidenceReportSourcePath = ""
+    public private(set) var diagnosticsDebugBundleRunIDDraft = ""
+    public private(set) var diagnosticsDebugBundleSourcePathDraft = ""
+    public private(set) var diagnosticsDebugBundleOutputPathDraft = ""
+    public private(set) var diagnosticsDebugBundleInProgress = false
+    public private(set) var diagnosticsDebugBundleMessage = ""
+    public private(set) var diagnosticsDebugBundleErrorMessage = ""
+    public private(set) var diagnosticsDebugBundleResult: RuntimeDiagnosticsDebugBundleState?
     public private(set) var adapterPackages: [RuntimeAdapterPackageState] = []
     public private(set) var trainingHistory: [RuntimeTrainingHistoryEntryState] = []
     public private(set) var loraExperimentGroups: [RuntimeLoraExperimentGroupState] = []
@@ -2037,11 +2554,19 @@ public final class RuntimeViewModel {
     public var modelSettingsOCRTemperatureDraft = ""
     public var modelSettingsOCRTopPDraft = ""
     public var modelSettingsOCRMaxTokensDraft = ""
+    public var modelSettingsLoadTrustModeText: String {
+        guard let model = primaryModelSummary else {
+            return "Unspecified"
+        }
+        return runtimeModelSettingsLoadTrustModeText(model.settings.loadTrustMode)
+    }
     public var selectedBenchmarkModelID = "melix-dev-text"
     public var selectedBenchmarkPresentationMode: RuntimeBenchmarkPresentationMode = .standard
     public var preferredDiagnosticsStage: RuntimeDiagnosticsStagePreference?
     public var selectedDiagnosticsServerTargetID = ""
     public var selectedBenchmarkSuiteIDs: Set<String> = ["smoke"]
+    public var benchmarkPreflightFitCheck = false
+    public var benchmarkAllowMemoryRisk = false
     public var selectedBenchContextLengths: [UInt32] = [1024, 4096]
     public var selectedBenchBatchSizes: [UInt32] = [2, 4]
     public var benchRepeats = "3"
@@ -2097,6 +2622,8 @@ public final class RuntimeViewModel {
     public var selectedEvaluationMode: RuntimeEvaluationMode = .standard
     public var selectedEvaluationCompareTargetModelIDs: Set<String> = []
     public var selectedEvaluationHistoryJobID = ""
+    public var evaluationPreflightFitCheck = false
+    public var evaluationAllowMemoryRisk = false
     public var loraDatasetSourceKind: RuntimeLoraDatasetSourceKind = .localPackage
     public var loraTrainingMode: RuntimeLoraTrainingMode = .lora
     public var selectedLoraTrainingPreset: RuntimeLoraTrainingPreset = .custom
@@ -2135,6 +2662,8 @@ public final class RuntimeViewModel {
     public var loraMaskPrompt = false
     public var loraGradientCheckpointing = false
     public var loraDerivedModelAlias = ""
+    public var trainingPreflightFitCheck = false
+    public var trainingAllowMemoryRisk = false
     public var selectedAdapterPackageID = ""
     public var selectedLoraTrainingJobID = ""
     public var loraTrainingJobExportPath = ""
@@ -2318,11 +2847,18 @@ public final class RuntimeViewModel {
             guard target.kind == .localServer, target.isRunning else {
                 return nil
             }
+            let profileSummaryText = Self.diagnosticsProfileSummaryText(
+                for: serverSessions.first(where: { $0.id == target.serverID })
+            )
+            let detailText = [target.detailText, target.statusText, profileSummaryText]
+                .filter { $0.isEmpty == false }
+                .joined(separator: " • ")
             return RuntimeDiagnosticsServerTargetState(
                 id: Self.diagnosticsLocalServerTargetID(serverID: target.serverID),
                 kind: .localServer,
                 title: target.title,
-                detailText: "\(target.detailText) • \(target.statusText)",
+                detailText: detailText,
+                profileSummaryText: profileSummaryText,
                 modelID: target.modelID,
                 serverID: target.serverID
             )
@@ -2362,6 +2898,20 @@ public final class RuntimeViewModel {
         return targets.first
     }
 
+    private static func diagnosticsProfileSummaryText(for session: DesktopServerSessionState?) -> String {
+        guard let session else {
+            return ""
+        }
+        let profile = ServingAccelerationProfiles.profile(id: session.servingDefaults.effectiveAccelerationProfile)
+        return "profile \(profile.label)"
+    }
+
+    private static func diagnosticsProfileSummarySuffix(
+        for target: RuntimeDiagnosticsServerTargetState
+    ) -> String {
+        target.profileSummaryText.isEmpty ? "" : " • \(target.profileSummaryText)"
+    }
+
     public var diagnosticsTargetSummaryText: String {
         guard let target = selectedDiagnosticsServerTarget else {
             return "Select a running server for Diagnostics."
@@ -2388,6 +2938,22 @@ public final class RuntimeViewModel {
             if selectedBenchmarkSuiteIDs.isEmpty {
                 return "Select at least one benchmark dataset before running Benchmark."
             }
+            if let unsupportedMessage = unsupportedCapabilityDispatchMessage(
+                actionTitle: "Benchmark",
+                modelID: target.modelID,
+                capabilityIDs: ["completion"]
+            ) {
+                return unsupportedMessage
+            }
+            if let memoryFitMessage = memoryFitPreflightDispatchMessage(
+                actionTitle: "Benchmark",
+                modelID: target.modelID,
+                target: "benchmark",
+                preflightFitCheck: benchmarkPreflightFitCheck,
+                allowMemoryRisk: benchmarkAllowMemoryRisk
+            ) {
+                return memoryFitMessage
+            }
             return nil
         case .remoteServer:
             return Self.remoteBenchmarkUnsupportedMessage
@@ -2407,6 +2973,22 @@ public final class RuntimeViewModel {
             }
             if selectedEvaluationSuiteIDs.isEmpty {
                 return "Select at least one evaluation suite before running Evaluation."
+            }
+            if let unsupportedMessage = unsupportedCapabilityDispatchMessage(
+                actionTitle: "Evaluation",
+                modelID: target.modelID,
+                capabilityIDs: ["completion"]
+            ) {
+                return unsupportedMessage
+            }
+            if let memoryFitMessage = memoryFitPreflightDispatchMessage(
+                actionTitle: "Evaluation",
+                modelID: target.modelID,
+                target: "eval",
+                preflightFitCheck: evaluationPreflightFitCheck,
+                allowMemoryRisk: evaluationAllowMemoryRisk
+            ) {
+                return memoryFitMessage
             }
             return nil
         case .remoteServer:
@@ -2431,6 +3013,53 @@ public final class RuntimeViewModel {
 
     public var canRunDiagnosticsEvaluation: Bool {
         diagnosticsEvaluationUnavailableText == nil
+    }
+
+    public var loraTrainingMemoryFitUnavailableText: String? {
+        memoryFitPreflightDispatchMessage(
+            actionTitle: "LoRA training",
+            modelID: resolvedLoraModelID(),
+            target: "train",
+            preflightFitCheck: trainingPreflightFitCheck,
+            allowMemoryRisk: trainingAllowMemoryRisk
+        )
+    }
+
+    public var modelSettingsToolParserXMLFallbackDisabledReason: String? {
+        guard let modelID = primaryModel?.modelID else {
+            return nil
+        }
+        return unsupportedCapabilityDispatchMessage(
+            actionTitle: "Tool parser XML fallback",
+            modelID: modelID,
+            capabilityIDs: ["tools"]
+        )
+    }
+
+    public var modelSettingsAccelerationModeDisabledReason: String? {
+        guard let modelID = primaryModel?.modelID else {
+            return nil
+        }
+        return unsupportedAccelerationModeMessage(
+            actionTitle: "Model settings acceleration",
+            modelID: modelID,
+            requestedMode: modelSettingsAccelerationModeDraft
+        )
+    }
+
+    public var selectedServerAccelerationModeDisabledReason: String? {
+        guard let session = selectedServerSession else {
+            return nil
+        }
+        return unsupportedAccelerationModeMessage(
+            actionTitle: "Serving acceleration",
+            modelID: session.modelID,
+            requestedMode: session.servingDefaults.accelerationMode
+        )
+    }
+
+    public var servingAccelerationProfileOptions: [ServingAccelerationProfile] {
+        ServingAccelerationProfiles.all
     }
 
     public func isPendingAssistantTranscriptEntry(_ entry: DesktopChatTranscriptEntry) -> Bool {
@@ -2738,6 +3367,130 @@ public final class RuntimeViewModel {
 
     private var commandWorkflowRunner: (any MelixCLIWorkflowRunning)? {
         cliWorkflowRunner ?? operatorCommandRunner
+    }
+
+    private var normalizedRuntimeSettingKey: String {
+        runtimeSettingKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedRuntimeSettingValue: String {
+        runtimeSettingValueDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedRuntimeDiscoveryAliasQuery: String {
+        runtimeDiscoveryAliasQueryDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedWorkflowRecipeTaskFilter: String {
+        workflowRecipeTaskFilterDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedWorkflowRecipeURIInspectDraft: String {
+        workflowRecipeURIInspectDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedWorkflowRecipeInitTask: String {
+        workflowRecipeInitTaskDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedWorkflowRecipeSetKey: String {
+        workflowRecipeSetKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedWorkflowRecipeSetValue: String {
+        workflowRecipeSetValueDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedWorkflowRecipePlanOutputPath: String {
+        workflowRecipePlanOutputPathDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedWorkflowRecipeApplyFromStep: String {
+        workflowRecipeApplyFromStepDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func syntheticDatasetErrorState(
+        source: String,
+        message: String
+    ) -> RuntimeSyntheticDatasetErrorState? {
+        let detail = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard detail.isEmpty == false else {
+            return nil
+        }
+
+        let lowered = detail.lowercased()
+        if lowered.contains("datadesigner"),
+           lowered.contains("extra") || lowered.contains("install") || lowered.contains("missing")
+        {
+            return .init(
+                source: source,
+                title: "Missing DataDesigner Extra",
+                detail: detail,
+                recoveryHint: "Install the DataDesigner extra, then retry preview or create."
+            )
+        }
+        if lowered.contains("provider") || lowered.contains("upstream") || lowered.contains("http ") {
+            return .init(
+                source: source,
+                title: "Provider Failure",
+                detail: detail,
+                recoveryHint: "Check provider endpoint, model, credentials, and availability before retrying."
+            )
+        }
+        if lowered.contains("column payload") || lowered.contains("json object or file path") {
+            return .init(
+                source: source,
+                title: "Invalid Column Payload",
+                detail: detail,
+                recoveryHint: #"Use a JSON object such as {"prompt":"..."} or a readable source path."#
+            )
+        }
+        return nil
+    }
+
+    private var syntheticDatasetColumnPayloadIsMalformedJSON: Bool {
+        let payload = normalizedSyntheticDatasetColumnPayload
+        guard payload.first == "{" else { return false }
+        guard let data = payload.data(using: .utf8),
+              let decoded = try? JSONSerialization.jsonObject(with: data),
+              decoded is [String: Any]
+        else {
+            return true
+        }
+        return false
+    }
+
+    private var syntheticDatasetResumeValidationMessages: [RuntimeSyntheticDatasetValidationMessageState] {
+        guard ["never", "if_possible", "always"].contains(normalizedSyntheticDatasetResumeMode) else {
+            return [
+                .init(field: "Resume", message: "Choose never, if_possible, or always."),
+            ]
+        }
+        return []
+    }
+
+    private func syntheticDatasetRequestOptions(mode: String) -> DatasetSyntheticOptions {
+        DatasetSyntheticOptions(
+            mode: mode,
+            datasetID: normalizedSyntheticDatasetID,
+            datasetName: normalizedSyntheticDatasetName,
+            numRecords: normalizedSyntheticDatasetNumRecords ?? 0,
+            outputKind: normalizedSyntheticDatasetOutputKind,
+            outputFormat: normalizedSyntheticDatasetOutputFormat,
+            outputDir: normalizedSyntheticDatasetOutputDir,
+            providerEndpoint: normalizedSyntheticDatasetProviderEndpoint,
+            providerName: normalizedSyntheticDatasetProviderName,
+            providerType: normalizedSyntheticDatasetProviderType,
+            modelAlias: normalizedSyntheticDatasetModelAlias,
+            model: normalizedSyntheticDatasetModel,
+            columns: syntheticDatasetColumnCommandArguments,
+            seedSourceKind: normalizedSyntheticDatasetSeedSourceKind,
+            seedSourcePath: normalizedSyntheticDatasetSeedSourcePath,
+            validationRatio: normalizedSyntheticDatasetValidationRatio,
+            resume: normalizedSyntheticDatasetResumeMode.isEmpty ? "never" : normalizedSyntheticDatasetResumeMode,
+            enableDataDesignerTelemetry: syntheticDatasetDataDesignerTelemetryEnabled,
+            json: true
+        )
     }
 
     private func reloadHuggingFaceTokenHint() {
@@ -3420,6 +4173,1215 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    public var selectedRuntimeJob: RuntimeJobSummaryState? {
+        runtimeJobs.first { $0.id == selectedRuntimeJobID }
+    }
+
+    public var selectedRuntimeJobDetail: RuntimeJobDetailState? {
+        runtimeJobDetailsByID[selectedRuntimeJobID]
+    }
+
+    public var selectedRuntimeJobLogSnapshot: RuntimeJobLogSnapshotState? {
+        runtimeJobLogSnapshotsByID[selectedRuntimeJobID]
+    }
+
+    public var selectedRuntimeJobArtifactSnapshot: RuntimeJobArtifactSnapshotState? {
+        runtimeJobArtifactSnapshotsByID[selectedRuntimeJobID]
+    }
+
+    public var selectedRuntimeJobCancelResult: RuntimeJobCancelResultState? {
+        runtimeJobCancelResultsByID[selectedRuntimeJobID]
+    }
+
+    public var selectedRuntimeJobCancellationState: RuntimeJobCancellationState {
+        if let detail = selectedRuntimeJobDetail {
+            return detail.cancellation
+        }
+        if let job = selectedRuntimeJob {
+            return RuntimeJobCancellationState(
+                cancelable: job.cancelable,
+                requested: job.cancellationRequested
+            )
+        }
+        return RuntimeJobCancellationState()
+    }
+
+    public var selectedRuntimeJobCanRequestCancellation: Bool {
+        guard selectedRuntimeJobID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
+              selectedRuntimeJobCancelInProgress == false,
+              selectedRuntimeJobCancelResult == nil
+        else {
+            return false
+        }
+        let cancellation = selectedRuntimeJobCancellationState
+        return cancellation.cancelable && cancellation.requested == false
+    }
+
+    public var selectedRuntimeJobCancellationStatusText: String {
+        if selectedRuntimeJobCancelInProgress {
+            return "Requesting cancellation"
+        }
+        if let result = selectedRuntimeJobCancelResult {
+            if result.cancelRequested {
+                return "Cancellation requested"
+            }
+            return result.reason.isEmpty
+                ? "Cancellation not requested"
+                : "Cancellation not requested: \(result.reason)"
+        }
+        guard selectedRuntimeJobID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            return "Select a job to request cancellation"
+        }
+        let cancellation = selectedRuntimeJobCancellationState
+        if cancellation.requested {
+            return "Cancellation already requested"
+        }
+        if cancellation.cancelable {
+            return "Active job can receive a durable cancel request"
+        }
+        if selectedRuntimeJob?.isTerminal == true || selectedRuntimeJobDetail?.summary.isTerminal == true {
+            return "Terminal job cannot be canceled"
+        }
+        return "Job is not cancelable"
+    }
+
+    public var batchRunModelInputs: [RuntimeBatchRunModelInputState] {
+        RuntimeBatchRunSetupParser.modelInputs(from: batchRunModelListText)
+    }
+
+    public var batchRunConfigEntries: [RuntimeBatchRunConfigEntryState] {
+        RuntimeBatchRunSetupParser.configEntries(from: batchRunConfigText)
+    }
+
+    public var batchRunSetupValidationMessages: [RuntimeBatchRunValidationMessageState] {
+        RuntimeBatchRunSetupParser.validationMessages(
+            modelsText: batchRunModelListText,
+            configText: batchRunConfigText
+        )
+    }
+
+    public var batchRunSetupCanRequestPreflight: Bool {
+        RuntimeBatchRunSetupParser.canRequestPreflight(
+            modelsText: batchRunModelListText,
+            configText: batchRunConfigText
+        )
+    }
+
+    public var batchRunSetupSummaryText: String {
+        RuntimeBatchRunSetupParser.summaryText(
+            modelsText: batchRunModelListText,
+            configText: batchRunConfigText
+        )
+    }
+
+    public var batchRunPreflightCanRun: Bool {
+        batchRunSetupCanRequestPreflight && batchRunPreflightInProgress == false
+    }
+
+    public var batchRunStatusCanRefresh: Bool {
+        selectedBatchRunReport != nil && batchRunStatusInProgress == false && batchRunResumeInProgress == false
+    }
+
+    public var batchRunResumeCanRun: Bool {
+        batchRunResumeDisabledReason.isEmpty
+    }
+
+    public var batchRunResumeDisabledReason: String {
+        guard let report = selectedBatchRunReport else {
+            return "Run or select a batch report before resuming."
+        }
+        guard commandWorkflowRunner != nil else {
+            return "Batch Runs CLI runner is unavailable."
+        }
+        if batchRunPreflightInProgress {
+            return "Wait for batch preflight to finish before resuming."
+        }
+        if batchRunStatusInProgress {
+            return "Wait for status refresh to finish before resuming."
+        }
+        if batchRunResumeInProgress {
+            return "Resume request is already running."
+        }
+        if report.canResume(missingOnly: batchRunResumeMissingOnly) == false {
+            return "All manifest rows are complete; turn off Missing Only to rerun every model."
+        }
+        return ""
+    }
+
+    public var batchRunResumeSummaryText: String {
+        selectedBatchRunReport?.resumeSummaryText(missingOnly: batchRunResumeMissingOnly)
+            ?? "Run or select a batch report before resuming."
+    }
+
+    public var selectedBatchRunReport: RuntimeBatchRunReportState? {
+        batchRunReports.first { $0.id == selectedBatchRunReportID }
+    }
+
+    public func updateBatchRunModelListText(_ text: String) {
+        batchRunModelListText = text
+        batchRunPreflightErrorMessage = ""
+        batchRunStatusErrorMessage = ""
+        batchRunResumeErrorMessage = ""
+        notifyStateChanged()
+    }
+
+    public func updateBatchRunConfigText(_ text: String) {
+        batchRunConfigText = text
+        batchRunPreflightErrorMessage = ""
+        batchRunStatusErrorMessage = ""
+        batchRunResumeErrorMessage = ""
+        notifyStateChanged()
+    }
+
+    public func updateBatchRunResumeMissingOnly(_ missingOnly: Bool) {
+        batchRunResumeMissingOnly = missingOnly
+        batchRunResumeErrorMessage = ""
+        notifyStateChanged()
+    }
+
+    public func requestBatchRunPreflight() async {
+        guard batchRunSetupCanRequestPreflight else {
+            batchRunPreflightErrorMessage = "Resolve batch input validation errors before running preflight."
+            recordLocalError(batchRunPreflightErrorMessage)
+            notifyStateChanged()
+            return
+        }
+        guard let commandWorkflowRunner else {
+            batchRunPreflightErrorMessage = "Batch Runs CLI runner is unavailable."
+            recordLocalError(batchRunPreflightErrorMessage)
+            notifyStateChanged()
+            return
+        }
+
+        batchRunPreflightInProgress = true
+        batchRunPreflightErrorMessage = ""
+        batchRunResumeErrorMessage = ""
+        notifyStateChanged()
+        do {
+            let requestFiles = try writeBatchRunRequestFiles()
+            let command = MelixCLICommand.batchRun(
+                .init(
+                    modelListPath: requestFiles.modelListPath,
+                    configPath: requestFiles.configPath,
+                    preflight: true,
+                    dryRun: true,
+                    json: true
+                )
+            )
+            let output = try await commandWorkflowRunner.run(command)
+            let report = try RuntimeBatchRunReportDecoder.decodePreflightOutput(output)
+            batchRunPreflightInProgress = false
+            clearCLIWorkflowFailure()
+            upsertBatchRunReport(report)
+            notifyStateChanged()
+        } catch {
+            batchRunPreflightInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            batchRunPreflightErrorMessage = workflowErrorMessage(error)
+            recordLocalError(batchRunPreflightErrorMessage)
+            notifyStateChanged()
+        }
+    }
+
+    public func requestBatchRunStatus() async {
+        guard let report = selectedBatchRunReport else {
+            batchRunStatusErrorMessage = "Run or select a batch report before refreshing status."
+            recordLocalError(batchRunStatusErrorMessage)
+            notifyStateChanged()
+            return
+        }
+        guard let commandWorkflowRunner else {
+            batchRunStatusErrorMessage = "Batch Runs CLI runner is unavailable."
+            recordLocalError(batchRunStatusErrorMessage)
+            notifyStateChanged()
+            return
+        }
+
+        batchRunStatusInProgress = true
+        batchRunStatusErrorMessage = ""
+        batchRunResumeErrorMessage = ""
+        notifyStateChanged()
+        do {
+            let command = MelixCLICommand.batchStatus(
+                .init(
+                    runID: report.runID,
+                    outputRoot: report.outputRoot,
+                    tempRoot: report.tempRoot,
+                    json: true
+                )
+            )
+            let output = try await commandWorkflowRunner.run(command)
+            let statusSnapshot = try RuntimeBatchRunReportDecoder.decodeStatusOutput(output)
+            batchRunStatusInProgress = false
+            clearCLIWorkflowFailure()
+            upsertBatchRunReport(report.applyingStatusSnapshot(statusSnapshot))
+            notifyStateChanged()
+        } catch {
+            batchRunStatusInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            batchRunStatusErrorMessage = workflowErrorMessage(error)
+            recordLocalError(batchRunStatusErrorMessage)
+            notifyStateChanged()
+        }
+    }
+
+    public func requestBatchRunResume() async {
+        guard let report = selectedBatchRunReport else {
+            batchRunResumeErrorMessage = "Run or select a batch report before resuming."
+            recordLocalError(batchRunResumeErrorMessage)
+            notifyStateChanged()
+            return
+        }
+        let disabledReason = batchRunResumeDisabledReason
+        if disabledReason.isEmpty == false {
+            batchRunResumeErrorMessage = disabledReason
+            recordLocalError(batchRunResumeErrorMessage)
+            notifyStateChanged()
+            return
+        }
+        guard let commandWorkflowRunner else {
+            batchRunResumeErrorMessage = "Batch Runs CLI runner is unavailable."
+            recordLocalError(batchRunResumeErrorMessage)
+            notifyStateChanged()
+            return
+        }
+
+        batchRunResumeInProgress = true
+        batchRunResumeErrorMessage = ""
+        notifyStateChanged()
+        do {
+            let command = MelixCLICommand.batchResume(
+                .init(
+                    runID: report.runID,
+                    outputRoot: report.outputRoot,
+                    tempRoot: report.tempRoot,
+                    modelListPath: report.modelListPath,
+                    configPath: report.configPath,
+                    missingOnly: batchRunResumeMissingOnly,
+                    continueOnFailure: true,
+                    dryRun: false,
+                    json: true
+                )
+            )
+            let output = try await commandWorkflowRunner.run(command)
+            let statusSnapshot = try RuntimeBatchRunReportDecoder.decodeStatusOutput(output)
+            batchRunResumeInProgress = false
+            clearCLIWorkflowFailure()
+            upsertBatchRunReport(report.applyingStatusSnapshot(statusSnapshot))
+            notifyStateChanged()
+        } catch {
+            batchRunResumeInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            batchRunResumeErrorMessage = workflowErrorMessage(error)
+            recordLocalError(batchRunResumeErrorMessage)
+            notifyStateChanged()
+        }
+    }
+
+    public func applyRuntimeJobs(_ jobs: [RuntimeJobSummaryState]) {
+        let previousSelectedRuntimeJobID = selectedRuntimeJobID
+        runtimeJobs = jobs
+        if runtimeJobs.contains(where: { $0.id == selectedRuntimeJobID }) == false {
+            selectedRuntimeJobID = runtimeJobs.first?.id ?? ""
+        }
+        if selectedRuntimeJobID != previousSelectedRuntimeJobID {
+            persistOperatorSessionState()
+        }
+        notifyStateChanged()
+    }
+
+    public func applyRuntimeSettings(_ snapshot: RuntimeSettingsSnapshotState) {
+        runtimeSettingsSnapshot = snapshot
+        notifyStateChanged()
+    }
+
+    public func applyRuntimeDiscovery(_ snapshot: RuntimeDiscoverySnapshotState) {
+        runtimeDiscoverySnapshot = snapshot
+        notifyStateChanged()
+    }
+
+    public func updateRuntimeDiscoveryAliasQuery(_ query: String) {
+        runtimeDiscoveryAliasQueryDraft = query
+        notifyStateChanged()
+    }
+
+    public func updateWorkflowRecipeTaskFilter(_ filter: String) {
+        workflowRecipeTaskFilterDraft = filter
+        notifyStateChanged()
+    }
+
+    public func updateWorkflowRecipeURIInspectDraft(_ uri: String) {
+        workflowRecipeURIInspectDraft = uri
+        notifyStateChanged()
+    }
+
+    public func updateWorkflowRecipeInitTaskDraft(_ task: String) {
+        workflowRecipeInitTaskDraft = task
+        notifyStateChanged()
+    }
+
+    public func updateWorkflowRecipeSetKeyDraft(_ key: String) {
+        workflowRecipeSetKeyDraft = key
+        notifyStateChanged()
+    }
+
+    public func updateWorkflowRecipeSetValueDraft(_ value: String) {
+        workflowRecipeSetValueDraft = value
+        notifyStateChanged()
+    }
+
+    public func updateWorkflowRecipePlanOutputPathDraft(_ path: String) {
+        workflowRecipePlanOutputPathDraft = path
+        notifyStateChanged()
+    }
+
+    public func updateWorkflowRecipeApplyDryRun(_ enabled: Bool) {
+        workflowRecipeApplyDryRun = enabled
+        notifyStateChanged()
+    }
+
+    public func updateWorkflowRecipeApplyResume(_ enabled: Bool) {
+        workflowRecipeApplyResume = enabled
+        notifyStateChanged()
+    }
+
+    public func updateWorkflowRecipeApplyFromStepDraft(_ stepID: String) {
+        workflowRecipeApplyFromStepDraft = stepID
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetIDDraft(_ datasetID: String) {
+        syntheticDatasetIDDraft = datasetID
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetNameDraft(_ datasetName: String) {
+        syntheticDatasetNameDraft = datasetName
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetNumRecordsDraft(_ count: String) {
+        syntheticDatasetNumRecordsDraft = count
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetOutputKindDraft(_ outputKind: String) {
+        syntheticDatasetOutputKindDraft = outputKind
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetOutputFormatDraft(_ outputFormat: String) {
+        syntheticDatasetOutputFormatDraft = outputFormat
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetOutputDirDraft(_ outputDir: String) {
+        syntheticDatasetOutputDirDraft = outputDir
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetProviderEndpointDraft(_ endpoint: String) {
+        syntheticDatasetProviderEndpointDraft = endpoint
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetProviderNameDraft(_ providerName: String) {
+        syntheticDatasetProviderNameDraft = providerName
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetProviderTypeDraft(_ providerType: String) {
+        syntheticDatasetProviderTypeDraft = providerType
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetModelAliasDraft(_ modelAlias: String) {
+        syntheticDatasetModelAliasDraft = modelAlias
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetModelDraft(_ model: String) {
+        syntheticDatasetModelDraft = model
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetColumnNameDraft(_ name: String) {
+        syntheticDatasetColumnNameDraft = name
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetColumnTypeDraft(_ type: String) {
+        syntheticDatasetColumnTypeDraft = type
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetColumnPayloadDraft(_ payload: String) {
+        syntheticDatasetColumnPayloadDraft = payload
+        notifyStateChanged()
+    }
+
+    public func addSyntheticDatasetColumnDraft() {
+        let messages = syntheticDatasetColumnDraftValidationMessages
+        guard messages.isEmpty else {
+            syntheticDatasetColumnEditorErrorMessage = messages.map { "\($0.field): \($0.message)" }.joined(separator: " ")
+            notifyStateChanged()
+            return
+        }
+
+        syntheticDatasetColumns.append(
+            RuntimeSyntheticDatasetColumnState(
+                name: normalizedSyntheticDatasetColumnName,
+                type: normalizedSyntheticDatasetColumnType,
+                payload: normalizedSyntheticDatasetColumnPayload
+            )
+        )
+        syntheticDatasetColumnNameDraft = ""
+        syntheticDatasetColumnPayloadDraft = ""
+        syntheticDatasetColumnTypeDraft = normalizedSyntheticDatasetColumnType
+        syntheticDatasetColumnEditorErrorMessage = ""
+        notifyStateChanged()
+    }
+
+    public func removeSyntheticDatasetColumn(id: String) {
+        syntheticDatasetColumns.removeAll { $0.id == id }
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetSeedSourceKindDraft(_ kind: String) {
+        syntheticDatasetSeedSourceKindDraft = kind
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetSeedSourcePathDraft(_ path: String) {
+        syntheticDatasetSeedSourcePathDraft = path
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetValidationRatioDraft(_ ratio: String) {
+        syntheticDatasetValidationRatioDraft = ratio
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetResumeModeDraft(_ mode: String) {
+        syntheticDatasetResumeModeDraft = mode
+        notifyStateChanged()
+    }
+
+    public func updateSyntheticDatasetDataDesignerTelemetryEnabled(_ enabled: Bool) {
+        syntheticDatasetDataDesignerTelemetryEnabled = enabled
+        notifyStateChanged()
+    }
+
+    public func previewSyntheticDataset() async {
+        guard syntheticDatasetPreviewValidationMessages.isEmpty else {
+            failSyntheticDatasetPreview("Resolve synthetic dataset validation errors before preview.")
+            return
+        }
+        guard let commandWorkflowRunner else {
+            failSyntheticDatasetPreview("Synthetic Dataset CLI runner is unavailable.")
+            return
+        }
+
+        syntheticDatasetPreviewInProgress = true
+        syntheticDatasetPreviewMessage = ""
+        syntheticDatasetPreviewErrorMessage = ""
+        notifyStateChanged()
+
+        do {
+            let preview = try await commandWorkflowRunner.previewSyntheticDataset(
+                options: syntheticDatasetRequestOptions(mode: "preview")
+            )
+            syntheticDatasetPreviewInProgress = false
+            let label = preview.datasetID.isEmpty ? preview.datasetName : preview.datasetID
+            let rowLabel = preview.sampleCount == 1 ? "row" : "rows"
+            syntheticDatasetPreviewMessage = "Previewed \(label) with \(preview.sampleCount) \(rowLabel)."
+            syntheticDatasetPreviewErrorMessage = ""
+            clearCLIWorkflowFailure()
+            applySyntheticDatasetPreview(preview)
+        } catch {
+            syntheticDatasetPreviewInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            failSyntheticDatasetPreview(workflowErrorMessage(error))
+        }
+    }
+
+    public func applySyntheticDatasetPreview(_ preview: RuntimeSyntheticDatasetPreviewState) {
+        syntheticDatasetPreview = preview
+        notifyStateChanged()
+    }
+
+    public func createSyntheticDataset() async {
+        guard syntheticDatasetCreateValidationMessages.isEmpty else {
+            failSyntheticDatasetCreate("Resolve synthetic dataset validation errors before create.")
+            return
+        }
+        guard let commandWorkflowRunner else {
+            failSyntheticDatasetCreate("Synthetic Dataset CLI runner is unavailable.")
+            return
+        }
+
+        syntheticDatasetCreateInProgress = true
+        syntheticDatasetCreateMessage = ""
+        syntheticDatasetCreateErrorMessage = ""
+        notifyStateChanged()
+
+        do {
+            let result = try await commandWorkflowRunner.createSyntheticDataset(
+                options: syntheticDatasetRequestOptions(mode: "create")
+            )
+            syntheticDatasetCreateInProgress = false
+            let label = result.datasetID.isEmpty ? result.datasetName : result.datasetID
+            let rowLabel = result.rowCount == 1 ? "row" : "rows"
+            syntheticDatasetCreateMessage = "Created \(label) package with \(result.rowCount) \(rowLabel)."
+            syntheticDatasetCreateErrorMessage = ""
+            clearCLIWorkflowFailure()
+            applySyntheticDatasetCreateResult(result)
+        } catch {
+            syntheticDatasetCreateInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            failSyntheticDatasetCreate(workflowErrorMessage(error))
+        }
+    }
+
+    public func applySyntheticDatasetCreateResult(_ result: RuntimeSyntheticDatasetCreateResultState) {
+        syntheticDatasetCreateResult = result
+        notifyStateChanged()
+    }
+
+    public func updateRuntimeSettingDraft(key: String, value: String) {
+        runtimeSettingKeyDraft = key
+        runtimeSettingValueDraft = value
+        notifyStateChanged()
+    }
+
+    public func applyRuntimeSettingsOperationMessage(_ message: String) {
+        runtimeSettingsOperationMessage = message
+        runtimeSettingsOperationErrorMessage = ""
+        notifyStateChanged()
+    }
+
+    public func applyWorkflowRecipeCatalog(_ catalog: RuntimeWorkflowRecipeCatalogState) {
+        workflowRecipeCatalog = catalog
+        if selectedWorkflowRecipeID.isEmpty || catalog.recipes.contains(where: { $0.id == selectedWorkflowRecipeID }) == false {
+            selectedWorkflowRecipeID = catalog.recipes.first?.id ?? ""
+        }
+        notifyStateChanged()
+    }
+
+    public func applyWorkflowRecipeDetail(_ detail: RuntimeWorkflowRecipeDetailState) {
+        workflowRecipeDetailsByID[detail.id] = detail
+        selectedWorkflowRecipeID = detail.id
+        notifyStateChanged()
+    }
+
+    public func applyWorkflowRecipeURIInspection(_ inspection: RuntimeWorkflowURIInspectionState) {
+        workflowRecipeURIInspection = inspection
+        if normalizedWorkflowRecipeInitTask.isEmpty,
+           let taskKind = inspection.candidates.first?.taskKind,
+           taskKind.isEmpty == false
+        {
+            workflowRecipeInitTaskDraft = taskKind
+        }
+        notifyStateChanged()
+    }
+
+    public func applyWorkflowRecipeInitPreview(_ preview: RuntimeWorkflowRecipeInitPreviewState) {
+        workflowRecipeInitPreview = preview
+        notifyStateChanged()
+    }
+
+    public func applyWorkflowRecipePlan(_ plan: RuntimeWorkflowRecipePlanState) {
+        workflowRecipePlan = plan
+        notifyStateChanged()
+    }
+
+    public func applyWorkflowRecipeResult(_ result: RuntimeWorkflowRecipeApplyResultState) {
+        workflowRecipeApplyResult = result
+        notifyStateChanged()
+    }
+
+    public func addWorkflowRecipeSetDraft() {
+        let key = normalizedWorkflowRecipeSetKey
+        let value = normalizedWorkflowRecipeSetValue
+        guard validateWorkflowRecipeSetKey(key) else {
+            return
+        }
+        let wasUpdate = workflowRecipeSetValues[key] != nil
+        workflowRecipeSetValues[key] = value
+        workflowRecipeSetKeyDraft = ""
+        workflowRecipeSetValueDraft = ""
+        workflowRecipeSetEditorMessage = wasUpdate
+            ? "Updated --set \(key)=\(value)."
+            : "Added --set \(key)=\(value)."
+        workflowRecipeSetEditorErrorMessage = ""
+        notifyStateChanged()
+    }
+
+    public func removeWorkflowRecipeSetValue(key: String) {
+        let normalizedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedKey.isEmpty == false else {
+            failWorkflowRecipeSetEditor("Select a variable before removing it.")
+            return
+        }
+        workflowRecipeSetValues.removeValue(forKey: normalizedKey)
+        workflowRecipeSetEditorMessage = "Removed --set \(normalizedKey)."
+        workflowRecipeSetEditorErrorMessage = ""
+        notifyStateChanged()
+    }
+
+    public func clearWorkflowRecipeSetValues() {
+        guard workflowRecipeSetValues.isEmpty == false else {
+            failWorkflowRecipeSetEditor("No recipe variables to clear.")
+            return
+        }
+        workflowRecipeSetValues = [:]
+        workflowRecipeSetEditorMessage = "Cleared recipe variables."
+        workflowRecipeSetEditorErrorMessage = ""
+        notifyStateChanged()
+    }
+
+    public func planWorkflowRecipe() async {
+        let recipeID = selectedWorkflowRecipeID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard recipeID.isEmpty == false else {
+            failWorkflowRecipePlan("Select a workflow recipe before planning.")
+            return
+        }
+        guard let commandWorkflowRunner else {
+            failWorkflowRecipePlan("Workflow recipe CLI runner is unavailable.")
+            return
+        }
+
+        workflowRecipePlanInProgress = true
+        workflowRecipePlanMessage = ""
+        workflowRecipePlanErrorMessage = ""
+        workflowRecipePlanOutputPathDraft = normalizedWorkflowRecipePlanOutputPath
+        notifyStateChanged()
+
+        do {
+            let plan = try await commandWorkflowRunner.planWorkflowRecipe(
+                recipeID: recipeID,
+                version: selectedWorkflowRecipeDetail?.version ?? "",
+                values: workflowRecipeSetValues,
+                outputPath: normalizedWorkflowRecipePlanOutputPath
+            )
+            workflowRecipePlanInProgress = false
+            workflowRecipePlanMessage = "Planned \(plan.recipeID) with \(plan.pipelineSteps.count) pipeline steps."
+            workflowRecipePlanErrorMessage = ""
+            clearCLIWorkflowFailure()
+            applyWorkflowRecipePlan(plan)
+        } catch {
+            workflowRecipePlanInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            failWorkflowRecipePlan(workflowErrorMessage(error))
+        }
+    }
+
+    public func applyWorkflowRecipe() async {
+        let recipeID = selectedWorkflowRecipeID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard recipeID.isEmpty == false else {
+            failWorkflowRecipeApply("Select a workflow recipe before applying.")
+            return
+        }
+        guard let commandWorkflowRunner else {
+            failWorkflowRecipeApply("Workflow recipe CLI runner is unavailable.")
+            return
+        }
+
+        workflowRecipeApplyInProgress = true
+        workflowRecipeApplyMessage = ""
+        workflowRecipeApplyErrorMessage = ""
+        workflowRecipeApplyFromStepDraft = normalizedWorkflowRecipeApplyFromStep
+        notifyStateChanged()
+
+        do {
+            let result = try await commandWorkflowRunner.applyWorkflowRecipe(
+                recipeID: recipeID,
+                version: selectedWorkflowRecipeDetail?.version ?? "",
+                values: workflowRecipeSetValues,
+                dryRun: workflowRecipeApplyDryRun,
+                resume: workflowRecipeApplyResume,
+                fromStepID: normalizedWorkflowRecipeApplyFromStep
+            )
+            workflowRecipeApplyInProgress = false
+            let name = result.name.isEmpty ? recipeID : result.name
+            let mode = workflowRecipeApplyDryRun ? " as dry run" : ""
+            let stepLabel = result.stepRows.count == 1 ? "step" : "steps"
+            workflowRecipeApplyMessage = "Applied \(name)\(mode): \(result.status) \(result.stepRows.count) \(stepLabel)."
+            workflowRecipeApplyErrorMessage = ""
+            clearCLIWorkflowFailure()
+            applyWorkflowRecipeResult(result)
+        } catch {
+            workflowRecipeApplyInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            failWorkflowRecipeApply(workflowErrorMessage(error))
+        }
+    }
+
+    public func setRuntimeSetting() async {
+        let key = normalizedRuntimeSettingKey
+        let value = normalizedRuntimeSettingValue
+        guard key.isEmpty == false, value.isEmpty == false else {
+            failRuntimeSettingsOperation("Enter a setting key and value before setting.")
+            return
+        }
+        guard let commandWorkflowRunner else {
+            failRuntimeSettingsOperation("Settings CLI runner is unavailable.")
+            return
+        }
+
+        beginRuntimeSettingsOperation()
+        do {
+            _ = try await commandWorkflowRunner.run(.settingsSet(.init(key: key, value: value, json: true)))
+            try await refreshRuntimeSettingsSnapshot(using: commandWorkflowRunner)
+            runtimeSettingsOperationInProgress = false
+            runtimeSettingsOperationMessage = "Updated \(key)."
+            runtimeSettingsOperationErrorMessage = ""
+            clearCLIWorkflowFailure()
+            notifyStateChanged()
+        } catch {
+            failRuntimeSettingsOperation(error)
+        }
+    }
+
+    public func resetRuntimeSetting() async {
+        let key = normalizedRuntimeSettingKey
+        guard key.isEmpty == false else {
+            failRuntimeSettingsOperation("Enter a setting key before resetting.")
+            return
+        }
+        guard let commandWorkflowRunner else {
+            failRuntimeSettingsOperation("Settings CLI runner is unavailable.")
+            return
+        }
+
+        beginRuntimeSettingsOperation()
+        do {
+            _ = try await commandWorkflowRunner.run(.settingsReset(.init(key: key, json: true)))
+            try await refreshRuntimeSettingsSnapshot(using: commandWorkflowRunner)
+            runtimeSettingsOperationInProgress = false
+            runtimeSettingsOperationMessage = "Reset \(key)."
+            runtimeSettingsOperationErrorMessage = ""
+            clearCLIWorkflowFailure()
+            notifyStateChanged()
+        } catch {
+            failRuntimeSettingsOperation(error)
+        }
+    }
+
+    public func validateRuntimeSettings() async {
+        guard let commandWorkflowRunner else {
+            failRuntimeSettingsOperation("Settings CLI runner is unavailable.")
+            return
+        }
+
+        beginRuntimeSettingsOperation()
+        do {
+            let output = try await commandWorkflowRunner.run(.settingsValidate(.init(json: true)))
+            let result = try RuntimeSettingsPayloadDecoder.decodeValidation(output)
+            runtimeSettingsValidationResult = result
+            runtimeSettingsOperationInProgress = false
+            runtimeSettingsOperationMessage = result.summaryText
+            runtimeSettingsOperationErrorMessage = ""
+            clearCLIWorkflowFailure()
+            notifyStateChanged()
+        } catch {
+            failRuntimeSettingsOperation(error)
+        }
+    }
+
+    public func refreshRuntimeDiscovery() async {
+        guard let commandWorkflowRunner else {
+            failRuntimeDiscoveryOperation("Discovery CLI runner is unavailable.")
+            return
+        }
+
+        beginRuntimeDiscoveryOperation()
+        do {
+            let entries: [(RuntimeDiscoveryEndpoint, String)] = [
+                (.info, try await commandWorkflowRunner.run(.info(.init(json: true)))),
+                (.capabilities, try await commandWorkflowRunner.run(.capabilities(.init(json: true)))),
+                (.instructions, try await commandWorkflowRunner.run(.instructions(.init(json: true)))),
+                (.schema, try await commandWorkflowRunner.run(.schema(.init(json: true)))),
+                (.configMetadata, try await commandWorkflowRunner.run(.configMetadata(.init(json: true)))),
+            ]
+            runtimeDiscoverySnapshot = try RuntimeDiscoveryPayloadDecoder.decodeSnapshot(entries)
+            runtimeDiscoveryOperationInProgress = false
+            runtimeDiscoveryOperationMessage = "Runtime discovery refreshed."
+            runtimeDiscoveryOperationErrorMessage = ""
+            clearCLIWorkflowFailure()
+            notifyStateChanged()
+        } catch {
+            failRuntimeDiscoveryOperation(error)
+        }
+    }
+
+    public func lookupRuntimeDiscoveryModelAlias() async {
+        let query = normalizedRuntimeDiscoveryAliasQuery
+        guard query.isEmpty == false else {
+            failRuntimeDiscoveryOperation("Model alias query is required.")
+            return
+        }
+        guard let commandWorkflowRunner else {
+            failRuntimeDiscoveryOperation("Discovery CLI runner is unavailable.")
+            return
+        }
+
+        beginRuntimeDiscoveryOperation()
+        do {
+            let output = try await commandWorkflowRunner.run(.capabilities(.init(json: true, modelQuery: query)))
+            let capabilities = try RuntimeDiscoveryPayloadDecoder.decodePayload(endpoint: .capabilities, output)
+            var payloads = runtimeDiscoverySnapshot.payloads
+            if let index = payloads.firstIndex(where: { $0.endpoint == .capabilities }) {
+                payloads[index] = capabilities
+            } else {
+                payloads.append(capabilities)
+            }
+            runtimeDiscoveryAliasQueryDraft = query
+            runtimeDiscoverySnapshot = RuntimeDiscoverySnapshotState(payloads: payloads)
+            runtimeDiscoveryOperationInProgress = false
+            runtimeDiscoveryOperationMessage = "Model alias lookup refreshed."
+            runtimeDiscoveryOperationErrorMessage = ""
+            clearCLIWorkflowFailure()
+            notifyStateChanged()
+        } catch {
+            failRuntimeDiscoveryOperation(error)
+        }
+    }
+
+    public func refreshWorkflowRecipeCatalog() async {
+        guard let commandWorkflowRunner else {
+            failWorkflowRecipeOperation("Workflow recipe CLI runner is unavailable.")
+            return
+        }
+
+        workflowRecipeCatalogInProgress = true
+        workflowRecipeCatalogMessage = ""
+        workflowRecipeCatalogErrorMessage = ""
+        notifyStateChanged()
+
+        do {
+            let catalog = try await commandWorkflowRunner.listWorkflowRecipes(task: normalizedWorkflowRecipeTaskFilter)
+            workflowRecipeCatalogInProgress = false
+            workflowRecipeCatalogMessage = Self.workflowRecipeCatalogLoadedMessage(count: catalog.recipes.count)
+            workflowRecipeCatalogErrorMessage = ""
+            clearCLIWorkflowFailure()
+            applyWorkflowRecipeCatalog(catalog)
+        } catch {
+            recordCLIWorkflowErrorIfNeeded(error)
+            failWorkflowRecipeOperation(workflowErrorMessage(error))
+        }
+    }
+
+    public func selectWorkflowRecipe(recipeID: String) async {
+        let normalizedRecipeID = recipeID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedRecipeID.isEmpty == false else {
+            failWorkflowRecipeOperation("Select a workflow recipe before loading detail.")
+            return
+        }
+
+        selectedWorkflowRecipeID = normalizedRecipeID
+        if workflowRecipeDetailsByID[normalizedRecipeID] != nil {
+            notifyStateChanged()
+            return
+        }
+
+        guard let commandWorkflowRunner else {
+            failWorkflowRecipeOperation("Workflow recipe CLI runner is unavailable.")
+            return
+        }
+
+        workflowRecipeDetailInProgress = true
+        workflowRecipeCatalogMessage = ""
+        workflowRecipeCatalogErrorMessage = ""
+        notifyStateChanged()
+
+        do {
+            let detail = try await commandWorkflowRunner.showWorkflowRecipe(recipeID: normalizedRecipeID)
+            workflowRecipeDetailInProgress = false
+            workflowRecipeCatalogMessage = "Loaded \(detail.id)."
+            workflowRecipeCatalogErrorMessage = ""
+            clearCLIWorkflowFailure()
+            applyWorkflowRecipeDetail(detail)
+        } catch {
+            workflowRecipeDetailInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            failWorkflowRecipeOperation(workflowErrorMessage(error))
+        }
+    }
+
+    public func inspectWorkflowRecipeURI() async {
+        let uri = normalizedWorkflowRecipeURIInspectDraft
+        guard uri.isEmpty == false else {
+            failWorkflowRecipeURIInspection("Enter a URI before inspecting.")
+            return
+        }
+        guard let commandWorkflowRunner else {
+            failWorkflowRecipeURIInspection("Workflow recipe CLI runner is unavailable.")
+            return
+        }
+
+        workflowRecipeURIInspectDraft = uri
+        workflowRecipeURIInspectInProgress = true
+        workflowRecipeURIInspectMessage = ""
+        workflowRecipeURIInspectErrorMessage = ""
+        notifyStateChanged()
+
+        do {
+            let inspection = try await commandWorkflowRunner.inspectWorkflowRecipeURI(uri: uri)
+            workflowRecipeURIInspectInProgress = false
+            workflowRecipeURIInspectMessage = "Inspected \(uri): \(inspection.summaryText)."
+            workflowRecipeURIInspectErrorMessage = ""
+            clearCLIWorkflowFailure()
+            applyWorkflowRecipeURIInspection(inspection)
+        } catch {
+            workflowRecipeURIInspectInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            failWorkflowRecipeURIInspection(workflowErrorMessage(error))
+        }
+    }
+
+    public func previewWorkflowRecipeInitFromInspectedURI() async {
+        let sourceURI = workflowRecipeInitPreviewSourceURI
+        let task = normalizedWorkflowRecipeInitTask
+        guard sourceURI.isEmpty == false else {
+            failWorkflowRecipeInitPreview("Inspect or enter a URI before previewing recipe init.")
+            return
+        }
+        guard task.isEmpty == false else {
+            failWorkflowRecipeInitPreview("Enter a recipe init task before previewing.")
+            return
+        }
+        guard let commandWorkflowRunner else {
+            failWorkflowRecipeInitPreview("Workflow recipe CLI runner is unavailable.")
+            return
+        }
+
+        workflowRecipeInitTaskDraft = task
+        workflowRecipeInitPreviewInProgress = true
+        workflowRecipeInitPreviewMessage = ""
+        workflowRecipeInitPreviewErrorMessage = ""
+        notifyStateChanged()
+
+        do {
+            let preview = try await commandWorkflowRunner.initWorkflowRecipeFromURI(sourceURI: sourceURI, task: task)
+            workflowRecipeInitPreviewInProgress = false
+            workflowRecipeInitPreviewMessage = "Previewed \(preview.recipe.id) from \(sourceURI)."
+            workflowRecipeInitPreviewErrorMessage = ""
+            clearCLIWorkflowFailure()
+            applyWorkflowRecipeInitPreview(preview)
+        } catch {
+            workflowRecipeInitPreviewInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            failWorkflowRecipeInitPreview(workflowErrorMessage(error))
+        }
+    }
+
+    public func applyRuntimeJobDetail(_ detail: RuntimeJobDetailState) {
+        runtimeJobDetailsByID[detail.summary.id] = detail
+        if let index = runtimeJobs.firstIndex(where: { $0.id == detail.summary.id }) {
+            runtimeJobs[index] = detail.summary
+        } else {
+            runtimeJobs.append(detail.summary)
+        }
+        let previousSelectedRuntimeJobID = selectedRuntimeJobID
+        if selectedRuntimeJobID.isEmpty || runtimeJobs.contains(where: { $0.id == selectedRuntimeJobID }) == false {
+            selectedRuntimeJobID = detail.summary.id
+        }
+        if selectedRuntimeJobID != previousSelectedRuntimeJobID {
+            persistOperatorSessionState()
+        }
+        notifyStateChanged()
+    }
+
+    public func refreshRuntimeJobs() async {
+        guard let commandWorkflowRunner else {
+            recordLocalError("Jobs CLI runner is unavailable.")
+            notifyStateChanged()
+            return
+        }
+
+        runtimeJobsRefreshInProgress = true
+        notifyStateChanged()
+        do {
+            let jobs = try await commandWorkflowRunner.listRuntimeJobs()
+            runtimeJobsRefreshInProgress = false
+            clearCLIWorkflowFailure()
+            applyRuntimeJobs(jobs)
+        } catch {
+            runtimeJobsRefreshInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            recordLocalError(String(describing: error))
+            notifyStateChanged()
+        }
+    }
+
+    public func refreshSelectedRuntimeJobDetail() async {
+        guard let jobID = runtimeJobIDForSelectedOperation("refreshing job detail") else {
+            return
+        }
+        guard let commandWorkflowRunner else {
+            recordLocalError("Jobs CLI runner is unavailable.")
+            notifyStateChanged()
+            return
+        }
+
+        selectedRuntimeJobDetailRefreshInProgress = true
+        notifyStateChanged()
+        do {
+            let detail = try await commandWorkflowRunner.showRuntimeJob(jobID: jobID)
+            selectedRuntimeJobDetailRefreshInProgress = false
+            clearCLIWorkflowFailure()
+            applyRuntimeJobDetail(detail)
+        } catch {
+            selectedRuntimeJobDetailRefreshInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            recordLocalError(String(describing: error))
+            notifyStateChanged()
+        }
+    }
+
+    public func refreshSelectedRuntimeJobLogs() async {
+        guard let jobID = runtimeJobIDForSelectedOperation("fetching job logs") else {
+            return
+        }
+        guard let commandWorkflowRunner else {
+            recordLocalError("Jobs CLI runner is unavailable.")
+            notifyStateChanged()
+            return
+        }
+
+        selectedRuntimeJobLogsRefreshInProgress = true
+        notifyStateChanged()
+        do {
+            let snapshot = try await commandWorkflowRunner.fetchRuntimeJobLogs(jobID: jobID)
+            selectedRuntimeJobLogsRefreshInProgress = false
+            clearCLIWorkflowFailure()
+            runtimeJobLogSnapshotsByID[snapshot.jobID] = snapshot
+            notifyStateChanged()
+        } catch {
+            selectedRuntimeJobLogsRefreshInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            recordLocalError(String(describing: error))
+            notifyStateChanged()
+        }
+    }
+
+    public func refreshSelectedRuntimeJobArtifacts() async {
+        guard let jobID = runtimeJobIDForSelectedOperation("refreshing job artifacts") else {
+            return
+        }
+        guard let commandWorkflowRunner else {
+            recordLocalError("Jobs CLI runner is unavailable.")
+            notifyStateChanged()
+            return
+        }
+
+        selectedRuntimeJobArtifactsRefreshInProgress = true
+        notifyStateChanged()
+        do {
+            let snapshot = try await commandWorkflowRunner.fetchRuntimeJobArtifacts(jobID: jobID)
+            selectedRuntimeJobArtifactsRefreshInProgress = false
+            clearCLIWorkflowFailure()
+            runtimeJobArtifactSnapshotsByID[snapshot.jobID] = snapshot
+            notifyStateChanged()
+        } catch {
+            selectedRuntimeJobArtifactsRefreshInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            recordLocalError(String(describing: error))
+            notifyStateChanged()
+        }
+    }
+
+    public func requestSelectedRuntimeJobCancellation() async {
+        guard let jobID = runtimeJobIDForSelectedOperation("requesting job cancellation") else {
+            return
+        }
+        guard selectedRuntimeJobCanRequestCancellation else {
+            recordLocalError("Selected job is terminal or already has a cancel request.")
+            notifyStateChanged()
+            return
+        }
+        guard let commandWorkflowRunner else {
+            recordLocalError("Jobs CLI runner is unavailable.")
+            notifyStateChanged()
+            return
+        }
+
+        selectedRuntimeJobCancelInProgress = true
+        notifyStateChanged()
+        do {
+            let result = try await commandWorkflowRunner.cancelRuntimeJob(jobID: jobID)
+            selectedRuntimeJobCancelInProgress = false
+            clearCLIWorkflowFailure()
+            runtimeJobCancelResultsByID[result.jobID.isEmpty ? jobID : result.jobID] = result
+            notifyStateChanged()
+        } catch {
+            selectedRuntimeJobCancelInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            recordLocalError(String(describing: error))
+            notifyStateChanged()
+        }
+    }
+
+    public func selectRuntimeJob(id: String) {
+        guard runtimeJobs.contains(where: { $0.id == id }) else {
+            return
+        }
+        selectedRuntimeJobID = id
+        persistOperatorSessionState(force: true)
+        notifyStateChanged()
+    }
+
+    private func runtimeJobIDForSelectedOperation(_ operation: String) -> String? {
+        let jobID = selectedRuntimeJobID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard jobID.isEmpty == false else {
+            recordLocalError("Select a job before \(operation).")
+            notifyStateChanged()
+            return nil
+        }
+        return jobID
+    }
+
+    private func upsertBatchRunReport(_ report: RuntimeBatchRunReportState) {
+        if let index = batchRunReports.firstIndex(where: { $0.id == report.id }) {
+            batchRunReports[index] = report
+        } else {
+            batchRunReports.insert(report, at: 0)
+        }
+        selectedBatchRunReportID = report.id
+    }
+
+    private func writeBatchRunRequestFiles() throws -> BatchRunRequestFiles {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-window-batch-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let modelListURL = root.appendingPathComponent("models.txt")
+        try normalizedBatchRequestText(batchRunModelListText).write(
+            to: modelListURL,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        var configPath = ""
+        if batchRunConfigText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            let configURL = root.appendingPathComponent("batch-config.txt")
+            try normalizedBatchRequestText(batchRunConfigText).write(
+                to: configURL,
+                atomically: true,
+                encoding: .utf8
+            )
+            configPath = configURL.path
+        }
+
+        return BatchRunRequestFiles(modelListPath: modelListURL.path, configPath: configPath)
+    }
+
+    private func normalizedBatchRequestText(_ text: String) -> String {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? "" : normalized + "\n"
+    }
+
     public func openPreferences() {
         selectedSurface = .tools
         selectedToolSection = .settings
@@ -3908,6 +5870,51 @@ public final class RuntimeViewModel {
             session.servingDefaults.accelerationMode = value
             session.updatedAt = Date()
         }
+    }
+
+    public func updateSelectedServerSessionAccelerationProfile(_ value: String) {
+        let normalizedProfile = ServingAccelerationProfiles.normalizeProfileID(value)
+            ?? ServingAccelerationProfiles.defaultProfileID
+        updateSelectedServerSession { session in
+            let previousProfile = ServingAccelerationProfiles.profile(id: session.servingDefaults.accelerationProfile)
+            let nextProfile = ServingAccelerationProfiles.profile(id: normalizedProfile)
+            Self.applyServingAccelerationProfileDefaults(
+                nextProfile,
+                replacing: previousProfile,
+                to: &session.servingDefaults
+            )
+            session.updatedAt = Date()
+        }
+    }
+
+    private static func applyServingAccelerationProfileDefaults(
+        _ nextProfile: ServingAccelerationProfile,
+        replacing previousProfile: ServingAccelerationProfile,
+        to servingDefaults: inout DesktopServerServingDefaultsState
+    ) {
+        let previousAccelerationMode = ServingAccelerationProfiles.controlPlaneRawValue(previousProfile.accelerationMode)
+        if servingDefaults.accelerationMode == previousAccelerationMode {
+            servingDefaults.accelerationMode = ServingAccelerationProfiles.controlPlaneRawValue(nextProfile.accelerationMode)
+        }
+        if servingDefaults.draftModelID == previousProfile.draftModelID {
+            servingDefaults.draftModelID = nextProfile.draftModelID
+        }
+        if servingDefaults.numDraftTokens == Int(previousProfile.numDraftTokens) {
+            servingDefaults.numDraftTokens = Int(nextProfile.numDraftTokens)
+        }
+        if servingDefaults.concurrentProcessingEnabled == previousProfile.concurrentProcessingEnabled {
+            servingDefaults.concurrentProcessingEnabled = nextProfile.concurrentProcessingEnabled
+        }
+        if servingDefaults.maxConcurrentRequests == Int(previousProfile.maxConcurrentRequests) {
+            servingDefaults.maxConcurrentRequests = Int(nextProfile.maxConcurrentRequests)
+        }
+        if servingDefaults.prefillBatchSize == Int(previousProfile.prefillBatchSize) {
+            servingDefaults.prefillBatchSize = Int(nextProfile.prefillBatchSize)
+        }
+        if servingDefaults.completionBatchSize == Int(previousProfile.completionBatchSize) {
+            servingDefaults.completionBatchSize = Int(nextProfile.completionBatchSize)
+        }
+        servingDefaults.accelerationProfile = nextProfile.id
     }
 
     public func updateSelectedServerSessionDraftModelID(_ value: String) {
@@ -4565,6 +6572,49 @@ public final class RuntimeViewModel {
         return loraTrainingJobs.first(where: { $0.id == selectedLoraTrainingJobID }) ?? loraTrainingJobs.first
     }
 
+    public var loraFusedActivationUnavailableText: String? {
+        loraFusedActivationUnavailableText(for: selectedLoraTrainingJob)
+    }
+
+    public static func adapterCapabilityReceipt(from job: LoraTrainingJobRecord) -> RuntimeAdapterCapabilityReceiptState? {
+        let payload = jsonPayload(from: job.latestOutputText)
+        let adapterFamily = stringValue("adapter_family", from: payload)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let adapterAlgorithm = stringValue("adapter_algorithm", from: payload)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let backendSupported = payload["backend_supported"] as? Bool
+        let unsupportedReason = stringValue("unsupported_reason", from: payload)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let adapterCapabilities = dictionaryValue("adapter_capabilities", from: payload)
+        let loraLike = adapterCapabilities["lora_like"] as? Bool
+        let mergeable = adapterCapabilities["mergeable"] as? Bool
+        let reloraCompatible = adapterCapabilities["relora_compatible"] as? Bool
+        let quantizedBaseSupported = adapterCapabilities["quantized_base_supported"] as? Bool
+
+        if adapterFamily.isEmpty,
+           adapterAlgorithm.isEmpty,
+           backendSupported == nil,
+           unsupportedReason.isEmpty,
+           loraLike == nil,
+           mergeable == nil,
+           reloraCompatible == nil,
+           quantizedBaseSupported == nil
+        {
+            return nil
+        }
+
+        return RuntimeAdapterCapabilityReceiptState(
+            adapterFamily: adapterFamily,
+            adapterAlgorithm: adapterAlgorithm,
+            backendSupported: backendSupported,
+            unsupportedReason: unsupportedReason,
+            loraLike: loraLike,
+            mergeable: mergeable,
+            reloraCompatible: reloraCompatible,
+            quantizedBaseSupported: quantizedBaseSupported
+        )
+    }
+
     public var registryRootSummaryText: String {
         if registryHasConfiguredRootOverride {
             let count = registryConfiguredRootPaths.count
@@ -4732,9 +6782,9 @@ public final class RuntimeViewModel {
         switch target.kind {
         case .localServer:
             guard let model = catalogModelRow(for: target.modelID) else {
-                return "\(benchmarkTargetTaskTitle) • \(target.title) • \(target.modelID)"
+                return "\(benchmarkTargetTaskTitle) • \(target.title) • \(target.modelID)\(Self.diagnosticsProfileSummarySuffix(for: target))"
             }
-            return "\(benchmarkTargetTaskTitle) • \(target.title) • \(model.displayNameWithID)"
+            return "\(benchmarkTargetTaskTitle) • \(target.title) • \(model.displayNameWithID)\(Self.diagnosticsProfileSummarySuffix(for: target))"
         case .remoteServer:
             return "\(benchmarkTargetTaskTitle) • \(target.title) • Remote Server"
         case .startNewServer:
@@ -4783,9 +6833,9 @@ public final class RuntimeViewModel {
         switch target.kind {
         case .localServer:
             guard let model = catalogModelRow(for: target.modelID) else {
-                return "\(evaluationTargetTaskTitle) • \(target.title) • \(target.modelID)"
+                return "\(evaluationTargetTaskTitle) • \(target.title) • \(target.modelID)\(Self.diagnosticsProfileSummarySuffix(for: target))"
             }
-            return "\(evaluationTargetTaskTitle) • \(target.title) • \(model.displayNameWithID)"
+            return "\(evaluationTargetTaskTitle) • \(target.title) • \(model.displayNameWithID)\(Self.diagnosticsProfileSummarySuffix(for: target))"
         case .remoteServer:
             return "\(evaluationTargetTaskTitle) • \(target.title) • \(target.modelID)"
         case .startNewServer:
@@ -4798,6 +6848,10 @@ public final class RuntimeViewModel {
             ?? benchmarkHistory.first
     }
 
+    public var selectedBenchmarkMemoryFitEvidenceText: String {
+        selectedBenchmarkHistoryEntry?.memoryFitSummaryText ?? ""
+    }
+
     public var selectedBenchmarkMatrixHistoryEntry: RuntimeBenchmarkMatrixHistoryEntryState? {
         benchmarkMatrixHistory.first(where: { $0.jobID == selectedBenchmarkMatrixHistoryJobID })
             ?? benchmarkMatrixHistory.first
@@ -4806,6 +6860,19 @@ public final class RuntimeViewModel {
     public var selectedEvaluationHistoryEntry: RuntimeEvaluationHistoryEntryState? {
         evaluationHistory.first(where: { $0.jobID == selectedEvaluationHistoryJobID })
             ?? evaluationHistory.first
+    }
+
+    public var selectedEvaluationMemoryFitEvidenceText: String {
+        selectedEvaluationHistoryEntry?.memoryFitSummaryText ?? ""
+    }
+
+    public var selectedLoraTrainingJobMemoryFitEvidenceText: String {
+        selectedLoraTrainingJob?.followUpArtifacts.memoryFitSummaryText ?? ""
+    }
+
+    public var diagnosticsDebugBundleCanRun: Bool {
+        diagnosticsDebugBundleRunIDDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            && diagnosticsDebugBundleInProgress == false
     }
 
     public func loadEvidenceReport(json: String) throws {
@@ -4849,6 +6916,80 @@ public final class RuntimeViewModel {
     public func clearEvidenceReportOpenError() {
         evidenceReportOpenError = ""
         notifyStateChanged()
+    }
+
+    public func updateDiagnosticsDebugBundleRunIDDraft(_ runID: String) {
+        diagnosticsDebugBundleRunIDDraft = sanitizedRichText(runID)
+        notifyStateChanged()
+    }
+
+    public func updateDiagnosticsDebugBundleSourcePathDraft(_ path: String) {
+        diagnosticsDebugBundleSourcePathDraft = sanitizedRichText(path)
+        notifyStateChanged()
+    }
+
+    public func updateDiagnosticsDebugBundleOutputPathDraft(_ path: String) {
+        diagnosticsDebugBundleOutputPathDraft = sanitizedRichText(path)
+        notifyStateChanged()
+    }
+
+    public func applyDiagnosticsDebugBundleResult(_ result: RuntimeDiagnosticsDebugBundleState) {
+        diagnosticsDebugBundleResult = result
+        diagnosticsDebugBundleMessage = result.bundlePath.isEmpty
+            ? "Debug bundle ready."
+            : "Debug bundle ready at \(result.bundlePath)."
+        diagnosticsDebugBundleErrorMessage = ""
+        diagnosticsDebugBundleInProgress = false
+        notifyStateChanged()
+    }
+
+    public func recordDiagnosticsDebugBundleArtifactMessage(_ message: String) {
+        diagnosticsDebugBundleMessage = sanitizedRichText(message)
+        diagnosticsDebugBundleErrorMessage = ""
+        notifyStateChanged()
+    }
+
+    public func recordDiagnosticsDebugBundleArtifactError(_ message: String) {
+        diagnosticsDebugBundleMessage = ""
+        diagnosticsDebugBundleErrorMessage = sanitizedRichText(message)
+        notifyStateChanged()
+    }
+
+    public func runDiagnosticsDebugBundle() async {
+        let runID = diagnosticsDebugBundleRunIDDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard runID.isEmpty == false else {
+            failDiagnosticsDebugBundle("Enter a run or job ID before creating a debug bundle.")
+            return
+        }
+        guard let commandWorkflowRunner else {
+            failDiagnosticsDebugBundle("Diagnostics CLI runner is unavailable.")
+            return
+        }
+
+        let sourcePath = diagnosticsDebugBundleSourcePathDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let outputPath = diagnosticsDebugBundleOutputPathDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        diagnosticsDebugBundleRunIDDraft = runID
+        diagnosticsDebugBundleSourcePathDraft = sourcePath
+        diagnosticsDebugBundleOutputPathDraft = outputPath
+        diagnosticsDebugBundleInProgress = true
+        diagnosticsDebugBundleMessage = ""
+        diagnosticsDebugBundleErrorMessage = ""
+        notifyStateChanged()
+
+        do {
+            let result = try await commandWorkflowRunner.createDiagnosticsDebugBundle(
+                runID: runID,
+                sourcePath: sourcePath,
+                outputPath: outputPath
+            )
+            diagnosticsDebugBundleInProgress = false
+            clearCLIWorkflowFailure()
+            applyDiagnosticsDebugBundleResult(result)
+        } catch {
+            diagnosticsDebugBundleInProgress = false
+            recordCLIWorkflowErrorIfNeeded(error)
+            failDiagnosticsDebugBundle(workflowErrorMessage(error))
+        }
     }
 
     private var selectedServerSessionID = ""
@@ -5749,6 +7890,40 @@ public final class RuntimeViewModel {
         notifyStateChanged()
     }
 
+    public func trustRemoteCodeForPrimaryModel() async {
+        await updatePrimaryModelLoadTrustMode("trust_remote_code")
+    }
+
+    public func clearPrimaryModelLoadTrustOverride() async {
+        await updatePrimaryModelLoadTrustMode("")
+    }
+
+    private func updatePrimaryModelLoadTrustMode(_ mode: String) async {
+        guard let model = primaryModelSummary else {
+            return
+        }
+        await updateModelLoadTrustMode(modelID: model.modelID, mode: mode)
+    }
+
+    public func updateModelLoadTrustMode(modelID: String, mode: String) async {
+        let startedAt = Date()
+        do {
+            let model = try await client.updateModelSettings(
+                modelID: modelID,
+                values: ["load_trust_mode": mode]
+            )
+            await metrics.record(
+                name: "menu.model_load_trust_policy_ms",
+                valueMs: Date().timeIntervalSince(startedAt) * 1_000
+            )
+            upsert(model: model)
+            synchronizeModelSettingsDrafts(force: true)
+        } catch {
+            recordLocalError(String(describing: error))
+        }
+        notifyStateChanged()
+    }
+
     public func updatePrimaryModelForLatency() async {
         guard let model = primaryModel else {
             return
@@ -5870,6 +8045,30 @@ public final class RuntimeViewModel {
                 } ?? "Unspecified",
                 accelerationProfileID: snapshotModel?.settings.accelerationProfileID ?? "",
                 toolParserFallbackText: snapshotModel.map(runtimeToolParserFallbackText) ?? "Off",
+                requestedLoadTrustModeText: snapshotModel.map {
+                    runtimeModelLoadTrustModeText($0.loadTrust.requestedMode, ifPresentOn: $0)
+                } ?? "",
+                effectiveLoadTrustModeText: snapshotModel.map {
+                    runtimeModelLoadTrustModeText($0.loadTrust.effectiveMode, ifPresentOn: $0)
+                } ?? "",
+                loadTrustCustomLoaderText: snapshotModel.map {
+                    runtimeModelLoadTrustCustomLoaderText($0.loadTrust, ifPresentOn: $0)
+                } ?? "",
+                loadTrustBlockReasonText: snapshotModel.map {
+                    runtimeModelLoadTrustBlockReasonText($0.loadTrust, ifPresentOn: $0)
+                } ?? "",
+                loadTrustReloadRequiredText: snapshotModel.map {
+                    runtimeModelLoadTrustReloadRequiredText($0.loadTrust, ifPresentOn: $0)
+                } ?? "",
+                loadTrustRuntimeGuidanceText: snapshotModel.map {
+                    runtimeModelLoadTrustRuntimeGuidanceText(for: $0)
+                } ?? "",
+                capabilityReceiptRows: snapshotModel.map {
+                    runtimeModelCapabilityReceiptRows(for: $0)
+                } ?? [],
+                memoryFitReceiptRows: snapshotModel.map {
+                    runtimeModelMemoryFitReceiptRows(for: $0)
+                } ?? [],
                 ocrPromptProfileText: snapshotModel?.settings.ext["ocr_prompt_profile_id"] ?? "",
                 ocrSamplingProfileText: snapshotModel.map {
                     runtimeEffectiveOCRSamplingProfileText(
@@ -6633,6 +8832,18 @@ public final class RuntimeViewModel {
             )
             return
         }
+        if let unsupportedMessage = unsupportedCapabilityDispatchMessage(
+            actionTitle: "LoRA training",
+            modelID: modelID,
+            capabilityIDs: ["completion"]
+        ) {
+            surfaceLoraWorkflowGuardFailure(.trainLoRA, message: unsupportedMessage)
+            return
+        }
+        if let memoryFitMessage = loraTrainingMemoryFitUnavailableText {
+            surfaceLoraWorkflowGuardFailure(.trainLoRA, message: memoryFitMessage)
+            return
+        }
         guard persistLoraTrainingLaunch(modelID: modelID) != nil else {
             return
         }
@@ -6663,6 +8874,8 @@ public final class RuntimeViewModel {
                         targetRepo: trainingExt["target_repo"] ?? "",
                         trainingMode: trainingExt["training_mode"] ?? "",
                         parameters: loraTrainingCLIParameters(),
+                        preflightFitCheck: trainingPreflightFitCheck,
+                        allowMemoryRisk: trainingAllowMemoryRisk,
                         json: true
                     )
                 )
@@ -6733,6 +8946,13 @@ public final class RuntimeViewModel {
             surfaceLoraWorkflowGuardFailure(
                 .activateAdapter,
                 message: "Train or select an adapter before activating it."
+            )
+            return
+        }
+        if let fusedActivationUnavailableText = loraFusedActivationUnavailableText {
+            surfaceLoraWorkflowGuardFailure(
+                .activateAdapter,
+                message: fusedActivationUnavailableText
             )
             return
         }
@@ -7548,6 +9768,8 @@ public final class RuntimeViewModel {
                             reasoningMode: normalizedBenchReasoningMode(),
                             structuredOutputMode: normalizedBenchStructuredOutputMode(),
                             parameters: benchmarkParameters(),
+                            preflightFitCheck: benchmarkPreflightFitCheck,
+                            allowMemoryRisk: benchmarkAllowMemoryRisk,
                             json: true
                         )
                     )
@@ -8109,6 +10331,8 @@ public final class RuntimeViewModel {
                             evalPromptRevisionID: evaluationPromptSnapshot?.revisionID ?? "",
                             semanticJudgeRemoteServerID: selectedEvaluationSemanticJudgeRemoteServerID,
                             semanticJudgeModelID: evaluationSemanticJudgeModelID,
+                            preflightFitCheck: evaluationPreflightFitCheck,
+                            allowMemoryRisk: evaluationAllowMemoryRisk,
                             json: true
                         )
                     )
@@ -8575,6 +10799,18 @@ public final class RuntimeViewModel {
             return ""
         }
         return Self.normalizedOptionalString(lastModelOperation?.outputPath ?? "") ?? ""
+    }
+
+    private func loraFusedActivationUnavailableText(for job: LoraTrainingJobRecord?) -> String? {
+        guard loraActivationMode == .fusedDerivedModel else {
+            return nil
+        }
+        guard let receipt = job.flatMap(Self.adapterCapabilityReceipt(from:)),
+              receipt.mergeable == false
+        else {
+            return nil
+        }
+        return receipt.fusedActivationUnavailableText
     }
 
     private func beginLoraWorkflow(
@@ -9102,6 +11338,7 @@ public final class RuntimeViewModel {
             selectedSurface = restoredState.selectedSurface
             selectedToolSection = restoredState.selectedToolSection
             selectedServerSessionID = restoredState.selectedServerSessionID
+            selectedRuntimeJobID = restoredState.selectedRuntimeJobID
             desktopPaneVisibility = DesktopPaneVisibilityState.mergedWithDefaults(restoredState.paneVisibility)
             dismissedBannerIDs = Set(restoredState.dismissedBannerIDs)
             registryConfiguredRootPaths = Self.normalizedRegistryRootPaths(restoredState.registryRoots)
@@ -9122,6 +11359,7 @@ public final class RuntimeViewModel {
             selectedSurface: selectedSurface,
             selectedToolSection: selectedToolSection,
             selectedServerSessionID: selectedServerSessionID,
+            selectedRuntimeJobID: selectedRuntimeJobID,
             serverSessions: persistedServerSessions,
             dismissedBannerIDs: dismissedBannerIDs.sorted(),
             downloadQueue: downloadQueue,
@@ -9528,7 +11766,12 @@ public final class RuntimeViewModel {
 
     private func applyBenchmarkExportBundle(_ bundle: ControlPlaneBenchmarkExportBundle) {
         benchmarkExportBundle = bundle
-        benchmarkHistory = bundle.benchmarkHistoryEntries().map(Self.makeBenchmarkHistoryEntryState)
+        benchmarkHistory = bundle.benchmarkHistoryEntries().map { entry in
+            Self.makeBenchmarkHistoryEntryState(
+                from: entry,
+                memoryFitSummaryText: memoryFitReceiptSummary(modelID: entry.modelID, target: "benchmark")
+            )
+        }
         if benchmarkHistory.contains(where: { $0.jobID == selectedBenchmarkHistoryJobID }) == false {
             selectedBenchmarkHistoryJobID = benchmarkHistory.first?.jobID ?? ""
         }
@@ -9625,14 +11868,22 @@ public final class RuntimeViewModel {
     private func rebuildEvaluationDerivedState() {
         let exportedHistory = benchmarkExportBundle?
             .evaluationHistoryEntries()
-            .map(Self.makeEvaluationHistoryEntryState) ?? []
+            .map { entry in
+                Self.makeEvaluationHistoryEntryState(
+                    from: entry,
+                    memoryFitSummaryText: memoryFitReceiptSummary(modelID: entry.modelID, target: "eval")
+                )
+            } ?? []
         let exportedJobIDs = Set(exportedHistory.map(\.jobID))
         let pendingHistory = pendingEvaluationSummaryRows.values
             .compactMap { rows -> RuntimeEvaluationHistoryEntryState? in
                 guard let row = rows.first, exportedJobIDs.contains(row.jobID) == false else {
                     return nil
                 }
-                return Self.makeEvaluationHistoryEntryState(fromPendingSummaryRow: row)
+                return Self.makeEvaluationHistoryEntryState(
+                    fromPendingSummaryRow: row,
+                    memoryFitSummaryText: memoryFitReceiptSummary(modelID: row.modelID, target: "eval")
+                )
             }
         evaluationHistory = (exportedHistory + pendingHistory).sorted {
             if $0.createdAtUnixMS == $1.createdAtUnixMS {
@@ -9759,6 +12010,199 @@ public final class RuntimeViewModel {
         return evaluationModels.first?.modelID ?? ""
     }
 
+    private func unsupportedCapabilityDispatchMessage(
+        actionTitle: String,
+        modelID: String,
+        capabilityIDs: [String]
+    ) -> String? {
+        let normalizedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedModelID.isEmpty == false,
+              let model = latestSnapshot.models.first(where: { $0.modelID == normalizedModelID }),
+              model.hasCapabilityReceipt
+        else {
+            return nil
+        }
+
+        for capabilityID in capabilityIDs {
+            let normalizedCapabilityID = capabilityID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard normalizedCapabilityID.isEmpty == false,
+                  let receipt = model.capabilityReceipt.tasks.first(where: {
+                      $0.capability.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedCapabilityID
+                  }),
+                  runtimeCapabilitySupportStateBlocksDispatch(receipt.state)
+            else {
+                continue
+            }
+
+            return runtimeCapabilityDispatchMessage(
+                actionTitle: actionTitle,
+                modelID: normalizedModelID,
+                capabilityID: normalizedCapabilityID,
+                state: receipt.state,
+                unsupportedReason: receipt.unsupportedReason,
+                recoveryHint: receipt.recoveryHint
+            )
+        }
+
+        return nil
+    }
+
+    private func memoryFitPreflightDispatchMessage(
+        actionTitle: String,
+        modelID: String,
+        target: String,
+        preflightFitCheck: Bool,
+        allowMemoryRisk: Bool
+    ) -> String? {
+        guard preflightFitCheck, allowMemoryRisk == false else {
+            return nil
+        }
+        let normalizedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedModelID.isEmpty == false,
+              let row = memoryFitReceiptRow(modelID: normalizedModelID, target: target),
+              Self.memoryFitReceiptBlocksDispatch(row)
+        else {
+            return nil
+        }
+        return "\(actionTitle) memory fit preflight blocked for \(normalizedModelID): \(row.statusText) - \(row.reasonText) Enable Allow Memory Risk to override."
+    }
+
+    private func memoryFitReceiptRow(modelID: String, target: String) -> RuntimeMemoryFitReceiptRow? {
+        let normalizedTarget = target.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let model = latestSnapshot.models.first(where: { $0.modelID == modelID }) else {
+            return nil
+        }
+        return runtimeModelMemoryFitReceiptRows(for: model)
+            .first { $0.target.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedTarget }
+    }
+
+    private func memoryFitReceiptSummary(modelID: String, target: String) -> String {
+        guard let row = memoryFitReceiptRow(modelID: modelID, target: target) else {
+            return ""
+        }
+        return Self.memoryFitReceiptSummary(row)
+    }
+
+    private static func memoryFitReceiptSummary(_ row: RuntimeMemoryFitReceiptRow) -> String {
+        ([ "\(row.statusText) - \(row.reasonText)" ] + row.detailRows)
+            .filter { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
+            .joined(separator: " • ")
+    }
+
+    private static func memoryFitReceiptBlocksDispatch(_ row: RuntimeMemoryFitReceiptRow) -> Bool {
+        switch row.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "blocked", "heavy":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func unsupportedAccelerationModeMessage(
+        actionTitle: String,
+        modelID: String,
+        requestedMode: String
+    ) -> String? {
+        let normalizedModelID = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestedAccelerationMode = servingDefaultsAccelerationMode(from: requestedMode)
+        guard normalizedModelID.isEmpty == false,
+              requestedAccelerationMode != .baseline,
+              let model = latestSnapshot.models.first(where: { $0.modelID == normalizedModelID }),
+              model.hasCapabilityReceipt,
+              model.capabilityReceipt.hasAcceleration
+        else {
+            return nil
+        }
+
+        let acceleration = model.capabilityReceipt.acceleration
+        let supportedModes = Set(acceleration.supportedModes)
+        let supportedByModeList = supportedModes.isEmpty || supportedModes.contains(requestedAccelerationMode)
+        guard supportedByModeList == false || runtimeCapabilitySupportStateBlocksDispatch(acceleration.state) else {
+            return nil
+        }
+
+        let state: Melix_Controlplane_V1_CapabilitySupportState = runtimeCapabilitySupportStateBlocksDispatch(acceleration.state)
+            ? acceleration.state
+            : .capabilityUnsupported
+        return runtimeAccelerationModeDisabledMessage(
+            actionTitle: actionTitle,
+            modelID: normalizedModelID,
+            accelerationMode: requestedAccelerationMode,
+            state: state,
+            unsupportedReason: runtimeAccelerationModeUnsupportedReason(
+                acceleration.unsupportedReason,
+                supportedByModeList: supportedByModeList
+            ),
+            recoveryHint: acceleration.recoveryHint
+        )
+    }
+
+    private func runtimeCapabilitySupportStateBlocksDispatch(
+        _ state: Melix_Controlplane_V1_CapabilitySupportState
+    ) -> Bool {
+        switch state {
+        case .capabilitySupported, .capabilityExperimental:
+            return false
+        case .capabilityUnsupported, .capabilityMetadataInconsistent, .unspecified:
+            return true
+        case .UNRECOGNIZED:
+            return true
+        }
+    }
+
+    private func runtimeCapabilityDispatchMessage(
+        actionTitle: String,
+        modelID: String,
+        capabilityID: String,
+        state: Melix_Controlplane_V1_CapabilitySupportState,
+        unsupportedReason: Melix_Controlplane_V1_UnsupportedCapabilityReason,
+        recoveryHint: String
+    ) -> String {
+        var parts = [
+            "\(actionTitle) is unavailable for \(modelID): \(capabilityID) capability is \(runtimeCapabilitySupportStateText(state))"
+        ]
+        runtimeAppendUnsupportedCapabilityDetails(
+            to: &parts,
+            unsupportedReason: unsupportedReason,
+            recoveryHint: recoveryHint
+        )
+        return parts.joined(separator: " • ")
+    }
+
+    private func runtimeAccelerationModeDisabledMessage(
+        actionTitle: String,
+        modelID: String,
+        accelerationMode: Melix_Controlplane_V1_AccelerationMode,
+        state: Melix_Controlplane_V1_CapabilitySupportState,
+        unsupportedReason: Melix_Controlplane_V1_UnsupportedCapabilityReason,
+        recoveryHint: String
+    ) -> String {
+        var parts = [
+            "\(actionTitle) is unavailable for \(modelID): \(runtimeAccelerationModeText(accelerationMode)) acceleration is \(runtimeCapabilitySupportStateText(state))"
+        ]
+        runtimeAppendUnsupportedCapabilityDetails(
+            to: &parts,
+            unsupportedReason: unsupportedReason,
+            recoveryHint: recoveryHint
+        )
+        return parts.joined(separator: " • ")
+    }
+
+    private func runtimeAccelerationModeUnsupportedReason(
+        _ unsupportedReason: Melix_Controlplane_V1_UnsupportedCapabilityReason,
+        supportedByModeList: Bool
+    ) -> Melix_Controlplane_V1_UnsupportedCapabilityReason {
+        if supportedByModeList {
+            return unsupportedReason
+        }
+        switch unsupportedReason {
+        case .unspecified, .unsupportedReasonNone:
+            return .unsupportedReasonUnsupportedMode
+        default:
+            return unsupportedReason
+        }
+    }
+
     private func catalogModelRow(for modelID: String) -> RuntimeModelRow? {
         catalogModelsIncludingRegistry.first { $0.modelID == modelID }
     }
@@ -9851,7 +12295,26 @@ public final class RuntimeViewModel {
         if batchFactor.isEmpty == false {
             parameters["batch_factor"] = batchFactor
         }
+        let accelerationProfile = selectedDiagnosticsEffectiveAccelerationProfileID()
+        if accelerationProfile.isEmpty == false {
+            parameters["acceleration_profile"] = accelerationProfile
+        }
+        Self.assignMemoryFitPreflightParameters(
+            preflightFitCheck: benchmarkPreflightFitCheck,
+            allowMemoryRisk: benchmarkAllowMemoryRisk,
+            into: &parameters
+        )
         return parameters
+    }
+
+    private func selectedDiagnosticsEffectiveAccelerationProfileID() -> String {
+        guard let target = selectedDiagnosticsServerTarget,
+              target.kind == .localServer,
+              let session = serverSessions.first(where: { $0.id == target.serverID })
+        else {
+            return ""
+        }
+        return session.servingDefaults.effectiveAccelerationProfile.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func evaluationParameters(
@@ -9888,6 +12351,11 @@ public final class RuntimeViewModel {
             parameters.merge(evaluationPromptParameters(from: promptSnapshot)) { _, new in new }
         }
         parameters.merge(semanticJudgeParameters) { _, new in new }
+        Self.assignMemoryFitPreflightParameters(
+            preflightFitCheck: evaluationPreflightFitCheck,
+            allowMemoryRisk: evaluationAllowMemoryRisk,
+            into: &parameters
+        )
         return parameters
     }
 
@@ -10576,6 +13044,9 @@ public final class RuntimeViewModel {
             session.servingDefaults.effectiveConcurrentProcessingEnabled = effectiveBatchingDefaults.concurrentProcessingEnabled
             session.servingDefaults.effectivePrefillBatchSize = effectiveBatchingDefaults.prefillBatchSize
             session.servingDefaults.effectiveCompletionBatchSize = effectiveBatchingDefaults.completionBatchSize
+            session.servingDefaults.effectiveAccelerationProfile = session.servingDefaults.accelerationProfile
+            session.servingDefaults.accelerationProfileIntent = ServingAccelerationProfiles
+                .profile(id: session.servingDefaults.effectiveAccelerationProfile).intent
             session.servingDefaults.effectiveAccelerationMode = session.servingDefaults.accelerationMode
             if session.servingDefaults.accelerationMode == "speculative_decode" {
                 session.servingDefaults.effectiveDraftModelID = session.servingDefaults.draftModelID
@@ -10594,6 +13065,7 @@ public final class RuntimeViewModel {
         session.servingDefaults.concurrentProcessingEnabled = projection.concurrentProcessingEnabled
         session.servingDefaults.prefillBatchSize = projection.prefillBatchSize
         session.servingDefaults.completionBatchSize = projection.completionBatchSize
+        session.servingDefaults.accelerationProfile = projection.accelerationProfile
         session.servingDefaults.accelerationMode = projection.accelerationMode
         session.servingDefaults.draftModelID = projection.draftModelID
         session.servingDefaults.numDraftTokens = projection.numDraftTokens
@@ -10605,6 +13077,8 @@ public final class RuntimeViewModel {
         session.servingDefaults.effectiveConcurrentProcessingEnabled = projection.effectiveConcurrentProcessingEnabled
         session.servingDefaults.effectivePrefillBatchSize = projection.effectivePrefillBatchSize
         session.servingDefaults.effectiveCompletionBatchSize = projection.effectiveCompletionBatchSize
+        session.servingDefaults.effectiveAccelerationProfile = projection.effectiveAccelerationProfile
+        session.servingDefaults.accelerationProfileIntent = projection.accelerationProfileIntent
         session.servingDefaults.effectiveAccelerationMode = projection.effectiveAccelerationMode
         session.servingDefaults.effectiveDraftModelID = projection.effectiveDraftModelID
         session.servingDefaults.effectiveNumDraftTokens = projection.effectiveNumDraftTokens
@@ -10803,6 +13277,13 @@ public final class RuntimeViewModel {
         let effectiveNumDraftTokens = effectiveAccelerationMode == "speculative_decode"
             ? (summary.effectiveNumDraftTokens == 0 ? requestedNumDraftTokens : Int(summary.effectiveNumDraftTokens))
             : 0
+        let requestedAccelerationProfile = ServingAccelerationProfiles
+            .normalizeProfileID(summary.requestedAccelerationProfile) ?? ServingAccelerationProfiles.defaultProfileID
+        let effectiveAccelerationProfile = ServingAccelerationProfiles
+            .normalizeProfileID(summary.effectiveAccelerationProfile) ?? requestedAccelerationProfile
+        let accelerationProfileIntent = summary.accelerationProfileIntent.isEmpty
+            ? ServingAccelerationProfiles.profile(id: effectiveAccelerationProfile).intent
+            : summary.accelerationProfileIntent
 
         return ServingDefaultsProjection(
             temperature: summary.requestedTemperature,
@@ -10813,6 +13294,7 @@ public final class RuntimeViewModel {
             concurrentProcessingEnabled: requestedConcurrentProcessingEnabled,
             prefillBatchSize: requestedPrefillBatchSize,
             completionBatchSize: requestedCompletionBatchSize,
+            accelerationProfile: requestedAccelerationProfile,
             accelerationMode: requestedAccelerationMode,
             draftModelID: requestedDraftModelID,
             numDraftTokens: requestedNumDraftTokens,
@@ -10824,6 +13306,8 @@ public final class RuntimeViewModel {
             effectiveConcurrentProcessingEnabled: effectiveConcurrentProcessingEnabled,
             effectivePrefillBatchSize: effectivePrefillBatchSize,
             effectiveCompletionBatchSize: effectiveCompletionBatchSize,
+            effectiveAccelerationProfile: effectiveAccelerationProfile,
+            accelerationProfileIntent: accelerationProfileIntent,
             effectiveAccelerationMode: effectiveAccelerationMode,
             effectiveDraftModelID: effectiveDraftModelID,
             effectiveNumDraftTokens: effectiveNumDraftTokens,
@@ -11042,6 +13526,7 @@ public final class RuntimeViewModel {
                 case .processFailed(let commandID, _, _, _),
                      .invalidJSON(let commandID, _, _),
                      .missingField(let commandID, _, _),
+                     .invalidOption(let commandID, _, _, _, _),
                      .unsupportedCommand(let commandID, _):
                     return commandID
                 }
@@ -11051,6 +13536,7 @@ public final class RuntimeViewModel {
                 case .processFailed(_, let surface, _, _),
                      .invalidJSON(_, let surface, _),
                      .missingField(_, let surface, _),
+                     .invalidOption(_, let surface, _, _, _),
                      .unsupportedCommand(_, let surface):
                     return surface
                 }
@@ -11121,6 +13607,143 @@ public final class RuntimeViewModel {
             at: 0
         )
         trimRecentEvents()
+    }
+
+    private func beginRuntimeSettingsOperation() {
+        runtimeSettingsOperationInProgress = true
+        runtimeSettingsOperationMessage = ""
+        runtimeSettingsOperationErrorMessage = ""
+        notifyStateChanged()
+    }
+
+    private func refreshRuntimeSettingsSnapshot(using runner: any MelixCLIWorkflowRunning) async throws {
+        let output = try await runner.run(.settingsShow(.init(json: true)))
+        runtimeSettingsSnapshot = try RuntimeSettingsPayloadDecoder.decodeShow(output)
+    }
+
+    private func failRuntimeSettingsOperation(_ error: Error) {
+        recordCLIWorkflowErrorIfNeeded(error)
+        failRuntimeSettingsOperation(workflowErrorMessage(error))
+    }
+
+    private func failRuntimeSettingsOperation(_ message: String) {
+        runtimeSettingsOperationInProgress = false
+        runtimeSettingsOperationMessage = ""
+        runtimeSettingsOperationErrorMessage = message
+        recordLocalError(message)
+        notifyStateChanged()
+    }
+
+    private func beginRuntimeDiscoveryOperation() {
+        runtimeDiscoveryOperationInProgress = true
+        runtimeDiscoveryOperationMessage = ""
+        runtimeDiscoveryOperationErrorMessage = ""
+        notifyStateChanged()
+    }
+
+    private func failRuntimeDiscoveryOperation(_ error: Error) {
+        recordCLIWorkflowErrorIfNeeded(error)
+        failRuntimeDiscoveryOperation(workflowErrorMessage(error))
+    }
+
+    private func failRuntimeDiscoveryOperation(_ message: String) {
+        runtimeDiscoveryOperationInProgress = false
+        runtimeDiscoveryOperationMessage = ""
+        runtimeDiscoveryOperationErrorMessage = message
+        recordLocalError(message)
+        notifyStateChanged()
+    }
+
+    private static func workflowRecipeCatalogLoadedMessage(count: Int) -> String {
+        count == 1 ? "Loaded 1 workflow recipe." : "Loaded \(count) workflow recipes."
+    }
+
+    private func failWorkflowRecipeOperation(_ message: String) {
+        workflowRecipeCatalogInProgress = false
+        workflowRecipeDetailInProgress = false
+        workflowRecipeCatalogMessage = ""
+        workflowRecipeCatalogErrorMessage = message
+        recordLocalError(message)
+        notifyStateChanged()
+    }
+
+    private func failWorkflowRecipeURIInspection(_ message: String) {
+        workflowRecipeURIInspectInProgress = false
+        workflowRecipeURIInspectMessage = ""
+        workflowRecipeURIInspectErrorMessage = message
+        recordLocalError(message)
+        notifyStateChanged()
+    }
+
+    private func failWorkflowRecipeInitPreview(_ message: String) {
+        workflowRecipeInitPreviewInProgress = false
+        workflowRecipeInitPreviewMessage = ""
+        workflowRecipeInitPreviewErrorMessage = message
+        recordLocalError(message)
+        notifyStateChanged()
+    }
+
+    private func failWorkflowRecipePlan(_ message: String) {
+        workflowRecipePlanInProgress = false
+        workflowRecipePlanMessage = ""
+        workflowRecipePlanErrorMessage = message
+        recordLocalError(message)
+        notifyStateChanged()
+    }
+
+    private func failWorkflowRecipeApply(_ message: String) {
+        workflowRecipeApplyInProgress = false
+        workflowRecipeApplyMessage = ""
+        workflowRecipeApplyErrorMessage = message
+        recordLocalError(message)
+        notifyStateChanged()
+    }
+
+    private func failDiagnosticsDebugBundle(_ message: String) {
+        diagnosticsDebugBundleInProgress = false
+        diagnosticsDebugBundleMessage = ""
+        diagnosticsDebugBundleErrorMessage = message
+        recordLocalError(message)
+        notifyStateChanged()
+    }
+
+    private func failSyntheticDatasetPreview(_ message: String) {
+        syntheticDatasetPreviewInProgress = false
+        syntheticDatasetPreviewMessage = ""
+        syntheticDatasetPreviewErrorMessage = message
+        recordLocalError(message)
+        notifyStateChanged()
+    }
+
+    private func failSyntheticDatasetCreate(_ message: String) {
+        syntheticDatasetCreateInProgress = false
+        syntheticDatasetCreateMessage = ""
+        syntheticDatasetCreateErrorMessage = message
+        recordLocalError(message)
+        notifyStateChanged()
+    }
+
+    private func validateWorkflowRecipeSetKey(_ key: String) -> Bool {
+        guard key.isEmpty == false else {
+            failWorkflowRecipeSetEditor("Enter a variable key before adding a --set value.")
+            return false
+        }
+        guard key.contains("=") == false else {
+            failWorkflowRecipeSetEditor("Variable key cannot include '='.")
+            return false
+        }
+        guard key.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else {
+            failWorkflowRecipeSetEditor("Variable key cannot contain whitespace.")
+            return false
+        }
+        return true
+    }
+
+    private func failWorkflowRecipeSetEditor(_ message: String) {
+        workflowRecipeSetEditorMessage = ""
+        workflowRecipeSetEditorErrorMessage = message
+        recordLocalError(message)
+        notifyStateChanged()
     }
 
     private func record(event: Melix_Controlplane_V1_ControlPlaneEvent) {
@@ -11583,13 +14206,26 @@ public final class RuntimeViewModel {
         ext["response_only"] = loraResponseOnly ? "true" : "false"
         ext["mask_prompt"] = loraMaskPrompt ? "true" : "false"
         ext["gradient_checkpointing"] = loraGradientCheckpointing ? "true" : "false"
+        Self.assignMemoryFitPreflightParameters(
+            preflightFitCheck: trainingPreflightFitCheck,
+            allowMemoryRisk: trainingAllowMemoryRisk,
+            into: &ext
+        )
         return ext
     }
 
     private func loraTrainingCLIParameters() -> [String: String] {
         let ext = loraTrainingExt()
         return ext.filter { key, _ in
-            ["adapter_name", "dataset_source_kind", "dataset_uri", "target_repo", "training_mode"].contains(key) == false
+            [
+                "adapter_name",
+                "dataset_source_kind",
+                "dataset_uri",
+                "target_repo",
+                "training_mode",
+                "preflight_fit_check",
+                "allow_memory_risk",
+            ].contains(key) == false
         }
     }
 
@@ -11631,6 +14267,7 @@ public final class RuntimeViewModel {
     private func persistLoraTrainingLaunch(modelID: String) -> LoraTrainingJobRecord? {
         do {
             let config = currentLoraTrainingConfig(modelID: modelID)
+            let memoryFitSummaryText = memoryFitReceiptSummary(modelID: modelID, target: "train")
             let now = Date()
             var record: LoraTrainingJobRecord
             if selectedLoraTrainingJobLoadedForEditing,
@@ -11661,6 +14298,7 @@ public final class RuntimeViewModel {
                 record.completedAt = nil
                 record.terminalMessage = "Training launched from the desktop training studio."
             }
+            record.followUpArtifacts.memoryFitSummaryText = memoryFitSummaryText
             let saved = try loraTrainingJobStore.save(record)
             reloadLoraTrainingJobs()
             selectedLoraTrainingJobID = saved.id
@@ -11869,6 +14507,19 @@ public final class RuntimeViewModel {
             return
         }
         ext[key] = normalized
+    }
+
+    private static func assignMemoryFitPreflightParameters(
+        preflightFitCheck: Bool,
+        allowMemoryRisk: Bool,
+        into parameters: inout [String: String]
+    ) {
+        if preflightFitCheck {
+            parameters["preflight_fit_check"] = "true"
+        }
+        if allowMemoryRisk {
+            parameters["allow_memory_risk"] = "true"
+        }
     }
 
     private func appendAssistantDelta(_ text: String, requestID: String) {
@@ -12731,7 +15382,8 @@ public final class RuntimeViewModel {
     }
 
     private static func makeBenchmarkHistoryEntryState(
-        from entry: ControlPlaneBenchmarkHistoryEntry
+        from entry: ControlPlaneBenchmarkHistoryEntry,
+        memoryFitSummaryText: String = ""
     ) -> RuntimeBenchmarkHistoryEntryState {
         let datasetParts = [entry.datasetRepo, entry.datasetConfig]
             .filter { $0.isEmpty == false }
@@ -12749,11 +15401,13 @@ public final class RuntimeViewModel {
             datasetLabel: datasetParts + splitSuffix,
             sampleSizeText: entry.sampleSize.map(String.init) ?? "default",
             batchFactorText: entry.batchFactor.map(String.init) ?? "default",
+            profileSummaryText: benchmarkProfileSummaryText(for: entry.accelerationProfile),
             statusText: humanizeStatus(entry.status),
             metricCountText: "\(entry.metricCount) metrics",
             createdAtText: benchmarkTimestampLabel(entry.createdAtUnixMS),
             createdAtUnixMS: entry.createdAtUnixMS,
-            reportPath: entry.reportPath
+            reportPath: entry.reportPath,
+            memoryFitSummaryText: memoryFitSummaryText
         )
     }
 
@@ -12814,6 +15468,7 @@ public final class RuntimeViewModel {
                     suiteSummary: suiteSummary,
                     cellCountText: "\(group.count) cells",
                     loadBudgetText: loadBudgetText,
+                    profileSummaryText: benchmarkProfileSummaryText(for: representative.accelerationProfile),
                     statusText: humanizeStatus(representative.status),
                     createdAtText: benchmarkTimestampLabel(representative.createdAtUnixMS),
                     createdAtUnixMS: representative.createdAtUnixMS
@@ -12887,7 +15542,7 @@ public final class RuntimeViewModel {
         RuntimeBenchmarkMatrixSummaryRowState(
             id: "\(row.jobID):\(row.suiteID):\(row.contextLength):\(row.generationLength):\(row.batchSize):\(row.concurrencyLevel)",
             suiteTitle: benchmarkSuiteTitle(for: row.suiteID, taskKind: row.taskKind),
-            configurationSummary: "ctx \(row.contextLength) • gen \(row.generationLength) • batch \(row.batchSize) • conc \(row.concurrencyLevel) • \(humanizedControlTitle(row.cacheProfile)) • \(humanizedControlTitle(row.reasoningMode)) • \(humanizedControlTitle(row.structuredOutputMode))",
+            configurationSummary: benchmarkMatrixConfigurationSummary(for: row),
             latencyText: String(format: "TTFT %.2f ms • Lat %.2f ms", row.ttftMeanMS, row.requestLatencyMeanMS),
             throughputText: String(format: "Prefill %.2f • Decode %.2f • Req %.2f", row.prefillTokensPerSecondMean, row.decodeTokensPerSecondMean, row.throughputRequestsPerSecond),
             successRateText: String(format: "%.1f%% success", row.successRate * 100),
@@ -12899,6 +15554,36 @@ public final class RuntimeViewModel {
             ttftMeanMS: row.ttftMeanMS,
             throughputTokensPerSecond: row.throughputTokensPerSecond
         )
+    }
+
+    private static func benchmarkMatrixConfigurationSummary(
+        for row: ControlPlaneBenchmarkMatrixSummaryCSVRow
+    ) -> String {
+        var parts = [
+            "ctx \(row.contextLength)",
+            "gen \(row.generationLength)",
+            "batch \(row.batchSize)",
+            "conc \(row.concurrencyLevel)",
+            humanizedControlTitle(row.cacheProfile),
+        ]
+        let profileSummary = benchmarkProfileSummaryText(for: row.accelerationProfile)
+        if profileSummary.isEmpty == false {
+            parts.append(profileSummary)
+        }
+        parts.append(humanizedControlTitle(row.reasoningMode))
+        parts.append(humanizedControlTitle(row.structuredOutputMode))
+        return parts.joined(separator: " • ")
+    }
+
+    private static func benchmarkProfileSummaryText(for rawProfileID: String) -> String {
+        let trimmed = rawProfileID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else {
+            return ""
+        }
+        let label = ServingAccelerationProfiles.normalizeProfileID(trimmed)
+            .map { ServingAccelerationProfiles.profile(id: $0).label }
+            ?? humanizedControlTitle(trimmed)
+        return "Profile: \(label)"
     }
 
     private static func makeBenchmarkMatrixContextChartPointState(
@@ -12928,7 +15613,8 @@ public final class RuntimeViewModel {
     }
 
     private static func makeEvaluationHistoryEntryState(
-        from entry: ControlPlaneEvaluationHistoryEntry
+        from entry: ControlPlaneEvaluationHistoryEntry,
+        memoryFitSummaryText: String = ""
     ) -> RuntimeEvaluationHistoryEntryState {
         RuntimeEvaluationHistoryEntryState(
             id: "\(entry.jobID):\(entry.suiteID)",
@@ -12946,12 +15632,14 @@ public final class RuntimeViewModel {
             metricCountText: "\(entry.metricCount) metrics",
             createdAtText: benchmarkTimestampLabel(entry.createdAtUnixMS),
             createdAtUnixMS: entry.createdAtUnixMS,
-            reportPath: entry.reportPath
+            reportPath: entry.reportPath,
+            memoryFitSummaryText: memoryFitSummaryText
         )
     }
 
     private static func makeEvaluationHistoryEntryState(
-        fromPendingSummaryRow row: ControlPlaneEvaluationSummaryCSVRow
+        fromPendingSummaryRow row: ControlPlaneEvaluationSummaryCSVRow,
+        memoryFitSummaryText: String = ""
     ) -> RuntimeEvaluationHistoryEntryState {
         RuntimeEvaluationHistoryEntryState(
             id: "\(row.jobID):\(row.suiteID)",
@@ -12969,7 +15657,8 @@ public final class RuntimeViewModel {
             metricCountText: "1 metrics",
             createdAtText: benchmarkTimestampLabel(row.createdAtUnixMS),
             createdAtUnixMS: row.createdAtUnixMS,
-            reportPath: ""
+            reportPath: "",
+            memoryFitSummaryText: memoryFitSummaryText
         )
     }
 
@@ -13941,7 +16630,10 @@ func makeRuntimeModelRow(_ model: Melix_Controlplane_V1_ModelSummary) -> Runtime
         registryDescriptorPathText: ModelRuntimeAvailability.descriptorPath(for: model),
         restoreCommandText: ModelRuntimeAvailability.restoreCommand(for: model),
         restoreRepoID: ModelRuntimeAvailability.restoreRepoID(for: model),
-        restoreRevision: ModelRuntimeAvailability.restoreRevision(for: model)
+        restoreRevision: ModelRuntimeAvailability.restoreRevision(for: model),
+        loadTrustReceiptRows: runtimeModelLoadTrustReceiptRows(for: model),
+        capabilityReceiptRows: runtimeModelCapabilityReceiptRows(for: model),
+        memoryFitReceiptRows: runtimeModelMemoryFitReceiptRows(for: model)
     )
 }
 
@@ -14241,6 +16933,548 @@ private func runtimeAccelerationModeText(_ mode: Melix_Controlplane_V1_Accelerat
     default:
         return "None"
     }
+}
+
+private func runtimeModelLoadTrustModeText(
+    _ mode: Melix_Controlplane_V1_ModelLoadTrustMode,
+    ifPresentOn model: Melix_Controlplane_V1_ModelSummary
+) -> String {
+    guard model.hasLoadTrust else {
+        return ""
+    }
+    return runtimeModelSettingsLoadTrustModeText(mode)
+}
+
+private func runtimeModelSettingsLoadTrustModeText(
+    _ mode: Melix_Controlplane_V1_ModelLoadTrustMode
+) -> String {
+    switch mode {
+    case .modelLoadTrustDefaultSafe:
+        return "Default Safe"
+    case .modelLoadTrustTrustRemoteCode:
+        return "Trust Remote Code"
+    case .modelLoadTrustNotApplicable:
+        return "Not Applicable"
+    case .unspecified:
+        return "Unspecified"
+    case .UNRECOGNIZED(let value):
+        return "Unrecognized \(value)"
+    }
+}
+
+private func runtimeModelLoadTrustCustomLoaderText(
+    _ policy: Melix_Controlplane_V1_ModelLoadTrustPolicy,
+    ifPresentOn model: Melix_Controlplane_V1_ModelSummary
+) -> String {
+    guard model.hasLoadTrust else {
+        return ""
+    }
+    let detectionSource = policy.customLoaderDetectionSource.trimmingCharacters(in: .whitespacesAndNewlines)
+    if policy.customLoaderRequired {
+        return detectionSource.isEmpty ? "Required" : "Required • \(detectionSource)"
+    }
+    return detectionSource.isEmpty ? "" : "Not Required • \(detectionSource)"
+}
+
+private func runtimeModelLoadTrustBlockReasonText(
+    _ policy: Melix_Controlplane_V1_ModelLoadTrustPolicy,
+    ifPresentOn model: Melix_Controlplane_V1_ModelSummary
+) -> String {
+    guard model.hasLoadTrust else {
+        return ""
+    }
+    return policy.blockReason.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+private func runtimeModelLoadTrustReloadRequiredText(
+    _ policy: Melix_Controlplane_V1_ModelLoadTrustPolicy,
+    ifPresentOn model: Melix_Controlplane_V1_ModelSummary
+) -> String {
+    guard model.hasLoadTrust, policy.requiresReloadForTrustChange else {
+        return ""
+    }
+    return "Reload Required"
+}
+
+private func runtimeModelLoadTrustReceiptRows(
+    for model: Melix_Controlplane_V1_ModelSummary
+) -> [String] {
+    guard model.hasLoadTrust else {
+        return []
+    }
+    let policy = model.loadTrust
+    var rows = [
+        "requested \(runtimeModelLoadTrustModeText(policy.requestedMode, ifPresentOn: model)) • effective \(runtimeModelLoadTrustModeText(policy.effectiveMode, ifPresentOn: model))"
+    ]
+    let customLoader = runtimeModelLoadTrustCustomLoaderText(policy, ifPresentOn: model)
+    if customLoader.isEmpty == false {
+        rows.append("custom loader \(customLoader)")
+    }
+    let blockReason = runtimeModelLoadTrustBlockReasonText(policy, ifPresentOn: model)
+    if blockReason.isEmpty == false {
+        rows.append("blocked \(blockReason)")
+    }
+    let reloadRequired = runtimeModelLoadTrustReloadRequiredText(policy, ifPresentOn: model)
+    if reloadRequired.isEmpty == false {
+        rows.append(reloadRequired)
+    }
+    let runtimeGuidance = runtimeModelLoadTrustRuntimeGuidanceText(for: model)
+    if runtimeGuidance.isEmpty == false {
+        rows.append("guidance \(runtimeLowercasedFirstSentence(runtimeGuidance))")
+    }
+    return rows
+}
+
+private struct RuntimeMemoryFitReceiptTarget {
+    let key: String
+    let title: String
+}
+
+private let runtimeMemoryFitReceiptTargets: [RuntimeMemoryFitReceiptTarget] = [
+    RuntimeMemoryFitReceiptTarget(key: "import", title: "Import"),
+    RuntimeMemoryFitReceiptTarget(key: "benchmark", title: "Benchmark"),
+    RuntimeMemoryFitReceiptTarget(key: "eval", title: "Eval"),
+    RuntimeMemoryFitReceiptTarget(key: "train", title: "Train"),
+]
+
+private func runtimeModelMemoryFitReceiptRows(
+    for model: Melix_Controlplane_V1_ModelSummary
+) -> [RuntimeMemoryFitReceiptRow] {
+    runtimeMemoryFitReceiptTargets.compactMap { target in
+        let status = runtimeMemoryFitReceiptValue(
+            in: model.settings.ext,
+            target: target.key,
+            field: "status"
+        )
+        let reason = runtimeMemoryFitReceiptValue(
+            in: model.settings.ext,
+            target: target.key,
+            field: "reason"
+        )
+        let detailRows = runtimeMemoryFitReceiptDetailRows(
+            in: model.settings.ext,
+            target: target.key
+        )
+        let normalizedStatus = runtimeMemoryFitStatus(status)
+        guard status.isEmpty == false || reason.isEmpty == false || detailRows.isEmpty == false else {
+            return nil
+        }
+        return RuntimeMemoryFitReceiptRow(
+            target: target.key,
+            title: target.title,
+            status: normalizedStatus,
+            statusText: runtimeMemoryFitStatusText(normalizedStatus),
+            reasonText: reason.isEmpty ? "No fit reason reported." : reason,
+            detailRows: detailRows
+        )
+    }
+}
+
+private func runtimeMemoryFitReceiptDetailRows(
+    in values: [String: String],
+    target: String
+) -> [String] {
+    var rows: [String] = []
+    if let activeMemoryBytes = runtimeMemoryFitReceiptBytesValue(
+        in: values,
+        target: target,
+        fields: ["estimated_active_memory_bytes", "active_memory_bytes"]
+    ) {
+        rows.append("active memory \(runtimeMemoryFitBytesText(activeMemoryBytes))")
+    }
+
+    let estimatedDiskBytes = runtimeMemoryFitReceiptBytesValue(
+        in: values,
+        target: target,
+        fields: ["estimated_disk_usage_bytes", "disk_usage_bytes"]
+    )
+    let availableDiskBytes = runtimeMemoryFitReceiptBytesValue(
+        in: values,
+        target: target,
+        fields: ["available_disk_bytes"]
+    )
+    let diskFitStatus = runtimeMemoryFitReceiptValue(
+        in: values,
+        target: target,
+        field: "disk_fit_status"
+    )
+    let diskParts = [
+        estimatedDiskBytes.map { "\(runtimeMemoryFitBytesText($0)) required" },
+        availableDiskBytes.map { "\(runtimeMemoryFitBytesText($0)) available" },
+        diskFitStatus.isEmpty ? nil : runtimeMemoryFitStatusText(runtimeMemoryFitStatus(diskFitStatus)),
+    ].compactMap { $0 }
+    if diskParts.isEmpty == false {
+        rows.append("disk \(diskParts.joined(separator: " • "))")
+    }
+
+    if let unifiedMemoryBytes = runtimeMemoryFitReceiptBytesValue(
+        in: values,
+        target: target,
+        fields: ["total_unified_memory_bytes", "unified_memory_bytes"]
+    ) {
+        rows.append("unified memory \(runtimeMemoryFitBytesText(unifiedMemoryBytes))")
+    }
+
+    if let thresholdFraction = runtimeMemoryFitReceiptDoubleValue(
+        in: values,
+        target: target,
+        fields: ["safety_threshold_fraction", "threshold_fraction"]
+    ) {
+        rows.append("threshold \(runtimeMemoryFitThresholdText(thresholdFraction))")
+    }
+
+    let unknownFields = runtimeMemoryFitReceiptListValue(
+        in: values,
+        target: target,
+        field: "unknown_fields"
+    )
+    if unknownFields.isEmpty == false {
+        rows.append("unknown fields \(unknownFields.joined(separator: ", "))")
+    }
+    return rows
+}
+
+private func runtimeMemoryFitReceiptBytesValue(
+    in values: [String: String],
+    target: String,
+    fields: [String]
+) -> UInt64? {
+    runtimeMemoryFitReceiptFirstValue(in: values, target: target, fields: fields).flatMap(UInt64.init)
+}
+
+private func runtimeMemoryFitReceiptDoubleValue(
+    in values: [String: String],
+    target: String,
+    fields: [String]
+) -> Double? {
+    runtimeMemoryFitReceiptFirstValue(in: values, target: target, fields: fields).flatMap(Double.init)
+}
+
+private func runtimeMemoryFitReceiptListValue(
+    in values: [String: String],
+    target: String,
+    field: String
+) -> [String] {
+    runtimeMemoryFitReceiptValue(in: values, target: target, field: field)
+        .split(whereSeparator: { $0 == "," || $0 == "|" })
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { $0.isEmpty == false }
+}
+
+private func runtimeMemoryFitReceiptFirstValue(
+    in values: [String: String],
+    target: String,
+    fields: [String]
+) -> String? {
+    fields.lazy
+        .map { runtimeMemoryFitReceiptValue(in: values, target: target, field: $0) }
+        .first { $0.isEmpty == false }
+}
+
+private func runtimeMemoryFitReceiptValue(
+    in values: [String: String],
+    target: String,
+    field: String
+) -> String {
+    var candidateKeys = [
+        "melix.memory_fit.\(target).\(field)",
+        "memory_fit_\(target)_\(field)",
+    ]
+    if values["memory_fit_target_kind"]?.trimmingCharacters(in: .whitespacesAndNewlines) == target {
+        candidateKeys.append("memory_fit_\(field)")
+    }
+    for key in candidateKeys {
+        let value = values[key]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if value.isEmpty == false {
+            return value
+        }
+    }
+    return ""
+}
+
+private func runtimeMemoryFitBytesText(_ bytes: UInt64) -> String {
+    let units = ["B", "KB", "MB", "GB", "TB"]
+    var value = Double(bytes)
+    var unitIndex = 0
+    while value >= 1024.0 && unitIndex < units.count - 1 {
+        value /= 1024.0
+        unitIndex += 1
+    }
+    guard unitIndex > 0 else {
+        return "\(bytes) B"
+    }
+    return String(format: "%.2f %@", locale: Locale(identifier: "en_US_POSIX"), value, units[unitIndex])
+}
+
+private func runtimeMemoryFitThresholdText(_ fraction: Double) -> String {
+    let percentage = fraction <= 1 ? fraction * 100 : fraction
+    if percentage.rounded() == percentage {
+        return String(format: "%.0f%%", locale: Locale(identifier: "en_US_POSIX"), percentage)
+    }
+    return String(format: "%.1f%%", locale: Locale(identifier: "en_US_POSIX"), percentage)
+}
+
+private func runtimeMemoryFitStatus(_ status: String) -> String {
+    switch status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "good", "fits", "fit", "ok", "pass", "passed":
+        return "good"
+    case "heavy", "risk", "risky", "warning", "warn":
+        return "heavy"
+    case "blocked", "block", "fail", "failed", "unsafe":
+        return "blocked"
+    default:
+        return "unknown"
+    }
+}
+
+private func runtimeMemoryFitStatusText(_ status: String) -> String {
+    switch status {
+    case "good":
+        return "Good"
+    case "heavy":
+        return "Heavy"
+    case "blocked":
+        return "Blocked"
+    default:
+        return "Unknown"
+    }
+}
+
+private func runtimeModelCapabilityReceiptRows(
+    for model: Melix_Controlplane_V1_ModelSummary
+) -> [String] {
+    guard model.hasCapabilityReceipt else {
+        return []
+    }
+    var rows = model.capabilityReceipt.tasks.compactMap(runtimeModelTaskCapabilityReceiptRow)
+    if model.capabilityReceipt.hasAcceleration {
+        rows.append(contentsOf: runtimeModelAccelerationCapabilityReceiptRows(model.capabilityReceipt.acceleration))
+    }
+    return rows
+}
+
+private func runtimeModelTaskCapabilityReceiptRow(
+    _ receipt: Melix_Controlplane_V1_TaskCapabilityReceipt
+) -> String? {
+    let capability = receipt.capability.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard capability.isEmpty == false else {
+        return nil
+    }
+    var parts = [
+        "task \(capability): \(runtimeCapabilitySupportStateText(receipt.state))"
+    ]
+    runtimeAppendUnsupportedCapabilityDetails(
+        to: &parts,
+        unsupportedReason: receipt.unsupportedReason,
+        recoveryHint: receipt.recoveryHint
+    )
+    let provenance = receipt.provenance.trimmingCharacters(in: .whitespacesAndNewlines)
+    if provenance.isEmpty == false {
+        parts.append(provenance)
+    }
+    return parts.joined(separator: " • ")
+}
+
+private func runtimeModelAccelerationCapabilityReceiptRows(
+    _ receipt: Melix_Controlplane_V1_AccelerationCapabilityReceipt
+) -> [String] {
+    var rows: [String] = []
+    var summaryParts = [
+        "acceleration: \(runtimeCapabilitySupportStateText(receipt.state))"
+    ]
+    if receipt.requestedAccelerationMode != .unspecified {
+        summaryParts.append("requested \(runtimeAccelerationModeText(receipt.requestedAccelerationMode))")
+    }
+    if receipt.resolvedAccelerationMode != .unspecified {
+        summaryParts.append("resolved \(runtimeAccelerationModeText(receipt.resolvedAccelerationMode))")
+    }
+    if receipt.supportedModes.isEmpty == false {
+        summaryParts.append("supported \(receipt.supportedModes.map(runtimeAccelerationModeText).joined(separator: ", "))")
+    }
+    runtimeAppendUnsupportedCapabilityDetails(
+        to: &summaryParts,
+        unsupportedReason: receipt.unsupportedReason,
+        recoveryHint: receipt.recoveryHint
+    )
+    let provenance = receipt.provenance.trimmingCharacters(in: .whitespacesAndNewlines)
+    if provenance.isEmpty == false {
+        summaryParts.append(provenance)
+    }
+    rows.append(summaryParts.joined(separator: " • "))
+
+    let routeRow = runtimeModelAccelerationRouteReceiptRow(receipt)
+    if routeRow.isEmpty == false {
+        rows.append(routeRow)
+    }
+    rows.append(contentsOf: receipt.draftCompatibility.compactMap(runtimeModelDraftCompatibilityReceiptRow))
+    if receipt.hasSpeculativeHead {
+        rows.append(runtimeModelSpeculativeHeadCapabilityReceiptRow(receipt.speculativeHead))
+    }
+    return rows
+}
+
+private func runtimeModelAccelerationRouteReceiptRow(
+    _ receipt: Melix_Controlplane_V1_AccelerationCapabilityReceipt
+) -> String {
+    var parts: [String] = []
+    let targetCapability = receipt.targetCapability.trimmingCharacters(in: .whitespacesAndNewlines)
+    if targetCapability.isEmpty == false {
+        parts.append("target \(targetCapability)")
+    }
+    let drafterCapability = receipt.drafterCapability.trimmingCharacters(in: .whitespacesAndNewlines)
+    if drafterCapability.isEmpty == false {
+        parts.append("drafter \(drafterCapability)")
+    }
+    if receipt.validDraftModelIds.isEmpty == false {
+        parts.append("valid drafts \(receipt.validDraftModelIds.joined(separator: ", "))")
+    }
+    guard parts.isEmpty == false else {
+        return ""
+    }
+    return "acceleration route: \(parts.joined(separator: " • "))"
+}
+
+private func runtimeModelDraftCompatibilityReceiptRow(
+    _ receipt: Melix_Controlplane_V1_DraftCompatibilityReceipt
+) -> String? {
+    let draftModelID = receipt.draftModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard draftModelID.isEmpty == false else {
+        return nil
+    }
+    var parts = [
+        "draft \(draftModelID): \(runtimeCapabilitySupportStateText(receipt.state))"
+    ]
+    runtimeAppendUnsupportedCapabilityDetails(
+        to: &parts,
+        unsupportedReason: receipt.unsupportedReason,
+        recoveryHint: receipt.recoveryHint
+    )
+    let provenance = receipt.provenance.trimmingCharacters(in: .whitespacesAndNewlines)
+    if provenance.isEmpty == false {
+        parts.append(provenance)
+    }
+    return parts.joined(separator: " • ")
+}
+
+private func runtimeModelSpeculativeHeadCapabilityReceiptRow(
+    _ receipt: Melix_Controlplane_V1_SpeculativeHeadCapabilityReceipt
+) -> String {
+    var parts = [
+        "speculative head: \(runtimeCapabilitySupportStateText(receipt.state))",
+        "configured \(runtimeYesNoText(receipt.configured))",
+        "layers \(receipt.configuredLayers)/\(receipt.indexedLayers)"
+    ]
+    let dropFlagState = receipt.dropFlagState.trimmingCharacters(in: .whitespacesAndNewlines)
+    if dropFlagState.isEmpty == false {
+        parts.append("drop \(dropFlagState)")
+    }
+    parts.append(receipt.runtimeAvailable ? "runtime available" : "runtime missing")
+    parts.append(receipt.artifactAvailable ? "artifact available" : "artifact missing")
+    runtimeAppendUnsupportedCapabilityDetails(
+        to: &parts,
+        unsupportedReason: receipt.unsupportedReason,
+        recoveryHint: receipt.recoveryHint
+    )
+    let provenance = receipt.provenance.trimmingCharacters(in: .whitespacesAndNewlines)
+    if provenance.isEmpty == false {
+        parts.append(provenance)
+    }
+    return parts.joined(separator: " • ")
+}
+
+private func runtimeAppendUnsupportedCapabilityDetails(
+    to parts: inout [String],
+    unsupportedReason: Melix_Controlplane_V1_UnsupportedCapabilityReason,
+    recoveryHint: String
+) {
+    let reason = runtimeUnsupportedCapabilityReasonText(unsupportedReason)
+    if reason.isEmpty == false {
+        parts.append("reason \(reason)")
+    }
+    let hint = recoveryHint.trimmingCharacters(in: .whitespacesAndNewlines)
+    if hint.isEmpty == false {
+        parts.append("recovery \(hint)")
+    }
+}
+
+private func runtimeYesNoText(_ value: Bool) -> String {
+    value ? "yes" : "no"
+}
+
+private func runtimeUnsupportedCapabilityReasonText(
+    _ reason: Melix_Controlplane_V1_UnsupportedCapabilityReason
+) -> String {
+    switch reason {
+    case .unsupportedReasonUnsupportedTask:
+        return "unsupported task"
+    case .unsupportedReasonUnsupportedMode:
+        return "unsupported mode"
+    case .unsupportedReasonMissingDraftModel:
+        return "missing draft model"
+    case .unsupportedReasonDraftModelNotAllowed:
+        return "draft model not allowed"
+    case .unsupportedReasonTargetDisabled:
+        return "target disabled"
+    case .unsupportedReasonDrafterDisabled:
+        return "drafter disabled"
+    case .unsupportedReasonMetadataInconsistent:
+        return "metadata inconsistent"
+    case .unsupportedReasonRuntimeUnavailable:
+        return "runtime unavailable"
+    case .unsupportedReasonExperimentalUnverified:
+        return "experimental unverified"
+    case .unspecified, .unsupportedReasonNone:
+        return ""
+    case .UNRECOGNIZED(let value):
+        return "unrecognized \(value)"
+    }
+}
+
+private func runtimeCapabilitySupportStateText(
+    _ state: Melix_Controlplane_V1_CapabilitySupportState
+) -> String {
+    switch state {
+    case .capabilitySupported:
+        return "supported"
+    case .capabilityUnsupported:
+        return "unsupported"
+    case .capabilityExperimental:
+        return "experimental"
+    case .capabilityMetadataInconsistent:
+        return "metadata inconsistent"
+    case .unspecified:
+        return "unspecified"
+    case .UNRECOGNIZED(let value):
+        return "unrecognized \(value)"
+    }
+}
+
+private func runtimeModelLoadTrustRuntimeGuidanceText(
+    for model: Melix_Controlplane_V1_ModelSummary
+) -> String {
+    guard model.hasLoadTrust else {
+        return ""
+    }
+    let policy = model.loadTrust
+    guard policy.requiresReloadForTrustChange else {
+        return ""
+    }
+    let storedMode = model.settings.loadTrustMode == .unspecified
+        ? policy.requestedMode
+        : model.settings.loadTrustMode
+    let activeMode = policy.effectiveMode
+    guard storedMode != .unspecified, storedMode != activeMode else {
+        return ""
+    }
+    return "Unload and reload this model to apply \(runtimeModelSettingsLoadTrustModeText(storedMode)); active runtime is \(runtimeModelSettingsLoadTrustModeText(activeMode))."
+}
+
+private func runtimeLowercasedFirstSentence(_ text: String) -> String {
+    var trimmed = text
+    if trimmed.last == "." {
+        trimmed.removeLast()
+    }
+    return trimmed.prefix(1).lowercased() + trimmed.dropFirst()
 }
 
 private func runtimeAccelerationModeDisplayText(from rawValue: String) -> String {

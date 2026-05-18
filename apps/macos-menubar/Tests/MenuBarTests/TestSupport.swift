@@ -499,10 +499,16 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         let repoID: String
     }
 
+    struct RecordedModelSettingsUpdate: Equatable, Sendable {
+        let modelID: String
+        let values: [String: String]
+    }
+
     private var streamContinuations: [AsyncStream<Melix_Controlplane_V1_ControlPlaneEvent>.Continuation] = []
     private var nextEventSequence: UInt64 = 1
 
     private(set) var recordedActions: [String] = []
+    private(set) var recordedModelSettingsUpdates: [RecordedModelSettingsUpdate] = []
     private(set) var recordedModelOperationRequests: [RecordedModelOperationRequest] = []
     private(set) var recordedBenchRequests: [ControlPlaneBenchRequest] = []
     private(set) var recordedBenchMatrixRequests: [ControlPlaneBenchMatrixRequest] = []
@@ -914,6 +920,9 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         values: [String: String]
     ) async throws -> Melix_Controlplane_V1_ModelSummary {
         recordedActions.append("settings:\(modelID)")
+        recordedModelSettingsUpdates.append(
+            RecordedModelSettingsUpdate(modelID: modelID, values: values)
+        )
         if let modelSettingsError {
             throw modelSettingsError
         }
@@ -1017,6 +1026,25 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         }
         if let toolParserXMLFallback = values["tool_parser_xml_fallback"] {
             modelSettings.ext["tool_parser_xml_fallback"] = toolParserXMLFallback
+        }
+        if let loadTrustMode = values["load_trust_mode"] ?? values["model_load_trust_mode"] {
+            let normalizedLoadTrustMode = loadTrustMode
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+                .replacingOccurrences(of: "-", with: "_")
+                .replacingOccurrences(of: " ", with: "_")
+            modelSettings.loadTrustMode = switch normalizedLoadTrustMode {
+            case "", "clear", "unset", "unspecified", "default":
+                .unspecified
+            case "safe", "default_safe", "false", "0", "no", "off":
+                .modelLoadTrustDefaultSafe
+            case "trust_remote_code", "remote_code", "trusted", "true", "1", "yes", "on":
+                .modelLoadTrustTrustRemoteCode
+            case "not_applicable", "n/a", "na":
+                .modelLoadTrustNotApplicable
+            default:
+                .unspecified
+            }
         }
         if let ocrSamplingProfileID = values["ocr_sampling_profile_id"] {
             modelSettings.ext["ocr_sampling_profile_id"] = ocrSamplingProfileID
@@ -1982,7 +2010,8 @@ func makeBenchmarkExportBundleJSON() -> String {
           "suites": ["smoke"],
           "parameters": {
             "sample_size": "2",
-            "batch_factor": "1"
+            "batch_factor": "1",
+            "acceleration_profile": "balanced"
           },
           "status": "completed",
           "output_dir": "/tmp/melix/bench/runs/bench-older",
@@ -2008,7 +2037,8 @@ func makeBenchmarkExportBundleJSON() -> String {
           "suites": ["smoke", "latency"],
           "parameters": {
             "sample_size": "6",
-            "batch_factor": "2"
+            "batch_factor": "2",
+            "acceleration_profile": "throughput"
           },
           "status": "completed",
           "output_dir": "/tmp/melix/bench/runs/bench-newer",
@@ -2080,7 +2110,10 @@ func makeBenchmarkExportBundleJSON() -> String {
           "status": "completed",
           "output_dir": "/tmp/melix/bench/matrix-runs/matrix-older",
           "created_at_unix_ms": 1712150000000,
-          "updated_at_unix_ms": 1712150005000
+          "updated_at_unix_ms": 1712150005000,
+          "parameters": {
+            "acceleration_profile": "balanced"
+          }
         },
         {
           "schema_version": "melix.benchmark_matrix_job.v1",
@@ -2093,7 +2126,10 @@ func makeBenchmarkExportBundleJSON() -> String {
           "status": "completed",
           "output_dir": "/tmp/melix/bench/matrix-runs/matrix-newer",
           "created_at_unix_ms": 1712250000000,
-          "updated_at_unix_ms": 1712250005000
+          "updated_at_unix_ms": 1712250005000,
+          "parameters": {
+            "acceleration_profile": "low-memory"
+          }
         }
       ],
       "benchmark_matrix_summary_rows": [
@@ -2198,6 +2234,7 @@ func makeBenchmarkExportBundleJSON() -> String {
           "generation_length": 128,
           "batch_size": 2,
           "cache_profile": "warm",
+          "acceleration_profile": "low-memory",
           "reasoning_mode": "enabled",
           "structured_output_mode": "json_schema",
           "concurrency_level": 1,
@@ -2222,6 +2259,7 @@ func makeBenchmarkExportBundleJSON() -> String {
           "generation_length": 256,
           "batch_size": 4,
           "cache_profile": "warm",
+          "acceleration_profile": "low-memory",
           "reasoning_mode": "enabled",
           "structured_output_mode": "json_schema",
           "concurrency_level": 2,
@@ -2702,6 +2740,55 @@ func makeCLIBenchRunJSON(
         "bench.smoke.tokens_per_second": 61.2,
         "bench.smoke.ttft_ms": 21.1
       }
+    }
+    """
+}
+
+func makeDiagnosticsDebugBundleJSON(
+    bundleID: String = "bench-1",
+    bundlePath: String = "/tmp/melix-debug/bench-1",
+    servingDiagnosticsEventCount: Int? = nil,
+    servingDiagnosticsDroppedEventCount: Int? = nil,
+    servingDiagnosticsMode: String = "debug"
+) -> String {
+    let servingDiagnosticsJSON: String
+    if let servingDiagnosticsEventCount, let servingDiagnosticsDroppedEventCount {
+        servingDiagnosticsJSON = """
+          ,
+          "serving_diagnostics": {
+            "schema_version": "melix.serving_diagnostics.manifest.v1",
+            "diagnostics_mode": "\(servingDiagnosticsMode)",
+            "event_count": \(servingDiagnosticsEventCount),
+            "dropped_event_count": \(servingDiagnosticsDroppedEventCount)
+          }
+        """
+    } else {
+        servingDiagnosticsJSON = ""
+    }
+    return """
+    {
+      "schema_version": "melix.diagnostics.bundle.v1",
+      "bundle_id": "\(bundleID)",
+      "bundle_path": "\(bundlePath)",
+      "diagnostics_consent_state": "local_only",
+      "debug_artifact_policy": "explicit_cli_command",
+      "debug_jsonl_enabled": true,
+      "debug_jsonl_event_limit": 256,
+      "redaction_schema_version": "melix.diagnostics.redaction.v1",
+      "redacted_field_count": 3,
+      "source_run_record_path": "/tmp/melix/jobs/\(bundleID)/run-record.json",
+      "artifacts": {
+        "command": "command.txt",
+        "redacted_env": "redacted-env.json",
+        "effective_config": "effective-config.json",
+        "system": "system.json",
+        "capability_receipts": "capability-receipts.json",
+        "memory_estimate": "memory-estimate.json",
+        "logs": "logs.txt",
+        "metrics": "metrics.json",
+        "error": "error.json"
+      }
+      \(servingDiagnosticsJSON)
     }
     """
 }

@@ -30,7 +30,11 @@ struct DesktopShellStateTests {
 
         let restored = try JSONDecoder().decode(OperatorSessionState.self, from: encodedLegacyState)
 
-        #expect(restored.schemaVersion == 5)
+        #expect(restored.schemaVersion == OperatorSessionState(
+            selectedSurface: .chat,
+            selectedServerSessionID: "",
+            serverSessions: []
+        ).schemaVersion)
         #expect(restored.paneVisibility.count == DesktopSurface.allCases.count)
         #expect(restored.paneVisibility.first(where: { $0.surface == .api })?.showsSidebar == true)
         #expect(restored.paneVisibility.first(where: { $0.surface == .api })?.showsInspector == false)

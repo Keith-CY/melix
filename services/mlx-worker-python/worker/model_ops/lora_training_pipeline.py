@@ -283,6 +283,17 @@ class LoRATrainingPipeline:
                     boundary_min=training_result.metrics.response_only_boundary_min,
                     boundary_max=training_result.metrics.response_only_boundary_max,
                     boundary_mean=training_result.metrics.response_only_boundary_mean,
+                    response_tokens_min=training_result.metrics.response_only_response_tokens_min,
+                    response_tokens_max=training_result.metrics.response_only_response_tokens_max,
+                    response_tokens_mean=training_result.metrics.response_only_response_tokens_mean,
+                    trainable_response_tokens_min=training_result.metrics.response_only_trainable_response_tokens_min,
+                    trainable_response_tokens_max=training_result.metrics.response_only_trainable_response_tokens_max,
+                    trainable_response_tokens_mean=training_result.metrics.response_only_trainable_response_tokens_mean,
+                    trainable_response_token_count=training_result.metrics.response_only_trainable_response_token_count,
+                    truncated_response_sample_count=training_result.metrics.response_only_truncated_response_sample_count,
+                    fully_truncated_response_sample_count=(
+                        training_result.metrics.response_only_fully_truncated_response_sample_count
+                    ),
                 ).to_manifest_fields()
             )
         if dataset.hf_reference is not None:

@@ -17,8 +17,7 @@ The probe provides focused:
 
 - `test_command` for the fenced JSON parser regression tests and probe dispatch tests.
 - `coverage_command` for changed-scope coverage across the parser, tests, registry, and probe script.
-- `probe_command` for a synthetic partially fenced JSON response that previously required
-  `splitlines()` plus `"\n".join(...)` before JSON parsing.
+- `probe_command` for synthetic fenced JSON responses, including trailer handling after the decoded JSON object.
 
 Metrics:
 
@@ -34,8 +33,9 @@ Metrics:
 3. Follow up by parsing fenced JSON directly with a shared `json.JSONDecoder.raw_decode(...)`
    starting at the post-fence offset. This preserves permissive handling for partially fenced
    responses while avoiding the large substring copy previously needed before `json.loads(...)`.
-4. Keep the slice local to the parser, regression tests, probe script, and PR-scoped probe registry.
-5. Verify locally on Linux with the registered focused test command, coverage command, and registered probe.
+4. In this follow-up slice, keep the same registered probe but make the trailer case explicit: after `raw_decode(...)`, validate an optional closing fence and surrounding whitespace with index scans instead of materializing `response_text[end_index:].strip()`.
+5. Keep the slice local to the parser, regression tests, probe script, PR-scoped probe registry, and this plan.
+6. Verify locally on Linux with the registered focused test command, coverage command, and registered probe.
 
 ## Acceptance Criteria
 

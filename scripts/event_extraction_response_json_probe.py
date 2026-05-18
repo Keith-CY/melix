@@ -37,9 +37,9 @@ def _response(event_count: int) -> str:
         }
         for index in range(event_count)
     ]
-    # The missing closing fence follows the existing permissive parser path for
-    # partially fenced model responses and used to require splitlines()+join().
-    return "```json\n" + json.dumps({"events": events}, ensure_ascii=False, separators=(",", ":"))
+    # Include a closing fence plus trailing whitespace to exercise the parser's
+    # fence-trailer path without making an intermediate stripped copy.
+    return "```json\n" + json.dumps({"events": events}, ensure_ascii=False, separators=(",", ":")) + "\n```   \n"
 
 
 def run_probe(*, event_count: int = 1600, iterations: int = 80, samples: int = 5) -> dict[str, float]:

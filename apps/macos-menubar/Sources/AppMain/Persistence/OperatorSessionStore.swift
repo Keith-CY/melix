@@ -6,6 +6,7 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
     public var selectedSurface: DesktopSurface
     public var selectedToolSection: DesktopToolSection
     public var selectedServerSessionID: String
+    public var selectedRuntimeJobID: String
     public var serverSessions: [DesktopServerSessionState]
     public var dismissedBannerIDs: [String]
     public var downloadQueue: [RuntimeDownloadQueueEntryState]
@@ -13,20 +14,22 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
     public var paneVisibility: [DesktopPaneVisibilityState]
 
     public init(
-        schemaVersion: Int = 5,
+        schemaVersion: Int = 6,
         selectedSurface: DesktopSurface,
         selectedToolSection: DesktopToolSection = .modelsLibrary,
         selectedServerSessionID: String,
+        selectedRuntimeJobID: String = "",
         serverSessions: [DesktopServerSessionState],
         dismissedBannerIDs: [String] = [],
         downloadQueue: [RuntimeDownloadQueueEntryState] = [],
         registryRoots: [String] = [],
         paneVisibility: [DesktopPaneVisibilityState] = DesktopPaneVisibilityState.defaultStates
     ) {
-        self.schemaVersion = max(schemaVersion, 5)
+        self.schemaVersion = max(schemaVersion, 6)
         self.selectedSurface = selectedSurface
         self.selectedToolSection = selectedToolSection
         self.selectedServerSessionID = selectedServerSessionID
+        self.selectedRuntimeJobID = selectedRuntimeJobID
         self.serverSessions = serverSessions
         self.dismissedBannerIDs = dismissedBannerIDs
         self.downloadQueue = downloadQueue
@@ -39,6 +42,7 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
         case selectedSurface = "selected_surface"
         case selectedToolSection = "selected_tool_section"
         case selectedServerSessionID = "selected_server_session_id"
+        case selectedRuntimeJobID = "selected_runtime_job_id"
         case serverSessions = "server_sessions"
         case dismissedBannerIDs = "dismissed_banner_ids"
         case downloadQueue = "download_queue"
@@ -55,6 +59,7 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
             selectedSurface: DesktopSurface(operatorSessionID: selectedSurfaceID),
             selectedToolSection: DesktopToolSection(operatorSessionID: selectedToolSectionID),
             selectedServerSessionID: try container.decodeIfPresent(String.self, forKey: .selectedServerSessionID) ?? "",
+            selectedRuntimeJobID: try container.decodeIfPresent(String.self, forKey: .selectedRuntimeJobID) ?? "",
             serverSessions: try container.decodeIfPresent([DesktopServerSessionState].self, forKey: .serverSessions) ?? [],
             dismissedBannerIDs: try container.decodeIfPresent([String].self, forKey: .dismissedBannerIDs) ?? [],
             downloadQueue: try container.decodeIfPresent([RuntimeDownloadQueueEntryState].self, forKey: .downloadQueue) ?? [],
@@ -70,6 +75,7 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
         try container.encode(selectedSurface.operatorSessionID, forKey: .selectedSurface)
         try container.encode(selectedToolSection.operatorSessionID, forKey: .selectedToolSection)
         try container.encode(selectedServerSessionID, forKey: .selectedServerSessionID)
+        try container.encode(selectedRuntimeJobID, forKey: .selectedRuntimeJobID)
         try container.encode(serverSessions, forKey: .serverSessions)
         try container.encode(dismissedBannerIDs, forKey: .dismissedBannerIDs)
         try container.encode(downloadQueue, forKey: .downloadQueue)
@@ -78,7 +84,7 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
     }
 
     public mutating func ensurePaneVisibilityDefaults() {
-        schemaVersion = max(schemaVersion, 5)
+        schemaVersion = max(schemaVersion, 6)
         paneVisibility = DesktopPaneVisibilityState.mergedWithDefaults(paneVisibility)
     }
 }
@@ -123,6 +129,7 @@ private extension OperatorSessionState {
             selectedSurface: DesktopSurface(operatorSessionID: sharedState.selectedSurfaceID),
             selectedToolSection: DesktopToolSection(operatorSessionID: sharedState.selectedToolSectionID),
             selectedServerSessionID: sharedState.selectedServerSessionID,
+            selectedRuntimeJobID: sharedState.selectedRuntimeJobID,
             serverSessions: sharedState.serverSessions.map(DesktopServerSessionState.init(sharedState:)),
             dismissedBannerIDs: sharedState.dismissedBannerIDs,
             downloadQueue: sharedState.downloadQueue.map(RuntimeDownloadQueueEntryState.init(sharedState:)),
@@ -137,6 +144,7 @@ private extension OperatorSessionState {
             selectedSurfaceID: selectedSurface.operatorSessionID,
             selectedToolSectionID: selectedToolSection.operatorSessionID,
             selectedServerSessionID: selectedServerSessionID,
+            selectedRuntimeJobID: selectedRuntimeJobID,
             serverSessions: serverSessions.map(\.sharedState),
             dismissedBannerIDs: dismissedBannerIDs,
             downloadQueue: downloadQueue.map(\.sharedState),
@@ -387,6 +395,14 @@ private extension DesktopToolSection {
             self = .downloads
         case "training":
             self = .training
+        case "workflowrecipes":
+            self = .workflowRecipes
+        case "syntheticdatasets":
+            self = .syntheticDatasets
+        case "batchruns":
+            self = .batchRuns
+        case "jobs":
+            self = .jobs
         case "diagnostics":
             self = .diagnostics
         case "logs":
@@ -406,6 +422,14 @@ private extension DesktopToolSection {
             return "downloads"
         case .training:
             return "training"
+        case .workflowRecipes:
+            return "workflowRecipes"
+        case .syntheticDatasets:
+            return "syntheticDatasets"
+        case .batchRuns:
+            return "batchRuns"
+        case .jobs:
+            return "jobs"
         case .diagnostics:
             return "diagnostics"
         case .logs:

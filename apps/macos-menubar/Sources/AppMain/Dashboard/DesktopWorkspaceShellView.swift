@@ -955,6 +955,7 @@ private struct DesktopServerOverviewCardsView: View {
             DesktopServerMetricCard(title: "Port", value: "\(session.effectivePort)", detail: session.gatewayConfigSourceText)
             DesktopServerMetricCard(title: "Context", value: "\(session.servingDefaults.effectiveMaxTokens)", detail: "max tokens")
             DesktopServerMetricCard(title: "Acceleration", value: desktopAccelerationModeText(session.servingDefaults.effectiveAccelerationMode), detail: "serving mode")
+            DesktopServerMetricCard(title: "Profile", value: servingAccelerationProfileLabel(session.servingDefaults.effectiveAccelerationProfile), detail: "acceleration defaults")
             DesktopServerMetricCard(title: "State", value: session.lifecycle.rawValue, detail: session.powerState.rawValue)
             DesktopServerMetricCard(title: "Base URL", value: session.effectiveBaseURL, detail: "effective listener")
         }
@@ -968,15 +969,23 @@ private struct DesktopServerMetricCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(title).melixSectionLabel()
-            Text(value)
-                .font(title == "Base URL" ? .caption.monospaced() : .headline)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Text(detail)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            DesktopPassiveStaticTextLabel(
+                title: title,
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+                textColor: .secondaryLabelColor
+            )
+            DesktopPassiveStaticTextLabel(
+                title: value,
+                font: title == "Base URL"
+                    ? .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+                    : .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold),
+                textColor: .labelColor
+            )
+            DesktopPassiveStaticTextLabel(
+                title: detail,
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                textColor: .secondaryLabelColor
+            )
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1534,6 +1543,13 @@ private struct DesktopServerSessionEditor: View {
                             Text(servingDefaultsCompactSummary(for: session))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                            if let disabledReason = viewModel.selectedServerAccelerationModeDisabledReason {
+                                Text(disabledReason)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            DesktopServingAccelerationProfilePicker(viewModel: viewModel)
+                            DesktopServingAccelerationProfileSummary(servingDefaults: session.servingDefaults)
                             DisclosureGroup(DesktopServerWorkspaceDefaults.advancedServingDefaultsTitle, isExpanded: $showsAdvanced) {
                                 advancedServingDefaultsForm(for: session)
                                     .padding(.top, 12)
@@ -1938,12 +1954,20 @@ private struct DesktopToolsWorkspaceView: View {
                         DesktopDownloadsToolSectionView(viewModel: viewModel)
                     case .training:
                         DesktopTrainingToolSectionView(viewModel: viewModel)
+                    case .workflowRecipes:
+                        DesktopWorkflowRecipesToolSectionView(viewModel: viewModel)
+                    case .syntheticDatasets:
+                        DesktopSyntheticDatasetToolSectionView(viewModel: viewModel)
+                    case .batchRuns:
+                        DesktopBatchRunsToolSectionView(viewModel: viewModel)
+                    case .jobs:
+                        DesktopJobsToolSectionView(viewModel: viewModel)
                     case .diagnostics:
                         DesktopDiagnosticsToolSectionView(viewModel: viewModel, foundation: foundation)
                     case .logs:
                         DesktopLogsTabView(foundation: foundation)
                     case .settings:
-                        DesktopSettingsTabView(foundation: foundation)
+                        DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
                     }
                 }
                 .padding(20)
@@ -2000,7 +2024,7 @@ private struct DesktopToolsWorkspaceView: View {
         switch viewModel.selectedToolSection {
         case .training, .diagnostics:
             return DesktopLoRAVisualPolish.pageBackgroundColor
-        case .modelsLibrary, .downloads, .logs, .settings:
+        case .modelsLibrary, .downloads, .workflowRecipes, .syntheticDatasets, .batchRuns, .jobs, .logs, .settings:
             return Color(nsColor: .windowBackgroundColor)
         }
     }
@@ -2232,6 +2256,2561 @@ struct DesktopDownloadsToolSectionView: View {
 
 }
 
+struct DesktopWorkflowRecipesToolSectionView: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .bottom, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Task filter")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField(
+                        "Task filter",
+                        text: Binding(
+                            get: { viewModel.workflowRecipeTaskFilterDraft },
+                            set: { viewModel.updateWorkflowRecipeTaskFilter($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+                Button("Refresh Catalog", action: refreshCatalogAction)
+                .buttonStyle(.borderedProminent)
+                .disabled(viewModel.workflowRecipeCatalogInProgress)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("URI to inspect")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField(
+                        "URI to inspect",
+                        text: Binding(
+                            get: { viewModel.workflowRecipeURIInspectDraft },
+                            set: { viewModel.updateWorkflowRecipeURIInspectDraft($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+                Button("Inspect URI", action: inspectURIAction)
+                    .buttonStyle(.bordered)
+                    .disabled(viewModel.workflowRecipeURIInspectCanRun == false)
+
+                if viewModel.workflowRecipeCatalogInProgress
+                    || viewModel.workflowRecipeDetailInProgress
+                    || viewModel.workflowRecipeURIInspectInProgress
+                    || viewModel.workflowRecipeInitPreviewInProgress
+                {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            if viewModel.workflowRecipeCatalog.availableTaskFilters.isEmpty == false {
+                HStack(spacing: 8) {
+                    ForEach(viewModel.workflowRecipeCatalog.availableTaskFilters, id: \.self) { task in
+                        Button(task) {
+                            applyTaskFilter(task)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    Button("Clear", action: clearTaskFilter)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+
+            if viewModel.workflowRecipeCatalogMessage.isEmpty == false {
+                Text(viewModel.workflowRecipeCatalogMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                    .textSelection(.enabled)
+            }
+            if viewModel.workflowRecipeCatalogErrorMessage.isEmpty == false {
+                Text(viewModel.workflowRecipeCatalogErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            }
+            if viewModel.workflowRecipeURIInspectMessage.isEmpty == false {
+                Text(viewModel.workflowRecipeURIInspectMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                    .textSelection(.enabled)
+            }
+            if viewModel.workflowRecipeURIInspectErrorMessage.isEmpty == false {
+                Text(viewModel.workflowRecipeURIInspectErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            }
+            if viewModel.workflowRecipeInitPreviewMessage.isEmpty == false {
+                Text(viewModel.workflowRecipeInitPreviewMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                    .textSelection(.enabled)
+            }
+            if viewModel.workflowRecipeInitPreviewErrorMessage.isEmpty == false {
+                Text(viewModel.workflowRecipeInitPreviewErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            }
+            if viewModel.workflowRecipeSetEditorMessage.isEmpty == false {
+                Text(viewModel.workflowRecipeSetEditorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                    .textSelection(.enabled)
+            }
+            if viewModel.workflowRecipeSetEditorErrorMessage.isEmpty == false {
+                Text(viewModel.workflowRecipeSetEditorErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            }
+            if viewModel.workflowRecipePlanMessage.isEmpty == false {
+                Text(viewModel.workflowRecipePlanMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                    .textSelection(.enabled)
+            }
+            if viewModel.workflowRecipePlanErrorMessage.isEmpty == false {
+                Text(viewModel.workflowRecipePlanErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            }
+            if viewModel.workflowRecipeApplyMessage.isEmpty == false {
+                Text(viewModel.workflowRecipeApplyMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                    .textSelection(.enabled)
+            }
+            if viewModel.workflowRecipeApplyErrorMessage.isEmpty == false {
+                Text(viewModel.workflowRecipeApplyErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            }
+
+            MelixSectionCard("URI Inspect") {
+                uriInspectionPanel
+            }
+
+            MelixSectionCard("Recipe Init Preview") {
+                recipeInitPreviewPanel
+            }
+
+            MelixSectionCard("Recipe Variables") {
+                recipeVariablesPanel
+            }
+
+            MelixSectionCard("Planned Pipeline") {
+                recipePlanPanel
+            }
+
+            MelixSectionCard("Recipe Apply") {
+                recipeApplyPanel
+            }
+
+            HStack(alignment: .top, spacing: 14) {
+                MelixSectionCard("Recipe Catalog") {
+                    recipeCatalogList
+                }
+                .frame(minWidth: 280, maxWidth: 360, alignment: .topLeading)
+
+                MelixSectionCard("Recipe Detail") {
+                    recipeDetail
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(accessibilitySummary)
+    }
+
+    private var recipeCatalogList: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if viewModel.workflowRecipeFilteredRecipes.isEmpty {
+                Text("No workflow recipes match this filter.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(viewModel.workflowRecipeFilteredRecipes) { recipe in
+                    Button {
+                        selectRecipeAction(recipe.id)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(recipe.title)
+                                    .font(.headline)
+                                    .lineLimit(2)
+                                Spacer(minLength: 8)
+                                Text("v\(recipe.version)")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text(recipe.id)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            if recipe.taskText.isEmpty == false {
+                                Text(recipe.taskText)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            viewModel.selectedWorkflowRecipeID == recipe.id
+                                ? MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.selected)
+                                : Color.secondary.opacity(0.05),
+                            in: RoundedRectangle(cornerRadius: 8)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    func refreshCatalogAction() {
+        Task { await viewModel.refreshWorkflowRecipeCatalog() }
+    }
+
+    func applyTaskFilter(_ task: String) {
+        viewModel.updateWorkflowRecipeTaskFilter(task)
+    }
+
+    func clearTaskFilter() {
+        viewModel.updateWorkflowRecipeTaskFilter("")
+    }
+
+    func selectRecipeAction(_ recipeID: String) {
+        Task { await viewModel.selectWorkflowRecipe(recipeID: recipeID) }
+    }
+
+    func inspectURIAction() {
+        Task { await viewModel.inspectWorkflowRecipeURI() }
+    }
+
+    func previewRecipeInitAction() {
+        Task { await viewModel.previewWorkflowRecipeInitFromInspectedURI() }
+    }
+
+    func addRecipeVariableAction() {
+        viewModel.addWorkflowRecipeSetDraft()
+    }
+
+    func applyRecipeVariableDraft(key: String, value: String) {
+        viewModel.updateWorkflowRecipeSetKeyDraft(key)
+        viewModel.updateWorkflowRecipeSetValueDraft(value)
+        viewModel.addWorkflowRecipeSetDraft()
+    }
+
+    func removeRecipeVariableAction(_ key: String) {
+        viewModel.removeWorkflowRecipeSetValue(key: key)
+    }
+
+    func clearRecipeVariablesAction() {
+        viewModel.clearWorkflowRecipeSetValues()
+    }
+
+    func planRecipeAction() {
+        Task { await viewModel.planWorkflowRecipe() }
+    }
+
+    func applyRecipeAction() {
+        Task { await viewModel.applyWorkflowRecipe() }
+    }
+
+    private var uriInspectionPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .bottom, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Recipe init task")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField(
+                        "Recipe init task",
+                        text: Binding(
+                            get: { viewModel.workflowRecipeInitTaskDraft },
+                            set: { viewModel.updateWorkflowRecipeInitTaskDraft($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+                Button("Preview Recipe Init", action: previewRecipeInitAction)
+                    .buttonStyle(.bordered)
+                    .disabled(viewModel.workflowRecipeInitPreviewCanRun == false)
+            }
+
+            if let inspection = viewModel.workflowRecipeURIInspection {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(inspection.summaryText)
+                        .font(.headline)
+                    Spacer()
+                    if inspection.schemaVersion.isEmpty == false {
+                        Text(inspection.schemaVersion)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if inspection.normalizedLocator.isEmpty == false {
+                    Text(inspection.normalizedLocator)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                if inspection.candidates.isEmpty {
+                    Text("No URI candidates found.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(inspection.candidates) { candidate in
+                        workflowRecipeURICandidateRow(candidate)
+                    }
+                }
+            } else {
+                Text("Inspect a URI to see candidate workflow inputs.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func workflowRecipeURICandidateRow(_ candidate: RuntimeWorkflowURICandidateState) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(candidate.kind)
+                    .font(.caption.weight(.semibold))
+                Text(candidate.confidenceText)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(candidate.taskKind)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            Text([candidate.sourceKind, candidate.repoID, candidate.revision]
+                .filter { $0.isEmpty == false }
+                .joined(separator: " | "))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(candidate.normalizedLocator)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+            if candidate.reasonText.isEmpty == false {
+                Text(candidate.reasonText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            if candidate.generatedCommandText.isEmpty == false {
+                Text(candidate.generatedCommandText)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+            }
+            if candidate.warningText.isEmpty == false {
+                Text(candidate.warningText)
+                    .font(.caption2)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.warning)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var recipeInitPreviewPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let preview = viewModel.workflowRecipeInitPreview {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(preview.recipe.title)
+                            .font(.headline)
+                        Spacer()
+                        Text("v\(preview.recipe.version)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(preview.recipe.id)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                    if preview.recipe.description.isEmpty == false {
+                        Text(preview.recipe.description)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let inspectionSummary = preview.inspection?.summaryText,
+                       inspectionSummary.isEmpty == false
+                    {
+                        Text(inspectionSummary)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+
+                workflowRecipeKeyValueRows("Provenance", rows: preview.provenanceRows)
+                workflowRecipeInputRows(preview.recipe.inputRows)
+                workflowRecipeKeyValueRows("Preflight", rows: preview.recipe.preflightRows)
+                workflowRecipePipelineRows(preview.recipe.pipelineSteps)
+                workflowRecipeKeyValueRows("Outputs", rows: preview.recipe.outputRows)
+            } else {
+                Text("Preview recipe init from an inspected URI before applying a workflow.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var recipeVariablesPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .bottom, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Variable key")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField(
+                        "Variable key",
+                        text: Binding(
+                            get: { viewModel.workflowRecipeSetKeyDraft },
+                            set: { viewModel.updateWorkflowRecipeSetKeyDraft($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Variable value")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField(
+                        "Variable value",
+                        text: Binding(
+                            get: { viewModel.workflowRecipeSetValueDraft },
+                            set: { viewModel.updateWorkflowRecipeSetValueDraft($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+                Button("Add --set", action: addRecipeVariableAction)
+                    .buttonStyle(.bordered)
+                    .disabled(viewModel.workflowRecipeSetEditorCanAdd == false)
+                Button("Clear Variables", action: clearRecipeVariablesAction)
+                    .buttonStyle(.bordered)
+                    .disabled(viewModel.workflowRecipeSetRows.isEmpty)
+            }
+
+            if viewModel.workflowRecipeSetRows.isEmpty {
+                Text("No recipe variables configured.")
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(viewModel.workflowRecipeSetRows) { row in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(row.key)
+                                    .font(.caption.weight(.semibold))
+                                Text(row.argumentText)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                            Spacer()
+                            Text(row.value)
+                                .font(.caption)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Button("Remove") {
+                                removeRecipeVariableAction(row.key)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var recipePlanPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .bottom, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Plan output path")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField(
+                        "Plan output path",
+                        text: Binding(
+                            get: { viewModel.workflowRecipePlanOutputPathDraft },
+                            set: { viewModel.updateWorkflowRecipePlanOutputPathDraft($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+                Button("Plan Recipe", action: planRecipeAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.workflowRecipePlanCanRun == false)
+            }
+
+            if let plan = viewModel.workflowRecipePlan {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(plan.summaryText)
+                            .font(.headline)
+                        Spacer()
+                        if plan.schemaVersion.isEmpty == false {
+                            Text(plan.schemaVersion)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text(plan.recipeDigest)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    if plan.pipelineSchemaVersion.isEmpty == false {
+                        Text(plan.pipelineSchemaVersion)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+
+                if plan.pipelineJSONText.isEmpty == false {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Pipeline JSON")
+                            .font(.caption.weight(.semibold))
+                        Text(plan.pipelineJSONText)
+                            .font(.caption.monospaced())
+                            .lineLimit(10)
+                            .textSelection(.enabled)
+                    }
+                }
+
+                workflowRecipePipelineRows(plan.pipelineSteps)
+                workflowRecipeArtifactRows(plan.artifactRows)
+                workflowRecipeMetricRows("Planning Metrics", rows: plan.metrics)
+            } else {
+                Text("Plan a selected recipe to inspect pipeline JSON and dry-run receipts.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var recipeApplyPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .bottom, spacing: 12) {
+                Toggle(
+                    "Dry Run",
+                    isOn: Binding(
+                        get: { viewModel.workflowRecipeApplyDryRun },
+                        set: { viewModel.updateWorkflowRecipeApplyDryRun($0) }
+                    )
+                )
+                .toggleStyle(.checkbox)
+
+                Toggle(
+                    "Resume",
+                    isOn: Binding(
+                        get: { viewModel.workflowRecipeApplyResume },
+                        set: { viewModel.updateWorkflowRecipeApplyResume($0) }
+                    )
+                )
+                .toggleStyle(.checkbox)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("From step")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField(
+                        "From step",
+                        text: Binding(
+                            get: { viewModel.workflowRecipeApplyFromStepDraft },
+                            set: { viewModel.updateWorkflowRecipeApplyFromStepDraft($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .frame(minWidth: 180)
+                }
+
+                Button("Apply Recipe", action: applyRecipeAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.workflowRecipeApplyCanRun == false)
+            }
+
+            if let result = viewModel.workflowRecipeApplyResult {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Recipe Apply Result")
+                            .font(.headline)
+                        Spacer()
+                        if result.schemaVersion.isEmpty == false {
+                            Text(result.schemaVersion)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text(result.summaryText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if result.traceID.isEmpty == false {
+                        Text(result.traceID)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+
+                workflowRecipePathRows([
+                    ("Receipt Directory", result.receiptDir),
+                    ("Summary Path", result.summaryPath),
+                    ("Pipeline Hash", result.pipelineHash),
+                    ("Inputs Hash", result.inputsHash),
+                ])
+                workflowRecipeKeyValueRows("Recipe", rows: result.recipeRows)
+                workflowRecipeApplyStepRows(result.stepRows)
+                workflowRecipeMetricRows("Apply Metrics", rows: result.metrics)
+            } else {
+                Text("Apply a selected recipe through the existing pipeline runner.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var recipeDetail: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let detail = viewModel.selectedWorkflowRecipeDetail {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(detail.title)
+                            .font(.headline)
+                        Spacer()
+                        Text("v\(detail.version)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(detail.id)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                    if detail.description.isEmpty == false {
+                        Text(detail.description)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if detail.taskText.isEmpty == false {
+                        Text(detail.taskText)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+
+                workflowRecipeInputRows(detail.inputRows)
+                workflowRecipeKeyValueRows("Preflight", rows: detail.preflightRows)
+                workflowRecipePipelineRows(detail.pipelineSteps)
+                workflowRecipeKeyValueRows("Outputs", rows: detail.outputRows)
+            } else {
+                Text("Select a recipe to inspect its inputs, preflight, pipeline, and outputs.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func workflowRecipeInputRows(_ rows: [RuntimeWorkflowRecipeInputRowState]) -> some View {
+        Group {
+            if rows.isEmpty == false {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Inputs")
+                        .font(.caption.weight(.semibold))
+                    ForEach(rows) { row in
+                        HStack(alignment: .firstTextBaseline) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(row.name)
+                                    .font(.caption.weight(.semibold))
+                                Text([row.valueType, row.requirementText, row.uriKind]
+                                    .filter { $0.isEmpty == false }
+                                    .joined(separator: " | "))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if row.defaultValueText.isEmpty == false {
+                                Text(row.defaultValueText)
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func workflowRecipeKeyValueRows(
+        _ title: String,
+        rows: [RuntimeWorkflowRecipeKeyValueRowState]
+    ) -> some View {
+        Group {
+            if rows.isEmpty == false {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title)
+                        .font(.caption.weight(.semibold))
+                    ForEach(rows) { row in
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(row.name)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(row.valueText)
+                                .font(.caption)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func workflowRecipePipelineRows(_ rows: [RuntimeWorkflowRecipePipelineStepState]) -> some View {
+        Group {
+            if rows.isEmpty == false {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Pipeline")
+                        .font(.caption.weight(.semibold))
+                    ForEach(rows) { step in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(step.id) • \(step.command)")
+                                .font(.caption.weight(.semibold))
+                            if step.argumentSummaryText.isEmpty == false {
+                                Text(step.argumentSummaryText)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func workflowRecipeArtifactRows(_ rows: [RuntimeWorkflowRecipeArtifactRowState]) -> some View {
+        Group {
+            if rows.isEmpty == false {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Dry-run Receipts")
+                        .font(.caption.weight(.semibold))
+                    ForEach(rows) { row in
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(row.kind)
+                                .font(.caption.weight(.semibold))
+                            Spacer()
+                            Text(row.path)
+                                .font(.caption.monospaced())
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func workflowRecipeMetricRows(_ title: String, rows: [RuntimeWorkflowRecipeMetricState]) -> some View {
+        Group {
+            if rows.isEmpty == false {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title)
+                        .font(.caption.weight(.semibold))
+                    ForEach(rows) { row in
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(row.name)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(row.valueText)
+                                .font(.caption.monospacedDigit())
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func workflowRecipePathRows(_ rows: [(String, String)]) -> some View {
+        let visibleRows = rows.filter { $0.1.isEmpty == false }
+        return Group {
+            if visibleRows.isEmpty == false {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(visibleRows, id: \.0) { label, value in
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(label)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(value)
+                                .font(.caption.monospaced())
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func workflowRecipeApplyStepRows(_ rows: [RuntimeWorkflowRecipeApplyStepRowState]) -> some View {
+        Group {
+            if rows.isEmpty == false {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Apply Steps")
+                        .font(.caption.weight(.semibold))
+                    ForEach(rows) { row in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text("\(row.id) • \(row.command)")
+                                    .font(.caption.weight(.semibold))
+                                Spacer()
+                                Text(row.status)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                            }
+                            if row.receiptPath.isEmpty == false {
+                                Text(row.receiptPath)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .textSelection(.enabled)
+                            }
+                            if row.artifactText.isEmpty == false {
+                                Text(row.artifactText)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    var accessibilitySummary: String {
+        var values = [
+            "Workflow Recipes",
+            "Task filter",
+            viewModel.workflowRecipeTaskFilterDraft,
+            viewModel.workflowRecipeURIInspectDraft,
+            viewModel.workflowRecipeInitTaskDraft,
+            "Refresh Catalog",
+            "URI to inspect",
+            "Inspect URI",
+            "Recipe init task",
+            "Preview Recipe Init",
+            "Recipe Init Preview",
+            "Recipe Variables",
+            "Variable key",
+            "Variable value",
+            "Add --set",
+            "Clear Variables",
+            "Planned Pipeline",
+            "Plan output path",
+            "Plan Recipe",
+            "Recipe Apply",
+            "Dry Run",
+            "Resume",
+            "From step",
+            "Apply Recipe",
+            viewModel.workflowRecipeCatalogMessage,
+            viewModel.workflowRecipeCatalogErrorMessage,
+            viewModel.workflowRecipeURIInspectMessage,
+            viewModel.workflowRecipeURIInspectErrorMessage,
+            viewModel.workflowRecipeInitPreviewMessage,
+            viewModel.workflowRecipeInitPreviewErrorMessage,
+            viewModel.workflowRecipeSetKeyDraft,
+            viewModel.workflowRecipeSetValueDraft,
+            viewModel.workflowRecipeSetArgumentSummaryText,
+            viewModel.workflowRecipeSetEditorMessage,
+            viewModel.workflowRecipeSetEditorErrorMessage,
+            viewModel.workflowRecipePlanOutputPathDraft,
+            viewModel.workflowRecipePlanMessage,
+            viewModel.workflowRecipePlanErrorMessage,
+            viewModel.workflowRecipeApplyDryRun ? "Dry Run enabled" : "Dry Run disabled",
+            viewModel.workflowRecipeApplyResume ? "Resume enabled" : "Resume disabled",
+            viewModel.workflowRecipeApplyFromStepDraft,
+            viewModel.workflowRecipeApplyMessage,
+            viewModel.workflowRecipeApplyErrorMessage,
+        ]
+        values.append(contentsOf: viewModel.workflowRecipeCatalog.availableTaskFilters)
+        if let inspection = viewModel.workflowRecipeURIInspection {
+            values.append(contentsOf: [
+                inspection.schemaVersion,
+                inspection.originalURI,
+                inspection.normalizedLocator,
+                inspection.summaryText,
+            ])
+            if inspection.candidates.isEmpty {
+                values.append("No URI candidates found.")
+            }
+            values.append(contentsOf: inspection.candidates.flatMap {
+                [
+                    $0.kind,
+                    $0.sourceKind,
+                    $0.taskKind,
+                    $0.confidenceText,
+                    $0.normalizedLocator,
+                    $0.repoID,
+                    $0.revision,
+                    $0.reasonText,
+                    $0.warningText,
+                    $0.recommendedNextAction,
+                    $0.generatedCommandText,
+                ]
+            })
+            values.append(contentsOf: inspection.metrics.flatMap { [$0.name, $0.valueText] })
+        } else {
+            values.append("Inspect a URI to see candidate workflow inputs.")
+        }
+        if let preview = viewModel.workflowRecipeInitPreview {
+            values.append(contentsOf: [
+                preview.recipe.id,
+                preview.recipe.version,
+                preview.recipe.title,
+                preview.recipe.description,
+                preview.recipe.taskText,
+                preview.recipe.digest,
+                preview.source,
+                preview.sourceURIDigest,
+                preview.inspection?.summaryText ?? "",
+            ])
+            values.append(contentsOf: preview.provenanceRows.flatMap { [$0.name, $0.valueText] })
+            values.append(contentsOf: preview.recipe.inputRows.flatMap {
+                [$0.name, $0.valueType, $0.requirementText, $0.defaultValueText, $0.uriKind]
+            })
+            values.append(contentsOf: preview.recipe.preflightRows.flatMap { [$0.name, $0.valueText] })
+            values.append(contentsOf: preview.recipe.pipelineSteps.flatMap { [$0.id, $0.command, $0.argumentSummaryText] })
+            values.append(contentsOf: preview.recipe.outputRows.flatMap { [$0.name, $0.valueText] })
+        } else {
+            values.append("Preview recipe init from an inspected URI before applying a workflow.")
+        }
+        if viewModel.workflowRecipeSetRows.isEmpty {
+            values.append("No recipe variables configured.")
+        }
+        values.append(contentsOf: viewModel.workflowRecipeSetRows.flatMap { [$0.key, $0.value, $0.argumentText] })
+        if let plan = viewModel.workflowRecipePlan {
+            values.append(contentsOf: [
+                plan.schemaVersion,
+                plan.recipeID,
+                plan.recipeVersion,
+                plan.recipeDigest,
+                plan.pipelineSchemaVersion,
+                plan.summaryText,
+                "Pipeline JSON",
+                plan.pipelineJSONText,
+                "Dry-run Receipts",
+            ])
+            values.append(contentsOf: plan.pipelineSteps.flatMap { [$0.id, $0.command, $0.argumentSummaryText] })
+            values.append(contentsOf: plan.artifactRows.flatMap { [$0.kind, $0.path] })
+            values.append(contentsOf: plan.metrics.flatMap { [$0.name, $0.valueText] })
+        } else {
+            values.append("Plan a selected recipe to inspect pipeline JSON and dry-run receipts.")
+        }
+        if let result = viewModel.workflowRecipeApplyResult {
+            values.append(contentsOf: [
+                "Recipe Apply Result",
+                result.schemaVersion,
+                result.name,
+                result.traceID,
+                result.status,
+                result.receiptDir,
+                result.summaryPath,
+                result.pipelineHash,
+                result.inputsHash,
+                result.summaryText,
+                "Receipt Directory",
+                "Summary Path",
+            ])
+            values.append(contentsOf: result.recipeRows.flatMap { [$0.name, $0.valueText] })
+            values.append(contentsOf: result.stepRows.flatMap {
+                [$0.id, $0.command, $0.status, $0.receiptPath, $0.artifactText, $0.commandID, $0.argsHash]
+            })
+            values.append(contentsOf: result.metrics.flatMap { [$0.name, $0.valueText] })
+        } else {
+            values.append("Apply a selected recipe through the existing pipeline runner.")
+        }
+        if viewModel.workflowRecipeFilteredRecipes.isEmpty {
+            values.append("No workflow recipes match this filter.")
+        }
+        values.append(contentsOf: viewModel.workflowRecipeFilteredRecipes.flatMap {
+            [$0.id, $0.version, $0.title, $0.taskText, $0.digest]
+        })
+        if let detail = viewModel.selectedWorkflowRecipeDetail {
+            values.append(contentsOf: [
+                detail.id,
+                detail.version,
+                detail.title,
+                detail.description,
+                detail.taskText,
+                detail.digest,
+            ])
+            values.append(contentsOf: detail.inputRows.flatMap {
+                [$0.name, $0.valueType, $0.requirementText, $0.defaultValueText, $0.uriKind]
+            })
+            values.append(contentsOf: detail.preflightRows.flatMap { [$0.name, $0.valueText] })
+            values.append(contentsOf: detail.pipelineSteps.flatMap { [$0.id, $0.command, $0.argumentSummaryText] })
+            values.append(contentsOf: detail.outputRows.flatMap { [$0.name, $0.valueText] })
+        } else {
+            values.append("Select a recipe to inspect its inputs, preflight, pipeline, and outputs.")
+        }
+        return values.filter { $0.isEmpty == false }.joined(separator: " ")
+    }
+}
+
+struct DesktopSyntheticDatasetToolSectionView: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Synthetic Dataset Studio")
+                .font(.title3.weight(.semibold))
+
+            if viewModel.syntheticDatasetPreviewMessage.isEmpty == false {
+                Text(viewModel.syntheticDatasetPreviewMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                    .textSelection(.enabled)
+            }
+            if viewModel.syntheticDatasetPreviewErrorMessage.isEmpty == false {
+                Text(viewModel.syntheticDatasetPreviewErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            }
+            if viewModel.syntheticDatasetCreateMessage.isEmpty == false {
+                Text(viewModel.syntheticDatasetCreateMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                    .textSelection(.enabled)
+            }
+            if viewModel.syntheticDatasetCreateErrorMessage.isEmpty == false {
+                Text(viewModel.syntheticDatasetCreateErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            }
+
+            HStack(alignment: .top, spacing: 14) {
+                MelixSectionCard("Dataset Identity") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        formField(
+                            "Dataset ID",
+                            text: Binding(
+                                get: { viewModel.syntheticDatasetIDDraft },
+                                set: { viewModel.updateSyntheticDatasetIDDraft($0) }
+                            )
+                        )
+                        formField(
+                            "Dataset Name",
+                            text: Binding(
+                                get: { viewModel.syntheticDatasetNameDraft },
+                                set: { viewModel.updateSyntheticDatasetNameDraft($0) }
+                            )
+                        )
+                        formField(
+                            "Records",
+                            text: Binding(
+                                get: { viewModel.syntheticDatasetNumRecordsDraft },
+                                set: { viewModel.updateSyntheticDatasetNumRecordsDraft($0) }
+                            )
+                        )
+                    }
+                }
+
+                MelixSectionCard("Output") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        formField(
+                            "Output Kind",
+                            text: Binding(
+                                get: { viewModel.syntheticDatasetOutputKindDraft },
+                                set: { viewModel.updateSyntheticDatasetOutputKindDraft($0) }
+                            )
+                        )
+                        formField(
+                            "Output Format",
+                            text: Binding(
+                                get: { viewModel.syntheticDatasetOutputFormatDraft },
+                                set: { viewModel.updateSyntheticDatasetOutputFormatDraft($0) }
+                            )
+                        )
+                        formField(
+                            "Output Directory",
+                            text: Binding(
+                                get: { viewModel.syntheticDatasetOutputDirDraft },
+                                set: { viewModel.updateSyntheticDatasetOutputDirDraft($0) }
+                            )
+                        )
+                    }
+                }
+            }
+
+            HStack(alignment: .top, spacing: 14) {
+                MelixSectionCard("Provider") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        formField(
+                            "Provider Endpoint",
+                            text: Binding(
+                                get: { viewModel.syntheticDatasetProviderEndpointDraft },
+                                set: { viewModel.updateSyntheticDatasetProviderEndpointDraft($0) }
+                            )
+                        )
+                        formField(
+                            "Provider Name",
+                            text: Binding(
+                                get: { viewModel.syntheticDatasetProviderNameDraft },
+                                set: { viewModel.updateSyntheticDatasetProviderNameDraft($0) }
+                            )
+                        )
+                        formField(
+                            "Provider Type",
+                            text: Binding(
+                                get: { viewModel.syntheticDatasetProviderTypeDraft },
+                                set: { viewModel.updateSyntheticDatasetProviderTypeDraft($0) }
+                            )
+                        )
+                    }
+                }
+
+                MelixSectionCard("Model") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        formField(
+                            "Model Alias",
+                            text: Binding(
+                                get: { viewModel.syntheticDatasetModelAliasDraft },
+                                set: { viewModel.updateSyntheticDatasetModelAliasDraft($0) }
+                            )
+                        )
+                        formField(
+                            "Model",
+                            text: Binding(
+                                get: { viewModel.syntheticDatasetModelDraft },
+                                set: { viewModel.updateSyntheticDatasetModelDraft($0) }
+                            )
+                        )
+                    }
+                }
+            }
+
+            MelixSectionCard("Columns") {
+                columnEditorPanel
+            }
+
+            MelixSectionCard("Generation Controls") {
+                generationControlsPanel
+            }
+
+            if viewModel.syntheticDatasetErrorStates.isEmpty == false {
+                MelixSectionCard("Error States") {
+                    errorStatesPanel
+                }
+            }
+
+            MelixSectionCard("Preview") {
+                previewPanel
+            }
+
+            MelixSectionCard("Create Package") {
+                createPanel
+            }
+
+            MelixSectionCard("Validation") {
+                if viewModel.syntheticDatasetBaseFormValidationMessages.isEmpty {
+                    Text("Ready to configure columns before preview or create.")
+                        .font(.caption)
+                        .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(viewModel.syntheticDatasetBaseFormValidationMessages) { message in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(message.field)
+                                    .font(.caption.weight(.semibold))
+                                Text(message.message)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    func addColumnAction() {
+        viewModel.addSyntheticDatasetColumnDraft()
+    }
+
+    func removeColumn(id: String) {
+        viewModel.removeSyntheticDatasetColumn(id: id)
+    }
+
+    func previewDatasetAction() {
+        Task { await viewModel.previewSyntheticDataset() }
+    }
+
+    func createDatasetAction() {
+        Task { await viewModel.createSyntheticDataset() }
+    }
+
+    private var columnEditorPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .bottom, spacing: 10) {
+                formField(
+                    "Column Name",
+                    text: Binding(
+                        get: { viewModel.syntheticDatasetColumnNameDraft },
+                        set: { viewModel.updateSyntheticDatasetColumnNameDraft($0) }
+                    )
+                )
+                formField(
+                    "Column Type",
+                    text: Binding(
+                        get: { viewModel.syntheticDatasetColumnTypeDraft },
+                        set: { viewModel.updateSyntheticDatasetColumnTypeDraft($0) }
+                    )
+                )
+                formField(
+                    "JSON or Path",
+                    text: Binding(
+                        get: { viewModel.syntheticDatasetColumnPayloadDraft },
+                        set: { viewModel.updateSyntheticDatasetColumnPayloadDraft($0) }
+                    )
+                )
+                Button("Add Column", action: addColumnAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.syntheticDatasetColumnDraftCanAdd == false)
+            }
+
+            if viewModel.syntheticDatasetColumnEditorErrorMessage.isEmpty == false {
+                Text(viewModel.syntheticDatasetColumnEditorErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            }
+
+            if viewModel.syntheticDatasetColumnDraftValidationMessages.isEmpty == false {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(viewModel.syntheticDatasetColumnDraftValidationMessages) { message in
+                        Text("\(message.field): \(message.message)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            if viewModel.syntheticDatasetColumns.isEmpty {
+                Text("No synthetic columns configured.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(viewModel.syntheticDatasetColumns) { column in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Text(column.commandArgument)
+                                .font(.caption.monospaced())
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
+                            Spacer()
+                            Button("Remove Column") {
+                                removeColumn(id: column.id)
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var generationControlsPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                formField(
+                    "Seed Source Kind",
+                    text: Binding(
+                        get: { viewModel.syntheticDatasetSeedSourceKindDraft },
+                        set: { viewModel.updateSyntheticDatasetSeedSourceKindDraft($0) }
+                    )
+                )
+                formField(
+                    "Seed Source Path",
+                    text: Binding(
+                        get: { viewModel.syntheticDatasetSeedSourcePathDraft },
+                        set: { viewModel.updateSyntheticDatasetSeedSourcePathDraft($0) }
+                    )
+                )
+            }
+
+            HStack(alignment: .top, spacing: 10) {
+                formField(
+                    "Validation Ratio",
+                    text: Binding(
+                        get: { viewModel.syntheticDatasetValidationRatioDraft },
+                        set: { viewModel.updateSyntheticDatasetValidationRatioDraft($0) }
+                    )
+                )
+                formField(
+                    "Resume",
+                    text: Binding(
+                        get: { viewModel.syntheticDatasetResumeModeDraft },
+                        set: { viewModel.updateSyntheticDatasetResumeModeDraft($0) }
+                    )
+                )
+                Toggle(
+                    "DataDesigner Telemetry",
+                    isOn: Binding(
+                        get: { viewModel.syntheticDatasetDataDesignerTelemetryEnabled },
+                        set: { viewModel.updateSyntheticDatasetDataDesignerTelemetryEnabled($0) }
+                    )
+                )
+                .toggleStyle(.checkbox)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if viewModel.syntheticDatasetGenerationControlValidationMessages.isEmpty == false {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(viewModel.syntheticDatasetGenerationControlValidationMessages) { message in
+                        Text("\(message.field): \(message.message)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            Text(viewModel.syntheticDatasetGenerationControlCommandArguments.joined(separator: " "))
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .textSelection(.enabled)
+        }
+    }
+
+    private var errorStatesPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(viewModel.syntheticDatasetErrorStates) { state in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(state.title)
+                            .font(.caption.weight(.semibold))
+                        Text(state.source)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(state.detail)
+                        .font(.caption)
+                        .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                        .textSelection(.enabled)
+                    Text(state.recoveryHint)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var previewPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Button("Preview Dataset", action: previewDatasetAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.syntheticDatasetCanPreview == false)
+                if viewModel.syntheticDatasetPreviewInProgress {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            if let preview = viewModel.syntheticDatasetPreview {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(preview.summaryText)
+                            .font(.headline)
+                        Spacer()
+                        if preview.schemaVersion.isEmpty == false {
+                            Text(preview.schemaVersion)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text([preview.outputKind, preview.outputFormat]
+                        .filter { $0.isEmpty == false }
+                        .joined(separator: " | "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if preview.artifactRows.isEmpty == false {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Artifacts")
+                            .font(.caption.weight(.semibold))
+                        ForEach(preview.artifactRows) { row in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(row.name)
+                                    .font(.caption.weight(.semibold))
+                                Text(row.path)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
+
+                if preview.previewRows.isEmpty {
+                    Text("Preview returned no rows.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Preview Rows")
+                            .font(.caption.weight(.semibold))
+                        ForEach(preview.previewRows) { row in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Row \(row.index)")
+                                    .font(.caption.weight(.semibold))
+                                Text(row.summaryText)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(3)
+                                    .textSelection(.enabled)
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
+                }
+            } else {
+                Text("Run a preview to inspect generated rows before creating a package.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var createPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Button("Create Dataset", action: createDatasetAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.syntheticDatasetCanCreate == false)
+                if viewModel.syntheticDatasetCreateInProgress {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            if let result = viewModel.syntheticDatasetCreateResult {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(result.summaryText)
+                            .font(.headline)
+                        Spacer()
+                        if result.schemaVersion.isEmpty == false {
+                            Text(result.schemaVersion)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text([result.outputKind, result.outputFormat]
+                        .filter { $0.isEmpty == false }
+                        .joined(separator: " | "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if result.manifestRows.isEmpty {
+                    Text("Create result did not include manifest fields.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Package Manifest")
+                            .font(.caption.weight(.semibold))
+                        ForEach(result.manifestRows) { row in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(row.name)
+                                    .font(.caption.weight(.semibold))
+                                Text(row.valueText)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
+
+                if result.artifactRows.isEmpty {
+                    Text("Create result did not include artifact paths.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Artifacts")
+                            .font(.caption.weight(.semibold))
+                        ForEach(result.artifactRows) { row in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(row.name)
+                                    .font(.caption.weight(.semibold))
+                                Text(row.path)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
+            } else {
+                Text("Create a package after previewing the request shape and validation state.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func formField(_ label: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField(label, text: text)
+                .textFieldStyle(.roundedBorder)
+        }
+    }
+
+    // Deterministic smoke-test projection; rendered accessibility is grouped from child views.
+    var accessibilitySummary: String {
+        var values = [
+            "Synthetic Dataset Studio",
+            "Dataset Identity",
+            "Dataset ID",
+            viewModel.normalizedSyntheticDatasetID,
+            "Dataset Name",
+            viewModel.normalizedSyntheticDatasetName,
+            "Records",
+            viewModel.syntheticDatasetNumRecordsDraft,
+            "Output",
+            "Output Kind",
+            viewModel.normalizedSyntheticDatasetOutputKind,
+            "Output Format",
+            viewModel.normalizedSyntheticDatasetOutputFormat,
+            "Output Directory",
+            viewModel.normalizedSyntheticDatasetOutputDir,
+            "Provider",
+            "Provider Endpoint",
+            viewModel.normalizedSyntheticDatasetProviderEndpoint,
+            "Provider Name",
+            viewModel.normalizedSyntheticDatasetProviderName,
+            "Provider Type",
+            viewModel.normalizedSyntheticDatasetProviderType,
+            "Model",
+            "Model Alias",
+            viewModel.normalizedSyntheticDatasetModelAlias,
+            viewModel.normalizedSyntheticDatasetModel,
+            "Columns",
+            "Column Name",
+            viewModel.normalizedSyntheticDatasetColumnName,
+            "Column Type",
+            viewModel.normalizedSyntheticDatasetColumnType,
+            "JSON or Path",
+            viewModel.normalizedSyntheticDatasetColumnPayload,
+            "Add Column",
+            "Generation Controls",
+            "Seed Source Kind",
+            viewModel.normalizedSyntheticDatasetSeedSourceKind,
+            "Seed Source Path",
+            viewModel.normalizedSyntheticDatasetSeedSourcePath,
+            "Validation Ratio",
+            viewModel.normalizedSyntheticDatasetValidationRatio,
+            "Resume",
+            viewModel.normalizedSyntheticDatasetResumeMode,
+            "DataDesigner Telemetry",
+            viewModel.syntheticDatasetDataDesignerTelemetryEnabled ? "enabled" : "disabled",
+            "Preview",
+            "Preview Dataset",
+            viewModel.syntheticDatasetPreviewMessage,
+            viewModel.syntheticDatasetPreviewErrorMessage,
+            "Create Package",
+            "Create Dataset",
+            viewModel.syntheticDatasetCreateMessage,
+            viewModel.syntheticDatasetCreateErrorMessage,
+            "Validation",
+        ]
+        if viewModel.syntheticDatasetColumnEditorErrorMessage.isEmpty == false {
+            values.append(viewModel.syntheticDatasetColumnEditorErrorMessage)
+        }
+        values.append(contentsOf: viewModel.syntheticDatasetColumnDraftValidationMessages.flatMap {
+            [$0.field, $0.message]
+        })
+        if viewModel.syntheticDatasetColumns.isEmpty {
+            values.append("No synthetic columns configured.")
+        } else {
+            values.append(contentsOf: viewModel.syntheticDatasetColumnCommandArguments)
+            values.append("Remove Column")
+        }
+        values.append(contentsOf: viewModel.syntheticDatasetGenerationControlValidationMessages.flatMap {
+            [$0.field, $0.message]
+        })
+        values.append(contentsOf: viewModel.syntheticDatasetGenerationControlCommandArguments)
+        if viewModel.syntheticDatasetErrorStates.isEmpty == false {
+            values.append("Error States")
+            values.append(contentsOf: viewModel.syntheticDatasetErrorStates.flatMap {
+                [$0.source, $0.title, $0.detail, $0.recoveryHint]
+            })
+        }
+        if let preview = viewModel.syntheticDatasetPreview {
+            values.append(contentsOf: [
+                preview.schemaVersion,
+                preview.datasetID,
+                preview.datasetName,
+                preview.outputKind,
+                preview.outputFormat,
+                String(preview.sampleCount),
+                String(preview.previewCount),
+            ])
+            values.append(contentsOf: preview.artifactRows.flatMap { [$0.name, $0.path] })
+            if preview.previewRows.isEmpty {
+                values.append("Preview returned no rows.")
+            } else {
+                values.append(contentsOf: preview.previewRows.flatMap { row in
+                    ["Row \(row.index)", row.summaryText]
+                })
+            }
+        } else {
+            values.append("Run a preview to inspect generated rows before creating a package.")
+        }
+        if let result = viewModel.syntheticDatasetCreateResult {
+            values.append(contentsOf: [
+                result.schemaVersion,
+                result.datasetID,
+                result.datasetName,
+                result.outputKind,
+                result.outputFormat,
+                String(result.rowCount),
+                String(result.sampleCount),
+            ])
+            if result.manifestRows.isEmpty {
+                values.append("Create result did not include manifest fields.")
+            } else {
+                values.append("Package Manifest")
+                values.append(contentsOf: result.manifestRows.flatMap { [$0.name, $0.valueText] })
+            }
+            if result.artifactRows.isEmpty {
+                values.append("Create result did not include artifact paths.")
+            } else {
+                values.append(contentsOf: result.artifactRows.flatMap { [$0.name, $0.path] })
+            }
+        } else {
+            values.append("Create a package after previewing the request shape and validation state.")
+        }
+        if viewModel.syntheticDatasetBaseFormValidationMessages.isEmpty {
+            values.append("Ready to configure columns before preview or create.")
+        } else {
+            values.append(contentsOf: viewModel.syntheticDatasetBaseFormValidationMessages.flatMap {
+                [$0.field, $0.message]
+            })
+        }
+        return values
+            .filter { $0.isEmpty == false }
+            .joined(separator: " ")
+    }
+}
+
+struct DesktopBatchRunsToolSectionView: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Batch runs coordinate model-list driven benchmark and evaluation workflows with explicit preflight state.")
+                .foregroundStyle(.secondary)
+
+            MelixSectionCard("Batch Inputs") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Batch Inputs")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Batch Inputs")
+                    Text(viewModel.batchRunSetupSummaryText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+
+                    HStack(alignment: .top, spacing: 12) {
+                        batchTextEditor(
+                            title: "Model List",
+                            text: Binding(
+                                get: { viewModel.batchRunModelListText },
+                                set: { viewModel.updateBatchRunModelListText($0) }
+                            ),
+                            prompt: "01 | mlx-community/Qwen3-8B"
+                        )
+
+                        batchTextEditor(
+                            title: "Config",
+                            text: Binding(
+                                get: { viewModel.batchRunConfigText },
+                                set: { viewModel.updateBatchRunConfigText($0) }
+                            ),
+                            prompt: "run_id: smoke-batch"
+                        )
+                    }
+
+                    validationMessages
+                    batchRunOperations
+                    selectedReportSummary
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func batchTextEditor(title: String, text: Binding<String>, prompt: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityLabel(title)
+            TextEditor(text: text)
+                .font(.system(.caption, design: .monospaced))
+                .frame(minHeight: 96)
+                .overlay(alignment: .topLeading) {
+                    if text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(prompt)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 8)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .scrollContentBackground(.hidden)
+                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var validationMessages: some View {
+        if viewModel.batchRunSetupValidationMessages.isEmpty {
+            Label("Batch input is ready for preflight.", systemImage: "checkmark.circle")
+                .font(.caption)
+                .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                .textSelection(.enabled)
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(viewModel.batchRunSetupValidationMessages) { message in
+                    Label(message.message, systemImage: symbolName(for: message.severity))
+                        .font(.caption)
+                        .foregroundStyle(color(for: message.severity))
+                        .textSelection(.enabled)
+                }
+            }
+        }
+    }
+
+    private var batchRunOperations: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                DesktopJobsOperationButton(
+                    title: "Run Preflight",
+                    isEnabled: viewModel.batchRunPreflightCanRun
+                ) {
+                    Task { await viewModel.requestBatchRunPreflight() }
+                }
+                DesktopJobsOperationButton(
+                    title: "Refresh Status",
+                    isEnabled: viewModel.batchRunStatusCanRefresh
+                ) {
+                    Task { await viewModel.requestBatchRunStatus() }
+                }
+                DesktopBatchRunMissingOnlyToggle(isOn: viewModel.batchRunResumeMissingOnly) {
+                    viewModel.updateBatchRunResumeMissingOnly($0)
+                }
+                DesktopJobsOperationButton(
+                    title: "Resume Batch",
+                    isEnabled: viewModel.batchRunResumeCanRun
+                ) {
+                    Task { await viewModel.requestBatchRunResume() }
+                }
+
+                batchRunOperationStatus
+            }
+
+            Text(viewModel.batchRunResumeSummaryText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            if viewModel.batchRunResumeDisabledReason.isEmpty == false {
+                Label(viewModel.batchRunResumeDisabledReason, systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var batchRunOperationStatus: some View {
+        if viewModel.batchRunPreflightInProgress {
+            Text("Running batch preflight")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        } else if viewModel.batchRunStatusInProgress {
+            Text("Refreshing batch status")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        } else if viewModel.batchRunResumeInProgress {
+            Text("Resuming batch")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        } else if viewModel.batchRunPreflightErrorMessage.isEmpty == false {
+            Label(viewModel.batchRunPreflightErrorMessage, systemImage: "xmark.octagon")
+                .font(.caption)
+                .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                .textSelection(.enabled)
+        } else if viewModel.batchRunStatusErrorMessage.isEmpty == false {
+            Label(viewModel.batchRunStatusErrorMessage, systemImage: "xmark.octagon")
+                .font(.caption)
+                .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                .textSelection(.enabled)
+        } else if viewModel.batchRunResumeErrorMessage.isEmpty == false {
+            Label(viewModel.batchRunResumeErrorMessage, systemImage: "xmark.octagon")
+                .font(.caption)
+                .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                .textSelection(.enabled)
+        }
+    }
+
+    @ViewBuilder
+    private var selectedReportSummary: some View {
+        if let report = viewModel.selectedBatchRunReport {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Selected Preflight Report")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                HStack(spacing: 10) {
+                    Text(report.runID)
+                        .font(.subheadline.weight(.semibold))
+                        .textSelection(.enabled)
+                    Text(report.statusTitle)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(report.preflightStatus == "ready"
+                                         ? MelixDesignTokens.StatusColor.success
+                                         : MelixDesignTokens.StatusColor.warning)
+                        .textSelection(.enabled)
+                    Text("\(report.modelCount) model\(report.modelCount == 1 ? "" : "s")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    Text("\(report.blockerCount) blocker\(report.blockerCount == 1 ? "" : "s")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                preflightReadinessSection(report)
+                batchStatusSection(report)
+                reportSummarySection(title: "Effective Config", rows: report.effectiveConfigRows)
+                reportSummarySection(title: "Isolation Summary", rows: report.isolationSummaryRows)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func preflightReadinessSection(_ report: RuntimeBatchRunReportState) -> some View {
+        let categories = report.preflightReadinessCategories
+        if categories.isEmpty == false {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Preflight Readiness")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                ForEach(categories) { category in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(category.category)
+                                .font(.caption.weight(.semibold))
+                                .textSelection(.enabled)
+                            Text(category.readinessText)
+                                .font(.caption)
+                                .foregroundStyle(category.blockerCount == 0
+                                                 ? MelixDesignTokens.StatusColor.success
+                                                 : MelixDesignTokens.StatusColor.warning)
+                                .textSelection(.enabled)
+                        }
+                        ForEach(category.checks) { check in
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 8) {
+                                    Text(check.name)
+                                        .font(.caption.weight(.semibold))
+                                        .textSelection(.enabled)
+                                    Text(check.status)
+                                        .font(.caption)
+                                        .foregroundStyle(check.isReady
+                                                         ? MelixDesignTokens.StatusColor.success
+                                                         : MelixDesignTokens.StatusColor.warning)
+                                        .textSelection(.enabled)
+                                    Text(check.detail)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                }
+                                if check.isBlocking && check.blockingReasonText.isEmpty == false {
+                                    Text(check.blockingReasonText)
+                                        .font(.caption)
+                                        .foregroundStyle(MelixDesignTokens.StatusColor.warning)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func batchStatusSection(_ report: RuntimeBatchRunReportState) -> some View {
+        if let summary = report.statusSummary {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Batch Status")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                HStack(spacing: 8) {
+                    Text(summary.statusTitle)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(summary.status == "failed"
+                                         ? MelixDesignTokens.StatusColor.error
+                                         : MelixDesignTokens.StatusColor.success)
+                        .textSelection(.enabled)
+                    Text(summary.countsText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                Text(summary.manifestPath)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                ForEach(report.manifestStatusRows.prefix(6)) { row in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(row.modelIndex)
+                                .font(.caption.weight(.semibold))
+                                .textSelection(.enabled)
+                            Text(row.repoID)
+                                .font(.caption)
+                                .textSelection(.enabled)
+                            Text(row.status)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(row.status == "failed"
+                                                 ? MelixDesignTokens.StatusColor.error
+                                                 : MelixDesignTokens.StatusColor.success)
+                                .textSelection(.enabled)
+                            if row.durationText.isEmpty == false {
+                                Text(row.durationText)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        HStack(spacing: 8) {
+                            if row.benchmarkJobID.isEmpty == false {
+                                Text(row.benchmarkJobID)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                            if row.evaluationJobID.isEmpty == false {
+                                Text(row.evaluationJobID)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                            if row.failureCategory.isEmpty == false {
+                                Text(row.failureCategory)
+                                    .font(.caption)
+                                    .foregroundStyle(MelixDesignTokens.StatusColor.warning)
+                                    .textSelection(.enabled)
+                            }
+                            if row.recoverability.isEmpty == false {
+                                Text(row.recoverability)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func reportSummarySection(title: String, rows: [RuntimeBatchRunSummaryRowState]) -> some View {
+        if rows.isEmpty == false {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                ForEach(rows) { row in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(row.title)
+                            .font(.caption.weight(.semibold))
+                            .textSelection(.enabled)
+                        Text(row.detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func symbolName(for severity: RuntimeBatchRunValidationSeverity) -> String {
+        switch severity {
+        case .info:
+            return "info.circle"
+        case .warning:
+            return "exclamationmark.triangle"
+        case .error:
+            return "xmark.octagon"
+        }
+    }
+
+    private func color(for severity: RuntimeBatchRunValidationSeverity) -> Color {
+        switch severity {
+        case .info:
+            return .secondary
+        case .warning:
+            return MelixDesignTokens.StatusColor.warning
+        case .error:
+            return MelixDesignTokens.StatusColor.error
+        }
+    }
+}
+
+struct DesktopJobsToolSectionView: View {
+    let viewModel: RuntimeViewModel
+
+    static let emptyStateTitle = "No Jobs Yet"
+    static let emptyStateDetail = "Run a benchmark, evaluation, training, or synthetic workflow to populate Jobs."
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Operator workflow jobs stay visible across benchmark, evaluation, training, and synthetic runs.")
+                .foregroundStyle(.secondary)
+
+            if viewModel.runtimeJobs.isEmpty {
+                MelixSectionCard("Jobs List") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        jobsOperationBar
+                        DesktopJobsInlineEmptyStateView(
+                            title: Self.emptyStateTitle,
+                            detail: Self.emptyStateDetail,
+                            symbolName: "tray"
+                        )
+                    }
+                }
+            } else {
+                HStack(alignment: .top, spacing: 14) {
+                    jobsList
+                        .frame(minWidth: 280, maxWidth: .infinity, alignment: .topLeading)
+                    selectedJobSummary
+                        .frame(minWidth: 260, maxWidth: .infinity, alignment: .topLeading)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var jobsOperationBar: some View {
+        HStack(spacing: 8) {
+            DesktopJobsOperationButton(
+                title: "Refresh Jobs",
+                isEnabled: viewModel.runtimeJobsRefreshInProgress == false
+            ) {
+                Task { await viewModel.refreshRuntimeJobs() }
+            }
+
+            DesktopJobsOperationButton(
+                title: "Refresh Detail",
+                isEnabled: viewModel.selectedRuntimeJobID.isEmpty == false
+                    && viewModel.selectedRuntimeJobDetailRefreshInProgress == false
+            ) {
+                Task { await viewModel.refreshSelectedRuntimeJobDetail() }
+            }
+
+            DesktopJobsOperationButton(
+                title: "Fetch Logs",
+                isEnabled: viewModel.selectedRuntimeJobID.isEmpty == false
+                    && viewModel.selectedRuntimeJobLogsRefreshInProgress == false
+            ) {
+                Task { await viewModel.refreshSelectedRuntimeJobLogs() }
+            }
+
+            DesktopJobsOperationButton(
+                title: "Refresh Artifacts",
+                isEnabled: viewModel.selectedRuntimeJobID.isEmpty == false
+                    && viewModel.selectedRuntimeJobArtifactsRefreshInProgress == false
+            ) {
+                Task { await viewModel.refreshSelectedRuntimeJobArtifacts() }
+            }
+
+            DesktopJobsOperationButton(
+                title: "Request Cancel",
+                isEnabled: viewModel.selectedRuntimeJobCanRequestCancellation
+            ) {
+                Task { await viewModel.requestSelectedRuntimeJobCancellation() }
+            }
+        }
+    }
+
+    private var jobsList: some View {
+        MelixSectionCard("Jobs List") {
+            VStack(alignment: .leading, spacing: 8) {
+                jobsOperationBar
+
+                Text(queueSummaryText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+
+                ForEach(viewModel.runtimeJobs) { job in
+                    Button {
+                        viewModel.selectRuntimeJob(id: job.id)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                Text(job.jobID)
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(1)
+                                    .textSelection(.enabled)
+                                Spacer(minLength: 12)
+                                Text(job.status)
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(statusColor(for: job))
+                                    .textSelection(.enabled)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.secondary.opacity(0.08), in: Capsule())
+                            }
+
+                            Text(jobSubtitle(for: job))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(
+                            viewModel.selectedRuntimeJobID == job.id
+                                ? MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.selected)
+                                : Color.secondary.opacity(0.06),
+                            in: RoundedRectangle(cornerRadius: 10)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Job \(job.jobID)")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var selectedJobSummary: some View {
+        if let detail = viewModel.selectedRuntimeJobDetail {
+            MelixSectionCard("Job Detail") {
+                VStack(alignment: .leading, spacing: 12) {
+                    selectedJobHeader(detail.summary)
+
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 10)], spacing: 10) {
+                        DesktopJobSummaryField(title: "Run", value: detail.summary.runKind)
+                        DesktopJobSummaryField(title: "Status", value: detail.summary.status)
+                        DesktopJobSummaryField(title: "Phase", value: detail.summary.phase)
+                        DesktopJobSummaryField(
+                            title: "Started",
+                            value: timestampText(detail.timestamps.startedAtUnixMS),
+                            secondaryValue: rawTimestampText(detail.timestamps.startedAtUnixMS)
+                        )
+                        DesktopJobSummaryField(
+                            title: "Updated",
+                            value: timestampText(detail.timestamps.updatedAtUnixMS),
+                            secondaryValue: rawTimestampText(detail.timestamps.updatedAtUnixMS)
+                        )
+                        DesktopJobSummaryField(
+                            title: "Ended",
+                            value: timestampText(detail.timestamps.endedAtUnixMS),
+                            secondaryValue: rawTimestampText(detail.timestamps.endedAtUnixMS)
+                        )
+                        DesktopJobSummaryField(title: "Duration", value: durationText(detail.timestamps.durationMS))
+                        DesktopJobSummaryField(title: "Model", value: detail.summary.modelID)
+                        DesktopJobSummaryField(title: "Task", value: detail.summary.taskKind)
+                    }
+
+                    if let error = detail.error {
+                        DesktopJobDetailBlock(title: "Error", values: [error.code, error.message])
+                    }
+
+                    DesktopJobDetailBlock(
+                        title: "Logs",
+                        values: [
+                            detail.logs.available ? "available" : "unavailable",
+                            detail.logs.path,
+                            detail.logs.command,
+                        ]
+                    )
+
+                    cancelRequestBlock
+                    fetchedLogBlock
+                    fetchedArtifactsBlock
+
+                    if detail.artifacts.isEmpty == false {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(detail.artifacts) { artifact in
+                                DesktopJobDetailBlock(
+                                    title: "Artifact",
+                                    values: [
+                                        artifact.kind,
+                                        artifact.path,
+                                        artifact.relativePath,
+                                        artifact.exists ? "exists" : "missing",
+                                    ]
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        } else if let job = viewModel.selectedRuntimeJob {
+            MelixSectionCard("Selected Job") {
+                VStack(alignment: .leading, spacing: 10) {
+                    selectedJobHeader(job)
+
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 10)], spacing: 10) {
+                        DesktopJobSummaryField(title: "Run", value: job.runKind)
+                        DesktopJobSummaryField(title: "Status", value: job.status)
+                        DesktopJobSummaryField(title: "Phase", value: job.phase)
+                        DesktopJobSummaryField(title: "Model", value: job.modelID)
+                        DesktopJobSummaryField(title: "Task", value: job.taskKind)
+                        DesktopJobSummaryField(title: "Artifacts", value: job.artifactRoot)
+                    }
+
+                    cancelRequestBlock
+                    fetchedLogBlock
+                    fetchedArtifactsBlock
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var cancelRequestBlock: some View {
+        DesktopJobDetailBlock(
+            title: "Cancel Request",
+            values: [
+                viewModel.selectedRuntimeJobCancellationStatusText,
+                viewModel.selectedRuntimeJobCancelResult?.requestPath
+                    ?? viewModel.selectedRuntimeJobDetail?.cancellation.requestPath
+                    ?? "",
+            ]
+        )
+    }
+
+    @ViewBuilder
+    private var fetchedLogBlock: some View {
+        if let snapshot = viewModel.selectedRuntimeJobLogSnapshot {
+            DesktopJobDetailBlock(
+                title: "Fetched Logs",
+                values: [
+                    snapshot.logPath,
+                    snapshot.content,
+                    snapshot.redactedFieldCount == 0 ? "" : "redacted fields \(snapshot.redactedFieldCount)",
+                ]
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var fetchedArtifactsBlock: some View {
+        if let snapshot = viewModel.selectedRuntimeJobArtifactSnapshot, snapshot.artifacts.isEmpty == false {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(snapshot.artifacts) { artifact in
+                    DesktopJobDetailBlock(
+                        title: "Fetched Artifact",
+                        values: [
+                            artifact.kind,
+                            artifact.path,
+                            artifact.relativePath,
+                            artifact.exists ? "exists" : "missing",
+                        ]
+                    )
+                }
+            }
+        }
+    }
+
+    private func selectedJobHeader(_ job: RuntimeJobSummaryState) -> some View {
+        Text(job.jobID)
+            .font(.headline)
+            .textSelection(.enabled)
+    }
+
+    private func jobSubtitle(for job: RuntimeJobSummaryState) -> String {
+        [job.runKind, job.phase, job.modelID]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.isEmpty == false }
+            .joined(separator: " • ")
+    }
+
+    private func statusColor(for job: RuntimeJobSummaryState) -> Color {
+        if job.isTerminal {
+            return MelixDesignTokens.StatusColor.success
+        }
+        if job.isActive {
+            return MelixDesignTokens.StatusColor.warning
+        }
+        return .secondary
+    }
+
+    private func timestampText(_ unixMS: Int64) -> String {
+        guard unixMS > 0 else {
+            return "N/A"
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss zzz"
+        return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(unixMS) / 1_000))
+    }
+
+    private func rawTimestampText(_ unixMS: Int64) -> String? {
+        unixMS == 0 ? nil : "raw \(unixMS) ms"
+    }
+
+    private func durationText(_ durationMS: Int64) -> String {
+        durationMS == 0 ? "N/A" : "\(durationMS) ms"
+    }
+
+    private var queueSummaryText: String {
+        "Queue IDs: \(viewModel.runtimeJobs.map(\.id).joined(separator: ", "))"
+    }
+}
+
+private struct DesktopJobsInlineEmptyStateView: View {
+    let title: String
+    let detail: String
+    let symbolName: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: symbolName)
+                    .foregroundStyle(MelixDesignTokens.accent)
+                Text(title)
+                    .font(.headline)
+                    .textSelection(.enabled)
+            }
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct DesktopJobsOperationButton: NSViewRepresentable {
+    let title: String
+    let isEnabled: Bool
+    let action: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton(
+            title: title,
+            target: context.coordinator,
+            action: #selector(Coordinator.performAction(_:))
+        )
+        button.bezelStyle = NSButton.BezelStyle.rounded
+        button.controlSize = NSControl.ControlSize.small
+        button.setAccessibilityLabel(title)
+        return button
+    }
+
+    func updateNSView(_ button: NSButton, context: Context) {
+        context.coordinator.action = action
+        button.title = title
+        button.isEnabled = isEnabled
+        button.setAccessibilityLabel(title)
+    }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc func performAction(_ sender: NSButton) {
+            action()
+        }
+    }
+}
+
+private struct DesktopBatchRunMissingOnlyToggle: NSViewRepresentable {
+    let isOn: Bool
+    let action: (Bool) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton(
+            title: "Missing Only",
+            target: context.coordinator,
+            action: #selector(Coordinator.performAction(_:))
+        )
+        button.setButtonType(.switch)
+        button.controlSize = .small
+        button.setAccessibilityLabel("Missing Only")
+        return button
+    }
+
+    func updateNSView(_ button: NSButton, context: Context) {
+        context.coordinator.action = action
+        button.title = "Missing Only"
+        button.state = isOn ? .on : .off
+        button.setAccessibilityLabel("Missing Only")
+    }
+
+    final class Coordinator: NSObject {
+        var action: (Bool) -> Void
+
+        init(action: @escaping (Bool) -> Void) {
+            self.action = action
+        }
+
+        @MainActor
+        @objc func performAction(_ sender: NSButton) {
+            action(sender.state == .on)
+        }
+    }
+}
+
+private struct DesktopJobSummaryField: View {
+    let title: String
+    let value: String
+    let secondaryValue: String?
+
+    init(title: String, value: String, secondaryValue: String? = nil) {
+        self.title = title
+        self.value = value
+        self.secondaryValue = secondaryValue
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(value.isEmpty ? "N/A" : value)
+                .font(.caption)
+                .textSelection(.enabled)
+                .lineLimit(2)
+            if let secondaryValue, secondaryValue.isEmpty == false {
+                Text(secondaryValue)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct DesktopJobDetailBlock: View {
+    let title: String
+    let values: [String]
+
+    private var visibleValues: [String] {
+        values
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.isEmpty == false }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            ForEach(visibleValues, id: \.self) { value in
+                Text(value)
+                    .font(.caption)
+                    .textSelection(.enabled)
+                    .lineLimit(3)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 enum DesktopDownloadsLayoutMetrics {
     static let compactAudioNoticeHeightBudget: CGFloat = 34
 }
@@ -2401,7 +4980,11 @@ struct DesktopTrainingToolSectionView: View {
 
                 Button("Activate Adapter", action: startActivateAdapterTask)
                     .buttonStyle(.bordered)
-                    .disabled(viewModel.selectedAdapterPackage == nil || viewModel.isLoraWorkflowActionInProgress)
+                    .disabled(
+                        viewModel.selectedAdapterPackage == nil
+                        || viewModel.loraFusedActivationUnavailableText != nil
+                        || viewModel.isLoraWorkflowActionInProgress
+                    )
 
                 Menu {
                     Button("Publish Adapter", action: startPublishAdapterTask)
@@ -2429,6 +5012,9 @@ struct DesktopTrainingToolSectionView: View {
             return "One LoRA action is currently running. Wait for it to finish before starting another workflow."
         }
         if let adapter = viewModel.selectedAdapterPackage {
+            if let fusedActivationUnavailableText = viewModel.loraFusedActivationUnavailableText {
+                return fusedActivationUnavailableText
+            }
             return adapter.derivedModelID.isEmpty
                 ? "Activate the selected adapter when you want to expose it as a runtime target."
                 : "The selected adapter already has a derived runtime target available."
@@ -2713,6 +5299,23 @@ struct DesktopTrainingToolSectionView: View {
                     .font(.caption)
                 }
 
+                let adapterCapabilityItems = savedJobAdapterCapabilityItems(job)
+                if adapterCapabilityItems.isEmpty == false {
+                    VStack(alignment: .leading, spacing: 6) {
+                        DesktopPassiveCaptionLabel(title: "Adapter Capability")
+                        ForEach(adapterCapabilityItems) { item in
+                            VStack(alignment: .leading, spacing: 2) {
+                                DesktopPassiveCaptionLabel(title: item.title)
+                                Text(item.value)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                    .font(.caption)
+                }
+
                 let followUpArtifacts = savedJobFollowUpArtifactItems(job)
                 if followUpArtifacts.isEmpty == false {
                     VStack(alignment: .leading, spacing: 6) {
@@ -2728,6 +5331,13 @@ struct DesktopTrainingToolSectionView: View {
                         }
                     }
                     .font(.caption)
+                }
+
+                if let fusedActivationUnavailableText = savedJobFusedActivationUnavailableText(job) {
+                    DesktopPassiveCaptionLabel(
+                        title: fusedActivationUnavailableText,
+                        foregroundStyle: MelixDesignTokens.StatusColor.error
+                    )
                 }
 
                 followUpActionsContent
@@ -3421,6 +6031,34 @@ struct DesktopTrainingToolSectionView: View {
         return "\(model) • \(job.config.trainingMode.uppercased()) • \(activation)"
     }
 
+    private func savedJobAdapterCapabilityItems(_ job: LoraTrainingJobRecord) -> [DesktopTrainingSummaryItem] {
+        guard let receipt = RuntimeViewModel.adapterCapabilityReceipt(from: job) else {
+            return []
+        }
+        return [
+            DesktopTrainingSummaryItem(title: "Family", value: receipt.adapterFamilyText, detail: ""),
+            DesktopTrainingSummaryItem(title: "Algorithm", value: receipt.adapterAlgorithm, detail: ""),
+            DesktopTrainingSummaryItem(title: "Backend Support", value: receipt.backendSupportText, detail: ""),
+            DesktopTrainingSummaryItem(title: "Unsupported Reason", value: receipt.unsupportedReason, detail: ""),
+            DesktopTrainingSummaryItem(title: "LoRA-like", value: receipt.loraLikeText, detail: ""),
+            DesktopTrainingSummaryItem(title: "Mergeable", value: receipt.mergeableText, detail: ""),
+            DesktopTrainingSummaryItem(title: "ReLoRA-compatible", value: receipt.reloraCompatibleText, detail: ""),
+            DesktopTrainingSummaryItem(title: "Quantized Base", value: receipt.quantizedBaseSupportedText, detail: ""),
+        ].filter { item in
+            item.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
+    }
+
+    private func savedJobFusedActivationUnavailableText(_ job: LoraTrainingJobRecord) -> String? {
+        guard job.config.activationMode == RuntimeLoraActivationMode.fusedDerivedModel.rawValue,
+              let receipt = RuntimeViewModel.adapterCapabilityReceipt(from: job),
+              receipt.mergeable == false
+        else {
+            return nil
+        }
+        return receipt.fusedActivationUnavailableText
+    }
+
     private func savedJobFollowUpArtifactItems(_ job: LoraTrainingJobRecord) -> [DesktopTrainingSummaryItem] {
         let artifacts = job.followUpArtifacts
         return [
@@ -3432,6 +6070,7 @@ struct DesktopTrainingToolSectionView: View {
             DesktopTrainingSummaryItem(title: "Benchmark Job", value: artifacts.benchmarkJobID, detail: ""),
             DesktopTrainingSummaryItem(title: "Evaluation Job", value: artifacts.evaluationJobID, detail: ""),
             DesktopTrainingSummaryItem(title: "Published Repo", value: artifacts.publishedRepo, detail: ""),
+            DesktopTrainingSummaryItem(title: "Memory Fit", value: artifacts.memoryFitSummaryText, detail: ""),
         ].filter { item in
             item.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         }
@@ -3756,17 +6395,93 @@ private struct DesktopPassiveCaptionLabel: View {
     }
 }
 
+struct DesktopServingAccelerationProfilePicker: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            DesktopPassiveStaticTextLabel(
+                title: "Acceleration Profile",
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+                textColor: .secondaryLabelColor
+            )
+            Picker(
+                "Acceleration Profile",
+                selection: Binding(
+                    get: { viewModel.selectedServerSession?.servingDefaults.accelerationProfile ?? ServingAccelerationProfiles.defaultProfileID },
+                    set: { viewModel.updateSelectedServerSessionAccelerationProfile($0) }
+                )
+            ) {
+                ForEach(viewModel.servingAccelerationProfileOptions, id: \.id) { profile in
+                    Text(profile.label).tag(profile.id)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(maxWidth: 280, alignment: .leading)
+        }
+    }
+}
+
+struct DesktopServingAccelerationProfileSummary: View {
+    let servingDefaults: DesktopServerServingDefaultsState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            DesktopPassiveStaticTextLabel(
+                title: "Requested profile: \(servingAccelerationProfileLabel(servingDefaults.accelerationProfile))",
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                textColor: .secondaryLabelColor
+            )
+            DesktopPassiveStaticTextLabel(
+                title: "Effective profile: \(servingAccelerationProfileLabel(servingDefaults.effectiveAccelerationProfile))",
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                textColor: .secondaryLabelColor
+            )
+            DesktopPassiveStaticTextLabel(
+                title: "Intent: \(servingDefaults.accelerationProfileIntent)",
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                textColor: .secondaryLabelColor,
+                lineBreakMode: .byWordWrapping,
+                maximumNumberOfLines: 2
+            )
+            DesktopPassiveStaticTextLabel(
+                title: "Resolved defaults: \(desktopAccelerationModeText(servingDefaults.effectiveAccelerationMode)) • sequences \(servingDefaults.effectiveMaxConcurrentRequests) • prefill \(servingDefaults.effectivePrefillBatchSize) • completion \(servingDefaults.effectiveCompletionBatchSize)",
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                textColor: .secondaryLabelColor,
+                lineBreakMode: .byWordWrapping,
+                maximumNumberOfLines: 2
+            )
+        }
+    }
+}
+
 private struct DesktopPassiveStaticTextLabel: NSViewRepresentable {
     let title: String
     let font: NSFont
     let textColor: NSColor
+    let lineBreakMode: NSLineBreakMode
+    let maximumNumberOfLines: Int
+
+    init(
+        title: String,
+        font: NSFont,
+        textColor: NSColor,
+        lineBreakMode: NSLineBreakMode = .byTruncatingTail,
+        maximumNumberOfLines: Int = 1
+    ) {
+        self.title = title
+        self.font = font
+        self.textColor = textColor
+        self.lineBreakMode = lineBreakMode
+        self.maximumNumberOfLines = maximumNumberOfLines
+    }
 
     func makeNSView(context: Context) -> NSTextField {
         let label = NSTextField(labelWithString: title)
         label.font = font
         label.textColor = textColor
-        label.lineBreakMode = .byTruncatingTail
-        label.maximumNumberOfLines = 1
+        label.lineBreakMode = lineBreakMode
+        label.maximumNumberOfLines = maximumNumberOfLines
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return label
     }
@@ -3775,6 +6490,8 @@ private struct DesktopPassiveStaticTextLabel: NSViewRepresentable {
         label.stringValue = title
         label.font = font
         label.textColor = textColor
+        label.lineBreakMode = lineBreakMode
+        label.maximumNumberOfLines = maximumNumberOfLines
     }
 }
 
@@ -4196,6 +6913,10 @@ struct DesktopDiagnosticsToolSectionView: View {
         await viewModel.refreshModelOpsProductState()
     }
 
+    func createDebugBundle() async {
+        await viewModel.runDiagnosticsDebugBundle()
+    }
+
     func toggleBenchmarkSuiteSelection(_ suiteID: String) {
         viewModel.toggleBenchmarkSuite(suiteID)
     }
@@ -4294,6 +7015,10 @@ struct DesktopDiagnosticsToolSectionView: View {
         Task { await refreshTooling() }
     }
 
+    private func startDebugBundleTask() {
+        Task { await createDebugBundle() }
+    }
+
     private var benchmarkRunDisabled: Bool {
         viewModel.canRunDiagnosticsBenchmark == false
     }
@@ -4371,6 +7096,147 @@ struct DesktopDiagnosticsToolSectionView: View {
     }
 
     @ViewBuilder
+    private var debugBundleSections: some View {
+        DesktopEditorialSectionCard("Debug Bundle") {
+            VStack(alignment: .leading, spacing: 12) {
+                TextField(
+                    "Run or Job ID",
+                    text: Binding(
+                        get: { viewModel.diagnosticsDebugBundleRunIDDraft },
+                        set: { viewModel.updateDiagnosticsDebugBundleRunIDDraft($0) }
+                    )
+                )
+                .textFieldStyle(.roundedBorder)
+
+                HStack(spacing: 8) {
+                    TextField(
+                        "Source path",
+                        text: Binding(
+                            get: { viewModel.diagnosticsDebugBundleSourcePathDraft },
+                            set: { viewModel.updateDiagnosticsDebugBundleSourcePathDraft($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+
+                    TextField(
+                        "Output path",
+                        text: Binding(
+                            get: { viewModel.diagnosticsDebugBundleOutputPathDraft },
+                            set: { viewModel.updateDiagnosticsDebugBundleOutputPathDraft($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+
+                HStack(spacing: 8) {
+                    Button(action: startDebugBundleTask) {
+                        Label("Create Debug Bundle", systemImage: "shippingbox")
+                    }
+                    .disabled(viewModel.diagnosticsDebugBundleCanRun == false)
+
+                    if viewModel.diagnosticsDebugBundleInProgress {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+
+                if viewModel.diagnosticsDebugBundleMessage.isEmpty == false {
+                    DesktopPassiveStaticTextLabel(
+                        title: viewModel.diagnosticsDebugBundleMessage,
+                        font: .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+                        textColor: .secondaryLabelColor,
+                        lineBreakMode: .byWordWrapping,
+                        maximumNumberOfLines: 2
+                    )
+                }
+
+                if viewModel.diagnosticsDebugBundleErrorMessage.isEmpty == false {
+                    DesktopPassiveStaticTextLabel(
+                        title: viewModel.diagnosticsDebugBundleErrorMessage,
+                        font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                        textColor: .secondaryLabelColor,
+                        lineBreakMode: .byWordWrapping,
+                        maximumNumberOfLines: 2
+                    )
+                }
+
+                if let result = viewModel.diagnosticsDebugBundleResult {
+                    debugBundleResultRows(result)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func debugBundleResultRows(_ result: RuntimeDiagnosticsDebugBundleState) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            debugBundleResultRow(title: "Bundle Path", value: result.bundlePath, allowsArtifactActions: true)
+            debugBundleResultRow(title: "Manifest", value: result.manifestPath, allowsArtifactActions: true)
+            debugBundleResultRow(title: "Redaction State", value: result.redactionSummaryText)
+            debugBundleResultRow(title: "Consent", value: result.diagnosticsConsentState)
+            debugBundleResultRow(title: "Artifact Policy", value: result.debugArtifactPolicy)
+            debugBundleResultRow(title: "Debug JSONL", value: result.debugJSONLSummaryText)
+            if result.servingDiagnosticsQueueSummaryText.isEmpty == false {
+                debugBundleResultRow(
+                    title: "Serving Diagnostics Queue",
+                    value: result.servingDiagnosticsQueueSummaryText
+                )
+                debugBundleResultRow(
+                    title: "Serving Diagnostics Retention",
+                    value: result.servingDiagnosticsRetentionSummaryText
+                )
+                debugBundleResultRow(
+                    title: "Serving Diagnostics Drops",
+                    value: result.servingDiagnosticsDropSummaryText
+                )
+            }
+            ForEach(Array(result.artifactRows.prefix(6))) { row in
+                debugBundleResultRow(title: row.kindText, value: row.path, allowsArtifactActions: true)
+            }
+        }
+    }
+
+    private func debugBundleResultRow(
+        title: String,
+        value: String,
+        allowsArtifactActions: Bool = false
+    ) -> some View {
+        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return VStack(alignment: .leading, spacing: 3) {
+            DesktopPassiveStaticTextLabel(
+                title: title,
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+                textColor: .secondaryLabelColor
+            )
+            DesktopPassiveStaticTextLabel(
+                title: value.isEmpty ? "-" : value,
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                textColor: .secondaryLabelColor,
+                lineBreakMode: .byWordWrapping,
+                maximumNumberOfLines: 2
+            )
+            if allowsArtifactActions && trimmedValue.isEmpty == false {
+                HStack(spacing: 8) {
+                    Button("Copy Path", systemImage: "doc.on.doc") {
+                        copyDebugBundleArtifactPath(value)
+                    }
+                    Button("Open Artifact", systemImage: "folder") {
+                        openDebugBundleArtifact(path: value, opener: NSWorkspace.shared.open)
+                    }
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(
+            Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
+            in: RoundedRectangle(cornerRadius: 8)
+        )
+    }
+
+    @ViewBuilder
     private var diagnosticsSnapshotContent: some View {
         switch selectedStage {
         case .benchmark:
@@ -4392,6 +7258,8 @@ struct DesktopDiagnosticsToolSectionView: View {
                 Text(benchmarkSelectionSubtitle(for: entry))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                profileSummaryLabel(entry.profileSummaryText)
+                memoryFitEvidenceLabel(entry.memoryFitSummaryText)
             }
 
             if benchmarkSnapshotItems.isEmpty {
@@ -4416,6 +7284,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                 Text(matrixSelectionSubtitle(for: entry))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                profileSummaryLabel(entry.profileSummaryText)
             }
 
             if matrixSnapshotItems.isEmpty {
@@ -4440,6 +7309,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                 Text(evaluationSelectionSubtitle(for: entry))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                memoryFitEvidenceLabel(entry.memoryFitSummaryText)
             }
 
             if evaluationSnapshotItems.isEmpty {
@@ -4465,17 +7335,47 @@ struct DesktopDiagnosticsToolSectionView: View {
 
     private func benchmarkSelectionSubtitle(for entry: RuntimeBenchmarkHistoryEntryState) -> String {
         let selectedSource = entry.sourceRepo.isEmpty ? entry.modelID : entry.sourceRepo
-        return "\(entry.taskTitle) • \(selectedSource) • \(entry.datasetLabel)"
+        return [entry.taskTitle, selectedSource, entry.datasetLabel, entry.profileSummaryText]
+            .filter { $0.isEmpty == false }
+            .joined(separator: " • ")
     }
 
     private func matrixSelectionSubtitle(for entry: RuntimeBenchmarkMatrixHistoryEntryState) -> String {
         let selectedSource = entry.sourceRepo.isEmpty ? entry.modelID : entry.sourceRepo
-        return "\(entry.taskTitle) • \(selectedSource) • \(entry.suiteSummary) • \(entry.cellCountText)"
+        return [entry.taskTitle, selectedSource, entry.suiteSummary, entry.cellCountText, entry.profileSummaryText]
+            .filter { $0.isEmpty == false }
+            .joined(separator: " • ")
+    }
+
+    @ViewBuilder
+    private func profileSummaryLabel(_ text: String) -> some View {
+        if text.isEmpty == false {
+            DesktopPassiveStaticTextLabel(
+                title: text,
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+                textColor: .secondaryLabelColor
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func evaluationSelectionSubtitle(for entry: RuntimeEvaluationHistoryEntryState) -> String {
         let selectedSource = entry.sourceRepo.isEmpty ? entry.modelID : entry.sourceRepo
-        return "\(entry.taskTitle) • \(selectedSource) • \(entry.datasetID)"
+        return [entry.taskTitle, selectedSource, entry.datasetID]
+            .filter { $0.isEmpty == false }
+            .joined(separator: " • ")
+    }
+
+    @ViewBuilder
+    private func memoryFitEvidenceLabel(_ text: String) -> some View {
+        if text.isEmpty == false {
+            DesktopPassiveStaticTextLabel(
+                title: "Memory fit: \(text)",
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+                textColor: .secondaryLabelColor
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     @ViewBuilder
@@ -4501,6 +7401,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                             )
                         }
                     )
+                    evidenceValidityRows(report)
                     evidenceReportFilterField
                     evidenceMetricRows(
                         report.metricRows(matching: evidenceReportFilter)
@@ -4729,6 +7630,94 @@ struct DesktopDiagnosticsToolSectionView: View {
         }
     }
 
+    @discardableResult
+    func copyDebugBundleArtifactPath(
+        _ path: String,
+        to pasteboard: NSPasteboard = .general,
+        clipboardWriter: (String, NSPasteboard) -> Bool = RuntimeDiagnosticsArtifactClipboard.copy(_:to:)
+    ) -> Bool {
+        let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedPath.isEmpty == false else {
+            viewModel.recordDiagnosticsDebugBundleArtifactError("Debug bundle artifact path is empty.")
+            return false
+        }
+
+        guard clipboardWriter(trimmedPath, pasteboard) else {
+            viewModel.recordDiagnosticsDebugBundleArtifactError(
+                "Could not copy debug bundle artifact path: \(trimmedPath)."
+            )
+            return false
+        }
+        viewModel.recordDiagnosticsDebugBundleArtifactMessage(
+            "Copied debug bundle artifact path: \(trimmedPath)."
+        )
+        return true
+    }
+
+    func openDebugBundleArtifact(path: String, opener: (URL) -> Bool) {
+        let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedPath.isEmpty == false else {
+            viewModel.recordDiagnosticsDebugBundleArtifactError("Debug bundle artifact path is empty.")
+            return
+        }
+
+        if opener(URL(fileURLWithPath: trimmedPath)) {
+            viewModel.recordDiagnosticsDebugBundleArtifactMessage("Opened debug bundle artifact: \(trimmedPath).")
+        } else {
+            viewModel.recordDiagnosticsDebugBundleArtifactError(
+                "Could not open debug bundle artifact at \(trimmedPath)."
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func evidenceValidityRows(_ report: RuntimeEvidenceReportState) -> some View {
+        if report.requiredEvidenceRows.isEmpty == false || report.evidenceValidityRows.isEmpty == false {
+            VStack(alignment: .leading, spacing: 8) {
+                DesktopPassiveCaptionLabel(title: "Required Evidence Status")
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 8)], spacing: 8) {
+                    ForEach(report.requiredEvidenceRows) { row in
+                        VStack(alignment: .leading, spacing: 4) {
+                            DesktopPassiveStaticTextLabel(
+                                title: "\(row.title) • \(row.statusText)",
+                                font: .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+                                textColor: .secondaryLabelColor,
+                                lineBreakMode: .byWordWrapping,
+                                maximumNumberOfLines: 2
+                            )
+                            DesktopPassiveStaticTextLabel(
+                                title: row.detailText,
+                                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                                textColor: .secondaryLabelColor,
+                                lineBreakMode: .byWordWrapping,
+                                maximumNumberOfLines: 2
+                            )
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(
+                            Color.secondary.opacity(DesktopLoRAVisualPolish.sectionSurfaceOpacity),
+                            in: RoundedRectangle(cornerRadius: 8)
+                        )
+                    }
+                }
+
+                if report.evidenceValidityRows.isEmpty == false {
+                    DesktopPassiveCaptionLabel(title: "Evidence Validity Metrics")
+                    ForEach(report.evidenceValidityRows) { row in
+                        DesktopPassiveStaticTextLabel(
+                            title: "\(row.id) • \(row.metric) • \(row.valueText)",
+                            font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                            textColor: .secondaryLabelColor,
+                            lineBreakMode: .byWordWrapping,
+                            maximumNumberOfLines: 2
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     @ViewBuilder
     private func evidenceMetricRows(_ rows: ArraySlice<RuntimeEvidenceReportMetricRow>) -> some View {
         if rows.isEmpty == false {
@@ -4794,9 +7783,13 @@ struct DesktopDiagnosticsToolSectionView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if row.issueText.isEmpty == false {
-                Text(row.issueText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                DesktopPassiveStaticTextLabel(
+                    title: row.issueText,
+                    font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                    textColor: .secondaryLabelColor,
+                    lineBreakMode: .byWordWrapping,
+                    maximumNumberOfLines: 2
+                )
             }
             if row.artifactRoot.isEmpty == false {
                 Text(row.artifactRoot)
@@ -4819,9 +7812,11 @@ struct DesktopDiagnosticsToolSectionView: View {
                 Text("\(row.kind) • \(row.component) • \(row.phase)")
                     .font(.headline)
                 Spacer()
-                Text(row.durationText)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                DesktopPassiveStaticTextLabel(
+                    title: row.durationText,
+                    font: .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+                    textColor: .secondaryLabelColor
+                )
             }
             Text("\(row.side) • \(row.runID) • \(row.statusText)")
                 .font(.caption)
@@ -4846,16 +7841,26 @@ struct DesktopDiagnosticsToolSectionView: View {
                 Text("\(row.side) • \(row.runID)")
                     .font(.headline)
                 Spacer()
-                Text(row.collectorStatusText)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                DesktopPassiveStaticTextLabel(
+                    title: row.collectorStatusText,
+                    font: .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+                    textColor: .secondaryLabelColor
+                )
             }
-            Text(row.powerText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text([row.utilizationText, row.memoryText].filter { $0.isEmpty == false }.joined(separator: " • "))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            DesktopPassiveStaticTextLabel(
+                title: row.powerText,
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                textColor: .secondaryLabelColor,
+                lineBreakMode: .byWordWrapping,
+                maximumNumberOfLines: 2
+            )
+            DesktopPassiveStaticTextLabel(
+                title: [row.utilizationText, row.memoryText].filter { $0.isEmpty == false }.joined(separator: " • "),
+                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                textColor: .secondaryLabelColor,
+                lineBreakMode: .byWordWrapping,
+                maximumNumberOfLines: 2
+            )
             if row.failureText.isEmpty == false {
                 Text(row.failureText)
                     .font(.caption)
@@ -5000,6 +8005,7 @@ struct DesktopDiagnosticsToolSectionView: View {
             }
 
             evidenceReportSections
+            debugBundleSections
 
             if selectedStage != .evaluation {
                 DesktopEditorialSectionCard(selectedStage == .matrix ? "Matrix Configuration" : "Bench Configuration") {
@@ -5026,9 +8032,15 @@ struct DesktopDiagnosticsToolSectionView: View {
                             .foregroundStyle(.secondary)
 
                         if let disabledReason = viewModel.diagnosticsBenchmarkUnavailableText {
-                            Text(disabledReason)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            DesktopPassiveStaticTextLabel(
+                                title: disabledReason,
+                                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                                textColor: .secondaryLabelColor,
+                                lineBreakMode: .byWordWrapping,
+                                maximumNumberOfLines: 0
+                            )
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityLabel(disabledReason)
                         }
 
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
@@ -5777,9 +8789,15 @@ struct DesktopDiagnosticsToolSectionView: View {
                             .foregroundStyle(.secondary)
 
                         if let disabledReason = viewModel.diagnosticsEvaluationUnavailableText {
-                            Text(disabledReason)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            DesktopPassiveStaticTextLabel(
+                                title: disabledReason,
+                                font: .systemFont(ofSize: NSFont.smallSystemFontSize),
+                                textColor: .secondaryLabelColor,
+                                lineBreakMode: .byWordWrapping,
+                                maximumNumberOfLines: 0
+                            )
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityLabel(disabledReason)
                         }
 
                         Divider()
@@ -7321,11 +10339,27 @@ private func desktopAccelerationModeText(_ rawValue: String) -> String {
     }
 }
 
+private func servingAccelerationProfileLabel(_ rawValue: String) -> String {
+    ServingAccelerationProfiles.profile(id: rawValue).label
+}
+
 func desktopAPIAuthenticationReferenceText(selectedExport: AgentIntegrationExport?) -> String {
     if let export = selectedExport {
         return "Selected target: \(export.target.rawValue). Use \(export.authPlaceholder) as the reproducible credential placeholder for \(export.baseURL)."
     }
     return "Select a server session to render auth guidance."
+}
+
+enum RuntimeDiagnosticsArtifactClipboard {
+    @discardableResult
+    static func copy(_ value: String, to pasteboard: NSPasteboard = .general) -> Bool {
+        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedValue.isEmpty == false else {
+            return false
+        }
+        pasteboard.clearContents()
+        return pasteboard.setString(trimmedValue, forType: .string)
+    }
 }
 
 private func copyToPasteboard(_ value: String) {

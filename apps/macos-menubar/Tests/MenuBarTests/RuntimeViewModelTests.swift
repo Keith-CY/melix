@@ -681,6 +681,34 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.serving_defaults_apply_ms"] != nil)
     }
 
+    @Test("server serving defaults do not grant model load trust")
+    @MainActor
+    func serverServingDefaultsDoNotGrantModelLoadTrust() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+        )
+        snapshot.models[0].settings.alias = "Melix Text"
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        #expect(viewModel.modelSettingsLoadTrustModeText == "Unspecified")
+
+        viewModel.updateSelectedServerSessionAccelerationMode("speculative_decode")
+        viewModel.updateSelectedServerSessionDraftModelID("melix-dev-draft")
+        viewModel.updateSelectedServerSessionNumDraftTokens(6)
+
+        await viewModel.applySelectedServerServingDefaults()
+
+        let request = try #require(await client.recordedServingDefaultsApplyRequests.last)
+        #expect(request.serverSessionID == viewModel.selectedServerSession?.id)
+        #expect(request.accelerationMode == .speculativeDecode)
+        #expect(await client.recordedModelSettingsUpdates.isEmpty)
+        #expect(viewModel.modelSettingsLoadTrustModeText == "Unspecified")
+    }
+
     @Test("applySelectedServerServingDefaults maps every server acceleration mode")
     @MainActor
     func applySelectedServerServingDefaultsMapsEveryServerAccelerationMode() async throws {
@@ -714,6 +742,75 @@ struct RuntimeViewModelTests {
         await viewModel.applySelectedServerServingDefaults()
 
         #expect(await client.recordedServingDefaultsApplyRequests.isEmpty)
+    }
+
+    @Test("serving acceleration profile applies profile defaults")
+    @MainActor
+    func servingAccelerationProfileAppliesProfileDefaults() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionAccelerationProfile("throughput")
+
+        let servingDefaults = try #require(viewModel.selectedServerSession?.servingDefaults)
+        #expect(servingDefaults.accelerationProfile == "throughput")
+        #expect(servingDefaults.accelerationMode == "speculative_decode")
+        #expect(servingDefaults.concurrentProcessingEnabled)
+        #expect(servingDefaults.maxConcurrentRequests == 8)
+        #expect(servingDefaults.prefillBatchSize == 4)
+        #expect(servingDefaults.completionBatchSize == 4)
+        #expect(servingDefaults.numDraftTokens == 6)
+    }
+
+    @Test("serving acceleration profile preserves manual low-level overrides")
+    @MainActor
+    func servingAccelerationProfilePreservesManualLowLevelOverrides() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionAccelerationMode("active_kv_quantized")
+        viewModel.updateSelectedServerSessionMaxConcurrentRequests(12)
+        viewModel.updateSelectedServerSessionCompletionBatchSize(5)
+
+        viewModel.updateSelectedServerSessionAccelerationProfile("throughput")
+
+        let servingDefaults = try #require(viewModel.selectedServerSession?.servingDefaults)
+        #expect(servingDefaults.accelerationProfile == "throughput")
+        #expect(servingDefaults.accelerationMode == "active_kv_quantized")
+        #expect(servingDefaults.maxConcurrentRequests == 12)
+        #expect(servingDefaults.completionBatchSize == 5)
+        #expect(servingDefaults.concurrentProcessingEnabled)
+        #expect(servingDefaults.prefillBatchSize == 4)
+        #expect(servingDefaults.numDraftTokens == 6)
+    }
+
+    @Test("serving acceleration profile regression preserves manual overrides and replaces untouched defaults")
+    @MainActor
+    func servingAccelerationProfileRegressionPreservesManualOverridesAndReplacesUntouchedDefaults() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionAccelerationProfile("throughput")
+        viewModel.updateSelectedServerSessionAccelerationMode("active_kv_quantized")
+        viewModel.updateSelectedServerSessionDraftModelID("operator-draft")
+        viewModel.updateSelectedServerSessionNumDraftTokens(9)
+        viewModel.updateSelectedServerSessionMaxConcurrentRequests(12)
+        viewModel.updateSelectedServerSessionPrefillBatchSize(6)
+
+        viewModel.updateSelectedServerSessionAccelerationProfile("low-memory")
+
+        let servingDefaults = try #require(viewModel.selectedServerSession?.servingDefaults)
+        #expect(servingDefaults.accelerationProfile == "low-memory")
+        #expect(servingDefaults.accelerationMode == "active_kv_quantized")
+        #expect(servingDefaults.draftModelID == "operator-draft")
+        #expect(servingDefaults.numDraftTokens == 9)
+        #expect(servingDefaults.maxConcurrentRequests == 12)
+        #expect(servingDefaults.prefillBatchSize == 6)
+        #expect(servingDefaults.concurrentProcessingEnabled == false)
+        #expect(servingDefaults.completionBatchSize == 1)
     }
 
     @Test("applySelectedServerServingDefaultsFromUI schedules the typed request through the view model")
@@ -859,6 +956,31 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedServerSession?.lifecycle == .running)
     }
 
+    @Test("server session template start does not grant model load trust")
+    @MainActor
+    func serverSessionTemplateStartDoesNotGrantModelLoadTrust() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+        )
+        snapshot.models[0].settings.alias = "Melix Text"
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        viewModel.createServerSession()
+        let serverSessionID = try #require(viewModel.selectedServerSession?.id)
+
+        await viewModel.startSelectedServerSession()
+
+        let actions = await client.recordedActions
+        #expect(actions.contains("serving-defaults.apply:\(serverSessionID)"))
+        #expect(actions.contains("server.start:\(serverSessionID)"))
+        #expect(await client.recordedModelSettingsUpdates.isEmpty)
+        #expect(viewModel.modelSettingsLoadTrustModeText == "Unspecified")
+    }
+
     @Test("gateway config apply failures block server starts and surface local errors")
     @MainActor
     func gatewayConfigApplyFailuresBlockServerStartsAndSurfaceLocalErrors() async throws {
@@ -983,9 +1105,9 @@ struct RuntimeViewModelTests {
         }
     }
 
-    @Test("snapshot serving defaults projection hydrates requested and effective generation state")
+    @Test("snapshot serving defaults projection hydrates requested and effective acceleration profile receipts")
     @MainActor
-    func snapshotServingDefaultsProjectionHydratesRequestedAndEffectiveGenerationState() async throws {
+    func snapshotServingDefaultsProjectionHydratesAccelerationProfileReceipts() async throws {
         let client = FakeControlPlaneXPCClient()
         let snapshot = makeSnapshot(
             serverState: .serverReady,
@@ -1018,6 +1140,7 @@ struct RuntimeViewModelTests {
         servingDefaults.requestedAccelerationMode = .speculativeDecode
         servingDefaults.requestedDraftModelID = "melix-dev-draft"
         servingDefaults.requestedNumDraftTokens = 6
+        servingDefaults.requestedAccelerationProfile = "throughput"
         servingDefaults.effectiveTemperature = 0.2
         servingDefaults.effectiveTopP = 0.88
         servingDefaults.effectiveMaxTokens = 512
@@ -1026,6 +1149,8 @@ struct RuntimeViewModelTests {
         servingDefaults.effectiveAccelerationMode = .speculativeDecode
         servingDefaults.effectiveDraftModelID = "melix-dev-draft"
         servingDefaults.effectiveNumDraftTokens = 6
+        servingDefaults.effectiveAccelerationProfile = "low-memory"
+        servingDefaults.accelerationProfileIntent = "Runtime selected the low-memory profile after model constraints."
         servingDefaults.source = .operatorOverride
         servingDefaults.modelOverrideApplied = true
         var projectedSnapshot = snapshot
@@ -1044,19 +1169,22 @@ struct RuntimeViewModelTests {
         #expect(session.servingDefaults.accelerationMode == "speculative_decode")
         #expect(session.servingDefaults.draftModelID == "melix-dev-draft")
         #expect(session.servingDefaults.numDraftTokens == 6)
+        #expect(session.servingDefaults.accelerationProfile == "throughput")
         #expect(session.servingDefaults.effectiveTemperature == 0.2)
         #expect(session.servingDefaults.effectiveTopP == 0.88)
         #expect(session.servingDefaults.effectiveMaxTokens == 512)
         #expect(session.servingDefaults.effectiveAccelerationMode == "speculative_decode")
         #expect(session.servingDefaults.effectiveDraftModelID == "melix-dev-draft")
         #expect(session.servingDefaults.effectiveNumDraftTokens == 6)
+        #expect(session.servingDefaults.effectiveAccelerationProfile == "low-memory")
+        #expect(session.servingDefaults.accelerationProfileIntent == "Runtime selected the low-memory profile after model constraints.")
         #expect(session.servingDefaults.sourceText == "Operator Override")
         #expect(session.servingDefaults.modelOverrideApplied)
     }
 
-    @Test("snapshot serving defaults projection keeps local defaults when no summary is available")
+    @Test("snapshot serving defaults projection keeps acceleration profile receipts when no summary is available")
     @MainActor
-    func snapshotServingDefaultsProjectionKeepsLocalDefaultsWhenSummaryIsMissing() async throws {
+    func snapshotServingDefaultsProjectionKeepsAccelerationProfileReceiptsWhenSummaryIsMissing() async throws {
         let client = FakeControlPlaneXPCClient()
         let snapshot = makeSnapshot(
             serverState: .serverReady,
@@ -1075,6 +1203,8 @@ struct RuntimeViewModelTests {
         #expect(session.servingDefaults.streamIntervalTokens == 1)
         #expect(session.servingDefaults.maxConcurrentRequests == 4)
         #expect(session.servingDefaults.accelerationMode == "baseline")
+        #expect(session.servingDefaults.effectiveAccelerationProfile == "balanced")
+        #expect(session.servingDefaults.accelerationProfileIntent == "Default serving with baseline decode and moderate batching.")
         #expect(session.servingDefaults.numDraftTokens == 0)
         #expect(session.servingDefaults.sourceText == "Built-in Defaults")
         #expect(session.servingDefaults.modelOverrideApplied == false)
@@ -4232,6 +4362,207 @@ struct RuntimeViewModelTests {
         #expect(makeRuntimeModelRow(off).adaptiveThinkingText == "Off")
     }
 
+    @Test("runtime model row renders task capability receipts")
+    func runtimeModelRowRendersTaskCapabilityReceipts() {
+        #expect(makeRuntimeModelRow(makeModelSummary(state: .modelWarm)).capabilityReceiptRows.isEmpty)
+
+        var model = makeModelSummary(state: .modelWarm)
+        var receipt = Melix_Controlplane_V1_ModelCapabilityReceipt()
+        receipt.schemaVersion = "melix.model_capabilities.v1"
+        receipt.tasks = [
+            makeTaskCapabilityReceipt("completion", provenance: "model catalog"),
+            makeTaskCapabilityReceipt("embedding", provenance: "model catalog"),
+            makeTaskCapabilityReceipt("vision", provenance: "vision metadata"),
+            makeTaskCapabilityReceipt("tools", provenance: "tool parser metadata"),
+            makeTaskCapabilityReceipt("reasoning", provenance: "reasoning policy"),
+            makeTaskCapabilityReceipt("insert", provenance: "tokenizer metadata"),
+            makeTaskCapabilityReceipt("audio", state: .capabilityUnsupported, provenance: ""),
+            makeTaskCapabilityReceipt("draft", state: .capabilityExperimental, provenance: ""),
+            makeTaskCapabilityReceipt("metadata", state: .capabilityMetadataInconsistent, provenance: ""),
+            makeTaskCapabilityReceipt("unknown", state: .unspecified, provenance: ""),
+            makeTaskCapabilityReceipt("future", state: .UNRECOGNIZED(999), provenance: ""),
+            makeTaskCapabilityReceipt(" ", provenance: "ignored"),
+        ]
+        model.capabilityReceipt = receipt
+
+        let row = makeRuntimeModelRow(model)
+
+        #expect(row.capabilityReceiptRows == [
+            "task completion: supported • model catalog",
+            "task embedding: supported • model catalog",
+            "task vision: supported • vision metadata",
+            "task tools: supported • tool parser metadata",
+            "task reasoning: supported • reasoning policy",
+            "task insert: supported • tokenizer metadata",
+            "task audio: unsupported",
+            "task draft: experimental",
+            "task metadata: metadata inconsistent",
+            "task unknown: unspecified",
+            "task future: unrecognized 999",
+        ])
+    }
+
+    @Test("runtime model row renders acceleration draft and speculative head receipts")
+    func runtimeModelRowRendersAccelerationDraftAndSpeculativeHeadReceipts() {
+        var model = makeModelSummary(state: .modelWarm)
+        var receipt = Melix_Controlplane_V1_ModelCapabilityReceipt()
+        receipt.schemaVersion = "melix.model_capabilities.v1"
+
+        var acceleration = Melix_Controlplane_V1_AccelerationCapabilityReceipt()
+        acceleration.requestedAccelerationMode = .speculativeDecode
+        acceleration.resolvedAccelerationMode = .acceleratedPrefill
+        acceleration.supportedModes = [.baseline, .speculativeDecode]
+        acceleration.targetCapability = "completion"
+        acceleration.drafterCapability = "completion"
+        acceleration.validDraftModelIds = ["melix-dev-draft", "melix-dev-draft-2"]
+        acceleration.state = .capabilityExperimental
+        acceleration.provenance = "model catalog"
+
+        var draft = Melix_Controlplane_V1_DraftCompatibilityReceipt()
+        draft.draftModelID = "melix-dev-draft"
+        draft.state = .capabilitySupported
+        draft.provenance = "draft cache"
+        acceleration.draftCompatibility = [draft]
+
+        var speculativeHead = Melix_Controlplane_V1_SpeculativeHeadCapabilityReceipt()
+        speculativeHead.configured = true
+        speculativeHead.configuredLayers = 4
+        speculativeHead.indexedLayers = 3
+        speculativeHead.dropFlagState = "enabled"
+        speculativeHead.runtimeAvailable = true
+        speculativeHead.artifactAvailable = false
+        speculativeHead.state = .capabilityExperimental
+        speculativeHead.provenance = "head index"
+        acceleration.speculativeHead = speculativeHead
+
+        receipt.acceleration = acceleration
+        model.capabilityReceipt = receipt
+
+        let row = makeRuntimeModelRow(model)
+
+        #expect(row.capabilityReceiptRows == [
+            "acceleration: experimental • requested Speculative Decode • resolved Accelerated Prefill • supported None, Speculative Decode • model catalog",
+            "acceleration route: target completion • drafter completion • valid drafts melix-dev-draft, melix-dev-draft-2",
+            "draft melix-dev-draft: supported • draft cache",
+            "speculative head: experimental • configured yes • layers 4/3 • drop enabled • runtime available • artifact missing • head index",
+        ])
+    }
+
+    @Test("runtime model row renders unsupported reasons and recovery hints")
+    func runtimeModelRowRendersUnsupportedReasonsAndRecoveryHints() {
+        var model = makeModelSummary(state: .modelWarm)
+        var receipt = Melix_Controlplane_V1_ModelCapabilityReceipt()
+        receipt.schemaVersion = "melix.model_capabilities.v1"
+
+        var task = makeTaskCapabilityReceipt(
+            "tools",
+            state: .capabilityUnsupported,
+            provenance: "model catalog"
+        )
+        task.unsupportedReason = .unsupportedReasonUnsupportedTask
+        task.recoveryHint = "Select a tool-capable model."
+
+        var missingDraftTask = makeTaskCapabilityReceipt(
+            "draft",
+            state: .capabilityUnsupported,
+            provenance: ""
+        )
+        missingDraftTask.unsupportedReason = .unsupportedReasonMissingDraftModel
+
+        var targetDisabledTask = makeTaskCapabilityReceipt(
+            "target",
+            state: .capabilityUnsupported,
+            provenance: ""
+        )
+        targetDisabledTask.unsupportedReason = .unsupportedReasonTargetDisabled
+
+        var drafterDisabledTask = makeTaskCapabilityReceipt(
+            "drafter",
+            state: .capabilityUnsupported,
+            provenance: ""
+        )
+        drafterDisabledTask.unsupportedReason = .unsupportedReasonDrafterDisabled
+
+        var metadataTask = makeTaskCapabilityReceipt(
+            "metadata",
+            state: .capabilityUnsupported,
+            provenance: ""
+        )
+        metadataTask.unsupportedReason = .unsupportedReasonMetadataInconsistent
+
+        var experimentalTask = makeTaskCapabilityReceipt(
+            "experimental",
+            state: .capabilityUnsupported,
+            provenance: ""
+        )
+        experimentalTask.unsupportedReason = .unsupportedReasonExperimentalUnverified
+
+        var noneTask = makeTaskCapabilityReceipt(
+            "none",
+            state: .capabilityUnsupported,
+            provenance: ""
+        )
+        noneTask.unsupportedReason = .unsupportedReasonNone
+
+        var futureTask = makeTaskCapabilityReceipt(
+            "future",
+            state: .capabilityUnsupported,
+            provenance: ""
+        )
+        futureTask.unsupportedReason = .UNRECOGNIZED(999)
+        receipt.tasks = [
+            task,
+            missingDraftTask,
+            targetDisabledTask,
+            drafterDisabledTask,
+            metadataTask,
+            experimentalTask,
+            noneTask,
+            futureTask,
+        ]
+
+        var acceleration = Melix_Controlplane_V1_AccelerationCapabilityReceipt()
+        acceleration.requestedAccelerationMode = .speculativeDecode
+        acceleration.state = .capabilityUnsupported
+        acceleration.unsupportedReason = .unsupportedReasonUnsupportedMode
+        acceleration.provenance = "model catalog"
+        acceleration.recoveryHint = "Switch to baseline or accelerated prefill."
+
+        var draft = Melix_Controlplane_V1_DraftCompatibilityReceipt()
+        draft.draftModelID = "melix-dev-draft"
+        draft.state = .capabilityUnsupported
+        draft.unsupportedReason = .unsupportedReasonDraftModelNotAllowed
+        draft.provenance = "draft cache"
+        draft.recoveryHint = "Pick a compatible draft model."
+        acceleration.draftCompatibility = [draft]
+
+        var speculativeHead = Melix_Controlplane_V1_SpeculativeHeadCapabilityReceipt()
+        speculativeHead.state = .capabilityUnsupported
+        speculativeHead.unsupportedReason = .unsupportedReasonRuntimeUnavailable
+        speculativeHead.provenance = "head index"
+        speculativeHead.recoveryHint = "Build the speculative-head index."
+        acceleration.speculativeHead = speculativeHead
+
+        receipt.acceleration = acceleration
+        model.capabilityReceipt = receipt
+
+        let row = makeRuntimeModelRow(model)
+
+        #expect(row.capabilityReceiptRows == [
+            "task tools: unsupported • reason unsupported task • recovery Select a tool-capable model. • model catalog",
+            "task draft: unsupported • reason missing draft model",
+            "task target: unsupported • reason target disabled",
+            "task drafter: unsupported • reason drafter disabled",
+            "task metadata: unsupported • reason metadata inconsistent",
+            "task experimental: unsupported • reason experimental unverified",
+            "task none: unsupported",
+            "task future: unsupported • reason unrecognized 999",
+            "acceleration: unsupported • requested Speculative Decode • reason unsupported mode • recovery Switch to baseline or accelerated prefill. • model catalog",
+            "draft melix-dev-draft: unsupported • reason draft model not allowed • recovery Pick a compatible draft model. • draft cache",
+            "speculative head: unsupported • configured no • layers 0/0 • runtime missing • artifact missing • reason runtime unavailable • recovery Build the speculative-head index. • head index",
+        ])
+    }
+
     @Test("runtime model row falls back across residency states policies and ttl descriptors")
     func runtimeModelRowFallsBackAcrossResidencyStateBranches() {
         var explicitResidency = makeModelSummary(
@@ -4952,6 +5283,12 @@ struct RuntimeViewModelTests {
         model.settings.ext["melix.generation_config.top_p"] = "0.9"
         model.settings.ext["melix.generation_config.max_tokens"] = "320"
         model.settings.ext["ocr_stop_sequences"] = "<ocr:end>"
+        var capabilityReceipt = Melix_Controlplane_V1_ModelCapabilityReceipt()
+        capabilityReceipt.schemaVersion = "melix.model_capabilities.v1"
+        capabilityReceipt.tasks = [
+            makeTaskCapabilityReceipt("completion", provenance: "model catalog"),
+        ]
+        model.capabilityReceipt = capabilityReceipt
         model.cachePolicy.effectiveMode = .hybrid
         model.cachePolicy.compatibility = .cacheCompatibilityCompatible
         model.cachePolicy.compatibilityReason = "requested policy is compatible with the current worker cache capabilities"
@@ -5014,6 +5351,57 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedModelInfo?.ocrTopPText == "0.82")
         #expect(viewModel.selectedModelInfo?.ocrMaxTokensText == "192")
         #expect(viewModel.selectedModelInfo?.generationConfigTemperatureText == "0.12")
+        #expect(viewModel.selectedModelInfo?.capabilityReceiptRows == ["task completion: supported • model catalog"])
+    }
+
+    @Test("model load trust controls dispatch opt-in and clear policy updates")
+    @MainActor
+    func modelLoadTrustControlsDispatchOptInAndClearPolicyUpdates() async throws {
+        let emptyClient = FakeControlPlaneXPCClient()
+        let emptyViewModel = RuntimeViewModel(client: emptyClient)
+
+        #expect(emptyViewModel.modelSettingsLoadTrustModeText == "Unspecified")
+        await emptyViewModel.trustRemoteCodeForPrimaryModel()
+        #expect(await emptyClient.recordedModelSettingsUpdates.isEmpty)
+
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+        )
+        snapshot.models[0].settings.alias = "Melix Text"
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        await viewModel.trustRemoteCodeForPrimaryModel()
+
+        var updates = await client.recordedModelSettingsUpdates
+        #expect(updates.last?.modelID == "melix-dev-text")
+        #expect(updates.last?.values["load_trust_mode"] == "trust_remote_code")
+        #expect(viewModel.modelSettingsLoadTrustModeText == "Trust Remote Code")
+
+        await viewModel.clearPrimaryModelLoadTrustOverride()
+
+        updates = await client.recordedModelSettingsUpdates
+        #expect(updates.last?.modelID == "melix-dev-text")
+        #expect(updates.last?.values["load_trust_mode"] == "")
+        #expect(viewModel.modelSettingsLoadTrustModeText == "Unspecified")
+
+        await client.configureErrors(modelSettings: MenuBarTestError(description: "policy failed"))
+        await viewModel.updateModelLoadTrustMode(modelID: "melix-dev-text", mode: "trust_remote_code")
+        #expect(viewModel.lastError?.contains("policy failed") == true)
+
+        await client.configureErrors(modelSettings: nil)
+        await viewModel.updateModelLoadTrustMode(modelID: "melix-dev-text", mode: "safe")
+        #expect(viewModel.modelSettingsLoadTrustModeText == "Default Safe")
+
+        await viewModel.updateModelLoadTrustMode(modelID: "melix-dev-text", mode: "not_applicable")
+        #expect(viewModel.modelSettingsLoadTrustModeText == "Not Applicable")
+
+        await viewModel.updateModelLoadTrustMode(modelID: "melix-dev-text", mode: "unknown-trust-mode")
+        #expect(viewModel.modelSettingsLoadTrustModeText == "Unspecified")
     }
 
     @Test("model settings validation guards invalid drafts resets typed values and no-ops without a primary model")
@@ -5478,6 +5866,77 @@ struct RuntimeViewModelTests {
         #expect(await metrics.snapshot()["menu.bench_export_csv_ms"] != nil)
     }
 
+    @Test("diagnostics debug bundle action dispatches CLI and stores artifact result")
+    @MainActor
+    func diagnosticsDebugBundleActionDispatchesCLIAndStoresArtifactResult() async throws {
+        let cliRunner = RecordingCLIWorkflowRunner()
+        let expectedCommand = MelixCLICommand.debugBundle(
+            .init(
+                runID: "bench-1",
+                sourcePath: "/tmp/melix/jobs",
+                outputPath: "/tmp/melix-debug/bench-1",
+                json: true
+            )
+        )
+        await cliRunner.configureOutput(
+            makeDiagnosticsDebugBundleJSON(
+                bundleID: "bench-1",
+                bundlePath: "/tmp/melix-debug/bench-1"
+            ),
+            for: expectedCommand
+        )
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            cliWorkflowRunner: cliRunner
+        )
+
+        viewModel.updateDiagnosticsDebugBundleRunIDDraft(" bench-1 ")
+        viewModel.updateDiagnosticsDebugBundleSourcePathDraft(" /tmp/melix/jobs ")
+        viewModel.updateDiagnosticsDebugBundleOutputPathDraft(" /tmp/melix-debug/bench-1 ")
+        await viewModel.runDiagnosticsDebugBundle()
+
+        #expect(await cliRunner.snapshotRecordedCommands() == [expectedCommand])
+        let result = try #require(viewModel.diagnosticsDebugBundleResult)
+        #expect(result.bundleID == "bench-1")
+        #expect(result.bundlePath == "/tmp/melix-debug/bench-1")
+        #expect(result.manifestPath == "/tmp/melix-debug/bench-1/manifest.json")
+        #expect(result.artifactRows.map(\.kindText).contains("Effective Config"))
+        #expect(result.artifactRows.map(\.path).contains("/tmp/melix-debug/bench-1/effective-config.json"))
+        #expect(viewModel.diagnosticsDebugBundleMessage == "Debug bundle ready at /tmp/melix-debug/bench-1.")
+        #expect(viewModel.diagnosticsDebugBundleErrorMessage.isEmpty)
+        #expect(viewModel.diagnosticsDebugBundleInProgress == false)
+    }
+
+    @Test("diagnostics debug bundle reports validation runner and decode failures")
+    @MainActor
+    func diagnosticsDebugBundleReportsValidationRunnerAndDecodeFailures() async throws {
+        let missingRunIDViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        await missingRunIDViewModel.runDiagnosticsDebugBundle()
+        #expect(
+            missingRunIDViewModel.diagnosticsDebugBundleErrorMessage
+                == "Enter a run or job ID before creating a debug bundle."
+        )
+
+        let missingRunnerViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        missingRunnerViewModel.updateDiagnosticsDebugBundleRunIDDraft("bench-1")
+        await missingRunnerViewModel.runDiagnosticsDebugBundle()
+        #expect(missingRunnerViewModel.diagnosticsDebugBundleErrorMessage == "Diagnostics CLI runner is unavailable.")
+
+        let cliRunner = RecordingCLIWorkflowRunner()
+        let expectedCommand = MelixCLICommand.debugBundle(.init(runID: "bench-bad", json: true))
+        await cliRunner.configureOutput("{", for: expectedCommand)
+        let decodeFailureViewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            cliWorkflowRunner: cliRunner
+        )
+        decodeFailureViewModel.updateDiagnosticsDebugBundleRunIDDraft("bench-bad")
+        await decodeFailureViewModel.runDiagnosticsDebugBundle()
+
+        #expect(await cliRunner.snapshotRecordedCommands() == [expectedCommand])
+        #expect(decodeFailureViewModel.diagnosticsDebugBundleErrorMessage == "debug.bundle returned malformed JSON.")
+        #expect(decodeFailureViewModel.diagnosticsDebugBundleInProgress == false)
+    }
+
     @Test("benchmark configuration forwards canonical context lengths batch sizes repeats cache reasoning and structured output controls")
     @MainActor
     func benchmarkConfigurationForwardsCanonicalControls() async throws {
@@ -5648,6 +6107,509 @@ struct RuntimeViewModelTests {
 
         #expect(await imageOnlyClient.recordedBenchRequests.isEmpty)
         #expect(imageOnlyViewModel.lastError == "Select a local running server before running Benchmark.")
+    }
+
+    @Test("capability guards surface unsupported targets before benchmark evaluation and training dispatch")
+    @MainActor
+    func capabilityGuardsSurfaceUnsupportedTargetsBeforeDispatch() async throws {
+        let modelID = testReadyModelID
+        var model = makeModelSummary(modelID: modelID, state: .modelWarm)
+        var capabilityReceipt = Melix_Controlplane_V1_ModelCapabilityReceipt()
+        capabilityReceipt.schemaVersion = "melix.model_capabilities.v1"
+        var completion = makeTaskCapabilityReceipt(
+            "completion",
+            state: .capabilityUnsupported,
+            provenance: "model catalog"
+        )
+        completion.unsupportedReason = .unsupportedReasonUnsupportedTask
+        completion.recoveryHint = "Select a completion-capable model."
+        capabilityReceipt.tasks = [completion]
+        model.capabilityReceipt = capabilityReceipt
+
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [model],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        viewModel.selectedLoraModelID = modelID
+        viewModel.loraDatasetSourceKind = .localPackage
+        viewModel.loraDatasetURI = "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+        viewModel.loraAdapterName = "blocked-adapter"
+
+        await viewModel.runBench()
+
+        #expect(await client.recordedBenchRequests.isEmpty)
+        #expect(viewModel.lastError == "Benchmark is unavailable for \(testReadyModelID): completion capability is unsupported • reason unsupported task • recovery Select a completion-capable model.")
+        #expect(viewModel.diagnosticsBenchmarkUnavailableText == viewModel.lastError)
+
+        await viewModel.runEvaluation()
+
+        #expect(await client.recordedEvaluationRequests.isEmpty)
+        #expect(viewModel.lastError == "Evaluation is unavailable for \(testReadyModelID): completion capability is unsupported • reason unsupported task • recovery Select a completion-capable model.")
+        #expect(viewModel.diagnosticsEvaluationUnavailableText == viewModel.lastError)
+
+        await viewModel.trainPrimaryModel()
+
+        #expect(await client.recordedModelOperationRequests.isEmpty)
+        #expect(viewModel.lastError == "LoRA training is unavailable for \(testReadyModelID): completion capability is unsupported • reason unsupported task • recovery Select a completion-capable model.")
+
+        var supportedModel = makeModelSummary(modelID: modelID, state: .modelWarm)
+        var supportedReceipt = Melix_Controlplane_V1_ModelCapabilityReceipt()
+        supportedReceipt.tasks = [
+            makeTaskCapabilityReceipt("completion", state: .capabilitySupported, provenance: "model catalog")
+        ]
+        supportedModel.capabilityReceipt = supportedReceipt
+        let supportedClient = FakeControlPlaneXPCClient()
+        await supportedClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [supportedModel],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-2")]
+            )
+        )
+        let supportedViewModel = RuntimeViewModel(client: supportedClient)
+        await supportedViewModel.start()
+        supportedViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+
+        #expect(supportedViewModel.diagnosticsBenchmarkUnavailableText == nil)
+        await supportedViewModel.runBench()
+        #expect(await supportedClient.recordedBenchRequests.isEmpty == false)
+
+        let noReceiptClient = FakeControlPlaneXPCClient()
+        await noReceiptClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: modelID, state: .modelWarm)],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-3")]
+            )
+        )
+        let noReceiptViewModel = RuntimeViewModel(client: noReceiptClient)
+        await noReceiptViewModel.start()
+        noReceiptViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+
+        #expect(noReceiptViewModel.diagnosticsBenchmarkUnavailableText == nil)
+    }
+
+    @Test("memory fit preflight toggles flow into benchmark evaluation and training dispatch")
+    @MainActor
+    func memoryFitPreflightTogglesFlowIntoDispatch() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: testReadyModelID, state: .modelWarm)],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "train_lora",
+                outputPath: "/tmp/melix-train-lora/memory-fit.adapter.json",
+                manifestJSON: #"{"operation":"train_lora","job_id":"model-ops-memory-fit"}"#,
+                artifactKind: "adapter",
+                manifestPath: "/tmp/melix-train-lora/memory-fit.adapter.json"
+            ),
+            forNamedOperation: "train_lora"
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionModelID(testReadyModelID)
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        viewModel.selectedLoraModelID = testReadyModelID
+        viewModel.loraDatasetSourceKind = .localPackage
+        viewModel.loraDatasetURI = "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+        viewModel.loraAdapterName = "memory-fit-adapter"
+
+        #expect(viewModel.benchmarkPreflightFitCheck == false)
+        #expect(viewModel.benchmarkAllowMemoryRisk == false)
+        #expect(viewModel.evaluationPreflightFitCheck == false)
+        #expect(viewModel.evaluationAllowMemoryRisk == false)
+        #expect(viewModel.trainingPreflightFitCheck == false)
+        #expect(viewModel.trainingAllowMemoryRisk == false)
+
+        viewModel.benchmarkPreflightFitCheck = true
+        viewModel.benchmarkAllowMemoryRisk = true
+        viewModel.evaluationPreflightFitCheck = true
+        viewModel.evaluationAllowMemoryRisk = true
+        viewModel.trainingPreflightFitCheck = true
+        viewModel.trainingAllowMemoryRisk = true
+
+        await viewModel.runBench()
+        await viewModel.runEvaluation()
+        await viewModel.trainPrimaryModel()
+
+        let benchRequest = try #require(await client.recordedBenchRequests.last)
+        #expect(benchRequest.parameters["preflight_fit_check"] == "true")
+        #expect(benchRequest.parameters["allow_memory_risk"] == "true")
+
+        let evaluationRequest = try #require(await client.recordedEvaluationRequests.last)
+        #expect(evaluationRequest.parameters["preflight_fit_check"] == "true")
+        #expect(evaluationRequest.parameters["allow_memory_risk"] == "true")
+
+        let trainRequest = try #require(await client.recordedModelOperationRequests.first { $0.operation == "train_lora" })
+        #expect(trainRequest.ext["preflight_fit_check"] == "true")
+        #expect(trainRequest.ext["allow_memory_risk"] == "true")
+
+        let cliClient = FakeControlPlaneXPCClient()
+        await cliClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [makeModelSummary(modelID: testReadyModelID, state: .modelWarm)],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        let workflowRunner = RecordingCLIWorkflowRunner(surface: .subprocess)
+        await workflowRunner.configureHandler { command in
+            switch command {
+            case .benchRun:
+                return .success(makeCLIBenchRunJSON())
+            case .evalRun:
+                return .success(makeCLIEvaluationRunJSON())
+            case .loraTrain:
+                return .success(
+                    """
+                    {
+                      "operation": "train_lora",
+                      "job_id": "cli-memory-fit",
+                      "output_path": "/tmp/melix-train-lora/cli-memory-fit.adapter.json",
+                      "adapter_name": "memory-fit-adapter",
+                      "dataset_uri": "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+                    }
+                    """
+                )
+            default:
+                return .success("{}\n")
+            }
+        }
+        let cliViewModel = RuntimeViewModel(
+            client: cliClient,
+            cliWorkflowRunner: workflowRunner
+        )
+        await cliViewModel.start()
+        cliViewModel.updateSelectedServerSessionModelID(testReadyModelID)
+        cliViewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        cliViewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        cliViewModel.selectedLoraModelID = testReadyModelID
+        cliViewModel.loraDatasetSourceKind = .localPackage
+        cliViewModel.loraDatasetURI = "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+        cliViewModel.loraAdapterName = "memory-fit-adapter"
+        cliViewModel.benchmarkPreflightFitCheck = true
+        cliViewModel.benchmarkAllowMemoryRisk = true
+        cliViewModel.evaluationPreflightFitCheck = true
+        cliViewModel.evaluationAllowMemoryRisk = true
+        cliViewModel.trainingPreflightFitCheck = true
+        cliViewModel.trainingAllowMemoryRisk = true
+
+        await cliViewModel.runBench()
+        await cliViewModel.runEvaluation()
+        await cliViewModel.trainPrimaryModel()
+
+        let commands = await workflowRunner.snapshotRecordedCommands()
+        let benchOptions = try #require(commands.compactMap { command -> BenchRunOptions? in
+            if case .benchRun(let options) = command {
+                return options
+            }
+            return nil
+        }.last)
+        #expect(benchOptions.preflightFitCheck)
+        #expect(benchOptions.allowMemoryRisk)
+
+        let evalOptions = try #require(commands.compactMap { command -> EvalRunOptions? in
+            if case .evalRun(let options) = command {
+                return options
+            }
+            return nil
+        }.last)
+        #expect(evalOptions.preflightFitCheck)
+        #expect(evalOptions.allowMemoryRisk)
+
+        let loraOptions = try #require(commands.compactMap { command -> LoraTrainOptions? in
+            if case .loraTrain(let options) = command {
+                return options
+            }
+            return nil
+        }.last)
+        #expect(loraOptions.preflightFitCheck)
+        #expect(loraOptions.allowMemoryRisk)
+    }
+
+    @Test("memory fit preflight blocks unsafe dispatch until allow memory risk override")
+    @MainActor
+    func memoryFitPreflightBlocksUnsafeDispatchUntilOverride() async throws {
+        var model = makeModelSummary(modelID: testReadyModelID, state: .modelWarm)
+        model.settings.ext["melix.memory_fit.benchmark.status"] = "heavy"
+        model.settings.ext["melix.memory_fit.benchmark.reason"] = "Benchmark KV cache may exceed comfort budget."
+        model.settings.ext["melix.memory_fit.eval.status"] = "blocked"
+        model.settings.ext["melix.memory_fit.eval.reason"] = "Evaluation prompt batch exceeds safe memory."
+        model.settings.ext["melix.memory_fit.train.status"] = "blocked"
+        model.settings.ext["melix.memory_fit.train.reason"] = "Training optimizer estimate exceeds unified memory."
+
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [model],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "train_lora",
+                outputPath: "/tmp/melix-train-lora/memory-fit.adapter.json",
+                manifestJSON: #"{"operation":"train_lora","job_id":"model-ops-memory-fit"}"#,
+                artifactKind: "adapter",
+                manifestPath: "/tmp/melix-train-lora/memory-fit.adapter.json"
+            ),
+            forNamedOperation: "train_lora"
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.updateSelectedServerSessionModelID(testReadyModelID)
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+        viewModel.selectedLoraModelID = testReadyModelID
+        viewModel.loraDatasetSourceKind = .localPackage
+        viewModel.loraDatasetURI = "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+        viewModel.loraAdapterName = "memory-fit-adapter"
+        viewModel.benchmarkPreflightFitCheck = true
+        viewModel.evaluationPreflightFitCheck = true
+        viewModel.trainingPreflightFitCheck = true
+
+        let benchmarkMessage = try #require(viewModel.diagnosticsBenchmarkUnavailableText)
+        #expect(benchmarkMessage == "Benchmark memory fit preflight blocked for \(testReadyModelID): Heavy - Benchmark KV cache may exceed comfort budget. Enable Allow Memory Risk to override.")
+        await viewModel.runBench()
+        #expect(await client.recordedBenchRequests.isEmpty)
+        #expect(viewModel.lastError == benchmarkMessage)
+
+        let evaluationMessage = try #require(viewModel.diagnosticsEvaluationUnavailableText)
+        #expect(evaluationMessage == "Evaluation memory fit preflight blocked for \(testReadyModelID): Blocked - Evaluation prompt batch exceeds safe memory. Enable Allow Memory Risk to override.")
+        await viewModel.runEvaluation()
+        #expect(await client.recordedEvaluationRequests.isEmpty)
+        #expect(viewModel.lastError == evaluationMessage)
+
+        let trainingMessage = try #require(viewModel.loraTrainingMemoryFitUnavailableText)
+        #expect(trainingMessage == "LoRA training memory fit preflight blocked for \(testReadyModelID): Blocked - Training optimizer estimate exceeds unified memory. Enable Allow Memory Risk to override.")
+        await viewModel.trainPrimaryModel()
+        #expect(await client.recordedModelOperationRequests.isEmpty)
+        #expect(viewModel.lastError == trainingMessage)
+
+        viewModel.benchmarkAllowMemoryRisk = true
+        viewModel.evaluationAllowMemoryRisk = true
+        viewModel.trainingAllowMemoryRisk = true
+
+        #expect(viewModel.diagnosticsBenchmarkUnavailableText == nil)
+        #expect(viewModel.diagnosticsEvaluationUnavailableText == nil)
+        #expect(viewModel.loraTrainingMemoryFitUnavailableText == nil)
+
+        await viewModel.runBench()
+        await viewModel.runEvaluation()
+        await viewModel.trainPrimaryModel()
+
+        #expect(await client.recordedBenchRequests.isEmpty == false)
+        #expect(await client.recordedEvaluationRequests.isEmpty == false)
+        #expect(await client.recordedModelOperationRequests.contains { $0.operation == "train_lora" })
+    }
+
+    @Test("memory fit receipt summaries persist into selected run and training evidence")
+    @MainActor
+    func memoryFitReceiptSummariesPersistIntoSelectedRunAndTrainingEvidence() async throws {
+        let modelID = "melix-dev-text-lora"
+        var model = makeModelSummary(modelID: modelID, state: .modelWarm)
+        model.settings.ext["melix.memory_fit.benchmark.status"] = "heavy"
+        model.settings.ext["melix.memory_fit.benchmark.reason"] = "Benchmark KV cache may exceed comfort budget."
+        model.settings.ext["melix.memory_fit.benchmark.estimated_active_memory_bytes"] = "34359738368"
+        model.settings.ext["melix.memory_fit.eval.status"] = "good"
+        model.settings.ext["melix.memory_fit.eval.reason"] = "Eval sample size fits available memory."
+        model.settings.ext["melix.memory_fit.eval.total_unified_memory_bytes"] = "68719476736"
+        model.settings.ext["melix.memory_fit.train.status"] = "blocked"
+        model.settings.ext["melix.memory_fit.train.reason"] = "Training optimizer estimate exceeds unified memory."
+        model.settings.ext["melix.memory_fit.train.safety_threshold_fraction"] = "0.85"
+        let legacyArtifactsData = try #require(
+            #"{"adapter_manifest_path":"/tmp/legacy.adapter.json"}"#.data(using: .utf8)
+        )
+        let legacyArtifacts = try JSONDecoder().decode(
+            LoraTrainingFollowUpArtifacts.self,
+            from: legacyArtifactsData
+        )
+        #expect(legacyArtifacts.adapterManifestPath == "/tmp/legacy.adapter.json")
+        #expect(legacyArtifacts.memoryFitSummaryText == "")
+        let encodedArtifacts = try JSONEncoder().encode(
+            LoraTrainingFollowUpArtifacts(
+                memoryFitSummaryText: "Heavy - Benchmark KV cache may exceed comfort budget."
+            )
+        )
+        let encodedPayload = try #require(
+            JSONSerialization.jsonObject(with: encodedArtifacts) as? [String: Any]
+        )
+        #expect(encodedPayload["memory_fit_summary_text"] as? String == "Heavy - Benchmark KV cache may exceed comfort budget.")
+
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [model],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "train_lora",
+                outputPath: "/tmp/melix-train-lora/memory-fit-evidence.adapter.json",
+                manifestJSON: #"{"operation":"train_lora","job_id":"model-ops-memory-fit-evidence"}"#,
+                artifactKind: "adapter",
+                manifestPath: "/tmp/melix-train-lora/memory-fit-evidence.adapter.json"
+            ),
+            forNamedOperation: "train_lora"
+        )
+        let store = FakeLoraTrainingJobStore()
+        let viewModel = RuntimeViewModel(
+            client: client,
+            loraTrainingJobStore: store
+        )
+        await viewModel.start()
+
+        await viewModel.refreshBenchmarkHistory()
+        await viewModel.refreshEvaluationHistory()
+
+        let benchmarkEvidence = try #require(viewModel.selectedBenchmarkHistoryEntry?.memoryFitSummaryText)
+        #expect(benchmarkEvidence == "Heavy - Benchmark KV cache may exceed comfort budget. • active memory 32.00 GB")
+        #expect(viewModel.selectedBenchmarkMemoryFitEvidenceText == benchmarkEvidence)
+
+        let evaluationEvidence = try #require(viewModel.selectedEvaluationHistoryEntry?.memoryFitSummaryText)
+        #expect(evaluationEvidence == "Good - Eval sample size fits available memory. • unified memory 64.00 GB")
+        #expect(viewModel.selectedEvaluationMemoryFitEvidenceText == evaluationEvidence)
+
+        let pendingClient = FakeControlPlaneXPCClient()
+        await pendingClient.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [model],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-2")]
+            )
+        )
+        await pendingClient.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSONWithoutResults())
+        )
+        var pendingEvaluationJob = Melix_Controlplane_V1_EvaluationJobSummary()
+        pendingEvaluationJob.jobID = "eval-memory-fit-pending"
+        pendingEvaluationJob.modelID = modelID
+        pendingEvaluationJob.taskKind = "text-generation"
+        pendingEvaluationJob.sourceRepo = "cais/mmlu"
+        pendingEvaluationJob.suiteID = "mmlu"
+        pendingEvaluationJob.datasetID = "mmlu.dev.v1"
+        pendingEvaluationJob.sampleSize = 8
+        pendingEvaluationJob.scoringMode = "multiple_choice_accuracy"
+        pendingEvaluationJob.status = "completed"
+        pendingEvaluationJob.outputDir = "/tmp/melix/evaluation/runs/eval-memory-fit-pending"
+        pendingEvaluationJob.createdAtUnixMs = 1_712_600_000_000
+        pendingEvaluationJob.updatedAtUnixMs = 1_712_600_001_000
+        var pendingMetric = Melix_Controlplane_V1_BenchmarkMetricValue()
+        pendingMetric.name = "eval.mmlu.typed_score_mean"
+        pendingMetric.value = 0.75
+        pendingMetric.unit = "ratio"
+        var pendingSummary = Melix_Controlplane_V1_EvaluationResultSummary()
+        pendingSummary.jobID = "eval-memory-fit-pending"
+        pendingSummary.suiteID = "mmlu"
+        pendingSummary.datasetID = "mmlu.dev.v1"
+        pendingSummary.sampleSize = 8
+        pendingSummary.metrics = [pendingMetric]
+        await pendingClient.configureEvaluationResponse(
+            ControlPlaneEvaluationResult(job: pendingEvaluationJob, results: [pendingSummary])
+        )
+        let pendingViewModel = RuntimeViewModel(client: pendingClient)
+        await pendingViewModel.start()
+        pendingViewModel.updateSelectedServerSessionModelID(modelID)
+        pendingViewModel.selectedEvaluationModelID = modelID
+        pendingViewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+
+        await pendingViewModel.runEvaluation()
+
+        let pendingEvidence = try #require(pendingViewModel.selectedEvaluationHistoryEntry?.memoryFitSummaryText)
+        #expect(pendingViewModel.selectedEvaluationHistoryJobID == "eval-memory-fit-pending")
+        #expect(pendingEvidence == evaluationEvidence)
+        #expect(pendingViewModel.selectedEvaluationMemoryFitEvidenceText == pendingEvidence)
+
+        viewModel.selectedLoraModelID = modelID
+        viewModel.loraDatasetSourceKind = .localPackage
+        viewModel.loraDatasetURI = "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1"
+        viewModel.loraAdapterName = "memory-fit-evidence-adapter"
+
+        await viewModel.trainPrimaryModel()
+
+        let saved = try #require(store.savedRecords.last)
+        #expect(saved.followUpArtifacts.memoryFitSummaryText == "Blocked - Training optimizer estimate exceeds unified memory. • threshold 85%")
+        #expect(viewModel.selectedLoraTrainingJobMemoryFitEvidenceText == saved.followUpArtifacts.memoryFitSummaryText)
+    }
+
+    @Test("capability guards explain unsupported tools and acceleration disabled states")
+    @MainActor
+    func capabilityGuardsExplainUnsupportedToolsAndAccelerationDisabledStates() async throws {
+        let modelID = testReadyModelID
+        var model = makeModelSummary(modelID: modelID, state: .modelWarm)
+        var capabilityReceipt = Melix_Controlplane_V1_ModelCapabilityReceipt()
+        var tools = makeTaskCapabilityReceipt(
+            "tools",
+            state: .capabilityUnsupported,
+            provenance: "tool parser metadata"
+        )
+        tools.unsupportedReason = .unsupportedReasonUnsupportedTask
+        tools.recoveryHint = "Select a tool-capable model."
+
+        var completion = makeTaskCapabilityReceipt(
+            "completion",
+            state: .capabilitySupported,
+            provenance: "model catalog"
+        )
+        completion.unsupportedReason = .unsupportedReasonNone
+
+        var acceleration = Melix_Controlplane_V1_AccelerationCapabilityReceipt()
+        acceleration.requestedAccelerationMode = .speculativeDecode
+        acceleration.supportedModes = [.baseline]
+        acceleration.state = .capabilityUnsupported
+        acceleration.unsupportedReason = .unsupportedReasonUnsupportedMode
+        acceleration.recoveryHint = "Switch to baseline or pick a compatible draft model."
+
+        capabilityReceipt.tasks = [completion, tools]
+        capabilityReceipt.acceleration = acceleration
+        model.capabilityReceipt = capabilityReceipt
+
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(
+            makeSnapshot(
+                serverState: .serverReady,
+                models: [model],
+                runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        viewModel.modelSettingsToolParserXMLFallbackDraft = true
+        viewModel.modelSettingsAccelerationModeDraft = "speculative_decode"
+        viewModel.updateSelectedServerSessionAccelerationMode("speculative_decode")
+
+        #expect(viewModel.modelSettingsToolParserXMLFallbackDisabledReason == "Tool parser XML fallback is unavailable for \(testReadyModelID): tools capability is unsupported • reason unsupported task • recovery Select a tool-capable model.")
+        #expect(viewModel.modelSettingsAccelerationModeDisabledReason == "Model settings acceleration is unavailable for \(testReadyModelID): Speculative Decode acceleration is unsupported • reason unsupported mode • recovery Switch to baseline or pick a compatible draft model.")
+        #expect(viewModel.selectedServerAccelerationModeDisabledReason == "Serving acceleration is unavailable for \(testReadyModelID): Speculative Decode acceleration is unsupported • reason unsupported mode • recovery Switch to baseline or pick a compatible draft model.")
+
+        viewModel.modelSettingsToolParserXMLFallbackDraft = false
+        viewModel.modelSettingsAccelerationModeDraft = "baseline"
+        viewModel.updateSelectedServerSessionAccelerationMode("baseline")
+
+        #expect(viewModel.modelSettingsToolParserXMLFallbackDisabledReason != nil)
+        #expect(viewModel.modelSettingsAccelerationModeDisabledReason == nil)
+        #expect(viewModel.selectedServerAccelerationModeDisabledReason == nil)
     }
 
     @Test("benchmark and evaluation control normalization fills defaults and preserves toggle state")
@@ -5825,6 +6787,105 @@ struct RuntimeViewModelTests {
         #expect(evaluationRequest.modelID == localModelID)
         #expect(evaluationRequest.hfRepoID.isEmpty)
         #expect(evaluationRequest.remoteTarget == nil)
+    }
+
+    @Test("diagnostics summaries include serving acceleration profile metadata")
+    @MainActor
+    func diagnosticsSummariesIncludeServingAccelerationProfileMetadata() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let localModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(modelID: localModelID, state: .modelWarm)],
+            runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+        )
+        var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
+        servingDefaults.serverSessionID = "server-session-1"
+        servingDefaults.servedModelID = localModelID
+        servingDefaults.requestedTemperature = 0.4
+        servingDefaults.requestedTopP = 0.9
+        servingDefaults.requestedMaxTokens = 512
+        servingDefaults.requestedStreamIntervalTokens = 2
+        servingDefaults.requestedMaxConcurrentRequests = 8
+        servingDefaults.requestedConcurrentProcessingEnabled = true
+        servingDefaults.requestedPrefillBatchSize = 4
+        servingDefaults.requestedCompletionBatchSize = 4
+        servingDefaults.requestedAccelerationMode = .speculativeDecode
+        servingDefaults.requestedNumDraftTokens = 6
+        servingDefaults.requestedAccelerationProfile = "throughput"
+        servingDefaults.effectiveTemperature = 0.4
+        servingDefaults.effectiveTopP = 0.9
+        servingDefaults.effectiveMaxTokens = 512
+        servingDefaults.effectiveStreamIntervalTokens = 2
+        servingDefaults.effectiveMaxConcurrentRequests = 8
+        servingDefaults.effectiveConcurrentProcessingEnabled = true
+        servingDefaults.effectivePrefillBatchSize = 4
+        servingDefaults.effectiveCompletionBatchSize = 4
+        servingDefaults.effectiveAccelerationMode = .speculativeDecode
+        servingDefaults.effectiveNumDraftTokens = 6
+        servingDefaults.effectiveAccelerationProfile = "throughput"
+        servingDefaults.accelerationProfileIntent = "Throughput-first serving with speculative decode when a draft model is supplied."
+        snapshot.servingDefaults.sessions = [servingDefaults]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        let localTarget = try #require(viewModel.diagnosticsServerTargets.first { $0.kind == .localServer })
+        viewModel.selectDiagnosticsServerTarget(id: localTarget.id)
+
+        #expect(localTarget.detailText.contains("profile Throughput"))
+        #expect(viewModel.diagnosticsTargetSummaryText.contains("profile Throughput"))
+        #expect(viewModel.benchmarkTargetSummaryText.contains("profile Throughput"))
+        #expect(viewModel.evaluationTargetSummaryText.contains("profile Throughput"))
+    }
+
+    @Test("benchmark and matrix profile fields appear in setup and history rows")
+    @MainActor
+    func benchmarkAndMatrixProfileFieldsAppearInSetupAndHistoryRows() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let localModelID = "melix-dev-text-lora"
+        var snapshot = makeSnapshot(
+            serverState: .serverReady,
+            models: [makeModelSummary(modelID: localModelID, state: .modelWarm)],
+            runtimeSessions: [makeRuntimeSession(serverSessionID: "server-session-1")]
+        )
+        var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
+        servingDefaults.serverSessionID = "server-session-1"
+        servingDefaults.servedModelID = localModelID
+        servingDefaults.requestedAccelerationProfile = "throughput"
+        servingDefaults.effectiveAccelerationProfile = "throughput"
+        servingDefaults.accelerationProfileIntent = "Throughput-first serving with speculative decode when a draft model is supplied."
+        snapshot.servingDefaults.sessions = [servingDefaults]
+        await client.configureSnapshot(snapshot)
+        await client.configureExportResult(
+            ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
+        )
+        await client.configureBenchResponse(
+            ControlPlaneBenchResult(
+                reportPath: "/tmp/melix/bench/runs/bench-profile/bench-report.md",
+                reportMarkdown: "# Melix Bench\n",
+                metrics: ["bench.smoke.tokens_per_second": 61.20]
+            )
+        )
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        let localTarget = try #require(viewModel.diagnosticsServerTargets.first { $0.kind == .localServer })
+        viewModel.selectDiagnosticsServerTarget(id: localTarget.id)
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+
+        await viewModel.runBench()
+
+        let benchRequest = try #require(await client.recordedBenchRequests.last)
+        let benchmarkEntry = try #require(viewModel.benchmarkHistory.first { $0.jobID == "bench-newer" })
+        let matrixEntry = try #require(viewModel.benchmarkMatrixHistory.first { $0.jobID == "matrix-newer" })
+        let matrixSummaryRow = try #require(viewModel.benchmarkMatrixSummaryRows.first { $0.id.contains("matrix-newer") })
+
+        #expect(viewModel.benchmarkTargetSummaryText.contains("profile Throughput"))
+        #expect(benchRequest.parameters["acceleration_profile"] == "throughput")
+        #expect(benchmarkEntry.profileSummaryText == "Profile: Throughput")
+        #expect(matrixEntry.profileSummaryText == "Profile: Low Memory")
+        #expect(matrixSummaryRow.configurationSummary.contains("Low Memory"))
     }
 
     @Test("server model options hide placeholders and create from ready registry models")
@@ -8779,6 +9840,144 @@ struct RuntimeViewModelTests {
         #expect(fallbackViewModel.selectedBenchmarkModelID == "melix-dev-text")
     }
 
+    @Test("lora fused activation blocks non mergeable adapter receipts before dispatch")
+    @MainActor
+    func loraFusedActivationBlocksNonMergeableAdapterReceiptsBeforeDispatch() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeRegistrySnapshotManifest(
+                    publishedRepo: "",
+                    targetRepo: "melix/adapters/non-mergeable-adapter"
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "activate_adapter",
+                outputPath: "/tmp/melix-activate/activate_adapter.derived_model.json",
+                manifestJSON: #"{"operation":"activate_adapter","derived_model_id":"should-not-dispatch"}"#
+            ),
+            forNamedOperation: "activate_adapter"
+        )
+        var config = makeDesktopLoraTrainingConfig(adapterName: "non-mergeable-adapter")
+        config.activationMode = RuntimeLoraActivationMode.fusedDerivedModel.rawValue
+        var job = makeDesktopLoraTrainingJobRecord(
+            id: "non-mergeable-job",
+            title: "Non Mergeable Adapter",
+            config: config,
+            status: .succeeded
+        )
+        job.latestOutputText = #"""
+        {
+          "operation": "train_lora",
+          "adapter_family": "fake_relora",
+          "adapter_algorithm": "fake_relora",
+          "backend_supported": true,
+          "unsupported_reason": "non_mergeable_adapter",
+          "adapter_capabilities": {
+            "lora_like": true,
+            "mergeable": false,
+            "relora_compatible": true,
+            "quantized_base_supported": true
+          }
+        }
+        """#
+        let store = FakeLoraTrainingJobStore(jobs: [job])
+        let viewModel = RuntimeViewModel(
+            client: client,
+            loraTrainingJobStore: store
+        )
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+
+        viewModel.prepareSelectedLoraTrainingJobFollowUp(.activation)
+        #expect(viewModel.loraActivationMode == .fusedDerivedModel)
+        #expect(viewModel.selectedAdapterPackageID == "melix-dev-adapter@model-ops-0001")
+
+        await viewModel.activateLatestAdapter()
+
+        let disabledReason = "Fused activation is disabled for fake_relora: non_mergeable_adapter. Use Adapter-backed Runtime instead."
+        #expect(viewModel.lastError == disabledReason)
+        #expect(viewModel.loraWorkflowStatus?.phase == .failed)
+        #expect(viewModel.loraWorkflowStatus?.detail == disabledReason)
+        let modelOperationRequests = await client.recordedModelOperationRequests
+        #expect(modelOperationRequests.contains { $0.operation == "activate_adapter" } == false)
+    }
+
+    @Test("lora adapter-backed activation remains available for backend supported receipts")
+    @MainActor
+    func loraAdapterBackedActivationRemainsAvailableForBackendSupportedReceipts() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeRegistrySnapshotManifest(
+                    publishedRepo: "",
+                    targetRepo: "melix/adapters/non-mergeable-adapter"
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "activate_adapter",
+                outputPath: "/tmp/melix-activate/activate_adapter.adapter_backed.json",
+                manifestJSON: #"{"operation":"activate_adapter","adapter_runtime_id":"adapter-backed-runtime"}"#
+            ),
+            forNamedOperation: "activate_adapter"
+        )
+        var config = makeDesktopLoraTrainingConfig(adapterName: "non-mergeable-adapter")
+        config.activationMode = RuntimeLoraActivationMode.adapterBackedRuntime.rawValue
+        var job = makeDesktopLoraTrainingJobRecord(
+            id: "backend-supported-job",
+            title: "Backend Supported Adapter",
+            config: config,
+            status: .succeeded
+        )
+        job.latestOutputText = #"""
+        {
+          "operation": "train_lora",
+          "adapter_family": "fake_relora",
+          "adapter_algorithm": "fake_relora",
+          "backend_supported": true,
+          "unsupported_reason": "non_mergeable_adapter",
+          "adapter_capabilities": {
+            "lora_like": true,
+            "mergeable": false,
+            "relora_compatible": true,
+            "quantized_base_supported": true
+          }
+        }
+        """#
+        let store = FakeLoraTrainingJobStore(jobs: [job])
+        let viewModel = RuntimeViewModel(
+            client: client,
+            loraTrainingJobStore: store
+        )
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+
+        viewModel.prepareSelectedLoraTrainingJobFollowUp(.activation)
+        #expect(viewModel.loraActivationMode == .adapterBackedRuntime)
+        #expect(viewModel.selectedAdapterPackageID == "melix-dev-adapter@model-ops-0001")
+
+        await viewModel.activateLatestAdapter()
+
+        #expect(viewModel.lastError == nil)
+        #expect(viewModel.loraWorkflowStatus?.phase == .succeeded)
+        let activateRequest = try #require(
+            await client.recordedModelOperationRequests.first { $0.operation == "activate_adapter" }
+        )
+        #expect(activateRequest.modelID == "melix-dev-text")
+        #expect(activateRequest.ext["artifact_path"] == "/tmp/melix-train-lora/train_lora.adapter.json")
+        #expect(activateRequest.ext["activation_mode"] == "adapter_backed_runtime")
+    }
+
     @Test("lora saved draft fills a blank selected title from the current config")
     @MainActor
     func loraSavedDraftFillsBlankSelectedTitleFromCurrentConfig() async throws {
@@ -10285,6 +11484,85 @@ struct RuntimeViewModelTests {
         #expect(viewModel.primaryModel?.diskStreamingModeText == "Disabled")
         #expect(viewModel.primaryModel?.accelerationModeText == "Active KV Quantized")
         #expect(viewModel.primaryModel?.accelerationProfileID == "kv-q8")
+    }
+
+    @Test("model memory fit receipts include import benchmark eval and train rows")
+    @MainActor
+    func modelMemoryFitReceiptsIncludeImportBenchmarkEvalAndTrainRows() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        var model = makeModelSummary(modelID: "melix-fit-receipts", state: .modelWarm)
+        model.settings.alias = "Fit Receipts"
+        model.settings.ext["melix.memory_fit.import.status"] = "blocked"
+        model.settings.ext["melix.memory_fit.import.reason"] = "Import requires 42 GB active memory."
+        model.settings.ext["melix.memory_fit.benchmark.status"] = "heavy"
+        model.settings.ext["melix.memory_fit.benchmark.reason"] = "Benchmark KV cache may exceed comfort budget."
+        model.settings.ext["melix.memory_fit.eval.status"] = "good"
+        model.settings.ext["melix.memory_fit.eval.reason"] = "Eval sample size fits available memory."
+        model.settings.ext["melix.memory_fit.train.status"] = "unknown"
+        model.settings.ext["melix.memory_fit.train.reason"] = "Training optimizer estimate is unavailable."
+        snapshot.models = [model]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let rows = try #require(viewModel.primaryModel?.memoryFitReceiptRows)
+        #expect(rows.map(\.title) == ["Import", "Benchmark", "Eval", "Train"])
+        #expect(rows.map(\.statusText) == ["Blocked", "Heavy", "Good", "Unknown"])
+        #expect(rows.map(\.reasonText) == [
+            "Import requires 42 GB active memory.",
+            "Benchmark KV cache may exceed comfort budget.",
+            "Eval sample size fits available memory.",
+            "Training optimizer estimate is unavailable.",
+        ])
+
+        var info = Melix_Controlplane_V1_ModelInfo()
+        info.ok = true
+        info.modelKind = "text"
+        info.maxContext = 8_192
+        info.supportedParsers = ["text"]
+        info.supportedModalities = ["text"]
+        await client.configureModelInfo(info)
+        await viewModel.fetchModelInfo(modelID: "melix-fit-receipts")
+        #expect(viewModel.selectedModelInfo?.memoryFitReceiptRows == rows)
+
+        let noFitRow = makeRuntimeModelRow(makeModelSummary(modelID: "melix-no-fit", state: .modelWarm))
+        #expect(noFitRow.memoryFitReceiptRows.isEmpty)
+    }
+
+    @Test("model memory fit receipts include resource summaries")
+    @MainActor
+    func modelMemoryFitReceiptsIncludeResourceSummaries() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        var model = makeModelSummary(modelID: "melix-fit-resources", state: .modelWarm)
+        model.settings.ext["melix.memory_fit.benchmark.status"] = "heavy"
+        model.settings.ext["melix.memory_fit.benchmark.reason"] = "Benchmark KV cache may exceed comfort budget."
+        model.settings.ext["melix.memory_fit.benchmark.estimated_active_memory_bytes"] = "34359738368"
+        model.settings.ext["melix.memory_fit.benchmark.estimated_disk_usage_bytes"] = "8589934592"
+        model.settings.ext["melix.memory_fit.benchmark.available_disk_bytes"] = "17179869184"
+        model.settings.ext["melix.memory_fit.benchmark.disk_fit_status"] = "good"
+        model.settings.ext["melix.memory_fit.benchmark.total_unified_memory_bytes"] = "68719476736"
+        model.settings.ext["melix.memory_fit.benchmark.safety_threshold_fraction"] = "0.85"
+        model.settings.ext["melix.memory_fit.benchmark.unknown_fields"] = "kv_cache,dataset_cache"
+        snapshot.models = [model]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let row = try #require(viewModel.primaryModel?.memoryFitReceiptRows.first)
+        #expect(row.title == "Benchmark")
+        #expect(row.detailRows == [
+            "active memory 32.00 GB",
+            "disk 8.00 GB required • 16.00 GB available • Good",
+            "unified memory 64.00 GB",
+            "threshold 85%",
+            "unknown fields kv_cache, dataset_cache",
+        ])
     }
 
     @Test("model settings drafts map require and unknown disk streaming modes")
@@ -12259,6 +13537,18 @@ private func makeCapabilityModelSummary(
     model.features = features
     model.maxContext = 8192
     return model
+}
+
+private func makeTaskCapabilityReceipt(
+    _ capability: String,
+    state: Melix_Controlplane_V1_CapabilitySupportState = .capabilitySupported,
+    provenance: String
+) -> Melix_Controlplane_V1_TaskCapabilityReceipt {
+    var receipt = Melix_Controlplane_V1_TaskCapabilityReceipt()
+    receipt.capability = capability
+    receipt.state = state
+    receipt.provenance = provenance
+    return receipt
 }
 
 private func makeRuntimeModelRow(state: Melix_Controlplane_V1_ModelState) -> RuntimeModelRow {
