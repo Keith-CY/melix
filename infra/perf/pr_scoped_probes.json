@@ -3117,7 +3117,7 @@
         "direction": "informational"
       }
     ],
-    "notes": "Compares fenced event-extraction JSON response trimming without materializing splitlines for partially fenced model responses."
+    "notes": "Compares fenced event-extraction JSON response trailer handling without materializing a stripped trailing slice after the decoded JSON object."
   },
   {
     "id": "mlx-audio-wav-streaming-pcm",
