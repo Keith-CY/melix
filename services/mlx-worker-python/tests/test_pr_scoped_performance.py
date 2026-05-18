@@ -1111,6 +1111,73 @@ def test_scope_report_selects_maintenance_prompt_shape_probe() -> None:
     assert "maintenance-prompt-shape-vector-repeat" in probe_ids
 
 
+def test_maintenance_prompt_shape_probe_inline_fallback_is_base_compatible() -> None:
+    probes = load_probe_registry(REGISTRY_PATH)
+    probe = next(
+        candidate
+        for candidate in probes
+        if candidate.probe_id == "maintenance-prompt-shape-vector-repeat"
+    )
+
+    assert "_prompt_token_count" in probe.probe_command
+    assert 'getattr(MaintenanceCore, "_benchmark_prompt_token_count", None)' in probe.probe_command
+    assert 'getattr(MaintenanceCore, "_benchmark_context_lengths", None)' in probe.probe_command
+    assert "MaintenanceCore._benchmark_prompt_token_count(plain_prompt)" not in probe.probe_command
+    assert "MaintenanceCore._benchmark_context_lengths(suite=suite, parameters={})" not in probe.probe_command
+
+
+def test_maintenance_prompt_shape_probe_is_importable_without_running() -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/maintenance_prompt_shape_probe.py"))
+
+    assert callable(probe_script["main"])
+    assert "elapsed_samples" not in probe_script
+
+
+def test_maintenance_prompt_shape_probe_validates_invariants(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/maintenance_prompt_shape_probe.py"))
+    main = probe_script["main"]
+    probe_globals = main.__globals__
+    maintenance_core = probe_script["MaintenanceCore"]
+
+    monkeypatch.setitem(probe_globals, "contexts", (2,))
+    monkeypatch.setitem(probe_globals, "sample_count", 1)
+    monkeypatch.setitem(probe_globals, "iteration_count", 1)
+    monkeypatch.setitem(probe_globals, "plain_iteration_count", 1)
+    monkeypatch.setitem(probe_globals, "plain_prompt", "one two")
+
+    monkeypatch.setattr(
+        maintenance_core,
+        "_shape_benchmark_prompt",
+        staticmethod(lambda prompt, *, context_length: "one"),
+    )
+    with pytest.raises(SystemExit, match="unexpected token count"):
+        main()
+
+    monkeypatch.setattr(
+        maintenance_core,
+        "_shape_benchmark_prompt",
+        staticmethod(lambda prompt, *, context_length: "one two"),
+    )
+    monkeypatch.setattr(
+        maintenance_core,
+        "_benchmark_prompt_token_count",
+        staticmethod(lambda prompt: 3),
+    )
+    with pytest.raises(SystemExit, match="unexpected plain prompt token count"):
+        main()
+
+    monkeypatch.setattr(
+        maintenance_core,
+        "_benchmark_prompt_token_count",
+        staticmethod(lambda prompt: 4096),
+    )
+    monkeypatch.setitem(probe_globals, "_default_context_length", lambda suite: 7)
+    with pytest.raises(SystemExit, match="unexpected default context length"):
+        main()
+
+
 def test_scope_report_selects_maintenance_parameter_normalization_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
