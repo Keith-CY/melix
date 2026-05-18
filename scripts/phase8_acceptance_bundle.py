@@ -361,7 +361,7 @@ def run_acceptance_bundle(
                 "update",
                 "--server-session-id",
                 config.server_session_id,
-                "--model-id",
+                "--model",
                 model_id,
                 "--json",
             ]

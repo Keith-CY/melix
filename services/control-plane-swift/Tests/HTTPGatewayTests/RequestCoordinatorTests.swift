@@ -3508,12 +3508,49 @@ struct RequestCoordinatorTests {
         _ = await consumer.result
     }
 
+    @Test("gateway speculative defaults downgrade unsupported model policies")
+    func gatewaySpeculativeDefaultsDowngradeUnsupportedModelPolicies() async throws {
+        var vlmModel = ModelCatalog.devVLMModel()
+        vlmModel.state = .modelWarm
+        var textModel = ModelCatalog.devTextModel()
+        textModel.state = .modelWarm
+
+        let speculativeDefaults = GatewayServingDefaultsPolicy(
+            temperature: nil,
+            topP: nil,
+            maxTokens: nil,
+            streamIntervalTokens: nil,
+            maxConcurrentRequests: 6,
+            concurrentProcessingEnabled: true,
+            prefillBatchSize: 3,
+            completionBatchSize: 3,
+            accelerationMode: .speculativeDecode,
+            draftModelID: "melix-dev-text",
+            numDraftTokens: 7,
+            accelerationProfile: "throughput"
+        )
+
+        let vlmDefaults = speculativeDefaults.resolvingAccelerationCompatibility(for: vlmModel)
+        #expect(vlmDefaults.accelerationMode == .baseline)
+        #expect(vlmDefaults.draftModelID == "")
+        #expect(vlmDefaults.numDraftTokens == 0)
+        #expect(vlmDefaults.maxConcurrentRequests == 6)
+        #expect(vlmDefaults.concurrentProcessingEnabled == true)
+        #expect(vlmDefaults.prefillBatchSize == 3)
+        #expect(vlmDefaults.completionBatchSize == 3)
+        #expect(vlmDefaults.accelerationProfile == "throughput")
+
+        let textDefaults = speculativeDefaults.resolvingAccelerationCompatibility(for: textModel)
+        #expect(textDefaults == speculativeDefaults)
+    }
+
     @Test("model active KV defaults populate TurboQuant Q4 when profile is empty")
     func modelActiveKVDefaultsPopulateTurboQuantQ4WhenProfileIsEmpty() async throws {
         let workerClient = PhaseAwareWorkerClient()
         var textModel = ModelCatalog.devTextModel()
         textModel.settings.defaultAccelerationMode = .activeKvQuantized
         textModel.settings.accelerationProfileID = ""
+        textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,active_kv_quantized"
         let catalog = ModelCatalog(seedModels: [textModel])
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
@@ -3551,6 +3588,7 @@ struct RequestCoordinatorTests {
         var textModel = ModelCatalog.devTextModel()
         textModel.settings.defaultAccelerationMode = .activeKvQuantized
         textModel.settings.accelerationProfileID = "balanced"
+        textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,active_kv_quantized"
         let catalog = ModelCatalog(seedModels: [textModel])
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
@@ -3588,6 +3626,7 @@ struct RequestCoordinatorTests {
         var textModel = ModelCatalog.devTextModel()
         textModel.settings.defaultAccelerationMode = .activeKvQuantized
         textModel.settings.accelerationProfileID = "q8"
+        textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,active_kv_quantized"
         let catalog = ModelCatalog(seedModels: [textModel])
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),

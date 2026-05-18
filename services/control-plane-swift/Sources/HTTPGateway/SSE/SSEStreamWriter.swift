@@ -21,6 +21,26 @@ private actor DisconnectNotifier {
     }
 }
 
+private actor CompletionNotifier {
+    private let callback: (@Sendable () async -> Void)?
+    private var fired = false
+
+    init(callback: (@Sendable () async -> Void)?) {
+        self.callback = callback
+    }
+
+    func fireIfNeeded() async {
+        guard !fired else {
+            return
+        }
+        fired = true
+        guard let callback else {
+            return
+        }
+        await callback()
+    }
+}
+
 public struct SSEStreamWriter: Sendable {
     public enum StreamShape: Sendable {
         case chatCompletions
@@ -61,10 +81,12 @@ public struct SSEStreamWriter: Sendable {
         shape: StreamShape = .chatCompletions,
         toolParser: ToolParserSelection? = nil,
         options: StreamOptions = StreamOptions(),
+        onComplete: (@Sendable () async -> Void)? = nil,
         onDisconnect: (@Sendable () async -> Void)? = nil
     ) -> AsyncThrowingStream<Data, Error> {
         AsyncThrowingStream { continuation in
             let disconnectNotifier = DisconnectNotifier(callback: onDisconnect)
+            let completionNotifier = CompletionNotifier(callback: onComplete)
             let keepaliveTask = keepaliveTask(continuation: continuation)
             let task = Task {
                 var emittedDataFrame = false
@@ -94,6 +116,7 @@ public struct SSEStreamWriter: Sendable {
                 }
                 keepaliveTask?.cancel()
                 continuation.yield(doneFrame())
+                await completionNotifier.fireIfNeeded()
                 continuation.finish()
             }
 
@@ -102,6 +125,9 @@ public struct SSEStreamWriter: Sendable {
                 task.cancel()
                 guard case .cancelled = termination else {
                     return
+                }
+                Task {
+                    await completionNotifier.fireIfNeeded()
                 }
                 guard onDisconnect != nil else {
                     return

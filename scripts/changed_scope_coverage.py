@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -95,6 +97,8 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
 
 
 def _changed_lines_by_path(repo_root: Path, rel_paths: list[str]) -> dict[str, set[int]]:
+    if not rel_paths:
+        return {}
     proc = subprocess.run(
         ["git", "diff", "--unified=0", "--", *rel_paths],
         cwd=repo_root,
@@ -104,6 +108,25 @@ def _changed_lines_by_path(repo_root: Path, rel_paths: list[str]) -> dict[str, s
     )
     changed_by_path = _parse_changed_lines(proc.stdout)
     return {rel_path: changed_by_path.get(rel_path, set()) for rel_path in rel_paths}
+
+
+def _coverage_path_allowlist(env: Mapping[str, str]) -> frozenset[str] | None:
+    raw_value = env.get("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON", "").strip()
+    if not raw_value:
+        return None
+    try:
+        payload = json.loads(raw_value)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"invalid MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON: {exc}") from exc
+    if not isinstance(payload, list):
+        raise SystemExit("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON must be a JSON list")
+    return frozenset(str(path) for path in payload if str(path))
+
+
+def _filter_coverage_paths(paths: list[str], allowlist: frozenset[str] | None) -> list[str]:
+    if allowlist is None:
+        return paths
+    return [path for path in paths if path in allowlist]
 
 
 def _measurable_changed_lines(
@@ -159,12 +182,13 @@ def main() -> int:
 
     repo_root = Path.cwd()
     coverage_payload = json.loads(Path(args.coverage_json).read_text(encoding="utf-8"))
-    changed_lines_by_path = _changed_lines_by_path(repo_root, args.paths)
+    paths = _filter_coverage_paths(args.paths, _coverage_path_allowlist(os.environ))
+    changed_lines_by_path = _changed_lines_by_path(repo_root, paths)
 
     total_measurable = 0
     total_covered = 0
     total_missed = 0
-    for rel_path in args.paths:
+    for rel_path in paths:
         measurable, covered, missed = _measurable_changed_lines(
             repo_root,
             coverage_payload,

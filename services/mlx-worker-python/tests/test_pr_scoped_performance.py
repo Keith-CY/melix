@@ -23,6 +23,7 @@ from worker.productization.pr_scoped_performance import (
     _build_probe_details,
     _closure_index_text,
     _compiled_glob_pattern,
+    _coverage_paths_by_probe_id,
     _dict_list,
     _dispatch_probe_impl,
     _float_or_none,
@@ -36,6 +37,7 @@ from worker.productization.pr_scoped_performance import (
     _matches_any_glob,
     _match_probe_indexes,
     _parse_coverage_percent,
+    _probe_id_to_index,
     _probe_benchmark_evaluation_report,
     _probe_benchmark_export_run_scan,
     _probe_benchmark_queue_cache,
@@ -60,6 +62,7 @@ from worker.productization.pr_scoped_performance import (
     build_performance_report,
     build_scope_report,
     build_sticky_comment_body,
+    coverage_paths_for_probe,
     load_probe_registry,
     render_markdown_report,
     render_terminal_report,
@@ -1181,7 +1184,7 @@ def test_scope_report_selects_registry_cache_probe(tmp_path: Path) -> None:
     registry_payload = []
     for probe_id, watch_globs in (
         ("alpha", ["src/a.py"]),
-        ("beta", ["src/b.py"]),
+        ("beta", ["src/*.py"]),
         ("gamma", ["src/c.py"]),
     ):
         registry_payload.append(
@@ -1198,11 +1201,23 @@ def test_scope_report_selects_registry_cache_probe(tmp_path: Path) -> None:
         )
     registry_path.write_text(json.dumps(registry_payload), encoding="utf-8")
 
-    sparse_scope = build_scope_report(registry_path=registry_path, changed_files=["src/c.py", "src/a.py"])
+    sparse_scope = build_scope_report(
+        registry_path=registry_path,
+        changed_files=["src/c.py", "src/a.py", "src/b.py", "other.py"],
+    )
 
-    assert sparse_scope["matched_probe_ids"] == ["alpha", "gamma"]
-    assert [probe["id"] for probe in sparse_scope["selected_probes"]] == ["alpha", "gamma"]
-    assert sparse_scope["selected_count"] == 2
+    assert sparse_scope["matched_probe_ids"] == ["alpha", "beta", "gamma"]
+    assert [probe["id"] for probe in sparse_scope["selected_probes"]] == ["alpha", "beta", "gamma"]
+    assert sparse_scope["selected_count"] == 3
+    coverage_paths_by_probe = {
+        str(probe["id"]): probe["coverage_paths"]
+        for probe in sparse_scope["selected_probes"]
+    }
+    assert coverage_paths_by_probe == {
+        "alpha": ["src/a.py"],
+        "beta": ["src/a.py", "src/b.py", "src/c.py"],
+        "gamma": ["src/c.py"],
+    }
 
 
 def test_scope_report_force_selects_all_on_infra_change() -> None:
@@ -1269,6 +1284,8 @@ def test_scope_report_empty_direct_paths_skips_probe_matching(monkeypatch: pytes
     assert scope["selected_probes"] == []
     assert scope["matched_probe_ids"] == []
 
+    assert _coverage_paths_by_probe_id(changed_paths=(), probes=()) == {}
+
 
 def test_scope_report_large_changed_set_preserves_exact_selection_semantics() -> None:
     changed_files = _build_large_scope_probe_changed_files() + [
@@ -1289,6 +1306,7 @@ def test_scope_report_large_changed_set_preserves_exact_selection_semantics() ->
         == SCOPE_MATCHER_SELECTED_PROBE_IDS
     )
     assert scope["selected_count"] == len(SCOPE_MATCHER_SELECTED_PROBE_IDS)
+    assert any(probe["coverage_paths"] for probe in scope["selected_probes"])
 
 
 def test_match_probe_indexes_deduplicates_repeated_watch_globs() -> None:
@@ -1330,6 +1348,15 @@ def test_match_probe_indexes_deduplicates_repeated_watch_globs() -> None:
     matched = _match_probe_indexes(changed_paths=("shared.py", "services/b.py", "unmatched.py"), probes=probes)
 
     assert matched == {0, 1, 2}
+    coverage_paths = _coverage_paths_by_probe_id(
+        changed_paths=("shared.py", "services/b.py", "unmatched.py"),
+        probes=probes,
+    )
+    assert coverage_paths == {
+        "alpha": ("shared.py",),
+        "beta": ("shared.py", "services/b.py"),
+        "gamma": ("shared.py",),
+    }
 
 
 def test_match_probe_indexes_exact_only_intersects_changed_paths() -> None:
@@ -2400,6 +2427,20 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
     assert release_gate_metrics["endswith_checks_mean"]["warn_pct"] == 0.0
     assert release_gate_metrics["elapsed_ms_mean"]["direction"] == "informational"
 
+    changed_scope_metrics = {
+        metric["key"]: metric
+        for metric in by_id["changed-scope-coverage-empty-path-short-circuit"]["metrics"]
+    }
+    assert changed_scope_metrics["elapsed_ms_mean"]["warn_abs"] == 0.05
+    assert changed_scope_metrics["source_read_calls_mean"]["warn_pct"] == 0.0
+
+    dataset_preview_metrics = {
+        metric["key"]: metric
+        for metric in by_id["dataset-registry-preview-limit-short-circuit"]["metrics"]
+    }
+    assert dataset_preview_metrics["elapsed_ms_mean"]["warn_abs"] == 0.5
+    assert dataset_preview_metrics["peak_bytes_mean"]["warn_pct"] == 5.0
+
 
 def test_scope_report_selects_probe_policy_overhead_probe() -> None:
     scope = build_scope_report(
@@ -2609,8 +2650,10 @@ def test_build_scope_report_reuses_scope_cached_registry_without_double_stat(
     stat_calls = 0
     original_stat = Path.stat
     cache = pr_scoped_performance_module._PROBE_REGISTRY_CACHE
+    selected_cache = pr_scoped_performance_module._SCOPE_SELECTED_PROBES_WITH_COVERAGE_CACHE
     pr_scoped_performance_module._load_probe_registry_for_scope_cached.cache_clear()
     cache.clear()
+    selected_cache.clear()
 
     def tracked_stat(self: Path, *args: object, **kwargs: object) -> os.stat_result:
         nonlocal stat_calls
@@ -2629,13 +2672,42 @@ def test_build_scope_report_reuses_scope_cached_registry_without_double_stat(
             registry_path=registry_path,
             changed_files=["services/mlx-worker-python/worker/productization/pr_scoped_performance.py"],
         )
+        selected_cache_populated = bool(selected_cache)
     finally:
         pr_scoped_performance_module._load_probe_registry_for_scope_cached.cache_clear()
         cache.clear()
+        selected_cache.clear()
 
     assert stat_calls == 2
     assert first["selected_count"] == 1
     assert second["selected_probes"] == first["selected_probes"]
+    assert selected_cache_populated
+    assert build_scope_report(registry_path=registry_path, changed_files=[])["selected_probes"] == []
+
+
+def test_probe_id_index_reuses_cached_mapping_without_reiterating() -> None:
+    probes = (
+        ProbeDefinition(
+            probe_id="target",
+            name="Target",
+            runner="ubuntu-latest",
+            watch_globs=(),
+            test_command="",
+            coverage_command="",
+            probe_impl="command_json",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+    )
+    cache = pr_scoped_performance_module._PROBE_ID_INDEX_CACHE
+    cache.clear()
+
+    first = _probe_id_to_index(probes)
+    second = _probe_id_to_index(probes)
+
+    cache.clear()
+    assert first == {"target": 0}
+    assert second is first
 
 
 def test_load_probe_registry_refreshes_cache_when_file_changes(
@@ -3514,7 +3586,8 @@ def test_run_head_verification_skips_standalone_test_when_coverage_replays_tests
 ) -> None:
     commands: list[str] = []
 
-    def fake_run_command(command: str, *, cwd: Path) -> dict[str, object]:
+    def fake_run_command(command: str, *, cwd: Path, env=None) -> dict[str, object]:
+        _ = env
         commands.append(command)
         assert cwd == tmp_path
         return {
@@ -4638,6 +4711,90 @@ def test_scope_report_tracks_direct_matches_separately_when_force_all(tmp_path: 
     assert scope["force_all"] is True
     assert {probe["id"] for probe in scope["selected_probes"]} == {"target", "context"}
     assert scope["matched_probe_ids"] == ["target"]
+
+
+def test_scope_report_treats_framework_force_all_paths_as_context_for_domain_probes(
+    tmp_path: Path,
+) -> None:
+    registry_path = tmp_path / "probes.json"
+    registry_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "evaluation-store-samples-csv-streaming",
+                    "name": "Evaluation samples",
+                    "watch_globs": [
+                        "services/mlx-worker-python/worker/productization/evaluation_store.py",
+                        "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+                    ],
+                    "probe_impl": "command_json",
+                    "metrics": [
+                        {"key": "elapsed_ms_mean", "unit": "ms", "direction": "lower_is_better"}
+                    ],
+                },
+                {
+                    "id": "pr-scoped-performance-scope-matcher",
+                    "name": "Scope matcher",
+                    "watch_globs": [
+                        "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+                    ],
+                    "probe_impl": "command_json",
+                    "metrics": [
+                        {"key": "elapsed_ms_mean", "unit": "ms", "direction": "lower_is_better"}
+                    ],
+                },
+            ]
+        )
+    )
+
+    scope = build_scope_report(
+        registry_path=registry_path,
+        changed_files=[
+            "services/mlx-worker-python/worker/productization/pr_scoped_performance.py"
+        ],
+    )
+
+    assert scope["force_all"] is True
+    assert {probe["id"] for probe in scope["selected_probes"]} == {
+        "evaluation-store-samples-csv-streaming",
+        "pr-scoped-performance-scope-matcher",
+    }
+    assert scope["matched_probe_ids"] == ["pr-scoped-performance-scope-matcher"]
+    coverage_paths_by_probe = {
+        str(probe["id"]): probe["coverage_paths"]
+        for probe in scope["selected_probes"]
+    }
+    assert coverage_paths_by_probe["evaluation-store-samples-csv-streaming"] == []
+    assert coverage_paths_by_probe["pr-scoped-performance-scope-matcher"] == [
+        "services/mlx-worker-python/worker/productization/pr_scoped_performance.py"
+    ]
+
+
+def test_coverage_paths_for_probe_keeps_force_all_context_off_domain_probes() -> None:
+    probe = ProbeDefinition(
+        probe_id="evaluation-sample-probe-aggregation",
+        name="Evaluation sample probe aggregation",
+        runner="ubuntu-latest",
+        watch_globs=(
+            "services/mlx-worker-python/worker/engine/evaluation_core.py",
+            "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+        ),
+        test_command="true",
+        coverage_command="true",
+        probe_impl="command_json",
+        probe_command='python3 -c "{}"',
+        metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+    )
+
+    paths = coverage_paths_for_probe(
+        probe=probe,
+        changed_files=[
+            "services/mlx-worker-python/worker/engine/evaluation_core.py",
+            "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+        ],
+    )
+
+    assert paths == ("services/mlx-worker-python/worker/engine/evaluation_core.py",)
 
 
 def test_force_all_context_regressions_do_not_fail_direct_probe_gate() -> None:

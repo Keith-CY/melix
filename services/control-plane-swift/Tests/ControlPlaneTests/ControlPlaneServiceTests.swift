@@ -466,7 +466,7 @@ struct ControlPlaneServiceTests {
         try await gatewayStore.apply(command: makeApplyGatewayConfigCommand(
             host: "0.0.0.0",
             port: 18_080,
-            servedModelID: "melix-dev-text",
+            defaultModelID: "melix-dev-text",
             rateLimitPerMinute: 180,
             timeoutSeconds: 45
         ))
@@ -485,7 +485,7 @@ struct ControlPlaneServiceTests {
         #expect(listener.requestedPort == 18_080)
         #expect(listener.effectiveHost == "127.0.0.1")
         #expect(listener.effectivePort == 11_434)
-        #expect(listener.servedModelID == "melix-dev-text")
+        #expect(listener.defaultModelID == "melix-dev-text")
         #expect(listener.rateLimitPerMinute == 180)
         #expect(listener.timeoutSeconds == 45)
         #expect(listener.source == .operatorOverride)
@@ -516,7 +516,7 @@ struct ControlPlaneServiceTests {
             makeApplyGatewayConfigRequest(
                 host: "127.0.0.1",
                 port: 11_434,
-                servedModelID: "melix-alt-text",
+                defaultModelID: "melix-alt-text",
                 rateLimitPerMinute: 240,
                 timeoutSeconds: 90
             )
@@ -528,7 +528,7 @@ struct ControlPlaneServiceTests {
         #expect(listener.requestedPort == 11_434)
         #expect(listener.effectiveHost == "127.0.0.1")
         #expect(listener.effectivePort == 11_434)
-        #expect(listener.servedModelID == "melix-alt-text")
+        #expect(listener.defaultModelID == "melix-alt-text")
         #expect(listener.rateLimitPerMinute == 240)
         #expect(listener.timeoutSeconds == 90)
         #expect(listener.requiresRestart == false)
@@ -556,7 +556,7 @@ struct ControlPlaneServiceTests {
         let listener = try #require(response.server.snapshot.gatewayConfig.listeners.first)
 
         #expect(response.ok)
-        #expect(listener.servedModelID == "")
+        #expect(listener.defaultModelID == "")
         #expect(listener.requestedHost == "127.0.0.1")
         #expect(listener.requestedPort == UInt32(MelixGatewayDefaults.port))
     }
@@ -570,7 +570,7 @@ struct ControlPlaneServiceTests {
                 targetID: "server-session-other",
                 host: "127.0.0.1",
                 port: 11_434,
-                servedModelID: "melix-dev-text",
+                defaultModelID: "melix-dev-text",
                 rateLimitPerMinute: 120,
                 timeoutSeconds: 60
             )
@@ -579,7 +579,7 @@ struct ControlPlaneServiceTests {
             makeApplyGatewayConfigRequest(
                 host: "",
                 port: 11_434,
-                servedModelID: "melix-dev-text",
+                defaultModelID: "melix-dev-text",
                 rateLimitPerMinute: 120,
                 timeoutSeconds: 60
             )
@@ -588,7 +588,7 @@ struct ControlPlaneServiceTests {
             makeApplyGatewayConfigRequest(
                 host: "127.0.0.1",
                 port: 0,
-                servedModelID: "melix-dev-text",
+                defaultModelID: "melix-dev-text",
                 rateLimitPerMinute: 120,
                 timeoutSeconds: 60
             )
@@ -597,7 +597,7 @@ struct ControlPlaneServiceTests {
             makeApplyGatewayConfigRequest(
                 host: "127.0.0.1",
                 port: 11_434,
-                servedModelID: "",
+                defaultModelID: "",
                 rateLimitPerMinute: 120,
                 timeoutSeconds: 60
             )
@@ -606,7 +606,7 @@ struct ControlPlaneServiceTests {
             makeApplyGatewayConfigRequest(
                 host: "127.0.0.1",
                 port: 11_434,
-                servedModelID: "melix-dev-text",
+                defaultModelID: "melix-dev-text",
                 rateLimitPerMinute: 0,
                 timeoutSeconds: 60
             )
@@ -615,7 +615,7 @@ struct ControlPlaneServiceTests {
             makeApplyGatewayConfigRequest(
                 host: "127.0.0.1",
                 port: 11_434,
-                servedModelID: "melix-dev-text",
+                defaultModelID: "melix-dev-text",
                 rateLimitPerMinute: 120,
                 timeoutSeconds: 0
             )
@@ -625,7 +625,7 @@ struct ControlPlaneServiceTests {
         #expect(mismatchedTarget.error.code == "invalid_argument")
         #expect(missingHost.error.code == GatewayConfigValidationError.missingHost.code)
         #expect(invalidPort.error.code == GatewayConfigValidationError.invalidPort.code)
-        #expect(missingServedModel.error.code == GatewayConfigValidationError.missingServedModelID.code)
+        #expect(missingServedModel.error.code == GatewayConfigValidationError.missingDefaultModelID.code)
         #expect(invalidRateLimit.error.code == GatewayConfigValidationError.invalidRateLimit.code)
         #expect(invalidTimeout.error.code == GatewayConfigValidationError.invalidTimeout.code)
     }
@@ -650,7 +650,7 @@ struct ControlPlaneServiceTests {
             makeApplyGatewayConfigRequest(
                 host: "0.0.0.0",
                 port: 18_080,
-                servedModelID: "melix-dev-text",
+                defaultModelID: "melix-dev-text",
                 rateLimitPerMinute: 180,
                 timeoutSeconds: 45
             )
@@ -918,7 +918,7 @@ struct ControlPlaneServiceTests {
             makeApplyGatewayConfigRequest(
                 host: "127.0.0.1",
                 port: 11_434,
-                servedModelID: "melix-dev-ocr",
+                defaultModelID: "melix-dev-ocr",
                 rateLimitPerMinute: 120,
                 timeoutSeconds: 60
             )
@@ -960,6 +960,54 @@ struct ControlPlaneServiceTests {
         #expect(backendUnsupported.error.code == ServingDefaultsValidationError.speculativeBackendUnsupported.code)
         #expect(servedModelUnsupported.error.code == ServingDefaultsValidationError.speculativeServedModelUnsupported.code)
         #expect(draftModelUnsupported.error.code == ServingDefaultsValidationError.speculativeDraftModelUnsupported.code)
+    }
+
+    @Test("execute validates speculative serving defaults against the default model only")
+    func executeValidatesSpeculativeServingDefaultsAgainstTheDefaultModelOnly() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-speculative-serving-defaults-default-only-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        var speculativeReadyTextModel = ModelCatalog.devTextModel()
+        speculativeReadyTextModel.settings.defaultAccelerationMode = .unspecified
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: [speculativeReadyTextModel, ModelCatalog.devOCRModel()]),
+            gatewayConfigStore: GatewayConfigStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-config.json"),
+                defaults: [:]
+            ),
+            gatewayServingDefaultsStore: GatewayServingDefaultsStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+                defaults: [:]
+            ),
+            gatewaySupportsSpeculativeDefaults: true
+        )
+        _ = try await service.execute(
+            makeApplyGatewayConfigRequest(
+                host: "127.0.0.1",
+                port: 11_434,
+                defaultModelID: "melix-dev-text",
+                servedModelIDs: ["melix-dev-text", "melix-dev-ocr"],
+                rateLimitPerMinute: 120,
+                timeoutSeconds: 60
+            )
+        )
+
+        let response = try await service.execute(
+            makeApplyServingDefaultsRequest(
+                temperature: 0.3,
+                topP: 0.91,
+                maxTokens: 384,
+                streamIntervalTokens: 2,
+                maxConcurrentRequests: 4,
+                accelerationMode: .speculativeDecode,
+                draftModelID: "melix-dev-text",
+                numDraftTokens: 6
+            )
+        )
+
+        #expect(response.ok)
     }
 
     @Test("execute surfaces serving defaults persistence failures with typed metrics")
@@ -6517,9 +6565,11 @@ struct ControlPlaneServiceTests {
             serverSessionID: "server-session-2",
             host: "0.0.0.0",
             port: 18_080,
-            servedModelID: "melix-dev-text",
+            defaultModelID: "melix-dev-text",
+            servedModelIDs: ["melix-dev-text", "melix-alt-text"],
             rateLimitPerMinute: 240,
-            timeoutSeconds: 90
+            timeoutSeconds: 90,
+            modelIdleTimeoutSeconds: 300
         )
         serverRequest = try #require(await service.lastServerRequest)
         #expect(serverRequest.commandType == "server.apply_gateway_config")
@@ -6527,9 +6577,11 @@ struct ControlPlaneServiceTests {
         #expect(serverRequest.server.applyGatewayConfig.serverSessionID == "server-session-2")
         #expect(serverRequest.server.applyGatewayConfig.host == "0.0.0.0")
         #expect(serverRequest.server.applyGatewayConfig.port == 18_080)
-        #expect(serverRequest.server.applyGatewayConfig.servedModelID == "melix-dev-text")
+        #expect(serverRequest.server.applyGatewayConfig.defaultModelID == "melix-dev-text")
+        #expect(serverRequest.server.applyGatewayConfig.servedModelIds == ["melix-dev-text", "melix-alt-text"])
         #expect(serverRequest.server.applyGatewayConfig.rateLimitPerMinute == 240)
         #expect(serverRequest.server.applyGatewayConfig.timeoutSeconds == 90)
+        #expect(serverRequest.server.applyGatewayConfig.modelIdleTimeoutSeconds == 300)
         #expect(gatewaySnapshot.runtimeSessions.first?.serverSessionID == "server-session-2")
 
         let servingDefaultsSnapshot = try await client.applyServerSessionServingDefaults(
@@ -6690,9 +6742,11 @@ struct ControlPlaneServiceTests {
                 serverSessionID: "server-session-1",
                 host: "127.0.0.1",
                 port: 11_434,
-                servedModelID: "melix-dev-text",
+                defaultModelID: "melix-dev-text",
+                servedModelIDs: ["melix-dev-text"],
                 rateLimitPerMinute: 120,
-                timeoutSeconds: 60
+                timeoutSeconds: 60,
+                modelIdleTimeoutSeconds: 600
             )
         }
         await #expect(throws: ControlPlaneXPCClientError.requestFailed(
@@ -9474,9 +9528,11 @@ struct ControlPlaneServiceTests {
         targetID: String? = nil,
         host: String,
         port: UInt32,
-        servedModelID: String,
+        defaultModelID: String,
+        servedModelIDs: [String]? = nil,
         rateLimitPerMinute: UInt32,
-        timeoutSeconds: UInt32
+        timeoutSeconds: UInt32,
+        modelIdleTimeoutSeconds: UInt32 = 600
     ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "req-apply-gateway-config-\(serverSessionID)"
@@ -9487,9 +9543,11 @@ struct ControlPlaneServiceTests {
             serverSessionID: serverSessionID,
             host: host,
             port: port,
-            servedModelID: servedModelID,
+            defaultModelID: defaultModelID,
+            servedModelIDs: servedModelIDs ?? (defaultModelID.isEmpty ? [] : [defaultModelID]),
             rateLimitPerMinute: rateLimitPerMinute,
-            timeoutSeconds: timeoutSeconds
+            timeoutSeconds: timeoutSeconds,
+            modelIdleTimeoutSeconds: modelIdleTimeoutSeconds
         )
         return request
     }
@@ -9560,17 +9618,21 @@ struct ControlPlaneServiceTests {
         serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
         host: String,
         port: UInt32,
-        servedModelID: String,
+        defaultModelID: String,
+        servedModelIDs: [String]? = nil,
         rateLimitPerMinute: UInt32,
-        timeoutSeconds: UInt32
+        timeoutSeconds: UInt32,
+        modelIdleTimeoutSeconds: UInt32 = 600
     ) -> Melix_Controlplane_V1_ApplyGatewayConfig {
         var command = Melix_Controlplane_V1_ApplyGatewayConfig()
         command.serverSessionID = serverSessionID
         command.host = host
         command.port = port
-        command.servedModelID = servedModelID
+        command.defaultModelID = defaultModelID
+        command.servedModelIds = servedModelIDs ?? (defaultModelID.isEmpty ? [] : [defaultModelID])
         command.rateLimitPerMinute = rateLimitPerMinute
         command.timeoutSeconds = timeoutSeconds
+        command.modelIdleTimeoutSeconds = modelIdleTimeoutSeconds
         return command
     }
 

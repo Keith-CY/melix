@@ -110,7 +110,7 @@ struct GatewayServingDefaultsStoreTests {
         )
         let summary = await store.summary(
             serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
-            servedModelIDs: [ServerSessionRuntimeStore.defaultServerSessionID: "melix-dev-text"],
+            defaultModelIDs: [ServerSessionRuntimeStore.defaultServerSessionID: "melix-dev-text"],
             modelSettingsByModelID: ["melix-dev-text": modelSettings]
         )
         let session = try #require(summary.sessions.first)
@@ -181,7 +181,7 @@ struct GatewayServingDefaultsStoreTests {
         let requested = await reloaded.requestedDefaults()
         let summary = await reloaded.summary(
             serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
-            servedModelIDs: [ServerSessionRuntimeStore.defaultServerSessionID: "melix-dev-text"],
+            defaultModelIDs: [ServerSessionRuntimeStore.defaultServerSessionID: "melix-dev-text"],
             modelSettingsByModelID: ["melix-dev-text": modelSettings]
         )
         let session = try #require(summary.sessions.first)
@@ -233,7 +233,7 @@ struct GatewayServingDefaultsStoreTests {
         let requested = await store.requestedDefaults()
         let summary = await store.summary(
             serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
-            servedModelIDs: [:],
+            defaultModelIDs: [:],
             modelSettingsByModelID: [:]
         )
         let session = try #require(summary.sessions.first)
@@ -325,7 +325,7 @@ struct GatewayServingDefaultsStoreTests {
 
         let summary = await store.summary(
             serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
-            servedModelIDs: [:],
+            defaultModelIDs: [:],
             modelSettingsByModelID: [:]
         )
         let session = try #require(summary.sessions.first)
@@ -371,7 +371,7 @@ struct GatewayServingDefaultsStoreTests {
 
         let summary = await store.summary(
             serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
-            servedModelIDs: [ServerSessionRuntimeStore.defaultServerSessionID: "melix-dev-text"],
+            defaultModelIDs: [ServerSessionRuntimeStore.defaultServerSessionID: "melix-dev-text"],
             modelSettingsByModelID: ["melix-dev-text": modelSettings]
         )
         let session = try #require(summary.sessions.first)

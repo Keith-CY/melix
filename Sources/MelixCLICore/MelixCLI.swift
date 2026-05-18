@@ -1071,34 +1071,50 @@ public struct ServerSnapshotOptions: Equatable, Sendable {
 public struct ServerControlOptions: Equatable, Sendable {
     public let serverSessionID: String
     public let serverTitle: String
-    public let modelID: String
+    public let defaultModelID: String
+    public let servedModelIDs: [String]
     public let host: String
     public let port: Int
     public let rateLimitPerMinute: Int
     public let timeoutSeconds: Int
+    public let modelIdleTimeoutSeconds: Int
     public let json: Bool
 
     public init(
         serverSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
         serverTitle: String = "",
-        modelID: String = "",
+        defaultModelID: String = "",
+        servedModelIDs: [String] = [],
         host: String = "",
         port: Int = 0,
         rateLimitPerMinute: Int = 0,
         timeoutSeconds: Int = 0,
+        modelIdleTimeoutSeconds: Int = 0,
         json: Bool = false
     ) {
         self.serverSessionID = serverSessionID.isEmpty
             ? ServerSessionRuntimeStore.defaultServerSessionID
             : serverSessionID
         self.serverTitle = serverTitle
-        self.modelID = modelID
+        let resolvedDefaultModelID = MelixServerModelRosterNormalizer.resolvedDefaultModelID(
+            defaultModelID,
+            servedModelIDs: servedModelIDs
+        )
+        self.defaultModelID = resolvedDefaultModelID
+        self.servedModelIDs = servedModelIDs.isEmpty
+            ? []
+            : MelixServerModelRosterNormalizer.normalized(
+                servedModelIDs,
+                defaultModelID: resolvedDefaultModelID
+            )
         self.host = host
         self.port = port
         self.rateLimitPerMinute = rateLimitPerMinute
         self.timeoutSeconds = timeoutSeconds
+        self.modelIdleTimeoutSeconds = modelIdleTimeoutSeconds
         self.json = json
     }
+
 }
 
 public struct ServerIdlePolicyOptions: Equatable, Sendable {
@@ -1681,11 +1697,13 @@ public struct ServerSessionListOptions: Equatable, Sendable {
 
 public struct ServerSessionCreateOptions: Equatable, Sendable {
     public let title: String
-    public let modelID: String
+    public let defaultModelID: String
+    public let servedModelIDs: [String]
     public let host: String
     public let port: Int
     public let rateLimitPerMinute: Int
     public let timeoutSeconds: Int
+    public let modelIdleTimeoutSeconds: Int
     public let accelerationProfile: String
     public let accelerationMode: String
     public let draftModelID: String
@@ -1694,11 +1712,13 @@ public struct ServerSessionCreateOptions: Equatable, Sendable {
 
     public init(
         title: String,
-        modelID: String,
+        defaultModelID: String = "",
+        servedModelIDs: [String] = [],
         host: String = MelixGatewayDefaults.host,
         port: Int = MelixGatewayDefaults.port,
         rateLimitPerMinute: Int = 120,
         timeoutSeconds: Int = 120,
+        modelIdleTimeoutSeconds: Int = 600,
         accelerationProfile: String = ServingAccelerationProfiles.defaultProfileID,
         accelerationMode: String = "baseline",
         draftModelID: String = "",
@@ -1706,27 +1726,42 @@ public struct ServerSessionCreateOptions: Equatable, Sendable {
         json: Bool = false
     ) {
         self.title = title
-        self.modelID = modelID
+        let trimmedServedModelIDs = servedModelIDs.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty }
+        let resolvedDefaultModelID = MelixServerModelRosterNormalizer.resolvedDefaultModelID(
+            defaultModelID,
+            servedModelIDs: trimmedServedModelIDs
+        )
+        self.defaultModelID = resolvedDefaultModelID
+        self.servedModelIDs = MelixServerModelRosterNormalizer.normalizedOrDefault(
+            trimmedServedModelIDs,
+            defaultModelID: resolvedDefaultModelID
+        )
         self.host = host
         self.port = port
         self.rateLimitPerMinute = rateLimitPerMinute
         self.timeoutSeconds = timeoutSeconds
+        self.modelIdleTimeoutSeconds = modelIdleTimeoutSeconds
         self.accelerationProfile = accelerationProfile
         self.accelerationMode = accelerationMode
         self.draftModelID = draftModelID
         self.numDraftTokens = numDraftTokens
         self.json = json
     }
+
 }
 
 public struct ServerSessionUpdateOptions: Equatable, Sendable {
     public let serverSessionID: String
     public let title: String
-    public let modelID: String
+    public let defaultModelID: String
+    public let servedModelIDs: [String]
     public let host: String
     public let port: Int
     public let rateLimitPerMinute: Int
     public let timeoutSeconds: Int
+    public let modelIdleTimeoutSeconds: Int
     public let accelerationProfile: String
     public let accelerationMode: String
     public let draftModelID: String
@@ -1736,11 +1771,13 @@ public struct ServerSessionUpdateOptions: Equatable, Sendable {
     public init(
         serverSessionID: String,
         title: String = "",
-        modelID: String = "",
+        defaultModelID: String = "",
+        servedModelIDs: [String] = [],
         host: String = "",
         port: Int = 0,
         rateLimitPerMinute: Int = 0,
         timeoutSeconds: Int = 0,
+        modelIdleTimeoutSeconds: Int = 0,
         accelerationProfile: String = "",
         accelerationMode: String = "",
         draftModelID: String = "",
@@ -1749,11 +1786,22 @@ public struct ServerSessionUpdateOptions: Equatable, Sendable {
     ) {
         self.serverSessionID = serverSessionID
         self.title = title
-        self.modelID = modelID
+        let resolvedDefaultModelID = MelixServerModelRosterNormalizer.resolvedDefaultModelID(
+            defaultModelID,
+            servedModelIDs: servedModelIDs
+        )
+        self.defaultModelID = resolvedDefaultModelID
+        self.servedModelIDs = servedModelIDs.isEmpty
+            ? []
+            : MelixServerModelRosterNormalizer.normalized(
+                servedModelIDs,
+                defaultModelID: resolvedDefaultModelID
+            )
         self.host = host
         self.port = port
         self.rateLimitPerMinute = rateLimitPerMinute
         self.timeoutSeconds = timeoutSeconds
+        self.modelIdleTimeoutSeconds = modelIdleTimeoutSeconds
         self.accelerationProfile = accelerationProfile
         self.accelerationMode = accelerationMode
         self.draftModelID = draftModelID
@@ -2327,11 +2375,11 @@ public enum MelixCLIParser {
       melix model roots rescan [--json]
       melix server snapshot [--json]
       melix server session list [--json]
-      melix server session create --title TITLE --model-id MODEL_ID [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--acceleration-profile PROFILE] [--acceleration-mode MODE] [--draft-model-id MODEL_ID] [--num-draft-tokens N] [--json]
-      melix server session update --server-session-id ID [--title TITLE] [--model-id MODEL_ID] [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--acceleration-profile PROFILE] [--acceleration-mode MODE] [--draft-model-id MODEL_ID] [--num-draft-tokens N] [--json]
+      melix server session create --title TITLE (--model MODEL_ID ... | --models MODEL_ID[,MODEL_ID...]) [--default-model MODEL_ID] [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--model-idle-timeout-seconds N] [--acceleration-profile PROFILE] [--acceleration-mode MODE] [--draft-model-id MODEL_ID] [--num-draft-tokens N] [--json]
+      melix server session update --server-session-id ID [--title TITLE] [--model MODEL_ID ... | --models MODEL_ID[,MODEL_ID...]] [--default-model MODEL_ID] [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--model-idle-timeout-seconds N] [--acceleration-profile PROFILE] [--acceleration-mode MODE] [--draft-model-id MODEL_ID] [--num-draft-tokens N] [--json]
       melix server session remove --server-session-id ID [--json]
       melix server session select --server-session-id ID [--json]
-      melix server start [TITLE] [--model MODEL_ID] [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--server-session-id ID] [--json]
+      melix server start [TITLE] [--model MODEL_ID ... | --models MODEL_ID[,MODEL_ID...]] [--default-model MODEL_ID] [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--model-idle-timeout-seconds N] [--server-session-id ID] [--json]
       melix server pause [--server-session-id ID] [--json]
       melix server resume [--server-session-id ID] [--json]
       melix server wake [--server-session-id ID] [--json]
@@ -3337,13 +3385,21 @@ public enum MelixCLIParser {
             serverTitle = ""
             optionArguments = arguments
         }
-        let values = try ArgumentCursor(arguments: optionArguments).parse()
+        let values = try ArgumentCursor(arguments: optionArguments).parse(multiValueOptions: ["--model", "--models"])
         let serverSessionID = values.single["--server-session-id"] ?? ServerSessionRuntimeStore.defaultServerSessionID
         let json = values.flags.contains("--json")
+        let modelIDs = parsedModelRoster(
+            singleModel: "",
+            modelValues: values.multi["--model"] ?? [],
+            modelsValues: values.multi["--models"] ?? []
+        )
+        let defaultModelID = (values.single["--default-model"] ?? modelIDs.first ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return .serverStart(.init(
             serverSessionID: serverSessionID,
             serverTitle: serverTitle,
-            modelID: values.single["--model"] ?? values.single["--model-id"] ?? "",
+            defaultModelID: defaultModelID,
+            servedModelIDs: modelIDs,
             host: values.single["--host"] ?? "",
             port: try parseIntValue(values.single["--port"], option: "--port", defaultValue: 0) ?? 0,
             rateLimitPerMinute: try parseIntValue(
@@ -3356,6 +3412,11 @@ public enum MelixCLIParser {
                 option: "--timeout-seconds",
                 defaultValue: 0
             ) ?? 0,
+            modelIdleTimeoutSeconds: try parseIntValue(
+                values.single["--model-idle-timeout-seconds"],
+                option: "--model-idle-timeout-seconds",
+                defaultValue: 0
+            ) ?? 0,
             json: json
         ))
     }
@@ -3364,7 +3425,9 @@ public enum MelixCLIParser {
         guard let action = arguments.first else {
             throw MelixCLIError.usage(usageText)
         }
-        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse(
+            multiValueOptions: ["--model", "--models"]
+        )
         switch action {
         case "list":
             return .serverSessionList(.init(json: values.flags.contains("--json")))
@@ -3372,8 +3435,15 @@ public enum MelixCLIParser {
             guard let title = values.single["--title"], !title.isEmpty else {
                 throw MelixCLIError.missingRequired("--title is required for melix server session create.")
             }
-            guard let modelID = values.single["--model-id"], !modelID.isEmpty else {
-                throw MelixCLIError.missingRequired("--model-id is required for melix server session create.")
+            let modelIDs = parsedModelRoster(
+                singleModel: "",
+                modelValues: values.multi["--model"] ?? [],
+                modelsValues: values.multi["--models"] ?? []
+            )
+            let defaultModelID = (values.single["--default-model"] ?? modelIDs.first ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !defaultModelID.isEmpty else {
+                throw MelixCLIError.missingRequired("--model or --models is required for melix server session create.")
             }
             let port = try parseIntValue(
                 values.single["--port"],
@@ -3390,15 +3460,22 @@ public enum MelixCLIParser {
                 option: "--timeout-seconds",
                 defaultValue: 120
             ) ?? 120
+            let modelIdleTimeoutSeconds = try parseIntValue(
+                values.single["--model-idle-timeout-seconds"],
+                option: "--model-idle-timeout-seconds",
+                defaultValue: 600
+            ) ?? 600
             let servingDefaults = try parseCreateServerSessionServingDefaults(values)
             return .serverSessionCreate(
                 .init(
                     title: title,
-                    modelID: modelID,
+                    defaultModelID: defaultModelID,
+                    servedModelIDs: modelIDs,
                     host: values.single["--host"] ?? MelixGatewayDefaults.host,
                     port: port,
                     rateLimitPerMinute: rateLimit,
                     timeoutSeconds: timeoutSeconds,
+                    modelIdleTimeoutSeconds: modelIdleTimeoutSeconds,
                     accelerationProfile: servingDefaults.accelerationProfile,
                     accelerationMode: servingDefaults.accelerationMode,
                     draftModelID: servingDefaults.draftModelID,
@@ -3410,12 +3487,20 @@ public enum MelixCLIParser {
             guard let serverSessionID = values.single["--server-session-id"], !serverSessionID.isEmpty else {
                 throw MelixCLIError.missingRequired("--server-session-id is required for melix server session update.")
             }
+            let modelIDs = parsedModelRoster(
+                singleModel: "",
+                modelValues: values.multi["--model"] ?? [],
+                modelsValues: values.multi["--models"] ?? []
+            )
+            let defaultModelID = (values.single["--default-model"] ?? modelIDs.first ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             let servingDefaults = try parseUpdateServerSessionServingDefaults(values)
             return .serverSessionUpdate(
                 .init(
                     serverSessionID: serverSessionID,
                     title: values.single["--title"] ?? "",
-                    modelID: values.single["--model-id"] ?? "",
+                    defaultModelID: defaultModelID,
+                    servedModelIDs: modelIDs,
                     host: values.single["--host"] ?? "",
                     port: try parseIntValue(values.single["--port"], option: "--port", defaultValue: 0) ?? 0,
                     rateLimitPerMinute: try parseIntValue(
@@ -3426,6 +3511,11 @@ public enum MelixCLIParser {
                     timeoutSeconds: try parseIntValue(
                         values.single["--timeout-seconds"],
                         option: "--timeout-seconds",
+                        defaultValue: 0
+                    ) ?? 0,
+                    modelIdleTimeoutSeconds: try parseIntValue(
+                        values.single["--model-idle-timeout-seconds"],
+                        option: "--model-idle-timeout-seconds",
                         defaultValue: 0
                     ) ?? 0,
                     accelerationProfile: servingDefaults.accelerationProfile,
@@ -3518,6 +3608,27 @@ public enum MelixCLIParser {
             return (profileID, accelerationMode, "", 0)
         }
         return (profileID, accelerationMode, draftModelID, numDraftTokens)
+    }
+
+    private static func parsedModelRoster(
+        singleModel: String,
+        modelValues: [String],
+        modelsValues: [String]
+    ) -> [String] {
+        var ordered: [String] = []
+        var seen: Set<String> = []
+        for rawValue in [singleModel] + modelValues + modelsValues {
+            for modelID in rawValue
+                .split(separator: ",")
+                .map({ String($0).trimmingCharacters(in: .whitespacesAndNewlines) })
+                where !modelID.isEmpty {
+                guard seen.insert(modelID).inserted else {
+                    continue
+                }
+                ordered.append(modelID)
+            }
+        }
+        return ordered
     }
 
     private static func parseChat(_ arguments: [String]) throws -> MelixCLICommand {
@@ -6089,9 +6200,11 @@ public actor MelixCLIRunner {
             serverSessionID: configuredSession.id,
             host: configuredSession.host,
             port: configuredSession.port,
-            servedModelID: configuredSession.modelID,
+            defaultModelID: configuredSession.defaultModelID,
+            servedModelIDs: configuredSession.servedModelIDs,
             rateLimitPerMinute: configuredSession.rateLimitPerMinute,
-            timeoutSeconds: configuredSession.timeoutSeconds
+            timeoutSeconds: configuredSession.timeoutSeconds,
+            modelIdleTimeoutSeconds: configuredSession.modelIdleTimeoutSeconds
         )
     }
 
@@ -7168,11 +7281,13 @@ public actor MelixCLIRunner {
                 let created = MelixOperatorServerSessionState(
                     id: nextGeneratedServerSessionID(in: current.serverSessions),
                     title: options.title,
-                    modelID: options.modelID,
+                    defaultModelID: options.defaultModelID,
+                    servedModelIDs: options.servedModelIDs,
                     host: options.host,
                     port: options.port,
                     rateLimitPerMinute: options.rateLimitPerMinute,
                     timeoutSeconds: options.timeoutSeconds,
+                    modelIdleTimeoutSeconds: options.modelIdleTimeoutSeconds,
                     servingDefaults: try servingDefaults(for: options),
                     lifecycle: .draft
                 )
@@ -7196,8 +7311,19 @@ public actor MelixCLIRunner {
                 if options.title.isEmpty == false {
                     session.title = options.title
                 }
-                if options.modelID.isEmpty == false {
-                    session.modelID = options.modelID
+                if options.defaultModelID.isEmpty == false {
+                    session.defaultModelID = options.defaultModelID
+                }
+                if options.servedModelIDs.isEmpty == false {
+                    session.servedModelIDs = normalizedServedModelIDs(
+                        options.servedModelIDs,
+                        defaultModelID: session.defaultModelID
+                    )
+                } else if options.defaultModelID.isEmpty == false {
+                    session.servedModelIDs = normalizedServedModelIDs(
+                        session.servedModelIDs,
+                        defaultModelID: options.defaultModelID
+                    )
                 }
                 if options.host.isEmpty == false {
                     session.host = options.host
@@ -7210,6 +7336,9 @@ public actor MelixCLIRunner {
                 }
                 if options.timeoutSeconds > 0 {
                     session.timeoutSeconds = options.timeoutSeconds
+                }
+                if options.modelIdleTimeoutSeconds > 0 {
+                    session.modelIdleTimeoutSeconds = options.modelIdleTimeoutSeconds
                 }
                 try applyServingDefaultsUpdate(options, to: &session)
                 session.updatedAt = Date()
@@ -7255,35 +7384,39 @@ public actor MelixCLIRunner {
                 return try renderServerSnapshot(snapshot, json: options.json)
             }
             let serverSnapshot = try await client.serverSnapshot()
-            guard try await boundServerStartModelIsAvailable(
-                modelID: configuredSession.modelID,
-                serverSnapshot: serverSnapshot
-            ) else {
-                try markServerSessionUnavailable(
-                    id: configuredSession.id,
-                    message: "Unavailable",
-                    lastError: "Bound model \(configuredSession.modelID) is missing."
-                )
-                throw MelixCLIError.runtime("Bound model \(configuredSession.modelID) is missing.")
-            }
-            guard try await boundServerStartModelIsServeable(
-                modelID: configuredSession.modelID,
-                serverSnapshot: serverSnapshot
-            ) else {
-                try markServerSessionUnavailable(
-                    id: configuredSession.id,
-                    message: "Unavailable",
-                    lastError: "Bound model \(configuredSession.modelID) is not serveable."
-                )
-                throw MelixCLIError.runtime("Bound model \(configuredSession.modelID) is not serveable.")
+            for modelID in configuredSession.servedModelIDs {
+                guard try await boundServerStartModelIsAvailable(
+                    modelID: modelID,
+                    serverSnapshot: serverSnapshot
+                ) else {
+                    try markServerSessionUnavailable(
+                        id: configuredSession.id,
+                        message: "Unavailable",
+                        lastError: "Bound model \(modelID) is missing."
+                    )
+                    throw MelixCLIError.runtime("Bound model \(modelID) is missing.")
+                }
+                guard try await boundServerStartModelIsServeable(
+                    modelID: modelID,
+                    serverSnapshot: serverSnapshot
+                ) else {
+                    try markServerSessionUnavailable(
+                        id: configuredSession.id,
+                        message: "Unavailable",
+                        lastError: "Bound model \(modelID) is not serveable."
+                    )
+                    throw MelixCLIError.runtime("Bound model \(modelID) is not serveable.")
+                }
             }
             _ = try await client.applyServerSessionGatewayConfig(
                 serverSessionID: configuredSession.id,
                 host: configuredSession.host,
                 port: configuredSession.port,
-                servedModelID: configuredSession.modelID,
+                defaultModelID: configuredSession.defaultModelID,
+                servedModelIDs: configuredSession.servedModelIDs,
                 rateLimitPerMinute: configuredSession.rateLimitPerMinute,
-                timeoutSeconds: configuredSession.timeoutSeconds
+                timeoutSeconds: configuredSession.timeoutSeconds,
+                modelIdleTimeoutSeconds: configuredSession.modelIdleTimeoutSeconds
             )
             _ = try await client.applyServerSessionServingDefaults(
                 serverSessionID: configuredSession.id,
@@ -8476,6 +8609,40 @@ public actor MelixCLIRunner {
         )
     }
 
+    private func runLoraTrain(_ options: LoraTrainOptions) async throws -> String {
+        var ext = options.parameters
+        if options.preflightFitCheck {
+            guard options.modelID.trimmingCharacters(in: .whitespacesAndNewlines).contains("/") else {
+                throw MelixCLIError.runtime("--preflight-fit-check is currently supported for melix lora train --model-id Hugging Face repo targets.")
+            }
+            let receipt = try await makeMemoryFitReceipt(repoID: options.modelID, targetKind: "train")
+            try enforceMemoryFitPreflight(
+                receipt,
+                allowMemoryRisk: options.allowMemoryRisk,
+                commandName: "training"
+            )
+            ext.merge(try receipt.runParameters(schemaVersion: Self.memoryFitSchemaVersion)) { _, new in new }
+        }
+        ext["adapter_name"] = options.adapterName
+        ext["dataset_source_kind"] = options.datasetSourceKind
+        if !options.datasetURI.isEmpty {
+            ext["dataset_uri"] = options.datasetURI
+        }
+        if !options.targetRepo.isEmpty {
+            ext["target_repo"] = options.targetRepo
+        }
+        if !options.trainingMode.isEmpty {
+            ext["training_mode"] = options.trainingMode
+        }
+        let result = try await performModelOperation(
+            modelID: options.modelID,
+            operation: "train_lora",
+            outputDir: "",
+            ext: ext
+        )
+        return options.json ? result.manifestJson : result.outputPath
+    }
+
     private func loadOperatorStateForRegistryPriming() -> MelixOperatorSessionState {
         do {
             return try loadOperatorState()
@@ -8725,24 +8892,58 @@ public actor MelixCLIRunner {
         }
     }
 
+    private func applyServerControlOptions(
+        _ options: ServerControlOptions,
+        to session: inout MelixOperatorServerSessionState
+    ) {
+        if !options.defaultModelID.isEmpty {
+            session.defaultModelID = options.defaultModelID
+        }
+        if !options.servedModelIDs.isEmpty {
+            session.servedModelIDs = normalizedServedModelIDs(
+                options.servedModelIDs,
+                defaultModelID: session.defaultModelID
+            )
+        } else if !options.defaultModelID.isEmpty {
+            session.servedModelIDs = normalizedServedModelIDs(
+                session.servedModelIDs,
+                defaultModelID: options.defaultModelID
+            )
+        }
+        if options.modelIdleTimeoutSeconds > 0 {
+            session.modelIdleTimeoutSeconds = options.modelIdleTimeoutSeconds
+        }
+    }
+
+    private func normalizedServedModelIDs(
+        _ modelIDs: [String],
+        defaultModelID: String
+    ) -> [String] {
+        MelixServerModelRosterNormalizer.normalized(
+            modelIDs,
+            defaultModelID: defaultModelID
+        )
+    }
+
     private func upsertServerSessionForStartIfNeeded(_ options: ServerControlOptions) throws -> String {
         let title = options.serverTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let modelID = options.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
         let host = options.host.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasShortcutConfiguration = title.isEmpty == false
-            || modelID.isEmpty == false
+            || options.defaultModelID.isEmpty == false
+            || options.servedModelIDs.isEmpty == false
             || host.isEmpty == false
             || options.port > 0
             || options.rateLimitPerMinute > 0
             || options.timeoutSeconds > 0
+            || options.modelIdleTimeoutSeconds > 0
         guard hasShortcutConfiguration else {
             return options.serverSessionID
         }
         guard title.isEmpty == false else {
-            throw MelixCLIError.missingRequired("TITLE is required when passing --model, --host, --port, --rate-limit-per-minute, or --timeout-seconds to melix server start.")
+            throw MelixCLIError.missingRequired("TITLE is required when passing --model, --models, --default-model, --host, --port, --rate-limit-per-minute, --timeout-seconds, or --model-idle-timeout-seconds to melix server start.")
         }
-        guard modelID.isEmpty == false else {
-            throw MelixCLIError.missingRequired("--model is required when starting a titled server session.")
+        guard !options.defaultModelID.isEmpty else {
+            throw MelixCLIError.missingRequired("--model or --models is required when starting a titled server session.")
         }
 
         var resolvedID = ""
@@ -8750,7 +8951,7 @@ public actor MelixCLIRunner {
             if let index = current.serverSessions.firstIndex(where: { $0.id == title || $0.title == title }) {
                 var session = current.serverSessions[index]
                 session.title = title
-                session.modelID = modelID
+                applyServerControlOptions(options, to: &session)
                 if host.isEmpty == false {
                     session.host = host
                 }
@@ -8771,11 +8972,15 @@ public actor MelixCLIRunner {
                 let created = MelixOperatorServerSessionState(
                     id: nextGeneratedServerSessionID(in: current.serverSessions),
                     title: title,
-                    modelID: modelID,
+                    defaultModelID: options.defaultModelID,
+                    servedModelIDs: options.servedModelIDs,
                     host: host.isEmpty ? "127.0.0.1" : host,
                     port: options.port > 0 ? options.port : 8080,
                     rateLimitPerMinute: options.rateLimitPerMinute > 0 ? options.rateLimitPerMinute : 120,
                     timeoutSeconds: options.timeoutSeconds > 0 ? options.timeoutSeconds : 120,
+                    modelIdleTimeoutSeconds: options.modelIdleTimeoutSeconds > 0
+                        ? options.modelIdleTimeoutSeconds
+                        : 600,
                     lifecycle: .draft
                 )
                 current.serverSessions.append(created)
@@ -9276,9 +9481,10 @@ public actor MelixCLIRunner {
         }
         let rows = state.serverSessions.map { session in
             let selectedMarker = session.id == state.selectedServerSessionID ? "*" : ""
-            return "\(selectedMarker)\(session.id)\t\(session.title)\t\(session.modelID)\t\(session.lifecycle.rawValue)"
+            let modelIDs = session.servedModelIDs.joined(separator: ",")
+            return "\(selectedMarker)\(session.id)\t\(session.title)\t\(modelIDs)\t\(session.lifecycle.rawValue)"
         }
-        return (["server_session_id\ttitle\tmodel_id\tlifecycle"] + rows).joined(separator: "\n") + "\n"
+        return (["server_session_id\ttitle\tmodel_ids\tlifecycle"] + rows).joined(separator: "\n") + "\n"
     }
 
     private func renderRemoteServers(_ servers: [RemoteServer]) -> String {
