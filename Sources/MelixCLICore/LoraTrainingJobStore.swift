@@ -252,6 +252,7 @@ public struct LoraTrainingFollowUpArtifacts: Codable, Equatable, Sendable {
     public var benchmarkJobID: String
     public var evaluationJobID: String
     public var publishedRepo: String
+    public var memoryFitSummaryText: String
 
     public init(
         adapterManifestPath: String = "",
@@ -261,7 +262,8 @@ public struct LoraTrainingFollowUpArtifacts: Codable, Equatable, Sendable {
         convertedArtifactPath: String = "",
         benchmarkJobID: String = "",
         evaluationJobID: String = "",
-        publishedRepo: String = ""
+        publishedRepo: String = "",
+        memoryFitSummaryText: String = ""
     ) {
         self.adapterManifestPath = adapterManifestPath
         self.derivedModelID = derivedModelID
@@ -271,6 +273,7 @@ public struct LoraTrainingFollowUpArtifacts: Codable, Equatable, Sendable {
         self.benchmarkJobID = benchmarkJobID
         self.evaluationJobID = evaluationJobID
         self.publishedRepo = publishedRepo
+        self.memoryFitSummaryText = memoryFitSummaryText
     }
 
     enum CodingKeys: String, CodingKey {
@@ -282,6 +285,22 @@ public struct LoraTrainingFollowUpArtifacts: Codable, Equatable, Sendable {
         case benchmarkJobID = "benchmark_job_id"
         case evaluationJobID = "evaluation_job_id"
         case publishedRepo = "published_repo"
+        case memoryFitSummaryText = "memory_fit_summary_text"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            adapterManifestPath: try container.decodeIfPresent(String.self, forKey: .adapterManifestPath) ?? "",
+            derivedModelID: try container.decodeIfPresent(String.self, forKey: .derivedModelID) ?? "",
+            derivedModelPath: try container.decodeIfPresent(String.self, forKey: .derivedModelPath) ?? "",
+            quantizedArtifactPath: try container.decodeIfPresent(String.self, forKey: .quantizedArtifactPath) ?? "",
+            convertedArtifactPath: try container.decodeIfPresent(String.self, forKey: .convertedArtifactPath) ?? "",
+            benchmarkJobID: try container.decodeIfPresent(String.self, forKey: .benchmarkJobID) ?? "",
+            evaluationJobID: try container.decodeIfPresent(String.self, forKey: .evaluationJobID) ?? "",
+            publishedRepo: try container.decodeIfPresent(String.self, forKey: .publishedRepo) ?? "",
+            memoryFitSummaryText: try container.decodeIfPresent(String.self, forKey: .memoryFitSummaryText) ?? ""
+        )
     }
 }
 

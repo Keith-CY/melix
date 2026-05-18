@@ -35,7 +35,7 @@ def test_run_smoke_projects_the_swift_payload(tmp_path: Path, monkeypatch: pytes
             },
             "navigation": {
                 "grounded_surface_count": 5,
-                "grounded_tool_section_count": 6,
+                "grounded_tool_section_count": 10,
             },
         },
     )
@@ -99,6 +99,7 @@ def test_main_prints_human_readable_payload(
 
 def test_run_swift_smoke_requires_marker(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     class _Completed:
+        returncode = 0
         stdout = "ok"
         stderr = ""
 

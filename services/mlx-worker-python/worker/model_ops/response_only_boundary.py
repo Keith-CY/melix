@@ -51,6 +51,15 @@ class ResponseOnlyBoundary:
     def response_tokens(self) -> int:
         return max(0, self.total_tokens - self.assistant_offset)
 
+    def trainable_response_tokens(self, max_seq_length: int | None) -> int:
+        """Return response tokens that survive MLX-LM's sequence truncation."""
+
+        if max_seq_length is None or max_seq_length <= 0:
+            effective_total = self.total_tokens
+        else:
+            effective_total = min(self.total_tokens, max_seq_length)
+        return max(0, effective_total - self.assistant_offset)
+
 
 @dataclass(frozen=True)
 class ResponseOnlyBoundaryAggregate:
@@ -60,6 +69,15 @@ class ResponseOnlyBoundaryAggregate:
     boundary_min: int
     boundary_max: int
     boundary_mean: float
+    response_tokens_min: int = 0
+    response_tokens_max: int = 0
+    response_tokens_mean: float = 0.0
+    trainable_response_tokens_min: int = 0
+    trainable_response_tokens_max: int = 0
+    trainable_response_tokens_mean: float = 0.0
+    trainable_response_token_count: int = 0
+    truncated_response_sample_count: int = 0
+    fully_truncated_response_sample_count: int = 0
 
     def to_manifest_fields(self) -> dict[str, Any]:
         return {
@@ -67,6 +85,15 @@ class ResponseOnlyBoundaryAggregate:
             "response_only_boundary_min": self.boundary_min,
             "response_only_boundary_max": self.boundary_max,
             "response_only_boundary_mean": round(self.boundary_mean, 3),
+            "response_only_response_tokens_min": self.response_tokens_min,
+            "response_only_response_tokens_max": self.response_tokens_max,
+            "response_only_response_tokens_mean": round(self.response_tokens_mean, 3),
+            "response_only_trainable_response_tokens_min": self.trainable_response_tokens_min,
+            "response_only_trainable_response_tokens_max": self.trainable_response_tokens_max,
+            "response_only_trainable_response_tokens_mean": round(self.trainable_response_tokens_mean, 3),
+            "response_only_trainable_response_token_count": self.trainable_response_token_count,
+            "response_only_truncated_response_sample_count": self.truncated_response_sample_count,
+            "response_only_fully_truncated_response_sample_count": self.fully_truncated_response_sample_count,
         }
 
 
@@ -117,6 +144,8 @@ def compute_response_only_boundary(
 
 def aggregate_response_only_boundaries(
     boundaries: Iterable[ResponseOnlyBoundary],
+    *,
+    max_seq_length: int | None = None,
 ) -> ResponseOnlyBoundaryAggregate:
     """Reduce per-sample boundaries into manifest-ready aggregate stats.
 
@@ -128,18 +157,46 @@ def aggregate_response_only_boundaries(
     sample_count = 0
     boundary_min = 0
     boundary_max = 0
+    response_tokens_min = 0
+    response_tokens_max = 0
+    trainable_response_tokens_min = 0
+    trainable_response_tokens_max = 0
     total_offset = 0
+    total_response_tokens = 0
+    total_trainable_response_tokens = 0
+    truncated_response_sample_count = 0
+    fully_truncated_response_sample_count = 0
     for entry in boundaries:
         offset = entry.assistant_offset
+        response_tokens = entry.response_tokens
+        trainable_response_tokens = entry.trainable_response_tokens(max_seq_length)
         if sample_count == 0:
             boundary_min = offset
             boundary_max = offset
+            response_tokens_min = response_tokens
+            response_tokens_max = response_tokens
+            trainable_response_tokens_min = trainable_response_tokens
+            trainable_response_tokens_max = trainable_response_tokens
         else:
             if offset < boundary_min:
                 boundary_min = offset
             if offset > boundary_max:
                 boundary_max = offset
+            if response_tokens < response_tokens_min:
+                response_tokens_min = response_tokens
+            if response_tokens > response_tokens_max:
+                response_tokens_max = response_tokens
+            if trainable_response_tokens < trainable_response_tokens_min:
+                trainable_response_tokens_min = trainable_response_tokens
+            if trainable_response_tokens > trainable_response_tokens_max:
+                trainable_response_tokens_max = trainable_response_tokens
         total_offset += offset
+        total_response_tokens += response_tokens
+        total_trainable_response_tokens += trainable_response_tokens
+        if trainable_response_tokens < response_tokens:
+            truncated_response_sample_count += 1
+        if response_tokens > 0 and trainable_response_tokens == 0:
+            fully_truncated_response_sample_count += 1
         sample_count += 1
     if sample_count == 0:
         return ResponseOnlyBoundaryAggregate(
@@ -153,4 +210,13 @@ def aggregate_response_only_boundaries(
         boundary_min=boundary_min,
         boundary_max=boundary_max,
         boundary_mean=total_offset / sample_count,
+        response_tokens_min=response_tokens_min,
+        response_tokens_max=response_tokens_max,
+        response_tokens_mean=total_response_tokens / sample_count,
+        trainable_response_tokens_min=trainable_response_tokens_min,
+        trainable_response_tokens_max=trainable_response_tokens_max,
+        trainable_response_tokens_mean=total_trainable_response_tokens / sample_count,
+        trainable_response_token_count=total_trainable_response_tokens,
+        truncated_response_sample_count=truncated_response_sample_count,
+        fully_truncated_response_sample_count=fully_truncated_response_sample_count,
     )

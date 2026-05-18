@@ -60,6 +60,15 @@ class TrainingMetrics:
     response_only_boundary_min: int = 0
     response_only_boundary_max: int = 0
     response_only_boundary_mean: float = 0.0
+    response_only_response_tokens_min: int = 0
+    response_only_response_tokens_max: int = 0
+    response_only_response_tokens_mean: float = 0.0
+    response_only_trainable_response_tokens_min: int = 0
+    response_only_trainable_response_tokens_max: int = 0
+    response_only_trainable_response_tokens_mean: float = 0.0
+    response_only_trainable_response_token_count: int = 0
+    response_only_truncated_response_sample_count: int = 0
+    response_only_fully_truncated_response_sample_count: int = 0
     # Milestone #43 Phase 3B: long-context chunking observability. ``chunked_enabled``
     # is True iff chunk_long_samples ran; ``chunk_count`` is the post-chunking
     # sample count (equal to ``source_sample_count`` when no sample exceeded
@@ -267,6 +276,7 @@ class MLXLMRunner:
         # path MLX-LM uses at training time — so the aggregate is bit-exact
         # with what MLX-LM's default_loss will see.
         boundary_aggregate = _probe_response_only_boundary(request, train_set)
+        _validate_response_only_trainable_tokens(request, boundary_aggregate)
 
         try:
             train_model(args, model, train_set, valid_set, training_callback=collector)
@@ -311,6 +321,15 @@ class MLXLMRunner:
                 response_only_boundary_min=boundary_aggregate.boundary_min,
                 response_only_boundary_max=boundary_aggregate.boundary_max,
                 response_only_boundary_mean=boundary_aggregate.boundary_mean,
+                response_only_response_tokens_min=boundary_aggregate.response_tokens_min,
+                response_only_response_tokens_max=boundary_aggregate.response_tokens_max,
+                response_only_response_tokens_mean=boundary_aggregate.response_tokens_mean,
+                response_only_trainable_response_tokens_min=boundary_aggregate.trainable_response_tokens_min,
+                response_only_trainable_response_tokens_max=boundary_aggregate.trainable_response_tokens_max,
+                response_only_trainable_response_tokens_mean=boundary_aggregate.trainable_response_tokens_mean,
+                response_only_trainable_response_token_count=boundary_aggregate.trainable_response_token_count,
+                response_only_truncated_response_sample_count=boundary_aggregate.truncated_response_sample_count,
+                response_only_fully_truncated_response_sample_count=boundary_aggregate.fully_truncated_response_sample_count,
                 chunked_enabled=chunk_stats.enabled,
                 chunk_count=chunk_stats.chunk_count,
                 source_sample_count=chunk_stats.source_sample_count,
@@ -673,7 +692,10 @@ def _probe_response_only_boundary(
                 total_tokens=int(total),
             )
 
-    aggregate = aggregate_response_only_boundaries(_iter_boundaries())
+    aggregate = aggregate_response_only_boundaries(
+        _iter_boundaries(),
+        max_seq_length=getattr(request.config, "max_seq_length", None),
+    )
     if skip_counter["count"]:
         _PROBE_LOGGER.debug(
             "response_only_boundary probe skipped %d / %d samples",
@@ -681,6 +703,47 @@ def _probe_response_only_boundary(
             sample_count,
         )
     return aggregate
+
+
+def _validate_response_only_trainable_tokens(
+    request: TrainingRequest,
+    aggregate: ResponseOnlyBoundaryAggregate,
+) -> None:
+    """Fail before MLX-LM when response-only masking leaves no labels."""
+
+    if not getattr(request.config, "response_only", False):
+        return
+    if not getattr(request.config, "mask_prompt", False):
+        return
+    if request.dataset_format != "chat_messages":
+        return
+    if aggregate.sample_count <= 0:
+        return
+    if aggregate.trainable_response_token_count > 0:
+        return
+    raise ModelOperationError(
+        code="response_only_labels_truncated",
+        message=(
+            "Response-only LoRA training would have zero trainable response "
+            f"tokens after max_seq_length={request.config.max_seq_length} "
+            "truncation. Increase max_seq_length, shorten the system prompt, "
+            "or disable response-only masking."
+        ),
+        details={
+            "max_seq_length": str(request.config.max_seq_length),
+            "response_only_boundary_sample_count": str(aggregate.sample_count),
+            "response_only_boundary_min": str(aggregate.boundary_min),
+            "response_only_boundary_max": str(aggregate.boundary_max),
+            "response_only_boundary_mean": f"{aggregate.boundary_mean:.3f}",
+            "response_only_response_tokens_mean": f"{aggregate.response_tokens_mean:.3f}",
+            "response_only_trainable_response_token_count": str(
+                aggregate.trainable_response_token_count
+            ),
+            "response_only_fully_truncated_response_sample_count": str(
+                aggregate.fully_truncated_response_sample_count
+            ),
+        },
+    )
 
 
 def _maybe_chunk_training_dataset(

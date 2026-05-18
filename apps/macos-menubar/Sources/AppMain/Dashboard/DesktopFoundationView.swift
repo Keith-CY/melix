@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 @MainActor
@@ -264,6 +265,11 @@ struct DesktopModelsTabView: View {
                                 }
                             }
                         }
+                        if let disabledReason = viewModel.modelSettingsAccelerationModeDisabledReason {
+                            Text(disabledReason)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                         HStack(spacing: 12) {
                             Picker(
                                 "Cache Mode",
@@ -351,6 +357,25 @@ struct DesktopModelsTabView: View {
                             )
                             .toggleStyle(.checkbox)
                         }
+                        if let disabledReason = viewModel.modelSettingsToolParserXMLFallbackDisabledReason {
+                            Text(disabledReason)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        HStack(spacing: 12) {
+                            Text("Load Trust")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(viewModel.modelSettingsLoadTrustModeText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Button("Trust Remote Code", action: trustRemoteCodeForPrimaryModelAction())
+                                .buttonStyle(.bordered)
+                                .accessibilityLabel("Trust Remote Code")
+                            Button("Clear Trust Override", action: clearPrimaryModelLoadTrustOverrideAction())
+                                .buttonStyle(.bordered)
+                                .accessibilityLabel("Clear Trust Override")
+                        }
                         if primaryModel.kind == "ocr" {
                             HStack(spacing: 12) {
                                 TextField(
@@ -388,6 +413,11 @@ struct DesktopModelsTabView: View {
                         HStack {
                             Button("Apply Settings", action: applyPrimaryModelSettingsAction())
                             .buttonStyle(.borderedProminent)
+                            .disabled(
+                                viewModel.modelSettingsAccelerationModeDisabledReason != nil
+                                    || (viewModel.modelSettingsToolParserXMLFallbackDraft
+                                        && viewModel.modelSettingsToolParserXMLFallbackDisabledReason != nil)
+                            )
                             Button("Reset Draft", action: resetPrimaryModelSettingsAction())
                             .buttonStyle(.bordered)
                             Spacer()
@@ -437,6 +467,14 @@ struct DesktopModelsTabView: View {
 
     func resetPrimaryModelSettingsAction() -> () -> Void {
         { viewModel.resetPrimaryModelSettingsDrafts() }
+    }
+
+    func trustRemoteCodeForPrimaryModelAction() -> () -> Void {
+        { Task { await viewModel.trustRemoteCodeForPrimaryModel() } }
+    }
+
+    func clearPrimaryModelLoadTrustOverrideAction() -> () -> Void {
+        { Task { await viewModel.clearPrimaryModelLoadTrustOverride() } }
     }
 
     func inspectPrimaryModelAction() -> () -> Void {
@@ -872,7 +910,7 @@ private struct DesktopHubModelCardContent: View {
     }
 }
 
-private struct DesktopRegistryEntryCardContent: View {
+struct DesktopRegistryEntryCardContent: View {
     let entry: RuntimeRegistryEntryState
     let localModel: RuntimeModelRow?
 
@@ -926,6 +964,7 @@ private struct DesktopRegistryEntryCardContent: View {
                             .font(.caption2)
                             .foregroundStyle(MelixDesignTokens.StatusColor.error)
                     }
+                    DesktopMemoryFitReceiptRowsView(rows: localModel.memoryFitReceiptRows)
                     Text("\(localModel.memoryPolicyText) • \(localModel.diskStreamingModeText) • \(localModel.accelerationModeText)")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
@@ -944,6 +983,88 @@ private struct DesktopRegistryEntryCardContent: View {
             reasons.append(localModel.runtimeCacheDetailText)
         }
         return reasons
+    }
+}
+
+enum DesktopMemoryFitReceiptVisualState: Equatable {
+    case blocked
+    case heavy
+    case good
+    case unknown
+
+    init(status: String) {
+        switch status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "blocked":
+            self = .blocked
+        case "heavy":
+            self = .heavy
+        case "good":
+            self = .good
+        default:
+            self = .unknown
+        }
+    }
+
+    var badgeTitle: String {
+        switch self {
+        case .blocked:
+            return "Blocked"
+        case .heavy:
+            return "Heavy"
+        case .good:
+            return "Good"
+        case .unknown:
+            return "Unknown"
+        }
+    }
+
+    var tint: Color {
+        DesktopRegistryVisuals.fitColor(badgeTitle)
+    }
+}
+
+struct DesktopMemoryFitReceiptRowsView: View {
+    let rows: [RuntimeMemoryFitReceiptRow]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(rows) { row in
+                let visualState = Self.visualState(for: row)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        DesktopRegistryBadgeView(title: visualState.badgeTitle, tint: visualState.tint)
+                        Text(Self.displayText(for: row))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    ForEach(row.detailRows, id: \.self) { detail in
+                        Text(detail)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(2)
+                    }
+                }
+                .accessibilityLabel(Self.accessibilityLabel(for: row))
+            }
+        }
+    }
+
+    static func visualState(for row: RuntimeMemoryFitReceiptRow) -> DesktopMemoryFitReceiptVisualState {
+        DesktopMemoryFitReceiptVisualState(status: row.status)
+    }
+
+    static func displayText(for row: RuntimeMemoryFitReceiptRow) -> String {
+        "Fit \(row.title): \(row.statusText) • \(row.reasonText)"
+    }
+
+    static func displayTexts(for row: RuntimeMemoryFitReceiptRow) -> [String] {
+        [displayText(for: row)] + row.detailRows
+    }
+
+    static func accessibilityLabel(for row: RuntimeMemoryFitReceiptRow) -> String {
+        let visualState = visualState(for: row)
+        return "Memory fit \(row.title): \(visualState.badgeTitle), \(row.reasonText)"
     }
 }
 
@@ -1268,6 +1389,20 @@ private struct DesktopResidencyRowsSection: View {
                             Text(model.memoryAlertText)
                                 .font(.caption2)
                                 .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                        }
+                        if model.loadTrustReceiptRows.isEmpty == false {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Load Trust")
+                                    .font(.caption2)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(.secondary)
+                                ForEach(model.loadTrustReceiptRows, id: \.self) { row in
+                                    Text(row)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .accessibilityElement(children: .combine)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1736,6 +1871,33 @@ func desktopModelInfoSummaryContent(
     detailLines.append("adaptive thinking: \(info.adaptiveThinkingText)")
     detailLines.append("acceleration: \(info.accelerationModeText) • \(info.accelerationProfileID.isEmpty ? "no-profile" : info.accelerationProfileID)")
     detailLines.append("parser fallback: \(info.toolParserFallbackText)")
+    if !info.requestedLoadTrustModeText.isEmpty {
+        detailLines.append("requested trust mode: \(info.requestedLoadTrustModeText)")
+    }
+    if !info.effectiveLoadTrustModeText.isEmpty {
+        detailLines.append("effective trust mode: \(info.effectiveLoadTrustModeText)")
+    }
+    if !info.loadTrustCustomLoaderText.isEmpty {
+        detailLines.append("custom loader: \(info.loadTrustCustomLoaderText)")
+    }
+    if !info.loadTrustBlockReasonText.isEmpty {
+        detailLines.append("trust block reason: \(info.loadTrustBlockReasonText)")
+    }
+    if !info.loadTrustReloadRequiredText.isEmpty {
+        detailLines.append("trust reload: \(info.loadTrustReloadRequiredText)")
+    }
+    if !info.loadTrustRuntimeGuidanceText.isEmpty {
+        detailLines.append("trust guidance: \(info.loadTrustRuntimeGuidanceText)")
+    }
+    for row in info.capabilityReceiptRows {
+        detailLines.append("capability \(row)")
+    }
+    for row in info.memoryFitReceiptRows {
+        detailLines.append("memory fit \(row.title.lowercased()): \(row.statusText) • \(row.reasonText)")
+        for detail in row.detailRows {
+            detailLines.append("memory fit \(row.title.lowercased()) detail: \(detail)")
+        }
+    }
     detailLines.append("pin on load: \(info.pinOnLoad ? "yes" : "no")")
     if info.ttlSeconds > 0 {
         detailLines.append("ttl seconds: \(info.ttlSeconds)")
@@ -1801,17 +1963,500 @@ func desktopModelInfoSummaryContent(
 
 struct DesktopSettingsTabView: View {
     let foundation: DesktopFoundationState
+    let viewModel: RuntimeViewModel?
+
+    init(foundation: DesktopFoundationState, viewModel: RuntimeViewModel? = nil) {
+        self.foundation = foundation
+        self.viewModel = viewModel
+    }
 
     var body: some View {
-        List(foundation.settings) { row in
-            HStack {
-                Text(row.key)
-                    .fontWeight(.semibold)
-                Spacer()
-                Text(row.value)
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 14) {
+            if let viewModel, viewModel.runtimeSettingRows.isEmpty == false {
+                runtimeSettingsControls(viewModel)
+                Text("Runtime Settings")
+                    .font(.headline)
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(viewModel.runtimeSettingRows) { row in
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(row.key)
+                                    .fontWeight(.semibold)
+                                Spacer()
+                                Text(row.currentValueText)
+                                    .foregroundStyle(.primary)
+                            }
+                            HStack(spacing: 8) {
+                                Text(row.source)
+                                if row.sourceDetail.isEmpty == false {
+                                    Text(row.sourceDetail)
+                                }
+                                Text(row.validationState.displayTitle)
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            if row.validationMessage.isEmpty == false {
+                                Text(row.validationMessage)
+                                    .font(.caption)
+                                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+                if viewModel.runtimeSettingSources.isEmpty == false {
+                    Text("Resolved Sources")
+                        .font(.headline)
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(viewModel.runtimeSettingSources) { source in
+                            HStack {
+                                Text(source.key)
+                                    .fontWeight(.semibold)
+                                Spacer()
+                                Text(source.path)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                if viewModel.runtimeSettingMetrics.isEmpty == false {
+                    Text("Resolve Metrics")
+                        .font(.headline)
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(viewModel.runtimeSettingMetrics) { metric in
+                            HStack {
+                                Text(metric.name)
+                                    .fontWeight(.semibold)
+                                Spacer()
+                                Text(metric.valueText)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            } else {
+                if let viewModel {
+                    runtimeSettingsControls(viewModel)
+                }
+                ForEach(foundation.settings) { row in
+                    HStack {
+                        Text(row.key)
+                            .fontWeight(.semibold)
+                        Spacer()
+                        Text(row.value)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if let viewModel {
+                runtimeDiscoveryInspector(viewModel)
             }
         }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func runtimeSettingsControls(_ viewModel: RuntimeViewModel) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Setting key")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField(
+                        "Setting key",
+                        text: Binding(
+                            get: { viewModel.runtimeSettingKeyDraft },
+                            set: { viewModel.updateRuntimeSettingDraft(key: $0, value: viewModel.runtimeSettingValueDraft) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Setting value")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextField(
+                        "Setting value",
+                        text: Binding(
+                            get: { viewModel.runtimeSettingValueDraft },
+                            set: { viewModel.updateRuntimeSettingDraft(key: viewModel.runtimeSettingKeyDraft, value: $0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+            }
+            HStack(spacing: 8) {
+                DesktopSettingsOperationButton(title: "Set Setting", isEnabled: viewModel.runtimeSettingsCanSet) {
+                    Task { await viewModel.setRuntimeSetting() }
+                }
+                DesktopSettingsOperationButton(title: "Reset Setting", isEnabled: viewModel.runtimeSettingsCanReset) {
+                    Task { await viewModel.resetRuntimeSetting() }
+                }
+                DesktopSettingsOperationButton(title: "Validate Settings", isEnabled: viewModel.runtimeSettingsCanValidate) {
+                    Task { await viewModel.validateRuntimeSettings() }
+                }
+                if viewModel.runtimeSettingsOperationInProgress {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            if viewModel.runtimeSettingsOperationMessage.isEmpty == false {
+                Text(viewModel.runtimeSettingsOperationMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                    .textSelection(.enabled)
+            }
+            if viewModel.runtimeSettingsOperationErrorMessage.isEmpty == false {
+                Text(viewModel.runtimeSettingsOperationErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            }
+            if let validationResult = viewModel.runtimeSettingsValidationResult, validationResult.issues.isEmpty == false {
+                ForEach(validationResult.issues) { issue in
+                    Text("\(issue.key): \(issue.message)")
+                        .font(.caption)
+                        .foregroundStyle(MelixDesignTokens.StatusColor.warning)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+    }
+
+    private func runtimeDiscoveryInspector(_ viewModel: RuntimeViewModel) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 8) {
+                Text("Discovery Inspector")
+                    .font(.headline)
+                Spacer()
+                DesktopSettingsOperationButton(title: "Refresh Discovery", isEnabled: !viewModel.runtimeDiscoveryRefreshInProgress) {
+                    Task { await viewModel.refreshRuntimeDiscovery() }
+                }
+                if viewModel.runtimeDiscoveryRefreshInProgress {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            runtimeDiscoveryAliasLookupControls(viewModel)
+            if viewModel.runtimeDiscoveryOperationMessage.isEmpty == false {
+                Text(viewModel.runtimeDiscoveryOperationMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.success)
+                    .textSelection(.enabled)
+            }
+            if viewModel.runtimeDiscoveryOperationErrorMessage.isEmpty == false {
+                Text(viewModel.runtimeDiscoveryOperationErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                    .textSelection(.enabled)
+            }
+            if viewModel.runtimeDiscoveryPayloads.isEmpty {
+                Text("Discovery metadata unavailable.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(viewModel.runtimeDiscoveryPayloads) { payload in
+                        runtimeDiscoveryPayload(payload)
+                    }
+                }
+            }
+        }
+    }
+
+    private func runtimeDiscoveryAliasLookupControls(_ viewModel: RuntimeViewModel) -> some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Model alias query")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField(
+                    "Model alias query",
+                    text: Binding(
+                        get: { viewModel.runtimeDiscoveryAliasQueryDraft },
+                        set: { viewModel.updateRuntimeDiscoveryAliasQuery($0) }
+                    )
+                )
+                .textFieldStyle(.roundedBorder)
+            }
+            DesktopSettingsOperationButton(title: "Lookup Alias", isEnabled: viewModel.runtimeDiscoveryAliasLookupCanRun) {
+                Task { await viewModel.lookupRuntimeDiscoveryModelAlias() }
+            }
+        }
+    }
+
+    private func runtimeDiscoveryPayload(_ payload: RuntimeDiscoveryPayloadState) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(payload.endpoint.displayTitle)
+                    .fontWeight(.semibold)
+                Spacer()
+                if payload.schemaVersion.isEmpty == false {
+                    Text(payload.schemaVersion)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button(action: { copyRuntimeDiscoveryValue(payload.schemaVersion) }) {
+                        Label("Copy Schema Version", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                }
+            }
+            ForEach(payload.valueRows) { row in
+                discoveryKeyValueRow(row.key, row.value)
+            }
+            if payload.links.isEmpty == false {
+                Text("Endpoint Links")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                ForEach(payload.links) { link in
+                    discoveryEndpointLinkRow(link)
+                }
+            }
+            if payload.models.isEmpty == false {
+                Text("Models")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                ForEach(payload.models) { model in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.modelID)
+                            .fontWeight(.medium)
+                        Text([model.kind, model.supportedModalitiesText, model.supportedTasksText]
+                            .filter { $0.isEmpty == false }
+                            .joined(separator: " | "))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if model.capabilityReceiptText.isEmpty == false {
+                            Text(model.capabilityReceiptText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                    }
+                }
+            }
+            if let alias = payload.aliasDiscovery {
+                discoveryKeyValueRow("model_alias.query", alias.query)
+                discoveryKeyValueRow("model_alias.status", alias.statusDisplayTitle)
+                if alias.suggestions.isEmpty == false {
+                    Text("Model Alias Suggestions")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                    ForEach(alias.suggestions) { suggestion in
+                        discoveryKeyValueRow(suggestion.modelID, suggestion.displayText)
+                    }
+                } else if alias.emptyStateMessage.isEmpty == false {
+                    Text(alias.emptyStateMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+            if payload.instructionAreas.isEmpty == false {
+                Text("Instruction Areas")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                ForEach(payload.instructionAreas) { area in
+                    discoveryKeyValueRow(area.title.isEmpty ? area.id : area.title, area.commandsText)
+                }
+            }
+            if payload.schemaPaths.isEmpty == false {
+                Text("Schema Paths")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                ForEach(payload.schemaPaths) { path in
+                    discoverySchemaPathRow(path)
+                }
+            }
+            if payload.configSettings.isEmpty == false {
+                Text("Runtime Setting Metadata")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                ForEach(payload.configSettings) { setting in
+                    discoveryKeyValueRow(
+                        setting.key,
+                        [setting.valueType, setting.defaultValueText, setting.environmentVariable, setting.summary]
+                            .filter { $0.isEmpty == false }
+                            .joined(separator: " | ")
+                    )
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func discoveryKeyValueRow(_ key: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(key)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(.caption)
+                .textSelection(.enabled)
+        }
+    }
+
+    private func discoveryEndpointLinkRow(_ link: RuntimeDiscoveryLinkRowState) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(link.key)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(link.url)
+                .font(.caption)
+                .textSelection(.enabled)
+            Button(action: { copyRuntimeDiscoveryValue(link.url) }) {
+                Label("Copy Endpoint", systemImage: "doc.on.doc")
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+        }
+    }
+
+    private func discoverySchemaPathRow(_ path: RuntimeDiscoverySchemaPathState) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(path.key)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(path.path)
+                .font(.caption)
+                .textSelection(.enabled)
+            Button(action: { copyRuntimeDiscoveryValue(path.path) }) {
+                Label("Copy Schema Path", systemImage: "doc.on.doc")
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+            Button(action: { RuntimeDiscoveryClipboard.open(path.path) }) {
+                Label("Open Schema Path", systemImage: "folder")
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+        }
+    }
+
+    private func copyRuntimeDiscoveryValue(_ value: String) {
+        let didCopy = RuntimeDiscoveryClipboard.copy(value)
+        if didCopy == false {
+            assertionFailure("Runtime discovery copy failed for a non-empty value.")
+        }
+    }
+
+    // Deterministic smoke-test projection; rendered accessibility is grouped from child views.
+    var accessibilitySummary: String {
+        if let viewModel, viewModel.runtimeSettingRows.isEmpty == false {
+            var values = [
+                "Setting key",
+                "Setting value",
+                "Set Setting",
+                "Reset Setting",
+                "Validate Settings",
+                viewModel.runtimeSettingsOperationMessage,
+                viewModel.runtimeSettingsOperationErrorMessage,
+                "Runtime Settings",
+            ]
+            values.append(contentsOf: viewModel.runtimeSettingRows.flatMap { row in
+                [
+                    row.key,
+                    row.currentValueText,
+                    row.source,
+                    row.sourceDetail,
+                    row.validationState.displayTitle,
+                    row.validationMessage,
+                ]
+            })
+            if viewModel.runtimeSettingSources.isEmpty == false {
+                values.append("Resolved Sources")
+                values.append(contentsOf: viewModel.runtimeSettingSources.flatMap { [$0.key, $0.path] })
+            }
+            if viewModel.runtimeSettingMetrics.isEmpty == false {
+                values.append("Resolve Metrics")
+                values.append(contentsOf: viewModel.runtimeSettingMetrics.flatMap { [$0.name, $0.valueText] })
+            }
+            if let validationResult = viewModel.runtimeSettingsValidationResult {
+                values.append(validationResult.summaryText)
+                values.append(contentsOf: validationResult.issues.flatMap { [$0.key, $0.message, $0.source] })
+            }
+            values.append(contentsOf: runtimeDiscoveryAccessibilityValues(viewModel))
+            return values.filter { $0.isEmpty == false }.joined(separator: " ")
+        }
+
+        var values = foundation.settings.flatMap { [$0.key, $0.value] }
+        if let viewModel {
+            values.append(contentsOf: runtimeDiscoveryAccessibilityValues(viewModel))
+        }
+        return values.filter { $0.isEmpty == false }.joined(separator: " ")
+    }
+
+    private func runtimeDiscoveryAccessibilityValues(_ viewModel: RuntimeViewModel) -> [String] {
+        var values = [
+            "Discovery Inspector",
+            "Refresh Discovery",
+            "Model alias query",
+            "Lookup Alias",
+            viewModel.runtimeDiscoveryAliasQueryDraft,
+            viewModel.runtimeDiscoveryOperationMessage,
+            viewModel.runtimeDiscoveryOperationErrorMessage,
+        ]
+        if viewModel.runtimeDiscoveryPayloads.isEmpty {
+            values.append("Discovery metadata unavailable.")
+        }
+        for payload in viewModel.runtimeDiscoveryPayloads {
+            values.append(payload.endpoint.displayTitle)
+            values.append(payload.schemaVersion)
+            if payload.schemaVersion.isEmpty == false {
+                values.append("Copy Schema Version")
+            }
+            values.append(contentsOf: payload.valueRows.flatMap { [$0.key, $0.value] })
+            values.append(contentsOf: payload.links.flatMap { [$0.key, $0.url] })
+            if payload.links.isEmpty == false {
+                values.append("Copy Endpoint")
+            }
+            values.append(contentsOf: payload.models.flatMap {
+                [$0.modelID, $0.kind, $0.supportedModalitiesText, $0.supportedTasksText, $0.capabilityReceiptText]
+            })
+            if let alias = payload.aliasDiscovery {
+                values.append(contentsOf: [
+                    alias.query,
+                    alias.status,
+                    alias.statusDisplayTitle,
+                    alias.suggestionsText,
+                    alias.emptyStateMessage,
+                ])
+                values.append(contentsOf: alias.suggestions.flatMap {
+                    [$0.modelID, $0.family, $0.aliasesText, $0.quantization, $0.displayText]
+                })
+                if alias.suggestions.isEmpty == false {
+                    values.append("Model Alias Suggestions")
+                }
+            }
+            values.append(contentsOf: payload.instructionAreas.flatMap { [$0.id, $0.title, $0.commandsText] })
+            values.append(contentsOf: payload.schemaPaths.flatMap { [$0.key, $0.path] })
+            if payload.schemaPaths.isEmpty == false {
+                values.append(contentsOf: ["Copy Schema Path", "Open Schema Path"])
+            }
+            values.append(contentsOf: payload.configSettings.flatMap {
+                [$0.key, $0.valueType, $0.defaultValueText, $0.environmentVariable, $0.summary]
+            })
+        }
+        return values
+    }
+}
+
+private struct DesktopSettingsOperationButton: View {
+    let title: String
+    let isEnabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(title) {
+            action()
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .disabled(isEnabled == false)
+        .accessibilityLabel(title)
     }
 }
 
@@ -1915,5 +2560,29 @@ struct DesktopAPIReferenceTabView: View {
                 }
             }
         }
+    }
+}
+
+enum RuntimeDiscoveryClipboard {
+    @discardableResult
+    static func copy(_ value: String, to pasteboard: NSPasteboard = .general) -> Bool {
+        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedValue.isEmpty == false else {
+            return false
+        }
+        pasteboard.clearContents()
+        return pasteboard.setString(trimmedValue, forType: .string)
+    }
+
+    @discardableResult
+    static func open(
+        _ path: String,
+        opener: (URL) -> Bool = { NSWorkspace.shared.open($0) }
+    ) -> Bool {
+        let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedPath.isEmpty == false else {
+            return false
+        }
+        return opener(URL(fileURLWithPath: (trimmedPath as NSString).expandingTildeInPath))
     }
 }

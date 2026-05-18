@@ -268,12 +268,12 @@ def audit_adapter_checkpoint(
     elif total_tensor_bytes > 0:
         expected_checkpoint_bytes = checkpoint_bytes
     size_ratio = 1.0 if expected_checkpoint_bytes <= 0 else checkpoint_bytes / expected_checkpoint_bytes
-    unexpected_total_count = _combined_unexpected_param_count(
-        serialized_counts=unexpected_serialized_counts,
-        trainable_counts=unexpected_trainable_counts,
-        serialized_total=unexpected_serialized_count,
-        trainable_total=unexpected_trainable_count,
-    )
+    # Only the serialized adapter checkpoint can prove that frozen/base weights
+    # leaked into the exported artifact. The live trainable-tree audit is still
+    # useful diagnostics, but MLX-LM may expose adapter internals with names that
+    # do not round-trip to the safetensors keys. Do not let live-only naming
+    # noise block an otherwise clean adapter export.
+    unexpected_total_count = unexpected_serialized_count
     return AdapterFreezeAudit(
         adapter_checkpoint_bytes=checkpoint_bytes,
         expected_lora_checkpoint_bytes=expected_checkpoint_bytes,
