@@ -18,6 +18,7 @@ SUPPORTED_VIDEO_MIME_TYPES = {
     "video/webm": "webm",
 }
 MAX_VIDEO_FRAME_BUDGET = 128
+VIDEO_REFERENCE_PARSE_CACHE_SIZE = 512
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,7 +134,7 @@ def _validate_bounds(duration_ms: int, frame_budget: int, start_ms: int, end_ms:
         raise VideoPreprocessError("end_ms must be less than or equal to duration_ms.")
 
 
-@lru_cache(maxsize=512)
+@lru_cache(maxsize=VIDEO_REFERENCE_PARSE_CACHE_SIZE)
 def _parse_video_reference(reference: str) -> ParsedVideoReference:
     parsed = urlparse(reference)
     if parsed.scheme in {"http", "https", "file"}:
