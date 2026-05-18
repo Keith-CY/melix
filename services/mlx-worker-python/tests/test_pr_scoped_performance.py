@@ -181,8 +181,11 @@ def test_scope_report_selects_tool_registry_schema_bytes_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/tool_registry.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert _selected_probe_ids(scope) == ["tool-registry-schema-bytes-cache"]
+    assert scope["selected_count"] == 2
+    assert _selected_probe_ids(scope) == [
+        "tool-registry-schema-bytes-cache",
+        "tool-registry-select-name-index-cache",
+    ]
 
 
 def test_tool_registry_schema_bytes_probe_script_emits_metrics(
@@ -202,6 +205,23 @@ def test_tool_registry_schema_bytes_probe_script_emits_metrics(
     assert metrics["json_schema_calls_mean"] == 0.0
     tool_count = len(probe_script["built_in_tool_registry"]().tools)
     assert metrics["schema_byte_count_calls_mean"] == 20.0 * tool_count
+
+
+def test_tool_registry_select_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_TOOL_REGISTRY_SELECT_ITERATIONS", "20")
+    monkeypatch.setenv("MELIX_TOOL_REGISTRY_SELECT_SAMPLES", "1")
+
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/tool_registry_select_probe.py"))
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["select_calls_mean"] == 20.0
+    assert metrics["selection_case_count"] == 4.0
 
 
 def test_scope_report_selects_integration_swift_binary_resolution_probe() -> None:
@@ -2371,6 +2391,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "statistical-evidence-category-breakdown-single-pass",
         "text-family-config-copy-elision",
         "tool-registry-schema-bytes-cache",
+        "tool-registry-select-name-index-cache",
     }
     registry_probe = None
     maintenance_probe = None
