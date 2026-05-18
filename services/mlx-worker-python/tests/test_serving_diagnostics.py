@@ -304,15 +304,15 @@ def test_serving_diagnostics_jsonl_fast_path_reuses_request_id_literal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
-    original_encoder = serving_diagnostics_module._json_string_literal
+    original_encoder = serving_diagnostics_module._json_string_literal_bytes
 
-    def counting_encoder(value: str) -> str:
+    def counting_encoder(value: str) -> bytes:
         calls.append(value)
         return original_encoder(value)
 
     monkeypatch.setattr(
         serving_diagnostics_module,
-        "_json_string_literal",
+        "_json_string_literal_bytes",
         counting_encoder,
     )
     rows = tuple(
@@ -378,6 +378,26 @@ def test_serving_diagnostics_jsonl_fast_path_preserves_direct_helper_call() -> N
 
     assert line is not None
     assert json.loads(line)["request_id"] == "req-direct-fast-path"
+
+
+def test_serving_diagnostics_jsonl_fast_path_populates_direct_request_id_byte_cache() -> None:
+    event = ServingDiagnosticsEvent(
+        request_id="req-direct-cache-fill",
+        phase="decode",
+        event_index=9,
+        status="completed",
+        duration_ms=0.001,
+    )
+    request_id_literals: dict[str, bytes] = {}
+
+    line = serving_diagnostics_module._empty_attribute_event_json_line_bytes(
+        event,
+        request_id_literals,
+    )
+
+    assert line is not None
+    assert json.loads(line)["request_id"] == "req-direct-cache-fill"
+    assert request_id_literals == {"req-direct-cache-fill": b'"req-direct-cache-fill"'}
 
 
 def test_serving_diagnostics_jsonl_fast_path_builds_direct_bytes() -> None:
