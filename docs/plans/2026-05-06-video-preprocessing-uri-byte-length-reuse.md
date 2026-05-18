@@ -20,7 +20,7 @@ This is a Python-only optimization and can be verified on Linux with focused pyt
 
 ## Performance Probe
 
-Register `video-preprocessing-uri-byte-length-reuse` in the PR-scoped performance registry. The probe repeatedly calls `prepare_video_input(...)` for URI-backed video input using a counting media stub.
+Register `video-preprocessing-uri-byte-length-reuse` in the PR-scoped performance registry. The probe repeatedly calls `prepare_video_input(...)` for URI-backed video input using a counting media stub. Repeated URI metadata parsing is backed by a bounded cache so trust-boundary validation can keep using the parsed reference without rebuilding the same `urlparse` result on hot paths.
 
 Primary success metric:
 
