@@ -82,7 +82,7 @@ def test_tool_registry_selects_tools_in_requested_order() -> None:
 
 
 def test_tool_registry_select_reuses_cached_name_index() -> None:
-    registry = built_in_tool_registry()
+    registry = ToolRegistry(built_in_tool_registry().tools)
     object.__setattr__(registry, "_tools", ())
 
     selected = registry.select(["visit", "image_crop", "visit"])

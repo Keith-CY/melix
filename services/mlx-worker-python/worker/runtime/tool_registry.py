@@ -155,7 +155,6 @@ class ToolRegistry:
         self._toolset_version = toolset_version.strip()
         self._parser = parser.strip()
         self._parser_contract_version = parser_contract_version.strip()
-        self._tool_by_name: dict[str, ToolDescriptor] = {}
         self._validate()
         self._tool_by_name = {tool.name: tool for tool in self._tools}
 
