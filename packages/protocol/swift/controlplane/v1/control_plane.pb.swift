@@ -20,12 +20,12 @@ import SwiftProtobuf
 // incompatible with the version of SwiftProtobuf to which you are linking.
 // Please ensure that you are building against the same version of the API
 // that was used to generate this file.
-fileprivate struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobuf.ProtobufAPIVersionCheck {
+fileprivate nonisolated struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobuf.ProtobufAPIVersionCheck {
   struct _2: SwiftProtobuf.ProtobufAPIVersion_2 {}
   typealias Version = _2
 }
 
-public enum Melix_Controlplane_V1_ImageEditMode: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_ImageEditMode: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case edit // = 1
@@ -67,7 +67,7 @@ public enum Melix_Controlplane_V1_ImageEditMode: SwiftProtobuf.Enum, Swift.CaseI
 
 }
 
-public enum Melix_Controlplane_V1_ServerState: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_ServerState: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case serverBooting // = 1
@@ -121,7 +121,7 @@ public enum Melix_Controlplane_V1_ServerState: SwiftProtobuf.Enum, Swift.CaseIte
 
 }
 
-public enum Melix_Controlplane_V1_WorkerState: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_WorkerState: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case workerStarting // = 1
@@ -179,7 +179,7 @@ public enum Melix_Controlplane_V1_WorkerState: SwiftProtobuf.Enum, Swift.CaseIte
 
 }
 
-public enum Melix_Controlplane_V1_ModelState: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_ModelState: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case modelDiscovered // = 1
@@ -237,7 +237,7 @@ public enum Melix_Controlplane_V1_ModelState: SwiftProtobuf.Enum, Swift.CaseIter
 
 }
 
-public enum Melix_Controlplane_V1_ModelCapabilityClass: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_ModelCapabilityClass: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case modelCapabilityText // = 1
@@ -307,7 +307,7 @@ public enum Melix_Controlplane_V1_ModelCapabilityClass: SwiftProtobuf.Enum, Swif
 
 }
 
-public enum Melix_Controlplane_V1_WorkerRouteClass: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_WorkerRouteClass: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case workerRouteSwiftText // = 1
@@ -377,7 +377,7 @@ public enum Melix_Controlplane_V1_WorkerRouteClass: SwiftProtobuf.Enum, Swift.Ca
 
 }
 
-public enum Melix_Controlplane_V1_ModelLoadTrustMode: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_ModelLoadTrustMode: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case modelLoadTrustDefaultSafe // = 1
@@ -419,7 +419,7 @@ public enum Melix_Controlplane_V1_ModelLoadTrustMode: SwiftProtobuf.Enum, Swift.
 
 }
 
-public enum Melix_Controlplane_V1_MemoryResidencyPolicy: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_MemoryResidencyPolicy: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case memoryResidencyEvictable // = 1
@@ -461,7 +461,7 @@ public enum Melix_Controlplane_V1_MemoryResidencyPolicy: SwiftProtobuf.Enum, Swi
 
 }
 
-public enum Melix_Controlplane_V1_DiskStreamingMode: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_DiskStreamingMode: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case diskStreamingDisabled // = 1
@@ -503,7 +503,7 @@ public enum Melix_Controlplane_V1_DiskStreamingMode: SwiftProtobuf.Enum, Swift.C
 
 }
 
-public enum Melix_Controlplane_V1_ResidencyState: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_ResidencyState: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case discovered // = 1
@@ -561,7 +561,7 @@ public enum Melix_Controlplane_V1_ResidencyState: SwiftProtobuf.Enum, Swift.Case
 
 }
 
-public enum Melix_Controlplane_V1_RequestPhase: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_RequestPhase: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case requestQueued // = 1
@@ -631,7 +631,7 @@ public enum Melix_Controlplane_V1_RequestPhase: SwiftProtobuf.Enum, Swift.CaseIt
 
 }
 
-public enum Melix_Controlplane_V1_AdmissionState: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_AdmissionState: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case admissionQueued // = 1
@@ -677,7 +677,7 @@ public enum Melix_Controlplane_V1_AdmissionState: SwiftProtobuf.Enum, Swift.Case
 
 }
 
-public enum Melix_Controlplane_V1_AccelerationMode: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_AccelerationMode: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case baseline // = 1
@@ -727,7 +727,7 @@ public enum Melix_Controlplane_V1_AccelerationMode: SwiftProtobuf.Enum, Swift.Ca
 
 }
 
-public enum Melix_Controlplane_V1_UnsupportedCapabilityReason: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_UnsupportedCapabilityReason: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case unsupportedReasonNone // = 1
@@ -797,7 +797,7 @@ public enum Melix_Controlplane_V1_UnsupportedCapabilityReason: SwiftProtobuf.Enu
 
 }
 
-public enum Melix_Controlplane_V1_CapabilitySupportState: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_CapabilitySupportState: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case capabilitySupported // = 1
@@ -843,7 +843,7 @@ public enum Melix_Controlplane_V1_CapabilitySupportState: SwiftProtobuf.Enum, Sw
 
 }
 
-public enum Melix_Controlplane_V1_CacheCompatibilityState: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_CacheCompatibilityState: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case cacheCompatibilityCompatible // = 1
@@ -889,7 +889,7 @@ public enum Melix_Controlplane_V1_CacheCompatibilityState: SwiftProtobuf.Enum, S
 
 }
 
-public enum Melix_Controlplane_V1_EventTopic: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_EventTopic: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case server // = 1
@@ -959,7 +959,7 @@ public enum Melix_Controlplane_V1_EventTopic: SwiftProtobuf.Enum, Swift.CaseIter
 
 }
 
-public enum Melix_Controlplane_V1_ImageJobState: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_ImageJobState: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case imageJobQueued // = 1
@@ -1009,7 +1009,7 @@ public enum Melix_Controlplane_V1_ImageJobState: SwiftProtobuf.Enum, Swift.CaseI
 
 }
 
-public enum Melix_Controlplane_V1_ImageArtifactRole: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_ImageArtifactRole: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case imageArtifactInput // = 1
@@ -1059,7 +1059,7 @@ public enum Melix_Controlplane_V1_ImageArtifactRole: SwiftProtobuf.Enum, Swift.C
 
 }
 
-public enum Melix_Controlplane_V1_APIOnboardingSurfaceStatus: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_APIOnboardingSurfaceStatus: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case shipped // = 1
@@ -1097,7 +1097,7 @@ public enum Melix_Controlplane_V1_APIOnboardingSurfaceStatus: SwiftProtobuf.Enum
 
 }
 
-public enum Melix_Controlplane_V1_GatewayAccessMode: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_GatewayAccessMode: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case none // = 1
@@ -1139,7 +1139,7 @@ public enum Melix_Controlplane_V1_GatewayAccessMode: SwiftProtobuf.Enum, Swift.C
 
 }
 
-public enum Melix_Controlplane_V1_GatewayAuthHeader: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_GatewayAuthHeader: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case none // = 1
@@ -1181,7 +1181,7 @@ public enum Melix_Controlplane_V1_GatewayAuthHeader: SwiftProtobuf.Enum, Swift.C
 
 }
 
-public enum Melix_Controlplane_V1_GatewayConfigSource: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_GatewayConfigSource: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case builtInDefaults // = 1
@@ -1227,7 +1227,7 @@ public enum Melix_Controlplane_V1_GatewayConfigSource: SwiftProtobuf.Enum, Swift
 
 }
 
-public enum Melix_Controlplane_V1_ServingDefaultsSource: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_ServingDefaultsSource: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case builtInDefaults // = 1
@@ -1273,7 +1273,7 @@ public enum Melix_Controlplane_V1_ServingDefaultsSource: SwiftProtobuf.Enum, Swi
 
 }
 
-public enum Melix_Controlplane_V1_ImageDefaultsSource: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_ImageDefaultsSource: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case builtInDefaults // = 1
@@ -1319,7 +1319,7 @@ public enum Melix_Controlplane_V1_ImageDefaultsSource: SwiftProtobuf.Enum, Swift
 
 }
 
-public enum Melix_Controlplane_V1_DoctorHealthStatus: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_DoctorHealthStatus: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case healthy // = 1
@@ -1365,7 +1365,7 @@ public enum Melix_Controlplane_V1_DoctorHealthStatus: SwiftProtobuf.Enum, Swift.
 
 }
 
-public enum Melix_Controlplane_V1_CacheMode: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_CacheMode: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case tiered // = 1
@@ -1407,7 +1407,7 @@ public enum Melix_Controlplane_V1_CacheMode: SwiftProtobuf.Enum, Swift.CaseItera
 
 }
 
-public enum Melix_Controlplane_V1_ServerSessionLifecycleState: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_ServerSessionLifecycleState: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case loading // = 1
@@ -1461,7 +1461,7 @@ public enum Melix_Controlplane_V1_ServerSessionLifecycleState: SwiftProtobuf.Enu
 
 }
 
-public enum Melix_Controlplane_V1_ServerSessionPowerState: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_ServerSessionPowerState: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case active // = 1
@@ -1507,7 +1507,7 @@ public enum Melix_Controlplane_V1_ServerSessionPowerState: SwiftProtobuf.Enum, S
 
 }
 
-public enum Melix_Controlplane_V1_ServerWakeReason: SwiftProtobuf.Enum, Swift.CaseIterable {
+public nonisolated enum Melix_Controlplane_V1_ServerWakeReason: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
   case initialBoot // = 1
@@ -1557,7 +1557,7 @@ public enum Melix_Controlplane_V1_ServerWakeReason: SwiftProtobuf.Enum, Swift.Ca
 
 }
 
-public struct Melix_Controlplane_V1_ErrorStatus: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ErrorStatus: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1575,7 +1575,7 @@ public struct Melix_Controlplane_V1_ErrorStatus: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_HandshakeRequest: Sendable {
+public nonisolated struct Melix_Controlplane_V1_HandshakeRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1595,7 +1595,7 @@ public struct Melix_Controlplane_V1_HandshakeRequest: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_HandshakeResponse: Sendable {
+public nonisolated struct Melix_Controlplane_V1_HandshakeResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1624,7 +1624,7 @@ public struct Melix_Controlplane_V1_HandshakeResponse: Sendable {
   fileprivate var _snapshot: Melix_Controlplane_V1_ServerSnapshot? = nil
 }
 
-public struct Melix_Controlplane_V1_ControlPlaneRequest: @unchecked Sendable {
+public nonisolated struct Melix_Controlplane_V1_ControlPlaneRequest: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1732,7 +1732,7 @@ public struct Melix_Controlplane_V1_ControlPlaneRequest: @unchecked Sendable {
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  public enum OneOf_Command: Equatable, Sendable {
+  public nonisolated enum OneOf_Command: Equatable, Sendable {
     case server(Melix_Controlplane_V1_ServerCommand)
     case model(Melix_Controlplane_V1_ModelCommand)
     case cache(Melix_Controlplane_V1_CacheCommand)
@@ -1748,7 +1748,7 @@ public struct Melix_Controlplane_V1_ControlPlaneRequest: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Controlplane_V1_ControlPlaneResponse: @unchecked Sendable {
+public nonisolated struct Melix_Controlplane_V1_ControlPlaneResponse: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -1850,7 +1850,7 @@ public struct Melix_Controlplane_V1_ControlPlaneResponse: @unchecked Sendable {
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  public enum OneOf_Payload: Equatable, Sendable {
+  public nonisolated enum OneOf_Payload: Equatable, Sendable {
     case server(Melix_Controlplane_V1_ServerReply)
     case model(Melix_Controlplane_V1_ModelReply)
     case cache(Melix_Controlplane_V1_CacheReply)
@@ -1866,7 +1866,7 @@ public struct Melix_Controlplane_V1_ControlPlaneResponse: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Controlplane_V1_ControlPlaneEvent: @unchecked Sendable {
+public nonisolated struct Melix_Controlplane_V1_ControlPlaneEvent: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2011,7 +2011,7 @@ public struct Melix_Controlplane_V1_ControlPlaneEvent: @unchecked Sendable {
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  public enum OneOf_Payload: Equatable, Sendable {
+  public nonisolated enum OneOf_Payload: Equatable, Sendable {
     case serverState(Melix_Controlplane_V1_ServerStateChanged)
     case workerState(Melix_Controlplane_V1_WorkerStateChanged)
     case modelState(Melix_Controlplane_V1_ModelStateChanged)
@@ -2031,7 +2031,7 @@ public struct Melix_Controlplane_V1_ControlPlaneEvent: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Controlplane_V1_ServerCommand: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ServerCommand: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2136,7 +2136,7 @@ public struct Melix_Controlplane_V1_ServerCommand: Sendable {
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  public enum OneOf_Kind: Equatable, Sendable {
+  public nonisolated enum OneOf_Kind: Equatable, Sendable {
     case start(Melix_Controlplane_V1_StartServer)
     case stop(Melix_Controlplane_V1_StopServer)
     case restart(Melix_Controlplane_V1_RestartServer)
@@ -2155,7 +2155,7 @@ public struct Melix_Controlplane_V1_ServerCommand: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ModelCommand: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ModelCommand: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2236,7 +2236,7 @@ public struct Melix_Controlplane_V1_ModelCommand: Sendable {
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  public enum OneOf_Kind: Equatable, Sendable {
+  public nonisolated enum OneOf_Kind: Equatable, Sendable {
     case list(Melix_Controlplane_V1_ListModels)
     case load(Melix_Controlplane_V1_LoadModel)
     case unload(Melix_Controlplane_V1_UnloadModel)
@@ -2252,7 +2252,7 @@ public struct Melix_Controlplane_V1_ModelCommand: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_CacheCommand: Sendable {
+public nonisolated struct Melix_Controlplane_V1_CacheCommand: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2309,7 +2309,7 @@ public struct Melix_Controlplane_V1_CacheCommand: Sendable {
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  public enum OneOf_Kind: Equatable, Sendable {
+  public nonisolated enum OneOf_Kind: Equatable, Sendable {
     case getSnapshot(Melix_Controlplane_V1_GetCacheSnapshot)
     case purge(Melix_Controlplane_V1_PurgeCache)
     case pinPrefix(Melix_Controlplane_V1_PinPrefix)
@@ -2322,7 +2322,7 @@ public struct Melix_Controlplane_V1_CacheCommand: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_SessionCommand: Sendable {
+public nonisolated struct Melix_Controlplane_V1_SessionCommand: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2379,7 +2379,7 @@ public struct Melix_Controlplane_V1_SessionCommand: Sendable {
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  public enum OneOf_Kind: Equatable, Sendable {
+  public nonisolated enum OneOf_Kind: Equatable, Sendable {
     case createSession(Melix_Controlplane_V1_CreateSession)
     case createBranch(Melix_Controlplane_V1_CreateBranch)
     case closeSession(Melix_Controlplane_V1_CloseSession)
@@ -2392,7 +2392,7 @@ public struct Melix_Controlplane_V1_SessionCommand: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_OpsCommand: Sendable {
+public nonisolated struct Melix_Controlplane_V1_OpsCommand: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2497,7 +2497,7 @@ public struct Melix_Controlplane_V1_OpsCommand: Sendable {
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  public enum OneOf_Kind: Equatable, Sendable {
+  public nonisolated enum OneOf_Kind: Equatable, Sendable {
     case tailLogs(Melix_Controlplane_V1_TailLogs)
     case runDoctor(Melix_Controlplane_V1_RunDoctor)
     case runBench(Melix_Controlplane_V1_RunBench)
@@ -2516,7 +2516,7 @@ public struct Melix_Controlplane_V1_OpsCommand: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_PresetCommand: Sendable {
+public nonisolated struct Melix_Controlplane_V1_PresetCommand: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2557,7 +2557,7 @@ public struct Melix_Controlplane_V1_PresetCommand: Sendable {
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  public enum OneOf_Kind: Equatable, Sendable {
+  public nonisolated enum OneOf_Kind: Equatable, Sendable {
     case list(Melix_Controlplane_V1_ListPresets)
     case apply(Melix_Controlplane_V1_ApplyPreset)
     case export(Melix_Controlplane_V1_ExportPreset)
@@ -2568,7 +2568,7 @@ public struct Melix_Controlplane_V1_PresetCommand: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ImageCommand: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ImageCommand: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2601,7 +2601,7 @@ public struct Melix_Controlplane_V1_ImageCommand: Sendable {
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  public enum OneOf_Kind: Equatable, Sendable {
+  public nonisolated enum OneOf_Kind: Equatable, Sendable {
     case generate(Melix_Controlplane_V1_GenerateImage)
     case edit(Melix_Controlplane_V1_EditImage)
     case applyDefaults(Melix_Controlplane_V1_ApplyImageDefaults)
@@ -2611,7 +2611,7 @@ public struct Melix_Controlplane_V1_ImageCommand: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ServerReply: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ServerReply: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2632,7 +2632,7 @@ public struct Melix_Controlplane_V1_ServerReply: Sendable {
   fileprivate var _snapshot: Melix_Controlplane_V1_ServerSnapshot? = nil
 }
 
-public struct Melix_Controlplane_V1_ModelReply: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ModelReply: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2675,7 +2675,7 @@ public struct Melix_Controlplane_V1_ModelReply: Sendable {
   fileprivate var _operation: Melix_Controlplane_V1_ModelOperationResult? = nil
 }
 
-public struct Melix_Controlplane_V1_CacheReply: Sendable {
+public nonisolated struct Melix_Controlplane_V1_CacheReply: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2706,7 +2706,7 @@ public struct Melix_Controlplane_V1_CacheReply: Sendable {
   fileprivate var _snapshot: Melix_Controlplane_V1_CacheSnapshot? = nil
 }
 
-public struct Melix_Controlplane_V1_SessionReply: Sendable {
+public nonisolated struct Melix_Controlplane_V1_SessionReply: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2727,7 +2727,7 @@ public struct Melix_Controlplane_V1_SessionReply: Sendable {
   fileprivate var _session: Melix_Controlplane_V1_SessionState? = nil
 }
 
-public struct Melix_Controlplane_V1_OpsReply: @unchecked Sendable {
+public nonisolated struct Melix_Controlplane_V1_OpsReply: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2842,7 +2842,7 @@ public struct Melix_Controlplane_V1_OpsReply: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Controlplane_V1_PresetReply: Sendable {
+public nonisolated struct Melix_Controlplane_V1_PresetReply: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2854,7 +2854,7 @@ public struct Melix_Controlplane_V1_PresetReply: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ImageReply: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ImageReply: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2885,7 +2885,7 @@ public struct Melix_Controlplane_V1_ImageReply: Sendable {
   fileprivate var _imageDefaults: Melix_Controlplane_V1_ImageDefaultsSummary? = nil
 }
 
-public struct Melix_Controlplane_V1_StartServer: Sendable {
+public nonisolated struct Melix_Controlplane_V1_StartServer: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2897,7 +2897,7 @@ public struct Melix_Controlplane_V1_StartServer: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_StopServer: Sendable {
+public nonisolated struct Melix_Controlplane_V1_StopServer: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2909,7 +2909,7 @@ public struct Melix_Controlplane_V1_StopServer: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_RestartServer: Sendable {
+public nonisolated struct Melix_Controlplane_V1_RestartServer: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2921,7 +2921,7 @@ public struct Melix_Controlplane_V1_RestartServer: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_PauseServer: Sendable {
+public nonisolated struct Melix_Controlplane_V1_PauseServer: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2933,7 +2933,7 @@ public struct Melix_Controlplane_V1_PauseServer: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ResumeServer: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ResumeServer: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2945,7 +2945,7 @@ public struct Melix_Controlplane_V1_ResumeServer: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_WakeServer: Sendable {
+public nonisolated struct Melix_Controlplane_V1_WakeServer: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2957,7 +2957,7 @@ public struct Melix_Controlplane_V1_WakeServer: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_GetServerSnapshot: Sendable {
+public nonisolated struct Melix_Controlplane_V1_GetServerSnapshot: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2967,7 +2967,7 @@ public struct Melix_Controlplane_V1_GetServerSnapshot: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_SetGlobalPolicy: Sendable {
+public nonisolated struct Melix_Controlplane_V1_SetGlobalPolicy: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2979,7 +2979,7 @@ public struct Melix_Controlplane_V1_SetGlobalPolicy: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_SetServerIdlePolicy: Sendable {
+public nonisolated struct Melix_Controlplane_V1_SetServerIdlePolicy: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -2997,7 +2997,7 @@ public struct Melix_Controlplane_V1_SetServerIdlePolicy: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_GatewayAccessKeyRecord: Sendable {
+public nonisolated struct Melix_Controlplane_V1_GatewayAccessKeyRecord: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3015,7 +3015,7 @@ public struct Melix_Controlplane_V1_GatewayAccessKeyRecord: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ApplyGatewayAccess: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ApplyGatewayAccess: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3042,7 +3042,7 @@ public struct Melix_Controlplane_V1_ApplyGatewayAccess: Sendable {
   fileprivate var _primaryKey: Melix_Controlplane_V1_GatewayAccessKeyRecord? = nil
 }
 
-public struct Melix_Controlplane_V1_ApplyGatewayConfig: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ApplyGatewayConfig: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3068,7 +3068,7 @@ public struct Melix_Controlplane_V1_ApplyGatewayConfig: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ApplyServingDefaults: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ApplyServingDefaults: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3104,7 +3104,7 @@ public struct Melix_Controlplane_V1_ApplyServingDefaults: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ListModels: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ListModels: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3114,7 +3114,7 @@ public struct Melix_Controlplane_V1_ListModels: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_LoadModel: Sendable {
+public nonisolated struct Melix_Controlplane_V1_LoadModel: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3128,7 +3128,7 @@ public struct Melix_Controlplane_V1_LoadModel: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_UnloadModel: Sendable {
+public nonisolated struct Melix_Controlplane_V1_UnloadModel: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3140,7 +3140,7 @@ public struct Melix_Controlplane_V1_UnloadModel: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_PinModel: Sendable {
+public nonisolated struct Melix_Controlplane_V1_PinModel: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3152,7 +3152,7 @@ public struct Melix_Controlplane_V1_PinModel: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_UnpinModel: Sendable {
+public nonisolated struct Melix_Controlplane_V1_UnpinModel: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3164,7 +3164,7 @@ public struct Melix_Controlplane_V1_UnpinModel: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_WarmupModel: Sendable {
+public nonisolated struct Melix_Controlplane_V1_WarmupModel: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3176,7 +3176,7 @@ public struct Melix_Controlplane_V1_WarmupModel: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_SetModelPolicy: Sendable {
+public nonisolated struct Melix_Controlplane_V1_SetModelPolicy: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3190,7 +3190,7 @@ public struct Melix_Controlplane_V1_SetModelPolicy: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_GetModelInfo: Sendable {
+public nonisolated struct Melix_Controlplane_V1_GetModelInfo: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3202,7 +3202,7 @@ public struct Melix_Controlplane_V1_GetModelInfo: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_RunModelOperation: Sendable {
+public nonisolated struct Melix_Controlplane_V1_RunModelOperation: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3239,7 +3239,7 @@ public struct Melix_Controlplane_V1_RunModelOperation: Sendable {
   fileprivate var _quantProfile: Melix_Controlplane_V1_QuantizationProfile? = nil
 }
 
-public struct Melix_Controlplane_V1_GenerateImage: Sendable {
+public nonisolated struct Melix_Controlplane_V1_GenerateImage: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3267,7 +3267,7 @@ public struct Melix_Controlplane_V1_GenerateImage: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_EditImage: Sendable {
+public nonisolated struct Melix_Controlplane_V1_EditImage: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3309,7 +3309,7 @@ public struct Melix_Controlplane_V1_EditImage: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ApplyImageDefaults: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ApplyImageDefaults: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3333,7 +3333,7 @@ public struct Melix_Controlplane_V1_ApplyImageDefaults: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_GetCacheSnapshot: Sendable {
+public nonisolated struct Melix_Controlplane_V1_GetCacheSnapshot: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3343,7 +3343,7 @@ public struct Melix_Controlplane_V1_GetCacheSnapshot: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_PurgeCache: Sendable {
+public nonisolated struct Melix_Controlplane_V1_PurgeCache: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3357,7 +3357,7 @@ public struct Melix_Controlplane_V1_PurgeCache: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_PinPrefix: Sendable {
+public nonisolated struct Melix_Controlplane_V1_PinPrefix: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3369,7 +3369,7 @@ public struct Melix_Controlplane_V1_PinPrefix: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_UnpinPrefix: Sendable {
+public nonisolated struct Melix_Controlplane_V1_UnpinPrefix: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3381,7 +3381,7 @@ public struct Melix_Controlplane_V1_UnpinPrefix: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_SaveCheckpoint: Sendable {
+public nonisolated struct Melix_Controlplane_V1_SaveCheckpoint: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3395,7 +3395,7 @@ public struct Melix_Controlplane_V1_SaveCheckpoint: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_RestoreCheckpoint: Sendable {
+public nonisolated struct Melix_Controlplane_V1_RestoreCheckpoint: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3407,7 +3407,7 @@ public struct Melix_Controlplane_V1_RestoreCheckpoint: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_CreateSession: Sendable {
+public nonisolated struct Melix_Controlplane_V1_CreateSession: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3417,7 +3417,7 @@ public struct Melix_Controlplane_V1_CreateSession: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_CreateBranch: Sendable {
+public nonisolated struct Melix_Controlplane_V1_CreateBranch: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3431,7 +3431,7 @@ public struct Melix_Controlplane_V1_CreateBranch: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_CloseSession: Sendable {
+public nonisolated struct Melix_Controlplane_V1_CloseSession: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3443,7 +3443,7 @@ public struct Melix_Controlplane_V1_CloseSession: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_GetSessionState: Sendable {
+public nonisolated struct Melix_Controlplane_V1_GetSessionState: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3455,7 +3455,7 @@ public struct Melix_Controlplane_V1_GetSessionState: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_RegisterToolResult: Sendable {
+public nonisolated struct Melix_Controlplane_V1_RegisterToolResult: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3471,7 +3471,7 @@ public struct Melix_Controlplane_V1_RegisterToolResult: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ResumeAfterTool: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ResumeAfterTool: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3487,7 +3487,7 @@ public struct Melix_Controlplane_V1_ResumeAfterTool: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_TailLogs: Sendable {
+public nonisolated struct Melix_Controlplane_V1_TailLogs: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3497,7 +3497,7 @@ public struct Melix_Controlplane_V1_TailLogs: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_RunDoctor: Sendable {
+public nonisolated struct Melix_Controlplane_V1_RunDoctor: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3507,7 +3507,7 @@ public struct Melix_Controlplane_V1_RunDoctor: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_RunBench: Sendable {
+public nonisolated struct Melix_Controlplane_V1_RunBench: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3539,7 +3539,7 @@ public struct Melix_Controlplane_V1_RunBench: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_RunBenchMatrix: Sendable {
+public nonisolated struct Melix_Controlplane_V1_RunBenchMatrix: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3579,7 +3579,7 @@ public struct Melix_Controlplane_V1_RunBenchMatrix: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_EvaluationSourceLocalFile: Sendable {
+public nonisolated struct Melix_Controlplane_V1_EvaluationSourceLocalFile: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3591,7 +3591,7 @@ public struct Melix_Controlplane_V1_EvaluationSourceLocalFile: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_EvaluationSourceHFDataset: Sendable {
+public nonisolated struct Melix_Controlplane_V1_EvaluationSourceHFDataset: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3609,7 +3609,7 @@ public struct Melix_Controlplane_V1_EvaluationSourceHFDataset: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_EvaluationSource: Sendable {
+public nonisolated struct Melix_Controlplane_V1_EvaluationSource: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3642,7 +3642,7 @@ public struct Melix_Controlplane_V1_EvaluationSource: Sendable {
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
-  public enum OneOf_Kind: Equatable, Sendable {
+  public nonisolated enum OneOf_Kind: Equatable, Sendable {
     case localCsv(Melix_Controlplane_V1_EvaluationSourceLocalFile)
     case localJsonl(Melix_Controlplane_V1_EvaluationSourceLocalFile)
     case hfDataset(Melix_Controlplane_V1_EvaluationSourceHFDataset)
@@ -3652,7 +3652,7 @@ public struct Melix_Controlplane_V1_EvaluationSource: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_EvaluationFieldMapping: Sendable {
+public nonisolated struct Melix_Controlplane_V1_EvaluationFieldMapping: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3670,7 +3670,7 @@ public struct Melix_Controlplane_V1_EvaluationFieldMapping: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_EvaluationProfile: Sendable {
+public nonisolated struct Melix_Controlplane_V1_EvaluationProfile: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3694,7 +3694,7 @@ public struct Melix_Controlplane_V1_EvaluationProfile: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_RemoteProviderTarget: Sendable {
+public nonisolated struct Melix_Controlplane_V1_RemoteProviderTarget: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3718,7 +3718,7 @@ public struct Melix_Controlplane_V1_RemoteProviderTarget: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_RunEvaluation: @unchecked Sendable {
+public nonisolated struct Melix_Controlplane_V1_RunEvaluation: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3816,7 +3816,7 @@ public struct Melix_Controlplane_V1_RunEvaluation: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Controlplane_V1_SearchHubModels: Sendable {
+public nonisolated struct Melix_Controlplane_V1_SearchHubModels: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3834,7 +3834,7 @@ public struct Melix_Controlplane_V1_SearchHubModels: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_GetHubModelCard: Sendable {
+public nonisolated struct Melix_Controlplane_V1_GetHubModelCard: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3846,7 +3846,7 @@ public struct Melix_Controlplane_V1_GetHubModelCard: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ExportDiagnostics: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ExportDiagnostics: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3856,7 +3856,7 @@ public struct Melix_Controlplane_V1_ExportDiagnostics: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ExportResults: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ExportResults: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3868,7 +3868,7 @@ public struct Melix_Controlplane_V1_ExportResults: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_SubmitResults: Sendable {
+public nonisolated struct Melix_Controlplane_V1_SubmitResults: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3882,7 +3882,7 @@ public struct Melix_Controlplane_V1_SubmitResults: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_GetMetricsSnapshot: Sendable {
+public nonisolated struct Melix_Controlplane_V1_GetMetricsSnapshot: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3892,7 +3892,7 @@ public struct Melix_Controlplane_V1_GetMetricsSnapshot: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_CancelRequest: Sendable {
+public nonisolated struct Melix_Controlplane_V1_CancelRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3904,7 +3904,7 @@ public struct Melix_Controlplane_V1_CancelRequest: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_BenchmarkMetricValue: Sendable {
+public nonisolated struct Melix_Controlplane_V1_BenchmarkMetricValue: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3920,7 +3920,7 @@ public struct Melix_Controlplane_V1_BenchmarkMetricValue: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_BenchmarkJobSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_BenchmarkJobSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3954,7 +3954,7 @@ public struct Melix_Controlplane_V1_BenchmarkJobSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_BenchmarkResultSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_BenchmarkResultSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -3978,7 +3978,7 @@ public struct Melix_Controlplane_V1_BenchmarkResultSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_BenchmarkMatrixJobSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_BenchmarkMatrixJobSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -4010,7 +4010,7 @@ public struct Melix_Controlplane_V1_BenchmarkMatrixJobSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_BenchmarkMatrixSummaryRow: @unchecked Sendable {
+public nonisolated struct Melix_Controlplane_V1_BenchmarkMatrixSummaryRow: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -4162,7 +4162,7 @@ public struct Melix_Controlplane_V1_BenchmarkMatrixSummaryRow: @unchecked Sendab
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Controlplane_V1_EvaluationJobSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_EvaluationJobSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -4200,7 +4200,7 @@ public struct Melix_Controlplane_V1_EvaluationJobSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_EvaluationResultSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_EvaluationResultSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -4226,7 +4226,7 @@ public struct Melix_Controlplane_V1_EvaluationResultSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_HubModelSummary: @unchecked Sendable {
+public nonisolated struct Melix_Controlplane_V1_HubModelSummary: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -4338,7 +4338,7 @@ public struct Melix_Controlplane_V1_HubModelSummary: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Controlplane_V1_HubSearchResult: Sendable {
+public nonisolated struct Melix_Controlplane_V1_HubSearchResult: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -4352,7 +4352,7 @@ public struct Melix_Controlplane_V1_HubSearchResult: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_HubModelCard: @unchecked Sendable {
+public nonisolated struct Melix_Controlplane_V1_HubModelCard: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -4474,7 +4474,7 @@ public struct Melix_Controlplane_V1_HubModelCard: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Controlplane_V1_ListPresets: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ListPresets: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -4484,19 +4484,7 @@ public struct Melix_Controlplane_V1_ListPresets: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ApplyPreset: Sendable {
-  // SwiftProtobuf.Message conformance is added in an extension below. See the
-  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
-  // methods supported on all messages.
-
-  public var presetID: String = String()
-
-  public var unknownFields = SwiftProtobuf.UnknownStorage()
-
-  public init() {}
-}
-
-public struct Melix_Controlplane_V1_ExportPreset: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ApplyPreset: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -4508,7 +4496,19 @@ public struct Melix_Controlplane_V1_ExportPreset: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ImportPreset: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ExportPreset: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var presetID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Controlplane_V1_ImportPreset: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -4520,7 +4520,7 @@ public struct Melix_Controlplane_V1_ImportPreset: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_TaskCapabilityReceipt: Sendable {
+public nonisolated struct Melix_Controlplane_V1_TaskCapabilityReceipt: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -4542,7 +4542,7 @@ public struct Melix_Controlplane_V1_TaskCapabilityReceipt: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_SpeculativeHeadCapabilityReceipt: Sendable {
+public nonisolated struct Melix_Controlplane_V1_SpeculativeHeadCapabilityReceipt: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -4572,7 +4572,7 @@ public struct Melix_Controlplane_V1_SpeculativeHeadCapabilityReceipt: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_DraftCompatibilityReceipt: Sendable {
+public nonisolated struct Melix_Controlplane_V1_DraftCompatibilityReceipt: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -4594,7 +4594,7 @@ public struct Melix_Controlplane_V1_DraftCompatibilityReceipt: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_AccelerationCapabilityReceipt: @unchecked Sendable {
+public nonisolated struct Melix_Controlplane_V1_AccelerationCapabilityReceipt: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -4675,7 +4675,7 @@ public struct Melix_Controlplane_V1_AccelerationCapabilityReceipt: @unchecked Se
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Controlplane_V1_ModelCapabilityReceipt: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ModelCapabilityReceipt: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -4700,7 +4700,7 @@ public struct Melix_Controlplane_V1_ModelCapabilityReceipt: Sendable {
   fileprivate var _acceleration: Melix_Controlplane_V1_AccelerationCapabilityReceipt? = nil
 }
 
-public struct Melix_Controlplane_V1_ModelSettings: @unchecked Sendable {
+public nonisolated struct Melix_Controlplane_V1_ModelSettings: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -4806,7 +4806,7 @@ public struct Melix_Controlplane_V1_ModelSettings: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Controlplane_V1_AdaptiveThinkingPolicy: Sendable {
+public nonisolated struct Melix_Controlplane_V1_AdaptiveThinkingPolicy: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -4820,7 +4820,7 @@ public struct Melix_Controlplane_V1_AdaptiveThinkingPolicy: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ModelLoadTrustPolicy: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ModelLoadTrustPolicy: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -4848,7 +4848,7 @@ public struct Melix_Controlplane_V1_ModelLoadTrustPolicy: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ResidencySummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ResidencySummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -4878,7 +4878,7 @@ public struct Melix_Controlplane_V1_ResidencySummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_CachePolicySummary: @unchecked Sendable {
+public nonisolated struct Melix_Controlplane_V1_CachePolicySummary: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -4990,7 +4990,7 @@ public struct Melix_Controlplane_V1_CachePolicySummary: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Controlplane_V1_ImageJobProgress: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ImageJobProgress: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5008,7 +5008,7 @@ public struct Melix_Controlplane_V1_ImageJobProgress: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ImageJobRecipeSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ImageJobRecipeSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5040,7 +5040,7 @@ public struct Melix_Controlplane_V1_ImageJobRecipeSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ImageArtifactRef: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ImageArtifactRef: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5076,7 +5076,7 @@ public struct Melix_Controlplane_V1_ImageArtifactRef: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ImageJobSummary: @unchecked Sendable {
+public nonisolated struct Melix_Controlplane_V1_ImageJobSummary: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5200,7 +5200,7 @@ public struct Melix_Controlplane_V1_ImageJobSummary: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Controlplane_V1_SubscribeRequest: Sendable {
+public nonisolated struct Melix_Controlplane_V1_SubscribeRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5218,7 +5218,7 @@ public struct Melix_Controlplane_V1_SubscribeRequest: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_MCPToolSourceSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_MCPToolSourceSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5236,7 +5236,7 @@ public struct Melix_Controlplane_V1_MCPToolSourceSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_MCPToolCatalogSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_MCPToolCatalogSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5256,7 +5256,7 @@ public struct Melix_Controlplane_V1_MCPToolCatalogSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_EmbeddingToolingSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_EmbeddingToolingSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5282,7 +5282,7 @@ public struct Melix_Controlplane_V1_EmbeddingToolingSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ToolingConfigPathSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ToolingConfigPathSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5296,7 +5296,7 @@ public struct Melix_Controlplane_V1_ToolingConfigPathSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ToolingSettingsSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ToolingSettingsSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5331,7 +5331,7 @@ public struct Melix_Controlplane_V1_ToolingSettingsSummary: Sendable {
   fileprivate var _embedding: Melix_Controlplane_V1_EmbeddingToolingSummary? = nil
 }
 
-public struct Melix_Controlplane_V1_APIOnboardingSurfaceSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_APIOnboardingSurfaceSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5353,7 +5353,7 @@ public struct Melix_Controlplane_V1_APIOnboardingSurfaceSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_APIReferenceEndpointSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_APIReferenceEndpointSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5375,7 +5375,7 @@ public struct Melix_Controlplane_V1_APIReferenceEndpointSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_APIOnboardingSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_APIOnboardingSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5389,7 +5389,7 @@ public struct Melix_Controlplane_V1_APIOnboardingSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_GatewayAccessKeySummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_GatewayAccessKeySummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5405,7 +5405,7 @@ public struct Melix_Controlplane_V1_GatewayAccessKeySummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_GatewayAccessSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_GatewayAccessSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5427,7 +5427,7 @@ public struct Melix_Controlplane_V1_GatewayAccessSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_GatewayListenerConfigSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_GatewayListenerConfigSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5465,7 +5465,7 @@ public struct Melix_Controlplane_V1_GatewayListenerConfigSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_GatewayConfigSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_GatewayConfigSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5477,7 +5477,7 @@ public struct Melix_Controlplane_V1_GatewayConfigSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ServingDefaultsSessionSummary: @unchecked Sendable {
+public nonisolated struct Melix_Controlplane_V1_ServingDefaultsSessionSummary: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5639,7 +5639,7 @@ public struct Melix_Controlplane_V1_ServingDefaultsSessionSummary: @unchecked Se
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Controlplane_V1_ServingDefaultsSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ServingDefaultsSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5651,7 +5651,7 @@ public struct Melix_Controlplane_V1_ServingDefaultsSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ImageDefaultsSummary: @unchecked Sendable {
+public nonisolated struct Melix_Controlplane_V1_ImageDefaultsSummary: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5748,7 +5748,7 @@ public struct Melix_Controlplane_V1_ImageDefaultsSummary: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Controlplane_V1_ServerSnapshot: @unchecked Sendable {
+public nonisolated struct Melix_Controlplane_V1_ServerSnapshot: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5894,7 +5894,7 @@ public struct Melix_Controlplane_V1_ServerSnapshot: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Controlplane_V1_WorkerSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_WorkerSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -5931,7 +5931,7 @@ public struct Melix_Controlplane_V1_WorkerSummary: Sendable {
   fileprivate var _resources: Melix_Controlplane_V1_ResourceSnapshot? = nil
 }
 
-public struct Melix_Controlplane_V1_ModelSummary: @unchecked Sendable {
+public nonisolated struct Melix_Controlplane_V1_ModelSummary: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6063,7 +6063,7 @@ public struct Melix_Controlplane_V1_ModelSummary: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Controlplane_V1_ModelInfo: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ModelInfo: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6097,7 +6097,7 @@ public struct Melix_Controlplane_V1_ModelInfo: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_DoctorFinding: Sendable {
+public nonisolated struct Melix_Controlplane_V1_DoctorFinding: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6115,7 +6115,7 @@ public struct Melix_Controlplane_V1_DoctorFinding: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_DoctorReport: Sendable {
+public nonisolated struct Melix_Controlplane_V1_DoctorReport: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6131,7 +6131,7 @@ public struct Melix_Controlplane_V1_DoctorReport: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ModelOperationResult: @unchecked Sendable {
+public nonisolated struct Melix_Controlplane_V1_ModelOperationResult: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6205,7 +6205,7 @@ public struct Melix_Controlplane_V1_ModelOperationResult: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Controlplane_V1_QuantizationProfile: Sendable {
+public nonisolated struct Melix_Controlplane_V1_QuantizationProfile: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6227,7 +6227,7 @@ public struct Melix_Controlplane_V1_QuantizationProfile: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ModelOperationArtifact: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ModelOperationArtifact: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6257,7 +6257,7 @@ public struct Melix_Controlplane_V1_ModelOperationArtifact: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_QueueSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_QueueSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6281,7 +6281,7 @@ public struct Melix_Controlplane_V1_QueueSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_QueueLaneSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_QueueLaneSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6309,7 +6309,7 @@ public struct Melix_Controlplane_V1_QueueLaneSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_CacheSummary: @unchecked Sendable {
+public nonisolated struct Melix_Controlplane_V1_CacheSummary: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6461,7 +6461,7 @@ public struct Melix_Controlplane_V1_CacheSummary: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Controlplane_V1_CacheScopeKey: Sendable {
+public nonisolated struct Melix_Controlplane_V1_CacheScopeKey: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6489,7 +6489,7 @@ public struct Melix_Controlplane_V1_CacheScopeKey: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_CacheKey: Sendable {
+public nonisolated struct Melix_Controlplane_V1_CacheKey: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6514,7 +6514,7 @@ public struct Melix_Controlplane_V1_CacheKey: Sendable {
   fileprivate var _scope: Melix_Controlplane_V1_CacheScopeKey? = nil
 }
 
-public struct Melix_Controlplane_V1_CacheBlockRef: Sendable {
+public nonisolated struct Melix_Controlplane_V1_CacheBlockRef: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6530,7 +6530,7 @@ public struct Melix_Controlplane_V1_CacheBlockRef: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_PageRef: Sendable {
+public nonisolated struct Melix_Controlplane_V1_PageRef: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6550,7 +6550,7 @@ public struct Melix_Controlplane_V1_PageRef: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_BlockTable: Sendable {
+public nonisolated struct Melix_Controlplane_V1_BlockTable: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6574,7 +6574,7 @@ public struct Melix_Controlplane_V1_BlockTable: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_PrefixRef: Sendable {
+public nonisolated struct Melix_Controlplane_V1_PrefixRef: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6603,7 +6603,7 @@ public struct Melix_Controlplane_V1_PrefixRef: Sendable {
   fileprivate var _cacheKey: Melix_Controlplane_V1_CacheKey? = nil
 }
 
-public struct Melix_Controlplane_V1_SnapshotRef: Sendable {
+public nonisolated struct Melix_Controlplane_V1_SnapshotRef: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6625,7 +6625,7 @@ public struct Melix_Controlplane_V1_SnapshotRef: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_CacheRestoreBoundary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_CacheRestoreBoundary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6654,7 +6654,7 @@ public struct Melix_Controlplane_V1_CacheRestoreBoundary: Sendable {
   fileprivate var _snapshot: Melix_Controlplane_V1_SnapshotRef? = nil
 }
 
-public struct Melix_Controlplane_V1_CacheRestorePlan: @unchecked Sendable {
+public nonisolated struct Melix_Controlplane_V1_CacheRestorePlan: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6709,7 +6709,7 @@ public struct Melix_Controlplane_V1_CacheRestorePlan: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Controlplane_V1_CacheScopeSummary: @unchecked Sendable {
+public nonisolated struct Melix_Controlplane_V1_CacheScopeSummary: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6770,7 +6770,7 @@ public struct Melix_Controlplane_V1_CacheScopeSummary: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Controlplane_V1_CacheSnapshot: Sendable {
+public nonisolated struct Melix_Controlplane_V1_CacheSnapshot: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6801,7 +6801,7 @@ public struct Melix_Controlplane_V1_CacheSnapshot: Sendable {
   fileprivate var _summary: Melix_Controlplane_V1_CacheSummary? = nil
 }
 
-public struct Melix_Controlplane_V1_SessionSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_SessionSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6821,7 +6821,7 @@ public struct Melix_Controlplane_V1_SessionSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ServerSessionRuntimeState: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ServerSessionRuntimeState: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6855,7 +6855,7 @@ public struct Melix_Controlplane_V1_ServerSessionRuntimeState: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ServerSessionModelRuntimeState: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ServerSessionModelRuntimeState: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6881,7 +6881,7 @@ public struct Melix_Controlplane_V1_ServerSessionModelRuntimeState: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_SessionState: Sendable {
+public nonisolated struct Melix_Controlplane_V1_SessionState: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6911,7 +6911,7 @@ public struct Melix_Controlplane_V1_SessionState: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_BranchState: @unchecked Sendable {
+public nonisolated struct Melix_Controlplane_V1_BranchState: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6977,7 +6977,7 @@ public struct Melix_Controlplane_V1_BranchState: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Controlplane_V1_ResourceSnapshot: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ResourceSnapshot: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -6999,7 +6999,7 @@ public struct Melix_Controlplane_V1_ResourceSnapshot: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_MetricsSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_MetricsSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -7011,7 +7011,7 @@ public struct Melix_Controlplane_V1_MetricsSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_RecentError: Sendable {
+public nonisolated struct Melix_Controlplane_V1_RecentError: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -7025,7 +7025,7 @@ public struct Melix_Controlplane_V1_RecentError: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_PresetSummary: Sendable {
+public nonisolated struct Melix_Controlplane_V1_PresetSummary: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -7039,7 +7039,7 @@ public struct Melix_Controlplane_V1_PresetSummary: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ServerStateChanged: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ServerStateChanged: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -7053,7 +7053,7 @@ public struct Melix_Controlplane_V1_ServerStateChanged: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_WorkerStateChanged: Sendable {
+public nonisolated struct Melix_Controlplane_V1_WorkerStateChanged: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -7067,7 +7067,7 @@ public struct Melix_Controlplane_V1_WorkerStateChanged: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ModelStateChanged: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ModelStateChanged: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -7081,7 +7081,7 @@ public struct Melix_Controlplane_V1_ModelStateChanged: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_RequestProgressEvent: @unchecked Sendable {
+public nonisolated struct Melix_Controlplane_V1_RequestProgressEvent: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -7198,7 +7198,7 @@ public struct Melix_Controlplane_V1_RequestProgressEvent: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Controlplane_V1_SessionStateChanged: Sendable {
+public nonisolated struct Melix_Controlplane_V1_SessionStateChanged: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -7219,7 +7219,7 @@ public struct Melix_Controlplane_V1_SessionStateChanged: Sendable {
   fileprivate var _state: Melix_Controlplane_V1_SessionState? = nil
 }
 
-public struct Melix_Controlplane_V1_CacheStatsEvent: Sendable {
+public nonisolated struct Melix_Controlplane_V1_CacheStatsEvent: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -7250,7 +7250,7 @@ public struct Melix_Controlplane_V1_CacheStatsEvent: Sendable {
   fileprivate var _snapshot: Melix_Controlplane_V1_CacheSnapshot? = nil
 }
 
-public struct Melix_Controlplane_V1_BenchmarkProgressEvent: Sendable {
+public nonisolated struct Melix_Controlplane_V1_BenchmarkProgressEvent: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -7266,7 +7266,7 @@ public struct Melix_Controlplane_V1_BenchmarkProgressEvent: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_LogEvent: Sendable {
+public nonisolated struct Melix_Controlplane_V1_LogEvent: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -7280,7 +7280,7 @@ public struct Melix_Controlplane_V1_LogEvent: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_Heartbeat: Sendable {
+public nonisolated struct Melix_Controlplane_V1_Heartbeat: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -7292,7 +7292,7 @@ public struct Melix_Controlplane_V1_Heartbeat: Sendable {
   public init() {}
 }
 
-public struct Melix_Controlplane_V1_ResourcePressureEvent: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ResourcePressureEvent: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -7315,7 +7315,7 @@ public struct Melix_Controlplane_V1_ResourcePressureEvent: Sendable {
   fileprivate var _resources: Melix_Controlplane_V1_ResourceSnapshot? = nil
 }
 
-public struct Melix_Controlplane_V1_ImageJobStateChanged: Sendable {
+public nonisolated struct Melix_Controlplane_V1_ImageJobStateChanged: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -7338,129 +7338,129 @@ public struct Melix_Controlplane_V1_ImageJobStateChanged: Sendable {
 
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
-fileprivate let _protobuf_package = "melix.controlplane.v1"
+fileprivate nonisolated let _protobuf_package = "melix.controlplane.v1"
 
-extension Melix_Controlplane_V1_ImageEditMode: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ImageEditMode: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0IMAGE_EDIT_MODE_UNSPECIFIED\0\u{1}IMAGE_EDIT_MODE_EDIT\0\u{1}IMAGE_EDIT_MODE_VARIATION\0\u{1}IMAGE_EDIT_MODE_ITERATE\0")
 }
 
-extension Melix_Controlplane_V1_ServerState: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ServerState: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0SERVER_STATE_UNSPECIFIED\0\u{1}SERVER_BOOTING\0\u{1}SERVER_READY\0\u{1}SERVER_DEGRADED\0\u{1}SERVER_DRAINING\0\u{1}SERVER_STOPPED\0\u{1}SERVER_FAILED\0")
 }
 
-extension Melix_Controlplane_V1_WorkerState: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_WorkerState: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0WORKER_STATE_UNSPECIFIED\0\u{1}WORKER_STARTING\0\u{1}WORKER_IDLE\0\u{1}WORKER_BUSY\0\u{1}WORKER_SATURATED\0\u{1}WORKER_DRAINING\0\u{1}WORKER_EXITED\0\u{1}WORKER_CRASH_LOOP\0")
 }
 
-extension Melix_Controlplane_V1_ModelState: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ModelState: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MODEL_STATE_UNSPECIFIED\0\u{1}MODEL_DISCOVERED\0\u{1}MODEL_LOADING\0\u{1}MODEL_WARM\0\u{1}MODEL_PINNED\0\u{1}MODEL_EVICTING\0\u{1}MODEL_UNLOADED\0\u{1}MODEL_FAILED\0")
 }
 
-extension Melix_Controlplane_V1_ModelCapabilityClass: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ModelCapabilityClass: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MODEL_CAPABILITY_CLASS_UNSPECIFIED\0\u{1}MODEL_CAPABILITY_TEXT\0\u{1}MODEL_CAPABILITY_EMBEDDING\0\u{1}MODEL_CAPABILITY_RERANK\0\u{1}MODEL_CAPABILITY_MODEL_OPERATIONS\0\u{1}MODEL_CAPABILITY_MULTIMODAL\0\u{1}MODEL_CAPABILITY_OCR\0\u{1}MODEL_CAPABILITY_VLM\0\u{1}MODEL_CAPABILITY_TRANSCRIPTION\0\u{1}MODEL_CAPABILITY_SPEECH\0\u{1}MODEL_CAPABILITY_IMAGE_GENERATION\0")
 }
 
-extension Melix_Controlplane_V1_WorkerRouteClass: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_WorkerRouteClass: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0WORKER_ROUTE_CLASS_UNSPECIFIED\0\u{1}WORKER_ROUTE_SWIFT_TEXT\0\u{1}WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY\0\u{1}WORKER_ROUTE_PYTHON_EMBEDDING\0\u{1}WORKER_ROUTE_PYTHON_RERANK\0\u{1}WORKER_ROUTE_PYTHON_MODEL_OPERATIONS\0\u{1}WORKER_ROUTE_PYTHON_OCR\0\u{1}WORKER_ROUTE_PYTHON_VLM\0\u{1}WORKER_ROUTE_PYTHON_TRANSCRIPTION\0\u{1}WORKER_ROUTE_PYTHON_SPEECH\0\u{1}WORKER_ROUTE_PYTHON_IMAGE\0")
 }
 
-extension Melix_Controlplane_V1_ModelLoadTrustMode: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ModelLoadTrustMode: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MODEL_LOAD_TRUST_MODE_UNSPECIFIED\0\u{1}MODEL_LOAD_TRUST_DEFAULT_SAFE\0\u{1}MODEL_LOAD_TRUST_TRUST_REMOTE_CODE\0\u{1}MODEL_LOAD_TRUST_NOT_APPLICABLE\0")
 }
 
-extension Melix_Controlplane_V1_MemoryResidencyPolicy: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_MemoryResidencyPolicy: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0MEMORY_RESIDENCY_POLICY_UNSPECIFIED\0\u{1}MEMORY_RESIDENCY_EVICTABLE\0\u{1}MEMORY_RESIDENCY_PINNED\0\u{1}MEMORY_RESIDENCY_TTL\0")
 }
 
-extension Melix_Controlplane_V1_DiskStreamingMode: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_DiskStreamingMode: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0DISK_STREAMING_MODE_UNSPECIFIED\0\u{1}DISK_STREAMING_DISABLED\0\u{1}DISK_STREAMING_PREFER_DISK\0\u{1}DISK_STREAMING_REQUIRE_DISK\0")
 }
 
-extension Melix_Controlplane_V1_ResidencyState: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ResidencyState: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RESIDENCY_STATE_UNSPECIFIED\0\u{1}RESIDENCY_STATE_DISCOVERED\0\u{1}RESIDENCY_STATE_LOADING\0\u{1}RESIDENCY_STATE_WARM\0\u{1}RESIDENCY_STATE_PINNED\0\u{1}RESIDENCY_STATE_EVICTING\0\u{1}RESIDENCY_STATE_UNLOADED\0\u{1}RESIDENCY_STATE_FAILED\0")
 }
 
-extension Melix_Controlplane_V1_RequestPhase: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_RequestPhase: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0REQUEST_PHASE_UNSPECIFIED\0\u{1}REQUEST_QUEUED\0\u{1}REQUEST_PREFILLING\0\u{1}REQUEST_DECODING\0\u{1}REQUEST_TOOL_WAIT\0\u{1}REQUEST_CHECKPOINTING\0\u{1}REQUEST_COMPLETED\0\u{1}REQUEST_ABORTED\0\u{1}REQUEST_FAILED\0\u{1}REQUEST_ADMITTED\0\u{1}REQUEST_REJECTED\0")
 }
 
-extension Melix_Controlplane_V1_AdmissionState: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_AdmissionState: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ADMISSION_STATE_UNSPECIFIED\0\u{1}ADMISSION_QUEUED\0\u{1}ADMISSION_ADMITTED\0\u{1}ADMISSION_REJECTED\0\u{1}ADMISSION_DROPPED\0")
 }
 
-extension Melix_Controlplane_V1_AccelerationMode: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_AccelerationMode: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ACCELERATION_MODE_UNSPECIFIED\0\u{1}ACCELERATION_MODE_BASELINE\0\u{1}ACCELERATION_MODE_SPECULATIVE_DECODE\0\u{1}ACCELERATION_MODE_ACCELERATED_PREFILL\0\u{1}ACCELERATION_MODE_ACTIVE_KV_QUANTIZED\0\u{1}ACCELERATION_MODE_SPARSE_PREFILL\0")
 }
 
-extension Melix_Controlplane_V1_UnsupportedCapabilityReason: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_UnsupportedCapabilityReason: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0UNSUPPORTED_CAPABILITY_REASON_UNSPECIFIED\0\u{1}UNSUPPORTED_REASON_NONE\0\u{1}UNSUPPORTED_REASON_UNSUPPORTED_TASK\0\u{1}UNSUPPORTED_REASON_UNSUPPORTED_MODE\0\u{1}UNSUPPORTED_REASON_MISSING_DRAFT_MODEL\0\u{1}UNSUPPORTED_REASON_DRAFT_MODEL_NOT_ALLOWED\0\u{1}UNSUPPORTED_REASON_TARGET_DISABLED\0\u{1}UNSUPPORTED_REASON_DRAFTER_DISABLED\0\u{1}UNSUPPORTED_REASON_METADATA_INCONSISTENT\0\u{1}UNSUPPORTED_REASON_RUNTIME_UNAVAILABLE\0\u{1}UNSUPPORTED_REASON_EXPERIMENTAL_UNVERIFIED\0")
 }
 
-extension Melix_Controlplane_V1_CapabilitySupportState: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_CapabilitySupportState: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0CAPABILITY_SUPPORT_STATE_UNSPECIFIED\0\u{1}CAPABILITY_SUPPORTED\0\u{1}CAPABILITY_UNSUPPORTED\0\u{1}CAPABILITY_EXPERIMENTAL\0\u{1}CAPABILITY_METADATA_INCONSISTENT\0")
 }
 
-extension Melix_Controlplane_V1_CacheCompatibilityState: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_CacheCompatibilityState: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0CACHE_COMPATIBILITY_STATE_UNSPECIFIED\0\u{1}CACHE_COMPATIBILITY_COMPATIBLE\0\u{1}CACHE_COMPATIBILITY_LIMITED\0\u{1}CACHE_COMPATIBILITY_DISABLED\0\u{1}CACHE_COMPATIBILITY_UNKNOWN\0")
 }
 
-extension Melix_Controlplane_V1_EventTopic: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_EventTopic: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0EVENT_TOPIC_UNSPECIFIED\0\u{1}EVENT_TOPIC_SERVER\0\u{1}EVENT_TOPIC_WORKER\0\u{1}EVENT_TOPIC_MODEL\0\u{1}EVENT_TOPIC_REQUEST\0\u{1}EVENT_TOPIC_SESSION\0\u{1}EVENT_TOPIC_CACHE\0\u{1}EVENT_TOPIC_RESOURCE\0\u{1}EVENT_TOPIC_BENCHMARK\0\u{1}EVENT_TOPIC_LOG\0\u{1}EVENT_TOPIC_IMAGE\0")
 }
 
-extension Melix_Controlplane_V1_ImageJobState: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ImageJobState: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0IMAGE_JOB_STATE_UNSPECIFIED\0\u{1}IMAGE_JOB_QUEUED\0\u{1}IMAGE_JOB_RUNNING\0\u{1}IMAGE_JOB_CANCELED\0\u{1}IMAGE_JOB_FAILED\0\u{1}IMAGE_JOB_COMPLETED\0")
 }
 
-extension Melix_Controlplane_V1_ImageArtifactRole: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ImageArtifactRole: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0IMAGE_ARTIFACT_ROLE_UNSPECIFIED\0\u{1}IMAGE_ARTIFACT_INPUT\0\u{1}IMAGE_ARTIFACT_MASK\0\u{1}IMAGE_ARTIFACT_GENERATED\0\u{1}IMAGE_ARTIFACT_EDIT_SOURCE\0\u{1}IMAGE_ARTIFACT_PREVIEW\0")
 }
 
-extension Melix_Controlplane_V1_APIOnboardingSurfaceStatus: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_APIOnboardingSurfaceStatus: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0API_ONBOARDING_SURFACE_STATUS_UNSPECIFIED\0\u{1}API_ONBOARDING_SURFACE_STATUS_SHIPPED\0\u{1}API_ONBOARDING_SURFACE_STATUS_COMPATIBILITY_ONLY\0")
 }
 
-extension Melix_Controlplane_V1_GatewayAccessMode: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_GatewayAccessMode: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0GATEWAY_ACCESS_MODE_UNSPECIFIED\0\u{1}GATEWAY_ACCESS_MODE_NONE\0\u{1}GATEWAY_ACCESS_MODE_BEARER_TOKEN\0\u{1}GATEWAY_ACCESS_MODE_API_KEYS\0")
 }
 
-extension Melix_Controlplane_V1_GatewayAuthHeader: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_GatewayAuthHeader: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0GATEWAY_AUTH_HEADER_UNSPECIFIED\0\u{1}GATEWAY_AUTH_HEADER_NONE\0\u{1}GATEWAY_AUTH_HEADER_AUTHORIZATION_BEARER\0\u{1}GATEWAY_AUTH_HEADER_X_API_KEY\0")
 }
 
-extension Melix_Controlplane_V1_GatewayConfigSource: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_GatewayConfigSource: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0GATEWAY_CONFIG_SOURCE_UNSPECIFIED\0\u{1}GATEWAY_CONFIG_SOURCE_BUILT_IN_DEFAULTS\0\u{1}GATEWAY_CONFIG_SOURCE_ENVIRONMENT_DEFAULTS\0\u{1}GATEWAY_CONFIG_SOURCE_CONFIG_FILE_IMPORT\0\u{1}GATEWAY_CONFIG_SOURCE_OPERATOR_OVERRIDE\0")
 }
 
-extension Melix_Controlplane_V1_ServingDefaultsSource: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ServingDefaultsSource: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0SERVING_DEFAULTS_SOURCE_UNSPECIFIED\0\u{1}SERVING_DEFAULTS_SOURCE_BUILT_IN_DEFAULTS\0\u{1}SERVING_DEFAULTS_SOURCE_ENVIRONMENT_DEFAULTS\0\u{1}SERVING_DEFAULTS_SOURCE_CONFIG_FILE_IMPORT\0\u{1}SERVING_DEFAULTS_SOURCE_OPERATOR_OVERRIDE\0")
 }
 
-extension Melix_Controlplane_V1_ImageDefaultsSource: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ImageDefaultsSource: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0IMAGE_DEFAULTS_SOURCE_UNSPECIFIED\0\u{1}IMAGE_DEFAULTS_SOURCE_BUILT_IN_DEFAULTS\0\u{1}IMAGE_DEFAULTS_SOURCE_ENVIRONMENT_DEFAULTS\0\u{1}IMAGE_DEFAULTS_SOURCE_CONFIG_FILE_IMPORT\0\u{1}IMAGE_DEFAULTS_SOURCE_OPERATOR_OVERRIDE\0")
 }
 
-extension Melix_Controlplane_V1_DoctorHealthStatus: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_DoctorHealthStatus: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0DOCTOR_HEALTH_STATUS_UNSPECIFIED\0\u{1}DOCTOR_HEALTH_STATUS_HEALTHY\0\u{1}DOCTOR_HEALTH_STATUS_WARNING\0\u{1}DOCTOR_HEALTH_STATUS_DEGRADED\0\u{1}DOCTOR_HEALTH_STATUS_FAILED\0")
 }
 
-extension Melix_Controlplane_V1_CacheMode: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_CacheMode: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0CACHE_MODE_UNSPECIFIED\0\u{1}CACHE_MODE_TIERED\0\u{1}CACHE_MODE_ROTATING\0\u{1}CACHE_MODE_HYBRID\0")
 }
 
-extension Melix_Controlplane_V1_ServerSessionLifecycleState: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ServerSessionLifecycleState: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0SERVER_SESSION_LIFECYCLE_STATE_UNSPECIFIED\0\u{1}SERVER_SESSION_LIFECYCLE_STATE_LOADING\0\u{1}SERVER_SESSION_LIFECYCLE_STATE_READY\0\u{1}SERVER_SESSION_LIFECYCLE_STATE_PAUSED\0\u{1}SERVER_SESSION_LIFECYCLE_STATE_SLEEPING\0\u{1}SERVER_SESSION_LIFECYCLE_STATE_STOPPED\0\u{1}SERVER_SESSION_LIFECYCLE_STATE_ERROR\0")
 }
 
-extension Melix_Controlplane_V1_ServerSessionPowerState: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ServerSessionPowerState: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0SERVER_SESSION_POWER_STATE_UNSPECIFIED\0\u{1}SERVER_SESSION_POWER_STATE_ACTIVE\0\u{1}SERVER_SESSION_POWER_STATE_LIGHT_SLEEP\0\u{1}SERVER_SESSION_POWER_STATE_DEEP_SLEEP\0\u{1}SERVER_SESSION_POWER_STATE_STOPPED\0")
 }
 
-extension Melix_Controlplane_V1_ServerWakeReason: SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ServerWakeReason: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0SERVER_WAKE_REASON_UNSPECIFIED\0\u{1}SERVER_WAKE_REASON_INITIAL_BOOT\0\u{1}SERVER_WAKE_REASON_OPERATOR_RESUME\0\u{1}SERVER_WAKE_REASON_REQUEST_ACTIVITY\0\u{1}SERVER_WAKE_REASON_TOOL_ACTIVITY\0\u{1}SERVER_WAKE_REASON_POLICY_APPLY\0")
 }
 
-extension Melix_Controlplane_V1_ErrorStatus: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ErrorStatus: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ErrorStatus"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}code\0\u{1}message\0\u{1}retriable\0\u{1}details\0")
 
@@ -7505,7 +7505,7 @@ extension Melix_Controlplane_V1_ErrorStatus: SwiftProtobuf.Message, SwiftProtobu
   }
 }
 
-extension Melix_Controlplane_V1_HandshakeRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_HandshakeRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".HandshakeRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_version\0\u{3}app_version\0\u{3}bundle_id\0\u{3}client_instance_id\0\u{3}ui_capabilities\0")
 
@@ -7555,7 +7555,7 @@ extension Melix_Controlplane_V1_HandshakeRequest: SwiftProtobuf.Message, SwiftPr
   }
 }
 
-extension Melix_Controlplane_V1_HandshakeResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_HandshakeResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".HandshakeResponse"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_version\0\u{3}server_version\0\u{3}daemon_instance_id\0\u{1}features\0\u{1}snapshot\0")
 
@@ -7609,7 +7609,7 @@ extension Melix_Controlplane_V1_HandshakeResponse: SwiftProtobuf.Message, SwiftP
   }
 }
 
-extension Melix_Controlplane_V1_ControlPlaneRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ControlPlaneRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ControlPlaneRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{3}actor_id\0\u{3}command_type\0\u{3}idempotency_key\0\u{3}deadline_unix_ms\0\u{3}correlation_id\0\u{3}causation_id\0\u{3}target_id\0\u{2}\u{c}server\0\u{1}model\0\u{1}cache\0\u{1}session\0\u{1}ops\0\u{1}preset\0\u{1}image\0")
 
@@ -7853,7 +7853,7 @@ extension Melix_Controlplane_V1_ControlPlaneRequest: SwiftProtobuf.Message, Swif
   }
 }
 
-extension Melix_Controlplane_V1_ControlPlaneResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ControlPlaneResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ControlPlaneResponse"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{3}command_type\0\u{1}ok\0\u{1}error\0\u{3}correlation_id\0\u{3}causation_id\0\u{2}\u{e}server\0\u{1}model\0\u{1}cache\0\u{1}session\0\u{1}ops\0\u{1}preset\0\u{1}image\0")
 
@@ -8083,7 +8083,7 @@ extension Melix_Controlplane_V1_ControlPlaneResponse: SwiftProtobuf.Message, Swi
   }
 }
 
-extension Melix_Controlplane_V1_ControlPlaneEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ControlPlaneEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ControlPlaneEvent"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}event_type\0\u{1}source\0\u{3}correlation_id\0\u{3}causation_id\0\u{3}request_id\0\u{3}actor_id\0\u{3}subscription_id\0\u{1}seq\0\u{3}emitted_at_unix_ms\0\u{4}\u{b}server_state\0\u{3}worker_state\0\u{3}model_state\0\u{3}request_progress\0\u{3}session_state\0\u{3}cache_stats\0\u{3}bench_progress\0\u{1}log\0\u{1}heartbeat\0\u{3}resource_pressure\0\u{3}image_job\0")
 
@@ -8402,7 +8402,7 @@ extension Melix_Controlplane_V1_ControlPlaneEvent: SwiftProtobuf.Message, SwiftP
   }
 }
 
-extension Melix_Controlplane_V1_ServerCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ServerCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServerCommand"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}start\0\u{1}stop\0\u{1}restart\0\u{3}get_snapshot\0\u{3}set_policy\0\u{3}apply_gateway_access\0\u{1}pause\0\u{1}resume\0\u{1}wake\0\u{3}set_idle_policy\0\u{3}apply_gateway_config\0\u{3}apply_serving_defaults\0")
 
@@ -8639,7 +8639,7 @@ extension Melix_Controlplane_V1_ServerCommand: SwiftProtobuf.Message, SwiftProto
   }
 }
 
-extension Melix_Controlplane_V1_ModelCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ModelCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelCommand"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}list\0\u{1}load\0\u{1}unload\0\u{1}pin\0\u{1}unpin\0\u{1}warmup\0\u{3}set_policy\0\u{3}get_info\0\u{3}run_operation\0")
 
@@ -8825,7 +8825,7 @@ extension Melix_Controlplane_V1_ModelCommand: SwiftProtobuf.Message, SwiftProtob
   }
 }
 
-extension Melix_Controlplane_V1_CacheCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_CacheCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheCommand"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}get_snapshot\0\u{1}purge\0\u{3}pin_prefix\0\u{3}unpin_prefix\0\u{3}save_checkpoint\0\u{3}restore_checkpoint\0")
 
@@ -8960,7 +8960,7 @@ extension Melix_Controlplane_V1_CacheCommand: SwiftProtobuf.Message, SwiftProtob
   }
 }
 
-extension Melix_Controlplane_V1_SessionCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_SessionCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SessionCommand"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}create_session\0\u{3}create_branch\0\u{3}close_session\0\u{3}get_state\0\u{3}register_tool_result\0\u{3}resume_after_tool\0")
 
@@ -9095,7 +9095,7 @@ extension Melix_Controlplane_V1_SessionCommand: SwiftProtobuf.Message, SwiftProt
   }
 }
 
-extension Melix_Controlplane_V1_OpsCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_OpsCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".OpsCommand"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}tail_logs\0\u{3}run_doctor\0\u{3}run_bench\0\u{3}run_evaluation\0\u{3}export_bundle\0\u{3}get_metrics\0\u{3}cancel_request\0\u{3}export_results\0\u{3}submit_results\0\u{3}search_hub_models\0\u{3}get_hub_model_card\0\u{3}run_bench_matrix\0")
 
@@ -9332,7 +9332,7 @@ extension Melix_Controlplane_V1_OpsCommand: SwiftProtobuf.Message, SwiftProtobuf
   }
 }
 
-extension Melix_Controlplane_V1_PresetCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_PresetCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PresetCommand"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}list\0\u{1}apply\0\u{1}export\0\u{1}import\0")
 
@@ -9433,7 +9433,7 @@ extension Melix_Controlplane_V1_PresetCommand: SwiftProtobuf.Message, SwiftProto
   }
 }
 
-extension Melix_Controlplane_V1_ImageCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ImageCommand: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ImageCommand"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generate\0\u{1}edit\0\u{3}apply_defaults\0")
 
@@ -9517,7 +9517,7 @@ extension Melix_Controlplane_V1_ImageCommand: SwiftProtobuf.Message, SwiftProtob
   }
 }
 
-extension Melix_Controlplane_V1_ServerReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ServerReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServerReply"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}snapshot\0")
 
@@ -9551,7 +9551,7 @@ extension Melix_Controlplane_V1_ServerReply: SwiftProtobuf.Message, SwiftProtobu
   }
 }
 
-extension Melix_Controlplane_V1_ModelReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ModelReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelReply"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}models\0\u{1}model\0\u{1}info\0\u{1}operation\0")
 
@@ -9600,7 +9600,7 @@ extension Melix_Controlplane_V1_ModelReply: SwiftProtobuf.Message, SwiftProtobuf
   }
 }
 
-extension Melix_Controlplane_V1_CacheReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_CacheReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheReply"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}summary\0\u{1}snapshot\0")
 
@@ -9639,7 +9639,7 @@ extension Melix_Controlplane_V1_CacheReply: SwiftProtobuf.Message, SwiftProtobuf
   }
 }
 
-extension Melix_Controlplane_V1_SessionReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_SessionReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SessionReply"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}session\0")
 
@@ -9673,7 +9673,7 @@ extension Melix_Controlplane_V1_SessionReply: SwiftProtobuf.Message, SwiftProtob
   }
 }
 
-extension Melix_Controlplane_V1_OpsReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_OpsReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".OpsReply"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}report_path\0\u{3}report_markdown\0\u{1}metrics\0\u{3}benchmark_job\0\u{3}benchmark_results\0\u{3}evaluation_job\0\u{3}evaluation_results\0\u{3}export_bundle_json\0\u{3}submission_json\0\u{3}hub_search\0\u{3}hub_model_card\0\u{3}benchmark_matrix_job\0\u{3}benchmark_matrix_summary_rows\0\u{1}doctor\0\u{3}evidence_path\0")
 
@@ -9841,7 +9841,7 @@ extension Melix_Controlplane_V1_OpsReply: SwiftProtobuf.Message, SwiftProtobuf._
   }
 }
 
-extension Melix_Controlplane_V1_PresetReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_PresetReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PresetReply"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}presets\0")
 
@@ -9871,7 +9871,7 @@ extension Melix_Controlplane_V1_PresetReply: SwiftProtobuf.Message, SwiftProtobu
   }
 }
 
-extension Melix_Controlplane_V1_ImageReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ImageReply: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ImageReply"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}job\0\u{3}image_defaults\0")
 
@@ -9910,7 +9910,7 @@ extension Melix_Controlplane_V1_ImageReply: SwiftProtobuf.Message, SwiftProtobuf
   }
 }
 
-extension Melix_Controlplane_V1_StartServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_StartServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".StartServer"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0")
 
@@ -9940,7 +9940,7 @@ extension Melix_Controlplane_V1_StartServer: SwiftProtobuf.Message, SwiftProtobu
   }
 }
 
-extension Melix_Controlplane_V1_StopServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_StopServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".StopServer"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0")
 
@@ -9970,7 +9970,7 @@ extension Melix_Controlplane_V1_StopServer: SwiftProtobuf.Message, SwiftProtobuf
   }
 }
 
-extension Melix_Controlplane_V1_RestartServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_RestartServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RestartServer"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0")
 
@@ -10000,7 +10000,7 @@ extension Melix_Controlplane_V1_RestartServer: SwiftProtobuf.Message, SwiftProto
   }
 }
 
-extension Melix_Controlplane_V1_PauseServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_PauseServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PauseServer"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0")
 
@@ -10030,7 +10030,7 @@ extension Melix_Controlplane_V1_PauseServer: SwiftProtobuf.Message, SwiftProtobu
   }
 }
 
-extension Melix_Controlplane_V1_ResumeServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ResumeServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ResumeServer"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0")
 
@@ -10060,7 +10060,7 @@ extension Melix_Controlplane_V1_ResumeServer: SwiftProtobuf.Message, SwiftProtob
   }
 }
 
-extension Melix_Controlplane_V1_WakeServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_WakeServer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".WakeServer"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0")
 
@@ -10090,7 +10090,7 @@ extension Melix_Controlplane_V1_WakeServer: SwiftProtobuf.Message, SwiftProtobuf
   }
 }
 
-extension Melix_Controlplane_V1_GetServerSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_GetServerSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GetServerSnapshot"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
 
@@ -10109,7 +10109,7 @@ extension Melix_Controlplane_V1_GetServerSnapshot: SwiftProtobuf.Message, SwiftP
   }
 }
 
-extension Melix_Controlplane_V1_SetGlobalPolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_SetGlobalPolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SetGlobalPolicy"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}values\0")
 
@@ -10139,7 +10139,7 @@ extension Melix_Controlplane_V1_SetGlobalPolicy: SwiftProtobuf.Message, SwiftPro
   }
 }
 
-extension Melix_Controlplane_V1_SetServerIdlePolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_SetServerIdlePolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SetServerIdlePolicy"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}auto_sleep_enabled\0\u{3}light_sleep_after_seconds\0\u{3}deep_sleep_after_seconds\0")
 
@@ -10184,7 +10184,7 @@ extension Melix_Controlplane_V1_SetServerIdlePolicy: SwiftProtobuf.Message, Swif
   }
 }
 
-extension Melix_Controlplane_V1_GatewayAccessKeyRecord: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_GatewayAccessKeyRecord: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GatewayAccessKeyRecord"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}key_id\0\u{1}label\0\u{3}token_hint\0\u{1}token\0")
 
@@ -10229,7 +10229,7 @@ extension Melix_Controlplane_V1_GatewayAccessKeyRecord: SwiftProtobuf.Message, S
   }
 }
 
-extension Melix_Controlplane_V1_ApplyGatewayAccess: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ApplyGatewayAccess: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ApplyGatewayAccess"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{1}mode\0\u{3}shared_access_enabled\0\u{3}primary_key\0")
 
@@ -10278,7 +10278,7 @@ extension Melix_Controlplane_V1_ApplyGatewayAccess: SwiftProtobuf.Message, Swift
   }
 }
 
-extension Melix_Controlplane_V1_ApplyGatewayConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ApplyGatewayConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ApplyGatewayConfig"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{1}host\0\u{1}port\0\u{3}default_model_id\0\u{3}rate_limit_per_minute\0\u{3}timeout_seconds\0\u{3}served_model_ids\0\u{3}model_idle_timeout_seconds\0")
 
@@ -10343,7 +10343,7 @@ extension Melix_Controlplane_V1_ApplyGatewayConfig: SwiftProtobuf.Message, Swift
   }
 }
 
-extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ApplyServingDefaults"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{1}temperature\0\u{3}top_p\0\u{3}max_tokens\0\u{3}stream_interval_tokens\0\u{3}max_concurrent_requests\0\u{3}concurrent_processing_enabled\0\u{3}prefill_batch_size\0\u{3}completion_batch_size\0\u{3}acceleration_mode\0\u{3}draft_model_id\0\u{3}num_draft_tokens\0\u{3}acceleration_profile\0")
 
@@ -10433,7 +10433,7 @@ extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.Message, Swi
   }
 }
 
-extension Melix_Controlplane_V1_ListModels: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ListModels: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ListModels"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
 
@@ -10452,7 +10452,7 @@ extension Melix_Controlplane_V1_ListModels: SwiftProtobuf.Message, SwiftProtobuf
   }
 }
 
-extension Melix_Controlplane_V1_LoadModel: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_LoadModel: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".LoadModel"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{3}memory_budget_bytes\0")
 
@@ -10487,7 +10487,7 @@ extension Melix_Controlplane_V1_LoadModel: SwiftProtobuf.Message, SwiftProtobuf.
   }
 }
 
-extension Melix_Controlplane_V1_UnloadModel: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_UnloadModel: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".UnloadModel"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0")
 
@@ -10517,7 +10517,7 @@ extension Melix_Controlplane_V1_UnloadModel: SwiftProtobuf.Message, SwiftProtobu
   }
 }
 
-extension Melix_Controlplane_V1_PinModel: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_PinModel: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PinModel"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0")
 
@@ -10547,7 +10547,7 @@ extension Melix_Controlplane_V1_PinModel: SwiftProtobuf.Message, SwiftProtobuf._
   }
 }
 
-extension Melix_Controlplane_V1_UnpinModel: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_UnpinModel: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".UnpinModel"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0")
 
@@ -10577,7 +10577,7 @@ extension Melix_Controlplane_V1_UnpinModel: SwiftProtobuf.Message, SwiftProtobuf
   }
 }
 
-extension Melix_Controlplane_V1_WarmupModel: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_WarmupModel: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".WarmupModel"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0")
 
@@ -10607,7 +10607,7 @@ extension Melix_Controlplane_V1_WarmupModel: SwiftProtobuf.Message, SwiftProtobu
   }
 }
 
-extension Melix_Controlplane_V1_SetModelPolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_SetModelPolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SetModelPolicy"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}values\0")
 
@@ -10642,7 +10642,7 @@ extension Melix_Controlplane_V1_SetModelPolicy: SwiftProtobuf.Message, SwiftProt
   }
 }
 
-extension Melix_Controlplane_V1_GetModelInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_GetModelInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GetModelInfo"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0")
 
@@ -10672,7 +10672,7 @@ extension Melix_Controlplane_V1_GetModelInfo: SwiftProtobuf.Message, SwiftProtob
   }
 }
 
-extension Melix_Controlplane_V1_RunModelOperation: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_RunModelOperation: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RunModelOperation"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}operation\0\u{3}output_dir\0\u{3}weight_quant\0\u{3}kv_quant\0\u{3}generate_manifest\0\u{3}run_smoke_test\0\u{1}ext\0\u{3}quant_profile\0")
 
@@ -10746,7 +10746,7 @@ extension Melix_Controlplane_V1_RunModelOperation: SwiftProtobuf.Message, SwiftP
   }
 }
 
-extension Melix_Controlplane_V1_GenerateImage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_GenerateImage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GenerateImage"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}prompt\0\u{1}size\0\u{1}n\0\u{3}response_format\0\u{3}artifact_namespace\0\u{1}steps\0\u{1}guidance\0\u{3}negative_prompt\0")
 
@@ -10816,7 +10816,7 @@ extension Melix_Controlplane_V1_GenerateImage: SwiftProtobuf.Message, SwiftProto
   }
 }
 
-extension Melix_Controlplane_V1_EditImage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_EditImage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".EditImage"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}prompt\0\u{1}image\0\u{3}image_uri\0\u{1}mask\0\u{3}mask_uri\0\u{1}strength\0\u{1}size\0\u{1}n\0\u{3}response_format\0\u{3}source_artifact_id\0\u{3}prompt_delta\0\u{3}edit_mode\0\u{1}steps\0\u{1}guidance\0\u{3}negative_prompt\0")
 
@@ -10921,7 +10921,7 @@ extension Melix_Controlplane_V1_EditImage: SwiftProtobuf.Message, SwiftProtobuf.
   }
 }
 
-extension Melix_Controlplane_V1_ApplyImageDefaults: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ApplyImageDefaults: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ApplyImageDefaults"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}generate_model_id\0\u{3}edit_model_id\0\u{1}size\0\u{1}steps\0\u{1}guidance\0\u{1}strength\0\u{3}negative_prompt\0")
 
@@ -10981,7 +10981,7 @@ extension Melix_Controlplane_V1_ApplyImageDefaults: SwiftProtobuf.Message, Swift
   }
 }
 
-extension Melix_Controlplane_V1_GetCacheSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_GetCacheSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GetCacheSnapshot"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
 
@@ -11000,7 +11000,7 @@ extension Melix_Controlplane_V1_GetCacheSnapshot: SwiftProtobuf.Message, SwiftPr
   }
 }
 
-extension Melix_Controlplane_V1_PurgeCache: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_PurgeCache: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PurgeCache"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}scope_id\0\u{1}tier\0")
 
@@ -11035,7 +11035,7 @@ extension Melix_Controlplane_V1_PurgeCache: SwiftProtobuf.Message, SwiftProtobuf
   }
 }
 
-extension Melix_Controlplane_V1_PinPrefix: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_PinPrefix: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PinPrefix"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}prefix_id\0")
 
@@ -11065,7 +11065,7 @@ extension Melix_Controlplane_V1_PinPrefix: SwiftProtobuf.Message, SwiftProtobuf.
   }
 }
 
-extension Melix_Controlplane_V1_UnpinPrefix: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_UnpinPrefix: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".UnpinPrefix"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}prefix_id\0")
 
@@ -11095,7 +11095,7 @@ extension Melix_Controlplane_V1_UnpinPrefix: SwiftProtobuf.Message, SwiftProtobu
   }
 }
 
-extension Melix_Controlplane_V1_SaveCheckpoint: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_SaveCheckpoint: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SaveCheckpoint"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{3}branch_id\0")
 
@@ -11130,7 +11130,7 @@ extension Melix_Controlplane_V1_SaveCheckpoint: SwiftProtobuf.Message, SwiftProt
   }
 }
 
-extension Melix_Controlplane_V1_RestoreCheckpoint: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_RestoreCheckpoint: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RestoreCheckpoint"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}checkpoint_id\0")
 
@@ -11160,7 +11160,7 @@ extension Melix_Controlplane_V1_RestoreCheckpoint: SwiftProtobuf.Message, SwiftP
   }
 }
 
-extension Melix_Controlplane_V1_CreateSession: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_CreateSession: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CreateSession"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
 
@@ -11179,7 +11179,7 @@ extension Melix_Controlplane_V1_CreateSession: SwiftProtobuf.Message, SwiftProto
   }
 }
 
-extension Melix_Controlplane_V1_CreateBranch: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_CreateBranch: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CreateBranch"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{3}parent_branch_id\0")
 
@@ -11214,7 +11214,7 @@ extension Melix_Controlplane_V1_CreateBranch: SwiftProtobuf.Message, SwiftProtob
   }
 }
 
-extension Melix_Controlplane_V1_CloseSession: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_CloseSession: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CloseSession"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0")
 
@@ -11244,7 +11244,7 @@ extension Melix_Controlplane_V1_CloseSession: SwiftProtobuf.Message, SwiftProtob
   }
 }
 
-extension Melix_Controlplane_V1_GetSessionState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_GetSessionState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GetSessionState"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0")
 
@@ -11274,7 +11274,7 @@ extension Melix_Controlplane_V1_GetSessionState: SwiftProtobuf.Message, SwiftPro
   }
 }
 
-extension Melix_Controlplane_V1_RegisterToolResult: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_RegisterToolResult: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RegisterToolResult"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{3}branch_id\0\u{3}tool_call_id\0")
 
@@ -11314,7 +11314,7 @@ extension Melix_Controlplane_V1_RegisterToolResult: SwiftProtobuf.Message, Swift
   }
 }
 
-extension Melix_Controlplane_V1_ResumeAfterTool: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ResumeAfterTool: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ResumeAfterTool"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{3}branch_id\0\u{3}snapshot_id\0")
 
@@ -11354,7 +11354,7 @@ extension Melix_Controlplane_V1_ResumeAfterTool: SwiftProtobuf.Message, SwiftPro
   }
 }
 
-extension Melix_Controlplane_V1_TailLogs: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_TailLogs: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".TailLogs"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
 
@@ -11373,7 +11373,7 @@ extension Melix_Controlplane_V1_TailLogs: SwiftProtobuf.Message, SwiftProtobuf._
   }
 }
 
-extension Melix_Controlplane_V1_RunDoctor: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_RunDoctor: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RunDoctor"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
 
@@ -11392,7 +11392,7 @@ extension Melix_Controlplane_V1_RunDoctor: SwiftProtobuf.Message, SwiftProtobuf.
   }
 }
 
-extension Melix_Controlplane_V1_RunBench: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_RunBench: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RunBench"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}suites\0\u{1}parameters\0\u{3}model_id\0\u{3}hf_repo_id\0\u{3}context_lengths\0\u{3}generation_length\0\u{3}batch_sizes\0\u{1}repeats\0\u{3}cache_profile\0\u{3}reasoning_mode\0\u{3}structured_output_mode\0")
 
@@ -11472,7 +11472,7 @@ extension Melix_Controlplane_V1_RunBench: SwiftProtobuf.Message, SwiftProtobuf._
   }
 }
 
-extension Melix_Controlplane_V1_RunBenchMatrix: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_RunBenchMatrix: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RunBenchMatrix"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{3}hf_repo_id\0\u{3}task_kind\0\u{3}suite_ids\0\u{3}context_lengths\0\u{3}generation_lengths\0\u{3}batch_sizes\0\u{3}cache_profiles\0\u{3}reasoning_modes\0\u{3}structured_output_modes\0\u{3}concurrency_levels\0\u{1}repeats\0\u{1}requests\0\u{3}duration_seconds\0\u{3}allow_large_matrix\0")
 
@@ -11572,7 +11572,7 @@ extension Melix_Controlplane_V1_RunBenchMatrix: SwiftProtobuf.Message, SwiftProt
   }
 }
 
-extension Melix_Controlplane_V1_EvaluationSourceLocalFile: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_EvaluationSourceLocalFile: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".EvaluationSourceLocalFile"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}path\0")
 
@@ -11602,7 +11602,7 @@ extension Melix_Controlplane_V1_EvaluationSourceLocalFile: SwiftProtobuf.Message
   }
 }
 
-extension Melix_Controlplane_V1_EvaluationSourceHFDataset: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_EvaluationSourceHFDataset: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".EvaluationSourceHFDataset"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}dataset_path\0\u{3}dataset_name\0\u{3}dataset_revision\0\u{1}split\0")
 
@@ -11647,7 +11647,7 @@ extension Melix_Controlplane_V1_EvaluationSourceHFDataset: SwiftProtobuf.Message
   }
 }
 
-extension Melix_Controlplane_V1_EvaluationSource: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_EvaluationSource: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".EvaluationSource"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}local_csv\0\u{3}local_jsonl\0\u{3}hf_dataset\0")
 
@@ -11731,7 +11731,7 @@ extension Melix_Controlplane_V1_EvaluationSource: SwiftProtobuf.Message, SwiftPr
   }
 }
 
-extension Melix_Controlplane_V1_EvaluationFieldMapping: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_EvaluationFieldMapping: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".EvaluationFieldMapping"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}system_path\0\u{3}input_text_path\0\u{3}target_path\0\u{3}sample_id_path\0")
 
@@ -11776,7 +11776,7 @@ extension Melix_Controlplane_V1_EvaluationFieldMapping: SwiftProtobuf.Message, S
   }
 }
 
-extension Melix_Controlplane_V1_EvaluationProfile: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_EvaluationProfile: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".EvaluationProfile"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}profile_type\0\u{3}result_kind\0\u{3}extraction_mode\0\u{3}scoring_mode\0\u{1}threshold\0\u{3}output_schema_json\0\u{3}ignored_paths\0")
 
@@ -11836,7 +11836,7 @@ extension Melix_Controlplane_V1_EvaluationProfile: SwiftProtobuf.Message, SwiftP
   }
 }
 
-extension Melix_Controlplane_V1_RemoteProviderTarget: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_RemoteProviderTarget: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RemoteProviderTarget"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}remote_server_id\0\u{3}provider_kind\0\u{3}base_url\0\u{3}api_key\0\u{3}model_id\0\u{3}timeout_seconds\0\u{3}rate_limit_per_minute\0")
 
@@ -11896,7 +11896,7 @@ extension Melix_Controlplane_V1_RemoteProviderTarget: SwiftProtobuf.Message, Swi
   }
 }
 
-extension Melix_Controlplane_V1_RunEvaluation: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_RunEvaluation: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RunEvaluation"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}sample_size\0\u{1}parameters\0\u{3}model_id\0\u{3}hf_repo_id\0\u{3}few_shot\0\u{1}seed\0\u{3}scoring_mode\0\u{3}code_exec_policy\0\u{1}source\0\u{3}field_mapping\0\u{1}profile\0\u{3}remote_target\0")
 
@@ -12057,7 +12057,7 @@ extension Melix_Controlplane_V1_RunEvaluation: SwiftProtobuf.Message, SwiftProto
   }
 }
 
-extension Melix_Controlplane_V1_SearchHubModels: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_SearchHubModels: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SearchHubModels"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}query\0\u{3}page_size\0\u{1}cursor\0\u{3}mlx_only\0")
 
@@ -12102,7 +12102,7 @@ extension Melix_Controlplane_V1_SearchHubModels: SwiftProtobuf.Message, SwiftPro
   }
 }
 
-extension Melix_Controlplane_V1_GetHubModelCard: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_GetHubModelCard: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GetHubModelCard"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}repo_id\0")
 
@@ -12132,7 +12132,7 @@ extension Melix_Controlplane_V1_GetHubModelCard: SwiftProtobuf.Message, SwiftPro
   }
 }
 
-extension Melix_Controlplane_V1_ExportDiagnostics: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ExportDiagnostics: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ExportDiagnostics"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
 
@@ -12151,7 +12151,7 @@ extension Melix_Controlplane_V1_ExportDiagnostics: SwiftProtobuf.Message, SwiftP
   }
 }
 
-extension Melix_Controlplane_V1_ExportResults: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ExportResults: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ExportResults"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}output_dir\0")
 
@@ -12181,7 +12181,7 @@ extension Melix_Controlplane_V1_ExportResults: SwiftProtobuf.Message, SwiftProto
   }
 }
 
-extension Melix_Controlplane_V1_SubmitResults: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_SubmitResults: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SubmitResults"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}output_dir\0\u{3}device_metadata\0")
 
@@ -12216,7 +12216,7 @@ extension Melix_Controlplane_V1_SubmitResults: SwiftProtobuf.Message, SwiftProto
   }
 }
 
-extension Melix_Controlplane_V1_GetMetricsSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_GetMetricsSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GetMetricsSnapshot"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
 
@@ -12235,7 +12235,7 @@ extension Melix_Controlplane_V1_GetMetricsSnapshot: SwiftProtobuf.Message, Swift
   }
 }
 
-extension Melix_Controlplane_V1_CancelRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_CancelRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CancelRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0")
 
@@ -12265,7 +12265,7 @@ extension Melix_Controlplane_V1_CancelRequest: SwiftProtobuf.Message, SwiftProto
   }
 }
 
-extension Melix_Controlplane_V1_BenchmarkMetricValue: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_BenchmarkMetricValue: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".BenchmarkMetricValue"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}value\0\u{1}unit\0")
 
@@ -12305,7 +12305,7 @@ extension Melix_Controlplane_V1_BenchmarkMetricValue: SwiftProtobuf.Message, Swi
   }
 }
 
-extension Melix_Controlplane_V1_BenchmarkJobSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_BenchmarkJobSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".BenchmarkJobSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}job_id\0\u{3}model_id\0\u{1}suites\0\u{1}parameters\0\u{1}status\0\u{3}output_dir\0\u{3}created_at_unix_ms\0\u{3}updated_at_unix_ms\0\u{3}task_kind\0\u{3}source_repo\0\u{3}benchmark_mode\0")
 
@@ -12390,7 +12390,7 @@ extension Melix_Controlplane_V1_BenchmarkJobSummary: SwiftProtobuf.Message, Swif
   }
 }
 
-extension Melix_Controlplane_V1_BenchmarkResultSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_BenchmarkResultSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".BenchmarkResultSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}job_id\0\u{1}suite\0\u{1}metrics\0\u{3}report_path\0\u{3}report_markdown\0\u{3}evidence_path\0")
 
@@ -12450,7 +12450,7 @@ extension Melix_Controlplane_V1_BenchmarkResultSummary: SwiftProtobuf.Message, S
   }
 }
 
-extension Melix_Controlplane_V1_BenchmarkMatrixJobSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_BenchmarkMatrixJobSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".BenchmarkMatrixJobSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}job_id\0\u{3}model_id\0\u{3}task_kind\0\u{3}source_repo\0\u{3}suite_ids\0\u{3}benchmark_mode\0\u{1}status\0\u{3}output_dir\0\u{3}created_at_unix_ms\0\u{3}updated_at_unix_ms\0")
 
@@ -12530,7 +12530,7 @@ extension Melix_Controlplane_V1_BenchmarkMatrixJobSummary: SwiftProtobuf.Message
   }
 }
 
-extension Melix_Controlplane_V1_BenchmarkMatrixSummaryRow: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_BenchmarkMatrixSummaryRow: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".BenchmarkMatrixSummaryRow"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}job_id\0\u{3}task_kind\0\u{3}source_repo\0\u{3}model_id\0\u{3}suite_id\0\u{3}context_length\0\u{3}generation_length\0\u{3}batch_size\0\u{3}cache_profile\0\u{3}reasoning_mode\0\u{3}structured_output_mode\0\u{3}concurrency_level\0\u{1}repeats\0\u{1}requests\0\u{3}duration_seconds\0\u{3}ttft_mean_ms\0\u{3}ttft_std_ms\0\u{3}request_latency_mean_ms\0\u{3}request_latency_std_ms\0\u{3}prefill_tokens_per_second_mean\0\u{3}decode_tokens_per_second_mean\0\u{3}throughput_requests_per_second\0\u{3}throughput_tokens_per_second\0\u{3}success_rate\0\u{3}peak_memory_bytes_max\0\u{3}queue_wait_mean_ms\0\u{3}queue_wait_p95_ms\0\u{3}created_at_unix_ms\0")
 
@@ -12785,7 +12785,7 @@ extension Melix_Controlplane_V1_BenchmarkMatrixSummaryRow: SwiftProtobuf.Message
   }
 }
 
-extension Melix_Controlplane_V1_EvaluationJobSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_EvaluationJobSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".EvaluationJobSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}job_id\0\u{3}model_id\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}sample_size\0\u{3}scoring_mode\0\u{1}parameters\0\u{1}status\0\u{3}task_kind\0\u{3}source_repo\0\u{3}output_dir\0\u{3}created_at_unix_ms\0\u{3}updated_at_unix_ms\0")
 
@@ -12880,7 +12880,7 @@ extension Melix_Controlplane_V1_EvaluationJobSummary: SwiftProtobuf.Message, Swi
   }
 }
 
-extension Melix_Controlplane_V1_EvaluationResultSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_EvaluationResultSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".EvaluationResultSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}job_id\0\u{3}suite_id\0\u{3}dataset_id\0\u{3}sample_size\0\u{1}metrics\0\u{3}report_path\0\u{3}evidence_path\0")
 
@@ -12945,7 +12945,7 @@ extension Melix_Controlplane_V1_EvaluationResultSummary: SwiftProtobuf.Message, 
   }
 }
 
-extension Melix_Controlplane_V1_HubModelSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_HubModelSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".HubModelSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}repo_id\0\u{1}author\0\u{3}model_name\0\u{1}summary\0\u{3}pipeline_tag\0\u{1}tags\0\u{1}downloads\0\u{1}likes\0\u{3}mlx_compatible\0\u{3}library_name\0\u{3}sibling_files\0\u{3}last_modified\0\u{3}local_fit_status\0\u{3}local_fit_reasons\0\u{3}estimated_artifact_bytes\0\u{3}estimated_resident_bytes\0\u{3}parameter_count\0\u{3}quantization_summary\0\u{1}gated\0\u{3}recommended_action\0")
 
@@ -13144,7 +13144,7 @@ extension Melix_Controlplane_V1_HubModelSummary: SwiftProtobuf.Message, SwiftPro
   }
 }
 
-extension Melix_Controlplane_V1_HubSearchResult: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_HubSearchResult: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".HubSearchResult"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}models\0\u{3}next_cursor\0")
 
@@ -13179,7 +13179,7 @@ extension Melix_Controlplane_V1_HubSearchResult: SwiftProtobuf.Message, SwiftPro
   }
 }
 
-extension Melix_Controlplane_V1_HubModelCard: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_HubModelCard: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".HubModelCard"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}repo_id\0\u{1}author\0\u{3}model_name\0\u{1}summary\0\u{1}license\0\u{3}pipeline_tag\0\u{1}tags\0\u{1}downloads\0\u{1}likes\0\u{3}mlx_compatible\0\u{3}library_name\0\u{3}sibling_files\0\u{3}base_models\0\u{3}last_modified\0\u{3}local_fit_status\0\u{3}local_fit_reasons\0\u{3}estimated_artifact_bytes\0\u{3}estimated_resident_bytes\0\u{3}parameter_count\0\u{3}quantization_summary\0\u{1}gated\0\u{3}recommended_action\0")
 
@@ -13392,7 +13392,7 @@ extension Melix_Controlplane_V1_HubModelCard: SwiftProtobuf.Message, SwiftProtob
   }
 }
 
-extension Melix_Controlplane_V1_ListPresets: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ListPresets: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ListPresets"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
 
@@ -13411,7 +13411,7 @@ extension Melix_Controlplane_V1_ListPresets: SwiftProtobuf.Message, SwiftProtobu
   }
 }
 
-extension Melix_Controlplane_V1_ApplyPreset: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ApplyPreset: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ApplyPreset"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}preset_id\0")
 
@@ -13441,7 +13441,7 @@ extension Melix_Controlplane_V1_ApplyPreset: SwiftProtobuf.Message, SwiftProtobu
   }
 }
 
-extension Melix_Controlplane_V1_ExportPreset: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ExportPreset: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ExportPreset"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}preset_id\0")
 
@@ -13471,7 +13471,7 @@ extension Melix_Controlplane_V1_ExportPreset: SwiftProtobuf.Message, SwiftProtob
   }
 }
 
-extension Melix_Controlplane_V1_ImportPreset: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ImportPreset: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ImportPreset"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}payload\0")
 
@@ -13501,7 +13501,7 @@ extension Melix_Controlplane_V1_ImportPreset: SwiftProtobuf.Message, SwiftProtob
   }
 }
 
-extension Melix_Controlplane_V1_TaskCapabilityReceipt: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_TaskCapabilityReceipt: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".TaskCapabilityReceipt"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}capability\0\u{1}state\0\u{3}unsupported_reason\0\u{1}provenance\0\u{3}recovery_hint\0\u{1}metadata\0")
 
@@ -13556,7 +13556,7 @@ extension Melix_Controlplane_V1_TaskCapabilityReceipt: SwiftProtobuf.Message, Sw
   }
 }
 
-extension Melix_Controlplane_V1_SpeculativeHeadCapabilityReceipt: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_SpeculativeHeadCapabilityReceipt: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SpeculativeHeadCapabilityReceipt"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}configured\0\u{3}configured_layers\0\u{3}indexed_layers\0\u{3}drop_flag_state\0\u{3}runtime_available\0\u{3}artifact_available\0\u{1}state\0\u{3}unsupported_reason\0\u{1}provenance\0\u{3}recovery_hint\0")
 
@@ -13631,7 +13631,7 @@ extension Melix_Controlplane_V1_SpeculativeHeadCapabilityReceipt: SwiftProtobuf.
   }
 }
 
-extension Melix_Controlplane_V1_DraftCompatibilityReceipt: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_DraftCompatibilityReceipt: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".DraftCompatibilityReceipt"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}draft_model_id\0\u{1}state\0\u{3}unsupported_reason\0\u{1}provenance\0\u{3}recovery_hint\0\u{1}metadata\0")
 
@@ -13686,7 +13686,7 @@ extension Melix_Controlplane_V1_DraftCompatibilityReceipt: SwiftProtobuf.Message
   }
 }
 
-extension Melix_Controlplane_V1_AccelerationCapabilityReceipt: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_AccelerationCapabilityReceipt: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".AccelerationCapabilityReceipt"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}requested_acceleration_mode\0\u{3}resolved_acceleration_mode\0\u{3}supported_modes\0\u{3}target_capability\0\u{3}drafter_capability\0\u{3}valid_draft_model_ids\0\u{1}state\0\u{3}unsupported_reason\0\u{1}provenance\0\u{3}recovery_hint\0\u{3}draft_compatibility\0\u{3}speculative_head\0\u{1}metadata\0")
 
@@ -13840,7 +13840,7 @@ extension Melix_Controlplane_V1_AccelerationCapabilityReceipt: SwiftProtobuf.Mes
   }
 }
 
-extension Melix_Controlplane_V1_ModelCapabilityReceipt: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ModelCapabilityReceipt: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelCapabilityReceipt"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{1}tasks\0\u{1}acceleration\0")
 
@@ -13884,7 +13884,7 @@ extension Melix_Controlplane_V1_ModelCapabilityReceipt: SwiftProtobuf.Message, S
   }
 }
 
-extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelSettings"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}alias\0\u{3}type_override\0\u{3}ttl_seconds\0\u{3}pin_on_load\0\u{3}memory_policy\0\u{3}default_acceleration_mode\0\u{3}acceleration_profile_id\0\u{1}ext\0\u{3}adaptive_thinking\0\u{3}disk_streaming_mode\0\u{3}memory_budget_bytes\0\u{3}cache_mode\0\u{3}cache_memory_budget_bytes\0\u{3}cache_memory_budget_pct\0\u{3}cache_block_size_tokens\0\u{3}cache_directory\0\u{3}multimodal_cache_budget_bytes\0\u{3}load_trust_mode\0")
 
@@ -14073,7 +14073,7 @@ extension Melix_Controlplane_V1_ModelSettings: SwiftProtobuf.Message, SwiftProto
   }
 }
 
-extension Melix_Controlplane_V1_AdaptiveThinkingPolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_AdaptiveThinkingPolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".AdaptiveThinkingPolicy"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}mode\0\u{3}budget_tokens\0")
 
@@ -14108,7 +14108,7 @@ extension Melix_Controlplane_V1_AdaptiveThinkingPolicy: SwiftProtobuf.Message, S
   }
 }
 
-extension Melix_Controlplane_V1_ModelLoadTrustPolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ModelLoadTrustPolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelLoadTrustPolicy"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}requested_mode\0\u{3}effective_mode\0\u{3}policy_source\0\u{3}custom_loader_required\0\u{3}custom_loader_detection_source\0\u{3}block_reason\0\u{3}requires_reload_for_trust_change\0\u{3}route_class\0\u{3}loader_family\0")
 
@@ -14178,7 +14178,7 @@ extension Melix_Controlplane_V1_ModelLoadTrustPolicy: SwiftProtobuf.Message, Swi
   }
 }
 
-extension Melix_Controlplane_V1_ResidencySummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ResidencySummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ResidencySummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}state\0\u{1}policy\0\u{3}pin_requested\0\u{1}pinned\0\u{3}ttl_seconds\0\u{3}transition_reason\0\u{3}effective_disk_streaming_mode\0\u{3}memory_budget_bytes\0\u{3}memory_headroom_bytes\0\u{3}required_bytes\0")
 
@@ -14253,7 +14253,7 @@ extension Melix_Controlplane_V1_ResidencySummary: SwiftProtobuf.Message, SwiftPr
   }
 }
 
-extension Melix_Controlplane_V1_CachePolicySummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_CachePolicySummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CachePolicySummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}requested_mode\0\u{3}effective_mode\0\u{1}compatibility\0\u{3}compatibility_reason\0\u{3}requested_directory\0\u{3}effective_directory\0\u{3}requested_block_size_tokens\0\u{3}effective_block_size_tokens\0\u{3}requested_cache_memory_budget_bytes\0\u{3}effective_cache_memory_budget_bytes\0\u{3}requested_cache_memory_budget_pct\0\u{3}effective_cache_memory_budget_pct\0\u{3}requested_multimodal_cache_budget_bytes\0\u{3}effective_multimodal_cache_budget_bytes\0\u{3}supported_modes\0\u{3}supports_prefix_cache\0\u{3}supports_paged_cache\0\u{3}supports_disk_cache\0\u{3}supports_boundary_snapshots\0\u{3}initial_cache_blocks\0")
 
@@ -14452,7 +14452,7 @@ extension Melix_Controlplane_V1_CachePolicySummary: SwiftProtobuf.Message, Swift
   }
 }
 
-extension Melix_Controlplane_V1_ImageJobProgress: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ImageJobProgress: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ImageJobProgress"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stage\0\u{1}pct\0\u{3}completed_steps\0\u{3}total_steps\0")
 
@@ -14497,7 +14497,7 @@ extension Melix_Controlplane_V1_ImageJobProgress: SwiftProtobuf.Message, SwiftPr
   }
 }
 
-extension Melix_Controlplane_V1_ImageJobRecipeSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ImageJobRecipeSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ImageJobRecipeSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}prompt\0\u{1}size\0\u{1}steps\0\u{1}guidance\0\u{1}strength\0\u{3}negative_prompt\0\u{3}variant_count\0\u{3}response_format\0\u{3}artifact_namespace\0\u{3}source_image_uri\0\u{3}mask_uri\0")
 
@@ -14577,7 +14577,7 @@ extension Melix_Controlplane_V1_ImageJobRecipeSummary: SwiftProtobuf.Message, Sw
   }
 }
 
-extension Melix_Controlplane_V1_ImageArtifactRef: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ImageArtifactRef: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ImageArtifactRef"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}artifact_id\0\u{3}job_id\0\u{1}role\0\u{3}mime_type\0\u{1}format\0\u{1}width\0\u{1}height\0\u{3}byte_length\0\u{3}storage_uri\0\u{1}sha256\0\u{3}variant_index\0\u{1}ext\0\u{3}parent_artifact_id\0")
 
@@ -14667,7 +14667,7 @@ extension Melix_Controlplane_V1_ImageArtifactRef: SwiftProtobuf.Message, SwiftPr
   }
 }
 
-extension Melix_Controlplane_V1_ImageJobSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ImageJobSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ImageJobSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}job_id\0\u{3}request_id\0\u{3}model_id\0\u{1}operation\0\u{1}state\0\u{1}lane\0\u{3}worker_id\0\u{1}progress\0\u{1}artifacts\0\u{1}error\0\u{1}cancelable\0\u{3}created_at_unix_ms\0\u{3}updated_at_unix_ms\0\u{3}prompt_digest\0\u{3}source_artifact_id\0\u{3}source_job_id\0\u{3}prompt_delta\0\u{3}edit_mode\0\u{1}recipe\0\u{3}timeout_seconds\0")
 
@@ -14870,7 +14870,7 @@ extension Melix_Controlplane_V1_ImageJobSummary: SwiftProtobuf.Message, SwiftPro
   }
 }
 
-extension Melix_Controlplane_V1_SubscribeRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_SubscribeRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SubscribeRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}client_instance_id\0\u{3}last_subscription_id\0\u{3}last_seen_seq\0\u{1}topics\0")
 
@@ -14915,7 +14915,7 @@ extension Melix_Controlplane_V1_SubscribeRequest: SwiftProtobuf.Message, SwiftPr
   }
 }
 
-extension Melix_Controlplane_V1_MCPToolSourceSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_MCPToolSourceSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".MCPToolSourceSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}source_id\0\u{1}enabled\0\u{1}namespaces\0\u{3}tool_count\0")
 
@@ -14960,7 +14960,7 @@ extension Melix_Controlplane_V1_MCPToolSourceSummary: SwiftProtobuf.Message, Swi
   }
 }
 
-extension Melix_Controlplane_V1_MCPToolCatalogSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_MCPToolCatalogSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".MCPToolCatalogSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}config_path\0\u{3}default_parser_mode\0\u{3}enabled_source_count\0\u{3}resolved_tool_count\0\u{1}sources\0")
 
@@ -15010,7 +15010,7 @@ extension Melix_Controlplane_V1_MCPToolCatalogSummary: SwiftProtobuf.Message, Sw
   }
 }
 
-extension Melix_Controlplane_V1_EmbeddingToolingSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_EmbeddingToolingSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".EmbeddingToolingSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{3}backend_id\0\u{3}family_id\0\u{3}route_class\0\u{3}model_state\0\u{1}loaded\0\u{1}preloaded\0\u{1}pinned\0")
 
@@ -15075,7 +15075,7 @@ extension Melix_Controlplane_V1_EmbeddingToolingSummary: SwiftProtobuf.Message, 
   }
 }
 
-extension Melix_Controlplane_V1_ToolingConfigPathSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ToolingConfigPathSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ToolingConfigPathSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}path_id\0\u{1}path\0")
 
@@ -15110,7 +15110,7 @@ extension Melix_Controlplane_V1_ToolingConfigPathSummary: SwiftProtobuf.Message,
   }
 }
 
-extension Melix_Controlplane_V1_ToolingSettingsSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ToolingSettingsSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ToolingSettingsSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}embedding\0\u{3}builtin_tool_parser_modes\0\u{3}mcp_default_parser_mode\0\u{3}mcp_config_path\0\u{3}mcp_enabled_source_count\0\u{3}mcp_resolved_tool_count\0\u{3}config_paths\0\u{3}additional_arguments\0")
 
@@ -15179,7 +15179,7 @@ extension Melix_Controlplane_V1_ToolingSettingsSummary: SwiftProtobuf.Message, S
   }
 }
 
-extension Melix_Controlplane_V1_APIOnboardingSurfaceSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_APIOnboardingSurfaceSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".APIOnboardingSurfaceSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}surface_id\0\u{1}title\0\u{1}summary\0\u{1}status\0\u{3}endpoint_ids\0\u{3}compatibility_note\0")
 
@@ -15234,7 +15234,7 @@ extension Melix_Controlplane_V1_APIOnboardingSurfaceSummary: SwiftProtobuf.Messa
   }
 }
 
-extension Melix_Controlplane_V1_APIReferenceEndpointSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_APIReferenceEndpointSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".APIReferenceEndpointSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}endpoint_id\0\u{3}surface_id\0\u{1}method\0\u{1}path\0\u{1}summary\0\u{1}streaming\0")
 
@@ -15289,7 +15289,7 @@ extension Melix_Controlplane_V1_APIReferenceEndpointSummary: SwiftProtobuf.Messa
   }
 }
 
-extension Melix_Controlplane_V1_APIOnboardingSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_APIOnboardingSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".APIOnboardingSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}surfaces\0\u{1}endpoints\0")
 
@@ -15324,7 +15324,7 @@ extension Melix_Controlplane_V1_APIOnboardingSummary: SwiftProtobuf.Message, Swi
   }
 }
 
-extension Melix_Controlplane_V1_GatewayAccessKeySummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_GatewayAccessKeySummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GatewayAccessKeySummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}key_id\0\u{1}label\0\u{3}token_hint\0")
 
@@ -15364,7 +15364,7 @@ extension Melix_Controlplane_V1_GatewayAccessKeySummary: SwiftProtobuf.Message, 
   }
 }
 
-extension Melix_Controlplane_V1_GatewayAccessSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_GatewayAccessSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GatewayAccessSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}mode\0\u{3}shared_access_enabled\0\u{3}shared_access_ready\0\u{3}required_header\0\u{3}accepted_api_key_count\0\u{1}keys\0")
 
@@ -15419,7 +15419,7 @@ extension Melix_Controlplane_V1_GatewayAccessSummary: SwiftProtobuf.Message, Swi
   }
 }
 
-extension Melix_Controlplane_V1_GatewayListenerConfigSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_GatewayListenerConfigSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GatewayListenerConfigSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}requested_host\0\u{3}requested_port\0\u{3}effective_host\0\u{3}effective_port\0\u{3}default_model_id\0\u{3}rate_limit_per_minute\0\u{3}timeout_seconds\0\u{1}source\0\u{3}active_binding\0\u{3}requires_restart\0\u{3}updated_at_unix_ms\0\u{3}served_model_ids\0\u{3}model_idle_timeout_seconds\0")
 
@@ -15514,7 +15514,7 @@ extension Melix_Controlplane_V1_GatewayListenerConfigSummary: SwiftProtobuf.Mess
   }
 }
 
-extension Melix_Controlplane_V1_GatewayConfigSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_GatewayConfigSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GatewayConfigSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}listeners\0")
 
@@ -15544,7 +15544,7 @@ extension Melix_Controlplane_V1_GatewayConfigSummary: SwiftProtobuf.Message, Swi
   }
 }
 
-extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServingDefaultsSessionSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}default_model_id\0\u{3}requested_temperature\0\u{3}requested_top_p\0\u{3}requested_max_tokens\0\u{3}requested_stream_interval_tokens\0\u{3}requested_max_concurrent_requests\0\u{3}effective_temperature\0\u{3}effective_top_p\0\u{3}effective_max_tokens\0\u{3}effective_stream_interval_tokens\0\u{3}effective_max_concurrent_requests\0\u{1}source\0\u{3}model_override_applied\0\u{3}updated_at_unix_ms\0\u{3}requested_concurrent_processing_enabled\0\u{3}requested_prefill_batch_size\0\u{3}requested_completion_batch_size\0\u{3}effective_concurrent_processing_enabled\0\u{3}effective_prefill_batch_size\0\u{3}effective_completion_batch_size\0\u{3}requested_acceleration_mode\0\u{3}requested_draft_model_id\0\u{3}requested_num_draft_tokens\0\u{3}effective_acceleration_mode\0\u{3}effective_draft_model_id\0\u{3}effective_num_draft_tokens\0\u{3}requested_acceleration_profile\0\u{3}effective_acceleration_profile\0\u{3}acceleration_profile_intent\0")
 
@@ -15813,7 +15813,7 @@ extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Mes
   }
 }
 
-extension Melix_Controlplane_V1_ServingDefaultsSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ServingDefaultsSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServingDefaultsSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}sessions\0")
 
@@ -15843,7 +15843,7 @@ extension Melix_Controlplane_V1_ServingDefaultsSummary: SwiftProtobuf.Message, S
   }
 }
 
-extension Melix_Controlplane_V1_ImageDefaultsSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ImageDefaultsSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ImageDefaultsSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}requested_generate_model_id\0\u{3}requested_edit_model_id\0\u{3}requested_size\0\u{3}requested_steps\0\u{3}requested_guidance\0\u{3}requested_strength\0\u{3}requested_negative_prompt\0\u{3}effective_generate_model_id\0\u{3}effective_edit_model_id\0\u{3}effective_size\0\u{3}effective_steps\0\u{3}effective_guidance\0\u{3}effective_strength\0\u{3}effective_negative_prompt\0\u{1}source\0\u{3}updated_at_unix_ms\0\u{3}request_timeout_seconds\0")
 
@@ -16021,7 +16021,7 @@ extension Melix_Controlplane_V1_ImageDefaultsSummary: SwiftProtobuf.Message, Swi
   }
 }
 
-extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServerSnapshot"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_state\0\u{1}workers\0\u{1}models\0\u{1}queues\0\u{1}cache\0\u{1}resources\0\u{1}metrics\0\u{1}sessions\0\u{3}recent_errors\0\u{3}image_jobs\0\u{3}mcp_tools\0\u{3}gateway_access\0\u{3}runtime_sessions\0\u{3}gateway_config\0\u{3}serving_defaults\0\u{3}tooling_settings\0\u{3}api_onboarding\0\u{3}image_defaults\0")
 
@@ -16210,7 +16210,7 @@ extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Message, SwiftProt
   }
 }
 
-extension Melix_Controlplane_V1_WorkerSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_WorkerSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".WorkerSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_id\0\u{3}worker_kind\0\u{1}state\0\u{3}loaded_model_handles\0\u{3}inflight_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{1}resources\0\u{3}recent_errors\0")
 
@@ -16284,7 +16284,7 @@ extension Melix_Controlplane_V1_WorkerSummary: SwiftProtobuf.Message, SwiftProto
   }
 }
 
-extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}kind\0\u{1}state\0\u{1}pinned\0\u{3}inflight_requests\0\u{3}estimated_bytes\0\u{3}quant_profile_id\0\u{3}max_context\0\u{1}features\0\u{3}capability_class\0\u{3}route_class\0\u{1}settings\0\u{3}supported_modalities\0\u{3}supported_tasks\0\u{1}residency\0\u{3}cache_policy\0\u{3}runtime_mode\0\u{3}load_trust\0\u{3}capability_receipt\0")
 
@@ -16480,7 +16480,7 @@ extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtob
   }
 }
 
-extension Melix_Controlplane_V1_ModelInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ModelInfo: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelInfo"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{3}model_kind\0\u{3}max_context\0\u{3}supported_parsers\0\u{3}supported_modalities\0\u{3}supported_tasks\0\u{3}backend_id\0\u{3}family_id\0\u{3}model_path\0\u{3}model_revision\0\u{3}default_workflow_role\0\u{3}detected_identity_source\0")
 
@@ -16565,7 +16565,7 @@ extension Melix_Controlplane_V1_ModelInfo: SwiftProtobuf.Message, SwiftProtobuf.
   }
 }
 
-extension Melix_Controlplane_V1_DoctorFinding: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_DoctorFinding: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".DoctorFinding"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}code\0\u{1}severity\0\u{1}summary\0\u{1}detail\0")
 
@@ -16610,7 +16610,7 @@ extension Melix_Controlplane_V1_DoctorFinding: SwiftProtobuf.Message, SwiftProto
   }
 }
 
-extension Melix_Controlplane_V1_DoctorReport: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_DoctorReport: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".DoctorReport"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}markdown\0\u{3}health_status\0\u{1}findings\0")
 
@@ -16650,7 +16650,7 @@ extension Melix_Controlplane_V1_DoctorReport: SwiftProtobuf.Message, SwiftProtob
   }
 }
 
-extension Melix_Controlplane_V1_ModelOperationResult: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ModelOperationResult: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelOperationResult"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}operation\0\u{3}job_id\0\u{1}stage\0\u{1}pct\0\u{3}output_path\0\u{3}manifest_json\0\u{1}error\0\u{3}quant_profile\0\u{1}artifact\0")
 
@@ -16783,7 +16783,7 @@ extension Melix_Controlplane_V1_ModelOperationResult: SwiftProtobuf.Message, Swi
   }
 }
 
-extension Melix_Controlplane_V1_QuantizationProfile: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_QuantizationProfile: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".QuantizationProfile"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}algorithm\0\u{3}schema_version\0\u{3}quant_profile_id\0\u{3}weight_quant\0\u{3}kv_quant\0\u{1}ext\0")
 
@@ -16838,7 +16838,7 @@ extension Melix_Controlplane_V1_QuantizationProfile: SwiftProtobuf.Message, Swif
   }
 }
 
-extension Melix_Controlplane_V1_ModelOperationArtifact: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ModelOperationArtifact: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelOperationArtifact"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}schema_version\0\u{3}artifact_kind\0\u{3}manifest_path\0\u{3}bundle_path\0\u{3}artifact_bytes\0\u{3}manifest_bytes\0\u{3}serving_compatible\0\u{3}smoke_test_requested\0\u{3}smoke_test_passed\0\u{1}runtime\0")
 
@@ -16913,7 +16913,7 @@ extension Melix_Controlplane_V1_ModelOperationArtifact: SwiftProtobuf.Message, S
   }
 }
 
-extension Melix_Controlplane_V1_QueueSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_QueueSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".QueueSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}lanes\0\u{3}queued_requests\0\u{3}active_requests\0\u{3}admission_latency_ms\0\u{1}backpressure\0\u{3}admitted_requests\0\u{3}rejected_requests\0")
 
@@ -16973,7 +16973,7 @@ extension Melix_Controlplane_V1_QueueSummary: SwiftProtobuf.Message, SwiftProtob
   }
 }
 
-extension Melix_Controlplane_V1_QueueLaneSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_QueueLaneSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".QueueLaneSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}lane_id\0\u{3}queued_requests\0\u{3}active_requests\0\u{3}queue_delay_ms_p50\0\u{3}queue_delay_ms_p95\0\u{3}admission_rate\0\u{1}backpressure\0\u{3}lane_class\0\u{3}priority_score\0")
 
@@ -17043,7 +17043,7 @@ extension Melix_Controlplane_V1_QueueLaneSummary: SwiftProtobuf.Message, SwiftPr
   }
 }
 
-extension Melix_Controlplane_V1_CacheSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_CacheSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}l1_bytes\0\u{3}l2_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}dedup_ratio\0\u{3}pinned_prefix_hit_rate\0\u{3}checkpoint_count\0\u{3}hot_keys\0\u{3}block_count\0\u{3}quantized_bytes\0\u{3}compression_ratio\0\u{3}l2_restore_hit_rate\0\u{3}hot_prefixes\0\u{3}recent_snapshots\0\u{3}active_mode\0\u{3}cache_root\0\u{3}initial_cache_blocks\0\u{3}supported_modes\0\u{3}experimental_modes\0\u{3}supports_prefix_cache\0\u{3}supports_paged_cache\0\u{3}supports_disk_cache\0\u{3}supports_boundary_snapshots\0\u{3}runtime_cache_fingerprint\0\u{3}cache_namespace_mismatch_count\0\u{3}active_memory_bytes\0\u{3}max_working_set_bytes\0\u{3}effective_cache_budget_bytes\0")
 
@@ -17298,7 +17298,7 @@ extension Melix_Controlplane_V1_CacheSummary: SwiftProtobuf.Message, SwiftProtob
   }
 }
 
-extension Melix_Controlplane_V1_CacheScopeKey: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_CacheScopeKey: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheScopeKey"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}revision\0\u{3}tokenizer_hash\0\u{3}quant_profile_id\0\u{3}prompt_template_hash\0\u{3}parser_mode\0\u{3}reasoning_mode\0\u{3}multimodal_adapter_hash\0\u{3}scope_id\0")
 
@@ -17368,7 +17368,7 @@ extension Melix_Controlplane_V1_CacheScopeKey: SwiftProtobuf.Message, SwiftProto
   }
 }
 
-extension Melix_Controlplane_V1_CacheKey: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_CacheKey: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheKey"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}prefix_hash\0\u{1}scope\0\u{3}fingerprint_hash\0")
 
@@ -17412,7 +17412,7 @@ extension Melix_Controlplane_V1_CacheKey: SwiftProtobuf.Message, SwiftProtobuf._
   }
 }
 
-extension Melix_Controlplane_V1_CacheBlockRef: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_CacheBlockRef: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheBlockRef"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}block_id\0\u{3}token_length\0\u{1}bytes\0")
 
@@ -17452,7 +17452,7 @@ extension Melix_Controlplane_V1_CacheBlockRef: SwiftProtobuf.Message, SwiftProto
   }
 }
 
-extension Melix_Controlplane_V1_PageRef: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_PageRef: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PageRef"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}page_id\0\u{3}block_ids\0\u{3}token_start\0\u{3}token_end\0\u{1}bytes\0")
 
@@ -17502,7 +17502,7 @@ extension Melix_Controlplane_V1_PageRef: SwiftProtobuf.Message, SwiftProtobuf._M
   }
 }
 
-extension Melix_Controlplane_V1_BlockTable: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_BlockTable: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".BlockTable"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}block_table_id\0\u{1}blocks\0\u{1}pages\0\u{3}prefix_hash\0\u{3}scope_id\0\u{3}total_token_count\0\u{3}fingerprint_hash\0")
 
@@ -17562,7 +17562,7 @@ extension Melix_Controlplane_V1_BlockTable: SwiftProtobuf.Message, SwiftProtobuf
   }
 }
 
-extension Melix_Controlplane_V1_PrefixRef: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_PrefixRef: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PrefixRef"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}prefix_id\0\u{3}cache_key\0\u{3}token_length\0\u{1}tier\0\u{1}pinned\0")
 
@@ -17616,7 +17616,7 @@ extension Melix_Controlplane_V1_PrefixRef: SwiftProtobuf.Message, SwiftProtobuf.
   }
 }
 
-extension Melix_Controlplane_V1_SnapshotRef: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_SnapshotRef: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SnapshotRef"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}snapshot_id\0\u{3}token_boundary\0\u{3}request_id\0\u{3}session_id\0\u{3}branch_id\0\u{3}checkpoint_id\0")
 
@@ -17671,7 +17671,7 @@ extension Melix_Controlplane_V1_SnapshotRef: SwiftProtobuf.Message, SwiftProtobu
   }
 }
 
-extension Melix_Controlplane_V1_CacheRestoreBoundary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_CacheRestoreBoundary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheRestoreBoundary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}snapshot\0\u{3}prefix_hash\0\u{3}scope_id\0\u{3}boundary_kind\0\u{3}fingerprint_hash\0")
 
@@ -17725,7 +17725,7 @@ extension Melix_Controlplane_V1_CacheRestoreBoundary: SwiftProtobuf.Message, Swi
   }
 }
 
-extension Melix_Controlplane_V1_CacheRestorePlan: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_CacheRestorePlan: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheRestorePlan"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}plan_id\0\u{1}boundary\0\u{3}block_table\0\u{3}restored_token_count\0\u{1}partial\0\u{1}tier\0\u{3}cache_mode\0")
 
@@ -17837,7 +17837,7 @@ extension Melix_Controlplane_V1_CacheRestorePlan: SwiftProtobuf.Message, SwiftPr
   }
 }
 
-extension Melix_Controlplane_V1_CacheScopeSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_CacheScopeSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheScopeSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}scope_id\0\u{1}scope\0\u{3}l1_bytes\0\u{3}l2_bytes\0\u{3}block_count\0\u{3}prefix_count\0\u{3}snapshot_count\0\u{3}hot_blocks\0\u{3}recent_snapshots\0")
 
@@ -17963,7 +17963,7 @@ extension Melix_Controlplane_V1_CacheScopeSummary: SwiftProtobuf.Message, SwiftP
   }
 }
 
-extension Melix_Controlplane_V1_CacheSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_CacheSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheSnapshot"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}summary\0\u{1}scopes\0\u{3}pinned_prefixes\0\u{3}hot_prefixes\0\u{1}snapshots\0\u{3}recent_restore_plans\0")
 
@@ -18022,7 +18022,7 @@ extension Melix_Controlplane_V1_CacheSnapshot: SwiftProtobuf.Message, SwiftProto
   }
 }
 
-extension Melix_Controlplane_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_SessionSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SessionSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{3}active_branch_id\0\u{3}branch_count\0\u{3}latest_request_id\0\u{3}latest_snapshot_id\0")
 
@@ -18072,7 +18072,7 @@ extension Melix_Controlplane_V1_SessionSummary: SwiftProtobuf.Message, SwiftProt
   }
 }
 
-extension Melix_Controlplane_V1_ServerSessionRuntimeState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ServerSessionRuntimeState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServerSessionRuntimeState"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}lifecycle_state\0\u{3}power_state\0\u{3}wake_reason\0\u{3}idle_timer_seconds\0\u{3}auto_sleep_enabled\0\u{3}light_sleep_after_seconds\0\u{3}deep_sleep_after_seconds\0\u{3}updated_at_unix_ms\0\u{3}requested_disk_streaming_mode\0\u{3}effective_disk_streaming_mode\0\u{3}model_runtime_states\0")
 
@@ -18157,7 +18157,7 @@ extension Melix_Controlplane_V1_ServerSessionRuntimeState: SwiftProtobuf.Message
   }
 }
 
-extension Melix_Controlplane_V1_ServerSessionModelRuntimeState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ServerSessionModelRuntimeState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServerSessionModelRuntimeState"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{3}model_state\0\u{3}active_request_count\0\u{3}last_request_started_at_unix_ms\0\u{3}last_request_finished_at_unix_ms\0\u{3}idle_deadline_unix_ms\0\u{3}idle_unload_eligible\0\u{1}pinned\0")
 
@@ -18222,7 +18222,7 @@ extension Melix_Controlplane_V1_ServerSessionModelRuntimeState: SwiftProtobuf.Me
   }
 }
 
-extension Melix_Controlplane_V1_SessionState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_SessionState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SessionState"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}session_id\0\u{1}branches\0\u{3}active_branch_id\0\u{3}latest_request_id\0\u{3}latest_checkpoint_id\0\u{3}latest_snapshot_id\0\u{3}created_at_unix_ms\0\u{3}updated_at_unix_ms\0\u{3}latest_tool_call_id\0\u{3}available_snapshots\0")
 
@@ -18297,7 +18297,7 @@ extension Melix_Controlplane_V1_SessionState: SwiftProtobuf.Message, SwiftProtob
   }
 }
 
-extension Melix_Controlplane_V1_BranchState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_BranchState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".BranchState"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}branch_id\0\u{3}parent_branch_id\0\u{3}head_request_id\0\u{3}head_checkpoint_id\0\u{3}resume_snapshot_id\0\u{3}last_tool_call_id\0\u{1}label\0\u{3}created_at_unix_ms\0\u{3}updated_at_unix_ms\0\u{3}head_cache_key\0")
 
@@ -18430,7 +18430,7 @@ extension Melix_Controlplane_V1_BranchState: SwiftProtobuf.Message, SwiftProtobu
   }
 }
 
-extension Melix_Controlplane_V1_ResourceSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ResourceSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ResourceSnapshot"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}cpu_util_pct\0\u{3}gpu_util_pct\0\u{3}memory_used_bytes\0\u{3}memory_total_bytes\0\u{3}memory_budget_bytes\0\u{3}metal_active_bytes\0")
 
@@ -18485,7 +18485,7 @@ extension Melix_Controlplane_V1_ResourceSnapshot: SwiftProtobuf.Message, SwiftPr
   }
 }
 
-extension Melix_Controlplane_V1_MetricsSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_MetricsSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".MetricsSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}values\0")
 
@@ -18515,7 +18515,7 @@ extension Melix_Controlplane_V1_MetricsSummary: SwiftProtobuf.Message, SwiftProt
   }
 }
 
-extension Melix_Controlplane_V1_RecentError: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_RecentError: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RecentError"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}code\0\u{1}message\0")
 
@@ -18550,7 +18550,7 @@ extension Melix_Controlplane_V1_RecentError: SwiftProtobuf.Message, SwiftProtobu
   }
 }
 
-extension Melix_Controlplane_V1_PresetSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_PresetSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PresetSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}preset_id\0\u{3}display_name\0")
 
@@ -18585,7 +18585,7 @@ extension Melix_Controlplane_V1_PresetSummary: SwiftProtobuf.Message, SwiftProto
   }
 }
 
-extension Melix_Controlplane_V1_ServerStateChanged: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ServerStateChanged: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServerStateChanged"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}state\0\u{3}runtime_sessions\0")
 
@@ -18620,7 +18620,7 @@ extension Melix_Controlplane_V1_ServerStateChanged: SwiftProtobuf.Message, Swift
   }
 }
 
-extension Melix_Controlplane_V1_WorkerStateChanged: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_WorkerStateChanged: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".WorkerStateChanged"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_id\0\u{1}state\0")
 
@@ -18655,7 +18655,7 @@ extension Melix_Controlplane_V1_WorkerStateChanged: SwiftProtobuf.Message, Swift
   }
 }
 
-extension Melix_Controlplane_V1_ModelStateChanged: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ModelStateChanged: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelStateChanged"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}state\0")
 
@@ -18690,7 +18690,7 @@ extension Melix_Controlplane_V1_ModelStateChanged: SwiftProtobuf.Message, SwiftP
   }
 }
 
-extension Melix_Controlplane_V1_RequestProgressEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_RequestProgressEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RequestProgressEvent"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{1}phase\0\u{1}lane\0\u{3}queue_delay_ms\0\u{3}priority_score\0\u{1}backpressure\0\u{3}worker_id\0\u{3}admission_state\0\u{3}queue_position\0\u{3}decode_handle\0\u{3}acceleration_mode\0\u{3}acceleration_profile_id\0\u{3}draft_model_id\0\u{3}image_job_id\0\u{3}prefill_processed_tokens\0\u{3}prefill_total_tokens\0\u{3}prefill_progress_pct\0\u{3}active_requests\0\u{3}waiting_requests\0\u{3}restore_stage\0\u{3}cache_pressure\0")
 
@@ -18896,7 +18896,7 @@ extension Melix_Controlplane_V1_RequestProgressEvent: SwiftProtobuf.Message, Swi
   }
 }
 
-extension Melix_Controlplane_V1_SessionStateChanged: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_SessionStateChanged: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SessionStateChanged"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}state\0")
 
@@ -18930,7 +18930,7 @@ extension Melix_Controlplane_V1_SessionStateChanged: SwiftProtobuf.Message, Swif
   }
 }
 
-extension Melix_Controlplane_V1_CacheStatsEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_CacheStatsEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheStatsEvent"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}summary\0\u{1}snapshot\0")
 
@@ -18969,7 +18969,7 @@ extension Melix_Controlplane_V1_CacheStatsEvent: SwiftProtobuf.Message, SwiftPro
   }
 }
 
-extension Melix_Controlplane_V1_BenchmarkProgressEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_BenchmarkProgressEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".BenchmarkProgressEvent"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}job_id\0\u{1}suite\0\u{1}pct\0")
 
@@ -19009,7 +19009,7 @@ extension Melix_Controlplane_V1_BenchmarkProgressEvent: SwiftProtobuf.Message, S
   }
 }
 
-extension Melix_Controlplane_V1_LogEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_LogEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".LogEvent"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}level\0\u{1}message\0")
 
@@ -19044,7 +19044,7 @@ extension Melix_Controlplane_V1_LogEvent: SwiftProtobuf.Message, SwiftProtobuf._
   }
 }
 
-extension Melix_Controlplane_V1_Heartbeat: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_Heartbeat: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Heartbeat"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}unix_ms\0")
 
@@ -19074,7 +19074,7 @@ extension Melix_Controlplane_V1_Heartbeat: SwiftProtobuf.Message, SwiftProtobuf.
   }
 }
 
-extension Melix_Controlplane_V1_ResourcePressureEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ResourcePressureEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ResourcePressureEvent"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}scope\0\u{1}resources\0")
 
@@ -19113,7 +19113,7 @@ extension Melix_Controlplane_V1_ResourcePressureEvent: SwiftProtobuf.Message, Sw
   }
 }
 
-extension Melix_Controlplane_V1_ImageJobStateChanged: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Controlplane_V1_ImageJobStateChanged: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ImageJobStateChanged"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}job\0")
 

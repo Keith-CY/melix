@@ -15,12 +15,12 @@ import SwiftProtobuf
 // incompatible with the version of SwiftProtobuf to which you are linking.
 // Please ensure that you are building against the same version of the API
 // that was used to generate this file.
-fileprivate struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobuf.ProtobufAPIVersionCheck {
+fileprivate nonisolated struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobuf.ProtobufAPIVersionCheck {
   struct _2: SwiftProtobuf.ProtobufAPIVersion_2 {}
   typealias Version = _2
 }
 
-public struct Melix_Worker_V1_CacheStats: @unchecked Sendable {
+public nonisolated struct Melix_Worker_V1_CacheStats: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -157,7 +157,7 @@ public struct Melix_Worker_V1_CacheStats: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Worker_V1_CacheScopeSummary: @unchecked Sendable {
+public nonisolated struct Melix_Worker_V1_CacheScopeSummary: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -213,7 +213,7 @@ public struct Melix_Worker_V1_CacheScopeSummary: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Worker_V1_CacheSnapshot: Sendable {
+public nonisolated struct Melix_Worker_V1_CacheSnapshot: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -242,7 +242,7 @@ public struct Melix_Worker_V1_CacheSnapshot: Sendable {
   fileprivate var _stats: Melix_Worker_V1_CacheStats? = nil
 }
 
-public struct Melix_Worker_V1_GetCacheStatsRequest: Sendable {
+public nonisolated struct Melix_Worker_V1_GetCacheStatsRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -252,7 +252,7 @@ public struct Melix_Worker_V1_GetCacheStatsRequest: Sendable {
   public init() {}
 }
 
-public struct Melix_Worker_V1_GetCacheStatsResponse: Sendable {
+public nonisolated struct Melix_Worker_V1_GetCacheStatsResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -283,7 +283,7 @@ public struct Melix_Worker_V1_GetCacheStatsResponse: Sendable {
   fileprivate var _snapshot: Melix_Worker_V1_CacheSnapshot? = nil
 }
 
-public struct Melix_Worker_V1_PinPrefixRequest: Sendable {
+public nonisolated struct Melix_Worker_V1_PinPrefixRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -304,7 +304,7 @@ public struct Melix_Worker_V1_PinPrefixRequest: Sendable {
   fileprivate var _prefix: Melix_Worker_V1_PrefixRef? = nil
 }
 
-public struct Melix_Worker_V1_PinPrefixResponse: Sendable {
+public nonisolated struct Melix_Worker_V1_PinPrefixResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -327,7 +327,7 @@ public struct Melix_Worker_V1_PinPrefixResponse: Sendable {
   fileprivate var _error: Melix_Worker_V1_ErrorStatus? = nil
 }
 
-public struct Melix_Worker_V1_UnpinPrefixRequest: Sendable {
+public nonisolated struct Melix_Worker_V1_UnpinPrefixRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -348,7 +348,7 @@ public struct Melix_Worker_V1_UnpinPrefixRequest: Sendable {
   fileprivate var _prefix: Melix_Worker_V1_PrefixRef? = nil
 }
 
-public struct Melix_Worker_V1_UnpinPrefixResponse: Sendable {
+public nonisolated struct Melix_Worker_V1_UnpinPrefixResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -371,7 +371,7 @@ public struct Melix_Worker_V1_UnpinPrefixResponse: Sendable {
   fileprivate var _error: Melix_Worker_V1_ErrorStatus? = nil
 }
 
-public struct Melix_Worker_V1_SaveBoundarySnapshotRequest: Sendable {
+public nonisolated struct Melix_Worker_V1_SaveBoundarySnapshotRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -387,7 +387,7 @@ public struct Melix_Worker_V1_SaveBoundarySnapshotRequest: Sendable {
   public init() {}
 }
 
-public struct Melix_Worker_V1_SaveBoundarySnapshotResponse: @unchecked Sendable {
+public nonisolated struct Melix_Worker_V1_SaveBoundarySnapshotResponse: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -436,7 +436,7 @@ public struct Melix_Worker_V1_SaveBoundarySnapshotResponse: @unchecked Sendable 
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Worker_V1_RestoreBoundarySnapshotRequest: Sendable {
+public nonisolated struct Melix_Worker_V1_RestoreBoundarySnapshotRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -459,7 +459,7 @@ public struct Melix_Worker_V1_RestoreBoundarySnapshotRequest: Sendable {
   fileprivate var _restoreBoundary: Melix_Worker_V1_RestoreBoundaryRef? = nil
 }
 
-public struct Melix_Worker_V1_RestoreBoundarySnapshotResponse: @unchecked Sendable {
+public nonisolated struct Melix_Worker_V1_RestoreBoundarySnapshotResponse: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -531,7 +531,7 @@ public struct Melix_Worker_V1_RestoreBoundarySnapshotResponse: @unchecked Sendab
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Worker_V1_PurgeCacheRequest: @unchecked Sendable {
+public nonisolated struct Melix_Worker_V1_PurgeCacheRequest: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -571,7 +571,7 @@ public struct Melix_Worker_V1_PurgeCacheRequest: @unchecked Sendable {
   fileprivate var _storage = _StorageClass.defaultInstance
 }
 
-public struct Melix_Worker_V1_PurgeCacheResponse: Sendable {
+public nonisolated struct Melix_Worker_V1_PurgeCacheResponse: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
@@ -598,9 +598,9 @@ public struct Melix_Worker_V1_PurgeCacheResponse: Sendable {
 
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
-fileprivate let _protobuf_package = "melix.worker.v1"
+fileprivate nonisolated let _protobuf_package = "melix.worker.v1"
 
-extension Melix_Worker_V1_CacheStats: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Worker_V1_CacheStats: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheStats"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}l1_bytes\0\u{3}l2_bytes\0\u{3}block_count\0\u{3}pinned_prefix_count\0\u{3}snapshot_count\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}dedup_ratio\0\u{3}quantized_bytes\0\u{3}compression_ratio\0\u{3}l2_restore_hit_rate\0\u{3}active_mode\0\u{3}cache_root\0\u{3}initial_cache_blocks\0\u{3}supported_modes\0\u{3}experimental_modes\0\u{3}supports_prefix_cache\0\u{3}supports_paged_cache\0\u{3}supports_disk_cache\0\u{3}supports_boundary_snapshots\0\u{3}runtime_cache_fingerprint\0\u{3}cache_namespace_mismatch_count\0\u{3}active_memory_bytes\0\u{3}max_working_set_bytes\0\u{3}effective_cache_budget_bytes\0")
 
@@ -834,7 +834,7 @@ extension Melix_Worker_V1_CacheStats: SwiftProtobuf.Message, SwiftProtobuf._Mess
   }
 }
 
-extension Melix_Worker_V1_CacheScopeSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Worker_V1_CacheScopeSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheScopeSummary"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}scope_id\0\u{1}scope\0\u{3}l1_bytes\0\u{3}l2_bytes\0\u{3}block_count\0\u{3}prefix_count\0\u{3}snapshot_count\0\u{3}hot_blocks\0")
 
@@ -953,7 +953,7 @@ extension Melix_Worker_V1_CacheScopeSummary: SwiftProtobuf.Message, SwiftProtobu
   }
 }
 
-extension Melix_Worker_V1_CacheSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Worker_V1_CacheSnapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CacheSnapshot"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stats\0\u{3}pinned_prefixes\0\u{3}hot_prefixes\0\u{1}snapshots\0\u{1}scopes\0")
 
@@ -1007,7 +1007,7 @@ extension Melix_Worker_V1_CacheSnapshot: SwiftProtobuf.Message, SwiftProtobuf._M
   }
 }
 
-extension Melix_Worker_V1_GetCacheStatsRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Worker_V1_GetCacheStatsRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GetCacheStatsRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
 
@@ -1026,7 +1026,7 @@ extension Melix_Worker_V1_GetCacheStatsRequest: SwiftProtobuf.Message, SwiftProt
   }
 }
 
-extension Melix_Worker_V1_GetCacheStatsResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Worker_V1_GetCacheStatsResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GetCacheStatsResponse"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}stats\0\u{1}snapshot\0")
 
@@ -1065,7 +1065,7 @@ extension Melix_Worker_V1_GetCacheStatsResponse: SwiftProtobuf.Message, SwiftPro
   }
 }
 
-extension Melix_Worker_V1_PinPrefixRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Worker_V1_PinPrefixRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PinPrefixRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}prefix\0")
 
@@ -1099,7 +1099,7 @@ extension Melix_Worker_V1_PinPrefixRequest: SwiftProtobuf.Message, SwiftProtobuf
   }
 }
 
-extension Melix_Worker_V1_PinPrefixResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Worker_V1_PinPrefixResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PinPrefixResponse"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0")
 
@@ -1138,7 +1138,7 @@ extension Melix_Worker_V1_PinPrefixResponse: SwiftProtobuf.Message, SwiftProtobu
   }
 }
 
-extension Melix_Worker_V1_UnpinPrefixRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Worker_V1_UnpinPrefixRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".UnpinPrefixRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}prefix\0")
 
@@ -1172,7 +1172,7 @@ extension Melix_Worker_V1_UnpinPrefixRequest: SwiftProtobuf.Message, SwiftProtob
   }
 }
 
-extension Melix_Worker_V1_UnpinPrefixResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Worker_V1_UnpinPrefixResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".UnpinPrefixResponse"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0")
 
@@ -1211,7 +1211,7 @@ extension Melix_Worker_V1_UnpinPrefixResponse: SwiftProtobuf.Message, SwiftProto
   }
 }
 
-extension Melix_Worker_V1_SaveBoundarySnapshotRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Worker_V1_SaveBoundarySnapshotRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SaveBoundarySnapshotRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{3}decode_handle\0\u{3}token_boundary\0")
 
@@ -1251,7 +1251,7 @@ extension Melix_Worker_V1_SaveBoundarySnapshotRequest: SwiftProtobuf.Message, Sw
   }
 }
 
-extension Melix_Worker_V1_SaveBoundarySnapshotResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Worker_V1_SaveBoundarySnapshotResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SaveBoundarySnapshotResponse"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}snapshot_id\0\u{1}snapshot\0\u{3}restore_boundary\0")
 
@@ -1349,7 +1349,7 @@ extension Melix_Worker_V1_SaveBoundarySnapshotResponse: SwiftProtobuf.Message, S
   }
 }
 
-extension Melix_Worker_V1_RestoreBoundarySnapshotRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Worker_V1_RestoreBoundarySnapshotRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RestoreBoundarySnapshotRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}snapshot_id\0\u{3}restore_boundary\0")
 
@@ -1388,7 +1388,7 @@ extension Melix_Worker_V1_RestoreBoundarySnapshotRequest: SwiftProtobuf.Message,
   }
 }
 
-extension Melix_Worker_V1_RestoreBoundarySnapshotResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Worker_V1_RestoreBoundarySnapshotResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RestoreBoundarySnapshotResponse"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}decode_handle\0\u{3}block_table_id\0\u{3}block_table\0\u{1}snapshot\0\u{3}restore_boundary\0\u{3}restore_plan\0")
 
@@ -1507,7 +1507,7 @@ extension Melix_Worker_V1_RestoreBoundarySnapshotResponse: SwiftProtobuf.Message
   }
 }
 
-extension Melix_Worker_V1_PurgeCacheRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Worker_V1_PurgeCacheRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PurgeCacheRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}scope\0\u{3}cache_key\0\u{1}tier\0\u{3}include_pinned\0")
 
@@ -1598,7 +1598,7 @@ extension Melix_Worker_V1_PurgeCacheRequest: SwiftProtobuf.Message, SwiftProtobu
   }
 }
 
-extension Melix_Worker_V1_PurgeCacheResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+nonisolated extension Melix_Worker_V1_PurgeCacheResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PurgeCacheResponse"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}purged_blocks\0")
 
