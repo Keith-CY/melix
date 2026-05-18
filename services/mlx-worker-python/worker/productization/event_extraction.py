@@ -2865,7 +2865,7 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
 
 def _has_only_optional_closing_fence(response_text: str, start: int, response_length: int) -> bool:
     if response_text.startswith("\n```", start):
-        trailer_start = start + 4
+        trailer_start = start + len("\n```")
         return trailer_start == response_length or response_text[trailer_start:response_length].isspace()
     while start < response_length and response_text[start].isspace():
         start += 1
