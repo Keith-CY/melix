@@ -98,6 +98,29 @@ def test_remove_tree_ignores_disappearing_directory_before_scan(
     assert not root.exists()
 
 
+def test_remove_tree_ignores_disappearing_directory_before_final_rmdir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "runtime-state"
+    nested = root / "state"
+    nested.mkdir(parents=True)
+    (nested / "session.json").write_text("{}", encoding="utf-8")
+    original_rmdir = helpers.os.rmdir
+
+    def tracked_rmdir(path: str) -> None:
+        if Path(path).name == "state":
+            original_rmdir(path)
+            raise FileNotFoundError(path)
+        original_rmdir(path)
+
+    monkeypatch.setattr(helpers.os, "rmdir", tracked_rmdir)
+
+    _stack()._remove_tree(root)
+
+    assert not root.exists()
+
+
 def test_remove_tree_ignores_disappearing_file_entries(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
