@@ -128,6 +128,16 @@ def test_compare_versions_does_not_allocate_streaming_part_generators(
     assert compare_versions("3.0-alpha", "2.99.99") == 1
 
 
+def test_compare_versions_identical_raw_values_skip_normalization() -> None:
+    class StripForbiddenVersion(str):
+        def strip(self, chars: str | None = None) -> str:  # pragma: no cover - sentinel
+            raise AssertionError("compare_versions normalized exactly identical raw values")
+
+    value = StripForbiddenVersion("v1.2.3+build")
+
+    assert compare_versions(value, value) == 0
+
+
 def test_compare_versions_identical_clean_values_skip_part_parsing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
