@@ -20,6 +20,12 @@ struct RuntimeEvidenceReportStateTests {
         #expect(report.metricRows.first?.resultText == "Fail")
         #expect(report.probeRows.contains { $0.kind == "Failed" && $0.phase == "Decode" })
         #expect(report.probeRows.contains { $0.kind == "Fallback" && $0.phase == "Fallback Enter" })
+        #expect(report.probeRows.contains {
+            $0.kind == "Skipped"
+                && $0.phase == "Score Compute"
+                && $0.durationText == "duration missing"
+                && $0.detailText.contains("duration missing")
+        })
         #expect(report.telemetryRows.contains { row in
             row.collectorStatusText == "Partial"
                 && row.powerText.contains("17.50 W avg")
@@ -27,6 +33,17 @@ struct RuntimeEvidenceReportStateTests {
         })
         #expect(report.evidenceValidityRows.contains {
             $0.id == "required_evidence_present" && $0.valueText == "1.0000"
+        })
+        #expect(report.requiredEvidenceRows.map(\.id) == [
+            "required_evidence_present",
+            "required_probe_phases_present",
+            "required_telemetry_present",
+        ])
+        #expect(report.requiredEvidenceRows.allSatisfy { $0.statusText == "Present" })
+        #expect(report.requiredEvidenceRows.contains {
+            $0.title == "Required Telemetry"
+                && $0.valueText == "1.0000"
+                && $0.detailText.contains("required_telemetry_present")
         })
         #expect(report.summaryItems.first { $0.id == "evidence-validity" }?.value == "Present")
         #expect(report.processRows.contains { row in
@@ -49,10 +66,13 @@ struct RuntimeEvidenceReportStateTests {
         #expect(report.reportKindText == "Unknown")
         #expect(report.summaryItems.first?.value == "Unknown")
         #expect(report.summaryItems.first { $0.id == "evidence-validity" }?.value == "Missing")
+        #expect(report.requiredEvidenceRows.map(\.statusText) == ["Missing", "Missing", "Missing"])
         #expect(report.metricRows.map(\.metric) == ["alpha.metric", "zeta.metric"])
         #expect(report.metricRows.first?.baselineText == "-")
         #expect(report.metricRows.first?.deltaText == "-")
         #expect(report.telemetryRows.first?.memoryText.contains("512 B") == true)
+        #expect(report.telemetryRows.first?.powerText == "system power missing")
+        #expect(report.telemetryRows.first?.utilizationText == "utilization telemetry missing")
         #expect(report.processRows.contains { row in
             row.roleText == "Worker 1"
                 && row.nameText == "Unknown process"
@@ -99,8 +119,200 @@ struct RuntimeEvidenceReportStateTests {
         #expect(renderedTexts.contains { $0.contains(url.lastPathComponent) })
         #expect(renderedTexts.contains("fixture open warning"))
         #expect(renderedTexts.contains { $0.contains("report-desktop-fixture") })
+        #expect(renderedTexts.contains("Required Evidence Status"))
+        #expect(renderedTexts.contains { $0.contains("Required Telemetry") && $0.contains("Present") })
+        #expect(renderedTexts.contains { $0.contains("required_telemetry_present") && $0.contains("1.0000") })
+        #expect(renderedTexts.contains("duration missing"))
+        #expect(renderedTexts.contains("failure: failed=true, stage=decode"))
+        #expect(renderedTexts.contains("fallback: fallback_count=1, fallbacks=1"))
         #expect(renderedTexts.contains { $0.contains("powermetrics_failed:fixture") })
         #expect(renderedTexts.contains { $0.contains("telemetry_summary.csv") })
+    }
+
+    @Test("diagnostics renders sparse telemetry gaps explicitly")
+    @MainActor
+    func diagnosticsRendersSparseTelemetryGapsExplicitly() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        try viewModel.loadEvidenceReport(json: makeSparseStructuredEvidenceReportJSON())
+
+        let view = evidenceHostView(
+            DesktopDiagnosticsToolSectionView(
+                viewModel: viewModel,
+                foundation: viewModel.desktopFoundationState
+            ),
+            size: CGSize(width: 1280, height: 2600)
+        )
+        let renderedTexts = evidenceRenderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Hardware Monitor"))
+        #expect(renderedTexts.contains("system power missing"))
+        #expect(renderedTexts.contains { $0.contains("utilization telemetry missing") && $0.contains("used 512 B") })
+    }
+
+    @Test("diagnostics renders debug bundle result state")
+    @MainActor
+    func diagnosticsRendersDebugBundleResultState() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.applyDiagnosticsDebugBundleResult(
+            try RuntimeDiagnosticsDebugBundleState.decode(json: makeDiagnosticsDebugBundleJSON())
+        )
+
+        let view = evidenceHostView(
+            DesktopDiagnosticsToolSectionView(
+                viewModel: viewModel,
+                foundation: viewModel.desktopFoundationState
+            ),
+            size: CGSize(width: 1280, height: 2400)
+        )
+        let renderedTexts = evidenceRenderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Debug Bundle"))
+        #expect(renderedTexts.contains("Bundle Path"))
+        #expect(renderedTexts.contains("/tmp/melix-debug/bench-1"))
+        #expect(renderedTexts.contains("Manifest"))
+        #expect(renderedTexts.contains("/tmp/melix-debug/bench-1/manifest.json"))
+        #expect(renderedTexts.contains("Effective Config"))
+        #expect(renderedTexts.contains("Debug bundle ready at /tmp/melix-debug/bench-1."))
+    }
+
+    @Test("diagnostics summarizes serving diagnostics queue retention and drops")
+    @MainActor
+    func diagnosticsSummarizesServingDiagnosticsQueueRetentionAndDrops() throws {
+        let result = try RuntimeDiagnosticsDebugBundleState.decode(
+            json: makeDiagnosticsDebugBundleJSON(
+                servingDiagnosticsEventCount: 8,
+                servingDiagnosticsDroppedEventCount: 24
+            )
+        )
+        #expect(result.servingDiagnosticsQueueSummaryText == "8 retained / 24 dropped / 32 observed")
+        #expect(result.servingDiagnosticsRetentionSummaryText == "debug mode retains up to 256 events")
+        #expect(result.servingDiagnosticsDropSummaryText == "24 debug events were dropped; diagnosis may be partial.")
+
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.applyDiagnosticsDebugBundleResult(result)
+
+        let view = evidenceHostView(
+            DesktopDiagnosticsToolSectionView(
+                viewModel: viewModel,
+                foundation: viewModel.desktopFoundationState
+            ),
+            size: CGSize(width: 1280, height: 2400)
+        )
+        let renderedTexts = evidenceRenderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Serving Diagnostics Queue"))
+        #expect(renderedTexts.contains("8 retained / 24 dropped / 32 observed"))
+        #expect(renderedTexts.contains("Serving Diagnostics Retention"))
+        #expect(renderedTexts.contains("debug mode retains up to 256 events"))
+        #expect(renderedTexts.contains("Serving Diagnostics Drops"))
+        #expect(renderedTexts.contains("24 debug events were dropped; diagnosis may be partial."))
+    }
+
+    @Test("diagnostics renders debug bundle redaction state")
+    @MainActor
+    func diagnosticsRendersDebugBundleRedactionState() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.applyDiagnosticsDebugBundleResult(
+            try RuntimeDiagnosticsDebugBundleState.decode(json: makeDiagnosticsDebugBundleJSON())
+        )
+
+        let view = evidenceHostView(
+            DesktopDiagnosticsToolSectionView(
+                viewModel: viewModel,
+                foundation: viewModel.desktopFoundationState
+            ),
+            size: CGSize(width: 1280, height: 2600)
+        )
+        let renderedTexts = evidenceRenderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Redaction State"))
+        #expect(renderedTexts.contains("Consent"))
+        #expect(renderedTexts.contains("local_only"))
+        #expect(renderedTexts.contains("Artifact Policy"))
+        #expect(renderedTexts.contains("explicit_cli_command"))
+        #expect(renderedTexts.contains("Debug JSONL"))
+        #expect(renderedTexts.contains("enabled, limit 256 events"))
+    }
+
+    @Test("diagnostics debug bundle artifact helpers copy and open paths")
+    @MainActor
+    func diagnosticsDebugBundleArtifactHelpersCopyAndOpenPaths() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        let diagnosticsView = DesktopDiagnosticsToolSectionView(
+            viewModel: viewModel,
+            foundation: viewModel.desktopFoundationState
+        )
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("melix.debug-bundle.copy.\(UUID().uuidString)"))
+
+        #expect(RuntimeDiagnosticsArtifactClipboard.copy(" /tmp/melix-debug/bench-1/manifest.json ", to: pasteboard))
+        #expect(pasteboard.string(forType: .string) == "/tmp/melix-debug/bench-1/manifest.json")
+        #expect(RuntimeDiagnosticsArtifactClipboard.copy("   ", to: pasteboard) == false)
+
+        #expect(diagnosticsView.copyDebugBundleArtifactPath(" /tmp/melix-debug/bench-1/events.jsonl ", to: pasteboard))
+        #expect(pasteboard.string(forType: .string) == "/tmp/melix-debug/bench-1/events.jsonl")
+        #expect(viewModel.diagnosticsDebugBundleMessage == "Copied debug bundle artifact path: /tmp/melix-debug/bench-1/events.jsonl.")
+        #expect(viewModel.diagnosticsDebugBundleErrorMessage.isEmpty)
+
+        #expect(diagnosticsView.copyDebugBundleArtifactPath(
+            "/tmp/melix-debug/bench-1/failing-artifact.json",
+            to: pasteboard,
+            clipboardWriter: { _, _ in false }
+        ) == false)
+        #expect(viewModel.diagnosticsDebugBundleErrorMessage.contains("Could not copy"))
+
+        var openedURL: URL?
+        diagnosticsView.openDebugBundleArtifact(path: " /tmp/melix-debug/bench-1/events.jsonl ") { url in
+            openedURL = url
+            return true
+        }
+        #expect(openedURL?.path == "/tmp/melix-debug/bench-1/events.jsonl")
+        #expect(viewModel.diagnosticsDebugBundleMessage == "Opened debug bundle artifact: /tmp/melix-debug/bench-1/events.jsonl.")
+        #expect(viewModel.diagnosticsDebugBundleErrorMessage.isEmpty)
+
+        #expect(diagnosticsView.copyDebugBundleArtifactPath("   ", to: pasteboard) == false)
+        #expect(viewModel.diagnosticsDebugBundleErrorMessage.contains("empty"))
+
+        diagnosticsView.openDebugBundleArtifact(path: "   ") { _ in true }
+        #expect(viewModel.diagnosticsDebugBundleErrorMessage.contains("empty"))
+
+        diagnosticsView.openDebugBundleArtifact(path: "/tmp/missing-debug-artifact.json") { _ in false }
+        #expect(viewModel.diagnosticsDebugBundleErrorMessage.contains("Could not open"))
+
+        let unknownLimitJSON = makeDiagnosticsDebugBundleJSON()
+            .replacingOccurrences(
+                of: #""debug_jsonl_event_limit": 256"#,
+                with: #""debug_jsonl_event_limit": 0"#
+            )
+        let unknownLimitResult = try RuntimeDiagnosticsDebugBundleState.decode(json: unknownLimitJSON)
+        #expect(unknownLimitResult.debugJSONLSummaryText == "enabled, limit unknown")
+    }
+
+    @Test("diagnostics renders debug bundle error state")
+    @MainActor
+    func diagnosticsRendersDebugBundleErrorState() async throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.updateDiagnosticsDebugBundleRunIDDraft("bench-missing-runner")
+        let diagnosticsView = DesktopDiagnosticsToolSectionView(
+            viewModel: viewModel,
+            foundation: viewModel.desktopFoundationState
+        )
+        await diagnosticsView.createDebugBundle()
+
+        let view = evidenceHostView(diagnosticsView, size: CGSize(width: 1280, height: 2000))
+        let renderedTexts = evidenceRenderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Debug Bundle"))
+        #expect(renderedTexts.contains("Diagnostics CLI runner is unavailable."))
     }
 
     @Test("view model loads clears and records evidence report errors")

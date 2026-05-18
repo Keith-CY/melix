@@ -311,8 +311,8 @@ struct DesktopFoundationViewTests {
     @MainActor
     func toolsCategoriesMapSectionsIntoStagedWorkflowGroups() {
         #expect(DesktopToolCategory.models.sections == [.modelsLibrary, .downloads])
-        #expect(DesktopToolCategory.build.sections == [.training])
-        #expect(DesktopToolCategory.validate.sections == [.diagnostics])
+        #expect(DesktopToolCategory.build.sections == [.training, .workflowRecipes, .syntheticDatasets])
+        #expect(DesktopToolCategory.validate.sections == [.batchRuns, .jobs, .diagnostics])
         #expect(DesktopToolCategory.system.sections == [.logs, .settings])
     }
 
@@ -441,9 +441,9 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedServerSession?.servingDefaults.modelOverrideApplied == true)
     }
 
-    @Test("workspace server surface renders projected serving defaults values")
+    @Test("workspace server surface renders projected serving defaults profile metadata")
     @MainActor
-    func workspaceServerSurfaceRendersProjectedServingDefaultsValues() async throws {
+    func workspaceServerSurfaceRendersProjectedServingDefaultsProfileMetadata() async throws {
         let client = FakeControlPlaneXPCClient()
         var snapshot = Melix_Controlplane_V1_ServerSnapshot()
         snapshot.serverState = .serverReady
@@ -460,6 +460,7 @@ struct DesktopFoundationViewTests {
         servingDefaults.requestedConcurrentProcessingEnabled = false
         servingDefaults.requestedPrefillBatchSize = 4
         servingDefaults.requestedCompletionBatchSize = 3
+        servingDefaults.requestedAccelerationProfile = "low-memory"
         servingDefaults.effectiveTemperature = 0.25
         servingDefaults.effectiveTopP = 0.85
         servingDefaults.effectiveMaxTokens = 512
@@ -468,6 +469,8 @@ struct DesktopFoundationViewTests {
         servingDefaults.effectiveConcurrentProcessingEnabled = false
         servingDefaults.effectivePrefillBatchSize = 1
         servingDefaults.effectiveCompletionBatchSize = 1
+        servingDefaults.effectiveAccelerationProfile = "low-memory"
+        servingDefaults.accelerationProfileIntent = "Conservative single-request serving for constrained local memory."
         servingDefaults.source = .environmentDefaults
         snapshot.servingDefaults.sessions = [servingDefaults]
         await client.configureSnapshot(snapshot)
@@ -477,14 +480,141 @@ struct DesktopFoundationViewTests {
         viewModel.selectSurface(.server)
 
         let view = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        let renderedTexts = renderedTextValues(in: view)
 
         #expect(view.subviews.isEmpty == false)
+        #expect(renderedTexts.contains("Profile"))
+        #expect(renderedTexts.contains("Low Memory"))
         #expect(viewModel.selectedServerSession?.servingDefaults.temperature == 0.44)
         #expect(viewModel.selectedServerSession?.servingDefaults.topP == 0.91)
         #expect(viewModel.selectedServerSession?.servingDefaults.maxTokens == 320)
         #expect(viewModel.selectedServerSession?.servingDefaults.streamIntervalTokens == 2)
         #expect(viewModel.selectedServerSession?.servingDefaults.maxConcurrentRequests == 6)
         #expect(viewModel.selectedServerSession?.servingDefaults.sourceText == "Environment Defaults")
+    }
+
+    @Test("workspace server surface renders acceleration profile picker")
+    @MainActor
+    func workspaceServerSurfaceRendersAccelerationProfilePicker() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.server)
+
+        let view = hostView(
+            DesktopWorkspaceShellView(viewModel: viewModel),
+            size: CGSize(width: 1_280, height: 1_400)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+        let pickerView = hostView(
+            DesktopServingAccelerationProfilePicker(viewModel: viewModel),
+            size: CGSize(width: 320, height: 120)
+        )
+        let pickerTexts = renderedTextValues(in: pickerView)
+
+        #expect(viewModel.servingAccelerationProfileOptions.map(\.id) == [
+            "balanced",
+            "throughput",
+            "low-memory",
+            "long-session",
+        ])
+        #expect(renderedTexts.contains("Acceleration Profile"))
+        #expect(renderedTexts.contains("Balanced"))
+        #expect(pickerTexts.contains("Acceleration Profile"))
+        #expect(pickerTexts.contains("Balanced"))
+
+        viewModel.updateSelectedServerSessionAccelerationProfile("LOW_MEMORY")
+
+        #expect(viewModel.selectedServerSession?.servingDefaults.accelerationProfile == "low-memory")
+    }
+
+    @Test("workspace server surface renders requested and effective acceleration profile receipts")
+    @MainActor
+    func workspaceServerSurfaceRendersRequestedAndEffectiveAccelerationProfileReceipts() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
+        servingDefaults.serverSessionID = "server-session-1"
+        servingDefaults.defaultModelID = desktopTestReadyModelID
+        servingDefaults.requestedTemperature = 0.4
+        servingDefaults.requestedTopP = 0.9
+        servingDefaults.requestedMaxTokens = 512
+        servingDefaults.requestedStreamIntervalTokens = 2
+        servingDefaults.requestedMaxConcurrentRequests = 8
+        servingDefaults.requestedConcurrentProcessingEnabled = true
+        servingDefaults.requestedPrefillBatchSize = 4
+        servingDefaults.requestedCompletionBatchSize = 4
+        servingDefaults.requestedAccelerationMode = .speculativeDecode
+        servingDefaults.requestedNumDraftTokens = 6
+        servingDefaults.requestedAccelerationProfile = "throughput"
+        servingDefaults.effectiveTemperature = 0.4
+        servingDefaults.effectiveTopP = 0.9
+        servingDefaults.effectiveMaxTokens = 512
+        servingDefaults.effectiveStreamIntervalTokens = 2
+        servingDefaults.effectiveMaxConcurrentRequests = 1
+        servingDefaults.effectiveConcurrentProcessingEnabled = false
+        servingDefaults.effectivePrefillBatchSize = 1
+        servingDefaults.effectiveCompletionBatchSize = 1
+        servingDefaults.effectiveAccelerationMode = .baseline
+        servingDefaults.effectiveAccelerationProfile = "low-memory"
+        servingDefaults.accelerationProfileIntent = "Conservative single-request serving for constrained local memory."
+        servingDefaults.source = .operatorOverride
+        snapshot.servingDefaults.sessions = [servingDefaults]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.server)
+
+        let view = hostView(
+            DesktopWorkspaceShellView(viewModel: viewModel),
+            size: CGSize(width: 1_280, height: 1_400)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Requested profile: Throughput"))
+        #expect(renderedTexts.contains("Effective profile: Low Memory"))
+        #expect(renderedTexts.contains("Intent: Conservative single-request serving for constrained local memory."))
+        #expect(renderedTexts.contains("Resolved defaults: None • sequences 1 • prefill 1 • completion 1"))
+    }
+
+    @Test("profile regression renders requested effective and resolved serving receipts")
+    @MainActor
+    func profileRegressionRendersRequestedEffectiveAndResolvedServingReceipts() throws {
+        let servingDefaults = DesktopServerServingDefaultsState(
+            maxConcurrentRequests: 2,
+            concurrentProcessingEnabled: true,
+            prefillBatchSize: 2,
+            completionBatchSize: 1,
+            accelerationProfile: "long-session",
+            accelerationMode: "sparse_prefill",
+            effectiveMaxConcurrentRequests: 1,
+            effectiveConcurrentProcessingEnabled: false,
+            effectivePrefillBatchSize: 1,
+            effectiveCompletionBatchSize: 1,
+            effectiveAccelerationProfile: "low-memory",
+            accelerationProfileIntent: "Runtime selected low-memory after model constraints.",
+            effectiveAccelerationMode: "baseline"
+        )
+        let view = hostView(
+            DesktopServingAccelerationProfileSummary(servingDefaults: servingDefaults),
+            size: CGSize(width: 520, height: 160)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Requested profile: Long Session"))
+        #expect(renderedTexts.contains("Effective profile: Low Memory"))
+        #expect(renderedTexts.contains("Intent: Runtime selected low-memory after model constraints."))
+        #expect(renderedTexts.contains("Resolved defaults: None • sequences 1 • prefill 1 • completion 1"))
     }
 
     @Test("workspace server surface renders remote server picker and editor")
@@ -752,14 +882,487 @@ struct DesktopFoundationViewTests {
             lastError: nil,
             recentEvents: []
         )
-        let view = hostView(DesktopSettingsTabView(foundation: foundation))
+        let summary = DesktopSettingsTabView(foundation: foundation).accessibilitySummary
 
-        #expect(view.subviews.isEmpty == false)
+        #expect(summary.contains("Embedding Model"))
+        #expect(summary.contains("melix-dev-embed"))
+        #expect(summary.contains("MCP Config"))
+        #expect(summary.contains("/tmp/mcp-tools.json"))
         #expect(foundation.settings.contains { $0.key == "Embedding Model" && $0.value == "melix-dev-embed" })
         #expect(foundation.settings.contains { $0.key == "MCP Config" && $0.value == "/tmp/mcp-tools.json" })
         #expect(foundation.settings.contains { $0.key == "Gateway Config Store" && $0.value == "/tmp/gateway-config.json" })
         #expect(foundation.settings.contains { $0.key == "Built-in Tool Parsers" && $0.value == "text, json, qwen" })
         #expect(foundation.settings.contains { $0.key == "Boot Arguments" && $0.value == "--config /tmp/melix.json" })
+    }
+
+    @Test("settings tab renders runtime settings rows with source and validation state")
+    @MainActor
+    func settingsTabRendersRuntimeSettingsRowsWithSourceAndValidationState() async throws {
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
+            snapshot: Melix_Controlplane_V1_ServerSnapshot(),
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-settings",
+            features: [],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
+            lastError: nil,
+            recentEvents: []
+        )
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.applyRuntimeSettings(
+            RuntimeSettingsSnapshotState(
+                schemaVersion: "melix.runtime_settings.effective.v1",
+                rows: [
+                    RuntimeSettingRowState(
+                        key: "model_cache_path",
+                        currentValueText: "/tmp/melix/models",
+                        source: "environment",
+                        sourceDetail: "MELIX_MODEL_CACHE_PATH"
+                    ),
+                    RuntimeSettingRowState(
+                        key: "memory_pressure_threshold",
+                        currentValueText: "1.25",
+                        source: "user_settings",
+                        sourceDetail: "/tmp/melix-home/runtime_settings.json",
+                        validationState: .invalid,
+                        validationMessage: "must be <= 1.0"
+                    ),
+                    RuntimeSettingRowState(
+                        key: "max_workers",
+                        currentValueText: "4",
+                        source: "default",
+                        sourceDetail: "runtime defaults",
+                        validationState: .valid
+                    ),
+                ],
+                sources: [
+                    RuntimeSettingSourceState(key: "user_settings", path: "/tmp/melix-home/runtime_settings.json"),
+                ],
+                metrics: [
+                    RuntimeSettingMetricState(name: "settings_resolve_ms", valueText: "3"),
+                ]
+            )
+        )
+
+        let tab = DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
+        let view = hostView(tab)
+        let values = tab.accessibilitySummary
+        #expect(view.subviews.isEmpty == false)
+        #expect(values.contains("Runtime Settings"))
+        #expect(values.contains("model_cache_path"))
+        #expect(values.contains("/tmp/melix/models"))
+        #expect(values.contains("environment"))
+        #expect(values.contains("MELIX_MODEL_CACHE_PATH"))
+        #expect(values.contains("Not validated"))
+        #expect(values.contains("memory_pressure_threshold"))
+        #expect(values.contains("1.25"))
+        #expect(values.contains("Invalid"))
+        #expect(values.contains("must be <= 1.0"))
+        #expect(values.contains("max_workers"))
+        #expect(values.contains("Valid"))
+        #expect(values.contains("Resolved Sources"))
+        #expect(values.contains("/tmp/melix-home/runtime_settings.json"))
+        #expect(values.contains("settings_resolve_ms"))
+
+        viewModel.selectToolSection(.settings)
+        let shellView = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        #expect(shellView.subviews.isEmpty == false)
+    }
+
+    @Test("settings tab renders runtime settings operation controls")
+    @MainActor
+    func settingsTabRendersRuntimeSettingsOperationControls() async throws {
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
+            snapshot: Melix_Controlplane_V1_ServerSnapshot(),
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-settings-controls",
+            features: [],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
+            lastError: nil,
+            recentEvents: []
+        )
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.applyRuntimeSettings(
+            RuntimeSettingsSnapshotState(
+                schemaVersion: "melix.runtime_settings.effective.v1",
+                rows: [
+                    RuntimeSettingRowState(
+                        key: "max_concurrent_jobs",
+                        currentValueText: "4",
+                        source: "default",
+                        sourceDetail: "builtin"
+                    ),
+                ],
+                sources: [],
+                metrics: []
+            )
+        )
+        viewModel.updateRuntimeSettingDraft(key: "max_concurrent_jobs", value: "8")
+        viewModel.applyRuntimeSettingsOperationMessage("Updated max_concurrent_jobs.")
+
+        let tab = DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
+        let view = hostView(tab)
+        let values = tab.accessibilitySummary
+        _ = renderedTextValues(in: view)
+
+        #expect(values.contains("Setting key"))
+        #expect(values.contains("Setting value"))
+        #expect(values.contains("Set Setting"))
+        #expect(values.contains("Reset Setting"))
+        #expect(values.contains("Validate Settings"))
+        #expect(values.contains("Updated max_concurrent_jobs."))
+    }
+
+    @Test("settings tab drives runtime settings operation buttons and renders failures")
+    @MainActor
+    func settingsTabDrivesRuntimeSettingsOperationButtonsAndRendersFailures() async throws {
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
+            snapshot: Melix_Controlplane_V1_ServerSnapshot(),
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-settings-actions",
+            features: [],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
+            lastError: nil,
+            recentEvents: []
+        )
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureOutput(
+            """
+            {
+              "key": "max_concurrent_jobs",
+              "value": 8,
+              "source": "user_settings"
+            }
+            """,
+            for: .settingsSet(.init(key: "max_concurrent_jobs", value: "8", json: true))
+        )
+        await runner.configureOutput(Self.runtimeSettingsOperationSnapshotJSON, for: .settingsShow(.init(json: true)))
+        await runner.configureOutput(
+            """
+            {
+              "valid": false,
+              "errors": [
+                {
+                  "key": "max_concurrent_jobs",
+                  "message": "expected int",
+                  "source": "user_settings"
+                }
+              ],
+              "metrics": {}
+            }
+            """,
+            for: .settingsValidate(.init(json: true))
+        )
+        await runner.configureOutput(
+            """
+            {
+              "key": "max_concurrent_jobs",
+              "removed": true
+            }
+            """,
+            for: .settingsReset(.init(key: "max_concurrent_jobs", json: true))
+        )
+
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.applyRuntimeSettings(try RuntimeSettingsPayloadDecoder.decodeShow(Self.runtimeSettingsOperationSnapshotJSON))
+        viewModel.updateRuntimeSettingDraft(key: "max_concurrent_jobs", value: "8")
+
+        await viewModel.setRuntimeSetting()
+        try await waitForDesktopFoundationCondition("settings set completes") {
+            viewModel.runtimeSettingsOperationMessage == "Updated max_concurrent_jobs."
+        }
+
+        await viewModel.validateRuntimeSettings()
+        try await waitForDesktopFoundationCondition("settings validation completes") {
+            viewModel.runtimeSettingsOperationMessage == "1 validation issue."
+        }
+        let validationTab = DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
+        _ = hostView(validationTab)
+        #expect(validationTab.accessibilitySummary.contains("expected int"))
+        #expect(validationTab.accessibilitySummary.contains("user_settings"))
+
+        await viewModel.resetRuntimeSetting()
+        try await waitForDesktopFoundationCondition("settings reset completes") {
+            viewModel.runtimeSettingsOperationMessage == "Reset max_concurrent_jobs."
+        }
+
+        #expect(
+            await runner.snapshotRecordedCommands() == [
+                .settingsSet(.init(key: "max_concurrent_jobs", value: "8", json: true)),
+                .settingsShow(.init(json: true)),
+                .settingsValidate(.init(json: true)),
+                .settingsReset(.init(key: "max_concurrent_jobs", json: true)),
+                .settingsShow(.init(json: true)),
+            ]
+        )
+
+        let localErrorViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        localErrorViewModel.applyRuntimeSettings(try RuntimeSettingsPayloadDecoder.decodeShow(Self.runtimeSettingsOperationSnapshotJSON))
+        localErrorViewModel.updateRuntimeSettingDraft(key: "max_concurrent_jobs", value: "8")
+        await localErrorViewModel.setRuntimeSetting()
+        let errorTab = DesktopSettingsTabView(foundation: foundation, viewModel: localErrorViewModel)
+        _ = hostView(errorTab)
+        #expect(errorTab.accessibilitySummary.contains("Settings CLI runner is unavailable."))
+
+        let legacyTab = DesktopSettingsTabView(
+            foundation: foundation,
+            viewModel: RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        )
+        _ = hostView(legacyTab)
+        #expect(legacyTab.accessibilitySummary.contains("Protocol"))
+    }
+
+    @Test("settings tab renders runtime discovery inspector payloads")
+    @MainActor
+    func settingsTabRendersRuntimeDiscoveryInspectorPayloads() async throws {
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
+            snapshot: Melix_Controlplane_V1_ServerSnapshot(),
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-discovery",
+            features: [],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
+            lastError: nil,
+            recentEvents: []
+        )
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.applyRuntimeDiscovery(
+            try RuntimeDiscoveryPayloadDecoder.decodeSnapshot([
+                (.info, RuntimeDiscoveryStateTests.infoJSON),
+                (.capabilities, RuntimeDiscoveryStateTests.capabilitiesJSON),
+                (.instructions, RuntimeDiscoveryStateTests.instructionsJSON),
+                (.schema, RuntimeDiscoveryStateTests.schemaJSON),
+                (.configMetadata, RuntimeDiscoveryStateTests.configMetadataJSON),
+            ])
+        )
+
+        let tab = DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
+        let view = hostView(tab)
+        let values = tab.accessibilitySummary
+        _ = renderedTextValues(in: view)
+
+        #expect(values.contains("Refresh Discovery"))
+        #expect(values.contains("Discovery Inspector"))
+        #expect(values.contains("Info"))
+        #expect(values.contains("Capabilities"))
+        #expect(values.contains("Instructions"))
+        #expect(values.contains("Schema"))
+        #expect(values.contains("Config Metadata"))
+        #expect(values.contains("melix.discovery.info.v1"))
+        #expect(values.contains("runtime_settings"))
+        #expect(values.contains("/api/config-metadata"))
+        #expect(values.contains("mlx-community/Qwen3.5-9B-MLX-4bit"))
+        #expect(values.contains("qwen35_9b_mlx_4bit"))
+        #expect(values.contains("/repo/packages/protocol/schema"))
+        #expect(values.contains("max_concurrent_jobs"))
+        #expect(values.contains("MELIX_MAX_CONCURRENT_JOBS"))
+    }
+
+    @Test("settings tab renders model alias lookup suggestions and no match states")
+    @MainActor
+    func settingsTabRendersModelAliasLookupSuggestionsAndNoMatchStates() async throws {
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
+            snapshot: Melix_Controlplane_V1_ServerSnapshot(),
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-discovery-alias",
+            features: [],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
+            lastError: nil,
+            recentEvents: []
+        )
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureOutput(
+            RuntimeDiscoveryStateTests.noMatchCapabilitiesJSON,
+            for: .capabilities(.init(json: true, modelQuery: "not a/model id"))
+        )
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.applyRuntimeDiscovery(
+            try RuntimeDiscoveryPayloadDecoder.decodeSnapshot([
+                (.capabilities, RuntimeDiscoveryStateTests.capabilitiesJSON),
+            ])
+        )
+        viewModel.updateRuntimeDiscoveryAliasQuery("not a/model id")
+
+        let initialTab = DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
+        let initialView = hostView(initialTab)
+        let initialValues = initialTab.accessibilitySummary
+        _ = renderedTextValues(in: initialView)
+
+        #expect(initialValues.contains("Model alias query"))
+        #expect(initialValues.contains("Lookup Alias"))
+        #expect(initialValues.contains("Model Alias Suggestions"))
+        #expect(initialValues.contains("Suggestions available"))
+        #expect(initialValues.contains("mlx-community/Qwen3.5-9B-MLX-4bit"))
+
+        await viewModel.lookupRuntimeDiscoveryModelAlias()
+        try await waitForDesktopFoundationCondition("alias lookup completes") {
+            viewModel.runtimeDiscoveryOperationMessage == "Model alias lookup refreshed."
+        }
+
+        let noMatchTab = DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
+        _ = hostView(noMatchTab)
+        #expect(noMatchTab.accessibilitySummary.contains("No match"))
+        #expect(noMatchTab.accessibilitySummary.contains("No model alias matches not a/model id."))
+        #expect(
+            await runner.snapshotRecordedCommands() == [
+                .capabilities(.init(json: true, modelQuery: "not a/model id")),
+            ]
+        )
+    }
+
+    @Test("settings tab renders discovery copy and open affordances")
+    @MainActor
+    func settingsTabRendersDiscoveryCopyAndOpenAffordances() throws {
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
+            snapshot: Melix_Controlplane_V1_ServerSnapshot(),
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-discovery-affordances",
+            features: [],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
+            lastError: nil,
+            recentEvents: []
+        )
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.applyRuntimeDiscovery(
+            try RuntimeDiscoveryPayloadDecoder.decodeSnapshot([
+                (.info, RuntimeDiscoveryStateTests.infoJSON),
+                (.schema, RuntimeDiscoveryStateTests.schemaJSON),
+            ])
+        )
+
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("melix.discovery.copy.\(UUID().uuidString)"))
+        #expect(RuntimeDiscoveryClipboard.copy("/repo/docs/plans", to: pasteboard))
+        #expect(pasteboard.string(forType: .string) == "/repo/docs/plans")
+        #expect(RuntimeDiscoveryClipboard.copy("   ", to: pasteboard) == false)
+
+        var openedURL: URL?
+        #expect(RuntimeDiscoveryClipboard.open("/repo/docs/plans") { url in
+            openedURL = url
+            return true
+        })
+        #expect(openedURL?.path == "/repo/docs/plans")
+        #expect(RuntimeDiscoveryClipboard.open("   ") { _ in true } == false)
+
+        var expandedHomeURL: URL?
+        #expect(RuntimeDiscoveryClipboard.open("~/Documents") { url in
+            expandedHomeURL = url
+            return true
+        })
+        #expect(expandedHomeURL?.path == "\(NSHomeDirectory())/Documents")
+
+        let tab = DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
+        let view = hostView(tab)
+        let buttons = renderedButtons(in: view)
+        let values = tab.accessibilitySummary
+
+        #expect(buttons.count >= 4)
+        #expect(values.contains("Copy Schema Version"))
+        #expect(values.contains("Copy Endpoint"))
+        #expect(values.contains("Copy Schema Path"))
+        #expect(values.contains("Open Schema Path"))
+    }
+
+    @Test("settings tab refreshes runtime discovery and renders status states")
+    @MainActor
+    func settingsTabRefreshesRuntimeDiscoveryAndRendersStatusStates() async throws {
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
+            snapshot: Melix_Controlplane_V1_ServerSnapshot(),
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-discovery-status",
+            features: [],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
+            lastError: nil,
+            recentEvents: []
+        )
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureOutput(RuntimeDiscoveryStateTests.infoJSON, for: .info(.init(json: true)))
+        await runner.configureOutput(RuntimeDiscoveryStateTests.capabilitiesJSON, for: .capabilities(.init(json: true)))
+        await runner.configureOutput(RuntimeDiscoveryStateTests.instructionsJSON, for: .instructions(.init(json: true)))
+        await runner.configureOutput(RuntimeDiscoveryStateTests.schemaJSON, for: .schema(.init(json: true)))
+        await runner.configureOutput(RuntimeDiscoveryStateTests.configMetadataJSON, for: .configMetadata(.init(json: true)))
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+
+        let refreshView = hostView(DesktopSettingsTabView(foundation: foundation, viewModel: viewModel))
+        #expect(DesktopSettingsTabView(foundation: foundation, viewModel: viewModel).accessibilitySummary.contains("Discovery metadata unavailable."))
+        _ = renderedTextValues(in: refreshView)
+        #expect(DesktopSettingsTabView(foundation: foundation, viewModel: viewModel).accessibilitySummary.contains("Refresh Discovery"))
+        await viewModel.refreshRuntimeDiscovery()
+        try await waitForDesktopFoundationCondition("discovery refresh completes") {
+            viewModel.runtimeDiscoveryOperationMessage == "Runtime discovery refreshed."
+        }
+        let refreshedTab = DesktopSettingsTabView(foundation: foundation, viewModel: viewModel)
+        _ = hostView(refreshedTab)
+        #expect(refreshedTab.accessibilitySummary.contains("Runtime discovery refreshed."))
+        #expect(refreshedTab.accessibilitySummary.contains("melix.discovery.config_metadata.v1"))
+
+        let errorViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        await errorViewModel.refreshRuntimeDiscovery()
+        let errorTab = DesktopSettingsTabView(foundation: foundation, viewModel: errorViewModel)
+        _ = hostView(errorTab)
+        #expect(errorTab.accessibilitySummary.contains("Discovery CLI runner is unavailable."))
+
+        let settingsViewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        settingsViewModel.applyRuntimeSettings(
+            RuntimeSettingsSnapshotState(
+                schemaVersion: "melix.runtime_settings.effective.v1",
+                rows: [
+                    RuntimeSettingRowState(
+                        key: "max_concurrent_jobs",
+                        currentValueText: "4",
+                        source: "default",
+                        sourceDetail: "builtin"
+                    ),
+                ],
+                sources: [],
+                metrics: []
+            )
+        )
+        settingsViewModel.applyRuntimeDiscovery(viewModel.runtimeDiscoverySnapshot)
+        let settingsTab = DesktopSettingsTabView(foundation: foundation, viewModel: settingsViewModel)
+        _ = hostView(settingsTab)
+        #expect(settingsTab.accessibilitySummary.contains("Runtime Settings"))
+        #expect(settingsTab.accessibilitySummary.contains("Discovery Inspector"))
+        #expect(settingsTab.accessibilitySummary.contains("melix.discovery.info.v1"))
     }
 
     @Test("settings tab normalizes tooling state labels across model states and config paths")
@@ -843,6 +1446,65 @@ struct DesktopFoundationViewTests {
         )
 
         #expect(view.subviews.isEmpty == false)
+    }
+
+    @Test("capability disabled explanations render in model settings and server defaults")
+    @MainActor
+    func capabilityDisabledExplanationsRenderInSettingsAndServerDefaults() async throws {
+        var model = makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)
+        var capabilityReceipt = Melix_Controlplane_V1_ModelCapabilityReceipt()
+        var tools = Melix_Controlplane_V1_TaskCapabilityReceipt()
+        tools.capability = "tools"
+        tools.state = .capabilityUnsupported
+        tools.unsupportedReason = .unsupportedReasonUnsupportedTask
+        tools.recoveryHint = "Select a tool-capable model."
+        tools.provenance = "tool parser metadata"
+        var completion = Melix_Controlplane_V1_TaskCapabilityReceipt()
+        completion.capability = "completion"
+        completion.state = .capabilitySupported
+        completion.provenance = "model catalog"
+        var acceleration = Melix_Controlplane_V1_AccelerationCapabilityReceipt()
+        acceleration.requestedAccelerationMode = .speculativeDecode
+        acceleration.supportedModes = [.baseline]
+        acceleration.state = .capabilityUnsupported
+        acceleration.unsupportedReason = .unsupportedReasonUnsupportedMode
+        acceleration.recoveryHint = "Switch to baseline or pick a compatible draft model."
+        capabilityReceipt.tasks = [completion, tools]
+        capabilityReceipt.acceleration = acceleration
+        model.capabilityReceipt = capabilityReceipt
+
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [model]
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.modelSettingsToolParserXMLFallbackDraft = true
+        viewModel.modelSettingsAccelerationModeDraft = "speculative_decode"
+        let modelsView = hostView(
+            DesktopModelsTabView(
+                foundation: viewModel.desktopFoundationState,
+                viewModel: viewModel
+            ),
+            size: CGSize(width: 1_200, height: 1_800)
+        )
+
+        #expect(modelsView.subviews.isEmpty == false)
+        #expect(viewModel.modelSettingsToolParserXMLFallbackDisabledReason == "Tool parser XML fallback is unavailable for \(desktopTestReadyModelID): tools capability is unsupported • reason unsupported task • recovery Select a tool-capable model.")
+        #expect(viewModel.modelSettingsAccelerationModeDisabledReason == "Model settings acceleration is unavailable for \(desktopTestReadyModelID): Speculative Decode acceleration is unsupported • reason unsupported mode • recovery Switch to baseline or pick a compatible draft model.")
+
+        viewModel.selectSurface(.server)
+        viewModel.updateSelectedServerSessionAccelerationMode("speculative_decode")
+        let serverView = hostView(
+            DesktopWorkspaceShellView(viewModel: viewModel),
+            size: CGSize(width: 1_400, height: 1_100)
+        )
+
+        #expect(serverView.subviews.isEmpty == false)
+        #expect(viewModel.selectedServerAccelerationModeDisabledReason == "Serving acceleration is unavailable for \(desktopTestReadyModelID): Speculative Decode acceleration is unsupported • reason unsupported mode • recovery Switch to baseline or pick a compatible draft model.")
     }
 
     @Test("models registry uses design-system workspace primitives")
@@ -1094,6 +1756,134 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
         #expect(renderedTexts.contains("Recommended action: Warm") == false)
         #expect(renderedTexts.contains("Recommended action: warm") == false)
+    }
+
+    @Test("model registry local card renders memory fit receipt rows")
+    @MainActor
+    func modelRegistryLocalCardRendersMemoryFitReceiptRows() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        var model = makeMenuBarModelSummary(modelID: "melix-local-fit", state: .modelWarm)
+        model.settings.ext["melix.memory_fit.import.status"] = "blocked"
+        model.settings.ext["melix.memory_fit.import.reason"] = "Import requires 42 GB active memory."
+        model.settings.ext["melix.memory_fit.benchmark.status"] = "heavy"
+        model.settings.ext["melix.memory_fit.benchmark.reason"] = "Benchmark KV cache may exceed comfort budget."
+        model.settings.ext["melix.memory_fit.eval.status"] = "good"
+        model.settings.ext["melix.memory_fit.eval.reason"] = "Eval sample size fits available memory."
+        model.settings.ext["melix.memory_fit.train.status"] = "unknown"
+        model.settings.ext["melix.memory_fit.train.reason"] = "Training optimizer estimate is unavailable."
+        snapshot.models = [model]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let rows = try #require(viewModel.primaryModel?.memoryFitReceiptRows)
+        let localEntry = try #require(viewModel.modelRegistryEntries.first)
+        _ = hostView(DesktopRegistryEntryCardContent(entry: localEntry, localModel: viewModel.primaryModel))
+        let displayTexts = rows.map(DesktopMemoryFitReceiptRowsView.displayText(for:))
+        let summary = desktopModelInfoSummaryContent(RuntimeModelInfoState(
+            modelID: "melix-local-fit",
+            modelKind: "text",
+            maxContext: 8_192,
+            supportedParsers: ["text"],
+            supportedModalities: ["text"],
+            memoryFitReceiptRows: rows
+        ))
+
+        #expect(displayTexts == [
+            "Fit Import: Blocked • Import requires 42 GB active memory.",
+            "Fit Benchmark: Heavy • Benchmark KV cache may exceed comfort budget.",
+            "Fit Eval: Good • Eval sample size fits available memory.",
+            "Fit Train: Unknown • Training optimizer estimate is unavailable.",
+        ])
+        #expect(summary.detailLines.contains("memory fit import: Blocked • Import requires 42 GB active memory."))
+    }
+
+    @Test("model registry local card renders memory fit resource summaries")
+    @MainActor
+    func modelRegistryLocalCardRendersMemoryFitResourceSummaries() async throws {
+        let row = RuntimeMemoryFitReceiptRow(
+            target: "benchmark",
+            title: "Benchmark",
+            status: "heavy",
+            statusText: "Heavy",
+            reasonText: "Benchmark KV cache may exceed comfort budget.",
+            detailRows: [
+                "active memory 32.00 GB",
+                "disk 8.00 GB required • 16.00 GB available • Good",
+                "unified memory 64.00 GB",
+                "threshold 85%",
+                "unknown fields kv_cache, dataset_cache",
+            ]
+        )
+        let displayTexts = DesktopMemoryFitReceiptRowsView.displayTexts(for: row)
+        let summary = desktopModelInfoSummaryContent(RuntimeModelInfoState(
+            modelID: "melix-local-fit",
+            modelKind: "text",
+            maxContext: 8_192,
+            supportedParsers: ["text"],
+            supportedModalities: ["text"],
+            memoryFitReceiptRows: [row]
+        ))
+
+        #expect(displayTexts == [
+            "Fit Benchmark: Heavy • Benchmark KV cache may exceed comfort budget.",
+            "active memory 32.00 GB",
+            "disk 8.00 GB required • 16.00 GB available • Good",
+            "unified memory 64.00 GB",
+            "threshold 85%",
+            "unknown fields kv_cache, dataset_cache",
+        ])
+        #expect(summary.detailLines.contains("memory fit benchmark detail: active memory 32.00 GB"))
+        #expect(summary.detailLines.contains("memory fit benchmark detail: unknown fields kv_cache, dataset_cache"))
+    }
+
+    @Test("model registry memory fit receipt rows expose visual states")
+    @MainActor
+    func modelRegistryMemoryFitReceiptRowsExposeVisualStates() async throws {
+        let rows = [
+            RuntimeMemoryFitReceiptRow(
+                target: "import",
+                title: "Import",
+                status: "blocked",
+                statusText: "Blocked",
+                reasonText: "Import exceeds unified memory."
+            ),
+            RuntimeMemoryFitReceiptRow(
+                target: "benchmark",
+                title: "Benchmark",
+                status: "heavy",
+                statusText: "Heavy",
+                reasonText: "Benchmark may need swap."
+            ),
+            RuntimeMemoryFitReceiptRow(
+                target: "eval",
+                title: "Eval",
+                status: "good",
+                statusText: "Good",
+                reasonText: "Eval fits the memory budget."
+            ),
+            RuntimeMemoryFitReceiptRow(
+                target: "train",
+                title: "Train",
+                status: "unexpected-state",
+                statusText: "Unknown",
+                reasonText: "Training estimate is missing."
+            ),
+        ]
+        let visualStates = rows.map(DesktopMemoryFitReceiptRowsView.visualState(for:))
+        let accessibilityLabels = rows.map(DesktopMemoryFitReceiptRowsView.accessibilityLabel(for:))
+
+        #expect(visualStates == [.blocked, .heavy, .good, .unknown])
+        #expect(visualStates.map(\.badgeTitle) == ["Blocked", "Heavy", "Good", "Unknown"])
+        #expect(accessibilityLabels == [
+            "Memory fit Import: Blocked, Import exceeds unified memory.",
+            "Memory fit Benchmark: Heavy, Benchmark may need swap.",
+            "Memory fit Eval: Good, Eval fits the memory budget.",
+            "Memory fit Train: Unknown, Training estimate is missing.",
+        ])
     }
 
     @Test("model registry covers cache missing managed blocked unknown and gated branches")
@@ -1716,6 +2506,982 @@ struct DesktopFoundationViewTests {
         }
     }
 
+    @Test("jobs tool section renders navigation list selection and empty state")
+    @MainActor
+    func jobsToolSectionRendersNavigationListSelectionAndEmptyState() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.selectToolSection(.jobs)
+
+        let emptyView = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
+        let emptyTexts = renderedTextValues(in: emptyView)
+
+        #expect(viewModel.selectedSurface == .tools)
+        #expect(viewModel.selectedToolSection == .jobs)
+        #expect(DesktopJobsToolSectionView.emptyStateTitle == "No Jobs Yet")
+        #expect(emptyTexts.contains(DesktopJobsToolSectionView.emptyStateTitle))
+        #expect(emptyTexts.contains(DesktopJobsToolSectionView.emptyStateDetail))
+
+        let jobs = try RuntimeJobsPayloadDecoder.decodeList(Data("""
+        [
+          {
+            "job_id": "bench-20260516-1027",
+            "run_kind": "benchmark",
+            "status": "running",
+            "phase": "sampling",
+            "model_id": "mlx-community/Qwen3-8B",
+            "task_kind": "text-generation",
+            "updated_at_unix_ms": 1778908099000,
+            "cancelable": true
+          },
+          {
+            "job_id": "eval-20260516-1044",
+            "run_kind": "evaluation",
+            "status": "completed",
+            "phase": "complete",
+            "model_id": "melix-dev-text",
+            "task_kind": "mmlu",
+            "updated_at_unix_ms": 1778909101000
+          }
+        ]
+        """.utf8))
+        viewModel.applyRuntimeJobs(jobs)
+        viewModel.selectRuntimeJob(id: "eval-20260516-1044")
+
+        let populatedView = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
+        let populatedTexts = renderedTextValues(in: populatedView)
+
+        #expect(populatedTexts.contains(where: { $0.contains("bench-20260516-1027") }))
+        #expect(populatedTexts.contains("eval-20260516-1044"))
+        #expect(populatedTexts.contains("evaluation"))
+        #expect(populatedTexts.contains("completed"))
+
+        let shellView = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        #expect(shellView.subviews.isEmpty == false)
+    }
+
+    @Test("batch runs tool section renders model config inputs and validation messages")
+    @MainActor
+    func batchRunsToolSectionRendersModelConfigInputsAndValidationMessages() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.selectToolSection(.batchRuns)
+        viewModel.updateBatchRunModelListText("")
+        viewModel.updateBatchRunConfigText(
+            """
+            unknown_key: value
+            broken line
+            """
+        )
+
+        let view = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let values = renderedTextValues(in: view)
+        let buttons = renderedButtons(in: view)
+        let preflightButton = try #require(buttons.first { $0.title == "Run Preflight" })
+
+        #expect(viewModel.selectedSurface == .tools)
+        #expect(viewModel.selectedToolSection == .batchRuns)
+        #expect(preflightButton.isEnabled == false)
+        #expect(values.contains("0 models • 0 config values"))
+        #expect(values.contains("Add at least one model repository."))
+        #expect(values.contains(where: { $0.contains("unknown_key") }))
+        #expect(values.contains(where: { $0.contains("line 2") }))
+
+        let shellView = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
+        #expect(shellView.subviews.isEmpty == false)
+
+        viewModel.updateBatchRunModelListText("mlx-community/Qwen3-8B")
+        viewModel.updateBatchRunConfigText("run_id: smoke-batch")
+        let readyView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let readyValues = renderedTextValues(in: readyView)
+        let readyPreflightButton = try #require(renderedButtons(in: readyView).first { $0.title == "Run Preflight" })
+        #expect(readyPreflightButton.isEnabled)
+        #expect(readyValues.contains("Batch input is ready for preflight."))
+    }
+
+    @Test("batch runs tool section preflight button dispatches and selects report")
+    @MainActor
+    func batchRunsToolSectionPreflightButtonDispatchesAndSelectsReport() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureHandler { command in
+            guard case .batchRun = command else {
+                return .failure(.unsupportedCommand(commandID: "unexpected", surface: .subprocess))
+            }
+            return .success(
+                """
+                {
+                  "schema_version": "melix.batch.effective_config.v1",
+                  "run_id": "smoke-batch",
+                  "model_list": "/tmp/models.txt",
+                  "config_path": "/tmp/config.txt",
+                  "output_root": "/tmp/melix-batch-output",
+                  "temp_root": "/tmp/melix-batch-temp",
+                  "melix_home": "/tmp/melix-home",
+                  "runtime_dir": "/tmp/melix-runtime",
+                  "http_port": "12434",
+                  "service_instance_name": "window-ui",
+                  "selected_model_count": 1,
+                  "total_model_count": 1,
+                  "dry_run": true,
+                  "preflight": true,
+                  "continue_on_failure": true,
+                  "restart_stack_per_model": true,
+                  "preflight_report": "/tmp/melix-batch-output/preflight-report.json",
+                  "isolation_policy": {
+                    "schema_version": "melix.batch.isolation_policy.v1",
+                    "best_effort_unload_previous_model": true,
+                    "best_effort_unload_after_model": true,
+                    "restart_stack_per_model": true,
+                    "force_clean_stack_after_runtime_failure": true,
+                    "cleanup_failures_preserve_artifacts": true
+                  },
+                  "judge": {
+                    "remote_server_id": "judge-local",
+                    "model": "judge-model"
+                  },
+                  "benchmark": {
+                    "suite": "latency",
+                    "context_length": 2048,
+                    "generation_length": 128,
+                    "batch_size": 2,
+                    "repeats": 1,
+                    "sample_size": 8,
+                    "batch_factor": 1
+                  },
+                  "evaluation": {
+                    "suite": "mt-bench",
+                    "dataset_id": "smoke",
+                    "scoring_mode": "exact",
+                    "sample_size": 8,
+                    "batch_factor": 1
+                  },
+                  "models": [
+                    {
+                      "index": "01",
+                      "repo_id": "mlx-community/Qwen3-8B",
+                      "source_line": 1,
+                      "slug": "01-mlx-community-qwen3-8b"
+                    }
+                  ],
+                  "preflight_result": {
+                    "schema_version": "melix.batch.preflight_report.v1",
+                    "run_id": "smoke-batch",
+                    "status": "ready",
+                    "blocker_count": 0,
+                    "model_count": 1,
+                    "runtime": {
+                      "repo_root": "/tmp/melix",
+                      "melix_home": "/tmp/melix-home",
+                      "runtime_dir": "/tmp/melix-runtime",
+                      "http_port": "12434",
+                      "service_instance_name": "window-ui",
+                      "melix_cli": "/tmp/melix"
+                    },
+                    "judge": {
+                      "remote_server_id": "judge-local",
+                      "model": "judge-model"
+                    },
+                    "checks": [
+                      {
+                        "name": "output_root",
+                        "status": "ready",
+                        "detail": "output root writable",
+                        "actionable": "",
+                        "category": "filesystem",
+                        "metadata": {
+                          "path": "/tmp/melix-batch-output"
+                        }
+                      }
+                    ]
+                  }
+                }
+                """
+            )
+        }
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.updateBatchRunModelListText("01 | mlx-community/Qwen3-8B")
+        viewModel.updateBatchRunConfigText("run_id: smoke-batch")
+
+        let view = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let preflightButton = try #require(renderedButtons(in: view).first { $0.title == "Run Preflight" })
+        preflightButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected selected batch preflight report") {
+            viewModel.selectedBatchRunReport?.preflightStatus == "ready"
+        }
+
+        let updatedView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let values = renderedTextValues(in: updatedView)
+        #expect(values.contains("smoke-batch"))
+        #expect(values.contains("Preflight ready"))
+        #expect(values.contains("output_root"))
+        #expect(values.contains("Effective Config"))
+        #expect(values.contains("Output Root"))
+        #expect(values.contains("/tmp/melix-batch-output"))
+        #expect(values.contains("Isolation Summary"))
+        #expect(values.contains("Restart Stack Per Model"))
+        #expect(values.contains("enabled"))
+        #expect(await runner.snapshotRecordedCommands().count == 1)
+    }
+
+    @Test("batch runs tool section renders preflight readiness categories and blockers")
+    @MainActor
+    func batchRunsToolSectionRendersPreflightReadinessCategoriesAndBlockers() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureHandler { command in
+            guard case .batchRun = command else {
+                return .failure(.unsupportedCommand(commandID: "unexpected", surface: .subprocess))
+            }
+            return .success(Self.batchRunsBlockedPreflightJSON)
+        }
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.updateBatchRunModelListText("01 | mlx-community/Qwen3-8B")
+        viewModel.updateBatchRunConfigText("run_id: blocked-batch")
+
+        let view = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let preflightButton = try #require(renderedButtons(in: view).first { $0.title == "Run Preflight" })
+        preflightButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected blocked batch preflight report") {
+            viewModel.selectedBatchRunReport?.preflightStatus == "blocked"
+        }
+
+        let updatedView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let values = renderedTextValues(in: updatedView)
+        #expect(values.contains("Preflight Readiness"))
+        #expect(values.contains("filesystem"))
+        #expect(values.contains("1/1 ready • 0 blockers"))
+        #expect(values.contains("runtime"))
+        #expect(values.contains("0/1 ready • 1 blocker"))
+        #expect(values.contains("Set a free MELIX_HTTP_PORT before running the batch."))
+        #expect(values.contains("Select a judge remote server."))
+    }
+
+    @Test("batch runs tool section renders manifest status rows with failure attribution")
+    @MainActor
+    func batchRunsToolSectionRendersManifestStatusRowsWithFailureAttribution() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureHandler { command in
+            switch command {
+            case .batchRun:
+                return .success(Self.batchRunsPreflightJSON)
+            case .batchStatus:
+                return .success(Self.batchRunsStatusJSON)
+            default:
+                return .failure(.unsupportedCommand(commandID: "unexpected", surface: .subprocess))
+            }
+        }
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.updateBatchRunModelListText("01 | mlx-community/Qwen3-8B")
+        viewModel.updateBatchRunConfigText("run_id: smoke-batch")
+
+        let view = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let preflightButton = try #require(renderedButtons(in: view).first { $0.title == "Run Preflight" })
+        preflightButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected selected batch preflight report") {
+            viewModel.selectedBatchRunReport?.preflightStatus == "ready"
+        }
+
+        let reportView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let statusButton = try #require(renderedButtons(in: reportView).first { $0.title == "Refresh Status" })
+        #expect(statusButton.isEnabled)
+        statusButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected batch manifest status rows") {
+            viewModel.selectedBatchRunReport?.statusSummary?.status == "partial_success"
+        }
+
+        let updatedView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let values = renderedTextValues(in: updatedView)
+        #expect(values.contains("Batch Status"))
+        #expect(values.contains("2 succeeded, 1 partial, 1 failed, 0 running, 0 planned / 4 total"))
+        #expect(values.contains("mlx-community/Mistral-7B"))
+        #expect(values.contains("partial_success"))
+        #expect(values.contains("artifact_export"))
+        #expect(values.contains("retry_same_model"))
+        #expect(values.contains("model_load"))
+        #expect(await runner.snapshotRecordedCommands().count == 2)
+    }
+
+    @Test("batch runs tool section renders resume missing-only controls and disabled states")
+    @MainActor
+    func batchRunsToolSectionRendersResumeMissingOnlyControlsAndDisabledStates() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureHandler { command in
+            switch command {
+            case .batchRun:
+                return .success(Self.batchRunsPreflightJSON)
+            case .batchStatus, .batchResume:
+                return .success(Self.batchRunsStatusJSON)
+            default:
+                return .failure(.unsupportedCommand(commandID: "unexpected", surface: .subprocess))
+            }
+        }
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.updateBatchRunModelListText("01 | mlx-community/Qwen3-8B")
+        viewModel.updateBatchRunConfigText("run_id: smoke-batch")
+
+        let initialView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let initialResumeButton = try #require(renderedButtons(in: initialView).first { $0.title == "Resume Batch" })
+        #expect(initialResumeButton.isEnabled == false)
+        #expect(renderedTextValues(in: initialView).contains("Run or select a batch report before resuming."))
+
+        let preflightButton = try #require(renderedButtons(in: initialView).first { $0.title == "Run Preflight" })
+        preflightButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected selected batch preflight report") {
+            viewModel.selectedBatchRunReport?.preflightStatus == "ready"
+        }
+
+        let reportView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let statusButton = try #require(renderedButtons(in: reportView).first { $0.title == "Refresh Status" })
+        statusButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected batch manifest status rows") {
+            viewModel.selectedBatchRunReport?.statusSummary?.status == "partial_success"
+        }
+
+        let statusView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let statusValues = renderedTextValues(in: statusView)
+        let missingOnlyToggle = try #require(renderedButtons(in: statusView).first {
+            $0.title == "Missing Only" || $0.accessibilityLabel() == "Missing Only"
+        })
+        let resumeButton = try #require(renderedButtons(in: statusView).first { $0.title == "Resume Batch" })
+        #expect(missingOnlyToggle.state == .on)
+        #expect(resumeButton.isEnabled)
+        #expect(statusValues.contains("2 incomplete rows available for missing-only resume."))
+
+        resumeButton.performClick(nil)
+
+        try await waitForRecordedCLICommandCount(3, runner: runner, description: "expected missing-only resume command")
+        var recordedCommands = await runner.snapshotRecordedCommands()
+        guard case .batchResume(let missingOnlyOptions) = try #require(recordedCommands.last) else {
+            Issue.record("expected batch.resume command")
+            return
+        }
+        #expect(missingOnlyOptions.missingOnly)
+
+        missingOnlyToggle.performClick(nil)
+        try await waitForDesktopFoundationCondition("expected missing-only toggle to clear") {
+            viewModel.batchRunResumeMissingOnly == false
+        }
+
+        let allRowsView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        #expect(renderedTextValues(in: allRowsView).contains("Resume will rerun all 4 manifest rows."))
+        let allRowsResumeButton = try #require(renderedButtons(in: allRowsView).first { $0.title == "Resume Batch" })
+        allRowsResumeButton.performClick(nil)
+
+        try await waitForRecordedCLICommandCount(4, runner: runner, description: "expected all-rows resume command")
+        recordedCommands = await runner.snapshotRecordedCommands()
+        guard case .batchResume(let allRowsOptions) = try #require(recordedCommands.last) else {
+            Issue.record("expected second batch.resume command")
+            return
+        }
+        #expect(allRowsOptions.missingOnly == false)
+    }
+
+    @Test("batch runs tool section renders status refresh errors")
+    @MainActor
+    func batchRunsToolSectionRendersStatusRefreshErrors() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureHandler { command in
+            switch command {
+            case .batchRun:
+                return .success(Self.batchRunsPreflightJSON)
+            case .batchStatus:
+                return .failure(
+                    .processFailed(
+                        commandID: "batch.status",
+                        surface: .subprocess,
+                        exitCode: 2,
+                        stderr: "status manifest missing"
+                    )
+                )
+            default:
+                return .failure(.unsupportedCommand(commandID: "unexpected", surface: .subprocess))
+            }
+        }
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.updateBatchRunModelListText("01 | mlx-community/Qwen3-8B")
+        viewModel.updateBatchRunConfigText("run_id: smoke-batch")
+
+        let view = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let preflightButton = try #require(renderedButtons(in: view).first { $0.title == "Run Preflight" })
+        preflightButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected selected batch preflight report") {
+            viewModel.selectedBatchRunReport?.preflightStatus == "ready"
+        }
+
+        let reportView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let statusButton = try #require(renderedButtons(in: reportView).first { $0.title == "Refresh Status" })
+        statusButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected status refresh error") {
+            viewModel.batchRunStatusErrorMessage.contains("status manifest missing")
+        }
+
+        let updatedView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        #expect(renderedTextValues(in: updatedView).contains(where: { $0.contains("status manifest missing") }))
+    }
+
+    @Test("batch runs tool section renders resume errors")
+    @MainActor
+    func batchRunsToolSectionRendersResumeErrors() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureHandler { command in
+            switch command {
+            case .batchRun:
+                return .success(Self.batchRunsPreflightJSON)
+            case .batchStatus:
+                return .success(Self.batchRunsStatusJSON)
+            case .batchResume:
+                return .failure(
+                    .processFailed(
+                        commandID: "batch.resume",
+                        surface: .subprocess,
+                        exitCode: 2,
+                        stderr: "resume failed"
+                    )
+                )
+            default:
+                return .failure(.unsupportedCommand(commandID: "unexpected", surface: .subprocess))
+            }
+        }
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.updateBatchRunModelListText("01 | mlx-community/Qwen3-8B")
+        viewModel.updateBatchRunConfigText("run_id: smoke-batch")
+
+        let view = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let preflightButton = try #require(renderedButtons(in: view).first { $0.title == "Run Preflight" })
+        preflightButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected selected batch preflight report") {
+            viewModel.selectedBatchRunReport?.preflightStatus == "ready"
+        }
+
+        let reportView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let statusButton = try #require(renderedButtons(in: reportView).first { $0.title == "Refresh Status" })
+        statusButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected batch status before resume") {
+            viewModel.selectedBatchRunReport?.statusSummary?.status == "partial_success"
+        }
+
+        let statusView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let resumeButton = try #require(renderedButtons(in: statusView).first { $0.title == "Resume Batch" })
+        resumeButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected resume error") {
+            viewModel.batchRunResumeErrorMessage.contains("resume failed")
+        }
+
+        let updatedView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        #expect(renderedTextValues(in: updatedView).contains(where: { $0.contains("resume failed") }))
+    }
+
+    private static let batchRunsPreflightJSON = #"""
+    {
+      "schema_version": "melix.batch.effective_config.v1",
+      "run_id": "smoke-batch",
+      "model_list": "/tmp/models.txt",
+      "config_path": "/tmp/config.txt",
+      "output_root": "/tmp/melix-batch-output",
+      "temp_root": "/tmp/melix-batch-temp",
+      "selected_model_count": 1,
+      "total_model_count": 4,
+      "preflight_report": "/tmp/melix-batch-output/preflight-report.json",
+      "preflight_result": {
+        "schema_version": "melix.batch.preflight_report.v1",
+        "run_id": "smoke-batch",
+        "status": "ready",
+        "blocker_count": 0,
+        "model_count": 1,
+        "checks": [
+          {
+            "name": "output_root",
+            "status": "ready",
+            "detail": "output root writable",
+            "actionable": "",
+            "category": "filesystem",
+            "metadata": {
+              "path": "/tmp/melix-batch-output"
+            }
+          }
+        ]
+      }
+    }
+    """#
+
+    private static let runtimeSettingsOperationSnapshotJSON = #"""
+    {
+      "schema_version": "melix.runtime_settings.effective.v1",
+      "settings": {
+        "max_concurrent_jobs": {
+          "value": 4,
+          "source": "default",
+          "source_detail": "builtin"
+        }
+      },
+      "sources": {
+        "user_settings": "/tmp/melix-home/runtime_settings.json"
+      },
+      "metrics": {
+        "settings_resolve_ms": 3
+      }
+    }
+    """#
+
+    private static let batchRunsBlockedPreflightJSON = #"""
+    {
+      "schema_version": "melix.batch.effective_config.v1",
+      "run_id": "blocked-batch",
+      "model_list": "/tmp/models.txt",
+      "config_path": "/tmp/config.txt",
+      "output_root": "/tmp/melix-batch-output",
+      "temp_root": "/tmp/melix-batch-temp",
+      "selected_model_count": 1,
+      "total_model_count": 1,
+      "preflight_report": "/tmp/melix-batch-output/preflight-report.json",
+      "preflight_result": {
+        "schema_version": "melix.batch.preflight_report.v1",
+        "run_id": "blocked-batch",
+        "status": "blocked",
+        "blocker_count": 2,
+        "model_count": 1,
+        "checks": [
+          {
+            "name": "output_root",
+            "status": "ready",
+            "detail": "output root writable",
+            "actionable": "",
+            "category": "filesystem",
+            "metadata": {
+              "path": "/tmp/melix-batch-output"
+            }
+          },
+          {
+            "name": "http_port",
+            "status": "blocked",
+            "detail": "HTTP port is already in use",
+            "actionable": "Set a free MELIX_HTTP_PORT before running the batch.",
+            "category": "runtime",
+            "metadata": {
+              "port": "12434"
+            }
+          },
+          {
+            "name": "judge_remote",
+            "status": "blocked",
+            "detail": "judge remote server is missing",
+            "actionable": "Select a judge remote server.",
+            "category": "judge",
+            "metadata": {}
+          }
+        ]
+      }
+    }
+    """#
+
+    private static let batchRunsStatusJSON = #"""
+    {
+      "schema_version": "melix.batch.run_summary.v1",
+      "run_id": "smoke-batch",
+      "status": "partial_success",
+      "total_models": 4,
+      "succeeded_models": 2,
+      "partial_success_models": 1,
+      "failed_models": 1,
+      "running_models": 0,
+      "planned_models": 0,
+      "temp_root": "/tmp/melix-batch-temp",
+      "output_root": "/tmp/melix-batch-output",
+      "manifest_path": "/tmp/melix-batch-temp/manifest.jsonl",
+      "models": [
+        {
+          "model_index": "01",
+          "repo_id": "mlx-community/Qwen3-8B",
+          "status": "succeeded",
+          "benchmark_job_id": "bench-01",
+          "evaluation_job_id": "eval-01",
+          "failure_category": "",
+          "recoverability": "",
+          "duration_seconds": 12.5,
+          "metric_fields": {
+            "latency_ms": 42.0
+          }
+        },
+        {
+          "model_index": "02",
+          "repo_id": "mlx-community/Mistral-7B",
+          "status": "partial_success",
+          "benchmark_job_id": "bench-02",
+          "evaluation_job_id": "",
+          "failure_category": "artifact_export",
+          "recoverability": "retry_same_model",
+          "duration_seconds": 21.0,
+          "metric_fields": {}
+        },
+        {
+          "model_index": "03",
+          "repo_id": "mlx-community/Llama-3.2-3B",
+          "status": "failed",
+          "benchmark_job_id": "",
+          "evaluation_job_id": "",
+          "failure_category": "model_load",
+          "recoverability": "operator_action_required",
+          "duration_seconds": 3.25,
+          "metric_fields": {}
+        },
+        {
+          "model_index": "04",
+          "repo_id": "mlx-community/Phi-3.5",
+          "status": "succeeded",
+          "benchmark_job_id": "bench-04",
+          "evaluation_job_id": "eval-04",
+          "failure_category": "",
+          "recoverability": "",
+          "duration_seconds": 9.75,
+          "metric_fields": {
+            "accuracy": 0.88
+          }
+        }
+      ]
+    }
+    """#
+
+    @Test("batch runs tool section renders preflight runner error")
+    @MainActor
+    func batchRunsToolSectionRendersPreflightRunnerError() async throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.updateBatchRunModelListText("mlx-community/Qwen3-8B")
+
+        let view = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        let preflightButton = try #require(renderedButtons(in: view).first { $0.title == "Run Preflight" })
+        preflightButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected missing batch runner error") {
+            viewModel.batchRunPreflightErrorMessage == "Batch Runs CLI runner is unavailable."
+        }
+
+        let updatedView = hostView(DesktopBatchRunsToolSectionView(viewModel: viewModel))
+        #expect(renderedTextValues(in: updatedView).contains("Batch Runs CLI runner is unavailable."))
+    }
+
+    @Test("jobs tool section renders selected job detail summary")
+    @MainActor
+    func jobsToolSectionRendersSelectedJobDetailSummary() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.selectToolSection(.jobs)
+        let detail = try RuntimeJobsPayloadDecoder.decodeDetail(Data("""
+        {
+          "job_id": "bench-20260516-1120",
+          "run_kind": "benchmark",
+          "operation": "bench run",
+          "status": "failed",
+          "phase": "export",
+          "model_id": "mlx-community/Qwen3-8B",
+          "task_kind": "text-generation",
+          "artifact_root": "/tmp/melix/jobs/bench-20260516-1120",
+          "timestamps": {
+            "started_at_unix_ms": 1778911200000,
+            "updated_at_unix_ms": 1778911210000,
+            "ended_at_unix_ms": 1778911215000,
+            "duration_ms": 15000
+          },
+          "error": {
+            "code": "E_MLX",
+            "message": "out of memory"
+          },
+          "logs": {
+            "available": true,
+            "path": "/tmp/melix/jobs/bench-20260516-1120/job.log",
+            "command": "melix jobs logs bench-20260516-1120"
+          },
+          "artifacts": [
+            {
+              "kind": "manifest",
+              "path": "/tmp/melix/jobs/bench-20260516-1120/manifest.json",
+              "relative_path": "manifest.json",
+              "exists": true
+            }
+          ]
+        }
+        """.utf8))
+        viewModel.applyRuntimeJobDetail(detail)
+
+        let view = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
+        let values = renderedTextValues(in: view)
+
+        #expect(values.contains("bench-20260516-1120"))
+        #expect(values.contains("failed"))
+        #expect(values.contains("export"))
+        #expect(values.contains(expectedDesktopJobTimestampText(1_778_911_200_000)))
+        #expect(values.contains("raw 1778911200000 ms"))
+        #expect(values.contains(expectedDesktopJobTimestampText(1_778_911_215_000)))
+        #expect(values.contains("raw 1778911215000 ms"))
+        #expect(values.contains("15000 ms"))
+        #expect(values.contains("E_MLX"))
+        #expect(values.contains("out of memory"))
+        #expect(values.contains("/tmp/melix/jobs/bench-20260516-1120/job.log"))
+        #expect(values.contains("melix jobs logs bench-20260516-1120"))
+        #expect(values.contains("manifest"))
+        #expect(values.contains("/tmp/melix/jobs/bench-20260516-1120/manifest.json"))
+    }
+
+    @Test("jobs tool section renders CLI operation controls")
+    @MainActor
+    func jobsToolSectionRendersCLIOperationControls() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.selectToolSection(.jobs)
+        let jobs = try RuntimeJobsPayloadDecoder.decodeList(Data("""
+        [
+          {
+            "job_id": "bench-20260516-1027",
+            "run_kind": "benchmark",
+            "status": "running",
+            "phase": "sampling",
+            "model_id": "mlx-community/Qwen3-8B",
+            "task_kind": "text-generation",
+            "updated_at_unix_ms": 1778908099000,
+            "cancelable": true
+          }
+        ]
+        """.utf8))
+        viewModel.applyRuntimeJobs(jobs)
+
+        let view = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
+        let values = renderedTextValues(in: view)
+
+        #expect(values.contains("Refresh Jobs"))
+        #expect(values.contains("Refresh Detail"))
+        #expect(values.contains("Fetch Logs"))
+        #expect(values.contains("Refresh Artifacts"))
+    }
+
+    @Test("jobs tool section operation buttons dispatch and render fetched results")
+    @MainActor
+    func jobsToolSectionOperationButtonsDispatchAndRenderFetchedResults() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureOutput(
+            """
+            [
+              {
+                "job_id": "bench-cli-1",
+                "run_kind": "benchmark",
+                "status": "running",
+                "phase": "sampling",
+                "model_id": "mlx-community/Qwen3-8B",
+                "task_kind": "text-generation",
+                "updated_at_unix_ms": 1778912044000,
+                "cancelable": true
+              }
+            ]
+            """,
+            for: .jobsList(.init(json: true))
+        )
+        await runner.configureOutput(
+            """
+            {
+              "job_id": "bench-cli-1",
+              "run_kind": "benchmark",
+              "status": "running",
+              "phase": "export",
+              "model_id": "mlx-community/Qwen3-8B",
+              "task_kind": "text-generation",
+              "logs": {
+                "available": true,
+                "path": "/tmp/melix/jobs/bench-cli-1/job.log",
+                "command": "melix jobs logs bench-cli-1"
+              },
+              "artifacts": []
+            }
+            """,
+            for: .jobsShow(.init(jobID: "bench-cli-1", json: true))
+        )
+        await runner.configureOutput(
+            """
+            {
+              "schema_version": "melix.logs.v1",
+              "run_id": "bench-cli-1",
+              "source_path": "/tmp/melix/jobs/bench-cli-1/run-record.json",
+              "log_path": "/tmp/melix/jobs/bench-cli-1/job.log",
+              "follow_requested": false,
+              "active_follow_supported": false,
+              "content": "export started",
+              "redacted_field_count": 0
+            }
+            """,
+            for: .jobsLogs(.init(jobID: "bench-cli-1", json: true))
+        )
+        await runner.configureOutput(
+            """
+            {
+              "schema_version": "melix.job_artifacts.v1",
+              "job_id": "bench-cli-1",
+              "artifact_count": 1,
+              "artifacts": [
+                {
+                  "kind": "manifest",
+                  "path": "/tmp/melix/jobs/bench-cli-1/manifest.json",
+                  "relative_path": "manifest.json",
+                  "exists": true
+                }
+              ]
+            }
+            """,
+            for: .jobsArtifacts(.init(jobID: "bench-cli-1", json: true))
+        )
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.applyRuntimeJobs(try RuntimeJobsPayloadDecoder.decodeList(Data("""
+        [
+          {
+            "job_id": "bench-cli-1",
+            "run_kind": "benchmark",
+            "status": "running",
+            "phase": "sampling",
+            "model_id": "mlx-community/Qwen3-8B",
+            "task_kind": "text-generation"
+          }
+        ]
+        """.utf8)))
+
+        let view = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
+        let buttons = renderedButtons(in: view)
+        try #require(buttons.contains { $0.title == "Refresh Jobs" })
+        try #require(buttons.contains { $0.title == "Refresh Detail" })
+        try #require(buttons.contains { $0.title == "Fetch Logs" })
+        try #require(buttons.contains { $0.title == "Refresh Artifacts" })
+
+        buttons.first { $0.title == "Refresh Jobs" }?.performClick(nil)
+        try await waitForDesktopFoundationCondition("expected jobs list refresh command") {
+            viewModel.runtimeJobs.first?.updatedAtUnixMS == 1778912044000
+        }
+
+        buttons.first { $0.title == "Refresh Detail" }?.performClick(nil)
+        try await waitForDesktopFoundationCondition("expected selected job detail") {
+            viewModel.selectedRuntimeJobDetail?.summary.phase == "export"
+        }
+
+        buttons.first { $0.title == "Fetch Logs" }?.performClick(nil)
+        try await waitForDesktopFoundationCondition("expected selected job logs") {
+            viewModel.selectedRuntimeJobLogSnapshot?.content == "export started"
+        }
+
+        buttons.first { $0.title == "Refresh Artifacts" }?.performClick(nil)
+        try await waitForDesktopFoundationCondition("expected selected job artifacts") {
+            viewModel.selectedRuntimeJobArtifactSnapshot?.artifacts.first?.kind == "manifest"
+        }
+
+        let updatedView = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
+        let values = renderedTextValues(in: updatedView)
+        #expect(values.contains("export started"))
+        #expect(values.contains("manifest"))
+        #expect(values.contains("/tmp/melix/jobs/bench-cli-1/manifest.json"))
+    }
+
+    @Test("jobs tool section renders cancel request states for active and terminal jobs")
+    @MainActor
+    func jobsToolSectionRendersCancelRequestStatesForActiveAndTerminalJobs() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        viewModel.selectToolSection(.jobs)
+        let jobs = try RuntimeJobsPayloadDecoder.decodeList(Data("""
+        [
+          {
+            "job_id": "bench-active",
+            "run_kind": "benchmark",
+            "status": "running",
+            "phase": "sampling",
+            "model_id": "mlx-community/Qwen3-8B",
+            "task_kind": "text-generation",
+            "cancelable": true,
+            "cancellation_requested": false
+          },
+          {
+            "job_id": "bench-terminal",
+            "run_kind": "benchmark",
+            "status": "completed",
+            "phase": "completed",
+            "model_id": "mlx-community/Qwen3-8B",
+            "task_kind": "text-generation",
+            "cancelable": false,
+            "cancellation_requested": false
+          }
+        ]
+        """.utf8))
+        viewModel.applyRuntimeJobs(jobs)
+
+        let activeView = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
+        let activeButtons = renderedButtons(in: activeView)
+        let activeCancelButton = try #require(activeButtons.first { $0.title == "Request Cancel" })
+        #expect(activeCancelButton.isEnabled)
+        #expect(renderedTextValues(in: activeView).contains("Active job can receive a durable cancel request"))
+
+        viewModel.selectRuntimeJob(id: "bench-terminal")
+        let terminalView = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
+        let terminalButtons = renderedButtons(in: terminalView)
+        let terminalCancelButton = try #require(terminalButtons.first { $0.title == "Request Cancel" })
+        #expect(terminalCancelButton.isEnabled == false)
+        #expect(renderedTextValues(in: terminalView).contains("Terminal job cannot be canceled"))
+    }
+
+    @Test("jobs tool section cancel button dispatches and renders cancel result")
+    @MainActor
+    func jobsToolSectionCancelButtonDispatchesAndRendersCancelResult() async throws {
+        let runner = RecordingCLIWorkflowRunner()
+        await runner.configureOutput(
+            """
+            {
+              "schema_version": "melix.job_cancel_result.v1",
+              "job_id": "bench-active",
+              "cancel_requested": true,
+              "status": "running",
+              "phase": "sampling",
+              "request_path": "/tmp/melix/jobs/bench-active/cancel-request.json",
+              "request": {
+                "requested_at_unix_ms": 1778913000000,
+                "process_signal": {
+                  "pid": null,
+                  "sent": false,
+                  "reason": "direct_process_signal_disabled"
+                }
+              }
+            }
+            """,
+            for: .jobsCancel(.init(jobID: "bench-active", json: true))
+        )
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient(), cliWorkflowRunner: runner)
+        viewModel.selectToolSection(.jobs)
+        let jobs = try RuntimeJobsPayloadDecoder.decodeList(Data("""
+        [
+          {
+            "job_id": "bench-active",
+            "run_kind": "benchmark",
+            "status": "running",
+            "phase": "sampling",
+            "model_id": "mlx-community/Qwen3-8B",
+            "task_kind": "text-generation",
+            "cancelable": true,
+            "cancellation_requested": false
+          }
+        ]
+        """.utf8))
+        viewModel.applyRuntimeJobs(jobs)
+
+        let view = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
+        let cancelButton = try #require(renderedButtons(in: view).first { $0.title == "Request Cancel" })
+        cancelButton.performClick(nil)
+
+        try await waitForDesktopFoundationCondition("expected selected job cancel result") {
+            viewModel.selectedRuntimeJobCancelResult?.cancelRequested == true
+        }
+
+        let updatedView = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
+        let values = renderedTextValues(in: updatedView)
+        #expect(values.contains("Cancellation requested"))
+        #expect(values.contains("/tmp/melix/jobs/bench-active/cancel-request.json"))
+        #expect(await runner.snapshotRecordedCommands() == [.jobsCancel(.init(jobID: "bench-active", json: true))])
+    }
+
     @Test("training defaults to preset-first primary fields with advanced folded")
     @MainActor
     func trainingDefaultsToPresetFirstPrimaryFieldsWithAdvancedFolded() async throws {
@@ -1877,7 +3643,8 @@ struct DesktopFoundationViewTests {
                 quantizedArtifactPath: "/tmp/melix-quantize/saved-adapter/quantized.artifact",
                 convertedArtifactPath: "/tmp/melix-convert/saved-adapter/converted.artifact",
                 benchmarkJobID: "bench-saved-adapter",
-                evaluationJobID: "eval-saved-adapter"
+                evaluationJobID: "eval-saved-adapter",
+                memoryFitSummaryText: "Blocked - Training optimizer estimate exceeds unified memory. • threshold 85%"
             )
         )
         let viewModel = RuntimeViewModel(
@@ -1900,12 +3667,251 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Converted Artifact"))
         #expect(renderedTexts.contains("Benchmark Job"))
         #expect(renderedTexts.contains("Evaluation Job"))
+        #expect(renderedTexts.contains("Memory Fit"))
+        #expect(renderedTexts.contains("Blocked - Training optimizer estimate exceeds unified memory. • threshold 85%"))
         #expect(renderedTexts.contains("Activation"))
         #expect(renderedTexts.contains("Quantization"))
         #expect(renderedTexts.contains("Benchmark"))
         #expect(renderedTexts.contains("Evaluation"))
         #expect(renderedTexts.contains("Import Config Path"))
         #expect(renderedTexts.contains("Export Config Path"))
+    }
+
+    @Test("training surface renders saved lora adapter capability receipt")
+    @MainActor
+    func trainingSurfaceRendersSavedLoraAdapterCapabilityReceipt() async throws {
+        let config = LoraTrainingJobConfig(
+            modelID: "melix-dev-text",
+            datasetSourceKind: "local_package",
+            datasetURI: "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+            adapterName: "unsupported-adapter",
+            trainingMode: "dora",
+            activationMode: "adapter_backed_runtime"
+        )
+        let job = LoraTrainingJobRecord(
+            id: "adapter-capability-job",
+            title: "Adapter Capability Job",
+            config: config,
+            status: .failed,
+            lastRunJobID: "model-ops-adapter-capability",
+            outputPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+            manifestPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+            latestOutputText: #"""
+            {
+              "operation": "train_lora",
+              "adapter_family": "unsupported_adapter",
+              "adapter_algorithm": "dora",
+              "backend_supported": false,
+              "unsupported_reason": "unsupported_backend"
+            }
+            """#,
+            terminalMessage: "Training failed."
+        )
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            loraTrainingJobStore: FakeLoraTrainingJobStore(jobs: [job])
+        )
+
+        let view = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1280, height: 1600)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Adapter Capability"))
+        #expect(renderedTexts.contains("Family"))
+        #expect(renderedTexts.contains("unsupported_adapter"))
+        #expect(renderedTexts.contains("Algorithm"))
+        #expect(renderedTexts.contains("dora"))
+        #expect(renderedTexts.contains("Backend Support"))
+        #expect(renderedTexts.contains("Unsupported"))
+        #expect(renderedTexts.contains("Unsupported Reason"))
+        #expect(renderedTexts.contains("unsupported_backend"))
+    }
+
+    @Test("training surface renders saved lora adapter support matrix receipt")
+    @MainActor
+    func trainingSurfaceRendersSavedLoraAdapterSupportMatrixReceipt() async throws {
+        let config = LoraTrainingJobConfig(
+            modelID: "melix-dev-text",
+            datasetSourceKind: "local_package",
+            datasetURI: "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+            adapterName: "relora-adapter",
+            trainingMode: "qlora",
+            activationMode: "adapter_backed_runtime"
+        )
+        let job = LoraTrainingJobRecord(
+            id: "adapter-support-matrix-job",
+            title: "Adapter Support Matrix Job",
+            config: config,
+            status: .succeeded,
+            lastRunJobID: "model-ops-adapter-support-matrix",
+            outputPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+            manifestPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+            latestOutputText: #"""
+            {
+              "operation": "train_lora",
+              "adapter_family": "fake_relora",
+              "adapter_algorithm": "fake_relora",
+              "backend_supported": true,
+              "unsupported_reason": "",
+              "adapter_capabilities": {
+                "lora_like": true,
+                "mergeable": false,
+                "relora_compatible": true,
+                "quantized_base_supported": false
+              }
+            }
+            """#,
+            terminalMessage: "Training completed."
+        )
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            loraTrainingJobStore: FakeLoraTrainingJobStore(jobs: [job])
+        )
+
+        let view = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1280, height: 1600)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Adapter Capability"))
+        #expect(renderedTexts.contains("LoRA-like"))
+        #expect(renderedTexts.contains("Mergeable"))
+        #expect(renderedTexts.contains("ReLoRA-compatible"))
+        #expect(renderedTexts.contains("Quantized Base"))
+        #expect(renderedTexts.contains("Supported"))
+        #expect(renderedTexts.contains("Unsupported"))
+    }
+
+    @Test("training surface renders unknown family and unsupported quantized base states")
+    @MainActor
+    func trainingSurfaceRendersUnknownFamilyAndUnsupportedQuantizedBaseStates() async throws {
+        let config = LoraTrainingJobConfig(
+            modelID: "melix-dev-text",
+            datasetSourceKind: "local_package",
+            datasetURI: "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+            adapterName: "unknown-family-adapter",
+            trainingMode: "custom",
+            activationMode: "adapter_backed_runtime"
+        )
+        let job = LoraTrainingJobRecord(
+            id: "adapter-unknown-family-job",
+            title: "Adapter Unknown Family Job",
+            config: config,
+            status: .failed,
+            lastRunJobID: "model-ops-adapter-unknown-family",
+            outputPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+            manifestPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+            latestOutputText: #"""
+            {
+              "operation": "train_lora",
+              "adapter_algorithm": "custom_adapter",
+              "backend_supported": true,
+              "unsupported_reason": "unsupported_quantized_base",
+              "adapter_capabilities": {
+                "lora_like": true,
+                "mergeable": true,
+                "relora_compatible": false,
+                "quantized_base_supported": false
+              }
+            }
+            """#,
+            terminalMessage: "Training failed."
+        )
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            loraTrainingJobStore: FakeLoraTrainingJobStore(jobs: [job])
+        )
+
+        let view = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1280, height: 1600)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Adapter Capability"))
+        #expect(renderedTexts.contains("Family"))
+        #expect(renderedTexts.contains("Unknown Family"))
+        #expect(renderedTexts.contains("Quantized Base"))
+        #expect(renderedTexts.contains("Unsupported quantized base"))
+        #expect(renderedTexts.contains("unsupported_quantized_base"))
+    }
+
+    @Test("training surface renders saved job follow-up activation gating from adapter receipts")
+    @MainActor
+    func trainingSurfaceRendersSavedJobFollowUpActivationGatingFromAdapterReceipts() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeRegistrySnapshotManifest(
+                    publishedRepo: "",
+                    targetRepo: "melix/adapters/non-mergeable-adapter"
+                )
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+        var config = LoraTrainingJobConfig(
+            modelID: "melix-dev-text",
+            datasetSourceKind: "local_package",
+            datasetURI: "services/mlx-worker-python/fixtures/training/melix-dev-dataset.v1",
+            adapterName: "non-mergeable-adapter",
+            targetRepo: "melix/adapters/non-mergeable-adapter",
+            trainingMode: "qlora",
+            activationMode: RuntimeLoraActivationMode.fusedDerivedModel.rawValue
+        )
+        config.derivedModelAlias = "melix-dev-text-fused"
+        var job = LoraTrainingJobRecord(
+            id: "adapter-gating-job",
+            title: "Adapter Gating Job",
+            config: config,
+            status: .succeeded,
+            lastRunJobID: "model-ops-adapter-gating",
+            outputPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+            manifestPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+            latestOutputText: #"""
+            {
+              "operation": "train_lora",
+              "adapter_family": "fake_relora",
+              "adapter_algorithm": "fake_relora",
+              "backend_supported": true,
+              "unsupported_reason": "non_mergeable_adapter",
+              "adapter_capabilities": {
+                "lora_like": true,
+                "mergeable": false,
+                "relora_compatible": true,
+                "quantized_base_supported": true
+              }
+            }
+            """#,
+            terminalMessage: "Training completed."
+        )
+        job.followUpArtifacts.adapterManifestPath = "/tmp/melix-train-lora/train_lora.adapter.json"
+        let viewModel = RuntimeViewModel(
+            client: client,
+            loraTrainingJobStore: FakeLoraTrainingJobStore(jobs: [job])
+        )
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+        viewModel.prepareSelectedLoraTrainingJobFollowUp(RuntimeLoraTrainingJobFollowUpAction.activation)
+        let disabledReason = "Fused activation is disabled for fake_relora: non_mergeable_adapter. Use Adapter-backed Runtime instead."
+        #expect(viewModel.loraFusedActivationUnavailableText == disabledReason)
+
+        let view = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1280, height: 1800)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Adapter Gating Job"))
+        #expect(renderedTexts.contains("Follow-up Actions"))
+        #expect(renderedTexts.contains("Activation"))
+        #expect(renderedTexts.contains("Adapter Capability"))
+        #expect(renderedTexts.contains("Mergeable"))
+        #expect(renderedTexts.contains(disabledReason))
     }
 
     @Test("training keeps Hugging Face dataset mapping fields folded behind a secondary reveal by default")
@@ -2726,6 +4732,339 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedModelInfo?.generationConfigTemperatureText == "0.12")
     }
 
+    @Test("dashboard residency rows render model metadata load trust receipts")
+    @MainActor
+    func dashboardResidencyRowsRenderModelMetadataLoadTrustReceipts() throws {
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-remote-code"
+        model.kind = "text"
+        model.state = .modelWarm
+        model.settings.alias = "Remote Code Model"
+        model.settings.loadTrustMode = .modelLoadTrustTrustRemoteCode
+        var loadTrust = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+        loadTrust.requestedMode = .modelLoadTrustTrustRemoteCode
+        loadTrust.effectiveMode = .modelLoadTrustDefaultSafe
+        loadTrust.customLoaderRequired = true
+        loadTrust.customLoaderDetectionSource = "model-config-auto-map"
+        loadTrust.blockReason = "remote code trust is not enabled"
+        loadTrust.requiresReloadForTrustChange = true
+        model.loadTrust = loadTrust
+        var capabilityReceipt = Melix_Controlplane_V1_ModelCapabilityReceipt()
+        capabilityReceipt.schemaVersion = "melix.model_capabilities.v1"
+        var completionReceipt = Melix_Controlplane_V1_TaskCapabilityReceipt()
+        completionReceipt.capability = "completion"
+        completionReceipt.state = .capabilitySupported
+        completionReceipt.provenance = "model catalog"
+        capabilityReceipt.tasks = [completionReceipt]
+        model.capabilityReceipt = capabilityReceipt
+        snapshot.models = [model]
+
+        let foundation = DesktopFoundationState.build(
+            statusTitle: "Melix Ready",
+            serverStateText: "Ready",
+            connectionStateText: "Connected",
+            connectionDetailText: "Snapshot hydrated",
+            snapshot: snapshot,
+            protocolVersion: "melix.controlplane.v1",
+            serverVersion: "0.1.0",
+            daemonInstanceID: "daemon-load-trust",
+            features: ["models"],
+            productUpdateSummary: nil,
+            productUpdateDetail: nil,
+            lastError: nil,
+            recentEvents: []
+        )
+        let view = hostView(DesktopDashboardTabView(foundation: foundation))
+        let row = try #require(foundation.models.first)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(row.loadTrustReceiptRows.contains("requested Trust Remote Code • effective Default Safe"))
+        #expect(row.loadTrustReceiptRows.contains("custom loader Required • model-config-auto-map"))
+        #expect(row.loadTrustReceiptRows.contains("blocked remote code trust is not enabled"))
+        #expect(row.loadTrustReceiptRows.contains("Reload Required"))
+        #expect(
+            row.loadTrustReceiptRows.contains(
+                "guidance unload and reload this model to apply Trust Remote Code; active runtime is Default Safe"
+            )
+        )
+        #expect(row.capabilityReceiptRows.contains("task completion: supported • model catalog"))
+    }
+
+    @Test("dashboard residency rows suppress load trust reload guidance when not needed")
+    @MainActor
+    func dashboardResidencyRowsSuppressLoadTrustReloadGuidanceWhenNotNeeded() throws {
+        var absentModel = Melix_Controlplane_V1_ModelSummary()
+        absentModel.modelID = "melix-no-trust"
+        absentModel.kind = "text"
+        absentModel.state = .modelWarm
+
+        var noReloadModel = Melix_Controlplane_V1_ModelSummary()
+        noReloadModel.modelID = "melix-no-reload"
+        noReloadModel.kind = "text"
+        noReloadModel.state = .modelWarm
+        noReloadModel.settings.loadTrustMode = .modelLoadTrustTrustRemoteCode
+        var noReloadTrust = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+        noReloadTrust.requestedMode = .modelLoadTrustTrustRemoteCode
+        noReloadTrust.effectiveMode = .modelLoadTrustDefaultSafe
+        noReloadModel.loadTrust = noReloadTrust
+
+        var alreadyEffectiveModel = Melix_Controlplane_V1_ModelSummary()
+        alreadyEffectiveModel.modelID = "melix-trust-applied"
+        alreadyEffectiveModel.kind = "text"
+        alreadyEffectiveModel.state = .modelWarm
+        alreadyEffectiveModel.settings.loadTrustMode = .modelLoadTrustTrustRemoteCode
+        var alreadyEffectiveTrust = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+        alreadyEffectiveTrust.requestedMode = .modelLoadTrustTrustRemoteCode
+        alreadyEffectiveTrust.effectiveMode = .modelLoadTrustTrustRemoteCode
+        alreadyEffectiveTrust.requiresReloadForTrustChange = true
+        alreadyEffectiveModel.loadTrust = alreadyEffectiveTrust
+
+        #expect(makeRuntimeModelRow(absentModel).loadTrustReceiptRows.isEmpty)
+        #expect(makeRuntimeModelRow(noReloadModel).loadTrustReceiptRows.contains { $0.hasPrefix("guidance ") } == false)
+        #expect(makeRuntimeModelRow(alreadyEffectiveModel).loadTrustReceiptRows.contains { $0.hasPrefix("guidance ") } == false)
+    }
+
+    @Test("models workspace wires model load trust opt-in controls")
+    @MainActor
+    func modelsWorkspaceWiresModelLoadTrustOptInControls() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-remote-code"
+        model.kind = "text"
+        model.state = .modelWarm
+        model.settings.alias = "Remote Code Model"
+        var loadTrust = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+        loadTrust.requestedMode = .modelLoadTrustTrustRemoteCode
+        loadTrust.effectiveMode = .modelLoadTrustDefaultSafe
+        model.loadTrust = loadTrust
+        snapshot.models = [model]
+
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        let tab = DesktopModelsTabView(
+            foundation: viewModel.desktopFoundationState,
+            viewModel: viewModel
+        )
+        let view = hostView(
+            tab
+        )
+
+        #expect(view.subviews.isEmpty == false)
+
+        tab.trustRemoteCodeForPrimaryModelAction()()
+        try await waitForDesktopFoundationCondition("trust opt-in dispatched") {
+            viewModel.modelSettingsLoadTrustModeText == "Trust Remote Code"
+        }
+        var updates = await client.recordedModelSettingsUpdates
+        #expect(updates.last?.values["load_trust_mode"] == "trust_remote_code")
+
+        tab.clearPrimaryModelLoadTrustOverrideAction()()
+        try await waitForDesktopFoundationCondition("trust clear dispatched") {
+            viewModel.modelSettingsLoadTrustModeText == "Unspecified"
+        }
+        updates = await client.recordedModelSettingsUpdates
+        #expect(updates.last?.values["load_trust_mode"] == "")
+    }
+
+    @Test("model detail renders requested and effective load trust modes")
+    @MainActor
+    func modelDetailRendersRequestedAndEffectiveLoadTrustModes() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-remote-code"
+        model.kind = "text"
+        model.state = .modelWarm
+        model.settings.alias = "Remote Code Model"
+        var loadTrust = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+        loadTrust.requestedMode = .modelLoadTrustTrustRemoteCode
+        loadTrust.effectiveMode = .modelLoadTrustDefaultSafe
+        model.loadTrust = loadTrust
+        snapshot.models = [model]
+
+        var info = Melix_Controlplane_V1_ModelInfo()
+        info.ok = true
+        info.modelKind = "text"
+        info.maxContext = 4096
+        info.supportedParsers = ["text"]
+        info.supportedModalities = ["text"]
+
+        await client.configureSnapshot(snapshot)
+        await client.configureModelInfo(info)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.inspectPrimaryModel()
+
+        let selectedInfo = try #require(viewModel.selectedModelInfo)
+        let content = desktopModelInfoSummaryContent(selectedInfo)
+
+        #expect(selectedInfo.requestedLoadTrustModeText == "Trust Remote Code")
+        #expect(selectedInfo.effectiveLoadTrustModeText == "Default Safe")
+        #expect(content.detailLines.contains("requested trust mode: Trust Remote Code"))
+        #expect(content.detailLines.contains("effective trust mode: Default Safe"))
+    }
+
+    @Test("model detail maps all load trust mode labels")
+    @MainActor
+    func modelDetailMapsAllLoadTrustModeLabels() async throws {
+        let unrecognized = try #require(Melix_Controlplane_V1_ModelLoadTrustMode(rawValue: 99))
+        let cases: [(String, Melix_Controlplane_V1_ModelLoadTrustMode?, String)] = [
+            ("absent", nil, ""),
+            ("default-safe", .modelLoadTrustDefaultSafe, "Default Safe"),
+            ("trust-remote-code", .modelLoadTrustTrustRemoteCode, "Trust Remote Code"),
+            ("not-applicable", .modelLoadTrustNotApplicable, "Not Applicable"),
+            ("unspecified", .unspecified, "Unspecified"),
+            ("unrecognized", unrecognized, "Unrecognized 99"),
+        ]
+
+        for (suffix, mode, expectedText) in cases {
+            let client = FakeControlPlaneXPCClient()
+            var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+            snapshot.serverState = .serverReady
+
+            let modelID = "melix-load-trust-\(suffix)"
+            var model = Melix_Controlplane_V1_ModelSummary()
+            model.modelID = modelID
+            model.kind = "text"
+            model.state = .modelWarm
+            if let mode {
+                var loadTrust = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+                loadTrust.requestedMode = mode
+                loadTrust.effectiveMode = mode
+                model.loadTrust = loadTrust
+            }
+            snapshot.models = [model]
+
+            var info = Melix_Controlplane_V1_ModelInfo()
+            info.ok = true
+            info.modelKind = "text"
+            info.maxContext = 4096
+            info.supportedParsers = ["text"]
+            info.supportedModalities = ["text"]
+
+            await client.configureSnapshot(snapshot)
+            await client.configureModelInfo(info)
+
+            let viewModel = RuntimeViewModel(client: client)
+            await viewModel.start()
+            await viewModel.fetchModelInfo(modelID: modelID)
+
+            #expect(viewModel.selectedModelInfo?.requestedLoadTrustModeText == expectedText)
+            #expect(viewModel.selectedModelInfo?.effectiveLoadTrustModeText == expectedText)
+        }
+    }
+
+    @Test("model detail renders load trust custom loader block and reload markers")
+    @MainActor
+    func modelDetailRendersLoadTrustCustomLoaderBlockAndReloadMarkers() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-custom-loader"
+        model.kind = "text"
+        model.state = .modelWarm
+        model.settings.loadTrustMode = .modelLoadTrustTrustRemoteCode
+        var loadTrust = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+        loadTrust.requestedMode = .modelLoadTrustTrustRemoteCode
+        loadTrust.effectiveMode = .modelLoadTrustDefaultSafe
+        loadTrust.customLoaderRequired = true
+        loadTrust.customLoaderDetectionSource = "model-config-auto-map"
+        loadTrust.blockReason = "remote code trust is not enabled"
+        loadTrust.requiresReloadForTrustChange = true
+        model.loadTrust = loadTrust
+        snapshot.models = [model]
+
+        var info = Melix_Controlplane_V1_ModelInfo()
+        info.ok = true
+        info.modelKind = "text"
+        info.maxContext = 4096
+        info.supportedParsers = ["text"]
+        info.supportedModalities = ["text"]
+
+        await client.configureSnapshot(snapshot)
+        await client.configureModelInfo(info)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.fetchModelInfo(modelID: "melix-custom-loader")
+
+        let selectedInfo = try #require(viewModel.selectedModelInfo)
+        let content = desktopModelInfoSummaryContent(selectedInfo)
+
+        #expect(selectedInfo.loadTrustCustomLoaderText == "Required • model-config-auto-map")
+        #expect(selectedInfo.loadTrustBlockReasonText == "remote code trust is not enabled")
+        #expect(selectedInfo.loadTrustReloadRequiredText == "Reload Required")
+        #expect(
+            selectedInfo.loadTrustRuntimeGuidanceText
+                == "Unload and reload this model to apply Trust Remote Code; active runtime is Default Safe."
+        )
+        #expect(content.detailLines.contains("custom loader: Required • model-config-auto-map"))
+        #expect(content.detailLines.contains("trust block reason: remote code trust is not enabled"))
+        #expect(content.detailLines.contains("trust reload: Reload Required"))
+        #expect(
+            content.detailLines.contains(
+                "trust guidance: Unload and reload this model to apply Trust Remote Code; active runtime is Default Safe."
+            )
+        )
+    }
+
+    @Test("model detail maps custom loader detection edge labels")
+    @MainActor
+    func modelDetailMapsCustomLoaderDetectionEdgeLabels() async throws {
+        let cases: [(String, Bool, String, String)] = [
+            ("required-no-source", true, "   ", "Required"),
+            ("not-required-source", false, "metadata-scan", "Not Required • metadata-scan"),
+        ]
+
+        for (suffix, customLoaderRequired, detectionSource, expectedText) in cases {
+            let client = FakeControlPlaneXPCClient()
+            var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+            snapshot.serverState = .serverReady
+
+            let modelID = "melix-custom-loader-\(suffix)"
+            var model = Melix_Controlplane_V1_ModelSummary()
+            model.modelID = modelID
+            model.kind = "text"
+            model.state = .modelWarm
+            var loadTrust = Melix_Controlplane_V1_ModelLoadTrustPolicy()
+            loadTrust.requestedMode = .modelLoadTrustDefaultSafe
+            loadTrust.effectiveMode = .modelLoadTrustDefaultSafe
+            loadTrust.customLoaderRequired = customLoaderRequired
+            loadTrust.customLoaderDetectionSource = detectionSource
+            model.loadTrust = loadTrust
+            snapshot.models = [model]
+
+            var info = Melix_Controlplane_V1_ModelInfo()
+            info.ok = true
+            info.modelKind = "text"
+            info.maxContext = 4096
+            info.supportedParsers = ["text"]
+            info.supportedModalities = ["text"]
+
+            await client.configureSnapshot(snapshot)
+            await client.configureModelInfo(info)
+
+            let viewModel = RuntimeViewModel(client: client)
+            await viewModel.start()
+            await viewModel.fetchModelInfo(modelID: modelID)
+
+            #expect(viewModel.selectedModelInfo?.loadTrustCustomLoaderText == expectedText)
+        }
+    }
+
     @Test("model info summary view renders typed settings and merged defaults")
     @MainActor
     func modelInfoSummaryViewRendersTypedSettingsAndMergedDefaults() {
@@ -2753,6 +5092,14 @@ struct DesktopFoundationViewTests {
             accelerationModeText: "Active KV Quantized",
             accelerationProfileID: "kv-q8",
             toolParserFallbackText: "XML",
+            capabilityReceiptRows: [
+                "task completion: supported • model catalog",
+                "task embedding: supported • model catalog",
+                "task vision: supported • vision metadata",
+                "task tools: supported • tool parser metadata",
+                "task reasoning: supported • reasoning policy",
+                "task insert: supported • tokenizer metadata",
+            ],
             ocrPromptProfileText: "ocr-default-v1",
             ocrSamplingProfileText: "ocr-deterministic",
             ocrTemperatureText: "0.05",
@@ -2794,6 +5141,12 @@ struct DesktopFoundationViewTests {
         #expect(content.detailLines.contains("adaptive thinking: Adaptive • 192 tok"))
         #expect(content.detailLines.contains("acceleration: Active KV Quantized • kv-q8"))
         #expect(content.detailLines.contains("parser fallback: XML"))
+        #expect(content.detailLines.contains("capability task completion: supported • model catalog"))
+        #expect(content.detailLines.contains("capability task embedding: supported • model catalog"))
+        #expect(content.detailLines.contains("capability task vision: supported • vision metadata"))
+        #expect(content.detailLines.contains("capability task tools: supported • tool parser metadata"))
+        #expect(content.detailLines.contains("capability task reasoning: supported • reasoning policy"))
+        #expect(content.detailLines.contains("capability task insert: supported • tokenizer metadata"))
         #expect(content.detailLines.contains("pin on load: yes"))
         #expect(content.detailLines.contains("ttl seconds: 600"))
         #expect(content.detailLines.contains("parsers: text, json"))
@@ -2973,6 +5326,9 @@ struct DesktopFoundationViewTests {
         let client = FakeControlPlaneXPCClient()
         var derivedModel = ModelCatalog.devTextModel()
         derivedModel.modelID = "melix-dev-text-lora"
+        derivedModel.settings.ext["melix.memory_fit.benchmark.status"] = "heavy"
+        derivedModel.settings.ext["melix.memory_fit.benchmark.reason"] = "Benchmark KV cache may exceed comfort budget."
+        derivedModel.settings.ext["melix.memory_fit.benchmark.estimated_active_memory_bytes"] = "34359738368"
         await client.configureSnapshot(
             makeAudioSetupSnapshot(
                 models: [
@@ -3001,6 +5357,9 @@ struct DesktopFoundationViewTests {
         #expect(DesktopDiagnosticsToolSectionView.initialStage(for: viewModel) == .benchmark)
         #expect(selectedRunIndex < configIndex)
         #expect(viewModel.benchmarkHistory.count == 3)
+        #expect(viewModel.selectedBenchmarkHistoryEntry?.profileSummaryText == "Profile: Throughput")
+        #expect(renderedTexts.contains("Profile: Throughput"))
+        #expect(renderedTexts.contains { $0.contains("Memory fit: Heavy - Benchmark KV cache may exceed comfort budget.") })
         #expect(viewModel.benchmarkMetricCards.isEmpty == false)
         #expect(viewModel.benchmarkChartPoints.count == 2)
     }
@@ -3103,7 +5462,10 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Requests"))
         #expect(renderedTexts.contains("Duration"))
         #expect(viewModel.benchmarkMatrixHistory.count == 2)
+        #expect(viewModel.selectedBenchmarkMatrixHistoryEntry?.profileSummaryText == "Profile: Low Memory")
+        #expect(renderedTexts.contains("Profile: Low Memory"))
         #expect(viewModel.benchmarkMatrixSummaryRows.count == 2)
+        #expect(viewModel.benchmarkMatrixSummaryRows.contains { $0.configurationSummary.contains("Low Memory") })
         #expect(viewModel.benchmarkMatrixContextChartPoints.count == 2)
         #expect(viewModel.benchmarkMatrixThroughputChartPoints.count == 2)
     }
@@ -3515,10 +5877,85 @@ struct DesktopFoundationViewTests {
 
     }
 
+    @Test("diagnostics capability refusals are visible before worker dispatch")
+    @MainActor
+    func diagnosticsCapabilityRefusalsAreVisibleBeforeWorkerDispatch() async throws {
+        var model = makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)
+        var capabilityReceipt = Melix_Controlplane_V1_ModelCapabilityReceipt()
+        var completion = Melix_Controlplane_V1_TaskCapabilityReceipt()
+        completion.capability = "completion"
+        completion.state = .capabilityUnsupported
+        completion.unsupportedReason = .unsupportedReasonUnsupportedTask
+        completion.recoveryHint = "Select a completion-capable model."
+        completion.provenance = "model catalog"
+        capabilityReceipt.tasks = [completion]
+        model.capabilityReceipt = capabilityReceipt
+
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [model]
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.selectedBenchmarkSuiteIDs = ["smoke"]
+        viewModel.selectedEvaluationSuiteIDs = ["mmlu"]
+
+        let benchmarkReason = "Benchmark is unavailable for \(desktopTestReadyModelID): completion capability is unsupported • reason unsupported task • recovery Select a completion-capable model."
+        let benchmarkView = hostView(
+            DesktopDiagnosticsToolSectionView(
+                viewModel: viewModel,
+                foundation: viewModel.desktopFoundationState
+            ),
+            size: CGSize(width: 1_280, height: 1_800)
+        )
+        let benchmarkTexts = renderedTextValues(in: benchmarkView)
+
+        #expect(viewModel.diagnosticsBenchmarkUnavailableText == benchmarkReason)
+        #expect(benchmarkTexts.contains(benchmarkReason))
+        await viewModel.runBench()
+        #expect(await client.recordedBenchRequests.isEmpty)
+        #expect(viewModel.lastError == benchmarkReason)
+
+        viewModel.preferredDiagnosticsStage = .evaluation
+        let evaluationReason = "Evaluation is unavailable for \(desktopTestReadyModelID): completion capability is unsupported • reason unsupported task • recovery Select a completion-capable model."
+        let evaluationView = hostView(
+            DesktopDiagnosticsToolSectionView(
+                viewModel: viewModel,
+                foundation: viewModel.desktopFoundationState
+            ),
+            size: CGSize(width: 1_280, height: 1_800)
+        )
+        let evaluationTexts = renderedTextValues(in: evaluationView)
+
+        #expect(viewModel.diagnosticsEvaluationUnavailableText == evaluationReason)
+        #expect(evaluationTexts.contains(evaluationReason))
+        await viewModel.runEvaluation()
+        #expect(await client.recordedEvaluationRequests.isEmpty)
+        #expect(viewModel.lastError == evaluationReason)
+    }
+
     @Test("workspace diagnostics renders evaluation configuration history and sample previews")
     @MainActor
     func workspaceDiagnosticsRendersEvaluationConfigurationHistoryAndSamples() async throws {
         let client = FakeControlPlaneXPCClient()
+        var derivedModel = ModelCatalog.devTextModel()
+        derivedModel.modelID = "melix-dev-text-lora"
+        derivedModel.settings.ext["melix.memory_fit.eval.status"] = "good"
+        derivedModel.settings.ext["melix.memory_fit.eval.reason"] = "Eval sample size fits available memory."
+        derivedModel.settings.ext["melix.memory_fit.eval.total_unified_memory_bytes"] = "68719476736"
+        await client.configureSnapshot(
+            makeAudioSetupSnapshot(
+                models: [
+                    ModelCatalog.devTextModel(),
+                    derivedModel,
+                ]
+            )
+        )
         await client.configureExportResult(
             ControlPlaneExportResult(exportBundleJSON: makeBenchmarkExportBundleJSON())
         )
@@ -3540,6 +5977,7 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Compare"))
         #expect(renderedTexts.contains("multiple_choice_accuracy"))
         #expect(renderedTexts.contains("sandboxed"))
+        #expect(renderedTexts.contains { $0.contains("Memory fit: Good - Eval sample size fits available memory.") })
         #expect(viewModel.evaluationHistory.count == 1)
         #expect(viewModel.evaluationMetricCards.count == 1)
         #expect(viewModel.evaluationSamplePreview.count == 2)
@@ -4064,7 +6502,7 @@ struct DesktopFoundationViewTests {
 
         let foundation = viewModel.desktopFoundationState
         let dashboard = hostView(DesktopDashboardTabView(foundation: foundation))
-        let settings = hostView(DesktopSettingsTabView(foundation: foundation))
+        let settingsSummary = DesktopSettingsTabView(foundation: foundation).accessibilitySummary
         let logs = hostView(DesktopLogsTabView(foundation: foundation))
         let bench = hostView(DesktopBenchTabView(foundation: foundation))
         let chat = hostView(DesktopChatTabView(viewModel: viewModel))
@@ -4091,7 +6529,8 @@ struct DesktopFoundationViewTests {
         #expect(hasEvictionsCard)
         #expect(hasGuardCard)
         #expect(hasConnectionSetting)
-        #expect(settings.subviews.isEmpty == false)
+        #expect(settingsSummary.contains("Connection"))
+        #expect(settingsSummary.contains("Connected"))
         #expect(logs.subviews.isEmpty == false)
         #expect(bench.subviews.isEmpty == false)
         #expect(chat.subviews.isEmpty == false)
@@ -7163,6 +9602,7 @@ private func hostView<Content: View>(_ rootView: Content, size: CGSize) -> NSVie
 @MainActor
 private func renderedTextValues(in rootView: NSView) -> [String] {
     var values: [String] = []
+    var visitedObjects = Set<ObjectIdentifier>()
 
     func appendValue(_ value: String) {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -7171,7 +9611,52 @@ private func renderedTextValues(in rootView: NSView) -> [String] {
         }
     }
 
+    func accessibilityString(_ object: NSObject, selectorName: String) -> String? {
+        let selector = NSSelectorFromString(selectorName)
+        guard object.responds(to: selector),
+              let value = object.perform(selector)?.takeUnretainedValue() as? String
+        else {
+            return nil
+        }
+        return value
+    }
+
+    func accessibilityChildren(_ object: NSObject) -> [Any] {
+        let selector = NSSelectorFromString("accessibilityChildren")
+        guard object.responds(to: selector),
+              let children = object.perform(selector)?.takeUnretainedValue() as? [Any]
+        else {
+            return []
+        }
+        return children
+    }
+
+    func visitAccessibilityElement(_ element: Any) {
+        if let view = element as? NSView {
+            visit(view)
+            return
+        }
+        guard let object = element as? NSObject else {
+            return
+        }
+        let identifier = ObjectIdentifier(object)
+        guard visitedObjects.insert(identifier).inserted else {
+            return
+        }
+        appendValue(accessibilityString(object, selectorName: "accessibilityLabel") ?? "")
+        appendValue(accessibilityString(object, selectorName: "accessibilityValue") ?? "")
+        appendValue(accessibilityString(object, selectorName: "accessibilityHelp") ?? "")
+        for child in accessibilityChildren(object) {
+            visitAccessibilityElement(child)
+        }
+    }
+
     func visit(_ view: NSView) {
+        let identifier = ObjectIdentifier(view)
+        guard visitedObjects.insert(identifier).inserted else {
+            return
+        }
+        appendValue(view.accessibilityLabel() ?? "")
         if let textField = view as? NSTextField {
             appendValue(textField.stringValue)
         }
@@ -7189,10 +9674,38 @@ private func renderedTextValues(in rootView: NSView) -> [String] {
         for subview in view.subviews {
             visit(subview)
         }
+        for child in view.accessibilityChildren() ?? [] {
+            visitAccessibilityElement(child)
+        }
     }
 
     visit(rootView)
     return values
+}
+
+@MainActor
+private func renderedButtons(in rootView: NSView) -> [NSButton] {
+    var buttons: [NSButton] = []
+
+    func visit(_ view: NSView) {
+        if let button = view as? NSButton {
+            buttons.append(button)
+        }
+        for subview in view.subviews {
+            visit(subview)
+        }
+    }
+
+    visit(rootView)
+    return buttons
+}
+
+private func expectedDesktopJobTimestampText(_ unixMS: Int64) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = .current
+    formatter.dateFormat = "yyyy-MM-dd HH:mm:ss zzz"
+    return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(unixMS) / 1_000))
 }
 
 @MainActor
@@ -7219,6 +9732,24 @@ private func waitForDesktopFoundationCondition(
     let deadline = ContinuousClock.now + timeout
     while ContinuousClock.now < deadline {
         if await condition() {
+            return
+        }
+        try await Task.sleep(for: pollInterval)
+    }
+
+    throw MenuBarTestError(description: description)
+}
+
+private func waitForRecordedCLICommandCount(
+    _ expectedCount: Int,
+    runner: RecordingCLIWorkflowRunner,
+    description: String,
+    timeout: Duration = .seconds(2),
+    pollInterval: Duration = .milliseconds(10)
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if await runner.snapshotRecordedCommands().count == expectedCount {
             return
         }
         try await Task.sleep(for: pollInterval)

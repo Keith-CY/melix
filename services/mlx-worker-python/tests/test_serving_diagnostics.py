@@ -335,6 +335,36 @@ def test_serving_diagnostics_jsonl_fast_path_reuses_request_id_literal(
     assert calls == ["req-shared-fast-path"]
 
 
+def test_serving_diagnostics_jsonl_writer_extends_fast_path_without_join_helper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_join_helper(*_: object) -> None:  # pragma: no cover
+        raise AssertionError("writer should extend the bytearray without per-row join")
+
+    monkeypatch.setattr(
+        serving_diagnostics_module,
+        "_empty_attribute_event_json_line_bytes",
+        fail_join_helper,
+    )
+    path = tmp_path / "events.jsonl"
+
+    serving_diagnostics_module._write_jsonl(
+        path,
+        (
+            ServingDiagnosticsEvent(
+                request_id="req-extend-fast-path",
+                phase="decode",
+                event_index=4,
+                status="completed",
+                duration_ms=0.001,
+            ),
+        ),
+    )
+
+    assert json.loads(path.read_text(encoding="utf-8"))["request_id"] == "req-extend-fast-path"
+
+
 def test_serving_diagnostics_jsonl_fast_path_preserves_direct_helper_call() -> None:
     event = ServingDiagnosticsEvent(
         request_id="req-direct-fast-path",

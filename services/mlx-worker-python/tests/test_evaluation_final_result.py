@@ -196,6 +196,24 @@ def test_extract_final_result_text_fallback_scans_tail_without_regex_split(
     assert outcome.extracted_result == "Paris"
 
 
+def test_extract_final_result_text_fallback_skips_fence_scan_without_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_fence_scan(*args: object, **kwargs: object) -> str:  # pragma: no cover - sentinel
+        raise AssertionError("text fallback should not run the fence regex when no fence marker exists")
+
+    monkeypatch.setattr(evaluation_final_result_module, "_last_stripped_pattern_match", fail_fence_scan)
+
+    outcome = extract_final_result(
+        raw_response="draft paragraph\n\nfinal paragraph\n  Paris  \n\n  ",
+        result_kind="text",
+        extraction_mode="heuristic_final",
+    )
+
+    assert outcome.extraction_status == "extracted"
+    assert outcome.extracted_result == "Paris"
+
+
 def test_last_nonblank_text_line_handles_trailing_whitespace_and_empty_input() -> None:
     assert _last_nonblank_text_line("draft\n  Paris  \n\t  ") == "Paris"
     assert _last_nonblank_text_line("  \n\t\n  ") == ""

@@ -80,12 +80,12 @@ class ProbePolicy:
             return policy
         return _invalid_probe_policy(raw_value, default_mode)
 
-    @classmethod
-    def evidence(cls) -> ProbePolicy:
+    @staticmethod
+    def evidence() -> ProbePolicy:
         return _EVIDENCE_PROBE_POLICY
 
-    @classmethod
-    def debug(cls) -> ProbePolicy:
+    @staticmethod
+    def debug() -> ProbePolicy:
         return _DEBUG_PROBE_POLICY
 
 
