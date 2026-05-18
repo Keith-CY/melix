@@ -156,6 +156,7 @@ class ToolRegistry:
         self._parser = parser.strip()
         self._parser_contract_version = parser_contract_version.strip()
         self._validate()
+        self._tool_by_name = {tool.name: tool for tool in self._tools}
 
     @property
     def tools(self) -> tuple[ToolDescriptor, ...]:
@@ -173,13 +174,11 @@ class ToolRegistry:
 
     def select(self, names: list[str] | tuple[str, ...]) -> ToolRegistry:
         requested_names = tuple(dict.fromkeys(name.strip() for name in names if name.strip()))
-        tool_by_name = {tool.name: tool for tool in self._tools}
-        known_names = set(tool_by_name)
-        missing_names = [name for name in requested_names if name not in known_names]
+        missing_names = [name for name in requested_names if name not in self._tool_by_name]
         if missing_names:
             joined = ", ".join(missing_names)
             raise ToolRegistryError(f"Unknown tool registry entry requested: {joined}")
-        selected = [tool_by_name[name] for name in requested_names]
+        selected = [self._tool_by_name[name] for name in requested_names]
         return ToolRegistry(
             selected,
             schema_version=self._schema_version,
