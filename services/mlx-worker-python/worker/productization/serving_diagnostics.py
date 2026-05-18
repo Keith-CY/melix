@@ -508,9 +508,11 @@ def _write_jsonl(path: Path, rows: Any) -> None:
     request_id_literals: dict[str, bytes] = {}
     for row in rows:
         if isinstance(row, ServingDiagnosticsEvent):
-            fast_line = _empty_attribute_event_json_line_bytes(row, request_id_literals)
-            if fast_line is not None:
-                append_line(fast_line)
+            if _extend_empty_attribute_event_json_line_bytes(
+                append_line,
+                row,
+                request_id_literals,
+            ):
                 append_line(newline)
                 continue
             row = row.to_dict()
@@ -527,6 +529,51 @@ def _empty_attribute_event_json_line(
     if line is None:
         return None
     return line.decode("utf-8")
+
+
+def _extend_empty_attribute_event_json_line_bytes(
+    append_line: Any,
+    event: ServingDiagnosticsEvent,
+    request_id_literals: dict[str, bytes],
+) -> bool:
+    if event.attributes is not _EMPTY_EVENT_ATTRIBUTES:
+        return False
+    event_index = event.event_index
+    duration_ms = event.duration_ms
+    if type(event_index) is not int or type(duration_ms) is not float:
+        return False
+    if not math.isfinite(duration_ms):
+        return False
+    phase = event.phase
+    request_id = event.request_id
+    status = event.status
+    encoded_request_id = request_id_literals.get(request_id)
+    if encoded_request_id is None:
+        encoded_request_id = _json_string_literal(request_id).encode("utf-8")
+        request_id_literals[request_id] = encoded_request_id
+    duration_literal = _ascii_float_literal(duration_ms)
+    event_index_literal = _ascii_int_literal(event_index)
+    if phase == "decode" and status == "completed":
+        append_line(_EMPTY_EVENT_JSON_DECODE_COMPLETED_PREFIX)
+        append_line(duration_literal)
+        append_line(_EMPTY_EVENT_JSON_DECODE_COMPLETED_MID)
+        append_line(event_index_literal)
+        append_line(_EMPTY_EVENT_JSON_DECODE_COMPLETED_REQUEST_PREFIX)
+        append_line(encoded_request_id)
+        append_line(_EMPTY_EVENT_JSON_DECODE_COMPLETED_SUFFIX)
+        return True
+    append_line(b'{"attributes":{},"duration_ms":')
+    append_line(duration_literal)
+    append_line(b',"event_index":')
+    append_line(event_index_literal)
+    append_line(b',"phase":')
+    append_line(_json_string_literal(phase).encode("utf-8"))
+    append_line(b',"request_id":')
+    append_line(encoded_request_id)
+    append_line(b',"schema_version":"melix.serving_diagnostics.event.v1","status":')
+    append_line(_json_string_literal(status).encode("utf-8"))
+    append_line(b"}")
+    return True
 
 
 def _empty_attribute_event_json_line_bytes(
