@@ -210,6 +210,19 @@ def test_parse_video_reference_decodes_remote_and_file_uris_once() -> None:
     assert local.path_suffix == "webm"
 
 
+def test_parse_video_reference_caches_repeated_uri_metadata() -> None:
+    _parse_video_reference.cache_clear()
+
+    first = _parse_video_reference("https://example.com/media/reused%20clip.mov")
+    second = _parse_video_reference("https://example.com/media/reused%20clip.mov")
+    cache_info = _parse_video_reference.cache_info()
+
+    assert second is first
+    assert cache_info.hits == 1
+    assert cache_info.misses == 1
+    assert second.path_name == "reused clip.mov"
+
+
 @pytest.mark.parametrize(
     ("reference", "expected_name", "expected_suffix"),
     [
