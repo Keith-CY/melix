@@ -45,6 +45,20 @@ def test_built_in_tool_schemas_are_object_contracts_with_required_arguments() ->
         assert "x-melix-observation-kind" not in parsed
 
 
+def test_tool_registry_metrics_reuses_cached_schema_byte_counts(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = built_in_tool_registry()
+    expected_schema_bytes = sum(len(tool.json_schema().encode("utf-8")) for tool in registry.tools)
+
+    def fail_json_schema(self: ToolDescriptor) -> str:
+        raise AssertionError("metrics() should not re-encode cached JSON schemas")
+
+    monkeypatch.setattr(ToolDescriptor, "json_schema", fail_json_schema)
+
+    with pytest.raises(AssertionError, match=r"metrics\(\) should not re-encode"):
+        registry.tools[0].json_schema()
+    assert registry.metrics().schema_bytes == expected_schema_bytes
+
+
 def test_tool_registry_rejects_duplicate_tool_names() -> None:
     registry = built_in_tool_registry()
 
@@ -117,6 +131,7 @@ def test_tool_descriptor_normalizes_exported_fields_and_caches_schema() -> None:
     assert tool.tool_kind == "vision.image_crop"
     assert tool.observation_kind == "image_region"
     assert tool.json_schema() is tool.json_schema()
+    assert tool.schema_byte_count() == len(tool.json_schema().encode("utf-8"))
     assert tool.as_openai_tool()["function"]["parameters"] == {
         "type": "object",
         "additionalProperties": False,
