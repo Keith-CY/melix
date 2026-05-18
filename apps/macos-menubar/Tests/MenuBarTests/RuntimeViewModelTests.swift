@@ -9796,6 +9796,7 @@ struct RuntimeViewModelTests {
         let receipt = try #require(RuntimeViewModel.responseOnlySafetyReceipt(from: job))
 
         #expect(receipt.statusText == "Blocked")
+        #expect(receipt.status == .blocked)
         #expect(receipt.errorCode == "response_only_labels_truncated")
         #expect(receipt.recoveryHint == "Increase max_seq_length, shorten the system prompt, or disable response-only masking.")
         #expect(receipt.maxSeqLengthText == "1024")
@@ -9804,6 +9805,42 @@ struct RuntimeViewModelTests {
         #expect(receipt.responseTokensMeanText == "9.000")
         #expect(receipt.trainableResponseTokenCountText == "0")
         #expect(receipt.fullyTruncatedSampleCountText == "2")
+    }
+
+    @Test("lora saved job response-only receipt formats numeric manifest values")
+    @MainActor
+    func loraSavedJobResponseOnlyReceiptFormatsNumericManifestValues() throws {
+        var config = makeDesktopLoraTrainingConfig(adapterName: "observed-response-adapter")
+        config.maxSeqLength = "2048"
+        let job = LoraTrainingJobRecord(
+            id: "response-only-observed-job",
+            title: "Response-only Observed Job",
+            config: config,
+            status: .succeeded,
+            latestOutputText: #"""
+            {
+              "details": {
+                "max_seq_length": 2048,
+                "response_only_boundary_sample_count": 3,
+                "response_only_boundary_min": 128,
+                "response_only_boundary_max": 256,
+                "response_only_boundary_mean": 192.1254,
+                "response_only_response_tokens_mean": 9.5,
+                "response_only_trainable_response_token_count": 24
+              }
+            }
+            """#,
+            terminalMessage: "Training completed."
+        )
+
+        let receipt = try #require(RuntimeViewModel.responseOnlySafetyReceipt(from: job))
+
+        #expect(receipt.status == RuntimeResponseOnlySafetyReceiptState.Status.observed)
+        #expect(receipt.statusText == "Observed")
+        #expect(receipt.maxSeqLengthText == "2048")
+        #expect(receipt.boundaryMeanText.contains("192"))
+        #expect(receipt.responseTokensMeanText.contains("9"))
+        #expect(receipt.trainableResponseTokenCountText == "24")
     }
 
     @Test("lora saved job follow-up actions route existing desktop surfaces")

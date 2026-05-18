@@ -5292,9 +5292,7 @@ struct DesktopTrainingToolSectionView: View {
                         DesktopPassiveCaptionLabel(title: "Response-only Safety")
                         DesktopPassiveCaptionLabel(
                             title: responseOnlyReceipt.statusText,
-                            foregroundStyle: responseOnlyReceipt.statusText == "Blocked"
-                                ? MelixDesignTokens.StatusColor.error
-                                : MelixDesignTokens.StatusColor.warning
+                            foregroundStyle: responseOnlySafetyStatusColor(responseOnlyReceipt.status)
                         )
                         ForEach(savedJobResponseOnlySafetyItems(responseOnlyReceipt)) { item in
                             VStack(alignment: .leading, spacing: 2) {
@@ -6092,6 +6090,17 @@ struct DesktopTrainingToolSectionView: View {
             ),
         ].filter { item in
             item.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
+    }
+
+    private func responseOnlySafetyStatusColor(_ status: RuntimeResponseOnlySafetyReceiptState.Status) -> Color {
+        switch status {
+        case .blocked:
+            return MelixDesignTokens.StatusColor.error
+        case .truncated:
+            return MelixDesignTokens.StatusColor.warning
+        case .observed:
+            return MelixDesignTokens.StatusColor.info
         }
     }
 

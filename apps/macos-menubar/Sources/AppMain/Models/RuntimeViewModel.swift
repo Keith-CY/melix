@@ -1749,6 +1749,23 @@ public struct RuntimeAdapterCapabilityReceiptState: Equatable, Sendable {
 }
 
 public struct RuntimeResponseOnlySafetyReceiptState: Equatable, Sendable {
+    public enum Status: String, Sendable {
+        case blocked
+        case truncated
+        case observed
+
+        public var text: String {
+            switch self {
+            case .blocked:
+                return "Blocked"
+            case .truncated:
+                return "Truncated"
+            case .observed:
+                return "Observed"
+            }
+        }
+    }
+
     public let errorCode: String
     public let maxSeqLengthText: String
     public let boundarySampleCountText: String
@@ -1759,16 +1776,20 @@ public struct RuntimeResponseOnlySafetyReceiptState: Equatable, Sendable {
     public let fullyTruncatedSampleCountText: String
     public let truncatedSampleCountText: String
 
-    public var statusText: String {
+    public var status: Status {
         if errorCode == "response_only_labels_truncated"
             || (trainableResponseTokenCountText == "0" && fullyTruncatedSampleCountText.isEmpty == false)
         {
-            return "Blocked"
+            return .blocked
         }
         if truncatedSampleCountText.isEmpty == false && truncatedSampleCountText != "0" {
-            return "Truncated"
+            return .truncated
         }
-        return "Observed"
+        return .observed
+    }
+
+    public var statusText: String {
+        status.text
     }
 
     public var recoveryHint: String {
@@ -16017,7 +16038,10 @@ public final class RuntimeViewModel {
         case let int64 as Int64:
             return "\(int64)"
         case let double as Double:
-            return double.rounded() == double ? "\(Int(double))" : String(format: "%.3f", double)
+            if double.rounded() == double {
+                return "\(Int(double))"
+            }
+            return double.formatted(.number.precision(.fractionLength(3)))
         case let number as NSNumber:
             return number.stringValue
         default:
