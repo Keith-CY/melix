@@ -1108,6 +1108,21 @@ def test_scope_report_selects_maintenance_prompt_shape_probe() -> None:
     assert "maintenance-prompt-shape-vector-repeat" in probe_ids
 
 
+def test_maintenance_prompt_shape_probe_inline_fallback_is_base_compatible() -> None:
+    probes = load_probe_registry(REGISTRY_PATH)
+    probe = next(
+        candidate
+        for candidate in probes
+        if candidate.probe_id == "maintenance-prompt-shape-vector-repeat"
+    )
+
+    assert "_prompt_token_count" in probe.probe_command
+    assert 'getattr(MaintenanceCore, "_benchmark_prompt_token_count", None)' in probe.probe_command
+    assert 'getattr(MaintenanceCore, "_benchmark_context_lengths", None)' in probe.probe_command
+    assert "MaintenanceCore._benchmark_prompt_token_count(plain_prompt)" not in probe.probe_command
+    assert "MaintenanceCore._benchmark_context_lengths(suite=suite, parameters={})" not in probe.probe_command
+
+
 def test_maintenance_prompt_shape_probe_is_importable_without_running() -> None:
     probe_script = runpy.run_path(str(REPO_ROOT / "scripts/maintenance_prompt_shape_probe.py"))
 
