@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import json
 import statistics
-import time
 from types import SimpleNamespace
+import time
 
 from worker.engine.maintenance_core import MaintenanceCore
+
+
+def _default_context_length(suite: SimpleNamespace) -> int:
+    return MaintenanceCore._benchmark_context_lengths(suite=suite, parameters={})[0]
+
 
 prompt = "alpha beta gamma delta epsilon"
 plain_prompt = " ".join(f"tok{index % 32}" for index in range(4096))
@@ -32,11 +37,7 @@ for _ in range(sample_count):
         plain_count = MaintenanceCore._benchmark_prompt_token_count(plain_prompt)
         if plain_count != 4096:
             raise SystemExit(f"unexpected plain prompt token count {plain_count}")
-        default_context = MaintenanceCore._benchmark_context_lengths(
-            MaintenanceCore.__new__(MaintenanceCore),
-            suite=plain_suite,
-            parameters={},
-        )[0]
+        default_context = _default_context_length(plain_suite)
         if default_context != 4096:
             raise SystemExit(f"unexpected default context length {default_context}")
         plain_total += plain_count + default_context

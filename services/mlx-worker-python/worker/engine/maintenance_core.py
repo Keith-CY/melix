@@ -3998,8 +3998,8 @@ class MaintenanceCore:
         except ValueError:
             return 8
 
+    @staticmethod
     def _benchmark_context_lengths(
-        self,
         *,
         suite: ResolvedBenchmarkSuite,
         parameters: dict[str, str],
@@ -4024,7 +4024,7 @@ class MaintenanceCore:
                     values.append(32)
             else:
                 default_prompt = suite.prompt_batches[0] if suite.prompt_batches else suite.title
-                values.append(max(1, self._benchmark_whitespace_token_count(default_prompt)))
+                values.append(MaintenanceCore._benchmark_prompt_token_count(default_prompt))
         return tuple(sorted(set(values)))
 
     @staticmethod
@@ -4077,7 +4077,8 @@ class MaintenanceCore:
         if not prompt:
             return 0
         if (
-            prompt[0] != " "
+            prompt.isascii()
+            and prompt[0] != " "
             and prompt[-1] != " "
             and "  " not in prompt
             and "\t" not in prompt
