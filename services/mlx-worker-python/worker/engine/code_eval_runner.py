@@ -16,9 +16,9 @@ import textwrap
 _DEFAULT_STDIO_LIMIT_BYTES = 32_768
 _JSON_LOADS = json.loads
 _JSON_DECODE_ERROR = json.JSONDecodeError
-_PYTHON_CODE_BLOCK_TAG_LENGTH = len("python")
+_PYTHON_CODE_BLOCK_TAG = "python"
+_PYTHON_CODE_BLOCK_TAG_LENGTH = len(_PYTHON_CODE_BLOCK_TAG)
 _PYTHON_CODE_BLOCK_TAG_VARIANTS = (
-    "python",
     "Python",
     "PYTHON",
     "PyThOn",
@@ -82,7 +82,9 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
 
 
 def _code_block_content_start(text: str, start: int) -> int:
-    if text.startswith(_PYTHON_CODE_BLOCK_TAG_VARIANTS, start):
+    if text.startswith(_PYTHON_CODE_BLOCK_TAG, start):
+        start += _PYTHON_CODE_BLOCK_TAG_LENGTH
+    elif text.startswith(_PYTHON_CODE_BLOCK_TAG_VARIANTS, start):
         start += _PYTHON_CODE_BLOCK_TAG_LENGTH
     while start < len(text) and text[start].isspace():
         start += 1
