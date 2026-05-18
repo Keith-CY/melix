@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -21,13 +22,20 @@ def main() -> int:
     parser.add_argument("--base-repo", required=True)
     parser.add_argument("--head-repo", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--coverage-paths-json", default="")
     args = parser.parse_args()
+
+    env = None
+    if args.coverage_paths_json:
+        env = dict(os.environ)
+        env["MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON"] = args.coverage_paths_json
 
     result, success = run_probe_job(
         registry_path=args.registry,
         probe_id=args.probe_id,
         base_repo=args.base_repo,
         head_repo=args.head_repo,
+        env=env,
     )
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)

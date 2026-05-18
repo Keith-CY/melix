@@ -143,7 +143,8 @@ struct OperatorSessionPersistenceSmokeTests {
         #expect(restoredAppState.selectedToolSection == .jobs)
         #expect(restoredAppState.selectedRuntimeJobID == "job-shared-selection")
         #expect(sharedState.selectedServerSessionID == "server-session-shared")
-        #expect(sharedState.serverSessions.first?.modelID == "melix-dev-vlm")
+        #expect(sharedState.serverSessions.first?.defaultModelID == "melix-dev-vlm")
+        #expect(sharedState.serverSessions.first?.servedModelIDs == ["melix-dev-vlm"])
         #expect(sharedState.serverSessions.first?.servingDefaults.accelerationProfile == "long-session")
         #expect(sharedState.serverSessions.first?.servingDefaults.accelerationMode == "sparse_prefill")
         #expect(sharedState.serverSessions.first?.servingDefaults.maxConcurrentRequests == 3)
@@ -258,7 +259,8 @@ struct OperatorSessionPersistenceSmokeTests {
                 MelixOperatorServerSessionState(
                     id: "legacy-server",
                     title: "Legacy Server",
-                    modelID: "melix-dev-text",
+                    defaultModelID: "melix-dev-text",
+                    servedModelIDs: ["melix-dev-text"],
                     lifecycle: .running
                 )
             ],

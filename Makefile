@@ -31,6 +31,7 @@ CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_B := \
 	"HTTPGatewayTests.RequestCoordinatorTests/emptyModelIdentifiersAreRejectedBeforeDispatch()" \
 	"HTTPGatewayTests.RequestCoordinatorTests/gatewayBatchingDefaultsCanDisableContinuousBatchAdmissions()" \
 	"HTTPGatewayTests.RequestCoordinatorTests/gatewayBatchingDefaultsCanExpandContinuousBatchCapacity()" \
+	"HTTPGatewayTests.RequestCoordinatorTests/gatewaySpeculativeDefaultsDowngradeUnsupportedModelPolicies()" \
 	"HTTPGatewayTests.RequestCoordinatorTests/gatewaySpeculativeDefaultsPopulateWorkerAccelerationWhenModelDefaultsAreUnspecified()" \
 	"HTTPGatewayTests.RequestCoordinatorTests/generateFailuresPropagateWhenTheWorkerThrowsAGenericError()"
 CONTROL_PLANE_REQUEST_COORDINATOR_SPECIFIERS_C := \

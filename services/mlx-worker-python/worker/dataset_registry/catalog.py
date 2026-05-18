@@ -988,8 +988,10 @@ def _path_part_matches_split(
 
 
 def _string_stem(name: str) -> str:
-    if not name or name.endswith("."):
+    if not name:
         return name
+    if name.endswith(".") and not name.endswith("..") and not name.startswith("."):
+        return name[:-1]
     dot_index = name.rfind(".")
     if dot_index <= 0:
         return name

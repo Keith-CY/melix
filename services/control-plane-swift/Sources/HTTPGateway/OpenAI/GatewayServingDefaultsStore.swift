@@ -130,6 +130,40 @@ public struct GatewayServingDefaultsPolicy: Sendable, Equatable {
         self.numDraftTokens = numDraftTokens
         self.accelerationProfile = accelerationProfile
     }
+
+    public func resolvingAccelerationCompatibility(
+        for model: Melix_Controlplane_V1_ModelSummary?
+    ) -> GatewayServingDefaultsPolicy {
+        guard accelerationMode == .speculativeDecode else {
+            return self
+        }
+        guard
+            let model,
+            Self.modelSupportsSpeculativeDefaults(model)
+        else {
+            return GatewayServingDefaultsPolicy(
+                temperature: temperature,
+                topP: topP,
+                maxTokens: maxTokens,
+                streamIntervalTokens: streamIntervalTokens,
+                maxConcurrentRequests: maxConcurrentRequests,
+                concurrentProcessingEnabled: concurrentProcessingEnabled,
+                prefillBatchSize: prefillBatchSize,
+                completionBatchSize: completionBatchSize,
+                accelerationMode: .baseline,
+                draftModelID: "",
+                numDraftTokens: 0,
+                accelerationProfile: accelerationProfile
+            )
+        }
+        return self
+    }
+
+    private static func modelSupportsSpeculativeDefaults(
+        _ model: Melix_Controlplane_V1_ModelSummary
+    ) -> Bool {
+        model.capabilityClass == .modelCapabilityText && model.routeClass == .workerRouteSwiftText
+    }
 }
 
 private struct GatewayServingDefaultsResolvedDefaults: Equatable, Sendable {
@@ -318,14 +352,14 @@ public actor GatewayServingDefaultsStore {
 
     public func summary(
         serverSessionIDs: [String],
-        servedModelIDs: [String: String],
+        defaultModelIDs: [String: String],
         modelSettingsByModelID: [String: Melix_Controlplane_V1_ModelSettings]
     ) -> Melix_Controlplane_V1_ServingDefaultsSummary {
         var summary = Melix_Controlplane_V1_ServingDefaultsSummary()
         let allServerSessionIDs = Set(
             serverSessionIDs.map(Self.trimmed).filter { !$0.isEmpty }
             + recordsByServerSessionID.keys
-            + servedModelIDs.keys
+            + defaultModelIDs.keys
         )
 
         summary.sessions = allServerSessionIDs.sorted().map { serverSessionID in
@@ -342,9 +376,9 @@ public actor GatewayServingDefaultsStore {
             let requestedDraftModelID = record?.draftModelID ?? defaults.draftModelID
             let requestedNumDraftTokens = record?.numDraftTokens ?? defaults.numDraftTokens
             let requestedAccelerationProfile = record?.accelerationProfile ?? defaults.accelerationProfile
-            let servedModelID = Self.trimmed(servedModelIDs[serverSessionID] ?? "")
-            let modelSamplingPolicy = modelSettingsByModelID[servedModelID].flatMap(ModelSamplingPolicy.init)
-            let modelSettings = modelSettingsByModelID[servedModelID]
+            let defaultModelID = Self.trimmed(defaultModelIDs[serverSessionID] ?? "")
+            let modelSamplingPolicy = modelSettingsByModelID[defaultModelID].flatMap(ModelSamplingPolicy.init)
+            let modelSettings = modelSettingsByModelID[defaultModelID]
             let effectiveBatchingDefaults = Self.effectiveBatchingDefaults(
                 concurrentProcessingEnabled: requestedConcurrentProcessingEnabled,
                 maxConcurrentRequests: requestedMaxConcurrentRequests,
@@ -361,7 +395,7 @@ public actor GatewayServingDefaultsStore {
 
             var session = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
             session.serverSessionID = serverSessionID
-            session.servedModelID = servedModelID
+            session.defaultModelID = defaultModelID
             session.requestedTemperature = requestedTemperature
             session.requestedTopP = requestedTopP
             session.requestedMaxTokens = requestedMaxTokens
