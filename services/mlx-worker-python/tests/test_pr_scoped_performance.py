@@ -200,7 +200,8 @@ def test_tool_registry_schema_bytes_probe_script_emits_metrics(
     assert metrics["schema_bytes"] > 0.0
     assert metrics["elapsed_ms_mean"] >= 0.0
     assert metrics["json_schema_calls_mean"] == 0.0
-    assert metrics["schema_byte_count_calls_mean"] == 120.0
+    tool_count = len(probe_script["built_in_tool_registry"]().tools)
+    assert metrics["schema_byte_count_calls_mean"] == 20.0 * tool_count
 
 
 def test_scope_report_selects_integration_swift_binary_resolution_probe() -> None:
