@@ -276,9 +276,11 @@ message ApplyGatewayConfig {
   string server_session_id = 1;
   string host = 2;
   uint32 port = 3;
-  string served_model_id = 4;
+  string default_model_id = 4;
   uint32 rate_limit_per_minute = 5;
   uint32 timeout_seconds = 6;
+  repeated string served_model_ids = 7;
+  uint32 model_idle_timeout_seconds = 8;
 }
 message ApplyServingDefaults {
   string server_session_id = 1;
@@ -1192,13 +1194,15 @@ message GatewayListenerConfigSummary {
   uint32 requested_port = 3;
   string effective_host = 4;
   uint32 effective_port = 5;
-  string served_model_id = 6;
+  string default_model_id = 6;
   uint32 rate_limit_per_minute = 7;
   uint32 timeout_seconds = 8;
   GatewayConfigSource source = 9;
   bool active_binding = 10;
   bool requires_restart = 11;
   int64 updated_at_unix_ms = 12;
+  repeated string served_model_ids = 13;
+  uint32 model_idle_timeout_seconds = 14;
 }
 
 message GatewayConfigSummary {
@@ -1223,7 +1227,7 @@ enum ImageDefaultsSource {
 
 message ServingDefaultsSessionSummary {
   string server_session_id = 1;
-  string served_model_id = 2;
+  string default_model_id = 2;
   double requested_temperature = 3;
   double requested_top_p = 4;
   uint32 requested_max_tokens = 5;
@@ -1614,6 +1618,18 @@ message ServerSessionRuntimeState {
   int64 updated_at_unix_ms = 9;
   DiskStreamingMode requested_disk_streaming_mode = 10;
   DiskStreamingMode effective_disk_streaming_mode = 11;
+  repeated ServerSessionModelRuntimeState model_runtime_states = 12;
+}
+
+message ServerSessionModelRuntimeState {
+  string model_id = 1;
+  ModelState model_state = 2;
+  uint32 active_request_count = 3;
+  int64 last_request_started_at_unix_ms = 4;
+  int64 last_request_finished_at_unix_ms = 5;
+  int64 idle_deadline_unix_ms = 6;
+  bool idle_unload_eligible = 7;
+  bool pinned = 8;
 }
 
 message SessionState {

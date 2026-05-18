@@ -38,6 +38,7 @@ struct GatewayConfigStoreTests {
                 "MELIX_HTTP_PORT": "14567",
                 "MELIX_GATEWAY_RATE_LIMIT_PER_MINUTE": "77",
                 "MELIX_GATEWAY_TIMEOUT_SECONDS": "99",
+                "MELIX_MODEL_IDLE_TIMEOUT_SECONDS": "321",
             ]
         )
 
@@ -45,7 +46,7 @@ struct GatewayConfigStoreTests {
         let summary = await store.summary(
             serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
             runtimeBinding: binding,
-            fallbackServedModelID: "melix-dev-text"
+            fallbackDefaultModelID: "melix-dev-text"
         )
         let listener = try #require(summary.listeners.first)
 
@@ -56,9 +57,11 @@ struct GatewayConfigStoreTests {
         #expect(listener.requestedPort == 14_567)
         #expect(listener.effectiveHost == "0.0.0.0")
         #expect(listener.effectivePort == 14_567)
-        #expect(listener.servedModelID == "melix-dev-text")
+        #expect(listener.defaultModelID == "melix-dev-text")
+        #expect(listener.servedModelIds == ["melix-dev-text"])
         #expect(listener.rateLimitPerMinute == 77)
         #expect(listener.timeoutSeconds == 99)
+        #expect(listener.modelIdleTimeoutSeconds == 321)
         #expect(listener.source == .environmentDefaults)
         #expect(listener.activeBinding)
         #expect(listener.requiresRestart == false)
@@ -82,9 +85,11 @@ struct GatewayConfigStoreTests {
         command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
         command.host = "localhost"
         command.port = 18080
-        command.servedModelID = "melix-alt-text"
+        command.defaultModelID = "melix-alt-text"
+        command.servedModelIds = ["melix-alt-text", "melix-dev-text"]
         command.rateLimitPerMinute = 240
         command.timeoutSeconds = 45
+        command.modelIdleTimeoutSeconds = 900
         try await store.apply(command: command)
 
         let reloadedStore = GatewayConfigStore(storeURL: storeURL, defaults: [:])
@@ -92,7 +97,7 @@ struct GatewayConfigStoreTests {
         let summary = await reloadedStore.summary(
             serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
             runtimeBinding: binding,
-            fallbackServedModelID: "melix-dev-text"
+            fallbackDefaultModelID: "melix-dev-text"
         )
         let listener = try #require(summary.listeners.first)
 
@@ -100,11 +105,40 @@ struct GatewayConfigStoreTests {
         #expect(binding.port == 18_080)
         #expect(listener.requestedHost == "localhost")
         #expect(listener.requestedPort == 18_080)
-        #expect(listener.servedModelID == "melix-alt-text")
+        #expect(listener.defaultModelID == "melix-alt-text")
+        #expect(listener.servedModelIds == ["melix-alt-text", "melix-dev-text"])
         #expect(listener.rateLimitPerMinute == 240)
         #expect(listener.timeoutSeconds == 45)
+        #expect(listener.modelIdleTimeoutSeconds == 900)
         #expect(listener.source == .operatorOverride)
         #expect(listener.updatedAtUnixMs == 1_717_171_717_000)
+    }
+
+    @Test("apply rejects duplicate served model identifiers at the gateway boundary")
+    func applyRejectsDuplicateServedModelIdentifiersAtTheGatewayBoundary() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-config-duplicates-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let store = GatewayConfigStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-config.json"),
+            defaults: [:]
+        )
+
+        var command = Melix_Controlplane_V1_ApplyGatewayConfig()
+        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.host = "localhost"
+        command.port = 18080
+        command.defaultModelID = "melix-dev-text"
+        command.servedModelIds = ["melix-dev-text", "melix-dev-text"]
+        command.rateLimitPerMinute = 120
+        command.timeoutSeconds = 60
+
+        await #expect(throws: GatewayConfigValidationError.duplicateServedModelID) {
+            try await store.apply(command: command)
+        }
+        #expect(GatewayConfigValidationError.duplicateServedModelID.message.contains("gateway API boundary"))
     }
 
     @Test("summary marks restart required when the requested active listener differs from the runtime binding")
@@ -123,15 +157,17 @@ struct GatewayConfigStoreTests {
         command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
         command.host = "0.0.0.0"
         command.port = 18081
-        command.servedModelID = "melix-dev-text"
+        command.defaultModelID = "melix-dev-text"
+        command.servedModelIds = ["melix-dev-text"]
         command.rateLimitPerMinute = 120
         command.timeoutSeconds = 60
+        command.modelIdleTimeoutSeconds = 600
         try await store.apply(command: command)
 
         let summary = await store.summary(
             serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
             runtimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434),
-            fallbackServedModelID: "melix-dev-text"
+            fallbackDefaultModelID: "melix-dev-text"
         )
         let listener = try #require(summary.listeners.first)
 
@@ -159,15 +195,17 @@ struct GatewayConfigStoreTests {
         command.serverSessionID = "server-session-secondary"
         command.host = "192.168.1.55"
         command.port = 19090
-        command.servedModelID = "melix-alt-text"
+        command.defaultModelID = "melix-alt-text"
+        command.servedModelIds = ["melix-alt-text"]
         command.rateLimitPerMinute = 180
         command.timeoutSeconds = 30
+        command.modelIdleTimeoutSeconds = 120
         try await store.apply(command: command)
 
         let summary = await store.summary(
             serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID, "server-session-secondary"],
             runtimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434),
-            fallbackServedModelID: "melix-dev-text"
+            fallbackDefaultModelID: "melix-dev-text"
         )
         let secondary = try #require(
             summary.listeners.first(where: { $0.serverSessionID == "server-session-secondary" })
@@ -177,7 +215,9 @@ struct GatewayConfigStoreTests {
         #expect(secondary.requestedPort == 19_090)
         #expect(secondary.effectiveHost == "192.168.1.55")
         #expect(secondary.effectivePort == 19_090)
-        #expect(secondary.servedModelID == "melix-alt-text")
+        #expect(secondary.defaultModelID == "melix-alt-text")
+        #expect(secondary.servedModelIds == ["melix-alt-text"])
+        #expect(secondary.modelIdleTimeoutSeconds == 120)
         #expect(secondary.source == .operatorOverride)
         #expect(secondary.activeBinding == false)
         #expect(secondary.requiresRestart == false)

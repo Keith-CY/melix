@@ -537,9 +537,11 @@ public protocol ControlPlaneXPCClient: Sendable {
         serverSessionID: String,
         host: String,
         port: Int,
-        servedModelID: String,
+        defaultModelID: String,
+        servedModelIDs: [String],
         rateLimitPerMinute: Int,
-        timeoutSeconds: Int
+        timeoutSeconds: Int,
+        modelIdleTimeoutSeconds: Int
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot
     func applyServerSessionServingDefaults(
         serverSessionID: String,
@@ -760,16 +762,20 @@ public extension ControlPlaneXPCClient {
         serverSessionID: String,
         host: String,
         port: Int,
-        servedModelID: String,
+        defaultModelID: String,
+        servedModelIDs: [String],
         rateLimitPerMinute: Int,
-        timeoutSeconds: Int
+        timeoutSeconds: Int,
+        modelIdleTimeoutSeconds: Int
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
         _ = serverSessionID
         _ = host
         _ = port
-        _ = servedModelID
+        _ = defaultModelID
+        _ = servedModelIDs
         _ = rateLimitPerMinute
         _ = timeoutSeconds
+        _ = modelIdleTimeoutSeconds
         throw ControlPlaneXPCClientError.requestFailed(
             code: "unimplemented",
             message: "Gateway config apply is not implemented for this control-plane client."
@@ -1099,18 +1105,22 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         serverSessionID: String,
         host: String,
         port: Int,
-        servedModelID: String,
+        defaultModelID: String,
+        servedModelIDs: [String],
         rateLimitPerMinute: Int,
-        timeoutSeconds: Int
+        timeoutSeconds: Int,
+        modelIdleTimeoutSeconds: Int
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
         try await execute(
             makeApplyServerSessionGatewayConfigRequest(
                 serverSessionID: serverSessionID,
                 host: host,
                 port: port,
-                servedModelID: servedModelID,
+                defaultModelID: defaultModelID,
+                servedModelIDs: servedModelIDs,
                 rateLimitPerMinute: rateLimitPerMinute,
-                timeoutSeconds: timeoutSeconds
+                timeoutSeconds: timeoutSeconds,
+                modelIdleTimeoutSeconds: modelIdleTimeoutSeconds
             )
         ) { response in
             response.server.snapshot
@@ -1603,9 +1613,11 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         serverSessionID: String,
         host: String,
         port: Int,
-        servedModelID: String,
+        defaultModelID: String,
+        servedModelIDs: [String],
         rateLimitPerMinute: Int,
-        timeoutSeconds: Int
+        timeoutSeconds: Int,
+        modelIdleTimeoutSeconds: Int
     ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "menubar-apply-gateway-config-\(serverSessionID)"
@@ -1616,9 +1628,11 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.server.applyGatewayConfig.serverSessionID = serverSessionID
         request.server.applyGatewayConfig.host = host
         request.server.applyGatewayConfig.port = UInt32(max(0, min(port, Int(UInt16.max))))
-        request.server.applyGatewayConfig.servedModelID = servedModelID
+        request.server.applyGatewayConfig.defaultModelID = defaultModelID
+        request.server.applyGatewayConfig.servedModelIds = servedModelIDs
         request.server.applyGatewayConfig.rateLimitPerMinute = UInt32(max(0, rateLimitPerMinute))
         request.server.applyGatewayConfig.timeoutSeconds = UInt32(max(0, timeoutSeconds))
+        request.server.applyGatewayConfig.modelIdleTimeoutSeconds = UInt32(max(0, modelIdleTimeoutSeconds))
         return request
     }
 

@@ -422,7 +422,7 @@ public actor ControlPlaneService {
             modelSamplingPolicy: modelSamplingPolicy,
             gatewayServingDefaults: await gatewayServingDefaultsStore.requestedDefaults(
                 serverSessionID: ServerSessionRuntimeStore.defaultServerSessionID
-            ),
+            ).resolvingAccelerationCompatibility(for: resolvedModel),
             mcpToolCatalog: mcpToolCatalog
         )
         let execution = try await requestCoordinator.startChatCompletion(translated)
@@ -1585,16 +1585,16 @@ public actor ControlPlaneService {
             hasActiveRequests: await schedulerReadModel.hasActiveRequests()
         )
         let gatewayAccessSummary = await gatewayAccessPolicyStore.summary()
-        let fallbackServedModelID = defaultServedModelID(from: models)
+        let fallbackDefaultModelID = defaultServedModelID(from: models)
         let gatewayConfigSummary = await gatewayConfigStore.summary(
             serverSessionIDs: runtimeSessions.map(\.serverSessionID),
             runtimeBinding: gatewayRuntimeBinding,
-            fallbackServedModelID: fallbackServedModelID
+            fallbackDefaultModelID: fallbackDefaultModelID
         )
         let servingDefaultsSummary = await gatewayServingDefaultsStore.summary(
             serverSessionIDs: runtimeSessions.map(\.serverSessionID),
-            servedModelIDs: Dictionary(
-                uniqueKeysWithValues: gatewayConfigSummary.listeners.map { ($0.serverSessionID, $0.servedModelID) }
+            defaultModelIDs: Dictionary(
+                uniqueKeysWithValues: gatewayConfigSummary.listeners.map { ($0.serverSessionID, $0.defaultModelID) }
             ),
             modelSettingsByModelID: Dictionary(
                 uniqueKeysWithValues: models.map { ($0.modelID, $0.settings) }
@@ -1831,13 +1831,16 @@ public actor ControlPlaneService {
         let gatewayConfigSummary = await gatewayConfigStore.summary(
             serverSessionIDs: [command.serverSessionID],
             runtimeBinding: gatewayRuntimeBinding,
-            fallbackServedModelID: ModelCatalog.devTextModel().modelID
+            fallbackDefaultModelID: ModelCatalog.devTextModel().modelID
         )
-        let servedModelID = gatewayConfigSummary.listeners.first(where: { $0.serverSessionID == command.serverSessionID })?.servedModelID
-            ?? ModelCatalog.devTextModel().modelID
-
-        guard let servedModel = await modelCatalog.model(id: servedModelID), modelSupportsSpeculativeDefaults(servedModel) else {
-            throw ServingDefaultsValidationError.speculativeServedModelUnsupported
+        let listener = gatewayConfigSummary.listeners.first { $0.serverSessionID == command.serverSessionID }
+        let servedDefaultModelID = (listener?.defaultModelID ?? ModelCatalog.devTextModel().modelID)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !servedDefaultModelID.isEmpty {
+            guard let servedModel = await modelCatalog.model(id: servedDefaultModelID),
+                  modelSupportsSpeculativeDefaults(servedModel) else {
+                throw ServingDefaultsValidationError.speculativeServedModelUnsupported
+            }
         }
         guard let draftModel = await modelCatalog.model(id: draftModelID), modelSupportsSpeculativeDefaults(draftModel) else {
             throw ServingDefaultsValidationError.speculativeDraftModelUnsupported

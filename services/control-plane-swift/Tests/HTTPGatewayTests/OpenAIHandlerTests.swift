@@ -765,6 +765,232 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
+    @Test("POST /v1/chat/completions routes by payload model within the active server roster")
+    func postChatCompletionsRoutesByPayloadModelWithinActiveServerRoster() async throws {
+        var primary = ModelCatalog.devTextModel()
+        primary.modelID = "melix-primary"
+        primary.state = .modelWarm
+        var secondary = ModelCatalog.devTextModel()
+        secondary.modelID = "melix-secondary"
+        secondary.state = .modelWarm
+        let catalog = ModelCatalog(seedModels: [primary, secondary])
+        _ = await catalog.recordLoadSucceeded(id: "melix-secondary", dispatchHandle: "melix-secondary::swift")
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(
+                requestID: "req-routed-secondary",
+                seq: 1,
+                finishReason: "stop",
+                assistantText: "secondary"
+            ),
+        ])
+        let gatewayConfigStore = GatewayConfigStore(
+            storeURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("melix-test-gateway-config-\(UUID().uuidString).json"),
+            defaults: [:]
+        )
+        var command = Melix_Controlplane_V1_ApplyGatewayConfig()
+        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.host = "127.0.0.1"
+        command.port = 11_434
+        command.defaultModelID = "melix-primary"
+        command.servedModelIds = ["melix-primary", "melix-secondary"]
+        command.rateLimitPerMinute = 120
+        command.timeoutSeconds = 60
+        try await gatewayConfigStore.apply(command: command)
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-routed-secondary" }),
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) }),
+            gatewayConfigStore: gatewayConfigStore
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(
+                    """
+                    {
+                      "model": "melix-secondary",
+                      "stream": true,
+                      "messages": [
+                        { "role": "user", "content": "route" }
+                      ]
+                    }
+                    """.utf8
+                )
+            )
+        )
+        let request = try #require(await workerClient.lastGenerateRequest)
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(request.execution.modelHandle == "melix-secondary::swift")
+        #expect(payload.contains("\"model\":\"melix-secondary\""))
+        #expect(payload.contains("data: [DONE]"))
+    }
+
+    @Test("POST /v1/chat/completions does not block on idle unloads")
+    func postChatCompletionsDoesNotBlockOnIdleUnloads() async throws {
+        final class ClockBox: @unchecked Sendable {
+            var now: Date
+
+            init(now: Date) {
+                self.now = now
+            }
+        }
+
+        let clock = ClockBox(now: Date(timeIntervalSince1970: 100))
+        var active = ModelCatalog.devTextModel()
+        active.modelID = "melix-active"
+        active.state = .modelWarm
+        var idle = ModelCatalog.devTextModel()
+        idle.modelID = "melix-idle"
+        idle.state = .modelWarm
+        let catalog = ModelCatalog(seedModels: [active, idle], nowUnixMs: {
+            Int64(clock.now.timeIntervalSince1970 * 1000)
+        })
+        _ = await catalog.recordLoadSucceeded(id: "melix-active", dispatchHandle: "melix-active::swift")
+        _ = await catalog.recordLoadSucceeded(id: "melix-idle", dispatchHandle: "melix-idle::swift")
+        clock.now = Date(timeIntervalSince1970: 200)
+
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(
+                requestID: "req-idle-sweep",
+                seq: 1,
+                finishReason: "stop",
+                assistantText: "active"
+            ),
+        ], unloadDelayNanoseconds: 5_000_000_000)
+        let gatewayConfigStore = GatewayConfigStore(
+            storeURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("melix-test-gateway-config-\(UUID().uuidString).json"),
+            defaults: [:]
+        )
+        var command = Melix_Controlplane_V1_ApplyGatewayConfig()
+        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.host = "127.0.0.1"
+        command.port = 11_434
+        command.defaultModelID = "melix-active"
+        command.servedModelIds = ["melix-active", "melix-idle"]
+        command.rateLimitPerMinute = 120
+        command.timeoutSeconds = 60
+        command.modelIdleTimeoutSeconds = 1
+        try await gatewayConfigStore.apply(command: command)
+        let registry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: registry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: registry,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-idle-sweep" }),
+            sseWriter: SSEStreamWriter(now: { clock.now }),
+            gatewayConfigStore: gatewayConfigStore,
+            now: { clock.now }
+        )
+
+        let startedAt = ContinuousClock.now
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(
+                    """
+                    {
+                      "model": "melix-active",
+                      "stream": true,
+                      "messages": [
+                        { "role": "user", "content": "route" }
+                      ]
+                    }
+                    """.utf8
+                )
+            )
+        )
+        let elapsed = startedAt.duration(to: .now)
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("data: [DONE]"))
+        #expect(elapsed < .seconds(2))
+        #expect(await workerClient.unloadCompletedCount == 0)
+
+        try await waitForOpenAIHandlerCondition("idle sweep unloads after response", timeout: .seconds(10)) {
+            await workerClient.unloadCompletedCount == 1
+        }
+    }
+
+    @Test("POST /v1/chat/completions rejects payload models outside the active server roster")
+    func postChatCompletionsRejectsPayloadModelsOutsideActiveServerRoster() async throws {
+        var primary = ModelCatalog.devTextModel()
+        primary.modelID = "melix-primary"
+        primary.state = .modelWarm
+        var secondary = ModelCatalog.devTextModel()
+        secondary.modelID = "melix-secondary"
+        secondary.state = .modelWarm
+        let catalog = ModelCatalog(seedModels: [primary, secondary])
+        let workerClient = ScriptedWorkerClient(events: [])
+        let gatewayConfigStore = GatewayConfigStore(
+            storeURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("melix-test-gateway-config-\(UUID().uuidString).json"),
+            defaults: [:]
+        )
+        var command = Melix_Controlplane_V1_ApplyGatewayConfig()
+        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.host = "127.0.0.1"
+        command.port = 11_434
+        command.defaultModelID = "melix-primary"
+        command.servedModelIds = ["melix-primary"]
+        command.rateLimitPerMinute = 120
+        command.timeoutSeconds = 60
+        try await gatewayConfigStore.apply(command: command)
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            gatewayConfigStore: gatewayConfigStore
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(
+                    """
+                    {
+                      "model": "melix-secondary",
+                      "stream": true,
+                      "messages": [
+                        { "role": "user", "content": "route" }
+                      ]
+                    }
+                    """.utf8
+                )
+            )
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 404)
+        #expect(payload.contains("\"code\":\"model_not_served_by_server\""))
+        #expect(await workerClient.lastGenerateRequest == nil)
+    }
+
     @Test("POST /v1/chat/completions skips registry sync for catalog-resident warm models")
     func postChatCompletionsSkipsRegistrySyncForCatalogResidentWarmModels() async throws {
         let catalog = ModelCatalog(seedModels: [warmModel()])
@@ -7965,8 +8191,11 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
     private let runtimeKVCacheBytes: UInt64
     private let runtimeStatsFailure: Error?
     private let runtimeStatsResponseOverride: Melix_Worker_V1_GetRuntimeStatsResponse?
+    private let unloadDelayNanoseconds: UInt64
     private(set) var lastGenerateRequest: Melix_Worker_V1_GenerateRequest?
     private(set) var lastLoadModelRequest: Melix_Worker_V1_LoadModelRequest?
+    private(set) var unloadRequestCount = 0
+    private(set) var unloadCompletedCount = 0
 
     init(
         events: [Melix_Worker_V1_ExecuteEvent],
@@ -7978,7 +8207,8 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
         runtimeCacheResidentBytes: UInt64 = 0,
         runtimeKVCacheBytes: UInt64 = 0,
         runtimeStatsFailure: Error? = nil,
-        runtimeStatsResponseOverride: Melix_Worker_V1_GetRuntimeStatsResponse? = nil
+        runtimeStatsResponseOverride: Melix_Worker_V1_GetRuntimeStatsResponse? = nil,
+        unloadDelayNanoseconds: UInt64 = 0
     ) {
         self.events = events
         self.streamFailure = streamFailure
@@ -7990,6 +8220,7 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
         self.runtimeKVCacheBytes = runtimeKVCacheBytes
         self.runtimeStatsFailure = runtimeStatsFailure
         self.runtimeStatsResponseOverride = runtimeStatsResponseOverride
+        self.unloadDelayNanoseconds = unloadDelayNanoseconds
     }
 
     func canDispatchRequests() async -> Bool {
@@ -8022,6 +8253,20 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
         response.ok = true
         response.modelHandle = loadModelHandle
         response.estimatedResidentBytes = loadModelEstimatedResidentBytes
+        return response
+    }
+
+    func unloadModel(
+        request: Melix_Worker_V1_UnloadModelRequest
+    ) async throws -> Melix_Worker_V1_UnloadModelResponse {
+        _ = request
+        unloadRequestCount += 1
+        if unloadDelayNanoseconds > 0 {
+            try await Task.sleep(nanoseconds: unloadDelayNanoseconds)
+        }
+        unloadCompletedCount += 1
+        var response = Melix_Worker_V1_UnloadModelResponse()
+        response.ok = true
         return response
     }
 
