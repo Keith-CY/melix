@@ -5287,6 +5287,28 @@ struct DesktopTrainingToolSectionView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                if let responseOnlyReceipt = RuntimeViewModel.responseOnlySafetyReceipt(from: job) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        DesktopPassiveCaptionLabel(title: "Response-only Safety")
+                        DesktopPassiveCaptionLabel(
+                            title: responseOnlyReceipt.statusText,
+                            foregroundStyle: responseOnlyReceipt.statusText == "Blocked"
+                                ? MelixDesignTokens.StatusColor.error
+                                : MelixDesignTokens.StatusColor.warning
+                        )
+                        ForEach(savedJobResponseOnlySafetyItems(responseOnlyReceipt)) { item in
+                            VStack(alignment: .leading, spacing: 2) {
+                                DesktopPassiveCaptionLabel(title: item.title)
+                                Text(item.value)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                    .font(.caption)
+                }
+
                 if !job.latestOutputText.isEmpty {
                     DisclosureGroup("Latest Output") {
                         Text(job.latestOutputText)
@@ -6044,6 +6066,30 @@ struct DesktopTrainingToolSectionView: View {
             DesktopTrainingSummaryItem(title: "Mergeable", value: receipt.mergeableText, detail: ""),
             DesktopTrainingSummaryItem(title: "ReLoRA-compatible", value: receipt.reloraCompatibleText, detail: ""),
             DesktopTrainingSummaryItem(title: "Quantized Base", value: receipt.quantizedBaseSupportedText, detail: ""),
+        ].filter { item in
+            item.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
+    }
+
+    private func savedJobResponseOnlySafetyItems(_ receipt: RuntimeResponseOnlySafetyReceiptState) -> [DesktopTrainingSummaryItem] {
+        [
+            DesktopTrainingSummaryItem(title: "Recovery", value: receipt.recoveryHint, detail: ""),
+            DesktopTrainingSummaryItem(title: "Error Code", value: receipt.errorCode, detail: ""),
+            DesktopTrainingSummaryItem(title: "Max Seq Length", value: receipt.maxSeqLengthText, detail: ""),
+            DesktopTrainingSummaryItem(title: "Samples", value: receipt.boundarySampleCountText, detail: ""),
+            DesktopTrainingSummaryItem(title: "Boundary Range", value: receipt.boundaryRangeText, detail: ""),
+            DesktopTrainingSummaryItem(title: "Boundary Mean", value: receipt.boundaryMeanText, detail: ""),
+            DesktopTrainingSummaryItem(title: "Response Tokens Mean", value: receipt.responseTokensMeanText, detail: ""),
+            DesktopTrainingSummaryItem(
+                title: "Trainable Response Tokens",
+                value: receipt.trainableResponseTokenCountText,
+                detail: ""
+            ),
+            DesktopTrainingSummaryItem(
+                title: "Fully Truncated Samples",
+                value: receipt.fullyTruncatedSampleCountText,
+                detail: ""
+            ),
         ].filter { item in
             item.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         }
@@ -8653,7 +8699,8 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     Chart(viewModel.benchmarkMatrixThroughputChartPoints) { point in
                                         BarMark(
                                             x: .value("Batch", point.xValue),
-                                            y: .value("Throughput", point.yValue)
+                                            y: .value("Throughput", point.yValue),
+                                            width: .fixed(12)
                                         )
                                         .foregroundStyle(
                                             MelixDesignTokens.accent.opacity(DesktopLoRAVisualPolish.chartFillOpacity)

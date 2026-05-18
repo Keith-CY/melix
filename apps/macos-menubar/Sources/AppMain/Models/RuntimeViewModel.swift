@@ -1748,6 +1748,34 @@ public struct RuntimeAdapterCapabilityReceiptState: Equatable, Sendable {
     }
 }
 
+public struct RuntimeResponseOnlySafetyReceiptState: Equatable, Sendable {
+    public let errorCode: String
+    public let maxSeqLengthText: String
+    public let boundarySampleCountText: String
+    public let boundaryRangeText: String
+    public let boundaryMeanText: String
+    public let responseTokensMeanText: String
+    public let trainableResponseTokenCountText: String
+    public let fullyTruncatedSampleCountText: String
+    public let truncatedSampleCountText: String
+
+    public var statusText: String {
+        if errorCode == "response_only_labels_truncated"
+            || (trainableResponseTokenCountText == "0" && fullyTruncatedSampleCountText.isEmpty == false)
+        {
+            return "Blocked"
+        }
+        if truncatedSampleCountText.isEmpty == false && truncatedSampleCountText != "0" {
+            return "Truncated"
+        }
+        return "Observed"
+    }
+
+    public var recoveryHint: String {
+        "Increase max_seq_length, shorten the system prompt, or disable response-only masking."
+    }
+}
+
 public struct RuntimeEvaluationMetricCardState: Identifiable, Equatable, Sendable {
     public let id: String
     public let suiteTitle: String
@@ -6612,6 +6640,66 @@ public final class RuntimeViewModel {
             mergeable: mergeable,
             reloraCompatible: reloraCompatible,
             quantizedBaseSupported: quantizedBaseSupported
+        )
+    }
+
+    public static func responseOnlySafetyReceipt(from job: LoraTrainingJobRecord) -> RuntimeResponseOnlySafetyReceiptState? {
+        let payload = jsonPayload(from: job.latestOutputText)
+        let terminalPayload = payload.isEmpty ? jsonPayload(from: job.terminalMessage) : [:]
+        let sourcePayload = payload.isEmpty ? terminalPayload : payload
+        let errorPayload = dictionaryValue("error", from: sourcePayload)
+        let detailsPayload = responseOnlyDetailsPayload(sourcePayload: sourcePayload, errorPayload: errorPayload)
+        let errorCode = firstNonEmpty(
+            manifestTextValue("error_code", primary: sourcePayload, fallback: errorPayload),
+            manifestTextValue("code", primary: sourcePayload, fallback: errorPayload)
+        )
+        let terminalContainsGuardCode = job.terminalMessage.contains("response_only_labels_truncated")
+        let maxSeqLengthText = responseOnlyTextValue("max_seq_length", details: detailsPayload, payload: sourcePayload)
+        let sampleCountText = responseOnlyTextValue("response_only_boundary_sample_count", details: detailsPayload, payload: sourcePayload)
+        let boundaryMinText = responseOnlyTextValue("response_only_boundary_min", details: detailsPayload, payload: sourcePayload)
+        let boundaryMaxText = responseOnlyTextValue("response_only_boundary_max", details: detailsPayload, payload: sourcePayload)
+        let boundaryMeanText = responseOnlyTextValue("response_only_boundary_mean", details: detailsPayload, payload: sourcePayload)
+        let responseTokensMeanText = responseOnlyTextValue("response_only_response_tokens_mean", details: detailsPayload, payload: sourcePayload)
+        let trainableResponseTokenCountText = responseOnlyTextValue(
+            "response_only_trainable_response_token_count",
+            details: detailsPayload,
+            payload: sourcePayload
+        )
+        let fullyTruncatedSampleCountText = responseOnlyTextValue(
+            "response_only_fully_truncated_response_sample_count",
+            details: detailsPayload,
+            payload: sourcePayload
+        )
+        let truncatedSampleCountText = responseOnlyTextValue(
+            "response_only_truncated_response_sample_count",
+            details: detailsPayload,
+            payload: sourcePayload
+        )
+        let hasReceiptFields = [
+            maxSeqLengthText,
+            sampleCountText,
+            boundaryMinText,
+            boundaryMaxText,
+            boundaryMeanText,
+            responseTokensMeanText,
+            trainableResponseTokenCountText,
+            fullyTruncatedSampleCountText,
+            truncatedSampleCountText,
+        ].contains { $0.isEmpty == false }
+        guard errorCode == "response_only_labels_truncated" || terminalContainsGuardCode || hasReceiptFields else {
+            return nil
+        }
+
+        return RuntimeResponseOnlySafetyReceiptState(
+            errorCode: errorCode.isEmpty && terminalContainsGuardCode ? "response_only_labels_truncated" : errorCode,
+            maxSeqLengthText: maxSeqLengthText,
+            boundarySampleCountText: sampleCountText,
+            boundaryRangeText: boundaryRangeText(min: boundaryMinText, max: boundaryMaxText),
+            boundaryMeanText: boundaryMeanText,
+            responseTokensMeanText: responseTokensMeanText,
+            trainableResponseTokenCountText: trainableResponseTokenCountText,
+            fullyTruncatedSampleCountText: fullyTruncatedSampleCountText,
+            truncatedSampleCountText: truncatedSampleCountText
         )
     }
 
@@ -15885,6 +15973,70 @@ public final class RuntimeViewModel {
 
     private static func dictionaryValue(_ key: String, from payload: [String: Any]) -> [String: Any] {
         payload[key] as? [String: Any] ?? [:]
+    }
+
+    private static func responseOnlyDetailsPayload(
+        sourcePayload: [String: Any],
+        errorPayload: [String: Any]
+    ) -> [String: Any] {
+        let errorDetails = dictionaryValue("details", from: errorPayload)
+        if errorDetails.isEmpty == false {
+            return errorDetails
+        }
+        return dictionaryValue("details", from: sourcePayload)
+    }
+
+    private static func responseOnlyTextValue(
+        _ key: String,
+        details: [String: Any],
+        payload: [String: Any]
+    ) -> String {
+        manifestTextValue(key, primary: details, fallback: payload)
+    }
+
+    private static func manifestTextValue(
+        _ key: String,
+        primary: [String: Any],
+        fallback: [String: Any]
+    ) -> String {
+        if let value = primary[key] {
+            return scalarManifestText(value)
+        }
+        if let value = fallback[key] {
+            return scalarManifestText(value)
+        }
+        return ""
+    }
+
+    private static func scalarManifestText(_ value: Any) -> String {
+        switch value {
+        case let string as String:
+            return string.trimmingCharacters(in: .whitespacesAndNewlines)
+        case let int as Int:
+            return "\(int)"
+        case let int64 as Int64:
+            return "\(int64)"
+        case let double as Double:
+            return double.rounded() == double ? "\(Int(double))" : String(format: "%.3f", double)
+        case let number as NSNumber:
+            return number.stringValue
+        default:
+            return ""
+        }
+    }
+
+    private static func firstNonEmpty(_ values: String...) -> String {
+        values.first { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false } ?? ""
+    }
+
+    private static func boundaryRangeText(min: String, max: String) -> String {
+        if min.isEmpty {
+            return max
+        }
+        if max.isEmpty {
+            return min
+        }
+        return "\(min)-\(max)"
     }
 
     private static func intValue(_ key: String, from payload: [String: Any]) -> Int {

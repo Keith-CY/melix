@@ -9758,6 +9758,54 @@ struct RuntimeViewModelTests {
         #expect(store.savedRecords.contains { $0.status == .failed })
     }
 
+    @Test("lora saved job response-only truncation receipt decodes recovery fields")
+    @MainActor
+    func loraSavedJobResponseOnlyTruncationReceiptDecodesRecoveryFields() throws {
+        var config = makeDesktopLoraTrainingConfig(adapterName: "truncated-response-adapter")
+        config.maxSeqLength = "1024"
+        let job = LoraTrainingJobRecord(
+            id: "response-only-truncated-job",
+            title: "Response-only Truncated Job",
+            config: config,
+            status: .failed,
+            createdAt: Date(timeIntervalSince1970: 1_714_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_714_000_100),
+            startedAt: Date(timeIntervalSince1970: 1_714_000_050),
+            completedAt: Date(timeIntervalSince1970: 1_714_000_100),
+            lastRunJobID: "model-ops-response-only",
+            outputPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+            manifestPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+            latestOutputText: #"""
+            {
+              "error_code": "response_only_labels_truncated",
+              "details": {
+                "max_seq_length": "1024",
+                "response_only_boundary_sample_count": "2",
+                "response_only_boundary_min": "1100",
+                "response_only_boundary_max": "1200",
+                "response_only_boundary_mean": "1150.000",
+                "response_only_response_tokens_mean": "9.000",
+                "response_only_trainable_response_token_count": "0",
+                "response_only_fully_truncated_response_sample_count": "2"
+              }
+            }
+            """#,
+            terminalMessage: "Training failed."
+        )
+
+        let receipt = try #require(RuntimeViewModel.responseOnlySafetyReceipt(from: job))
+
+        #expect(receipt.statusText == "Blocked")
+        #expect(receipt.errorCode == "response_only_labels_truncated")
+        #expect(receipt.recoveryHint == "Increase max_seq_length, shorten the system prompt, or disable response-only masking.")
+        #expect(receipt.maxSeqLengthText == "1024")
+        #expect(receipt.boundaryRangeText == "1100-1200")
+        #expect(receipt.boundaryMeanText == "1150.000")
+        #expect(receipt.responseTokensMeanText == "9.000")
+        #expect(receipt.trainableResponseTokenCountText == "0")
+        #expect(receipt.fullyTruncatedSampleCountText == "2")
+    }
+
     @Test("lora saved job follow-up actions route existing desktop surfaces")
     @MainActor
     func loraSavedJobFollowUpActionsRouteExistingDesktopSurfaces() async throws {
