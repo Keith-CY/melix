@@ -2534,6 +2534,38 @@ def test_load_probe_registry_uses_absolute_cache_key_without_resolving(
     assert scope["selected_count"] == 0
 
 
+def test_load_probe_registry_absolutizes_relative_cache_keys(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    registry_path = tmp_path / "probe-registry.json"
+    registry_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "demo",
+                    "name": "Demo",
+                    "probe_impl": "command_json",
+                    "probe_command": "python3 -c \"import json; print(json.dumps({'elapsed_ms_mean': 1.0}))\"",
+                    "metrics": [{"key": "elapsed_ms_mean", "unit": "ms", "direction": "lower_is_better"}],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cache = pr_scoped_performance_module._PROBE_REGISTRY_CACHE
+    cache.clear()
+    monkeypatch.chdir(tmp_path)
+
+    try:
+        first = load_probe_registry("probe-registry.json")
+        second = load_probe_registry(registry_path)
+    finally:
+        cache.clear()
+
+    assert second is first
+
+
 def test_scope_report_with_no_matching_probe_returns_empty_selection() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
