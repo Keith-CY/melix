@@ -63,6 +63,7 @@ class ToolDescriptor:
     observation_kind: str
     arguments: tuple[ToolArgumentDescriptor, ...]
     _cached_schema: str = field(default="", init=False, repr=False)
+    _cached_schema_bytes: int = field(default=0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         normalized_name = self.name.strip()
@@ -87,7 +88,9 @@ class ToolDescriptor:
                     f"Duplicate argument {argument.name} in tool registry entry {normalized_name}."
                 )
             argument_names.add(argument.name)
-        object.__setattr__(self, "_cached_schema", _COMPACT_SORTED_JSON_ENCODER.encode(self.schema_payload()))
+        cached_schema = _COMPACT_SORTED_JSON_ENCODER.encode(self.schema_payload())
+        object.__setattr__(self, "_cached_schema", cached_schema)
+        object.__setattr__(self, "_cached_schema_bytes", len(cached_schema.encode("utf-8")))
 
     @property
     def required_arguments(self) -> tuple[str, ...]:
@@ -106,6 +109,9 @@ class ToolDescriptor:
 
     def json_schema(self) -> str:
         return self._cached_schema
+
+    def schema_byte_count(self) -> int:
+        return self._cached_schema_bytes
 
     def as_openai_tool(self) -> dict[str, Any]:
         return {
@@ -161,7 +167,7 @@ class ToolRegistry:
     def metrics(self) -> ToolRegistryMetrics:
         return ToolRegistryMetrics(
             tool_count=len(self._tools),
-            schema_bytes=sum(len(tool.json_schema().encode("utf-8")) for tool in self._tools),
+            schema_bytes=sum(tool.schema_byte_count() for tool in self._tools),
             required_argument_count=sum(len(tool.required_arguments) for tool in self._tools),
         )
 
