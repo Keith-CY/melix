@@ -616,9 +616,11 @@ struct RuntimeViewModelTests {
         #expect(request.serverSessionID == session.id)
         #expect(request.host == "0.0.0.0")
         #expect(request.port == 18_080)
-        #expect(request.servedModelID == "melix-dev-text")
+        #expect(request.defaultModelID == "melix-dev-text")
+        #expect(request.servedModelIDs == ["melix-dev-text"])
         #expect(request.rateLimitPerMinute == 240)
         #expect(request.timeoutSeconds == 90)
+        #expect(request.modelIdleTimeoutSeconds == 600)
         #expect(session.host == "0.0.0.0")
         #expect(session.port == 18_080)
         #expect(session.effectiveHost == "0.0.0.0")
@@ -867,7 +869,7 @@ struct RuntimeViewModelTests {
         )
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
         servingDefaults.serverSessionID = "server-session-1"
-        servingDefaults.servedModelID = "melix-dev-text"
+        servingDefaults.defaultModelID = "melix-dev-text"
         servingDefaults.requestedTemperature = 0.7
         servingDefaults.requestedTopP = 1.0
         servingDefaults.requestedMaxTokens = 256
@@ -1037,7 +1039,7 @@ struct RuntimeViewModelTests {
                     requestedPort: 18_090,
                     effectiveHost: "127.0.0.1",
                     effectivePort: 11_434,
-                    servedModelID: "melix-dev-text",
+                    defaultModelID: "melix-dev-text",
                     rateLimitPerMinute: 360,
                     timeoutSeconds: 75,
                     source: .operatorOverride,
@@ -1087,7 +1089,7 @@ struct RuntimeViewModelTests {
                         requestedPort: 11_434,
                         effectiveHost: "127.0.0.1",
                         effectivePort: 11_434,
-                        servedModelID: "melix-dev-text",
+                        defaultModelID: "melix-dev-text",
                         rateLimitPerMinute: 120,
                         timeoutSeconds: 60,
                         source: source,
@@ -1120,7 +1122,7 @@ struct RuntimeViewModelTests {
                     requestedPort: 11_434,
                     effectiveHost: "127.0.0.1",
                     effectivePort: 11_434,
-                    servedModelID: "melix-dev-text",
+                    defaultModelID: "melix-dev-text",
                     rateLimitPerMinute: 120,
                     timeoutSeconds: 60,
                     source: .operatorOverride,
@@ -1131,7 +1133,7 @@ struct RuntimeViewModelTests {
         )
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
         servingDefaults.serverSessionID = "server-session-1"
-        servingDefaults.servedModelID = "melix-dev-text"
+        servingDefaults.defaultModelID = "melix-dev-text"
         servingDefaults.requestedTemperature = 0.31
         servingDefaults.requestedTopP = 0.89
         servingDefaults.requestedMaxTokens = 400
@@ -2849,7 +2851,7 @@ struct RuntimeViewModelTests {
             requestedPort: 12436,
             effectiveHost: "127.0.0.1",
             effectivePort: 12434,
-            servedModelID: "melix-selected-text",
+            defaultModelID: "melix-selected-text",
             rateLimitPerMinute: 120,
             timeoutSeconds: 120,
             source: .environmentDefaults,
@@ -2908,8 +2910,8 @@ struct RuntimeViewModelTests {
             requestedHost: "127.0.0.1",
             requestedPort: 12436,
             effectiveHost: "127.0.0.1",
-            effectivePort: 12_436,
-            servedModelID: staleGatewayModelID,
+            effectivePort: UInt32(MelixGatewayDefaults.port),
+            defaultModelID: staleGatewayModelID,
             rateLimitPerMinute: 120,
             timeoutSeconds: 120,
             source: .configFileImport,
@@ -2956,7 +2958,7 @@ struct RuntimeViewModelTests {
             requestedPort: 12436,
             effectiveHost: "127.0.0.1",
             effectivePort: 8080,
-            servedModelID: selectedModelID,
+            defaultModelID: selectedModelID,
             rateLimitPerMinute: 120,
             timeoutSeconds: 120,
             source: .environmentDefaults,
@@ -6801,7 +6803,7 @@ struct RuntimeViewModelTests {
         )
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
         servingDefaults.serverSessionID = "server-session-1"
-        servingDefaults.servedModelID = localModelID
+        servingDefaults.defaultModelID = localModelID
         servingDefaults.requestedTemperature = 0.4
         servingDefaults.requestedTopP = 0.9
         servingDefaults.requestedMaxTokens = 512
@@ -6851,7 +6853,7 @@ struct RuntimeViewModelTests {
         )
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
         servingDefaults.serverSessionID = "server-session-1"
-        servingDefaults.servedModelID = localModelID
+        servingDefaults.defaultModelID = localModelID
         servingDefaults.requestedAccelerationProfile = "throughput"
         servingDefaults.effectiveAccelerationProfile = "throughput"
         servingDefaults.accelerationProfileIntent = "Throughput-first serving with speculative decode when a draft model is supplied."
@@ -8205,7 +8207,7 @@ struct RuntimeViewModelTests {
             case .modelRootsRescan:
                 return .success("{\"operation\":\"registry_snapshot\"}\n")
             case .serverSessionUpdate(let options):
-                return .success(sessionJSON(modelID: options.modelID.isEmpty ? testReadyModelID : options.modelID))
+                return .success(sessionJSON(modelID: options.defaultModelID.isEmpty ? testReadyModelID : options.defaultModelID))
             case .serverSessionSelect:
                 return .success(sessionJSON(modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"))
             case .serverStart(let options):
@@ -13576,7 +13578,7 @@ private func makeGatewayConfigListener(
     requestedPort: UInt32,
     effectiveHost: String,
     effectivePort: UInt32,
-    servedModelID: String,
+    defaultModelID: String,
     rateLimitPerMinute: UInt32,
     timeoutSeconds: UInt32,
     source: Melix_Controlplane_V1_GatewayConfigSource,
@@ -13589,9 +13591,11 @@ private func makeGatewayConfigListener(
     listener.requestedPort = requestedPort
     listener.effectiveHost = effectiveHost
     listener.effectivePort = effectivePort
-    listener.servedModelID = servedModelID
+    listener.defaultModelID = defaultModelID
+    listener.servedModelIds = defaultModelID.isEmpty ? [] : [defaultModelID]
     listener.rateLimitPerMinute = rateLimitPerMinute
     listener.timeoutSeconds = timeoutSeconds
+    listener.modelIdleTimeoutSeconds = 600
     listener.source = source
     listener.activeBinding = activeBinding
     listener.requiresRestart = requiresRestart

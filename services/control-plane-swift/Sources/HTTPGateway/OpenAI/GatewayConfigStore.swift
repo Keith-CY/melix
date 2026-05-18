@@ -5,7 +5,10 @@ public enum GatewayConfigValidationError: Error, Equatable, Sendable {
     case missingServerSessionID
     case missingHost
     case invalidPort
-    case missingServedModelID
+    case missingDefaultModelID
+    case missingServedModelIDs
+    case defaultModelNotServed
+    case duplicateServedModelID
     case invalidRateLimit
     case invalidTimeout
 
@@ -17,8 +20,14 @@ public enum GatewayConfigValidationError: Error, Equatable, Sendable {
             return "missing_host"
         case .invalidPort:
             return "invalid_port"
-        case .missingServedModelID:
-            return "missing_served_model_id"
+        case .missingDefaultModelID:
+            return "missing_default_model_id"
+        case .missingServedModelIDs:
+            return "missing_served_model_ids"
+        case .defaultModelNotServed:
+            return "default_model_not_served"
+        case .duplicateServedModelID:
+            return "duplicate_served_model_id"
         case .invalidRateLimit:
             return "invalid_rate_limit"
         case .invalidTimeout:
@@ -34,8 +43,14 @@ public enum GatewayConfigValidationError: Error, Equatable, Sendable {
             return "Gateway config requires a non-empty host."
         case .invalidPort:
             return "Gateway config requires a TCP port between 1 and 65535."
-        case .missingServedModelID:
-            return "Gateway config requires a served model identifier."
+        case .missingDefaultModelID:
+            return "Gateway config requires a default model identifier."
+        case .missingServedModelIDs:
+            return "Gateway config requires at least one served model identifier."
+        case .defaultModelNotServed:
+            return "Gateway config default model must be included in the served model roster."
+        case .duplicateServedModelID:
+            return "Gateway config served model identifiers must be unique; repeated IDs are rejected at the gateway API boundary instead of silently deduplicated."
         case .invalidRateLimit:
             return "Gateway config requires a positive rate limit."
         case .invalidTimeout:
@@ -65,6 +80,7 @@ private struct GatewayConfigDefaults: Equatable, Sendable {
     let port: UInt32
     let rateLimitPerMinute: UInt32
     let timeoutSeconds: UInt32
+    let modelIdleTimeoutSeconds: UInt32
     let source: Melix_Controlplane_V1_GatewayConfigSource
 }
 
@@ -72,9 +88,11 @@ private struct PersistedGatewayListenerRecord: Codable, Equatable, Sendable {
     let serverSessionID: String
     let host: String
     let port: UInt32
-    let servedModelID: String
+    let defaultModelID: String
+    let servedModelIDs: [String]
     let rateLimitPerMinute: UInt32
     let timeoutSeconds: UInt32
+    let modelIdleTimeoutSeconds: UInt32
     let sourceRawValue: Int
     let updatedAtUnixMS: Int64
 
@@ -82,11 +100,73 @@ private struct PersistedGatewayListenerRecord: Codable, Equatable, Sendable {
         case serverSessionID = "server_session_id"
         case host
         case port
-        case servedModelID = "served_model_id"
+        case defaultModelID = "default_model_id"
+        case servedModelIDs = "served_model_ids"
         case rateLimitPerMinute = "rate_limit_per_minute"
         case timeoutSeconds = "timeout_seconds"
+        case modelIdleTimeoutSeconds = "model_idle_timeout_seconds"
         case sourceRawValue = "source"
         case updatedAtUnixMS = "updated_at_unix_ms"
+    }
+
+    init(
+        serverSessionID: String,
+        host: String,
+        port: UInt32,
+        defaultModelID: String,
+        servedModelIDs: [String],
+        rateLimitPerMinute: UInt32,
+        timeoutSeconds: UInt32,
+        modelIdleTimeoutSeconds: UInt32,
+        sourceRawValue: Int,
+        updatedAtUnixMS: Int64
+    ) {
+        self.serverSessionID = serverSessionID
+        self.host = host
+        self.port = port
+        self.defaultModelID = defaultModelID
+        self.servedModelIDs = servedModelIDs
+        self.rateLimitPerMinute = rateLimitPerMinute
+        self.timeoutSeconds = timeoutSeconds
+        self.modelIdleTimeoutSeconds = modelIdleTimeoutSeconds
+        self.sourceRawValue = sourceRawValue
+        self.updatedAtUnixMS = updatedAtUnixMS
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaultModelID = try container.decodeIfPresent(String.self, forKey: .defaultModelID) ?? ""
+        let servedModelIDs = try container.decodeIfPresent([String].self, forKey: .servedModelIDs)
+            ?? (defaultModelID.isEmpty ? [] : [defaultModelID])
+        self.init(
+            serverSessionID: try container.decode(String.self, forKey: .serverSessionID),
+            host: try container.decode(String.self, forKey: .host),
+            port: try container.decode(UInt32.self, forKey: .port),
+            defaultModelID: defaultModelID,
+            servedModelIDs: servedModelIDs,
+            rateLimitPerMinute: try container.decode(UInt32.self, forKey: .rateLimitPerMinute),
+            timeoutSeconds: try container.decode(UInt32.self, forKey: .timeoutSeconds),
+            modelIdleTimeoutSeconds: try container.decodeIfPresent(
+                UInt32.self,
+                forKey: .modelIdleTimeoutSeconds
+            ) ?? 0,
+            sourceRawValue: try container.decode(Int.self, forKey: .sourceRawValue),
+            updatedAtUnixMS: try container.decode(Int64.self, forKey: .updatedAtUnixMS)
+        )
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(serverSessionID, forKey: .serverSessionID)
+        try container.encode(host, forKey: .host)
+        try container.encode(port, forKey: .port)
+        try container.encode(defaultModelID, forKey: .defaultModelID)
+        try container.encode(servedModelIDs, forKey: .servedModelIDs)
+        try container.encode(rateLimitPerMinute, forKey: .rateLimitPerMinute)
+        try container.encode(timeoutSeconds, forKey: .timeoutSeconds)
+        try container.encode(modelIdleTimeoutSeconds, forKey: .modelIdleTimeoutSeconds)
+        try container.encode(sourceRawValue, forKey: .sourceRawValue)
+        try container.encode(updatedAtUnixMS, forKey: .updatedAtUnixMS)
     }
 
     var source: Melix_Controlplane_V1_GatewayConfigSource {
@@ -157,6 +237,7 @@ public actor GatewayConfigStore {
     func apply(
         command: Melix_Controlplane_V1_ApplyGatewayConfig
     ) throws {
+        // Validates then persists a listener record for the given server session.
         let serverSessionID = Self.trimmed(command.serverSessionID)
         guard !serverSessionID.isEmpty else {
             throw GatewayConfigValidationError.missingServerSessionID
@@ -170,10 +251,14 @@ public actor GatewayConfigStore {
             throw GatewayConfigValidationError.invalidPort
         }
 
-        let servedModelID = Self.trimmed(command.servedModelID)
-        guard !servedModelID.isEmpty else {
-            throw GatewayConfigValidationError.missingServedModelID
+        let defaultModelID = Self.trimmed(command.defaultModelID)
+        guard !defaultModelID.isEmpty else {
+            throw GatewayConfigValidationError.missingDefaultModelID
         }
+        let servedModelIDs = try Self.normalizedServedModelIDs(
+            command.servedModelIds,
+            defaultModelID: defaultModelID
+        )
         guard command.rateLimitPerMinute > 0 else {
             throw GatewayConfigValidationError.invalidRateLimit
         }
@@ -185,9 +270,11 @@ public actor GatewayConfigStore {
             serverSessionID: serverSessionID,
             host: host,
             port: command.port,
-            servedModelID: servedModelID,
+            defaultModelID: defaultModelID,
+            servedModelIDs: servedModelIDs,
             rateLimitPerMinute: command.rateLimitPerMinute,
             timeoutSeconds: command.timeoutSeconds,
+            modelIdleTimeoutSeconds: command.modelIdleTimeoutSeconds,
             sourceRawValue: Melix_Controlplane_V1_GatewayConfigSource.operatorOverride.rawValue,
             updatedAtUnixMS: nowUnixMS()
         )
@@ -198,10 +285,10 @@ public actor GatewayConfigStore {
     public func summary(
         serverSessionIDs: [String],
         runtimeBinding: GatewayRuntimeBinding,
-        fallbackServedModelID: String
+        fallbackDefaultModelID: String
     ) -> Melix_Controlplane_V1_GatewayConfigSummary {
         var summary = Melix_Controlplane_V1_GatewayConfigSummary()
-        let resolvedFallbackModelID = Self.trimmed(fallbackServedModelID)
+        let resolvedFallbackModelID = Self.trimmed(fallbackDefaultModelID)
 
         let allServerSessionIDs = Set(
             serverSessionIDs.map(Self.trimmed).filter { !$0.isEmpty }
@@ -213,9 +300,11 @@ public actor GatewayConfigStore {
             let record = recordsByServerSessionID[serverSessionID]
             let requestedHost = record?.host ?? defaults.host
             let requestedPort = record?.port ?? defaults.port
-            let servedModelID = record?.servedModelID ?? resolvedFallbackModelID
+            let defaultModelID = record?.defaultModelID ?? resolvedFallbackModelID
+            let servedModelIDs = record?.servedModelIDs ?? (defaultModelID.isEmpty ? [] : [defaultModelID])
             let rateLimitPerMinute = record?.rateLimitPerMinute ?? defaults.rateLimitPerMinute
             let timeoutSeconds = record?.timeoutSeconds ?? defaults.timeoutSeconds
+            let modelIdleTimeoutSeconds = record?.modelIdleTimeoutSeconds ?? defaults.modelIdleTimeoutSeconds
             let isActiveBinding = serverSessionID == runtimeBinding.activeServerSessionID
 
             var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
@@ -224,9 +313,11 @@ public actor GatewayConfigStore {
             listener.requestedPort = requestedPort
             listener.effectiveHost = isActiveBinding ? runtimeBinding.host : requestedHost
             listener.effectivePort = isActiveBinding ? runtimeBinding.port : requestedPort
-            listener.servedModelID = servedModelID
+            listener.defaultModelID = defaultModelID
+            listener.servedModelIds = servedModelIDs
             listener.rateLimitPerMinute = rateLimitPerMinute
             listener.timeoutSeconds = timeoutSeconds
+            listener.modelIdleTimeoutSeconds = modelIdleTimeoutSeconds
             listener.source = record?.source ?? defaults.source
             listener.activeBinding = isActiveBinding
             listener.requiresRestart = isActiveBinding
@@ -235,6 +326,36 @@ public actor GatewayConfigStore {
             return listener
         }
         return summary
+    }
+
+    public func activeModelRoster(
+        runtimeBinding: GatewayRuntimeBinding,
+        fallbackDefaultModelID: String,
+        fallbackServedModelIDs: [String]
+    ) -> (defaultModelID: String, servedModelIDs: [String], modelIdleTimeoutSeconds: UInt32, explicit: Bool) {
+        let record = recordsByServerSessionID[runtimeBinding.activeServerSessionID]
+        let defaultModelID = record?.defaultModelID ?? Self.trimmed(fallbackDefaultModelID)
+        let servedModelIDs = record?.servedModelIDs
+            ?? Self.normalizedFallbackServedModelIDs(fallbackServedModelIDs, defaultModelID: defaultModelID)
+        return (
+            defaultModelID: defaultModelID,
+            servedModelIDs: servedModelIDs,
+            modelIdleTimeoutSeconds: record?.modelIdleTimeoutSeconds ?? defaults.modelIdleTimeoutSeconds,
+            explicit: record != nil
+        )
+    }
+
+    public func activeModelRosterIfConfigured(
+        runtimeBinding: GatewayRuntimeBinding
+    ) -> (defaultModelID: String, servedModelIDs: [String], modelIdleTimeoutSeconds: UInt32)? {
+        guard let record = recordsByServerSessionID[runtimeBinding.activeServerSessionID] else {
+            return nil
+        }
+        return (
+            defaultModelID: record.defaultModelID,
+            servedModelIDs: record.servedModelIDs,
+            modelIdleTimeoutSeconds: record.modelIdleTimeoutSeconds
+        )
     }
 
     private func writeRecords() throws {
@@ -275,21 +396,71 @@ public actor GatewayConfigStore {
         let builtInPort: UInt32 = UInt32(MelixGatewayDefaults.port)
         let builtInRateLimit: UInt32 = 120
         let builtInTimeout: UInt32 = 120
+        let builtInModelIdleTimeout: UInt32 = 600
 
         let envHost = trimmed(environment["MELIX_HTTP_HOST"])
         let envPort = UInt32(trimmed(environment["MELIX_HTTP_PORT"])) ?? 0
         let envRateLimit = UInt32(trimmed(environment["MELIX_GATEWAY_RATE_LIMIT_PER_MINUTE"])) ?? 0
         let envTimeout = UInt32(trimmed(environment["MELIX_GATEWAY_TIMEOUT_SECONDS"])) ?? 0
+        let envModelIdleTimeout = UInt32(trimmed(environment["MELIX_MODEL_IDLE_TIMEOUT_SECONDS"])) ?? 0
 
-        let usesEnvironmentDefaults = !envHost.isEmpty || envPort > 0 || envRateLimit > 0 || envTimeout > 0
+        let usesEnvironmentDefaults = !envHost.isEmpty
+            || envPort > 0
+            || envRateLimit > 0
+            || envTimeout > 0
+            || envModelIdleTimeout > 0
 
         return GatewayConfigDefaults(
             host: envHost.isEmpty ? builtInHost : envHost,
             port: envPort > 0 ? envPort : builtInPort,
             rateLimitPerMinute: envRateLimit > 0 ? envRateLimit : builtInRateLimit,
             timeoutSeconds: envTimeout > 0 ? envTimeout : builtInTimeout,
+            modelIdleTimeoutSeconds: envModelIdleTimeout > 0 ? envModelIdleTimeout : builtInModelIdleTimeout,
             source: usesEnvironmentDefaults ? .environmentDefaults : .builtInDefaults
         )
+    }
+
+    private static func normalizedServedModelIDs(
+        _ rawModelIDs: [String],
+        defaultModelID: String
+    ) throws -> [String] {
+        // Strict path for explicit operator configuration applied at the API boundary.
+        var orderedIDs = rawModelIDs.map(trimmed).filter { !$0.isEmpty }
+        if orderedIDs.isEmpty {
+            orderedIDs = [defaultModelID]
+        }
+        guard !orderedIDs.isEmpty else {
+            throw GatewayConfigValidationError.missingServedModelIDs
+        }
+        var seen: Set<String> = []
+        for modelID in orderedIDs {
+            guard seen.insert(modelID).inserted else {
+                throw GatewayConfigValidationError.duplicateServedModelID
+            }
+        }
+        guard seen.contains(defaultModelID) else {
+            throw GatewayConfigValidationError.defaultModelNotServed
+        }
+        return orderedIDs
+    }
+
+    private static func normalizedFallbackServedModelIDs(
+        _ rawModelIDs: [String],
+        defaultModelID: String
+    ) -> [String] {
+        // Lax bootstrap path for built-in/default seeding before an explicit roster exists.
+        var orderedIDs: [String] = []
+        var seen: Set<String> = []
+        for modelID in rawModelIDs.map(trimmed).filter({ !$0.isEmpty }) {
+            guard seen.insert(modelID).inserted else {
+                continue
+            }
+            orderedIDs.append(modelID)
+        }
+        if !defaultModelID.isEmpty, !seen.contains(defaultModelID) {
+            orderedIDs.insert(defaultModelID, at: 0)
+        }
+        return orderedIDs
     }
 
     private static func resolveStoreURL(environment: [String: String]) -> URL {

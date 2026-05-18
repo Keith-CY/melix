@@ -32,7 +32,7 @@ struct Phase8LoRAWindowSmokeTests {
         let snapshot = phase8LoRAWindowSnapshot(
             models: [baseModel, derivedModel],
             runtimeSessions: [phase8LoRAWindowRuntimeSession()],
-            servedModelID: baseModelID
+            defaultModelID: baseModelID
         )
 
         let directClient = FakeControlPlaneXPCClient()
@@ -184,7 +184,7 @@ struct Phase8LoRAWindowSmokeTests {
             phase8LoRAWindowSnapshot(
                 models: [baseModel],
                 runtimeSessions: [phase8LoRAWindowRuntimeSession()],
-                servedModelID: baseModelID
+                defaultModelID: baseModelID
             )
         )
         let negativeActionRunnerClient = FakeControlPlaneXPCClient()
@@ -192,7 +192,7 @@ struct Phase8LoRAWindowSmokeTests {
             phase8LoRAWindowSnapshot(
                 models: [baseModel],
                 runtimeSessions: [phase8LoRAWindowRuntimeSession()],
-                servedModelID: baseModelID
+                defaultModelID: baseModelID
             )
         )
         await negativeActionRunnerClient.configureExportResult(
@@ -341,30 +341,32 @@ private func phase8LoRAWaitForCondition(
 private func phase8LoRAWindowSnapshot(
     models: [Melix_Controlplane_V1_ModelSummary],
     runtimeSessions: [Melix_Controlplane_V1_ServerSessionRuntimeState] = [],
-    servedModelID: String = ""
+    defaultModelID: String = ""
 ) -> Melix_Controlplane_V1_ServerSnapshot {
     var snapshot = Melix_Controlplane_V1_ServerSnapshot()
     snapshot.serverState = .serverReady
     snapshot.models = models
     snapshot.runtimeSessions = runtimeSessions
-    let normalizedServedModelID = servedModelID.trimmingCharacters(in: .whitespacesAndNewlines)
-    if let runtimeSession = runtimeSessions.first, normalizedServedModelID.isEmpty == false {
+    let normalizedDefaultModelID = defaultModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let runtimeSession = runtimeSessions.first, normalizedDefaultModelID.isEmpty == false {
         var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
         listener.serverSessionID = runtimeSession.serverSessionID
         listener.requestedHost = "127.0.0.1"
         listener.requestedPort = 8080
         listener.effectiveHost = "127.0.0.1"
         listener.effectivePort = 8080
-        listener.servedModelID = normalizedServedModelID
+        listener.defaultModelID = normalizedDefaultModelID
+        listener.servedModelIds = [normalizedDefaultModelID]
         listener.rateLimitPerMinute = 60
         listener.timeoutSeconds = 120
+        listener.modelIdleTimeoutSeconds = 600
         listener.source = .operatorOverride
         listener.activeBinding = true
         snapshot.gatewayConfig.listeners = [listener]
 
         var servingDefaults = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
         servingDefaults.serverSessionID = runtimeSession.serverSessionID
-        servingDefaults.servedModelID = normalizedServedModelID
+        servingDefaults.defaultModelID = normalizedDefaultModelID
         servingDefaults.requestedTemperature = 0.7
         servingDefaults.requestedTopP = 0.9
         servingDefaults.requestedMaxTokens = 512

@@ -1542,7 +1542,8 @@ struct MelixCLIRunnerTests {
               "args": {
                 "server_session_id": "server-session-1",
                 "title": 123,
-                "model_id": "${inputs.model_id}",
+                "default_model_id": "${inputs.model_id}",
+                "served_model_ids": ["${inputs.model_id}"],
                 "host": true,
                 "port": "8080",
                 "rate_limit_per_minute": 60,
@@ -1885,6 +1886,58 @@ struct MelixCLIRunnerTests {
         #expect(quantizeArguments.contains("runtime_generate"))
     }
 
+    @Test("pipeline server session update accepts legacy model id alias")
+    func pipelineServerSessionUpdateAcceptsLegacyModelIDAlias() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let pipelineURL = root.appendingPathComponent("legacy-model-id.pipeline.json")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pipelineJSON = #"""
+        {
+          "schema_version": "melix.pipeline.v1",
+          "name": "legacy model id",
+          "inputs": {
+            "model_id": "melix-dev-text"
+          },
+          "steps": [
+            {
+              "id": "update_session",
+              "command": "server.session.update",
+              "args": {
+                "server_session_id": "server-session-1",
+                "model_id": "${inputs.model_id}"
+              }
+            }
+          ]
+        }
+        """#
+        try Data(pipelineJSON.utf8).write(to: pipelineURL)
+
+        let output = try await MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": root.path]
+        ).run(
+            .pipelineRun(
+                .init(
+                    filePath: pipelineURL.path,
+                    traceID: "trace-legacy-model-id",
+                    dryRun: true
+                )
+            )
+        )
+        let summary = try #require(parseJSONObject(output))
+        let steps = try #require(summary["steps"] as? [[String: Any]])
+        let updateStep = try #require(steps.first)
+        let receiptPath = try #require(updateStep["receipt_path"] as? String)
+        let receipt = try #require(try parseJSONFile(receiptPath))
+        let result = try #require(receipt["result"] as? [String: Any])
+        let arguments = try #require(result["arguments"] as? [String])
+
+        #expect(arguments.contains("--default-model"))
+        #expect(arguments.contains("melix-dev-text"))
+    }
+
     @Test("pipeline dry run redacts Hugging Face download token arguments")
     func pipelineDryRunRedactsHuggingFaceDownloadTokenArguments() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -2082,7 +2135,8 @@ struct MelixCLIRunnerTests {
               "args": {
                 "server_session_id": "${inputs.server_session_id}",
                 "title": "Fake Phase 8",
-                "model_id": "${inputs.model_id}",
+                "default_model_id": "${inputs.model_id}",
+                "served_model_ids": ["${inputs.model_id}"],
                 "host": "127.0.0.1",
                 "port": 8080
               }
@@ -2307,7 +2361,12 @@ struct MelixCLIRunnerTests {
             MelixOperatorSessionState(
                 selectedServerSessionID: "server-session-1",
                 serverSessions: [
-                    .init(id: "server-session-1", title: "Fake Phase 8", modelID: "melix-dev-text")
+                    .init(
+                        id: "server-session-1",
+                        title: "Fake Phase 8",
+                        defaultModelID: "melix-dev-text",
+                        servedModelIDs: ["melix-dev-text"]
+                    )
                 ]
             )
         )
@@ -2503,7 +2562,6 @@ struct MelixCLIRunnerTests {
         ])
         let executor = RecordingCLICommandExecutor(
             responses: [
-                #"{"operation":"registry_snapshot","adapters":[]}"#,
                 #"{"operation":"train_lora","job_id":"lora-job-1","output_path":"/tmp/melix/train_lora/issue365-sft.adapter.json"}"#,
                 #"{"operation":"registry_snapshot","adapters":[]}"#,
                 #"{"operation":"train_alignment","job_id":"align-job-1","output_path":"/tmp/melix/alignment/issue365-dpo.adapter.json","alignment_run_manifest_path":"/tmp/melix/alignment/issue365-dpo.alignment_run.json"}"#,
@@ -5658,7 +5716,7 @@ struct MelixCLIRunnerTests {
             .serverSessionCreate(
                 .init(
                     title: "Vision Session",
-                    modelID: "melix-dev-vlm",
+                    servedModelIDs: ["melix-dev-vlm"],
                     host: "127.0.0.1",
                     port: 12434,
                     accelerationMode: "speculative_decode",
@@ -5678,7 +5736,8 @@ struct MelixCLIRunnerTests {
 
         #expect(selectedServerSessionID == "server-session-1")
         #expect(sessions.count == 1)
-        #expect(sessions.first?["model_id"] as? String == "melix-dev-vlm")
+        #expect(sessions.first?["default_model_id"] as? String == "melix-dev-vlm")
+        #expect(sessions.first?["served_model_ids"] as? [String] == ["melix-dev-vlm"])
 
         _ = try await runner.run(
             .serverStart(.init(serverSessionID: "server-session-1"))
@@ -5688,7 +5747,8 @@ struct MelixCLIRunnerTests {
         let servingDefaultsCall = try #require(await client.lastServingDefaultsApplyRequest)
 
         #expect(gatewayConfigCall.serverSessionID == "server-session-1")
-        #expect(gatewayConfigCall.servedModelID == "melix-dev-vlm")
+        #expect(gatewayConfigCall.defaultModelID == "melix-dev-vlm")
+        #expect(gatewayConfigCall.servedModelIDs == ["melix-dev-vlm"])
         #expect(servingDefaultsCall.serverSessionID == "server-session-1")
         #expect(servingDefaultsCall.accelerationMode == .speculativeDecode)
         #expect(servingDefaultsCall.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
@@ -5703,7 +5763,8 @@ struct MelixCLIRunnerTests {
                     .init(
                         id: "server-session-1",
                         title: "Broken Session",
-                        modelID: "melix-dev-ocr"
+                        defaultModelID: "melix-dev-ocr",
+                        servedModelIDs: ["melix-dev-ocr"]
                     )
                 ]
             )
@@ -5739,7 +5800,7 @@ struct MelixCLIRunnerTests {
             .serverSessionCreate(
                 .init(
                     title: "Qwen Session",
-                    modelID: "mlx-community/Qwen3.5-27B-4bit"
+                    servedModelIDs: ["mlx-community/Qwen3.5-27B-4bit"]
                 )
             )
         )
@@ -5759,6 +5820,47 @@ struct MelixCLIRunnerTests {
         #expect(servingDefaultsCall.accelerationMode == .speculativeDecode)
         #expect(servingDefaultsCall.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
         #expect(servingDefaultsCall.numDraftTokens == 4)
+    }
+
+    @Test("server session update preserves roster when only default model changes")
+    func serverSessionUpdatePreservesRosterWhenOnlyDefaultModelChanges() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let primaryModelID = "mlx-community/Qwen3.5-27B-4bit"
+        let secondaryModelID = "mlx-community/gemma-4-31b-it-4bit"
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        let runner = MelixCLIRunner(client: StubControlPlaneXPCClient(), operatorSessionStore: store)
+
+        _ = try await runner.run(
+            .serverSessionCreate(
+                .init(
+                    title: "Qwen Session",
+                    defaultModelID: primaryModelID,
+                    servedModelIDs: [primaryModelID, secondaryModelID]
+                )
+            )
+        )
+        _ = try await runner.run(
+            .serverSessionUpdate(
+                .init(
+                    serverSessionID: "server-session-1",
+                    defaultModelID: secondaryModelID
+                )
+            )
+        )
+
+        let state = try #require(try store.load())
+        let session = try #require(state.serverSessions.first)
+
+        #expect(session.defaultModelID == secondaryModelID)
+        #expect(session.servedModelIDs == [primaryModelID, secondaryModelID])
     }
 
     @Test("server session low memory profile persists serving defaults for start")
@@ -5783,7 +5885,7 @@ struct MelixCLIRunnerTests {
             .serverSessionCreate(
                 .init(
                     title: "Low Memory Session",
-                    modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    servedModelIDs: ["mlx-community/Qwen3.5-0.8B-OptiQ-4bit"],
                     accelerationProfile: "low-memory"
                 )
             )
@@ -5826,7 +5928,7 @@ struct MelixCLIRunnerTests {
             .serverStart(
                 .init(
                     serverTitle: "Gemma 31B",
-                    modelID: modelID,
+                    servedModelIDs: [modelID],
                     host: "127.0.0.1",
                     port: 12434,
                     rateLimitPerMinute: 60,
@@ -5844,13 +5946,15 @@ struct MelixCLIRunnerTests {
         #expect(state.selectedServerSessionID == "server-session-1")
         #expect(session.id == "server-session-1")
         #expect(session.title == "Gemma 31B")
-        #expect(session.modelID == modelID)
+        #expect(session.defaultModelID == modelID)
+        #expect(session.servedModelIDs == [modelID])
         #expect(session.host == "127.0.0.1")
         #expect(session.port == 12434)
         #expect(session.rateLimitPerMinute == 60)
         #expect(session.timeoutSeconds == 240)
         #expect(gatewayConfigCall.serverSessionID == "server-session-1")
-        #expect(gatewayConfigCall.servedModelID == modelID)
+        #expect(gatewayConfigCall.defaultModelID == modelID)
+        #expect(gatewayConfigCall.servedModelIDs == [modelID])
         #expect(gatewayConfigCall.port == 12434)
         #expect(servingDefaultsCall.serverSessionID == "server-session-1")
         #expect(startedAction == .start("server-session-1"))
@@ -5884,7 +5988,8 @@ struct MelixCLIRunnerTests {
                     .init(
                         id: "server-session-1",
                         title: "Qwen Dev",
-                        modelID: originalModelID,
+                        defaultModelID: originalModelID,
+                        servedModelIDs: [originalModelID],
                         host: "127.0.0.1",
                         port: 8080
                     ),
@@ -5896,7 +6001,7 @@ struct MelixCLIRunnerTests {
             .serverStart(
                 .init(
                     serverTitle: "Qwen Dev",
-                    modelID: updatedModelID,
+                    servedModelIDs: [updatedModelID],
                     host: "0.0.0.0",
                     port: 12435,
                     rateLimitPerMinute: 90,
@@ -5914,15 +6019,74 @@ struct MelixCLIRunnerTests {
         #expect(state.selectedServerSessionID == "server-session-1")
         #expect(session.id == "server-session-1")
         #expect(session.title == "Qwen Dev")
-        #expect(session.modelID == updatedModelID)
+        #expect(session.defaultModelID == updatedModelID)
+        #expect(session.servedModelIDs == [updatedModelID])
         #expect(session.host == "0.0.0.0")
         #expect(session.port == 12435)
         #expect(session.rateLimitPerMinute == 90)
         #expect(session.timeoutSeconds == 300)
         #expect(gatewayConfigCall.serverSessionID == "server-session-1")
-        #expect(gatewayConfigCall.servedModelID == updatedModelID)
+        #expect(gatewayConfigCall.defaultModelID == updatedModelID)
+        #expect(gatewayConfigCall.servedModelIDs == [updatedModelID])
         #expect(gatewayConfigCall.port == 12435)
         #expect(startedAction == .start("server-session-1"))
+    }
+
+    @Test("server start shortcut preserves roster when only default model changes")
+    func serverStartShortcutPreservesRosterWhenOnlyDefaultModelChanges() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let originalModelID = "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"
+        let updatedDefaultID = "mlx-community/gemma-4-31b-it-4bit"
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: [
+            makeModelSummary(id: originalModelID, kind: "text"),
+            makeModelSummary(id: updatedDefaultID, kind: "text"),
+        ]))
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        try store.save(
+            MelixOperatorSessionState(
+                selectedSurfaceID: "server",
+                selectedToolSectionID: "modelsLibrary",
+                selectedServerSessionID: "server-session-1",
+                serverSessions: [
+                    .init(
+                        id: "server-session-1",
+                        title: "Qwen Dev",
+                        defaultModelID: originalModelID,
+                        servedModelIDs: [originalModelID, updatedDefaultID],
+                        host: "127.0.0.1",
+                        port: 8080
+                    ),
+                ]
+            )
+        )
+
+        _ = try await MelixCLIRunner(client: client, operatorSessionStore: store).run(
+            .serverStart(
+                .init(
+                    serverTitle: "Qwen Dev",
+                    defaultModelID: updatedDefaultID,
+                    port: 12435
+                )
+            )
+        )
+
+        let state = try #require(try store.load())
+        let session = try #require(state.serverSessions.first)
+        let gatewayConfigCall = try #require(await client.lastGatewayConfigApplyRequest)
+
+        #expect(session.defaultModelID == updatedDefaultID)
+        #expect(session.servedModelIDs == [originalModelID, updatedDefaultID])
+        #expect(gatewayConfigCall.defaultModelID == updatedDefaultID)
+        #expect(gatewayConfigCall.servedModelIDs == [originalModelID, updatedDefaultID])
     }
 
     @Test("server start shortcut allocates the first available generated id")
@@ -5951,12 +6115,14 @@ struct MelixCLIRunnerTests {
                     .init(
                         id: "server-session-1",
                         title: "Existing One",
-                        modelID: modelID
+                        defaultModelID: modelID,
+                        servedModelIDs: [modelID]
                     ),
                     .init(
                         id: "server-session-3",
                         title: "Existing Three",
-                        modelID: modelID
+                        defaultModelID: modelID,
+                        servedModelIDs: [modelID]
                     ),
                 ]
             )
@@ -5966,7 +6132,7 @@ struct MelixCLIRunnerTests {
             .serverStart(
                 .init(
                     serverTitle: "Gemma 31B",
-                    modelID: modelID,
+                    servedModelIDs: [modelID],
                     port: 12434
                 )
             )
@@ -5997,10 +6163,10 @@ struct MelixCLIRunnerTests {
             )
         )
 
-        await #expect(throws: MelixCLIError.missingRequired("TITLE is required when passing --model, --host, --port, --rate-limit-per-minute, or --timeout-seconds to melix server start.")) {
-            _ = try await runner.run(.serverStart(.init(modelID: "mlx-community/gemma-4-31b-it-4bit")))
+        await #expect(throws: MelixCLIError.missingRequired("TITLE is required when passing --model, --models, --default-model, --host, --port, --rate-limit-per-minute, --timeout-seconds, or --model-idle-timeout-seconds to melix server start.")) {
+            _ = try await runner.run(.serverStart(.init(servedModelIDs: ["mlx-community/gemma-4-31b-it-4bit"])))
         }
-        await #expect(throws: MelixCLIError.missingRequired("--model is required when starting a titled server session.")) {
+        await #expect(throws: MelixCLIError.missingRequired("--model or --models is required when starting a titled server session.")) {
             _ = try await runner.run(.serverStart(.init(serverTitle: "Gemma 31B")))
         }
     }
@@ -6041,7 +6207,8 @@ struct MelixCLIRunnerTests {
                     .init(
                         id: "server-session-1",
                         title: "Imported Session",
-                        modelID: importedModelID
+                        defaultModelID: importedModelID,
+                        servedModelIDs: [importedModelID]
                     )
                 ]
             )
@@ -6054,7 +6221,8 @@ struct MelixCLIRunnerTests {
         let gatewayConfigCall = try #require(await client.lastGatewayConfigApplyRequest)
         let startedAction = try #require(await client.lastServerAction)
 
-        #expect(gatewayConfigCall.servedModelID == importedModelID)
+        #expect(gatewayConfigCall.defaultModelID == importedModelID)
+        #expect(gatewayConfigCall.servedModelIDs == [importedModelID])
         #expect(startedAction == .start("server-session-1"))
     }
 
@@ -8677,9 +8845,9 @@ struct MelixCLIRunnerTests {
         #expect(response["job_id"] as? String == "bench-1")
         #expect(response["output_path"] as? String == outputURL.path)
         #expect(response["row_count"] as? Int == 2)
-        #expect(csv.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_repo,dataset_config,dataset_split,sample_size,batch_factor,metric_name,metric_value,unit,created_at_unix_ms"))
-        #expect(csv.contains("bench-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,smoke,HuggingFaceH4/ultrachat_200k,default,train_sft,4,2,bench.smoke.tokens_per_second,47.08,tok/s,1712100000000"))
-        #expect(csv.contains("bench-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,smoke,HuggingFaceH4/ultrachat_200k,default,train_sft,4,2,bench.smoke.ttft_ms,24.45,ms,1712100000000"))
+        #expect(csv.contains("job_id,model_id,task_kind,source_repo,suite_id,dataset_repo,dataset_config,dataset_split,sample_size,batch_factor,acceleration_profile,metric_name,metric_value,unit,created_at_unix_ms"))
+        #expect(csv.contains("bench-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,smoke,HuggingFaceH4/ultrachat_200k,default,train_sft,4,2,,bench.smoke.tokens_per_second,47.08,tok/s,1712100000000"))
+        #expect(csv.contains("bench-1,melix-dev-text,text-generation,HuggingFaceH4/ultrachat_200k,smoke,HuggingFaceH4/ultrachat_200k,default,train_sft,4,2,,bench.smoke.ttft_ms,24.45,ms,1712100000000"))
     }
 
     @Test("bench export-csv fails when the requested job is not present")
@@ -8911,8 +9079,8 @@ struct MelixCLIRunnerTests {
 
         #expect(response["job_id"] as? String == "bench-matrix-1")
         #expect(response["row_count"] as? Int == 1)
-        #expect(csv.contains("job_id,task_kind,source_repo,model_id,suite_id,context_length,generation_length,batch_size,cache_profile,reasoning_mode,structured_output_mode,concurrency_level,repeats,requests,duration_seconds,ttft_mean_ms,ttft_std_ms,request_latency_mean_ms,request_latency_std_ms,prefill_tokens_per_second_mean,decode_tokens_per_second_mean,throughput_requests_per_second,throughput_tokens_per_second,success_rate,peak_memory_bytes_max,queue_wait_mean_ms,queue_wait_p95_ms,cell_wall_ms,completed_count,failed_count,ttft_p50_ms,ttft_p95_ms,request_latency_p50_ms,request_latency_p95_ms,created_at_unix_ms"))
-        #expect(csv.contains("bench-matrix-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,smoke,1024,128,2,cold,enabled,plain_text,1,3,24,0,24.45,1.2,88.4,3.1,1400.0,58.2,3.8,221.5,1.0,2147483648,5.1,9.2,0.0,0,0,0.0,0.0,0.0,0.0,1712200000000"))
+        #expect(csv.contains("job_id,task_kind,source_repo,model_id,suite_id,context_length,generation_length,batch_size,cache_profile,acceleration_profile,reasoning_mode,structured_output_mode,concurrency_level,repeats,requests,duration_seconds,ttft_mean_ms,ttft_std_ms,request_latency_mean_ms,request_latency_std_ms,prefill_tokens_per_second_mean,decode_tokens_per_second_mean,throughput_requests_per_second,throughput_tokens_per_second,success_rate,peak_memory_bytes_max,queue_wait_mean_ms,queue_wait_p95_ms,cell_wall_ms,completed_count,failed_count,ttft_p50_ms,ttft_p95_ms,request_latency_p50_ms,request_latency_p95_ms,created_at_unix_ms"))
+        #expect(csv.contains("bench-matrix-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,smoke,1024,128,2,cold,,enabled,plain_text,1,3,24,0,24.45,1.2,88.4,3.1,1400.0,58.2,3.8,221.5,1.0,2147483648,5.1,9.2,0.0,0,0,0.0,0.0,0.0,0.0,1712200000000"))
     }
 
     @Test("bench matrix export-summary-csv returns the written path in plain text")
@@ -8963,8 +9131,8 @@ struct MelixCLIRunnerTests {
 
         #expect(response["job_id"] as? String == "bench-matrix-1")
         #expect(response["row_count"] as? Int == 1)
-        #expect(csv.contains("job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms,request_latency_ms,prefill_tokens_per_second,decode_tokens_per_second,queue_wait_ms,peak_memory_bytes,status,error_code,dataset_materialize_ms,prompt_render_ms,warmup_ms,prefill_ms,decode_ms,tokens_in,tokens_out,first_token_index,cache_hit,runtime_kind,error_stage,speculative_acceptance_rate,speculative_rollback_rate,speculative_accepted_tokens,speculative_rejected_tokens,speculative_fallback_count,speculative_num_draft_tokens,speculative_draft_model_configured,speculative_draft_propose_ms,speculative_target_verify_ms,dflash_enabled,dflash_block_size,dflash_rollback_count,dflash_target_hidden_layers,created_at_unix_ms"))
-        #expect(csv.contains("bench-matrix-1,cell-1,text-generation,smoke,1024,128,2,cold,enabled,plain_text,1,0,0,24.45,88.4,1400.0,58.2,5.1,2147483648,completed,,0.0,0.0,0.0,0.0,0.0,0,0,0,false,,,0.0,0.0,0,0,0,0,false,0.0,0.0,false,0,0,0,1712200000000"))
+        #expect(csv.contains("job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,acceleration_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms,request_latency_ms,prefill_tokens_per_second,decode_tokens_per_second,queue_wait_ms,peak_memory_bytes,status,error_code,dataset_materialize_ms,prompt_render_ms,warmup_ms,prefill_ms,decode_ms,tokens_in,tokens_out,first_token_index,cache_hit,runtime_kind,error_stage,speculative_acceptance_rate,speculative_rollback_rate,speculative_accepted_tokens,speculative_rejected_tokens,speculative_fallback_count,speculative_num_draft_tokens,speculative_draft_model_configured,speculative_draft_propose_ms,speculative_target_verify_ms,dflash_enabled,dflash_block_size,dflash_rollback_count,dflash_target_hidden_layers,created_at_unix_ms"))
+        #expect(csv.contains("bench-matrix-1,cell-1,text-generation,smoke,1024,128,2,cold,,enabled,plain_text,1,0,0,24.45,88.4,1400.0,58.2,5.1,2147483648,completed,,0.0,0.0,0.0,0.0,0.0,0,0,0,false,,,0.0,0.0,0,0,0,0,false,0.0,0.0,false,0,0,0,1712200000000"))
     }
 
     @Test("bench matrix export-requests-csv returns the written path in plain text")
@@ -11327,9 +11495,11 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         let serverSessionID: String
         let host: String
         let port: Int
-        let servedModelID: String
+        let defaultModelID: String
+        let servedModelIDs: [String]
         let rateLimitPerMinute: Int
         let timeoutSeconds: Int
+        let modelIdleTimeoutSeconds: Int
     }
 
     struct ServingDefaultsApplyCall: Sendable, Equatable {
@@ -11720,17 +11890,21 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         serverSessionID: String,
         host: String,
         port: Int,
-        servedModelID: String,
+        defaultModelID: String,
+        servedModelIDs: [String],
         rateLimitPerMinute: Int,
-        timeoutSeconds: Int
+        timeoutSeconds: Int,
+        modelIdleTimeoutSeconds: Int
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
         lastGatewayConfigApplyRequest = GatewayConfigApplyCall(
             serverSessionID: serverSessionID,
             host: host,
             port: port,
-            servedModelID: servedModelID,
+            defaultModelID: defaultModelID,
+            servedModelIDs: servedModelIDs,
             rateLimitPerMinute: rateLimitPerMinute,
-            timeoutSeconds: timeoutSeconds
+            timeoutSeconds: timeoutSeconds,
+            modelIdleTimeoutSeconds: modelIdleTimeoutSeconds
         )
         return snapshot
     }
