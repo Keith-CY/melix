@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass
+from functools import lru_cache
 import hashlib
 import json
 import os
@@ -941,9 +942,7 @@ def _first_split_alias_delimiter(candidate: str) -> int:
 
 
 def _path_matches_split(relative_path: Path, split: str) -> bool:
-    normalized_split = split.lower()
-    split_dash_prefix = f"{normalized_split}-"
-    split_underscore_prefix = f"{normalized_split}_"
+    normalized_split, split_dash_prefix, split_underscore_prefix = _split_match_tokens(split)
     if _path_part_matches_split(
         relative_path.name,
         normalized_split,
@@ -961,6 +960,12 @@ def _path_matches_split(relative_path: Path, split: str) -> bool:
         ):
             return True
     return False
+
+
+@lru_cache(maxsize=16)
+def _split_match_tokens(split: str) -> tuple[str, str, str]:
+    normalized_split = split.lower()
+    return normalized_split, f"{normalized_split}-", f"{normalized_split}_"
 
 
 def _path_part_matches_split(
