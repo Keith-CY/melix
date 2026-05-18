@@ -357,24 +357,36 @@ class LiveMelixStack:
 
     def _remove_tree(self, root: Path) -> None:
         root_path = os.fspath(root)
-        stack: list[tuple[str, bool]] = [(root_path, False)]
+        post_order_marker = object()
+        stack: list[str | object] = [root_path]
+        scandir = os.scandir
+        unlink = os.unlink
+        rmdir = os.rmdir
+        stack_pop = stack.pop
+        stack_append = stack.append
+
         while stack:
-            path, visited = stack.pop()
-            if visited:
+            item = stack_pop()
+            if item is post_order_marker:
+                path = stack_pop()
                 try:
-                    os.rmdir(path)
+                    rmdir(path)  # type: ignore[arg-type]
                 except FileNotFoundError:
                     pass
                 continue
+
+            path = item
             try:
-                with os.scandir(path) as entries:
-                    stack.append((path, True))
+                with scandir(path) as entries:  # type: ignore[arg-type]
+                    stack_append(path)
+                    stack_append(post_order_marker)
                     for entry in entries:
                         try:
+                            entry_path = entry.path
                             if entry.is_dir(follow_symlinks=False):
-                                stack.append((entry.path, False))
+                                stack_append(entry_path)
                             else:
-                                os.unlink(entry.path)
+                                unlink(entry_path)
                         except FileNotFoundError:
                             pass
             except (FileNotFoundError, NotADirectoryError):
