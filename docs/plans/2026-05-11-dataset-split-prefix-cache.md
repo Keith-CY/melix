@@ -21,7 +21,7 @@ The probe includes focused `test_command`, `coverage_command`, and `probe_comman
 ## Implementation Plan
 
 1. Keep the existing `_path_matches_split(...)` behavior intact.
-2. Precompute the selected split's dash and underscore prefixes once per call instead of rebuilding the same f-strings for every path component and stem comparison.
+2. Cache the selected split's normalized value plus dash and underscore prefixes across repeated calls, so the common split-filter scan path avoids rebuilding identical short strings for every candidate path.
 3. Reuse the existing focused dataset registry tests and registered probe for behavior and performance validation.
 
 ## Success Criteria
