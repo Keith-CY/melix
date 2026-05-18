@@ -2,6 +2,13 @@ import Foundation
 import MelixControlPlaneProtocol
 import MelixWorkerProtocol
 
+private extension UInt32 {
+    func saturatingAdd(_ value: UInt32) -> UInt32 {
+        let (result, overflow) = addingReportingOverflow(value)
+        return overflow ? UInt32.max : result
+    }
+}
+
 public actor ModelCatalog {
     public struct EvictionDecision: Equatable, Sendable {
         public let modelID: String
@@ -22,6 +29,22 @@ public actor ModelCatalog {
             pinnedProtectedModelIDs: [String] = []
         ) {
             self.decisions = decisions
+            self.pinnedProtectedModelIDs = pinnedProtectedModelIDs
+        }
+    }
+
+    public struct IdleSweepPlan: Equatable, Sendable {
+        public let decisions: [EvictionDecision]
+        public let activeProtectedModelIDs: [String]
+        public let pinnedProtectedModelIDs: [String]
+
+        public init(
+            decisions: [EvictionDecision] = [],
+            activeProtectedModelIDs: [String] = [],
+            pinnedProtectedModelIDs: [String] = []
+        ) {
+            self.decisions = decisions
+            self.activeProtectedModelIDs = activeProtectedModelIDs
             self.pinnedProtectedModelIDs = pinnedProtectedModelIDs
         }
     }
@@ -105,6 +128,7 @@ public actor ModelCatalog {
     private var models: [String: Melix_Controlplane_V1_ModelSummary]
     private var dispatchHandles: [String: String]
     private var residencyLedger: [String: ResidencyLedger]
+    private var activeRequestCountByModelID: [String: UInt32]
     private let seedModelIDs: Set<String>
     private var registryModelIDs: Set<String>
     private var registryState: RegistryState
@@ -142,6 +166,7 @@ public actor ModelCatalog {
             }
         )
         self.residencyLedger = ledger
+        self.activeRequestCountByModelID = [:]
         self.seedModelIDs = Set(normalizedSeedModels.map(\.modelID))
         self.registryModelIDs = []
         self.registryState = RegistryState()
@@ -349,6 +374,59 @@ public actor ModelCatalog {
         model = synchronized(model)
         models[id] = model
         return model
+    }
+
+    public func beginRequest(modelID: String) {
+        // Every beginRequest call must be paired with exactly one finishRequest
+        // call, either via non-streaming defer cleanup or the SSE onComplete hook.
+        let current = activeRequestCountByModelID[modelID] ?? 0
+        activeRequestCountByModelID[modelID] = current.saturatingAdd(1)
+        touchModel(id: modelID)
+    }
+
+    public func finishRequest(modelID: String) {
+        let current = activeRequestCountByModelID[modelID] ?? 0
+        if current <= 1 {
+            activeRequestCountByModelID.removeValue(forKey: modelID)
+        } else {
+            activeRequestCountByModelID[modelID] = current - 1
+        }
+        touchModel(id: modelID)
+    }
+
+    public func idleSweepPlan(
+        servedModelIDs: [String],
+        idleTimeoutSeconds: UInt32
+    ) -> IdleSweepPlan {
+        guard idleTimeoutSeconds > 0 else {
+            return IdleSweepPlan()
+        }
+        let currentNowUnixMs = nowUnixMs()
+        var decisions: [EvictionDecision] = []
+        var activeProtected: [String] = []
+        var pinnedProtected: [String] = []
+
+        let servedModels = servedModelIDs.compactMap { models[$0] }.filter(Self.isResident)
+        for model in servedModels.sorted(by: compareRecency) {
+            if activeRequestCountByModelID[model.modelID, default: 0] > 0 {
+                activeProtected.append(model.modelID)
+                continue
+            }
+            if Self.isPinProtected(model) {
+                pinnedProtected.append(model.modelID)
+                continue
+            }
+            let idleDeadline = lastAccessUnixMs(for: model.modelID) + Int64(idleTimeoutSeconds) * 1_000
+            if idleDeadline <= currentNowUnixMs {
+                decisions.append(EvictionDecision(modelID: model.modelID, reason: "idle_timeout"))
+            }
+        }
+
+        return IdleSweepPlan(
+            decisions: decisions,
+            activeProtectedModelIDs: activeProtected.sorted(),
+            pinnedProtectedModelIDs: pinnedProtected.sorted()
+        )
     }
 
     public func syncRegistryModels(

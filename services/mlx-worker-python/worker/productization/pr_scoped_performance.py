@@ -16,6 +16,7 @@ import threading
 import time
 import tracemalloc
 import types
+from collections.abc import Mapping
 from typing import Any
 
 
@@ -39,14 +40,33 @@ _FORCE_ALL_WILDCARD_GLOBS = tuple(glob for glob in _FORCE_ALL_GLOBS if _glob_has
 _FORCE_ALL_CONTEXT_ONLY_PATHS = frozenset(
     {
         "infra/perf/pr_scoped_probes.json",
+        "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
         "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
     }
 )
+_FORCE_ALL_DIRECT_PROBE_IDS_BY_EXACT_PATH = {
+    "infra/perf/pr_scoped_probes.json": frozenset({"pr-scoped-performance-registry-cache"}),
+    "services/mlx-worker-python/worker/productization/pr_scoped_performance.py": frozenset(
+        {
+            "pr-scoped-performance-registry-cache",
+            "pr-scoped-performance-scope-matcher",
+        }
+    ),
+}
 _COVERAGE_PERCENT_RE = re.compile(r"TOTAL\s+\d+\s+\d+\s+(\d+)%")
 _TEXT_FILE_SUFFIXES = {".md", ".py", ".json", ".txt", ".yaml", ".yml"}
 _COMMAND_HEARTBEAT_SECONDS = 30.0
 _MATCH_PROBE_INDEXES_CACHE: dict[tuple[int, int, tuple[str, ...]], frozenset[int]] = {}
+_PROBE_ID_INDEX_CACHE: dict[tuple[int, int], dict[str, int]] = {}
 _PROBE_SCOPE_DICT_CACHE: dict[tuple[int, str], dict[str, object]] = {}
+_SCOPE_SELECTION_CACHE: dict[
+    tuple[int, int, tuple[str, ...]],
+    tuple[bool, tuple[str, ...], tuple[dict[str, object], ...]],
+] = {}
+_SCOPE_SELECTED_PROBES_WITH_COVERAGE_CACHE: dict[
+    tuple[int, int, tuple[str, ...]],
+    tuple[dict[str, object], ...],
+] = {}
 
 
 def _log_progress(message: str) -> None:
@@ -117,7 +137,8 @@ _PROBE_REGISTRY_CACHE: dict[str, tuple[int, int, tuple[ProbeDefinition, ...]]] =
 
 
 def _probe_registry_cache_key(path: str | Path) -> str:
-    return os.path.abspath(os.fspath(path))
+    raw_path = os.fspath(path)
+    return raw_path if os.path.isabs(raw_path) else os.path.abspath(raw_path)
 
 
 def _parse_probe_registry_payload(payload: object) -> tuple[ProbeDefinition, ...]:
@@ -177,15 +198,14 @@ def _load_probe_registry_uncached(
 
 
 def load_probe_registry(path: str | Path) -> tuple[ProbeDefinition, ...]:
-    path_obj = Path(path)
-    cache_key = _probe_registry_cache_key(path_obj)
-    stat_result = path_obj.stat()
+    cache_key = _probe_registry_cache_key(path)
+    stat_result = os.stat(cache_key)
     cached = _PROBE_REGISTRY_CACHE.get(cache_key)
     if cached is not None and cached[0] == stat_result.st_mtime_ns and cached[1] == stat_result.st_size:
         return cached[2]
 
     return _load_probe_registry_uncached(
-        path_obj=path_obj,
+        path_obj=Path(cache_key),
         cache_key=cache_key,
         mtime_ns=stat_result.st_mtime_ns,
         size=stat_result.st_size,
@@ -228,29 +248,23 @@ def build_scope_report(
 ) -> dict[str, object]:
     probes = load_probe_registry_for_scope(registry_path)
     changed_path_set = {path for path in changed_files if path}
-    force_all = bool(_FORCE_ALL_EXACT_PATHS & changed_path_set) or _changed_paths_match_force_all_wildcards(
-        changed_path_set
-    )
-    direct_changed_path_set = changed_path_set - _FORCE_ALL_CONTEXT_ONLY_PATHS
-    matched_probe_indexes = (
-        frozenset()
-        if not direct_changed_path_set
-        else _match_probe_indexes(changed_paths=direct_changed_path_set, probes=probes)
-    )
-    matched_probe_indexes_ordered = tuple(sorted(matched_probe_indexes))
-    if force_all:
-        selected = probes
-    else:
-        selected = tuple(probes[index] for index in matched_probe_indexes_ordered)
-    matched_probe_ids = [probes[index].probe_id for index in matched_probe_indexes_ordered]
     changed_paths = tuple(sorted(changed_path_set))
+    force_all, matched_probe_ids, selected_probes = _scope_selection(
+        probes=probes,
+        changed_paths=changed_paths,
+    )
+    selected_probes_with_coverage_paths = _selected_probes_with_coverage_paths(
+        probes=probes,
+        changed_paths=changed_paths,
+        selected_probes=selected_probes,
+    )
     return {
         "schema_version": _SCOPE_SCHEMA_VERSION,
         "changed_files": list(changed_paths),
         "force_all": force_all,
-        "matched_probe_ids": matched_probe_ids,
-        "selected_probes": [_probe_scope_dict(probe) for probe in selected],
-        "selected_count": len(selected),
+        "matched_probe_ids": list(matched_probe_ids),
+        "selected_probes": list(selected_probes_with_coverage_paths),
+        "selected_count": len(selected_probes_with_coverage_paths),
     }
 
 
@@ -260,6 +274,7 @@ def run_probe_job(
     probe_id: str,
     base_repo: str | Path,
     head_repo: str | Path,
+    env: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, object], bool]:
     probes = {probe.probe_id: probe for probe in load_probe_registry(registry_path)}
     probe = probes.get(probe_id)
@@ -267,16 +282,16 @@ def run_probe_job(
         raise ValueError(f"unknown probe id: {probe_id}")
 
     _log_progress(f"{probe_id}: starting head verification")
-    head_verification = _run_head_verification(probe=probe, repo_root=Path(head_repo))
+    head_verification = _run_head_verification(probe=probe, repo_root=Path(head_repo), env=env)
     _log_progress(
         f"{probe_id}: head verification completed "
         f"test_ok={head_verification['test']['ok']} coverage_ok={head_verification['coverage']['ok']}"
     )
     _log_progress(f"{probe_id}: starting base probe")
-    base_probe = _run_probe_impl(probe=probe, repo_root=Path(base_repo), repo_label="base")
+    base_probe = _run_probe_impl(probe=probe, repo_root=Path(base_repo), repo_label="base", env=env)
     _log_progress(f"{probe_id}: base probe completed ok={base_probe['ok']}")
     _log_progress(f"{probe_id}: starting head probe")
-    head_probe = _run_probe_impl(probe=probe, repo_root=Path(head_repo), repo_label="head")
+    head_probe = _run_probe_impl(probe=probe, repo_root=Path(head_repo), repo_label="head", env=env)
     _log_progress(f"{probe_id}: head probe completed ok={head_probe['ok']}")
     success = (
         head_verification["test"]["ok"]
@@ -310,9 +325,15 @@ def build_performance_report(
     rows: list[dict[str, object]] = []
     force_all = bool(scope.get("force_all", False))
     matched_probe_ids = set(_string_list(scope.get("matched_probe_ids")))
-    gate_probe_ids = matched_probe_ids if force_all and matched_probe_ids else {
-        str(probe.get("id", "")).strip() for probe in selected_probes if str(probe.get("id", "")).strip()
-    }
+    gate_probe_ids = (
+        matched_probe_ids
+        if force_all
+        else {
+            str(probe.get("id", "")).strip()
+            for probe in selected_probes
+            if str(probe.get("id", "")).strip()
+        }
+    )
     regression_count = 0
     context_regression_count = 0
     verification_failure_count = 0
@@ -461,9 +482,14 @@ def write_report_outputs(
     return outputs
 
 
-def _run_head_verification(*, probe: ProbeDefinition, repo_root: Path) -> dict[str, object]:
+def _run_head_verification(
+    *,
+    probe: ProbeDefinition,
+    repo_root: Path,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, object]:
     if probe.coverage_replays_tests:
-        coverage_result = _run_command(probe.coverage_command, cwd=repo_root)
+        coverage_result = _run_command(probe.coverage_command, cwd=repo_root, env=env)
         test_result = {
             "command": probe.test_command,
             "ok": coverage_result["ok"],
@@ -473,9 +499,9 @@ def _run_head_verification(*, probe: ProbeDefinition, repo_root: Path) -> dict[s
             "coverage_pct": None,
         }
         return {"test": test_result, "coverage": coverage_result}
-    test_result = _run_command(probe.test_command, cwd=repo_root)
+    test_result = _run_command(probe.test_command, cwd=repo_root, env=env)
     coverage_result = (
-        _run_command(probe.coverage_command, cwd=repo_root)
+        _run_command(probe.coverage_command, cwd=repo_root, env=env)
         if test_result["ok"]
         else {
             "command": probe.coverage_command,
@@ -489,7 +515,12 @@ def _run_head_verification(*, probe: ProbeDefinition, repo_root: Path) -> dict[s
     return {"test": test_result, "coverage": coverage_result}
 
 
-def _run_command(command: str, *, cwd: Path) -> dict[str, object]:
+def _run_command(
+    command: str,
+    *,
+    cwd: Path,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, object]:
     command_summary = _summarize_command(command)
     _log_progress(f"starting command in {cwd}: {command_summary}")
     started = time.perf_counter()
@@ -501,6 +532,7 @@ def _run_command(command: str, *, cwd: Path) -> dict[str, object]:
         stderr=subprocess.PIPE,
         text=True,
         bufsize=1,
+        env=None if env is None else dict(env),
     )
     stdout_chunks: list[str] = []
     stderr_chunks: list[str] = []
@@ -546,10 +578,16 @@ def _run_command(command: str, *, cwd: Path) -> dict[str, object]:
     }
 
 
-def _run_probe_impl(*, probe: ProbeDefinition, repo_root: Path, repo_label: str) -> dict[str, object]:
+def _run_probe_impl(
+    *,
+    probe: ProbeDefinition,
+    repo_root: Path,
+    repo_label: str,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, object]:
     started = time.perf_counter()
     try:
-        metrics = _dispatch_probe_impl(probe=probe, repo_root=repo_root)
+        metrics = _dispatch_probe_impl(probe=probe, repo_root=repo_root, env=env)
         return {
             "repo_label": repo_label,
             "ok": True,
@@ -566,7 +604,12 @@ def _run_probe_impl(*, probe: ProbeDefinition, repo_root: Path, repo_label: str)
         }
 
 
-def _dispatch_probe_impl(*, probe: ProbeDefinition, repo_root: Path) -> dict[str, float]:
+def _dispatch_probe_impl(
+    *,
+    probe: ProbeDefinition,
+    repo_root: Path,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, float]:
     if probe.probe_impl == "benchmark_evaluation_report":
         return _probe_benchmark_evaluation_report(repo_root)
     if probe.probe_impl == "benchmark_export_run_scan":
@@ -596,16 +639,22 @@ def _dispatch_probe_impl(*, probe: ProbeDefinition, repo_root: Path) -> dict[str
     if probe.probe_impl == "pr_scoped_performance_registry_cache":
         return _probe_pr_scoped_performance_registry_cache(repo_root)
     if probe.probe_impl == "command_json":
-        return _probe_command_json(probe=probe, repo_root=repo_root)
+        return _probe_command_json(probe=probe, repo_root=repo_root, env=env)
     raise ValueError(f"unsupported probe implementation: {probe.probe_impl}")
 
 
-def _probe_command_json(*, probe: ProbeDefinition, repo_root: Path) -> dict[str, float]:
+def _probe_command_json(
+    *,
+    probe: ProbeDefinition,
+    repo_root: Path,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, float]:
     if not probe.probe_command:
         raise ValueError("command_json probes require a non-empty probe_command")
     completed = _run_command(
         probe.probe_command,
         cwd=repo_root,
+        env=env,
     )
     if completed["returncode"] != 0:
         raise RuntimeError(
@@ -2320,6 +2369,110 @@ def _probe_scope_dict(probe: ProbeDefinition) -> dict[str, object]:
     return cached
 
 
+def _scope_selection(
+    *,
+    probes: tuple[ProbeDefinition, ...],
+    changed_paths: tuple[str, ...],
+) -> tuple[bool, tuple[str, ...], tuple[dict[str, object], ...]]:
+    cache_key = (id(probes), len(probes), changed_paths)
+    cached = _SCOPE_SELECTION_CACHE.get(cache_key)
+    if cached is None:
+        cached = _scope_selection_uncached(probes=probes, changed_paths=changed_paths)
+        _SCOPE_SELECTION_CACHE[cache_key] = cached
+    return cached
+
+
+def _scope_selection_uncached(
+    *,
+    probes: tuple[ProbeDefinition, ...],
+    changed_paths: tuple[str, ...],
+) -> tuple[bool, tuple[str, ...], tuple[dict[str, object], ...]]:
+    changed_path_set = frozenset(changed_paths)
+    force_all = bool(_FORCE_ALL_EXACT_PATHS & changed_path_set) or _changed_paths_match_force_all_wildcards(
+        changed_path_set
+    )
+    direct_changed_path_set = changed_path_set - _FORCE_ALL_CONTEXT_ONLY_PATHS
+    matched_probe_indexes = (
+        frozenset()
+        if not direct_changed_path_set
+        else _match_probe_indexes(changed_paths=direct_changed_path_set, probes=probes)
+    )
+    matched_probe_indexes = matched_probe_indexes | _force_all_direct_probe_indexes(
+        changed_paths=changed_path_set,
+        probes=probes,
+    )
+    selected_probes = tuple(
+        _probe_scope_dict(probe)
+        for index, probe in enumerate(probes)
+        if force_all or index in matched_probe_indexes
+    )
+    matched_probe_ids = tuple(
+        probe.probe_id
+        for index, probe in enumerate(probes)
+        if index in matched_probe_indexes
+    )
+    return force_all, matched_probe_ids, selected_probes
+
+
+def _coverage_paths_by_probe_id(
+    *,
+    changed_paths: tuple[str, ...],
+    probes: tuple[ProbeDefinition, ...],
+) -> dict[str, tuple[str, ...]]:
+    if not changed_paths:
+        return {}
+    exact_path_to_probe_indexes, wildcard_glob_matchers = _probe_match_indexes(probes)
+    coverage_paths_by_probe_index: dict[int, list[str]] = {}
+    for path in changed_paths:
+        direct_probe_ids = _FORCE_ALL_DIRECT_PROBE_IDS_BY_EXACT_PATH.get(path)
+        if path in _FORCE_ALL_CONTEXT_ONLY_PATHS:
+            if direct_probe_ids:
+                probe_id_to_index = _probe_id_to_index(probes)
+                for probe_id in direct_probe_ids:
+                    if (probe_index := probe_id_to_index.get(probe_id)) is not None:
+                        coverage_paths_by_probe_index.setdefault(probe_index, []).append(path)
+            continue
+        probe_indexes = exact_path_to_probe_indexes.get(path)
+        if probe_indexes is not None:
+            for probe_index in probe_indexes:
+                coverage_paths_by_probe_index.setdefault(probe_index, []).append(path)
+        for prefix, pattern, probe_indexes in wildcard_glob_matchers:
+            if prefix and not path.startswith(prefix):
+                continue
+            if pattern.match(path) is not None:
+                for probe_index in probe_indexes:
+                    coverage_paths_by_probe_index.setdefault(probe_index, []).append(path)
+    return {
+        probes[probe_index].probe_id: tuple(coverage_paths)
+        for probe_index, coverage_paths in coverage_paths_by_probe_index.items()
+    }
+
+
+def _selected_probes_with_coverage_paths(
+    *,
+    probes: tuple[ProbeDefinition, ...],
+    changed_paths: tuple[str, ...],
+    selected_probes: tuple[dict[str, object], ...],
+) -> tuple[dict[str, object], ...]:
+    cache_key = (id(probes), len(probes), changed_paths)
+    cached = _SCOPE_SELECTED_PROBES_WITH_COVERAGE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    coverage_paths_by_probe_id = _coverage_paths_by_probe_id(
+        changed_paths=changed_paths,
+        probes=probes,
+    )
+    cached = tuple(
+        {
+            **probe_entry,
+            "coverage_paths": list(coverage_paths_by_probe_id.get(str(probe_entry["id"]), ())),
+        }
+        for probe_entry in selected_probes
+    )
+    _SCOPE_SELECTED_PROBES_WITH_COVERAGE_CACHE[cache_key] = cached
+    return cached
+
+
 def _match_probe_indexes(
     *,
     changed_paths: set[str] | frozenset[str] | tuple[str, ...],
@@ -2354,6 +2507,50 @@ def _match_probe_indexes_uncached(
             if pattern.match(path) is not None:
                 matched_probe_indexes.update(probe_indexes)
     return frozenset(matched_probe_indexes)
+
+
+def _force_all_direct_probe_indexes(
+    *,
+    changed_paths: set[str] | frozenset[str] | tuple[str, ...],
+    probes: tuple[ProbeDefinition, ...],
+) -> frozenset[int]:
+    direct_probe_ids: set[str] = set()
+    for path in changed_paths:
+        direct_probe_ids.update(_FORCE_ALL_DIRECT_PROBE_IDS_BY_EXACT_PATH.get(path, ()))
+    if not direct_probe_ids:
+        return frozenset()
+    probe_id_to_index = _probe_id_to_index(probes)
+    return frozenset(
+        index
+        for probe_id in direct_probe_ids
+        if (index := probe_id_to_index.get(probe_id)) is not None
+    )
+
+
+def coverage_paths_for_probe(
+    *,
+    probe: ProbeDefinition,
+    changed_files: list[str] | tuple[str, ...],
+) -> tuple[str, ...]:
+    coverage_paths: list[str] = []
+    for path in sorted({path for path in changed_files if path}):
+        direct_probe_ids = _FORCE_ALL_DIRECT_PROBE_IDS_BY_EXACT_PATH.get(path)
+        if path in _FORCE_ALL_CONTEXT_ONLY_PATHS:
+            if direct_probe_ids and probe.probe_id in direct_probe_ids:
+                coverage_paths.append(path)
+            continue
+        if any(_glob_matches_path(path, glob) for glob in probe.watch_globs):
+            coverage_paths.append(path)
+    return tuple(coverage_paths)
+
+
+def _probe_id_to_index(probes: tuple[ProbeDefinition, ...]) -> dict[str, int]:
+    cache_key = (id(probes), len(probes))
+    cached = _PROBE_ID_INDEX_CACHE.get(cache_key)
+    if cached is None:
+        cached = {probe.probe_id: index for index, probe in enumerate(probes)}
+        _PROBE_ID_INDEX_CACHE[cache_key] = cached
+    return cached
 
 
 @lru_cache(maxsize=None)

@@ -822,9 +822,11 @@ struct ControlPlaneXPCClientTests {
         listener.requestedPort = 18080
         listener.effectiveHost = "127.0.0.1"
         listener.effectivePort = 11_434
-        listener.servedModelID = "melix-dev-text"
+        listener.defaultModelID = "melix-dev-text"
+        listener.servedModelIds = ["melix-dev-text", "melix-dev-vlm"]
         listener.rateLimitPerMinute = 240
         listener.timeoutSeconds = 90
+        listener.modelIdleTimeoutSeconds = 600
         listener.source = .operatorOverride
         listener.activeBinding = true
         listener.requiresRestart = true
@@ -836,9 +838,11 @@ struct ControlPlaneXPCClientTests {
             serverSessionID: "server-session-123",
             host: "0.0.0.0",
             port: 18080,
-            servedModelID: "melix-dev-text",
+            defaultModelID: "melix-dev-text",
+            servedModelIDs: ["melix-dev-text", "melix-dev-vlm"],
             rateLimitPerMinute: 240,
-            timeoutSeconds: 90
+            timeoutSeconds: 90,
+            modelIdleTimeoutSeconds: 600
         )
         let request = try #require(await service.lastExecuteRequest)
 
@@ -848,9 +852,11 @@ struct ControlPlaneXPCClientTests {
         #expect(request.server.applyGatewayConfig.serverSessionID == "server-session-123")
         #expect(request.server.applyGatewayConfig.host == "0.0.0.0")
         #expect(request.server.applyGatewayConfig.port == 18_080)
-        #expect(request.server.applyGatewayConfig.servedModelID == "melix-dev-text")
+        #expect(request.server.applyGatewayConfig.defaultModelID == "melix-dev-text")
+        #expect(request.server.applyGatewayConfig.servedModelIds == ["melix-dev-text", "melix-dev-vlm"])
         #expect(request.server.applyGatewayConfig.rateLimitPerMinute == 240)
         #expect(request.server.applyGatewayConfig.timeoutSeconds == 90)
+        #expect(request.server.applyGatewayConfig.modelIdleTimeoutSeconds == 600)
         #expect(snapshot.gatewayConfig.listeners.first?.effectiveHost == "127.0.0.1")
         #expect(snapshot.gatewayConfig.listeners.first?.requiresRestart == true)
     }
