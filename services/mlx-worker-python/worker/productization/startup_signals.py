@@ -301,7 +301,7 @@ def _contains_any(value: str, patterns: tuple[str, ...]) -> bool:
 
 
 def _log_excerpt(*paths: object) -> str:
-    excerpts: list[str] = []
+    combined_excerpt = ""
     for path in paths:
         if not path:
             continue
@@ -310,9 +310,13 @@ def _log_excerpt(*paths: object) -> str:
             excerpt = _read_last_nonempty_line(resolved)
         except OSError:
             continue
-        if excerpt:
-            excerpts.append(excerpt)
-    return " | ".join(excerpts)
+        if not excerpt:
+            continue
+        if not combined_excerpt:
+            combined_excerpt = excerpt
+        else:
+            combined_excerpt = f"{combined_excerpt} | {excerpt}"
+    return combined_excerpt
 
 
 def _read_last_nonempty_line(path: Path, *, chunk_size: int = 8192) -> str:
