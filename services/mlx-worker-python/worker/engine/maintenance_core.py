@@ -4024,7 +4024,7 @@ class MaintenanceCore:
                     values.append(32)
             else:
                 default_prompt = suite.prompt_batches[0] if suite.prompt_batches else suite.title
-                values.append(max(1, len(default_prompt.split())))
+                values.append(max(1, self._benchmark_whitespace_token_count(default_prompt)))
         return tuple(sorted(set(values)))
 
     @staticmethod
@@ -4073,10 +4073,27 @@ class MaintenanceCore:
         return ShapedBenchmarkPrompt(shaped_prompt, None, context_length)
 
     @staticmethod
+    def _benchmark_whitespace_token_count(prompt: str) -> int:
+        if not prompt:
+            return 0
+        if (
+            prompt[0] != " "
+            and prompt[-1] != " "
+            and "  " not in prompt
+            and "\t" not in prompt
+            and "\n" not in prompt
+            and "\r" not in prompt
+            and "\v" not in prompt
+            and "\f" not in prompt
+        ):
+            return prompt.count(" ") + 1
+        return len(prompt.split())
+
+    @staticmethod
     def _benchmark_prompt_token_count(prompt: str) -> int:
         if isinstance(prompt, ShapedBenchmarkPrompt):
             return max(1, prompt.token_count)
-        return max(1, len(prompt.split()))
+        return max(1, MaintenanceCore._benchmark_whitespace_token_count(prompt))
 
     @staticmethod
     def _benchmark_execution_ext(

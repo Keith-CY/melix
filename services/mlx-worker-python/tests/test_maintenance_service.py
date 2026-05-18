@@ -5835,6 +5835,26 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
         split_tokens[0] = "three"
     assert shaped_repeated_prompt.split(" ", 1) == ["one", "two one two one two"]
     assert core._benchmark_prompt_token_count(shaped_repeated_prompt) == 6
+
+    class SplitCountingPrompt(str):
+        def __new__(cls, value: str) -> "SplitCountingPrompt":
+            instance = str.__new__(cls, value)
+            instance.split_calls = 0
+            return instance
+
+        def split(self, *args: object, **kwargs: object) -> list[str]:
+            self.split_calls += 1
+            return super().split(*args, **kwargs)
+
+    normalized_prompt = SplitCountingPrompt("one two three")
+    assert core._benchmark_prompt_token_count(normalized_prompt) == 3
+    assert normalized_prompt.split_calls == 0
+    fallback_prompt = SplitCountingPrompt("one\ttwo  three")
+    assert core._benchmark_whitespace_token_count(fallback_prompt) == 3
+    assert fallback_prompt.split_calls == 1
+    default_prompt_suite = SimpleNamespace(prompt_batches=(normalized_prompt,), title="unused")
+    assert core._benchmark_context_lengths(suite=default_prompt_suite, parameters={}) == (3,)
+    assert normalized_prompt.split_calls == 0
     assert core._benchmark_prompt_token_count("") == 1
     assert core._benchmark_prompt_token_count("one two") == 2
     assert core._shape_benchmark_prompt("one two", context_length=6) == "one two one two one two"
