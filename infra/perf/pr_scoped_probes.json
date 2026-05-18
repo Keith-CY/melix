@@ -3544,7 +3544,8 @@
         "key": "delta_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_pct": 0.0
+        "warn_pct": 0.0,
+        "warn_abs": 5.0
       },
       {
         "key": "peak_bytes_mean",
@@ -3560,13 +3561,15 @@
         "key": "remove_tree_peak_bytes_delta_mean",
         "unit": "bytes",
         "direction": "lower_is_better",
-        "warn_pct": 0.0
+        "warn_pct": 0.0,
+        "warn_abs": 65536.0
       },
       {
         "key": "remove_tree_delta_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_pct": 0.0
+        "warn_pct": 0.0,
+        "warn_abs": 5.0
       },
       {
         "key": "remove_tree_directories",

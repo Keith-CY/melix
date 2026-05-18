@@ -239,6 +239,81 @@ def test_stop_process_waits_for_already_exited_process(tmp_path: Path) -> None:
     assert process.wait_calls == 1
 
 
+@pytest.mark.parametrize(
+    ("stderr", "expected"),
+    [
+        ("bind() failed: Address already in use", True),
+        ("POSIXErrorCode(rawValue: 48)", True),
+        ("freed pointer was not the last allocation", True),
+        ("fatal error: unrelated control plane crash", False),
+    ],
+)
+def test_control_plane_startup_retry_classification(
+    tmp_path: Path,
+    stderr: str,
+    expected: bool,
+) -> None:
+    stack = helpers.LiveMelixStack(tmp_path)
+    stack.control_plane_stderr_path.write_text(stderr, encoding="utf-8")
+
+    assert stack._control_plane_startup_failure_is_retryable() is expected
+
+
+def test_live_stack_retries_retryable_control_plane_startup_exit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ports = iter([12345, 12346])
+    processes: list[object] = []
+    wait_calls = 0
+
+    class FakeProcess:
+        pid = 42
+
+        def poll(self) -> int:
+            return 1
+
+        def wait(self, timeout: float) -> None:
+            return None
+
+    def fake_wait_for_http_ready(*args, **kwargs) -> None:
+        nonlocal wait_calls
+        wait_calls += 1
+        if wait_calls == 1:
+            kwargs["control_plane_stderr_path"].write_text(
+                "freed pointer was not the last allocation",
+                encoding="utf-8",
+            )
+            raise AssertionError("retryable startup exit")
+
+    monkeypatch.setattr(helpers, "reserve_port", lambda: next(ports))
+    monkeypatch.setattr(
+        helpers,
+        "resolve_swift_product_binary",
+        lambda *args, **kwargs: tmp_path / "melix-control-plane",
+    )
+    monkeypatch.setattr(
+        helpers.subprocess,
+        "Popen",
+        lambda *args, **kwargs: processes.append(FakeProcess()) or processes[-1],
+    )
+    monkeypatch.setattr(helpers, "wait_for_http_ready", fake_wait_for_http_ready)
+
+    stack = helpers.LiveMelixStack(
+        tmp_path,
+        start_swift_text_worker=False,
+        start_python_worker=False,
+    )
+    try:
+        stack.start()
+
+        assert wait_calls == 2
+        assert len(processes) == 2
+        assert stack.http_port == 12346
+    finally:
+        stack.stop()
+
+
 def test_format_process_failure_reads_existing_logs(tmp_path: Path) -> None:
     stdout_path = tmp_path / "stdout.log"
     stderr_path = tmp_path / "stderr.log"

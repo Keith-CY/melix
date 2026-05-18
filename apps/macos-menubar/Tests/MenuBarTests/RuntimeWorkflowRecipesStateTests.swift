@@ -598,10 +598,12 @@ struct RuntimeWorkflowRecipesStateTests {
         viewModel.updateWorkflowRecipeTaskFilter("model_import")
 
         let section = DesktopWorkflowRecipesToolSectionView(viewModel: viewModel)
-        let hosted = hostWorkflowRecipeView(section)
-        let buttons = renderedWorkflowRecipeButtons(in: hosted)
+        let summary = section.accessibilitySummary
 
-        #expect(buttons.count >= 4)
+        #expect(summary.contains("Refresh Catalog"))
+        #expect(summary.contains("Inspect URI"))
+        #expect(summary.contains("model_import"))
+        #expect(summary.contains("Clear"))
         section.clearTaskFilter()
         #expect(viewModel.workflowRecipeTaskFilterDraft.isEmpty)
 
@@ -1378,19 +1380,6 @@ private func hostWorkflowRecipeView<Content: View>(_ rootView: Content) -> NSVie
     hostingView.frame = CGRect(origin: .zero, size: CGSize(width: 960, height: 720))
     hostingView.layoutSubtreeIfNeeded()
     return hostingView
-}
-
-@MainActor
-private func renderedWorkflowRecipeButtons(in rootView: NSView) -> [NSButton] {
-    var buttons: [NSButton] = []
-    func visit(_ view: NSView) {
-        if let button = view as? NSButton {
-            buttons.append(button)
-        }
-        view.subviews.forEach(visit)
-    }
-    visit(rootView)
-    return buttons
 }
 
 @MainActor

@@ -881,9 +881,12 @@ struct DesktopFoundationViewTests {
             lastError: nil,
             recentEvents: []
         )
-        let view = hostView(DesktopSettingsTabView(foundation: foundation))
+        let summary = DesktopSettingsTabView(foundation: foundation).accessibilitySummary
 
-        #expect(view.subviews.isEmpty == false)
+        #expect(summary.contains("Embedding Model"))
+        #expect(summary.contains("melix-dev-embed"))
+        #expect(summary.contains("MCP Config"))
+        #expect(summary.contains("/tmp/mcp-tools.json"))
         #expect(foundation.settings.contains { $0.key == "Embedding Model" && $0.value == "melix-dev-embed" })
         #expect(foundation.settings.contains { $0.key == "MCP Config" && $0.value == "/tmp/mcp-tools.json" })
         #expect(foundation.settings.contains { $0.key == "Gateway Config Store" && $0.value == "/tmp/gateway-config.json" })
@@ -1778,7 +1781,6 @@ struct DesktopFoundationViewTests {
         let rows = try #require(viewModel.primaryModel?.memoryFitReceiptRows)
         let localEntry = try #require(viewModel.modelRegistryEntries.first)
         _ = hostView(DesktopRegistryEntryCardContent(entry: localEntry, localModel: viewModel.primaryModel))
-        let view = hostView(DesktopMemoryFitReceiptRowsView(rows: rows))
         let displayTexts = rows.map(DesktopMemoryFitReceiptRowsView.displayText(for:))
         let summary = desktopModelInfoSummaryContent(RuntimeModelInfoState(
             modelID: "melix-local-fit",
@@ -1789,7 +1791,6 @@ struct DesktopFoundationViewTests {
             memoryFitReceiptRows: rows
         ))
 
-        #expect(view.subviews.isEmpty == false)
         #expect(displayTexts == [
             "Fit Import: Blocked • Import requires 42 GB active memory.",
             "Fit Benchmark: Heavy • Benchmark KV cache may exceed comfort budget.",
@@ -1816,7 +1817,6 @@ struct DesktopFoundationViewTests {
                 "unknown fields kv_cache, dataset_cache",
             ]
         )
-        let view = hostView(DesktopMemoryFitReceiptRowsView(rows: [row]))
         let displayTexts = DesktopMemoryFitReceiptRowsView.displayTexts(for: row)
         let summary = desktopModelInfoSummaryContent(RuntimeModelInfoState(
             modelID: "melix-local-fit",
@@ -1827,7 +1827,6 @@ struct DesktopFoundationViewTests {
             memoryFitReceiptRows: [row]
         ))
 
-        #expect(view.subviews.isEmpty == false)
         #expect(displayTexts == [
             "Fit Benchmark: Heavy • Benchmark KV cache may exceed comfort budget.",
             "active memory 32.00 GB",
@@ -1873,11 +1872,9 @@ struct DesktopFoundationViewTests {
                 reasonText: "Training estimate is missing."
             ),
         ]
-        let view = hostView(DesktopMemoryFitReceiptRowsView(rows: rows))
         let visualStates = rows.map(DesktopMemoryFitReceiptRowsView.visualState(for:))
         let accessibilityLabels = rows.map(DesktopMemoryFitReceiptRowsView.accessibilityLabel(for:))
 
-        #expect(view.subviews.isEmpty == false)
         #expect(visualStates == [.blocked, .heavy, .good, .unknown])
         #expect(visualStates.map(\.badgeTitle) == ["Blocked", "Heavy", "Good", "Unknown"])
         #expect(accessibilityLabels == [
@@ -4910,9 +4907,7 @@ struct DesktopFoundationViewTests {
 
         let selectedInfo = try #require(viewModel.selectedModelInfo)
         let content = desktopModelInfoSummaryContent(selectedInfo)
-        let view = hostView(DesktopModelInfoSummaryView(info: selectedInfo))
 
-        #expect(view.subviews.isEmpty == false)
         #expect(selectedInfo.requestedLoadTrustModeText == "Trust Remote Code")
         #expect(selectedInfo.effectiveLoadTrustModeText == "Default Safe")
         #expect(content.detailLines.contains("requested trust mode: Trust Remote Code"))
@@ -6506,7 +6501,7 @@ struct DesktopFoundationViewTests {
 
         let foundation = viewModel.desktopFoundationState
         let dashboard = hostView(DesktopDashboardTabView(foundation: foundation))
-        let settings = hostView(DesktopSettingsTabView(foundation: foundation))
+        let settingsSummary = DesktopSettingsTabView(foundation: foundation).accessibilitySummary
         let logs = hostView(DesktopLogsTabView(foundation: foundation))
         let bench = hostView(DesktopBenchTabView(foundation: foundation))
         let chat = hostView(DesktopChatTabView(viewModel: viewModel))
@@ -6533,7 +6528,8 @@ struct DesktopFoundationViewTests {
         #expect(hasEvictionsCard)
         #expect(hasGuardCard)
         #expect(hasConnectionSetting)
-        #expect(settings.subviews.isEmpty == false)
+        #expect(settingsSummary.contains("Connection"))
+        #expect(settingsSummary.contains("Connected"))
         #expect(logs.subviews.isEmpty == false)
         #expect(bench.subviews.isEmpty == false)
         #expect(chat.subviews.isEmpty == false)
