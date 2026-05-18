@@ -79,6 +79,8 @@ Rules:
 """
 SEMANTIC_JUDGE_PROMPT_HASH = f"sha256:{sha256(SEMANTIC_JUDGE_SYSTEM_PROMPT.encode('utf-8')).hexdigest()}"
 _JSON_DECODER = json.JSONDecoder()
+_CLOSING_FENCE_WITH_LEADING_NEWLINE = "\n```"
+_CLOSING_FENCE_WITH_LEADING_NEWLINE_LENGTH = len(_CLOSING_FENCE_WITH_LEADING_NEWLINE)
 
 EVENT_EXTRACTION_LEGACY_SYSTEM_PROMPT = """Extract established events and future plans from a dialogue.
 
@@ -2864,6 +2866,9 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
 
 
 def _has_only_optional_closing_fence(response_text: str, start: int, response_length: int) -> bool:
+    if response_text.startswith(_CLOSING_FENCE_WITH_LEADING_NEWLINE, start):
+        trailer_start = start + _CLOSING_FENCE_WITH_LEADING_NEWLINE_LENGTH
+        return trailer_start == response_length or response_text[trailer_start:response_length].isspace()
     while start < response_length and response_text[start].isspace():
         start += 1
     if start == response_length:
