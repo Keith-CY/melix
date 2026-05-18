@@ -60,6 +60,8 @@ class ProbePolicy:
         default_mode: ProbeMode = ProbeMode.MINIMAL,
     ) -> ProbePolicy:
         if type(value) is str:
+            if not value:
+                return _PROBE_POLICY_BY_DEFAULT_MODE[default_mode]
             policy = _PROBE_POLICY_BY_VALUE_GET(value)
             if policy is not None:
                 return policy
