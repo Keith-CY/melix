@@ -654,9 +654,19 @@ def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:
     match = pattern.search(text)
     if not match:
         return 0
-    value = float(match.group(1))
-    multiplier = _SIZE_HINT_MULTIPLIERS[match.group(2).lower()]
-    return int(value * multiplier)
+    value_text = match.group(1)
+    unit_text = match.group(2)
+    if unit_text == "kb" or unit_text == "KB":
+        multiplier = _SIZE_HINT_KB
+    elif unit_text == "mb" or unit_text == "MB":
+        multiplier = _SIZE_HINT_MB
+    elif unit_text == "gb" or unit_text == "GB":
+        multiplier = _SIZE_HINT_GB
+    else:
+        multiplier = _SIZE_HINT_MULTIPLIERS[unit_text.lower()]
+    if value_text.isdecimal():
+        return int(value_text) * multiplier
+    return int(float(value_text) * multiplier)
 
 
 def _may_contain_model_marker(text: str) -> bool:
