@@ -32,5 +32,10 @@ The cleanup probe reports:
 - `remove_tree_peak_bytes_delta_mean`
 - fixture dimensions (`remove_tree_directories`, `remove_tree_files_per_directory`)
 
+The delta metrics are improvement margins relative to the legacy cleanup path,
+so the registered PR-scoped thresholds include small absolute tolerances for
+timing and allocation jitter. Direct elapsed-time regressions still block
+through `remove_tree_elapsed_ms_mean`.
+
 Success means behavior parity tests pass and the registered probe shows lower
 mean elapsed time or lower peak memory for the os.walk cleanup path.

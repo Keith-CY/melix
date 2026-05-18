@@ -231,7 +231,7 @@ class LiveMelixStack:
                 )
                 break
             except AssertionError:
-                if attempt == 4 or not self._control_plane_hit_port_conflict():
+                if attempt == 4 or not self._control_plane_startup_failure_is_retryable():
                     raise
                 self.stop_control_plane()
                 self.http_port = reserve_port()
@@ -387,6 +387,17 @@ class LiveMelixStack:
             else ""
         )
         return "Address already in use" in stderr or "POSIXErrorCode(rawValue: 48)" in stderr
+
+    def _control_plane_hit_allocator_startup_exit(self) -> bool:
+        stderr = (
+            self.control_plane_stderr_path.read_text(encoding="utf-8")
+            if self.control_plane_stderr_path.exists()
+            else ""
+        )
+        return "freed pointer was not the last allocation" in stderr
+
+    def _control_plane_startup_failure_is_retryable(self) -> bool:
+        return self._control_plane_hit_port_conflict() or self._control_plane_hit_allocator_startup_exit()
 
 
 def reserve_port() -> int:

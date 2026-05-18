@@ -21,6 +21,7 @@ from typing import Any
 import pytest
 
 from worker.model_ops.response_only_boundary import (
+    ResponseOnlyBoundary,
     aggregate_response_only_boundaries,
     compute_response_only_boundary,
 )
@@ -246,6 +247,7 @@ def test_probe_summarizes_train_set_without_rereading_disk() -> None:
 
     class _DummyConfig:
         response_only = True
+        max_seq_length = 5
 
     class _DummyRequest:
         config = _DummyConfig()
@@ -265,6 +267,15 @@ def test_probe_summarizes_train_set_without_rereading_disk() -> None:
     assert aggregate.boundary_min == 2
     assert aggregate.boundary_max == 4
     assert aggregate.boundary_mean == pytest.approx((3 + 2 + 4) / 3)
+    assert aggregate.response_tokens_min == 2
+    assert aggregate.response_tokens_max == 4
+    assert aggregate.response_tokens_mean == pytest.approx(3)
+    assert aggregate.trainable_response_tokens_min == 1
+    assert aggregate.trainable_response_tokens_max == 2
+    assert aggregate.trainable_response_tokens_mean == pytest.approx(5 / 3)
+    assert aggregate.trainable_response_token_count == 5
+    assert aggregate.truncated_response_sample_count == 2
+    assert aggregate.fully_truncated_response_sample_count == 0
     assert train_set.process_calls == 3, "probe must call train_set.process for each sample"
     # normalized_dataset_dir points to a non-existent path. If the probe re-read
     # disk, the test would fail — proving the disk re-read is gone.
@@ -306,6 +317,15 @@ def test_aggregate_response_only_boundaries_handles_empty_and_full() -> None:
         "response_only_boundary_min": 0,
         "response_only_boundary_max": 0,
         "response_only_boundary_mean": 0.0,
+        "response_only_response_tokens_min": 0,
+        "response_only_response_tokens_max": 0,
+        "response_only_response_tokens_mean": 0.0,
+        "response_only_trainable_response_tokens_min": 0,
+        "response_only_trainable_response_tokens_max": 0,
+        "response_only_trainable_response_tokens_mean": 0.0,
+        "response_only_trainable_response_token_count": 0,
+        "response_only_truncated_response_sample_count": 0,
+        "response_only_fully_truncated_response_sample_count": 0,
     }
 
     tokenizer = _load_tokenizer()
@@ -322,10 +342,40 @@ def test_aggregate_response_only_boundaries_handles_empty_and_full() -> None:
     assert agg.boundary_min == min(offsets)
     assert agg.boundary_max == max(offsets)
     assert agg.boundary_mean == pytest.approx(sum(offsets) / len(offsets))
+    assert agg.trainable_response_token_count == sum(b.response_tokens for b in boundaries)
     fields = agg.to_manifest_fields()
     assert set(fields.keys()) == {
         "response_only_boundary_sample_count",
         "response_only_boundary_min",
         "response_only_boundary_max",
         "response_only_boundary_mean",
+        "response_only_response_tokens_min",
+        "response_only_response_tokens_max",
+        "response_only_response_tokens_mean",
+        "response_only_trainable_response_tokens_min",
+        "response_only_trainable_response_tokens_max",
+        "response_only_trainable_response_tokens_mean",
+        "response_only_trainable_response_token_count",
+        "response_only_truncated_response_sample_count",
+        "response_only_fully_truncated_response_sample_count",
     }
+
+
+def test_aggregate_response_only_boundaries_marks_truncated_labels() -> None:
+    boundaries = [
+        ResponseOnlyBoundary(assistant_offset=8, total_tokens=10),
+        ResponseOnlyBoundary(assistant_offset=12, total_tokens=16),
+    ]
+
+    agg = aggregate_response_only_boundaries(boundaries, max_seq_length=8)
+
+    assert agg.sample_count == 2
+    assert agg.response_tokens_min == 2
+    assert agg.response_tokens_max == 4
+    assert agg.response_tokens_mean == pytest.approx(3)
+    assert agg.trainable_response_tokens_min == 0
+    assert agg.trainable_response_tokens_max == 0
+    assert agg.trainable_response_tokens_mean == 0
+    assert agg.trainable_response_token_count == 0
+    assert agg.truncated_response_sample_count == 2
+    assert agg.fully_truncated_response_sample_count == 2

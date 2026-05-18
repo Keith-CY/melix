@@ -32,6 +32,11 @@ the legacy glob candidate enumerator with the new scandir enumerator, and report
 - `peak_bytes_mean`
 - `peak_bytes_delta_mean`
 
+`delta_ms_mean` is a derived improvement margin against the legacy resolver, not
+the direct resolver latency. The registered PR-scoped metric keeps a small
+absolute tolerance so sub-5 ms timing noise cannot block a PR when direct
+`elapsed_ms_mean` remains stable.
+
 ## Verification
 
 Focused tests cover both package-scoped and root/scoped binary resolution and monkeypatch

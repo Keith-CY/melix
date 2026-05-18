@@ -2251,6 +2251,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     }
     registry_probe = None
     maintenance_probe = None
+    integration_helper_probe = None
     worker_registry_probe = None
     swift_probe = None
     for probe in load_probe_registry(REGISTRY_PATH):
@@ -2263,6 +2264,8 @@ def test_registered_probes_expose_focused_commands() -> None:
             registry_probe = probe
         if probe.probe_id == "maintenance-percentile-vector-reuse":
             maintenance_probe = probe
+        if probe.probe_id == "integration-swift-binary-resolution-scandir":
+            integration_helper_probe = probe
         if probe.probe_id == "worker-registry-resident-bytes-accumulator":
             worker_registry_probe = probe
         if probe.probe_id == "swift-cli-json-envelope-encoding":
@@ -2295,6 +2298,17 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert "test_image_latency_metrics_reuse_single_sorted_job_latency_vector" in maintenance_probe.test_command
     assert "test_measure_vlm_latency_metrics_reuse_single_sorted_total_latency_vector" in maintenance_probe.coverage_command
     assert "test_image_latency_metrics_reuse_single_sorted_job_latency_vector" in maintenance_probe.coverage_command
+
+    assert integration_helper_probe is not None
+    integration_helper_metrics = {
+        metric.key: metric for metric in integration_helper_probe.metrics
+    }
+    assert integration_helper_metrics["delta_ms_mean"].warn_pct == 0.0
+    assert integration_helper_metrics["delta_ms_mean"].warn_abs == 5.0
+    assert integration_helper_metrics["remove_tree_delta_ms_mean"].warn_pct == 0.0
+    assert integration_helper_metrics["remove_tree_delta_ms_mean"].warn_abs == 5.0
+    assert integration_helper_metrics["remove_tree_peak_bytes_delta_mean"].warn_pct == 0.0
+    assert integration_helper_metrics["remove_tree_peak_bytes_delta_mean"].warn_abs == 65536.0
 
     assert swift_probe is not None
     assert "MelixCLIRunnerTests/(" in swift_probe.test_command
