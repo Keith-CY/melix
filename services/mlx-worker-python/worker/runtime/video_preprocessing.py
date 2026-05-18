@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import hashlib
 from urllib.parse import unquote, urlparse
 
@@ -132,6 +133,7 @@ def _validate_bounds(duration_ms: int, frame_budget: int, start_ms: int, end_ms:
         raise VideoPreprocessError("end_ms must be less than or equal to duration_ms.")
 
 
+@lru_cache(maxsize=512)
 def _parse_video_reference(reference: str) -> ParsedVideoReference:
     parsed = urlparse(reference)
     if parsed.scheme in {"http", "https", "file"}:
