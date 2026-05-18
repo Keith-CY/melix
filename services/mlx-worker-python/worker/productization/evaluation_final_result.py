@@ -287,9 +287,10 @@ def _extract_text_heuristic(raw_response: str) -> ExtractionOutcome:
     if answer_prefix_candidate:
         return ExtractionOutcome(answer_prefix_candidate, "extracted")
 
-    candidate = _last_stripped_pattern_match(_GENERIC_FENCE_PATTERN, raw_response)
-    if candidate:
-        return ExtractionOutcome(candidate, "extracted")
+    if "```" in raw_response:
+        candidate = _last_stripped_pattern_match(_GENERIC_FENCE_PATTERN, raw_response)
+        if candidate:
+            return ExtractionOutcome(candidate, "extracted")
 
     fallback_line = _last_nonblank_text_line(raw_response)
     if fallback_line:
