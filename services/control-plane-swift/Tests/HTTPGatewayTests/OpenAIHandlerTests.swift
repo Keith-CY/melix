@@ -900,6 +900,7 @@ struct OpenAIHandlerTests {
             now: { clock.now }
         )
 
+        let startedAt = ContinuousClock.now
         let response = try await handler.handle(
             HTTPRequest(
                 method: .post,
@@ -918,10 +919,12 @@ struct OpenAIHandlerTests {
                 )
             )
         )
+        let elapsed = startedAt.duration(to: .now)
         let payload = try await collectBody(response.body)
 
         #expect(response.statusCode == 200)
         #expect(payload.contains("data: [DONE]"))
+        #expect(elapsed < .seconds(2))
 
         try await waitForOpenAIHandlerCondition("idle sweep starts after response") {
             await workerClient.unloadRequestCount == 1

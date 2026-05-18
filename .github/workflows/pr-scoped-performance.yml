@@ -74,6 +74,7 @@ jobs:
                   'id': probe['id'],
                   'name': probe['name'],
                   'runner': probe.get('runner', 'ubuntu-latest'),
+                  'coverage_paths': probe.get('coverage_paths', []),
               }
               for probe in scope.get('selected_probes', [])
           ]
@@ -129,6 +130,7 @@ jobs:
             --probe-id "${{ matrix.id }}" \
             --base-repo "$GITHUB_WORKSPACE/base" \
             --head-repo "$GITHUB_WORKSPACE/head" \
+            --coverage-paths-json '${{ toJSON(matrix.coverage_paths) }}' \
             --output "artifacts/probes/${{ matrix.id }}.json"
 
       - name: Upload probe artifact

@@ -552,10 +552,7 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         set {
             let resolvedDefaultModelID = Self.trimmed(newValue)
             defaultModelID = resolvedDefaultModelID
-            servedModelIDs = MelixServerModelRosterNormalizer.normalized(
-                [resolvedDefaultModelID],
-                defaultModelID: resolvedDefaultModelID
-            )
+            servedModelIDs = resolvedDefaultModelID.isEmpty ? [] : [resolvedDefaultModelID]
         }
     }
 

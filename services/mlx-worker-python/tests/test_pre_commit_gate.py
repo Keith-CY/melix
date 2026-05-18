@@ -224,7 +224,7 @@ def test_export_index_snapshot_can_preserve_head_diff_for_staged_content(tmp_pat
     (source / "deleted.py").write_text("remove_me = True\n", encoding="utf-8")
     (source / "nested" / "deleted.py").write_text("nested_remove_me = True\n", encoding="utf-8")
     subprocess.check_call(["git", "add", "-A"], cwd=source, env=git_env)
-    subprocess.check_call(["git", "commit", "-q", "-m", "base"], cwd=source, env=git_env)
+    subprocess.check_call(["git", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "base"], cwd=source, env=git_env)
     (source / "changed.py").write_text("value = 1\nadded = 2\n", encoding="utf-8")
     (source / "added.py").write_text("created = True\n", encoding="utf-8")
     (source / "deleted.py").unlink()
@@ -268,7 +268,7 @@ def test_performance_probe_failure_writes_traceback(monkeypatch, tmp_path: Path)
     monkeypatch.setattr(
         pre_commit_gate,
         "load_probe_registry",
-        lambda registry_path: (SimpleNamespace(probe_id="probe-one"),),
+        lambda registry_path: (SimpleNamespace(probe_id="probe-one", watch_globs=()),),
     )
     monkeypatch.setattr(pre_commit_gate, "export_head_comparison_snapshot", lambda root, destination, base_ref: destination.mkdir())
     monkeypatch.setattr(pre_commit_gate, "export_base_snapshot", lambda root, destination, base_ref, **kwargs: destination.mkdir())
@@ -315,20 +315,22 @@ def test_performance_probe_runs_with_scrubbed_git_environment(monkeypatch, tmp_p
     monkeypatch.setattr(
         pre_commit_gate,
         "load_probe_registry",
-        lambda registry_path: (SimpleNamespace(probe_id="probe-one"),),
+        lambda registry_path: (SimpleNamespace(probe_id="probe-one", watch_globs=()),),
     )
     monkeypatch.setattr(pre_commit_gate, "export_head_comparison_snapshot", lambda root, destination, base_ref: destination.mkdir())
     monkeypatch.setattr(pre_commit_gate, "export_base_snapshot", lambda root, destination, base_ref, **kwargs: destination.mkdir())
     observed_env: dict[str, str | None] = {}
     observed_base_root: str | None = None
     observed_base_root_exists = False
+    observed_coverage_paths: str | None = None
 
     def run_probe(**kwargs):
-        nonlocal observed_base_root, observed_base_root_exists
+        nonlocal observed_base_root, observed_base_root_exists, observed_coverage_paths
         env = kwargs["env"]
         for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
             observed_env[name] = env.get(name)
         observed_base_root = env.get("MELIX_CHANGED_SCOPE_BASE_ROOT")
+        observed_coverage_paths = env.get("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON")
         observed_base_root_exists = (
             observed_base_root is not None and Path(observed_base_root).is_dir()
         )
@@ -354,6 +356,7 @@ def test_performance_probe_runs_with_scrubbed_git_environment(monkeypatch, tmp_p
     assert observed_base_root is not None
     assert Path(observed_base_root).name == "base"
     assert observed_base_root_exists is True
+    assert observed_coverage_paths == "[]"
     assert pre_commit_gate.os.environ.get("GIT_DIR") == "/tmp/melix-hook-git-dir"
     assert pre_commit_gate.os.environ.get("GIT_WORK_TREE") == "/tmp/melix-hook-work-tree"
     assert pre_commit_gate.os.environ.get("GIT_INDEX_FILE") == "/tmp/melix-hook-index"
@@ -464,7 +467,7 @@ def test_head_comparison_snapshot_preserves_base_git_diff_context(tmp_path: Path
     (source_repo / "kept.py").write_text("old\n", encoding="utf-8")
     (source_repo / "removed.py").write_text("remove me\n", encoding="utf-8")
     subprocess.check_call(["git", "add", "kept.py", "removed.py"], cwd=source_repo)
-    subprocess.check_call(["git", "commit", "-m", "base"], cwd=source_repo, stdout=subprocess.DEVNULL)
+    subprocess.check_call(["git", "-c", "commit.gpgsign=false", "commit", "-m", "base"], cwd=source_repo, stdout=subprocess.DEVNULL)
     base_ref = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source_repo, text=True).strip()
     (source_repo / "kept.py").write_text("old\nnew\n", encoding="utf-8")
     (source_repo / "added.py").write_text("created\n", encoding="utf-8")
@@ -504,7 +507,7 @@ def test_head_comparison_snapshot_scrubs_outer_git_environment(monkeypatch, tmp_
     subprocess.check_call(["git", "config", "user.name", "Test User"], cwd=source_repo)
     (source_repo / "tracked.py").write_text("old\n", encoding="utf-8")
     subprocess.check_call(["git", "add", "tracked.py"], cwd=source_repo)
-    subprocess.check_call(["git", "commit", "-m", "base"], cwd=source_repo, stdout=subprocess.DEVNULL)
+    subprocess.check_call(["git", "-c", "commit.gpgsign=false", "commit", "-m", "base"], cwd=source_repo, stdout=subprocess.DEVNULL)
     base_ref = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source_repo, text=True).strip()
     (source_repo / "tracked.py").write_text("new\n", encoding="utf-8")
     subprocess.check_call(["git", "add", "tracked.py"], cwd=source_repo)
@@ -576,7 +579,7 @@ def test_run_performance_report_exports_requested_base_ref(monkeypatch, tmp_path
     monkeypatch.setattr(
         pre_commit_gate,
         "load_probe_registry",
-        lambda registry_path: (SimpleNamespace(probe_id="probe-one"),),
+        lambda registry_path: (SimpleNamespace(probe_id="probe-one", watch_globs=()),),
     )
     def export_head(root: Path, destination: Path, base_ref: str | None) -> None:
         observed_head_base_refs.append(base_ref)

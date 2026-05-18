@@ -63,6 +63,10 @@ _SCOPE_SELECTION_CACHE: dict[
     tuple[int, int, tuple[str, ...]],
     tuple[bool, tuple[str, ...], tuple[dict[str, object], ...]],
 ] = {}
+_SCOPE_SELECTED_PROBES_WITH_COVERAGE_CACHE: dict[
+    tuple[int, int, tuple[str, ...]],
+    tuple[dict[str, object], ...],
+] = {}
 
 
 def _log_progress(message: str) -> None:
@@ -133,7 +137,8 @@ _PROBE_REGISTRY_CACHE: dict[str, tuple[int, int, tuple[ProbeDefinition, ...]]] =
 
 
 def _probe_registry_cache_key(path: str | Path) -> str:
-    return os.path.abspath(os.fspath(path))
+    raw_path = os.fspath(path)
+    return raw_path if os.path.isabs(raw_path) else os.path.abspath(raw_path)
 
 
 def _parse_probe_registry_payload(payload: object) -> tuple[ProbeDefinition, ...]:
@@ -193,15 +198,14 @@ def _load_probe_registry_uncached(
 
 
 def load_probe_registry(path: str | Path) -> tuple[ProbeDefinition, ...]:
-    path_obj = Path(path)
-    cache_key = _probe_registry_cache_key(path_obj)
-    stat_result = path_obj.stat()
+    cache_key = _probe_registry_cache_key(path)
+    stat_result = os.stat(cache_key)
     cached = _PROBE_REGISTRY_CACHE.get(cache_key)
     if cached is not None and cached[0] == stat_result.st_mtime_ns and cached[1] == stat_result.st_size:
         return cached[2]
 
     return _load_probe_registry_uncached(
-        path_obj=path_obj,
+        path_obj=Path(cache_key),
         cache_key=cache_key,
         mtime_ns=stat_result.st_mtime_ns,
         size=stat_result.st_size,
@@ -249,13 +253,18 @@ def build_scope_report(
         probes=probes,
         changed_paths=changed_paths,
     )
+    selected_probes_with_coverage_paths = _selected_probes_with_coverage_paths(
+        probes=probes,
+        changed_paths=changed_paths,
+        selected_probes=selected_probes,
+    )
     return {
         "schema_version": _SCOPE_SCHEMA_VERSION,
         "changed_files": list(changed_paths),
         "force_all": force_all,
         "matched_probe_ids": list(matched_probe_ids),
-        "selected_probes": list(selected_probes),
-        "selected_count": len(selected_probes),
+        "selected_probes": list(selected_probes_with_coverage_paths),
+        "selected_count": len(selected_probes_with_coverage_paths),
     }
 
 
@@ -2405,6 +2414,65 @@ def _scope_selection_uncached(
     return force_all, matched_probe_ids, selected_probes
 
 
+def _coverage_paths_by_probe_id(
+    *,
+    changed_paths: tuple[str, ...],
+    probes: tuple[ProbeDefinition, ...],
+) -> dict[str, tuple[str, ...]]:
+    if not changed_paths:
+        return {}
+    exact_path_to_probe_indexes, wildcard_glob_matchers = _probe_match_indexes(probes)
+    coverage_paths_by_probe_index: dict[int, list[str]] = {}
+    for path in changed_paths:
+        direct_probe_ids = _FORCE_ALL_DIRECT_PROBE_IDS_BY_EXACT_PATH.get(path)
+        if path in _FORCE_ALL_CONTEXT_ONLY_PATHS:
+            if direct_probe_ids:
+                probe_id_to_index = _probe_id_to_index(probes)
+                for probe_id in direct_probe_ids:
+                    if (probe_index := probe_id_to_index.get(probe_id)) is not None:
+                        coverage_paths_by_probe_index.setdefault(probe_index, []).append(path)
+            continue
+        probe_indexes = exact_path_to_probe_indexes.get(path)
+        if probe_indexes is not None:
+            for probe_index in probe_indexes:
+                coverage_paths_by_probe_index.setdefault(probe_index, []).append(path)
+        for prefix, pattern, probe_indexes in wildcard_glob_matchers:
+            if prefix and not path.startswith(prefix):
+                continue
+            if pattern.match(path) is not None:
+                for probe_index in probe_indexes:
+                    coverage_paths_by_probe_index.setdefault(probe_index, []).append(path)
+    return {
+        probes[probe_index].probe_id: tuple(coverage_paths)
+        for probe_index, coverage_paths in coverage_paths_by_probe_index.items()
+    }
+
+
+def _selected_probes_with_coverage_paths(
+    *,
+    probes: tuple[ProbeDefinition, ...],
+    changed_paths: tuple[str, ...],
+    selected_probes: tuple[dict[str, object], ...],
+) -> tuple[dict[str, object], ...]:
+    cache_key = (id(probes), len(probes), changed_paths)
+    cached = _SCOPE_SELECTED_PROBES_WITH_COVERAGE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    coverage_paths_by_probe_id = _coverage_paths_by_probe_id(
+        changed_paths=changed_paths,
+        probes=probes,
+    )
+    cached = tuple(
+        {
+            **probe_entry,
+            "coverage_paths": list(coverage_paths_by_probe_id.get(str(probe_entry["id"]), ())),
+        }
+        for probe_entry in selected_probes
+    )
+    _SCOPE_SELECTED_PROBES_WITH_COVERAGE_CACHE[cache_key] = cached
+    return cached
+
+
 def _match_probe_indexes(
     *,
     changed_paths: set[str] | frozenset[str] | tuple[str, ...],
@@ -2457,6 +2525,23 @@ def _force_all_direct_probe_indexes(
         for probe_id in direct_probe_ids
         if (index := probe_id_to_index.get(probe_id)) is not None
     )
+
+
+def coverage_paths_for_probe(
+    *,
+    probe: ProbeDefinition,
+    changed_files: list[str] | tuple[str, ...],
+) -> tuple[str, ...]:
+    coverage_paths: list[str] = []
+    for path in sorted({path for path in changed_files if path}):
+        direct_probe_ids = _FORCE_ALL_DIRECT_PROBE_IDS_BY_EXACT_PATH.get(path)
+        if path in _FORCE_ALL_CONTEXT_ONLY_PATHS:
+            if direct_probe_ids and probe.probe_id in direct_probe_ids:
+                coverage_paths.append(path)
+            continue
+        if any(_glob_matches_path(path, glob) for glob in probe.watch_globs):
+            coverage_paths.append(path)
+    return tuple(coverage_paths)
 
 
 def _probe_id_to_index(probes: tuple[ProbeDefinition, ...]) -> dict[str, int]:

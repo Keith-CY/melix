@@ -972,6 +972,10 @@ struct ControlPlaneServiceTests {
                 storeURL: temporaryRoot.appendingPathComponent("gateway-config.json"),
                 defaults: [:]
             ),
+            gatewayServingDefaultsStore: GatewayServingDefaultsStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+                defaults: [:]
+            ),
             gatewaySupportsSpeculativeDefaults: true
         )
         _ = try await service.execute(
