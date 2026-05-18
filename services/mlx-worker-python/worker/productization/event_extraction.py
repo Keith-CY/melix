@@ -2852,8 +2852,7 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
         newline_index = response_text.find("\n", response_start)
         if newline_index >= 0:
             parsed, end_index = _JSON_DECODER.raw_decode(response_text, newline_index + 1)
-            trailing = response_text[end_index:].strip()
-            if trailing and trailing != "```":
+            if not _has_only_optional_closing_fence(response_text, end_index, response_length):
                 raise json.JSONDecodeError("Extra data", response_text, end_index)
             if not isinstance(parsed, dict):
                 raise ValueError("LLM response must be a JSON object")
@@ -2862,6 +2861,19 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
     if not isinstance(parsed, dict):
         raise ValueError("LLM response must be a JSON object")
     return parsed
+
+
+def _has_only_optional_closing_fence(response_text: str, start: int, response_length: int) -> bool:
+    while start < response_length and response_text[start].isspace():
+        start += 1
+    if start == response_length:
+        return True
+    if not response_text.startswith("```", start):
+        return False
+    start += 3
+    while start < response_length and response_text[start].isspace():
+        start += 1
+    return start == response_length
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
