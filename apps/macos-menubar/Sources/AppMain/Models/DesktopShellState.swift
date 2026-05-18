@@ -1,4 +1,5 @@
 import Foundation
+import MelixCLICore
 import MelixControlPlaneCore
 
 public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendable {
@@ -509,7 +510,8 @@ public struct DesktopServerServingDefaultsState: Codable, Equatable, Sendable {
 public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Sendable {
     public let id: String
     public var title: String
-    public var modelID: String
+    public var defaultModelID: String
+    public var servedModelIDs: [String]
     public var host: String
     public var port: Int
     public var effectiveHost: String
@@ -524,6 +526,7 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
     public var accessKeyHints: [String]
     public var rateLimitPerMinute: Int
     public var timeoutSeconds: Int
+    public var modelIdleTimeoutSeconds: Int
     public var servingDefaults: DesktopServerServingDefaultsState
     public var lifecycle: DesktopServerSessionLifecycle
     public var powerState: DesktopServerPowerState
@@ -544,10 +547,20 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
     public var createdAt: Date
     public var updatedAt: Date
 
+    public var modelID: String {
+        get { defaultModelID }
+        set {
+            let resolvedDefaultModelID = Self.trimmed(newValue)
+            defaultModelID = resolvedDefaultModelID
+            servedModelIDs = resolvedDefaultModelID.isEmpty ? [] : [resolvedDefaultModelID]
+        }
+    }
+
     public init(
         id: String,
         title: String,
         modelID: String,
+        servedModelIDs: [String] = [],
         host: String = MelixGatewayDefaults.host,
         port: Int = MelixGatewayDefaults.port,
         effectiveHost: String? = nil,
@@ -562,6 +575,7 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         accessKeyHints: [String] = [],
         rateLimitPerMinute: Int = 120,
         timeoutSeconds: Int = 120,
+        modelIdleTimeoutSeconds: Int = 600,
         servingDefaults: DesktopServerServingDefaultsState = DesktopServerServingDefaultsState(),
         lifecycle: DesktopServerSessionLifecycle = .draft,
         powerState: DesktopServerPowerState = .unavailable,
@@ -584,7 +598,12 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
     ) {
         self.id = id
         self.title = title
-        self.modelID = modelID
+        let resolvedDefaultModelID = Self.trimmed(modelID)
+        self.defaultModelID = resolvedDefaultModelID
+        self.servedModelIDs = MelixServerModelRosterNormalizer.normalizedOrDefault(
+            servedModelIDs,
+            defaultModelID: resolvedDefaultModelID
+        )
         self.host = host
         self.port = port
         self.effectiveHost = effectiveHost ?? host
@@ -599,6 +618,7 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         self.accessKeyHints = accessKeyHints
         self.rateLimitPerMinute = rateLimitPerMinute
         self.timeoutSeconds = timeoutSeconds
+        self.modelIdleTimeoutSeconds = modelIdleTimeoutSeconds
         self.servingDefaults = servingDefaults
         self.lifecycle = lifecycle
         self.powerState = powerState
@@ -618,6 +638,10 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         self.lastAuthSessionSignOutLatencyMs = lastAuthSessionSignOutLatencyMs
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    private static func trimmed(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     public var baseURL: String {
@@ -689,6 +713,8 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         case id
         case title
         case modelID = "model_id"
+        case defaultModelID = "default_model_id"
+        case servedModelIDs = "served_model_ids"
         case host
         case port
         case effectiveHost = "effective_host"
@@ -703,6 +729,7 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         case accessKeyHints = "access_key_hints"
         case rateLimitPerMinute = "rate_limit_per_minute"
         case timeoutSeconds = "timeout_seconds"
+        case modelIdleTimeoutSeconds = "model_idle_timeout_seconds"
         case servingDefaults = "serving_defaults"
         case lifecycle
         case powerState = "power_state"
@@ -726,7 +753,14 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         title = try container.decode(String.self, forKey: .title)
-        modelID = try container.decode(String.self, forKey: .modelID)
+        let decodedDefaultModelID = try container.decodeIfPresent(String.self, forKey: .defaultModelID)
+            ?? (try container.decodeIfPresent(String.self, forKey: .modelID) ?? "")
+        defaultModelID = Self.trimmed(decodedDefaultModelID)
+        servedModelIDs = MelixServerModelRosterNormalizer.normalized(
+            try container.decodeIfPresent([String].self, forKey: .servedModelIDs)
+                ?? (defaultModelID.isEmpty ? [] : [defaultModelID]),
+            defaultModelID: defaultModelID
+        )
         host = try container.decodeIfPresent(String.self, forKey: .host) ?? MelixGatewayDefaults.host
         port = try container.decodeIfPresent(Int.self, forKey: .port) ?? MelixGatewayDefaults.port
         effectiveHost = try container.decodeIfPresent(String.self, forKey: .effectiveHost) ?? host
@@ -742,6 +776,7 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         accessKeyHints = try container.decodeIfPresent([String].self, forKey: .accessKeyHints) ?? []
         rateLimitPerMinute = try container.decodeIfPresent(Int.self, forKey: .rateLimitPerMinute) ?? 120
         timeoutSeconds = try container.decodeIfPresent(Int.self, forKey: .timeoutSeconds) ?? 120
+        modelIdleTimeoutSeconds = try container.decodeIfPresent(Int.self, forKey: .modelIdleTimeoutSeconds) ?? 600
         servingDefaults = try container.decodeIfPresent(DesktopServerServingDefaultsState.self, forKey: .servingDefaults)
             ?? DesktopServerServingDefaultsState()
         lifecycle = try container.decodeIfPresent(DesktopServerSessionLifecycle.self, forKey: .lifecycle) ?? .draft
@@ -766,7 +801,8 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
         try container.encode(title, forKey: .title)
-        try container.encode(modelID, forKey: .modelID)
+        try container.encode(defaultModelID, forKey: .defaultModelID)
+        try container.encode(servedModelIDs, forKey: .servedModelIDs)
         try container.encode(host, forKey: .host)
         try container.encode(port, forKey: .port)
         try container.encode(effectiveHost, forKey: .effectiveHost)
@@ -781,6 +817,7 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         try container.encode(accessKeyHints, forKey: .accessKeyHints)
         try container.encode(rateLimitPerMinute, forKey: .rateLimitPerMinute)
         try container.encode(timeoutSeconds, forKey: .timeoutSeconds)
+        try container.encode(modelIdleTimeoutSeconds, forKey: .modelIdleTimeoutSeconds)
         try container.encode(servingDefaults, forKey: .servingDefaults)
         try container.encode(lifecycle, forKey: .lifecycle)
         try container.encode(powerState, forKey: .powerState)

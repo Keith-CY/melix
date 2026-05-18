@@ -1949,9 +1949,12 @@ private struct GatewayConfigProjection: Equatable, Sendable {
     let port: Int
     let effectiveHost: String
     let effectivePort: Int
-    let servedModelID: String
+    let defaultModelID: String
+    let servedModelIDs: [String]
     let rateLimitPerMinute: Int
     let timeoutSeconds: Int
+    let modelIdleTimeoutSeconds: Int
+    let source: Melix_Controlplane_V1_GatewayConfigSource
     let sourceText: String
     let activeBinding: Bool
     let requiresRestart: Bool
@@ -5710,7 +5713,16 @@ public final class RuntimeViewModel {
             Task {
                 do {
                     _ = try await commandWorkflowRunner.run(
-                        .serverSessionCreate(.init(title: title, modelID: modelID, host: host, port: port, json: true))
+                        .serverSessionCreate(
+                            .init(
+                                title: title,
+                                defaultModelID: modelID,
+                                servedModelIDs: [modelID],
+                                host: host,
+                                port: port,
+                                json: true
+                            )
+                        )
                     )
                     restoreOperatorSessionState()
                     syncServerSessionsWithModels()
@@ -11137,9 +11149,11 @@ public final class RuntimeViewModel {
                     serverSessionID: serverSession.id,
                     host: serverSession.host,
                     port: serverSession.port,
-                    servedModelID: serverSession.modelID,
+                    defaultModelID: serverSession.defaultModelID,
+                    servedModelIDs: serverSession.servedModelIDs,
                     rateLimitPerMinute: serverSession.rateLimitPerMinute,
-                    timeoutSeconds: serverSession.timeoutSeconds
+                    timeoutSeconds: serverSession.timeoutSeconds,
+                    modelIdleTimeoutSeconds: serverSession.modelIdleTimeoutSeconds
                 )
             }
             await metrics.record(
@@ -11301,16 +11315,16 @@ public final class RuntimeViewModel {
                 from: latestSnapshot,
                 serverSessionID: seededServerSessionID
             )
-            let projectedServedModelID = projectedConfig?.servedModelID
+            let projectedDefaultModelID = projectedConfig?.defaultModelID
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let seeded = makeServerSession(
                 for: projectedConfig.flatMap { projection in
-                    textModels.first { $0.modelID == projection.servedModelID }
+                    textModels.first { $0.modelID == projection.defaultModelID }
                 } ?? firstTextModel,
                 title: "Primary Server",
                 port: projectedConfig?.port ?? MelixGatewayDefaults.port,
                 serverSessionID: seededServerSessionID,
-                modelIDOverride: projectedServedModelID?.isEmpty == false ? projectedServedModelID : nil
+                modelIDOverride: projectedDefaultModelID?.isEmpty == false ? projectedDefaultModelID : nil
             )
             if projectedConfig != nil {
                 var projectedSeeded = seeded
@@ -11332,7 +11346,7 @@ public final class RuntimeViewModel {
             applyGatewayConfigProjection(to: &updated)
             applyServingDefaultsProjection(to: &updated)
             let runtimeSession = runtimeSession(for: session.id, fallbackIndex: offset)
-            if let model = catalogModelsIncludingRegistry.first(where: { $0.modelID == session.modelID }) {
+            if let model = catalogModelsIncludingRegistry.first(where: { $0.modelID == updated.defaultModelID }) {
                 updated.lastKnownModelStateText = model.stateText
                 if runtimeSession == nil {
                     switch session.lifecycle {
@@ -11436,12 +11450,14 @@ public final class RuntimeViewModel {
         title: String,
         port: Int,
         serverSessionID: String = "server-session-\(UUID().uuidString)",
-        modelIDOverride: String? = nil
+        modelIDOverride: String? = nil,
+        servedModelIDs: [String] = []
     ) -> DesktopServerSessionState {
         var session = DesktopServerSessionState(
             id: serverSessionID,
             title: title,
             modelID: modelIDOverride ?? model.modelID,
+            servedModelIDs: servedModelIDs,
             port: port,
             lifecycle: .running,
             lastKnownModelStateText: model.stateText
@@ -11458,7 +11474,7 @@ public final class RuntimeViewModel {
         error: String
     ) {
         serverSessions = serverSessions.map { session in
-            guard session.modelID == modelID else {
+            guard session.servedModelIDs.contains(modelID) else {
                 return session
             }
             var updated = session
@@ -11572,11 +11588,13 @@ public final class RuntimeViewModel {
                     .init(
                         serverSessionID: serverSession.id,
                         title: serverSession.title,
-                        modelID: serverSession.modelID,
+                        defaultModelID: serverSession.defaultModelID,
+                        servedModelIDs: serverSession.servedModelIDs,
                         host: serverSession.host,
                         port: serverSession.port,
                         rateLimitPerMinute: serverSession.rateLimitPerMinute,
                         timeoutSeconds: serverSession.timeoutSeconds,
+                        modelIdleTimeoutSeconds: serverSession.modelIdleTimeoutSeconds,
                         accelerationProfile: serverSession.servingDefaults.accelerationProfile,
                         accelerationMode: serverSession.servingDefaults.accelerationMode,
                         draftModelID: serverSession.servingDefaults.draftModelID,
@@ -13160,11 +13178,35 @@ public final class RuntimeViewModel {
         session.port = projection.port
         session.effectiveHost = projection.effectiveHost
         session.effectivePort = projection.effectivePort
+        if shouldAdoptGatewayRosterProjection(projection, for: session) {
+            session.defaultModelID = projection.defaultModelID
+            session.servedModelIDs = projection.servedModelIDs
+        }
         session.rateLimitPerMinute = projection.rateLimitPerMinute
         session.timeoutSeconds = projection.timeoutSeconds
+        session.modelIdleTimeoutSeconds = projection.modelIdleTimeoutSeconds
         session.gatewayConfigSourceText = projection.sourceText
         session.gatewayConfigActiveBinding = projection.activeBinding
         session.gatewayConfigRequiresRestart = projection.requiresRestart
+    }
+
+    private func shouldAdoptGatewayRosterProjection(
+        _ projection: GatewayConfigProjection,
+        for session: DesktopServerSessionState
+    ) -> Bool {
+        // Config-file projections can lag behind explicit operator edits.
+        // Keep local roster intent unless the defaults still match, while an
+        // empty local roster is treated as bootstrap state that can be filled.
+        let localDefaultModelID = session.defaultModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let projectedDefaultModelID = projection.defaultModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard localDefaultModelID.isEmpty == false else {
+            return true
+        }
+        guard projection.source == .configFileImport else {
+            return true
+        }
+        // Bootstrap: an empty local roster means no explicit operator choice exists yet.
+        return localDefaultModelID == projectedDefaultModelID || session.servedModelIDs.isEmpty
     }
 
     private func applyServingDefaultsProjection(to session: inout DesktopServerSessionState) {
@@ -13344,14 +13386,23 @@ public final class RuntimeViewModel {
             return nil
         }
 
+        let defaultModelID = listener.defaultModelID.isEmpty
+            ? (listener.servedModelIds.first ?? "")
+            : listener.defaultModelID
+        let servedModelIDs = listener.servedModelIds.isEmpty
+            ? (defaultModelID.isEmpty ? [] : [defaultModelID])
+            : listener.servedModelIds
         return GatewayConfigProjection(
             host: listener.requestedHost,
             port: Int(listener.requestedPort),
             effectiveHost: listener.effectiveHost.isEmpty ? listener.requestedHost : listener.effectiveHost,
             effectivePort: listener.effectivePort == 0 ? Int(listener.requestedPort) : Int(listener.effectivePort),
-            servedModelID: listener.servedModelID,
+            defaultModelID: defaultModelID,
+            servedModelIDs: servedModelIDs,
             rateLimitPerMinute: Int(listener.rateLimitPerMinute),
             timeoutSeconds: Int(listener.timeoutSeconds),
+            modelIdleTimeoutSeconds: Int(listener.modelIdleTimeoutSeconds),
+            source: listener.source,
             sourceText: gatewayConfigSourceText(listener.source),
             activeBinding: listener.activeBinding,
             requiresRestart: listener.requiresRestart

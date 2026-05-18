@@ -53,6 +53,23 @@ public struct SessionLifecycleSmokeReport: Encodable, Equatable, Sendable {
 }
 
 public struct SessionLifecycleSmokeRunner: Sendable {
+    private static let exportedControlPlaneMetricKeys = [
+        "control_plane.server_start_ms",
+        "control_plane.server_pause_ms",
+        "control_plane.server_resume_ms",
+        "control_plane.server_wake_ms",
+        "control_plane.server_stop_ms",
+        "control_plane.server_idle_policy_ms",
+    ]
+
+    private static let requiredControlPlaneMetricKeys: Set<String> = [
+        "control_plane.server_start_ms",
+        "control_plane.server_pause_ms",
+        "control_plane.server_resume_ms",
+        "control_plane.server_stop_ms",
+        "control_plane.server_idle_policy_ms",
+    ]
+
     private let client: any ControlPlaneXPCClient
     private let metricsPath: String
     private let now: @Sendable () -> Double
@@ -156,7 +173,10 @@ public struct SessionLifecycleSmokeRunner: Sendable {
         let restartAssistant = try await collectAssistantText(from: restartExecution)
 
         await flushMetrics()
-        var metrics = readExportedMetrics()
+        var metrics = try await readExportedMetrics(
+            requiring: Self.requiredControlPlaneMetricKeys,
+            timeoutSeconds: 1
+        )
         metrics["lifecycle.pause_ack_ms"] = pauseAckMS
         metrics["lifecycle.idle_to_light_sleep_ms"] = idleToSleepMS
         metrics["lifecycle.wake_to_ready_ms"] = wakeToReadyMS
@@ -270,12 +290,32 @@ public struct SessionLifecycleSmokeRunner: Sendable {
         return try await client.stopServerSession(serverSessionID: serverSessionID)
     }
 
-    private func readExportedMetrics() -> [String: Double] {
+    private func readExportedMetrics(
+        requiring requiredKeys: Set<String> = [],
+        timeoutSeconds: TimeInterval = 0
+    ) async throws -> [String: Double] {
         let trimmedPath = metricsPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPath.isEmpty else {
             return [:]
         }
-        let url = URL(fileURLWithPath: trimmedPath)
+
+        let pollInterval: TimeInterval = 0.05
+        let deadline = max(0, timeoutSeconds)
+        var waited: TimeInterval = 0
+        var metrics = readExportedMetricsOnce(from: trimmedPath)
+
+        while !requiredKeys.isSubset(of: Set(metrics.keys)), waited < deadline {
+            let waitSeconds = min(pollInterval, deadline - waited)
+            try await sleep(waitSeconds)
+            waited += waitSeconds
+            metrics = readExportedMetricsOnce(from: trimmedPath)
+        }
+
+        return metrics
+    }
+
+    private func readExportedMetricsOnce(from path: String) -> [String: Double] {
+        let url = URL(fileURLWithPath: path)
         guard
             let data = try? Data(contentsOf: url),
             let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -285,14 +325,7 @@ public struct SessionLifecycleSmokeRunner: Sendable {
         }
 
         var metrics: [String: Double] = [:]
-        for key in [
-            "control_plane.server_start_ms",
-            "control_plane.server_pause_ms",
-            "control_plane.server_resume_ms",
-            "control_plane.server_wake_ms",
-            "control_plane.server_stop_ms",
-            "control_plane.server_idle_policy_ms",
-        ] {
+        for key in Self.exportedControlPlaneMetricKeys {
             if let value = values[key] as? NSNumber {
                 metrics[key] = value.doubleValue
             }

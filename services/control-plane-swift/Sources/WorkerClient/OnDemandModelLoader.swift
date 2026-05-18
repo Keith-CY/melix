@@ -25,6 +25,52 @@ enum OnDemandModelLoadError: Error, Equatable {
 }
 
 enum OnDemandModelLoader {
+    static func sweepIdleModels(
+        servedModelIDs: [String],
+        idleTimeoutSeconds: UInt32,
+        modelCatalog: ModelCatalog,
+        workerRegistry: WorkerRegistry?,
+        metricsStore: MetricsStore
+    ) async -> ModelCatalog.IdleSweepPlan {
+        let startedAt = Date()
+        let plan = await modelCatalog.idleSweepPlan(
+            servedModelIDs: servedModelIDs,
+            idleTimeoutSeconds: idleTimeoutSeconds
+        )
+        await metricsStore.set(
+            Date().timeIntervalSince(startedAt) * 1000,
+            forKey: "control_plane.model_idle_sweep_ms"
+        )
+        if !plan.activeProtectedModelIDs.isEmpty {
+            await metricsStore.increment(
+                "control_plane.model_idle_skip_active_count",
+                by: Double(plan.activeProtectedModelIDs.count)
+            )
+        }
+        if !plan.pinnedProtectedModelIDs.isEmpty {
+            await metricsStore.increment(
+                "control_plane.model_idle_skip_pinned_count",
+                by: Double(plan.pinnedProtectedModelIDs.count)
+            )
+        }
+        for decision in plan.decisions {
+            guard let evicting = await modelCatalog.beginUnload(id: decision.modelID, reason: decision.reason) else {
+                continue
+            }
+            let unloaded = await unloadModel(
+                modelID: decision.modelID,
+                fallbackSummary: evicting,
+                reason: decision.reason,
+                modelCatalog: modelCatalog,
+                workerRegistry: workerRegistry
+            )
+            if unloaded.state == .modelUnloaded {
+                await metricsStore.increment("control_plane.model_idle_unload_count")
+            }
+        }
+        return plan
+    }
+
     static func ensureTextModelReady(
         modelID: String,
         modelCatalog: ModelCatalog,

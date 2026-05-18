@@ -110,11 +110,13 @@ public struct MelixOperatorServerServingDefaultsState: Codable, Equatable, Senda
 public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
     public let id: String
     public var title: String
-    public var modelID: String
+    public var defaultModelID: String
+    public var servedModelIDs: [String]
     public var host: String
     public var port: Int
     public var rateLimitPerMinute: Int
     public var timeoutSeconds: Int
+    public var modelIdleTimeoutSeconds: Int
     public var servingDefaults: MelixOperatorServerServingDefaultsState
     public var autoSleepEnabled: Bool
     public var lightSleepAfterSeconds: Int
@@ -128,11 +130,13 @@ public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
     public init(
         id: String,
         title: String,
-        modelID: String,
+        defaultModelID: String = "",
+        servedModelIDs: [String] = [],
         host: String = MelixGatewayDefaults.host,
         port: Int = MelixGatewayDefaults.port,
         rateLimitPerMinute: Int = 120,
         timeoutSeconds: Int = 120,
+        modelIdleTimeoutSeconds: Int = 600,
         servingDefaults: MelixOperatorServerServingDefaultsState = .init(),
         autoSleepEnabled: Bool = false,
         lightSleepAfterSeconds: Int = 0,
@@ -145,11 +149,17 @@ public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
     ) {
         self.id = id
         self.title = title
-        self.modelID = modelID
+        let resolvedDefaultModelID = Self.trimmed(defaultModelID)
+        self.defaultModelID = resolvedDefaultModelID
+        self.servedModelIDs = MelixServerModelRosterNormalizer.normalizedOrDefault(
+            servedModelIDs,
+            defaultModelID: resolvedDefaultModelID
+        )
         self.host = host
         self.port = port
         self.rateLimitPerMinute = rateLimitPerMinute
         self.timeoutSeconds = timeoutSeconds
+        self.modelIdleTimeoutSeconds = modelIdleTimeoutSeconds
         self.servingDefaults = servingDefaults
         self.autoSleepEnabled = autoSleepEnabled
         self.lightSleepAfterSeconds = lightSleepAfterSeconds
@@ -164,11 +174,14 @@ public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case id
         case title
-        case modelID = "model_id"
+        case legacyModelID = "model_id"
+        case defaultModelID = "default_model_id"
+        case servedModelIDs = "served_model_ids"
         case host
         case port
         case rateLimitPerMinute = "rate_limit_per_minute"
         case timeoutSeconds = "timeout_seconds"
+        case modelIdleTimeoutSeconds = "model_idle_timeout_seconds"
         case servingDefaults = "serving_defaults"
         case autoSleepEnabled = "auto_sleep_enabled"
         case lightSleepAfterSeconds = "light_sleep_after_seconds"
@@ -182,14 +195,22 @@ public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaultModelID = try container.decodeIfPresent(String.self, forKey: .defaultModelID)
+            ?? (try container.decodeIfPresent(String.self, forKey: .legacyModelID) ?? "")
         self.init(
             id: try container.decode(String.self, forKey: .id),
             title: try container.decodeIfPresent(String.self, forKey: .title) ?? "",
-            modelID: try container.decodeIfPresent(String.self, forKey: .modelID) ?? "",
+            defaultModelID: defaultModelID,
+            servedModelIDs: try container.decodeIfPresent([String].self, forKey: .servedModelIDs)
+                ?? (defaultModelID.isEmpty ? [] : [defaultModelID]),
             host: try container.decodeIfPresent(String.self, forKey: .host) ?? MelixGatewayDefaults.host,
             port: try container.decodeIfPresent(Int.self, forKey: .port) ?? MelixGatewayDefaults.port,
             rateLimitPerMinute: try container.decodeIfPresent(Int.self, forKey: .rateLimitPerMinute) ?? 120,
             timeoutSeconds: try container.decodeIfPresent(Int.self, forKey: .timeoutSeconds) ?? 120,
+            modelIdleTimeoutSeconds: try container.decodeIfPresent(
+                Int.self,
+                forKey: .modelIdleTimeoutSeconds
+            ) ?? 600,
             servingDefaults: try container.decodeIfPresent(
                 MelixOperatorServerServingDefaultsState.self,
                 forKey: .servingDefaults
@@ -209,11 +230,13 @@ public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
         try container.encode(title, forKey: .title)
-        try container.encode(modelID, forKey: .modelID)
+        try container.encode(defaultModelID, forKey: .defaultModelID)
+        try container.encode(servedModelIDs, forKey: .servedModelIDs)
         try container.encode(host, forKey: .host)
         try container.encode(port, forKey: .port)
         try container.encode(rateLimitPerMinute, forKey: .rateLimitPerMinute)
         try container.encode(timeoutSeconds, forKey: .timeoutSeconds)
+        try container.encode(modelIdleTimeoutSeconds, forKey: .modelIdleTimeoutSeconds)
         try container.encode(servingDefaults, forKey: .servingDefaults)
         try container.encode(autoSleepEnabled, forKey: .autoSleepEnabled)
         try container.encode(lightSleepAfterSeconds, forKey: .lightSleepAfterSeconds)
@@ -223,6 +246,10 @@ public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
         try container.encode(lastKnownModelStateText, forKey: .lastKnownModelStateText)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
+    }
+
+    private static func trimmed(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

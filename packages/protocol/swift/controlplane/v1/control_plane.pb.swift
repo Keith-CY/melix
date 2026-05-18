@@ -3053,11 +3053,15 @@ public struct Melix_Controlplane_V1_ApplyGatewayConfig: Sendable {
 
   public var port: UInt32 = 0
 
-  public var servedModelID: String = String()
+  public var defaultModelID: String = String()
 
   public var rateLimitPerMinute: UInt32 = 0
 
   public var timeoutSeconds: UInt32 = 0
+
+  public var servedModelIds: [String] = []
+
+  public var modelIdleTimeoutSeconds: UInt32 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -5438,7 +5442,7 @@ public struct Melix_Controlplane_V1_GatewayListenerConfigSummary: Sendable {
 
   public var effectivePort: UInt32 = 0
 
-  public var servedModelID: String = String()
+  public var defaultModelID: String = String()
 
   public var rateLimitPerMinute: UInt32 = 0
 
@@ -5451,6 +5455,10 @@ public struct Melix_Controlplane_V1_GatewayListenerConfigSummary: Sendable {
   public var requiresRestart: Bool = false
 
   public var updatedAtUnixMs: Int64 = 0
+
+  public var servedModelIds: [String] = []
+
+  public var modelIdleTimeoutSeconds: UInt32 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -5479,9 +5487,9 @@ public struct Melix_Controlplane_V1_ServingDefaultsSessionSummary: @unchecked Se
     set {_uniqueStorage()._serverSessionID = newValue}
   }
 
-  public var servedModelID: String {
-    get {_storage._servedModelID}
-    set {_uniqueStorage()._servedModelID = newValue}
+  public var defaultModelID: String {
+    get {_storage._defaultModelID}
+    set {_uniqueStorage()._defaultModelID = newValue}
   }
 
   public var requestedTemperature: Double {
@@ -6839,6 +6847,34 @@ public struct Melix_Controlplane_V1_ServerSessionRuntimeState: Sendable {
   public var requestedDiskStreamingMode: Melix_Controlplane_V1_DiskStreamingMode = .unspecified
 
   public var effectiveDiskStreamingMode: Melix_Controlplane_V1_DiskStreamingMode = .unspecified
+
+  public var modelRuntimeStates: [Melix_Controlplane_V1_ServerSessionModelRuntimeState] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public struct Melix_Controlplane_V1_ServerSessionModelRuntimeState: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var modelID: String = String()
+
+  public var modelState: Melix_Controlplane_V1_ModelState = .unspecified
+
+  public var activeRequestCount: UInt32 = 0
+
+  public var lastRequestStartedAtUnixMs: Int64 = 0
+
+  public var lastRequestFinishedAtUnixMs: Int64 = 0
+
+  public var idleDeadlineUnixMs: Int64 = 0
+
+  public var idleUnloadEligible: Bool = false
+
+  public var pinned: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -10244,7 +10280,7 @@ extension Melix_Controlplane_V1_ApplyGatewayAccess: SwiftProtobuf.Message, Swift
 
 extension Melix_Controlplane_V1_ApplyGatewayConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ApplyGatewayConfig"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{1}host\0\u{1}port\0\u{3}served_model_id\0\u{3}rate_limit_per_minute\0\u{3}timeout_seconds\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{1}host\0\u{1}port\0\u{3}default_model_id\0\u{3}rate_limit_per_minute\0\u{3}timeout_seconds\0\u{3}served_model_ids\0\u{3}model_idle_timeout_seconds\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -10255,9 +10291,11 @@ extension Melix_Controlplane_V1_ApplyGatewayConfig: SwiftProtobuf.Message, Swift
       case 1: try { try decoder.decodeSingularStringField(value: &self.serverSessionID) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.host) }()
       case 3: try { try decoder.decodeSingularUInt32Field(value: &self.port) }()
-      case 4: try { try decoder.decodeSingularStringField(value: &self.servedModelID) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.defaultModelID) }()
       case 5: try { try decoder.decodeSingularUInt32Field(value: &self.rateLimitPerMinute) }()
       case 6: try { try decoder.decodeSingularUInt32Field(value: &self.timeoutSeconds) }()
+      case 7: try { try decoder.decodeRepeatedStringField(value: &self.servedModelIds) }()
+      case 8: try { try decoder.decodeSingularUInt32Field(value: &self.modelIdleTimeoutSeconds) }()
       default: break
       }
     }
@@ -10273,14 +10311,20 @@ extension Melix_Controlplane_V1_ApplyGatewayConfig: SwiftProtobuf.Message, Swift
     if self.port != 0 {
       try visitor.visitSingularUInt32Field(value: self.port, fieldNumber: 3)
     }
-    if !self.servedModelID.isEmpty {
-      try visitor.visitSingularStringField(value: self.servedModelID, fieldNumber: 4)
+    if !self.defaultModelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.defaultModelID, fieldNumber: 4)
     }
     if self.rateLimitPerMinute != 0 {
       try visitor.visitSingularUInt32Field(value: self.rateLimitPerMinute, fieldNumber: 5)
     }
     if self.timeoutSeconds != 0 {
       try visitor.visitSingularUInt32Field(value: self.timeoutSeconds, fieldNumber: 6)
+    }
+    if !self.servedModelIds.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.servedModelIds, fieldNumber: 7)
+    }
+    if self.modelIdleTimeoutSeconds != 0 {
+      try visitor.visitSingularUInt32Field(value: self.modelIdleTimeoutSeconds, fieldNumber: 8)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -10289,9 +10333,11 @@ extension Melix_Controlplane_V1_ApplyGatewayConfig: SwiftProtobuf.Message, Swift
     if lhs.serverSessionID != rhs.serverSessionID {return false}
     if lhs.host != rhs.host {return false}
     if lhs.port != rhs.port {return false}
-    if lhs.servedModelID != rhs.servedModelID {return false}
+    if lhs.defaultModelID != rhs.defaultModelID {return false}
     if lhs.rateLimitPerMinute != rhs.rateLimitPerMinute {return false}
     if lhs.timeoutSeconds != rhs.timeoutSeconds {return false}
+    if lhs.servedModelIds != rhs.servedModelIds {return false}
+    if lhs.modelIdleTimeoutSeconds != rhs.modelIdleTimeoutSeconds {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -15375,7 +15421,7 @@ extension Melix_Controlplane_V1_GatewayAccessSummary: SwiftProtobuf.Message, Swi
 
 extension Melix_Controlplane_V1_GatewayListenerConfigSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GatewayListenerConfigSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}requested_host\0\u{3}requested_port\0\u{3}effective_host\0\u{3}effective_port\0\u{3}served_model_id\0\u{3}rate_limit_per_minute\0\u{3}timeout_seconds\0\u{1}source\0\u{3}active_binding\0\u{3}requires_restart\0\u{3}updated_at_unix_ms\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}requested_host\0\u{3}requested_port\0\u{3}effective_host\0\u{3}effective_port\0\u{3}default_model_id\0\u{3}rate_limit_per_minute\0\u{3}timeout_seconds\0\u{1}source\0\u{3}active_binding\0\u{3}requires_restart\0\u{3}updated_at_unix_ms\0\u{3}served_model_ids\0\u{3}model_idle_timeout_seconds\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -15388,13 +15434,15 @@ extension Melix_Controlplane_V1_GatewayListenerConfigSummary: SwiftProtobuf.Mess
       case 3: try { try decoder.decodeSingularUInt32Field(value: &self.requestedPort) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.effectiveHost) }()
       case 5: try { try decoder.decodeSingularUInt32Field(value: &self.effectivePort) }()
-      case 6: try { try decoder.decodeSingularStringField(value: &self.servedModelID) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.defaultModelID) }()
       case 7: try { try decoder.decodeSingularUInt32Field(value: &self.rateLimitPerMinute) }()
       case 8: try { try decoder.decodeSingularUInt32Field(value: &self.timeoutSeconds) }()
       case 9: try { try decoder.decodeSingularEnumField(value: &self.source) }()
       case 10: try { try decoder.decodeSingularBoolField(value: &self.activeBinding) }()
       case 11: try { try decoder.decodeSingularBoolField(value: &self.requiresRestart) }()
       case 12: try { try decoder.decodeSingularInt64Field(value: &self.updatedAtUnixMs) }()
+      case 13: try { try decoder.decodeRepeatedStringField(value: &self.servedModelIds) }()
+      case 14: try { try decoder.decodeSingularUInt32Field(value: &self.modelIdleTimeoutSeconds) }()
       default: break
       }
     }
@@ -15416,8 +15464,8 @@ extension Melix_Controlplane_V1_GatewayListenerConfigSummary: SwiftProtobuf.Mess
     if self.effectivePort != 0 {
       try visitor.visitSingularUInt32Field(value: self.effectivePort, fieldNumber: 5)
     }
-    if !self.servedModelID.isEmpty {
-      try visitor.visitSingularStringField(value: self.servedModelID, fieldNumber: 6)
+    if !self.defaultModelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.defaultModelID, fieldNumber: 6)
     }
     if self.rateLimitPerMinute != 0 {
       try visitor.visitSingularUInt32Field(value: self.rateLimitPerMinute, fieldNumber: 7)
@@ -15437,6 +15485,12 @@ extension Melix_Controlplane_V1_GatewayListenerConfigSummary: SwiftProtobuf.Mess
     if self.updatedAtUnixMs != 0 {
       try visitor.visitSingularInt64Field(value: self.updatedAtUnixMs, fieldNumber: 12)
     }
+    if !self.servedModelIds.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.servedModelIds, fieldNumber: 13)
+    }
+    if self.modelIdleTimeoutSeconds != 0 {
+      try visitor.visitSingularUInt32Field(value: self.modelIdleTimeoutSeconds, fieldNumber: 14)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -15446,13 +15500,15 @@ extension Melix_Controlplane_V1_GatewayListenerConfigSummary: SwiftProtobuf.Mess
     if lhs.requestedPort != rhs.requestedPort {return false}
     if lhs.effectiveHost != rhs.effectiveHost {return false}
     if lhs.effectivePort != rhs.effectivePort {return false}
-    if lhs.servedModelID != rhs.servedModelID {return false}
+    if lhs.defaultModelID != rhs.defaultModelID {return false}
     if lhs.rateLimitPerMinute != rhs.rateLimitPerMinute {return false}
     if lhs.timeoutSeconds != rhs.timeoutSeconds {return false}
     if lhs.source != rhs.source {return false}
     if lhs.activeBinding != rhs.activeBinding {return false}
     if lhs.requiresRestart != rhs.requiresRestart {return false}
     if lhs.updatedAtUnixMs != rhs.updatedAtUnixMs {return false}
+    if lhs.servedModelIds != rhs.servedModelIds {return false}
+    if lhs.modelIdleTimeoutSeconds != rhs.modelIdleTimeoutSeconds {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -15490,11 +15546,11 @@ extension Melix_Controlplane_V1_GatewayConfigSummary: SwiftProtobuf.Message, Swi
 
 extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServingDefaultsSessionSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}served_model_id\0\u{3}requested_temperature\0\u{3}requested_top_p\0\u{3}requested_max_tokens\0\u{3}requested_stream_interval_tokens\0\u{3}requested_max_concurrent_requests\0\u{3}effective_temperature\0\u{3}effective_top_p\0\u{3}effective_max_tokens\0\u{3}effective_stream_interval_tokens\0\u{3}effective_max_concurrent_requests\0\u{1}source\0\u{3}model_override_applied\0\u{3}updated_at_unix_ms\0\u{3}requested_concurrent_processing_enabled\0\u{3}requested_prefill_batch_size\0\u{3}requested_completion_batch_size\0\u{3}effective_concurrent_processing_enabled\0\u{3}effective_prefill_batch_size\0\u{3}effective_completion_batch_size\0\u{3}requested_acceleration_mode\0\u{3}requested_draft_model_id\0\u{3}requested_num_draft_tokens\0\u{3}effective_acceleration_mode\0\u{3}effective_draft_model_id\0\u{3}effective_num_draft_tokens\0\u{3}requested_acceleration_profile\0\u{3}effective_acceleration_profile\0\u{3}acceleration_profile_intent\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}default_model_id\0\u{3}requested_temperature\0\u{3}requested_top_p\0\u{3}requested_max_tokens\0\u{3}requested_stream_interval_tokens\0\u{3}requested_max_concurrent_requests\0\u{3}effective_temperature\0\u{3}effective_top_p\0\u{3}effective_max_tokens\0\u{3}effective_stream_interval_tokens\0\u{3}effective_max_concurrent_requests\0\u{1}source\0\u{3}model_override_applied\0\u{3}updated_at_unix_ms\0\u{3}requested_concurrent_processing_enabled\0\u{3}requested_prefill_batch_size\0\u{3}requested_completion_batch_size\0\u{3}effective_concurrent_processing_enabled\0\u{3}effective_prefill_batch_size\0\u{3}effective_completion_batch_size\0\u{3}requested_acceleration_mode\0\u{3}requested_draft_model_id\0\u{3}requested_num_draft_tokens\0\u{3}effective_acceleration_mode\0\u{3}effective_draft_model_id\0\u{3}effective_num_draft_tokens\0\u{3}requested_acceleration_profile\0\u{3}effective_acceleration_profile\0\u{3}acceleration_profile_intent\0")
 
   fileprivate class _StorageClass {
     var _serverSessionID: String = String()
-    var _servedModelID: String = String()
+    var _defaultModelID: String = String()
     var _requestedTemperature: Double = 0
     var _requestedTopP: Double = 0
     var _requestedMaxTokens: UInt32 = 0
@@ -15534,7 +15590,7 @@ extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Mes
 
     init(copying source: _StorageClass) {
       _serverSessionID = source._serverSessionID
-      _servedModelID = source._servedModelID
+      _defaultModelID = source._defaultModelID
       _requestedTemperature = source._requestedTemperature
       _requestedTopP = source._requestedTopP
       _requestedMaxTokens = source._requestedMaxTokens
@@ -15582,7 +15638,7 @@ extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Mes
         // enabled. https://github.com/apple/swift-protobuf/issues/1034
         switch fieldNumber {
         case 1: try { try decoder.decodeSingularStringField(value: &_storage._serverSessionID) }()
-        case 2: try { try decoder.decodeSingularStringField(value: &_storage._servedModelID) }()
+        case 2: try { try decoder.decodeSingularStringField(value: &_storage._defaultModelID) }()
         case 3: try { try decoder.decodeSingularDoubleField(value: &_storage._requestedTemperature) }()
         case 4: try { try decoder.decodeSingularDoubleField(value: &_storage._requestedTopP) }()
         case 5: try { try decoder.decodeSingularUInt32Field(value: &_storage._requestedMaxTokens) }()
@@ -15622,8 +15678,8 @@ extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Mes
       if !_storage._serverSessionID.isEmpty {
         try visitor.visitSingularStringField(value: _storage._serverSessionID, fieldNumber: 1)
       }
-      if !_storage._servedModelID.isEmpty {
-        try visitor.visitSingularStringField(value: _storage._servedModelID, fieldNumber: 2)
+      if !_storage._defaultModelID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._defaultModelID, fieldNumber: 2)
       }
       if _storage._requestedTemperature.bitPattern != 0 {
         try visitor.visitSingularDoubleField(value: _storage._requestedTemperature, fieldNumber: 3)
@@ -15719,7 +15775,7 @@ extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Mes
         let _storage = _args.0
         let rhs_storage = _args.1
         if _storage._serverSessionID != rhs_storage._serverSessionID {return false}
-        if _storage._servedModelID != rhs_storage._servedModelID {return false}
+        if _storage._defaultModelID != rhs_storage._defaultModelID {return false}
         if _storage._requestedTemperature != rhs_storage._requestedTemperature {return false}
         if _storage._requestedTopP != rhs_storage._requestedTopP {return false}
         if _storage._requestedMaxTokens != rhs_storage._requestedMaxTokens {return false}
@@ -18018,7 +18074,7 @@ extension Melix_Controlplane_V1_SessionSummary: SwiftProtobuf.Message, SwiftProt
 
 extension Melix_Controlplane_V1_ServerSessionRuntimeState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServerSessionRuntimeState"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}lifecycle_state\0\u{3}power_state\0\u{3}wake_reason\0\u{3}idle_timer_seconds\0\u{3}auto_sleep_enabled\0\u{3}light_sleep_after_seconds\0\u{3}deep_sleep_after_seconds\0\u{3}updated_at_unix_ms\0\u{3}requested_disk_streaming_mode\0\u{3}effective_disk_streaming_mode\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}lifecycle_state\0\u{3}power_state\0\u{3}wake_reason\0\u{3}idle_timer_seconds\0\u{3}auto_sleep_enabled\0\u{3}light_sleep_after_seconds\0\u{3}deep_sleep_after_seconds\0\u{3}updated_at_unix_ms\0\u{3}requested_disk_streaming_mode\0\u{3}effective_disk_streaming_mode\0\u{3}model_runtime_states\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -18037,6 +18093,7 @@ extension Melix_Controlplane_V1_ServerSessionRuntimeState: SwiftProtobuf.Message
       case 9: try { try decoder.decodeSingularInt64Field(value: &self.updatedAtUnixMs) }()
       case 10: try { try decoder.decodeSingularEnumField(value: &self.requestedDiskStreamingMode) }()
       case 11: try { try decoder.decodeSingularEnumField(value: &self.effectiveDiskStreamingMode) }()
+      case 12: try { try decoder.decodeRepeatedMessageField(value: &self.modelRuntimeStates) }()
       default: break
       }
     }
@@ -18076,6 +18133,9 @@ extension Melix_Controlplane_V1_ServerSessionRuntimeState: SwiftProtobuf.Message
     if self.effectiveDiskStreamingMode != .unspecified {
       try visitor.visitSingularEnumField(value: self.effectiveDiskStreamingMode, fieldNumber: 11)
     }
+    if !self.modelRuntimeStates.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.modelRuntimeStates, fieldNumber: 12)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -18091,6 +18151,72 @@ extension Melix_Controlplane_V1_ServerSessionRuntimeState: SwiftProtobuf.Message
     if lhs.updatedAtUnixMs != rhs.updatedAtUnixMs {return false}
     if lhs.requestedDiskStreamingMode != rhs.requestedDiskStreamingMode {return false}
     if lhs.effectiveDiskStreamingMode != rhs.effectiveDiskStreamingMode {return false}
+    if lhs.modelRuntimeStates != rhs.modelRuntimeStates {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+extension Melix_Controlplane_V1_ServerSessionModelRuntimeState: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ServerSessionModelRuntimeState"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{3}model_state\0\u{3}active_request_count\0\u{3}last_request_started_at_unix_ms\0\u{3}last_request_finished_at_unix_ms\0\u{3}idle_deadline_unix_ms\0\u{3}idle_unload_eligible\0\u{1}pinned\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.modelID) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.modelState) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.activeRequestCount) }()
+      case 4: try { try decoder.decodeSingularInt64Field(value: &self.lastRequestStartedAtUnixMs) }()
+      case 5: try { try decoder.decodeSingularInt64Field(value: &self.lastRequestFinishedAtUnixMs) }()
+      case 6: try { try decoder.decodeSingularInt64Field(value: &self.idleDeadlineUnixMs) }()
+      case 7: try { try decoder.decodeSingularBoolField(value: &self.idleUnloadEligible) }()
+      case 8: try { try decoder.decodeSingularBoolField(value: &self.pinned) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.modelID.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelID, fieldNumber: 1)
+    }
+    if self.modelState != .unspecified {
+      try visitor.visitSingularEnumField(value: self.modelState, fieldNumber: 2)
+    }
+    if self.activeRequestCount != 0 {
+      try visitor.visitSingularUInt32Field(value: self.activeRequestCount, fieldNumber: 3)
+    }
+    if self.lastRequestStartedAtUnixMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.lastRequestStartedAtUnixMs, fieldNumber: 4)
+    }
+    if self.lastRequestFinishedAtUnixMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.lastRequestFinishedAtUnixMs, fieldNumber: 5)
+    }
+    if self.idleDeadlineUnixMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.idleDeadlineUnixMs, fieldNumber: 6)
+    }
+    if self.idleUnloadEligible != false {
+      try visitor.visitSingularBoolField(value: self.idleUnloadEligible, fieldNumber: 7)
+    }
+    if self.pinned != false {
+      try visitor.visitSingularBoolField(value: self.pinned, fieldNumber: 8)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_ServerSessionModelRuntimeState, rhs: Melix_Controlplane_V1_ServerSessionModelRuntimeState) -> Bool {
+    if lhs.modelID != rhs.modelID {return false}
+    if lhs.modelState != rhs.modelState {return false}
+    if lhs.activeRequestCount != rhs.activeRequestCount {return false}
+    if lhs.lastRequestStartedAtUnixMs != rhs.lastRequestStartedAtUnixMs {return false}
+    if lhs.lastRequestFinishedAtUnixMs != rhs.lastRequestFinishedAtUnixMs {return false}
+    if lhs.idleDeadlineUnixMs != rhs.idleDeadlineUnixMs {return false}
+    if lhs.idleUnloadEligible != rhs.idleUnloadEligible {return false}
+    if lhs.pinned != rhs.pinned {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
