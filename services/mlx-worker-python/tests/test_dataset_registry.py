@@ -753,6 +753,17 @@ def test_dataset_catalog_path_split_matching_avoids_temporary_path_construction(
     assert catalog._path_matches_split(Path("custom/train."), "train") is False
 
 
+def test_dataset_catalog_split_match_tokens_are_cached_per_split() -> None:
+    catalog._split_match_tokens.cache_clear()
+
+    assert catalog._path_matches_split(Path("data/validation-00000.jsonl"), "validation") is True
+    assert catalog._path_matches_split(Path("custom/validation-00001.jsonl"), "validation") is True
+
+    cache_info = catalog._split_match_tokens.cache_info()
+    assert cache_info.misses == 1
+    assert cache_info.hits >= 1
+
+
 def test_dataset_catalog_split_matching_skips_stem_for_direct_prefix_hits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
