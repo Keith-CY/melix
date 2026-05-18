@@ -28,7 +28,11 @@ Primary success metric:
 
 Secondary metric:
 
-- `elapsed_ms_mean` should not regress beyond the probe warning threshold.
+- `elapsed_ms_mean` should not regress beyond the probe warning threshold. The
+  elapsed-time gate keeps the 5% relative warning and allows 50 ms of absolute
+  harness jitter across the full sample loop; the `byte_length_getattrs_per_call`
+  and `parse_calls_per_call` functional counters remain strict zero-tolerance
+  metrics.
 
 ## Success Criteria
 

@@ -2780,7 +2780,8 @@
         "key": "elapsed_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "warn_pct": 5.0,
+        "warn_abs": 50.0
       },
       {
         "key": "byte_length_getattrs_per_call",
