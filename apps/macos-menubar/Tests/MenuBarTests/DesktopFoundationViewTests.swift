@@ -114,6 +114,40 @@ struct DesktopFoundationViewTests {
         #expect(DesktopLoRAVisualPolish.chartFillOpacity == 0.24)
     }
 
+    @Test("diagnostics throughput bars declare a fixed mark width")
+    func diagnosticsThroughputBarsDeclareFixedMarkWidth() throws {
+        let root = try repositoryRootForDesktopFoundationTests()
+        let shellSourceURL = root.appendingPathComponent(
+            "apps/macos-menubar/Sources/AppMain/Dashboard/DesktopWorkspaceShellView.swift"
+        )
+        let shellSource = try String(contentsOf: shellSourceURL, encoding: .utf8)
+        let throughputChartSource = try #require(
+            shellSource.slice(
+                from: "Chart(viewModel.benchmarkMatrixThroughputChartPoints)",
+                to: ".chartLegend(.hidden)"
+            )
+        )
+
+        #expect(throughputChartSource.contains("width: .fixed(12)"))
+    }
+
+    @Test("menubar swift verification disables noisy debug info")
+    func menubarSwiftVerificationDisablesNoisyDebugInfo() throws {
+        let root = try repositoryRootForDesktopFoundationTests()
+        let makefileURL = root.appendingPathComponent("Makefile")
+        let makefile = try String(contentsOf: makefileURL, encoding: .utf8)
+        let menubarTestTarget = try #require(
+            makefile.slice(from: "swift-test-menubar:", to: "py-test:")
+        )
+        let menubarCoverageCommand = try #require(
+            makefile.slice(from: "swift-coverage:", to: "py-coverage:")
+        )
+
+        #expect(makefile.contains("MENUBAR_SWIFT_TEST_FLAGS := -Xswiftc -gnone"))
+        #expect(menubarTestTarget.contains("$(MENUBAR_SWIFT_TEST_FLAGS)"))
+        #expect(menubarCoverageCommand.contains("$(MENUBAR_SWIFT_TEST_FLAGS)"))
+    }
+
     @Test("command center visuals track design-system and Apple-style inputs")
     func commandCenterVisualsTrackDesignInputs() {
         #expect(DesktopCommandCenterVisuals.visualDirection == "Digital Broadsheet Command Center")
@@ -3727,6 +3761,174 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Unsupported"))
         #expect(renderedTexts.contains("Unsupported Reason"))
         #expect(renderedTexts.contains("unsupported_backend"))
+    }
+
+    @Test("training surface renders response-only truncation safety receipt")
+    @MainActor
+    func trainingSurfaceRendersResponseOnlyTruncationSafetyReceipt() async throws {
+        let config = LoraTrainingJobConfig(
+            modelID: "melix-dev-text",
+            datasetSourceKind: "hf_dataset",
+            hfDatasetPath: "HuggingFaceH4/ultrachat_200k",
+            hfTrainSplit: "train_sft",
+            chatFeature: "messages",
+            adapterName: "truncated-response-adapter",
+            trainingMode: "qlora",
+            activationMode: "adapter_backed_runtime",
+            maxSeqLength: "1024",
+            responseOnly: true,
+            maskPrompt: true
+        )
+        let job = LoraTrainingJobRecord(
+            id: "response-only-truncated-job",
+            title: "Response-only Truncated Job",
+            config: config,
+            status: .failed,
+            lastRunJobID: "model-ops-response-only",
+            outputPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+            manifestPath: "/tmp/melix-train-lora/train_lora.adapter.json",
+            latestOutputText: #"""
+            {
+              "error_code": "response_only_labels_truncated",
+              "details": {
+                "max_seq_length": "1024",
+                "response_only_boundary_sample_count": "2",
+                "response_only_boundary_min": "1100",
+                "response_only_boundary_max": "1200",
+                "response_only_boundary_mean": "1150.000",
+                "response_only_response_tokens_mean": "9.000",
+                "response_only_trainable_response_token_count": "0",
+                "response_only_fully_truncated_response_sample_count": "2"
+              }
+            }
+            """#,
+            terminalMessage: "Training failed."
+        )
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            loraTrainingJobStore: FakeLoraTrainingJobStore(jobs: [job])
+        )
+
+        let view = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1280, height: 1800)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Response-only Safety"))
+        #expect(renderedTexts.contains("Blocked"))
+        #expect(renderedTexts.contains("Increase max_seq_length, shorten the system prompt, or disable response-only masking."))
+        #expect(renderedTexts.contains("Max Seq Length"))
+        #expect(renderedTexts.contains("1024"))
+        #expect(renderedTexts.contains("Boundary Range"))
+        #expect(renderedTexts.contains("1100-1200"))
+        #expect(renderedTexts.contains("Trainable Response Tokens"))
+        #expect(renderedTexts.contains("Fully Truncated Samples"))
+    }
+
+    @Test("training surface suppresses response-only recovery for observed jobs")
+    @MainActor
+    func trainingSurfaceSuppressesResponseOnlyRecoveryForObservedJobs() async throws {
+        let config = LoraTrainingJobConfig(
+            modelID: "melix-dev-text",
+            datasetSourceKind: "hf_dataset",
+            hfDatasetPath: "HuggingFaceH4/ultrachat_200k",
+            hfTrainSplit: "train_sft",
+            chatFeature: "messages",
+            adapterName: "observed-response-adapter",
+            trainingMode: "qlora",
+            activationMode: "adapter_backed_runtime",
+            maxSeqLength: "2048",
+            responseOnly: true,
+            maskPrompt: true
+        )
+        let job = LoraTrainingJobRecord(
+            id: "response-only-observed-job",
+            title: "Response-only Observed Job",
+            config: config,
+            status: .succeeded,
+            latestOutputText: #"""
+            {
+              "details": {
+                "max_seq_length": "2048",
+                "response_only_boundary_sample_count": "3",
+                "response_only_boundary_min": "128",
+                "response_only_boundary_max": "256",
+                "response_only_response_tokens_mean": "9.500",
+                "response_only_trainable_response_token_count": "24"
+              }
+            }
+            """#,
+            terminalMessage: "Training completed."
+        )
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            loraTrainingJobStore: FakeLoraTrainingJobStore(jobs: [job])
+        )
+
+        let view = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1280, height: 1800)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Response-only Safety"))
+        #expect(renderedTexts.contains("Observed"))
+        #expect(renderedTexts.contains("Recovery") == false)
+        #expect(renderedTexts.contains("Increase max_seq_length, shorten the system prompt, or disable response-only masking.") == false)
+    }
+
+    @Test("training surface renders response-only partially truncated sample counts")
+    @MainActor
+    func trainingSurfaceRendersResponseOnlyPartiallyTruncatedSampleCounts() async throws {
+        let config = LoraTrainingJobConfig(
+            modelID: "melix-dev-text",
+            datasetSourceKind: "hf_dataset",
+            hfDatasetPath: "HuggingFaceH4/ultrachat_200k",
+            hfTrainSplit: "train_sft",
+            chatFeature: "messages",
+            adapterName: "partially-truncated-response-adapter",
+            trainingMode: "qlora",
+            activationMode: "adapter_backed_runtime",
+            maxSeqLength: "1024",
+            responseOnly: true,
+            maskPrompt: true
+        )
+        let job = LoraTrainingJobRecord(
+            id: "response-only-partially-truncated-job",
+            title: "Response-only Partially Truncated Job",
+            config: config,
+            status: .succeeded,
+            latestOutputText: #"""
+            {
+              "details": {
+                "max_seq_length": "1024",
+                "response_only_boundary_sample_count": "3",
+                "response_only_boundary_min": "900",
+                "response_only_boundary_max": "1120",
+                "response_only_response_tokens_mean": "7.000",
+                "response_only_trainable_response_token_count": "12",
+                "response_only_truncated_response_sample_count": "1"
+              }
+            }
+            """#,
+            terminalMessage: "Training completed."
+        )
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            loraTrainingJobStore: FakeLoraTrainingJobStore(jobs: [job])
+        )
+
+        let view = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1280, height: 1800)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Response-only Safety"))
+        #expect(renderedTexts.contains("Truncated"))
+        #expect(renderedTexts.contains("Truncated Samples"))
+        #expect(renderedTexts.contains("1"))
     }
 
     @Test("training surface renders saved lora adapter support matrix receipt")

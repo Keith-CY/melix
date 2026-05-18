@@ -24,12 +24,13 @@ def _version_pairs(count: int) -> list[tuple[str, str]]:
         for patch in range(0, 3)
         for suffix in ("", "-alpha", "-beta", "-rc1")
     ]
-    differing_pairs = list(zip(versions, reversed(versions)))[: count // 2]
+    differing_pairs = list(zip(versions, reversed(versions)))[: count // 3]
+    exact_pairs = [(version, version) for version in versions[: count // 3]]
     prefix_equivalent_pairs = [
         (version, version[1:]) if index % 2 == 0 else (version[1:], version)
-        for index, version in enumerate(versions[: count - len(differing_pairs)])
+        for index, version in enumerate(versions[: count - len(differing_pairs) - len(exact_pairs)])
     ]
-    return differing_pairs + prefix_equivalent_pairs
+    return differing_pairs + exact_pairs + prefix_equivalent_pairs
 
 
 def main() -> int:

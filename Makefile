@@ -6,6 +6,7 @@ PROTOCOL_SWIFT_HOME := $(SWIFT_HOME)/protocol
 TEXT_WORKER_SWIFT_HOME := $(SWIFT_HOME)/mlx-text-worker-swift
 CONTROL_PLANE_SWIFT_HOME := $(SWIFT_HOME)/control-plane-swift
 MENUBAR_SWIFT_HOME := $(SWIFT_HOME)/macos-menubar
+MENUBAR_SWIFT_TEST_FLAGS := -Xswiftc -gnone
 
 PROTOCOL_MODULE_CACHE_PATH := $(CLANG_MODULE_CACHE_PATH)/protocol
 TEXT_WORKER_MODULE_CACHE_PATH := $(CLANG_MODULE_CACHE_PATH)/mlx-text-worker-swift
@@ -199,7 +200,7 @@ swift-test-control-worker:
 swift-test-menubar:
 	/bin/zsh -lc 'set -e; \
 	mkdir -p "$(MENUBAR_SWIFT_HOME)" "$(MENUBAR_MODULE_CACHE_PATH)"; \
-	bash scripts/ci_progress.sh "swift-test stage: macOS menubar package" env HOME="$(MENUBAR_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(MENUBAR_MODULE_CACHE_PATH)" xcrun swift test --package-path apps/macos-menubar'
+	bash scripts/ci_progress.sh "swift-test stage: macOS menubar package" env HOME="$(MENUBAR_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(MENUBAR_MODULE_CACHE_PATH)" xcrun swift test --package-path apps/macos-menubar $(MENUBAR_SWIFT_TEST_FLAGS)'
 
 py-test:
 	mkdir -p "$(UV_CACHE_DIR)"
@@ -235,7 +236,7 @@ swift-coverage:
 	mkdir -p "$(TEXT_WORKER_MODULE_CACHE_PATH)" "$(CONTROL_PLANE_MODULE_CACHE_PATH)" "$(MENUBAR_MODULE_CACHE_PATH)"; \
 	HOME="$(TEXT_WORKER_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(TEXT_WORKER_MODULE_CACHE_PATH)" xcrun swift test --package-path services/mlx-text-worker-swift --enable-code-coverage; \
 	HOME="$(CONTROL_PLANE_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(CONTROL_PLANE_MODULE_CACHE_PATH)" xcrun swift test --package-path services/control-plane-swift --enable-code-coverage; \
-	HOME="$(MENUBAR_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(MENUBAR_MODULE_CACHE_PATH)" xcrun swift test --package-path apps/macos-menubar --enable-code-coverage'
+	HOME="$(MENUBAR_SWIFT_HOME)" CLANG_MODULE_CACHE_PATH="$(MENUBAR_MODULE_CACHE_PATH)" xcrun swift test --package-path apps/macos-menubar --enable-code-coverage $(MENUBAR_SWIFT_TEST_FLAGS)'
 	python3 scripts/swift_coverage_summary.py services/mlx-text-worker-swift/.build/arm64-apple-macosx/debug/codecov/MelixTextWorkerSwift.json /services/mlx-text-worker-swift/Sources/
 	python3 scripts/swift_coverage_summary.py services/control-plane-swift/.build/arm64-apple-macosx/debug/codecov/MelixControlPlane.json /services/control-plane-swift/Sources/
 	python3 scripts/swift_coverage_summary.py apps/macos-menubar/.build/arm64-apple-macosx/debug/codecov/MelixMacOSMenubar.json /apps/macos-menubar/Sources/
