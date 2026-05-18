@@ -38,6 +38,11 @@ def _json_string_literal(value: str) -> str:
 
 
 @lru_cache(maxsize=1024)
+def _json_string_literal_bytes(value: str) -> bytes:
+    return _JSON_STRING_ENCODER(value).encode("utf-8")
+
+
+@lru_cache(maxsize=1024)
 def _ascii_float_literal(value: float) -> bytes:
     return str(value).encode("ascii")
 
@@ -549,7 +554,7 @@ def _extend_empty_attribute_event_json_line_bytes(
     status = event.status
     encoded_request_id = request_id_literals.get(request_id)
     if encoded_request_id is None:
-        encoded_request_id = _json_string_literal(request_id).encode("utf-8")
+        encoded_request_id = _json_string_literal_bytes(request_id)
         request_id_literals[request_id] = encoded_request_id
     duration_literal = _ascii_float_literal(duration_ms)
     event_index_literal = _ascii_int_literal(event_index)
@@ -567,11 +572,11 @@ def _extend_empty_attribute_event_json_line_bytes(
     append_line(b',"event_index":')
     append_line(event_index_literal)
     append_line(b',"phase":')
-    append_line(_json_string_literal(phase).encode("utf-8"))
+    append_line(_json_string_literal_bytes(phase))
     append_line(b',"request_id":')
     append_line(encoded_request_id)
     append_line(b',"schema_version":"melix.serving_diagnostics.event.v1","status":')
-    append_line(_json_string_literal(status).encode("utf-8"))
+    append_line(_json_string_literal_bytes(status))
     append_line(b"}")
     return True
 
@@ -592,11 +597,11 @@ def _empty_attribute_event_json_line_bytes(
     request_id = event.request_id
     status = event.status
     if request_id_literals is None:
-        encoded_request_id = _json_string_literal(request_id).encode("utf-8")
+        encoded_request_id = _json_string_literal_bytes(request_id)
     else:
         encoded_request_id = request_id_literals.get(request_id)
         if encoded_request_id is None:
-            encoded_request_id = _json_string_literal(request_id).encode("utf-8")
+            encoded_request_id = _json_string_literal_bytes(request_id)
             request_id_literals[request_id] = encoded_request_id
     if phase == "decode" and status == "completed":
         return b"".join(
@@ -610,8 +615,6 @@ def _empty_attribute_event_json_line_bytes(
                 _EMPTY_EVENT_JSON_DECODE_COMPLETED_SUFFIX,
             )
         )
-    encoded_phase = _json_string_literal(phase).encode("utf-8")
-    encoded_status = _json_string_literal(status).encode("utf-8")
     return b"".join(
         (
             b'{"attributes":{},"duration_ms":',
@@ -619,11 +622,11 @@ def _empty_attribute_event_json_line_bytes(
             b',"event_index":',
             _ascii_int_literal(event_index),
             b',"phase":',
-            encoded_phase,
+            _json_string_literal_bytes(phase),
             b',"request_id":',
             encoded_request_id,
             b',"schema_version":"melix.serving_diagnostics.event.v1","status":',
-            encoded_status,
+            _json_string_literal_bytes(status),
             b"}",
         )
     )
