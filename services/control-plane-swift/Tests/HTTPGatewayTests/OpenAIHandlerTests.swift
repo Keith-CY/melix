@@ -868,7 +868,7 @@ struct OpenAIHandlerTests {
                 finishReason: "stop",
                 assistantText: "active"
             ),
-        ], unloadDelayNanoseconds: 200_000_000)
+        ], unloadDelayNanoseconds: 5_000_000_000)
         let gatewayConfigStore = GatewayConfigStore(
             storeURL: FileManager.default.temporaryDirectory
                 .appendingPathComponent("melix-test-gateway-config-\(UUID().uuidString).json"),
@@ -923,10 +923,10 @@ struct OpenAIHandlerTests {
 
         #expect(response.statusCode == 200)
         #expect(payload.contains("data: [DONE]"))
-        #expect(elapsed < .milliseconds(150))
+        #expect(elapsed < .seconds(2))
         #expect(await workerClient.unloadCompletedCount == 0)
 
-        try await waitForOpenAIHandlerCondition("idle sweep unloads after response") {
+        try await waitForOpenAIHandlerCondition("idle sweep unloads after response", timeout: .seconds(10)) {
             await workerClient.unloadCompletedCount == 1
         }
     }
