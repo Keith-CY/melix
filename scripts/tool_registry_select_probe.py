@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+import statistics
+import sys
+import time
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
+
+from worker.runtime.tool_registry import built_in_tool_registry  # noqa: E402
+
+_SELECTIONS: tuple[tuple[str, ...], ...] = (
+    ("visit", "image_crop", "visit"),
+    ("text_search", "image_search", "local_compute"),
+    ("layout_parse", "visit"),
+    ("image_crop",),
+)
+
+
+def _measure(iterations: int, sample_count: int) -> dict[str, float]:
+    registry = built_in_tool_registry()
+    elapsed_samples: list[float] = []
+    checksum = 0
+
+    for _ in range(sample_count):
+        started = time.perf_counter()
+        for index in range(iterations):
+            selected = registry.select(_SELECTIONS[index % len(_SELECTIONS)])
+            checksum += len(selected.tools)
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+
+    return {
+        "elapsed_ms_mean": statistics.fmean(elapsed_samples),
+        "select_calls_mean": float(iterations),
+        "checksum": float(checksum),
+        "iterations": float(iterations),
+        "sample_count": float(sample_count),
+        "selection_case_count": float(len(_SELECTIONS)),
+    }
+
+
+def main() -> int:
+    iterations = int(os.environ.get("MELIX_TOOL_REGISTRY_SELECT_ITERATIONS", "80000"))
+    sample_count = int(os.environ.get("MELIX_TOOL_REGISTRY_SELECT_SAMPLES", "5"))
+    print(json.dumps(_measure(iterations, sample_count), sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
