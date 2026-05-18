@@ -9841,6 +9841,39 @@ struct RuntimeViewModelTests {
         #expect(receipt.boundaryMeanText.contains("192"))
         #expect(receipt.responseTokensMeanText.contains("9"))
         #expect(receipt.trainableResponseTokenCountText == "24")
+        #expect(receipt.recoveryHint.isEmpty)
+    }
+
+    @Test("lora saved job response-only receipt classifies numeric string zero as blocked")
+    @MainActor
+    func loraSavedJobResponseOnlyReceiptClassifiesNumericStringZeroAsBlocked() throws {
+        var config = makeDesktopLoraTrainingConfig(adapterName: "blocked-response-adapter")
+        config.maxSeqLength = "1024"
+        let job = LoraTrainingJobRecord(
+            id: "response-only-blocked-zero-string-job",
+            title: "Response-only Blocked Zero String Job",
+            config: config,
+            status: .failed,
+            latestOutputText: #"""
+            {
+              "details": {
+                "max_seq_length": "1024",
+                "response_only_boundary_sample_count": "2",
+                "response_only_boundary_min": "1100",
+                "response_only_boundary_max": "1200",
+                "response_only_trainable_response_token_count": "0.0",
+                "response_only_fully_truncated_response_sample_count": "2"
+              }
+            }
+            """#,
+            terminalMessage: "Training failed."
+        )
+
+        let receipt = try #require(RuntimeViewModel.responseOnlySafetyReceipt(from: job))
+
+        #expect(receipt.status == .blocked)
+        #expect(receipt.trainableResponseTokenCountText == "0.0")
+        #expect(receipt.fullyTruncatedSampleCountText == "2")
     }
 
     @Test("lora saved job follow-up actions route existing desktop surfaces")

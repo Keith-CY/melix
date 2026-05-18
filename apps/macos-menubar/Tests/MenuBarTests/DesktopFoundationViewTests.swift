@@ -3825,6 +3825,111 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Fully Truncated Samples"))
     }
 
+    @Test("training surface suppresses response-only recovery for observed jobs")
+    @MainActor
+    func trainingSurfaceSuppressesResponseOnlyRecoveryForObservedJobs() async throws {
+        let config = LoraTrainingJobConfig(
+            modelID: "melix-dev-text",
+            datasetSourceKind: "hf_dataset",
+            hfDatasetPath: "HuggingFaceH4/ultrachat_200k",
+            hfTrainSplit: "train_sft",
+            chatFeature: "messages",
+            adapterName: "observed-response-adapter",
+            trainingMode: "qlora",
+            activationMode: "adapter_backed_runtime",
+            maxSeqLength: "2048",
+            responseOnly: true,
+            maskPrompt: true
+        )
+        let job = LoraTrainingJobRecord(
+            id: "response-only-observed-job",
+            title: "Response-only Observed Job",
+            config: config,
+            status: .succeeded,
+            latestOutputText: #"""
+            {
+              "details": {
+                "max_seq_length": "2048",
+                "response_only_boundary_sample_count": "3",
+                "response_only_boundary_min": "128",
+                "response_only_boundary_max": "256",
+                "response_only_response_tokens_mean": "9.500",
+                "response_only_trainable_response_token_count": "24"
+              }
+            }
+            """#,
+            terminalMessage: "Training completed."
+        )
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            loraTrainingJobStore: FakeLoraTrainingJobStore(jobs: [job])
+        )
+
+        let view = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1280, height: 1800)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Response-only Safety"))
+        #expect(renderedTexts.contains("Observed"))
+        #expect(renderedTexts.contains("Recovery") == false)
+        #expect(renderedTexts.contains("Increase max_seq_length, shorten the system prompt, or disable response-only masking.") == false)
+    }
+
+    @Test("training surface renders response-only partially truncated sample counts")
+    @MainActor
+    func trainingSurfaceRendersResponseOnlyPartiallyTruncatedSampleCounts() async throws {
+        let config = LoraTrainingJobConfig(
+            modelID: "melix-dev-text",
+            datasetSourceKind: "hf_dataset",
+            hfDatasetPath: "HuggingFaceH4/ultrachat_200k",
+            hfTrainSplit: "train_sft",
+            chatFeature: "messages",
+            adapterName: "partially-truncated-response-adapter",
+            trainingMode: "qlora",
+            activationMode: "adapter_backed_runtime",
+            maxSeqLength: "1024",
+            responseOnly: true,
+            maskPrompt: true
+        )
+        let job = LoraTrainingJobRecord(
+            id: "response-only-partially-truncated-job",
+            title: "Response-only Partially Truncated Job",
+            config: config,
+            status: .succeeded,
+            latestOutputText: #"""
+            {
+              "details": {
+                "max_seq_length": "1024",
+                "response_only_boundary_sample_count": "3",
+                "response_only_boundary_min": "900",
+                "response_only_boundary_max": "1120",
+                "response_only_response_tokens_mean": "7.000",
+                "response_only_trainable_response_token_count": "12",
+                "response_only_truncated_response_sample_count": "1"
+              }
+            }
+            """#,
+            terminalMessage: "Training completed."
+        )
+        let viewModel = RuntimeViewModel(
+            client: FakeControlPlaneXPCClient(),
+            loraTrainingJobStore: FakeLoraTrainingJobStore(jobs: [job])
+        )
+
+        let view = hostView(
+            DesktopTrainingToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1280, height: 1800)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(renderedTexts.contains("Response-only Safety"))
+        #expect(renderedTexts.contains("Truncated"))
+        #expect(renderedTexts.contains("Truncated Samples"))
+        #expect(renderedTexts.contains("1"))
+    }
+
     @Test("training surface renders saved lora adapter support matrix receipt")
     @MainActor
     func trainingSurfaceRendersSavedLoraAdapterSupportMatrixReceipt() async throws {

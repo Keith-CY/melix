@@ -6088,6 +6088,11 @@ struct DesktopTrainingToolSectionView: View {
                 value: receipt.fullyTruncatedSampleCountText,
                 detail: ""
             ),
+            DesktopTrainingSummaryItem(
+                title: "Truncated Samples",
+                value: receipt.truncatedSampleCountText,
+                detail: ""
+            ),
         ].filter { item in
             item.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         }

@@ -11,8 +11,14 @@ or terminal output.
 - Decode `response_only_labels_truncated` and the related response-only token
   metrics from saved LoRA training job output.
 - Render a dedicated saved-job detail section for response-only safety,
-  including the recovery hint, `max_seq_length`, boundary statistics, trainable
-  response token count, and fully truncated sample count.
+  including status-aware recovery guidance, `max_seq_length`, boundary
+  statistics, trainable response token count, truncated sample count, and fully
+  truncated sample count.
+- Classify receipt status from typed numeric count fields rather than formatted
+  display strings, so `"0"`, `"0.0"`, and numeric zero payloads classify
+  consistently.
+- Suppress remediation guidance for observed healthy jobs so successful
+  response-only runs do not show false recovery instructions.
 - Keep the raw output disclosure for auditability, but make the actionable
   failure reason visible before it.
 

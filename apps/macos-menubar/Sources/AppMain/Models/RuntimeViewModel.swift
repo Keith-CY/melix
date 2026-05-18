@@ -1773,16 +1773,19 @@ public struct RuntimeResponseOnlySafetyReceiptState: Equatable, Sendable {
     public let boundaryMeanText: String
     public let responseTokensMeanText: String
     public let trainableResponseTokenCountText: String
+    public let trainableResponseTokenCount: Int?
     public let fullyTruncatedSampleCountText: String
+    public let fullyTruncatedSampleCount: Int?
     public let truncatedSampleCountText: String
+    public let truncatedSampleCount: Int?
 
     public var status: Status {
         if errorCode == "response_only_labels_truncated"
-            || (trainableResponseTokenCountText == "0" && fullyTruncatedSampleCountText.isEmpty == false)
+            || (trainableResponseTokenCount == 0 && (fullyTruncatedSampleCount ?? 0) > 0)
         {
             return .blocked
         }
-        if truncatedSampleCountText.isEmpty == false && truncatedSampleCountText != "0" {
+        if (truncatedSampleCount ?? 0) > 0 {
             return .truncated
         }
         return .observed
@@ -1793,7 +1796,12 @@ public struct RuntimeResponseOnlySafetyReceiptState: Equatable, Sendable {
     }
 
     public var recoveryHint: String {
-        "Increase max_seq_length, shorten the system prompt, or disable response-only masking."
+        switch status {
+        case .blocked, .truncated:
+            return "Increase max_seq_length, shorten the system prompt, or disable response-only masking."
+        case .observed:
+            return ""
+        }
     }
 }
 
@@ -6675,26 +6683,45 @@ public final class RuntimeViewModel {
             manifestTextValue("code", primary: sourcePayload, fallback: errorPayload)
         )
         let terminalContainsGuardCode = job.terminalMessage.contains("response_only_labels_truncated")
-        let maxSeqLengthText = responseOnlyTextValue("max_seq_length", details: detailsPayload, payload: sourcePayload)
-        let sampleCountText = responseOnlyTextValue("response_only_boundary_sample_count", details: detailsPayload, payload: sourcePayload)
-        let boundaryMinText = responseOnlyTextValue("response_only_boundary_min", details: detailsPayload, payload: sourcePayload)
-        let boundaryMaxText = responseOnlyTextValue("response_only_boundary_max", details: detailsPayload, payload: sourcePayload)
-        let boundaryMeanText = responseOnlyTextValue("response_only_boundary_mean", details: detailsPayload, payload: sourcePayload)
-        let responseTokensMeanText = responseOnlyTextValue("response_only_response_tokens_mean", details: detailsPayload, payload: sourcePayload)
-        let trainableResponseTokenCountText = responseOnlyTextValue(
+        let maxSeqLengthText = manifestTextValue("max_seq_length", primary: detailsPayload, fallback: sourcePayload)
+        let sampleCountText = manifestTextValue("response_only_boundary_sample_count", primary: detailsPayload, fallback: sourcePayload)
+        let boundaryMinText = manifestTextValue("response_only_boundary_min", primary: detailsPayload, fallback: sourcePayload)
+        let boundaryMaxText = manifestTextValue("response_only_boundary_max", primary: detailsPayload, fallback: sourcePayload)
+        let boundaryMeanText = manifestTextValue("response_only_boundary_mean", primary: detailsPayload, fallback: sourcePayload)
+        let responseTokensMeanText = manifestTextValue(
+            "response_only_response_tokens_mean",
+            primary: detailsPayload,
+            fallback: sourcePayload
+        )
+        let trainableResponseTokenCountText = manifestTextValue(
             "response_only_trainable_response_token_count",
-            details: detailsPayload,
-            payload: sourcePayload
+            primary: detailsPayload,
+            fallback: sourcePayload
         )
-        let fullyTruncatedSampleCountText = responseOnlyTextValue(
+        let trainableResponseTokenCount = manifestIntValue(
+            "response_only_trainable_response_token_count",
+            primary: detailsPayload,
+            fallback: sourcePayload
+        )
+        let fullyTruncatedSampleCountText = manifestTextValue(
             "response_only_fully_truncated_response_sample_count",
-            details: detailsPayload,
-            payload: sourcePayload
+            primary: detailsPayload,
+            fallback: sourcePayload
         )
-        let truncatedSampleCountText = responseOnlyTextValue(
+        let fullyTruncatedSampleCount = manifestIntValue(
+            "response_only_fully_truncated_response_sample_count",
+            primary: detailsPayload,
+            fallback: sourcePayload
+        )
+        let truncatedSampleCountText = manifestTextValue(
             "response_only_truncated_response_sample_count",
-            details: detailsPayload,
-            payload: sourcePayload
+            primary: detailsPayload,
+            fallback: sourcePayload
+        )
+        let truncatedSampleCount = manifestIntValue(
+            "response_only_truncated_response_sample_count",
+            primary: detailsPayload,
+            fallback: sourcePayload
         )
         let hasReceiptFields = [
             maxSeqLengthText,
@@ -6719,8 +6746,11 @@ public final class RuntimeViewModel {
             boundaryMeanText: boundaryMeanText,
             responseTokensMeanText: responseTokensMeanText,
             trainableResponseTokenCountText: trainableResponseTokenCountText,
+            trainableResponseTokenCount: trainableResponseTokenCount,
             fullyTruncatedSampleCountText: fullyTruncatedSampleCountText,
-            truncatedSampleCountText: truncatedSampleCountText
+            fullyTruncatedSampleCount: fullyTruncatedSampleCount,
+            truncatedSampleCountText: truncatedSampleCountText,
+            truncatedSampleCount: truncatedSampleCount
         )
     }
 
@@ -16007,14 +16037,6 @@ public final class RuntimeViewModel {
         return dictionaryValue("details", from: sourcePayload)
     }
 
-    private static func responseOnlyTextValue(
-        _ key: String,
-        details: [String: Any],
-        payload: [String: Any]
-    ) -> String {
-        manifestTextValue(key, primary: details, fallback: payload)
-    }
-
     private static func manifestTextValue(
         _ key: String,
         primary: [String: Any],
@@ -16027,6 +16049,20 @@ public final class RuntimeViewModel {
             return scalarManifestText(value)
         }
         return ""
+    }
+
+    private static func manifestIntValue(
+        _ key: String,
+        primary: [String: Any],
+        fallback: [String: Any]
+    ) -> Int? {
+        if let value = primary[key] {
+            return scalarManifestInt(value)
+        }
+        if let value = fallback[key] {
+            return scalarManifestInt(value)
+        }
+        return nil
     }
 
     private static func scalarManifestText(_ value: Any) -> String {
@@ -16046,6 +16082,40 @@ public final class RuntimeViewModel {
             return number.stringValue
         default:
             return ""
+        }
+    }
+
+    private static func scalarManifestInt(_ value: Any) -> Int? {
+        switch value {
+        case let int as Int:
+            return int
+        case let int64 as Int64:
+            guard int64 <= Int64(Int.max), int64 >= Int64(Int.min) else {
+                return nil
+            }
+            return Int(int64)
+        case let double as Double:
+            guard double.isFinite, double.rounded() == double else {
+                return nil
+            }
+            return Int(double)
+        case let number as NSNumber:
+            let double = number.doubleValue
+            guard double.isFinite, double.rounded() == double else {
+                return nil
+            }
+            return Int(double)
+        case let string as String:
+            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let int = Int(trimmed) {
+                return int
+            }
+            if let double = Double(trimmed), double.isFinite, double.rounded() == double {
+                return Int(double)
+            }
+            return nil
+        default:
+            return nil
         }
     }
 
