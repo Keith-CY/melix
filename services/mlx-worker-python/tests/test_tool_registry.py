@@ -40,6 +40,28 @@ def test_built_in_tool_registry_reuses_singleton_snapshot() -> None:
     assert registry.names() == BUILTIN_AGENTIC_TOOL_NAMES
 
 
+def test_built_in_tool_config_returns_isolated_template_copies() -> None:
+    first_config = built_in_tool_config()
+    first_config.tools.pop()
+    first_config.schema_version = "mutated"
+
+    second_config = built_in_tool_config()
+
+    assert len(second_config.tools) == len(BUILTIN_AGENTIC_TOOL_NAMES)
+    assert second_config.schema_version == tool_registry_module.TOOL_REGISTRY_SCHEMA_VERSION
+
+
+def test_built_in_tool_config_selection_returns_isolated_template_copies() -> None:
+    first_config = built_in_tool_config(("image_crop", "local_compute"))
+    first_config.tools.pop()
+    first_config.schema_version = "mutated"
+
+    second_config = built_in_tool_config(("image_crop", "local_compute"))
+
+    assert [tool.name for tool in second_config.tools] == ["image_crop", "local_compute"]
+    assert second_config.schema_version == tool_registry_module.TOOL_REGISTRY_SCHEMA_VERSION
+
+
 def test_built_in_tool_schemas_are_object_contracts_with_required_arguments() -> None:
     registry = built_in_tool_registry()
 
