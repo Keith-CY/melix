@@ -64,28 +64,97 @@ def test_agentic_tool_trace_sft_formatter_covers_defensive_branches() -> None:
                     '"name":"visit"}'
                 ),
             },
+        ],
+        "response_only_boundary": {
+            "policy_id": "melix.agentic_tool_trace.response_only_boundaries.v1",
+            "mask_prompt": True,
+            "trainable_role": "assistant",
+            "trainable_kind": "tool_call",
+            "trainable_message_index": 1,
+            "trace_id": "trace-defensive",
+        },
+    }
+    assert rows[1] == {
+        "messages": [
+            {
+                "role": "system",
+                "content": "Media references:\n- fixture://loose\n- {}\n\nUse tools.",
+            },
+            {
+                "role": "assistant",
+                "content": (
+                    'I will inspect.\nTool call: {"arguments":{},"id":"call-1",'
+                    '"name":"visit"}'
+                ),
+            },
             {"role": "tool", "content": "Tool observation: plain observation"},
             {"role": "assistant", "content": "Final answer: Done"},
         ],
-    }
-    assert rows[1] == {
-        "messages": [{"role": "assistant", "content": "Final answer: Only answer"}]
+        "response_only_boundary": {
+            "policy_id": "melix.agentic_tool_trace.response_only_boundaries.v1",
+            "mask_prompt": True,
+            "trainable_role": "assistant",
+            "trainable_kind": "final_answer",
+            "trainable_message_index": 3,
+            "trace_id": "trace-defensive",
+        },
     }
     assert rows[2] == {
-        "messages": [{"role": "assistant", "content": "Final answer: Matched answer"}]
+        "messages": [{"role": "assistant", "content": "Final answer: Only answer"}],
+        "response_only_boundary": {
+            "policy_id": "melix.agentic_tool_trace.response_only_boundaries.v1",
+            "mask_prompt": True,
+            "trainable_role": "assistant",
+            "trainable_kind": "final_answer",
+            "trainable_message_index": 0,
+            "trace_id": "trace-answer-only",
+        },
     }
     assert rows[3] == {
+        "messages": [{"role": "assistant", "content": "Final answer: Matched answer"}],
+        "response_only_boundary": {
+            "policy_id": "melix.agentic_tool_trace.response_only_boundaries.v1",
+            "mask_prompt": True,
+            "trainable_role": "assistant",
+            "trainable_kind": "final_answer",
+            "trainable_message_index": 0,
+            "trace_id": "trace-final-equals-assistant",
+        },
+    }
+    assert rows[4] == {
         "messages": [
             {"role": "assistant", "content": "Final answer: Already formatted"}
-        ]
+        ],
+        "response_only_boundary": {
+            "policy_id": "melix.agentic_tool_trace.response_only_boundaries.v1",
+            "mask_prompt": True,
+            "trainable_role": "assistant",
+            "trainable_kind": "final_answer",
+            "trainable_message_index": 0,
+            "trace_id": "trace-final-already-formatted",
+        },
     }
     assert metrics == {
         "sample_count": 4,
+        "trainer_row_count": 5,
         "tool_call_count": 1,
         "tool_observation_count": 1,
         "media_ref_count": 2,
         "final_answer_count": 4,
+        "response_only_boundary_count": 5,
+        "mask_prompt_boundary_count": 5,
     }
+    assert agentic_sft_formatter.count_trace_trainer_rows(
+        [
+            {
+                "turns": [
+                    {"role": "assistant", "tool_call": {"id": "a"}},
+                    {"role": "assistant", "content": "done"},
+                ],
+                "final_answer": "done",
+            }
+        ]
+    ) == 2
     assert agentic_sft_formatter.merge_projection_metrics(
         {"sample_count": "bad", "tool_call_count": "2"},
         {"sample_count": 1},

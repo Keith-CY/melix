@@ -203,6 +203,13 @@ Expected training behavior:
 - `agentic_tool_trace` packages are accepted by SFT modes and projected into a
   trainer-facing `chat_messages` snapshot while preserving the original
   normalized trace rows in sibling `agentic-traces.*.jsonl` evidence files
+- agentic SFT projection splits a source trace into one trainer row per
+  trainable assistant tool-call span plus one final-answer row; each row records
+  `response_only_boundary` metadata and defaults to `response_only=true` with
+  `mask_prompt=true` so user, system, and tool-observation context does not
+  receive loss
+- adapter receipts keep the source trace count in `dataset_sample_count` and
+  record expanded trainer rows in `trainer_dataset_sample_count`
 - Hugging Face dataset materialization is cached under `<jobs_root>/datasets/<cache-key>`
 - Melix supports `lora`, `qlora`, `dora`, `dpo`, `orpo`, and `cpt` through the same `train_lora` surface
 - `dora` records `adapter_algorithm=dora` and `dora_enabled=true` in the adapter manifest

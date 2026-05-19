@@ -502,7 +502,7 @@ def normalize_training_config(
 
     response_only = _bool_value(
         ext.get("response_only", ""),
-        default=dataset_format == "chat_messages",
+        default=dataset_format in {"chat_messages", "agentic_tool_trace"},
     )
     if response_only and not response_only_supported:
         raise ModelOperationError(

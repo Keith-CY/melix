@@ -248,7 +248,11 @@ def _build_training_dataset_package(
         normalized_samples=normalized_samples,
         normalized_validation_samples=normalized_validation_samples,
         validation_sample_count=len(normalized_validation_samples),
-        response_only_supported=format_name in {"chat_messages", "prompt_completion"},
+        response_only_supported=format_name in {
+            "chat_messages",
+            "prompt_completion",
+            "agentic_tool_trace",
+        },
         manifest_fields=dict(manifest) if format_name == "agentic_tool_trace" else None,
     )
 
@@ -544,6 +548,8 @@ def write_normalized_dataset_snapshot(
     trainer_format = dataset.format
     train_samples = dataset.normalized_samples
     validation_samples = dataset.normalized_validation_samples
+    trainer_sample_count = dataset.sample_count
+    trainer_validation_sample_count = dataset.validation_sample_count
     agentic_projection: dict[str, Any] = {}
     if dataset.format == "agentic_tool_trace":
         trainer_format = "chat_messages"
@@ -553,13 +559,20 @@ def write_normalized_dataset_snapshot(
         validation_samples, validation_projection_metrics = agentic_sft_formatter.format_trace_rows(
             dataset.normalized_validation_samples
         )
+        trainer_sample_count = len(train_samples)
+        trainer_validation_sample_count = len(validation_samples)
         agentic_projection = {
             "trainer_format": trainer_format,
             "agentic_sft_formatter": agentic_sft_formatter.AGENTIC_SFT_FORMATTER_ID,
+            "agentic_sft_boundary_policy": agentic_sft_formatter.AGENTIC_SFT_BOUNDARY_POLICY_ID,
             "agentic_trace_train_path": str(agentic_train_path),
             "agentic_trace_valid_path": (
                 str(agentic_valid_path) if dataset.normalized_validation_samples else ""
             ),
+            "source_trace_sample_count": dataset.sample_count,
+            "source_trace_validation_sample_count": dataset.validation_sample_count,
+            "trainer_sample_count": trainer_sample_count,
+            "trainer_validation_sample_count": trainer_validation_sample_count,
             "agentic_sft_projection_metrics": agentic_sft_formatter.merge_projection_metrics(
                 train_projection_metrics,
                 validation_projection_metrics,
@@ -571,8 +584,8 @@ def write_normalized_dataset_snapshot(
         "dataset_id": dataset.dataset_id,
         "format": dataset.format,
         "trainer_format": trainer_format,
-        "sample_count": dataset.sample_count,
-        "validation_sample_count": dataset.validation_sample_count,
+        "sample_count": trainer_sample_count,
+        "validation_sample_count": trainer_validation_sample_count,
         "version": dataset.version,
         "source_manifest_path": str(dataset.manifest_path),
         "source_samples_path": str(dataset.samples_path),
@@ -607,10 +620,21 @@ def write_normalized_dataset_snapshot(
         samples_path=samples_path,
         train_path=train_path,
         valid_path=valid_path,
-        sample_count=dataset.sample_count,
-        validation_sample_count=dataset.validation_sample_count,
+        sample_count=trainer_sample_count,
+        validation_sample_count=trainer_validation_sample_count,
         format=dataset.format,
         trainer_format=trainer_format,
+    )
+
+
+def trainer_sample_counts(dataset: TrainingDatasetPackage) -> tuple[int, int]:
+    if dataset.format != "agentic_tool_trace":
+        return dataset.sample_count, dataset.validation_sample_count
+    return (
+        agentic_sft_formatter.count_trace_trainer_rows(dataset.normalized_samples),
+        agentic_sft_formatter.count_trace_trainer_rows(
+            dataset.normalized_validation_samples
+        ),
     )
 
 
@@ -1518,7 +1542,8 @@ def _resolve_dataset_build_source(
         "source_samples_path": str(source_path),
         "samples": normalized_samples,
         "validation_samples": [],
-        "response_only_supported": format_name in {"chat_messages", "prompt_completion"},
+        "response_only_supported": format_name
+        in {"chat_messages", "prompt_completion", "agentic_tool_trace"},
         "conversion_template": resolved_template,
         "hf_metadata": {},
     }
@@ -1838,6 +1863,7 @@ def _build_quality_and_token_stats(
     total_tokens: list[int] = []
     sample_count = 0
     is_prompt_completion = format_name == "prompt_completion"
+    is_agentic_tool_trace = format_name == "agentic_tool_trace"
     prompt_tokens_append = prompt_tokens.append
     completion_tokens_append = completion_tokens.append
     total_tokens_append = total_tokens.append
@@ -1849,12 +1875,12 @@ def _build_quality_and_token_stats(
     sample_token_counts = _sample_token_counts
     whitespace_token_count = _whitespace_token_count
     quality_report_sample_limit = _QUALITY_REPORT_SAMPLE_LIMIT
-    agentic_metrics = _new_agentic_trace_quality_metrics()
+    agentic_metrics = _new_agentic_trace_quality_metrics() if is_agentic_tool_trace else None
     for index, sample in enumerate(samples):
         sample_count += 1
         if is_prompt_completion:
             sample_identity = prompt_completion_duplicate_key(sample)
-        elif format_name == "agentic_tool_trace":
+        elif is_agentic_tool_trace:
             sample_identity = _agentic_trace_duplicate_key(sample)
         else:
             sample_identity = canonical_sample_digest(sample)
@@ -1873,7 +1899,7 @@ def _build_quality_and_token_stats(
             dirty_count += 1
             if len(dirty_samples) < quality_report_sample_limit:
                 dirty_samples_append({"index": index, "reasons": reasons})
-        if format_name == "agentic_tool_trace":
+        if is_agentic_tool_trace and agentic_metrics is not None:
             _update_agentic_trace_quality_metrics(
                 agentic_metrics,
                 sample,
@@ -1899,7 +1925,7 @@ def _build_quality_and_token_stats(
         "dirty_count": dirty_count,
         "dirty_samples": dirty_samples,
     }
-    if format_name == "agentic_tool_trace":
+    if is_agentic_tool_trace and agentic_metrics is not None:
         trace_count = agentic_metrics["agentic_trace_count"]
         if trace_count > 0:
             agentic_metrics["trace_turn_count_avg"] = round(
