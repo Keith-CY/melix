@@ -249,6 +249,24 @@ def test_tool_registry_raw_tuple_alias_keeps_selection_cache_bounded() -> None:
     }
 
 
+def test_built_in_tool_config_without_names_uses_cached_serialized_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_config = built_in_tool_config()
+
+    def fail_as_worker_tool_config(self: ToolRegistry) -> common_pb2.ToolConfig:
+        raise AssertionError("built_in_tool_config() should reuse cached serialized config")
+
+    monkeypatch.setattr(ToolRegistry, "as_worker_tool_config", fail_as_worker_tool_config)
+
+    config = built_in_tool_config()
+
+    assert config == expected_config
+    assert config is not expected_config
+    config.tools[0].name = "mutated"
+    assert built_in_tool_config().tools[0].name == "image_crop"
+
+
 def test_tool_registry_exports_worker_tool_config_metadata() -> None:
     config = built_in_tool_config(["image_crop", "local_compute"])
 

@@ -261,9 +261,9 @@ def built_in_tool_registry() -> ToolRegistry:
 
 
 def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> common_pb2.ToolConfig:
-    registry = built_in_tool_registry()
-    if names is not None:
-        registry = registry.select(names)
+    if names is None:
+        return common_pb2.ToolConfig.FromString(_BUILTIN_TOOL_CONFIG_BYTES)
+    registry = built_in_tool_registry().select(names)
     return registry.as_worker_tool_config()
 
 
@@ -346,6 +346,11 @@ _BUILTIN_AGENTIC_TOOLS = (
             _arg("timeout_ms", "integer", "Maximum execution time in milliseconds.", required=False),
         ),
     ),
+)
+
+
+_BUILTIN_TOOL_CONFIG_BYTES = (
+    ToolRegistry(_BUILTIN_AGENTIC_TOOLS).as_worker_tool_config().SerializeToString()
 )
 
 
