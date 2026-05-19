@@ -233,7 +233,11 @@ def _status_override_payload(
     tool_call_id: str,
 ) -> dict[str, Any] | None:
     overrides = _context_mapping(fixture_context, "tool_status_overrides")
-    raw_override = overrides.get(tool_call_id, overrides.get(tool_name, overrides.get("*")))
+    raw_override = overrides.get(tool_call_id)
+    if raw_override is None:
+        raw_override = overrides.get(tool_name)
+    if raw_override is None:
+        raw_override = overrides.get("*")
     if raw_override is None:
         return None
     if isinstance(raw_override, str):
