@@ -133,12 +133,24 @@ def test_tool_registry_select_reuses_cached_selected_registry() -> None:
     assert selected.names() == ("visit", "image_crop")
 
 
+def test_tool_registry_select_tuple_cache_hit_skips_name_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = built_in_tool_registry()
+    selected = registry.select(("visit", "image_crop"))
+
+    monkeypatch.setattr(registry, "_tool_by_name", {})
+
+    assert registry.select(("visit", "image_crop")) is selected
+    with pytest.raises(ToolRegistryError, match="Unknown tool registry entry requested"):
+        registry.select(["image_crop", "visit"])
+
+
 def test_tool_registry_select_returns_self_for_complete_selection() -> None:
     registry = built_in_tool_registry()
 
     selected = registry.select([" " + name + " " for name in BUILTIN_AGENTIC_TOOL_NAMES])
 
     assert selected is registry
+    assert registry.select(BUILTIN_AGENTIC_TOOL_NAMES) is registry
     assert registry.names() == BUILTIN_AGENTIC_TOOL_NAMES
 
 

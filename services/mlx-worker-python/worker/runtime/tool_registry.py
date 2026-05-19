@@ -177,6 +177,13 @@ class ToolRegistry:
         return self._metrics
 
     def select(self, names: list[str] | tuple[str, ...]) -> ToolRegistry:
+        if isinstance(names, tuple):
+            if names == self._tool_names:
+                return self
+            cached_selection = self._selection_cache.get(names)
+            if cached_selection is not None:
+                return cached_selection
+
         requested_names_list: list[str] = []
         seen_names: set[str] = set()
         for name in names:
