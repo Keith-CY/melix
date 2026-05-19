@@ -7,6 +7,11 @@ from worker.productization.probe_policy_overhead import (
 from worker.productization.probe_policy import ProbeMode, ProbePolicy, probe_policy_from_env
 
 
+class _EmptyEnvMapping(dict[str, str]):
+    def get(self, key: str, default: str = "") -> str:  # pragma: no cover - should not run
+        raise AssertionError("empty environment mappings should not be probed")
+
+
 def test_probe_policy_parses_supported_modes() -> None:
     assert ProbePolicy.from_value("off").mode == ProbeMode.OFF
     assert ProbePolicy.from_value("minimal").mode == ProbeMode.MINIMAL
@@ -93,6 +98,16 @@ def test_probe_policy_empty_values_reuse_default_policy_cache() -> None:
     assert debug_policy.mode is ProbeMode.DEBUG
     assert debug_policy.source_value == ""
     assert debug_policy.telemetry_enabled is True
+
+
+def test_probe_policy_empty_env_short_circuits_mapping_lookup() -> None:
+    minimal_policy = ProbePolicy.from_value("")
+
+    assert ProbePolicy.from_env(_EmptyEnvMapping()) is minimal_policy
+    assert (
+        ProbePolicy.from_env(_EmptyEnvMapping(), default_mode=ProbeMode.DEBUG)
+        is ProbePolicy.from_value("", default_mode=ProbeMode.DEBUG)
+    )
 
 
 def test_probe_policy_factory_helpers_reuse_cached_instances() -> None:
