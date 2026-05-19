@@ -157,6 +157,7 @@ class ToolRegistry:
         self._parser_contract_version = parser_contract_version.strip()
         self._validate()
         self._tool_by_name = {tool.name: tool for tool in self._tools}
+        self._selection_cache: dict[tuple[str, ...], ToolRegistry] = {}
         self._metrics = ToolRegistryMetrics(
             tool_count=len(self._tools),
             schema_bytes=sum(tool.schema_byte_count() for tool in self._tools),
@@ -175,18 +176,23 @@ class ToolRegistry:
 
     def select(self, names: list[str] | tuple[str, ...]) -> ToolRegistry:
         requested_names = tuple(dict.fromkeys(name.strip() for name in names if name.strip()))
+        cached_selection = self._selection_cache.get(requested_names)
+        if cached_selection is not None:
+            return cached_selection
         missing_names = [name for name in requested_names if name not in self._tool_by_name]
         if missing_names:
             joined = ", ".join(missing_names)
             raise ToolRegistryError(f"Unknown tool registry entry requested: {joined}")
         selected = [self._tool_by_name[name] for name in requested_names]
-        return ToolRegistry(
+        selection = ToolRegistry(
             selected,
             schema_version=self._schema_version,
             toolset_version=self._toolset_version,
             parser=self._parser,
             parser_contract_version=self._parser_contract_version,
         )
+        self._selection_cache[requested_names] = selection
+        return selection
 
     def as_openai_tools(self) -> list[dict[str, Any]]:
         return [tool.as_openai_tool() for tool in self._tools]
