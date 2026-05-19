@@ -157,6 +157,11 @@ class ToolRegistry:
         self._parser_contract_version = parser_contract_version.strip()
         self._validate()
         self._tool_by_name = {tool.name: tool for tool in self._tools}
+        self._metrics = ToolRegistryMetrics(
+            tool_count=len(self._tools),
+            schema_bytes=sum(tool.schema_byte_count() for tool in self._tools),
+            required_argument_count=sum(len(tool.required_arguments) for tool in self._tools),
+        )
 
     @property
     def tools(self) -> tuple[ToolDescriptor, ...]:
@@ -166,11 +171,7 @@ class ToolRegistry:
         return tuple(tool.name for tool in self._tools)
 
     def metrics(self) -> ToolRegistryMetrics:
-        return ToolRegistryMetrics(
-            tool_count=len(self._tools),
-            schema_bytes=sum(tool.schema_byte_count() for tool in self._tools),
-            required_argument_count=sum(len(tool.required_arguments) for tool in self._tools),
-        )
+        return self._metrics
 
     def select(self, names: list[str] | tuple[str, ...]) -> ToolRegistry:
         requested_names = tuple(dict.fromkeys(name.strip() for name in names if name.strip()))
