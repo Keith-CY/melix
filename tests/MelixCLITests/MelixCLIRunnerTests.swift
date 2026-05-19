@@ -5960,6 +5960,160 @@ struct MelixCLIRunnerTests {
         #expect(startedAction == .start("server-session-1"))
     }
 
+    @Test("server start shortcut uses slug title as the server session id")
+    func serverStartShortcutUsesSlugTitleAsServerSessionID() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let modelID = "mlx-community/gemma-4-31b-it-4bit"
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: [
+            makeModelSummary(id: modelID, kind: "text"),
+        ]))
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+
+        _ = try await MelixCLIRunner(client: client, operatorSessionStore: store).run(
+            .serverStart(
+                .init(
+                    serverTitle: "gemma-31b",
+                    servedModelIDs: [modelID],
+                    host: "127.0.0.1",
+                    port: 12434
+                )
+            )
+        )
+
+        let state = try #require(try store.load())
+        let session = try #require(state.serverSessions.first(where: { $0.id == "gemma-31b" }))
+        let gatewayConfigCall = try #require(await client.lastGatewayConfigApplyRequest)
+        let startedAction = try #require(await client.lastServerAction)
+
+        #expect(state.selectedServerSessionID == "gemma-31b")
+        #expect(session.title == "gemma-31b")
+        #expect(session.defaultModelID == modelID)
+        #expect(session.servedModelIDs == [modelID])
+        #expect(session.port == 12434)
+        #expect(gatewayConfigCall.serverSessionID == "gemma-31b")
+        #expect(gatewayConfigCall.defaultModelID == modelID)
+        #expect(gatewayConfigCall.servedModelIDs == [modelID])
+        #expect(startedAction == .start("gemma-31b"))
+    }
+
+    @Test("server start shortcut normalizes mixed-case slug titles")
+    func serverStartShortcutNormalizesMixedCaseSlugTitles() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let modelID = "mlx-community/gemma-4-31b-it-4bit"
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: [
+            makeModelSummary(id: modelID, kind: "text"),
+        ]))
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+
+        let runner = MelixCLIRunner(client: client, operatorSessionStore: store)
+
+        _ = try await runner.run(
+            .serverStart(
+                .init(
+                    serverTitle: "gemma-31b",
+                    servedModelIDs: [modelID],
+                    port: 8080
+                )
+            )
+        )
+        _ = try await runner.run(
+            .serverStart(
+                .init(
+                    serverTitle: "Gemma-31B",
+                    servedModelIDs: [modelID],
+                    port: 12434
+                )
+            )
+        )
+
+        let state = try #require(try store.load())
+        let session = try #require(state.serverSessions.first(where: { $0.id == "gemma-31b" }))
+        let startedAction = try #require(await client.lastServerAction)
+
+        #expect(state.serverSessions.count == 1)
+        #expect(state.selectedServerSessionID == "gemma-31b")
+        #expect(session.title == "Gemma-31B")
+        #expect(session.port == 12434)
+        #expect(startedAction == .start("gemma-31b"))
+    }
+
+    @Test("server start shortcut falls back when an explicit session id collides")
+    func serverStartShortcutFallsBackWhenExplicitSessionIDCollides() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let modelID = "mlx-community/gemma-4-31b-it-4bit"
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: [
+            makeModelSummary(id: modelID, kind: "text"),
+        ]))
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        try store.save(
+            MelixOperatorSessionState(
+                selectedSurfaceID: "server",
+                selectedToolSectionID: "modelsLibrary",
+                selectedServerSessionID: "gemma-31b",
+                serverSessions: [
+                    .init(
+                        id: "gemma-31b",
+                        title: "Existing Gemma",
+                        defaultModelID: modelID,
+                        servedModelIDs: [modelID]
+                    ),
+                    .init(
+                        id: "server-session-1",
+                        title: "Existing One",
+                        defaultModelID: modelID,
+                        servedModelIDs: [modelID]
+                    ),
+                ]
+            )
+        )
+
+        _ = try await MelixCLIRunner(client: client, operatorSessionStore: store).run(
+            .serverStart(
+                .init(
+                    serverSessionID: "gemma-31b",
+                    serverTitle: "Gemma Archive",
+                    servedModelIDs: [modelID],
+                    port: 12434
+                )
+            )
+        )
+
+        let state = try #require(try store.load())
+        let created = try #require(state.serverSessions.first(where: { $0.title == "Gemma Archive" }))
+        let startedAction = try #require(await client.lastServerAction)
+
+        #expect(created.id == "server-session-2")
+        #expect(state.selectedServerSessionID == "server-session-2")
+        #expect(startedAction == .start("server-session-2"))
+    }
+
     @Test("server start shortcut reuses an existing titled session")
     func serverStartShortcutReusesExistingTitledSession() async throws {
         let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
