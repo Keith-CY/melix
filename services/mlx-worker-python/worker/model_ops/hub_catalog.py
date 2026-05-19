@@ -195,6 +195,7 @@ class HubCatalog:
         tags = _string_list(payload.get("tags"))
         lowered_tags = _lowered_tag_set(tags)
         library_name = _string(payload.get("library_name") or card_data.get("library_name"))
+        pipeline_tag = _string(payload.get("pipeline_tag") or card_data.get("pipeline_tag"))
         sibling_files = _sibling_files(payload.get("siblings"))
         mlx_compatible = _is_mlx_compatible(
             repo_id=repo_id,
@@ -206,7 +207,7 @@ class HubCatalog:
         local_fit = _local_fit_evidence(
             payload=payload,
             repo_id=repo_id,
-            pipeline_tag=_string(payload.get("pipeline_tag") or card_data.get("pipeline_tag")),
+            pipeline_tag=pipeline_tag,
             tags=tags,
             lowered_tags=lowered_tags,
             mlx_compatible=mlx_compatible,
@@ -217,7 +218,7 @@ class HubCatalog:
             author=_author(payload, repo_id),
             model_name=_model_name(repo_id),
             summary=_string(card_data.get("model_name") or payload.get("description")),
-            pipeline_tag=_string(payload.get("pipeline_tag") or card_data.get("pipeline_tag")),
+            pipeline_tag=pipeline_tag,
             tags=tags,
             downloads=_int(payload.get("downloads")),
             likes=_int(payload.get("likes")),
