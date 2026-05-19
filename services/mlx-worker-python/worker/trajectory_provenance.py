@@ -22,20 +22,7 @@ TRAJECTORY_PROVENANCE_FIELDS = (
     "trajectory_quality_metrics",
 )
 
-TRAJECTORY_PROVENANCE_CSV_FIELDS = (
-    "trajectory_dataset_id",
-    "trajectory_dataset_version",
-    "trajectory_schema_version",
-    "trajectory_snapshot_manifest_path",
-    "trajectory_split",
-    "trajectory_trace_digest",
-    "trajectory_toolset_version",
-    "trajectory_registry_schema_version",
-    "trajectory_reward_policy_id",
-    "trajectory_leakage_policy_id",
-    "trajectory_package_path",
-    "trajectory_quality_metrics",
-)
+TRAJECTORY_PROVENANCE_CSV_FIELDS = TRAJECTORY_PROVENANCE_FIELDS
 
 
 def normalize_trajectory_provenance(

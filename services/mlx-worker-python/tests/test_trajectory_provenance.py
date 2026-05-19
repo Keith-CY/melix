@@ -42,7 +42,14 @@ from worker.registry import WorkerRegistry
 from worker.runtime.deterministic_backend import DeterministicTextBackend
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 from worker.trajectory_provenance import (
+    adapter_manifest_trajectory_provenance,
+    alignment_metrics_trajectory_provenance,
+    append_trajectory_provenance,
+    load_trajectory_provenance_from_normalized_snapshot,
     load_trajectory_provenance_from_snapshot_manifest,
+    load_trajectory_provenance_from_snapshot_dir,
+    normalize_trajectory_provenance,
+    trajectory_provenance_from_snapshot_manifest,
 )
 from telemetry_fixtures import fixture_telemetry_collector
 
@@ -190,6 +197,31 @@ def test_load_trajectory_provenance_from_snapshot_manifest_uses_stable_field_nam
         "trajectory_package_path": str(tmp_path / "agentic-package"),
         "trajectory_quality_metrics": {"reward_coverage_count": 1},
     }
+
+
+def test_trajectory_provenance_helpers_ignore_empty_or_unrelated_inputs(
+    tmp_path: Path,
+) -> None:
+    payload = {"existing": "value"}
+    append_trajectory_provenance(payload, None)
+
+    non_mapping_manifest = tmp_path / "non-mapping-manifest.json"
+    non_mapping_manifest.write_text("[]\n", encoding="utf-8")
+
+    assert normalize_trajectory_provenance(None) == {}
+    assert payload == {"existing": "value"}
+    assert trajectory_provenance_from_snapshot_manifest({"format": "text"}) == {}
+    assert load_trajectory_provenance_from_snapshot_manifest(non_mapping_manifest) == {}
+    assert (
+        load_trajectory_provenance_from_normalized_snapshot(
+            format_name="text",
+            manifest_path=non_mapping_manifest,
+        )
+        == {}
+    )
+    assert load_trajectory_provenance_from_snapshot_dir(tmp_path / "missing-snapshot") == {}
+    assert adapter_manifest_trajectory_provenance(None) == {}
+    assert alignment_metrics_trajectory_provenance(None) == {}
 
 
 def test_train_lora_records_agentic_trajectory_provenance_in_adapter_manifest(

@@ -1935,6 +1935,19 @@ def test_rows_to_csv_uses_writerows_stream_without_dictwriter(monkeypatch: pytes
     assert csv_text == 'job_id,suite\r\nbench-1,"a,b"\r\n'
 
 
+def test_rows_to_csv_falls_back_for_custom_values() -> None:
+    class CustomValue:
+        def __str__(self) -> str:
+            return "custom-value"
+
+    csv_text = _rows_to_csv(
+        iter(({"job_id": "bench-1", "custom": CustomValue()},)),
+        ["job_id", "custom"],
+    )
+
+    assert csv_text == "job_id,custom\r\nbench-1,custom-value\r\n"
+
+
 def test_evaluation_compare_csv_builders_emit_compare_rows() -> None:
     bundle: dict[str, object] = {
         "evaluation_compare_summary_rows": [

@@ -4,7 +4,7 @@ import csv
 import json
 import io
 import time
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
@@ -12,6 +12,27 @@ from pathlib import Path
 from worker.trajectory_provenance import TRAJECTORY_PROVENANCE_CSV_FIELDS
 
 _EXPORT_SCHEMA_VERSION = "melix.benchmark_export.v1"
+
+_BENCHMARK_SUMMARY_COLUMNS = (
+    "job_id",
+    "model_id",
+    "task_kind",
+    "source_repo",
+    "suites",
+    "context_lengths",
+    "generation_length",
+    "batch_sizes",
+    "repeats",
+    "cache_profile",
+    "reasoning_mode",
+    "structured_output_mode",
+    "request_p50_ms",
+    "request_p95_ms",
+    "status",
+    "output_dir",
+    "created_at_unix_ms",
+    "updated_at_unix_ms",
+)
 
 
 @dataclass(frozen=True)
@@ -479,26 +500,7 @@ def build_evaluation_compare_samples_csv(bundle: dict[str, object]) -> str:
 def build_benchmark_summary_csv(bundle: dict[str, object]) -> str:
     return _rows_to_csv(
         (row for row in bundle.get("benchmark_summary_rows", []) if isinstance(row, dict)),
-        [
-            "job_id",
-            "model_id",
-            "task_kind",
-            "source_repo",
-            "suites",
-            "context_lengths",
-            "generation_length",
-            "batch_sizes",
-            "repeats",
-            "cache_profile",
-            "reasoning_mode",
-            "structured_output_mode",
-            "request_p50_ms",
-            "request_p95_ms",
-            "status",
-            "output_dir",
-            "created_at_unix_ms",
-            "updated_at_unix_ms",
-        ],
+        _BENCHMARK_SUMMARY_COLUMNS,
     )
 
 
@@ -821,16 +823,37 @@ def _iter_jsonl_dict_rows(path: Path) -> Iterator[dict[str, object]]:
                 yield row
 
 
-def _rows_to_csv(rows: Iterable[dict[str, object]], fieldnames: list[str]) -> str:
+def _rows_to_csv(rows: Iterable[dict[str, object]], fieldnames: Sequence[str]) -> str:
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(fieldnames)
-    normalize_csv_value = _csv_value
+    fields = tuple(fieldnames)
+    writer.writerow(fields)
 
     def csv_rows() -> Iterable[list[str]]:
         for row in rows:
             row_get = row.get
-            yield [normalize_csv_value(row_get(field, "")) for field in fieldnames]
+            csv_row: list[str] = []
+            append_value = csv_row.append
+            for field in fields:
+                value = row_get(field, "")
+                if value is None:
+                    append_value("")
+                    continue
+                value_type = type(value)
+                if value_type is str:
+                    append_value(value)
+                    continue
+                if value_type is int or value_type is float or value_type is bool:
+                    append_value(str(value))
+                    continue
+                if value_type is list or value_type is tuple:
+                    append_value(",".join(map(str, value)) if value else "")
+                    continue
+                if value_type is dict:
+                    append_value(json.dumps(value, sort_keys=True) if value else "")
+                    continue
+                append_value(_csv_value(value))
+            yield csv_row
 
     writer.writerows(csv_rows())
     return buffer.getvalue()

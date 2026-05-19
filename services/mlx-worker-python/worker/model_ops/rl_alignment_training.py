@@ -153,7 +153,7 @@ def train_alignment_rl_trace(
 
     if trajectory_provenance:
         for row in policy_updates.trace_rows:
-            append_trajectory_provenance(row, trajectory_provenance)
+            row.update(trajectory_provenance)
     _write_jsonl(policy_update_trace_path, policy_updates.trace_rows)
     adapter_config = _load_resume_adapter_config(request.resume_source_path) or {
         "fine_tune_type": "lora",
