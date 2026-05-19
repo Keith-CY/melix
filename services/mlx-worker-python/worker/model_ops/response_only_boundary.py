@@ -40,7 +40,7 @@ class _ChatTemplateTokenizer(Protocol):
         ...
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ResponseOnlyBoundary:
     """Per-sample response-only boundary record persisted in the manifest."""
 
@@ -61,7 +61,7 @@ class ResponseOnlyBoundary:
         return max(0, effective_total - self.assistant_offset)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ResponseOnlyBoundaryAggregate:
     """Aggregate stats computed across a normalized-dataset pass."""
 

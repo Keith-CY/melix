@@ -484,6 +484,33 @@ def test_scope_report_selects_training_dataset_chunker_probe() -> None:
     assert scope["selected_probes"][0]["id"] == "training-dataset-chunker-top-level-base-copy"
 
 
+def test_scope_report_selects_response_only_boundary_slots_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=[
+            "services/mlx-worker-python/worker/model_ops/response_only_boundary.py"
+        ],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "response-only-boundary-slotted-records"
+
+
+def test_response_only_boundary_slots_probe_script_emits_metrics() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "response-only-boundary-slotted-records"
+    )
+
+    metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["construction_elapsed_ms_mean"] > 0
+    assert metrics["aggregation_elapsed_ms_mean"] > 0
+    assert metrics["instance_dict_count_mean"] == 0.0
+    assert metrics["boundary_count"] == 50000.0
+
+
 def test_scope_report_selects_quantization_qat_source_scan_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -2412,6 +2439,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "statistical-evidence-bootstrap-single-sort",
         "statistical-evidence-category-breakdown-single-pass",
         "text-family-config-copy-elision",
+        "response-only-boundary-slotted-records",
         "tool-registry-schema-bytes-cache",
         "tool-registry-select-name-index-cache",
         "tool-registry-names-snapshot-cache",
