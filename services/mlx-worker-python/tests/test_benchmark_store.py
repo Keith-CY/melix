@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from worker.productization.benchmark_export import (
+    build_benchmark_context_csv,
+    collect_benchmark_artifacts,
+)
 from worker.productization.benchmark_schemas import (
     build_benchmark_matrix_job,
     build_benchmark_matrix_request_row,
@@ -131,6 +135,87 @@ def test_persist_serving_benchmark_writes_expected_artifact_names_and_payloads(
         "telemetry_jsonl",
     }
     assert run_record["probes"][0]["phase"] == "run_record_write"
+
+
+def test_persist_serving_benchmark_exports_trajectory_provenance_fields(
+    tmp_path: Path,
+) -> None:
+    store = BenchmarkStore(telemetry_collector=fixture_telemetry_collector())
+    jobs_root = tmp_path / "bench"
+    snapshot_manifest = tmp_path / "snapshots" / "normalized_dataset" / "manifest.json"
+    snapshot_manifest.parent.mkdir(parents=True)
+    snapshot_manifest.write_text("{}\n", encoding="utf-8")
+    provenance = {
+        "trajectory_dataset_id": "opensearch-vl.dev",
+        "trajectory_dataset_version": "2026-05-19",
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_snapshot_manifest_path": str(snapshot_manifest),
+        "trajectory_package_path": str(tmp_path / "packages" / "opensearch-vl.dev"),
+        "trajectory_split": "train",
+        "trajectory_trace_digest": "abc123",
+        "trajectory_toolset_version": "melix.agentic_tools.builtin.v1",
+        "trajectory_reward_policy_id": "reward-policy.v1",
+        "trajectory_quality_metrics": {"agentic_trace_count": 1},
+    }
+    job = build_serving_benchmark_job(
+        job_id="bench-trajectory",
+        model_id="melix-dev-text",
+        source_repo="local",
+        suites=("agentic",),
+        parameters={},
+        status="completed",
+        output_dir=str(jobs_root),
+        trajectory_provenance=provenance,
+    )
+    results = build_serving_benchmark_results(
+        job_id="bench-trajectory",
+        metrics={"bench.agentic.ttft_ms": 24.45},
+        units={"bench.agentic.ttft_ms": "ms"},
+        report_path=str(jobs_root / "bench-report.md"),
+        report_markdown="# Melix Bench\n",
+    )
+    context_row = {
+        "job_id": "bench-trajectory",
+        "model_id": "melix-dev-text",
+        "task_kind": "text-generation",
+        "source_repo": "local",
+        "suite": "agentic",
+        "context_length": 16,
+        "generation_length": 8,
+        "batch_size": 1,
+        "repeat_index": 0,
+        "prefill_tokens_per_second": 1.0,
+        "decode_tokens_per_second": 1.0,
+        "ttft_ms": 1.0,
+        "request_latency_ms": 2.0,
+        "peak_memory_bytes": 4096,
+        "speedup_vs_batch_1": 1.0,
+        "cache_profile": "cold",
+        "reasoning_mode": "",
+        "structured_output_mode": "",
+        **provenance,
+    }
+
+    persisted = store.persist_serving_benchmark(
+        jobs_root=jobs_root,
+        job=job,
+        results=results,
+        context_rows=(context_row,),
+    )
+
+    context_jsonl = json.loads(persisted["context_rows_jsonl"].read_text(encoding="utf-8"))
+    evidence = json.loads(persisted["evidence"].read_text(encoding="utf-8"))
+    export_bundle = collect_benchmark_artifacts(jobs_root)
+    context_csv = build_benchmark_context_csv(export_bundle)
+
+    assert context_jsonl["trajectory_dataset_id"] == "opensearch-vl.dev"
+    assert "trajectory_trace_digest" in context_csv.splitlines()[0]
+    assert ",abc123," in context_csv
+    assert evidence["domain_results"]["trajectory_provenance"]["trajectory_reward_policy_id"] == "reward-policy.v1"
+    assert {
+        artifact["kind"]
+        for artifact in evidence["artifacts"]
+    } >= {"trajectory_snapshot_manifest", "trajectory_package"}
 
 
 def test_persist_serving_benchmark_defaults_to_no_op_telemetry(tmp_path: Path) -> None:

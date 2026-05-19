@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from worker.trajectory_provenance import append_trajectory_provenance
+
 
 _EVALUATION_DATASET_PACKAGE_SCHEMA_VERSION = "melix.evaluation_dataset_package.v2"
 _EVALUATION_JOB_SCHEMA_VERSION = "melix.evaluation_job.v2"
@@ -87,9 +89,10 @@ class EvaluationJob:
     output_dir: str
     created_at_unix_ms: int
     updated_at_unix_ms: int
+    trajectory_provenance: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "schema_version": self.schema_version,
             "job_id": self.job_id,
             "model_id": self.model_id,
@@ -108,6 +111,8 @@ class EvaluationJob:
             "created_at_unix_ms": self.created_at_unix_ms,
             "updated_at_unix_ms": self.updated_at_unix_ms,
         }
+        append_trajectory_provenance(payload, self.trajectory_provenance)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -189,6 +194,7 @@ class EvaluationSample:
     agentic_tool_calls: tuple[dict[str, object], ...] = ()
     agentic_tool_observations: tuple[dict[str, object], ...] = ()
     agentic_tool_metrics: dict[str, float] | None = None
+    trajectory_provenance: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -238,6 +244,7 @@ class EvaluationSample:
             ]
         if self.agentic_tool_metrics:
             payload["agentic_tool_metrics"] = dict(self.agentic_tool_metrics)
+        append_trajectory_provenance(payload, self.trajectory_provenance)
         if self.category_label:
             payload["category_label"] = self.category_label
         if self.subject_label:
@@ -296,9 +303,10 @@ class EvaluationCompareJob:
     # that pre-date the adapter-native compare surface; ``to_dict``/``from_dict``
     # handle that as a clean default.
     target_lineage: tuple[EvaluationCompareTargetLineage, ...] = ()
+    trajectory_provenance: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "schema_version": self.schema_version,
             "job_id": self.job_id,
             "base_model_id": self.base_model_id,
@@ -316,6 +324,8 @@ class EvaluationCompareJob:
             "updated_at_unix_ms": self.updated_at_unix_ms,
             "target_lineage": [entry.to_dict() for entry in self.target_lineage],
         }
+        append_trajectory_provenance(payload, self.trajectory_provenance)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -421,6 +431,7 @@ class EvaluationCompareSample:
     target_code_failure_detail: str = ""
     category_label: str = ""
     subject_label: str = ""
+    trajectory_provenance: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -467,6 +478,7 @@ class EvaluationCompareSample:
             "base_code_failure_detail": self.base_code_failure_detail,
             "target_code_failure_detail": self.target_code_failure_detail,
         }
+        append_trajectory_provenance(payload, self.trajectory_provenance)
         if self.category_label:
             payload["category_label"] = self.category_label
         if self.subject_label:
@@ -532,6 +544,7 @@ def build_evaluation_job_record(
     output_dir: str = "",
     created_at_unix_ms: int = 0,
     updated_at_unix_ms: int = 0,
+    trajectory_provenance: dict[str, object] | None = None,
 ) -> EvaluationJob:
     return EvaluationJob(
         schema_version=_EVALUATION_JOB_SCHEMA_VERSION,
@@ -551,6 +564,7 @@ def build_evaluation_job_record(
         output_dir=output_dir,
         created_at_unix_ms=created_at_unix_ms,
         updated_at_unix_ms=updated_at_unix_ms,
+        trajectory_provenance=dict(trajectory_provenance or {}),
     )
 
 
@@ -636,6 +650,7 @@ def build_evaluation_sample_record(
     agentic_tool_calls: tuple[dict[str, object], ...] = (),
     agentic_tool_observations: tuple[dict[str, object], ...] = (),
     agentic_tool_metrics: dict[str, float] | None = None,
+    trajectory_provenance: dict[str, object] | None = None,
 ) -> EvaluationSample:
     return EvaluationSample(
         schema_version=_EVALUATION_SAMPLE_SCHEMA_VERSION,
@@ -685,6 +700,7 @@ def build_evaluation_sample_record(
         agentic_tool_calls=tuple(dict(call) for call in agentic_tool_calls),
         agentic_tool_observations=tuple(dict(observation) for observation in agentic_tool_observations),
         agentic_tool_metrics=dict(agentic_tool_metrics or {}),
+        trajectory_provenance=dict(trajectory_provenance or {}),
     )
 
 
@@ -705,6 +721,7 @@ def build_evaluation_compare_job_record(
     created_at_unix_ms: int = 0,
     updated_at_unix_ms: int = 0,
     target_lineage: tuple[EvaluationCompareTargetLineage, ...] = (),
+    trajectory_provenance: dict[str, object] | None = None,
 ) -> EvaluationCompareJob:
     return EvaluationCompareJob(
         schema_version=_EVALUATION_COMPARE_JOB_SCHEMA_VERSION,
@@ -723,6 +740,7 @@ def build_evaluation_compare_job_record(
         created_at_unix_ms=created_at_unix_ms,
         updated_at_unix_ms=updated_at_unix_ms,
         target_lineage=tuple(target_lineage),
+        trajectory_provenance=dict(trajectory_provenance or {}),
     )
 
 
@@ -832,6 +850,7 @@ def build_evaluation_compare_sample_record(
     target_code_failure_detail: str = "",
     category_label: str = "",
     subject_label: str = "",
+    trajectory_provenance: dict[str, object] | None = None,
 ) -> EvaluationCompareSample:
     return EvaluationCompareSample(
         schema_version=_EVALUATION_COMPARE_SAMPLE_SCHEMA_VERSION,
@@ -878,4 +897,5 @@ def build_evaluation_compare_sample_record(
         target_code_failure_detail=target_code_failure_detail,
         category_label=category_label,
         subject_label=subject_label,
+        trajectory_provenance=dict(trajectory_provenance or {}),
     )

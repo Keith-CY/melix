@@ -28,6 +28,13 @@ from worker.model_ops.training_dataset import (
     write_normalized_dataset_snapshot,
 )
 from worker.productization.lora_experiment_store import LoraExperimentStore
+from worker.trajectory_provenance import (
+    adapter_manifest_trajectory_provenance,
+    alignment_metrics_trajectory_provenance,
+    append_trajectory_provenance,
+    load_trajectory_provenance_from_normalized_snapshot,
+    normalize_trajectory_provenance,
+)
 
 
 _NUMERIC_TOKEN_RE = re.compile(r"\d+")
@@ -99,6 +106,10 @@ class LoRATrainingPipeline:
             dataset.package,
             output_dir=output_dir,
             manifest_overrides=normalized_manifest_overrides,
+        )
+        trajectory_provenance = load_trajectory_provenance_from_normalized_snapshot(
+            format_name=normalized_snapshot.format,
+            manifest_path=normalized_snapshot.manifest_path,
         )
 
         emit("apply_lora", 0.65)
@@ -261,6 +272,7 @@ class LoRATrainingPipeline:
             "created_at_unix_ms": persisted_at_unix_ms,
             "updated_at_unix_ms": persisted_at_unix_ms,
         }
+        manifest.update(adapter_manifest_trajectory_provenance(trajectory_provenance))
         manifest.update(adapter_audit_fields)
         if resume_context["resume_manifest_path"] is not None:
             manifest["resume_source_manifest_path"] = str(resume_context["resume_manifest_path"])
@@ -333,6 +345,7 @@ class LoRATrainingPipeline:
                 training_result=training_result,
                 adapter_manifest_path=manifest_path,
                 candidate_trace_path=candidate_trace_path,
+                trajectory_provenance=trajectory_provenance,
                 created_at_unix_ms=persisted_at_unix_ms,
             )
             alignment_manifest_path.write_text(
@@ -451,6 +464,7 @@ def _alignment_manifest_payload(
     training_result: TrainingResult,
     adapter_manifest_path: Path,
     candidate_trace_path: str,
+    trajectory_provenance: dict[str, Any] | None = None,
     created_at_unix_ms: int,
 ) -> dict[str, Any]:
     alignment = config.alignment
@@ -477,6 +491,8 @@ def _alignment_manifest_payload(
     reward_summary = _reward_summary(dataset.package.normalized_samples)
     if reward_summary:
         metrics.update(reward_summary)
+    provenance = normalize_trajectory_provenance(trajectory_provenance)
+    metrics.update(alignment_metrics_trajectory_provenance(provenance))
     if alignment.dataset_contract in {"prompt_candidate", "reward_scored"}:
         metrics.update(
             {
@@ -507,7 +523,7 @@ def _alignment_manifest_payload(
                 training_result.metrics.candidate_group_reward_variance_mean
             )
 
-    return {
+    payload = {
         "schema_version": "melix.alignment_run.v1",
         "operation": "train_alignment",
         "job_id": job_id,
@@ -539,6 +555,8 @@ def _alignment_manifest_payload(
         "created_at_unix_ms": created_at_unix_ms,
         "updated_at_unix_ms": created_at_unix_ms,
     }
+    append_trajectory_provenance(payload, provenance)
+    return payload
 
 
 def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:

@@ -20,6 +20,7 @@ from worker.productization.benchmark_export import (
     _iter_sorted_matching_files,
     _load_json_object,
     _resolve_artifact_root,
+    _csv_value,
     _rows_to_csv,
     build_comparison_table,
     build_benchmark_batch_csv,
@@ -1491,11 +1492,11 @@ def test_build_benchmark_matrix_summary_and_requests_csv_use_canonical_rows(tmp_
     assert summary_lines[1].startswith(
         "bench-matrix-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,smoke,1024,128,2,cold,enabled,plain_text,1,3,24,0,24.45,1.2,88.4,3.1,1400.0,58.2,3.8,221.5,1.0,2147483648,5.1,9.2,"
     )
-    assert summary_lines[1].endswith("111")
+    assert list(csv.DictReader(io.StringIO(summary_csv)))[0]["created_at_unix_ms"] == "111"
     assert request_lines[1].startswith(
         "bench-matrix-1,cell-1,text-generation,smoke,1024,128,2,cold,enabled,plain_text,1,0,0,24.45,88.4,1400.0,58.2,5.1,2147483648,completed,,"
     )
-    assert request_lines[1].endswith("111")
+    assert list(csv.DictReader(io.StringIO(requests_csv)))[0]["created_at_unix_ms"] == "111"
 
 
 def test_export_csv_preserves_probe_columns() -> None:
@@ -1819,6 +1820,72 @@ def test_evaluation_samples_csv_builder_maps_sample_id_and_preserves_modalities(
     assert rows[0]["input_modalities"] == "text"
 
 
+def test_export_csv_builders_preserve_trajectory_provenance_columns() -> None:
+    provenance = {
+        "trajectory_dataset_id": "opensearch-vl.dev",
+        "trajectory_dataset_version": "2026-05-19",
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_snapshot_manifest_path": "/tmp/run/normalized_dataset/manifest.json",
+        "trajectory_package_path": "/tmp/package",
+        "trajectory_split": "train",
+        "trajectory_trace_digest": "abc123",
+        "trajectory_toolset_version": "melix.agentic_tools.builtin.v1",
+        "trajectory_reward_policy_id": "reward-policy.v1",
+        "trajectory_quality_metrics": {"agentic_trace_count": 1},
+    }
+    bundle = {
+        "evaluation_samples": [
+            {
+                "job_id": "eval-1",
+                "suite_id": "agentic",
+                "sample_id": "sample-1",
+                "target": "MELIX",
+                "extracted_result": "MELIX",
+                "input_text": "Inspect image.",
+                "raw_response": "MELIX",
+                "typed_score": 1.0,
+                **provenance,
+            }
+        ],
+        "benchmark_context_rows": [
+            {
+                "job_id": "bench-1",
+                "model_id": "melix-dev-text",
+                "task_kind": "text-generation",
+                "source_repo": "local",
+                "suite": "agentic",
+                "context_length": 16,
+                "generation_length": 8,
+                "batch_size": 1,
+                "repeat_index": 0,
+                **provenance,
+            }
+        ],
+        "benchmark_matrix_request_rows": [
+            {
+                "job_id": "matrix-1",
+                "cell_id": "cell-1",
+                "task_kind": "text-generation",
+                "suite_id": "agentic",
+                "context_length": 16,
+                "generation_length": 8,
+                "batch_size": 1,
+                "created_at_unix_ms": 101,
+                **provenance,
+            }
+        ],
+    }
+
+    eval_rows = list(csv.DictReader(io.StringIO(build_evaluation_samples_csv(bundle))))
+    context_rows = list(csv.DictReader(io.StringIO(build_benchmark_context_csv(bundle))))
+    request_rows = list(csv.DictReader(io.StringIO(build_benchmark_matrix_requests_csv(bundle))))
+
+    assert eval_rows[0]["trajectory_trace_digest"] == "abc123"
+    assert json.loads(eval_rows[0]["trajectory_quality_metrics"])["agentic_trace_count"] == 1
+    assert context_rows[0]["trajectory_dataset_id"] == "opensearch-vl.dev"
+    assert request_rows[0]["trajectory_reward_policy_id"] == "reward-policy.v1"
+
+
 def test_rows_to_csv_accepts_generators_without_materializing_lists() -> None:
     rows = (
         {"job_id": f"eval-{index}", "typed_score": index / 10}
@@ -1832,6 +1899,25 @@ def test_rows_to_csv_accepts_generators_without_materializing_lists() -> None:
         {"job_id": "eval-1", "typed_score": "0.1"},
         {"job_id": "eval-2", "typed_score": "0.2"},
     ]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("literal", "literal"),
+        (0, "0"),
+        (False, "False"),
+        ([], ""),
+        ((), ""),
+        ({}, ""),
+        ({"reward_coverage_count": 1}, "{\"reward_coverage_count\": 1}"),
+    ],
+)
+def test_csv_value_fast_paths_cover_scalars_and_nested_values(
+    value: object,
+    expected: str,
+) -> None:
+    assert _csv_value(value) == expected
 
 
 def test_rows_to_csv_uses_writerows_stream_without_dictwriter(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -199,6 +199,58 @@ def test_build_evaluation_sample_record_preserves_agentic_tool_evidence() -> Non
     assert payload["agentic_tool_metrics"]["agentic_tool.call_count"] == 1.0
 
 
+def test_build_evaluation_job_and_sample_records_preserve_trajectory_provenance() -> None:
+    provenance = {
+        "trajectory_dataset_id": "opensearch-vl.dev",
+        "trajectory_dataset_version": "2026-05-19",
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_snapshot_manifest_path": "/tmp/run/normalized_dataset/manifest.json",
+        "trajectory_split": "train",
+        "trajectory_trace_digest": "abc123",
+        "trajectory_toolset_version": "melix.agentic_tools.builtin.v1",
+        "trajectory_reward_policy_id": "reward-policy.v1",
+        "trajectory_quality_metrics": {"reward_coverage_count": 1},
+    }
+    job = build_evaluation_job_record(
+        job_id="eval-1",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="local",
+        suite_id="agentic",
+        dataset_id="agentic-dev",
+        sample_size=1,
+        scoring_mode="exact",
+        parameters={},
+        status="completed",
+        trajectory_provenance=provenance,
+    )
+    sample = build_evaluation_sample_record(
+        job_id="eval-1",
+        suite_id="agentic",
+        dataset_id="agentic-dev",
+        sample_id="sample-1",
+        system="",
+        input_text="Inspect image.",
+        target="MELIX",
+        raw_response="MELIX",
+        extracted_result="MELIX",
+        typed_score=1.0,
+        time_s=0.1,
+        extraction_status="extracted",
+        validation_status="validated",
+        failure_reason="",
+        trajectory_provenance=provenance,
+    )
+
+    job_payload = job.to_dict()
+    sample_payload = sample.to_dict()
+
+    assert job_payload["trajectory_dataset_id"] == "opensearch-vl.dev"
+    assert sample_payload["trajectory_trace_digest"] == "abc123"
+    assert sample_payload["trajectory_reward_policy_id"] == "reward-policy.v1"
+    assert sample_payload["trajectory_quality_metrics"]["reward_coverage_count"] == 1
+
+
 def test_build_evaluation_sample_record_preserves_probe_fields() -> None:
     sample = build_evaluation_sample_record(
         job_id="eval-1",

@@ -1903,7 +1903,7 @@ def test_train_lora_rejects_sft_mode_with_preference_pair_dataset(tmp_path: Path
     assert events[-1].failed.error.code == "invalid_dataset_package"
     assert events[-1].failed.error.details["training_mode"] == "lora"
     assert events[-1].failed.error.details["required_format"] == (
-        "chat_messages,prompt_completion,text_completion"
+        "chat_messages,prompt_completion,text_completion,agentic_tool_trace"
     )
     assert events[-1].failed.error.details["actual_format"] == "preference_pair"
 
@@ -1940,7 +1940,7 @@ def test_train_lora_rejects_sft_mode_with_prompt_candidate_dataset(tmp_path: Pat
     assert events[-1].failed.error.code == "invalid_dataset_package"
     assert events[-1].failed.error.details["training_mode"] == "lora"
     assert events[-1].failed.error.details["required_format"] == (
-        "chat_messages,prompt_completion,text_completion"
+        "chat_messages,prompt_completion,text_completion,agentic_tool_trace"
     )
     assert events[-1].failed.error.details["actual_format"] == "prompt_candidate"
 

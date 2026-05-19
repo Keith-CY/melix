@@ -655,13 +655,21 @@ def normalize_training_config(
 
 def _resolve_training_mode_contract(training_mode: str, dataset_format: str) -> dict[str, str]:
     if training_mode in _SFT_TRAINING_MODES:
-        if dataset_format not in {"chat_messages", "prompt_completion", "text_completion"}:
+        if dataset_format not in {
+            "chat_messages",
+            "prompt_completion",
+            "text_completion",
+            "agentic_tool_trace",
+        }:
             raise ModelOperationError(
                 code="invalid_dataset_package",
                 message="SFT training modes require supervised training datasets.",
                 details={
                     "training_mode": training_mode,
-                    "required_format": "chat_messages,prompt_completion,text_completion",
+                    "required_format": (
+                        "chat_messages,prompt_completion,text_completion,"
+                        "agentic_tool_trace"
+                    ),
                     "actual_format": dataset_format,
                 },
             )

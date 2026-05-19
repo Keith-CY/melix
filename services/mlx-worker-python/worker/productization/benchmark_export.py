@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 import os
 from pathlib import Path
 
+from worker.trajectory_provenance import TRAJECTORY_PROVENANCE_CSV_FIELDS
+
 _EXPORT_SCHEMA_VERSION = "melix.benchmark_export.v1"
 
 
@@ -878,6 +880,7 @@ def _canonical_benchmark_row_columns() -> list[str]:
         "dflash_block_size",
         "dflash_rollback_count",
         "dflash_target_hidden_layers",
+        *TRAJECTORY_PROVENANCE_CSV_FIELDS,
     ]
 
 
@@ -917,6 +920,7 @@ def _canonical_evaluation_sample_columns() -> list[str]:
         "raw_response_chars",
         "extracted_result_chars",
         "failure_stage",
+        *TRAJECTORY_PROVENANCE_CSV_FIELDS,
     ]
 
 
@@ -966,6 +970,10 @@ def _normalized_evaluation_sample_row(row: dict[str, object]) -> dict[str, objec
             len(str(row.get("extracted_result", row.get("predicted", "")))),
         ),
         "failure_stage": row.get("failure_stage", ""),
+        **{
+            field_name: row.get(field_name, "")
+            for field_name in TRAJECTORY_PROVENANCE_CSV_FIELDS
+        },
     }
 
 
@@ -1006,6 +1014,7 @@ def _canonical_benchmark_matrix_summary_columns() -> list[str]:
         "request_latency_p50_ms",
         "request_latency_p95_ms",
         "created_at_unix_ms",
+        *TRAJECTORY_PROVENANCE_CSV_FIELDS,
     ]
 
 
@@ -1057,16 +1066,29 @@ def _canonical_benchmark_matrix_request_columns() -> list[str]:
         "dflash_rollback_count",
         "dflash_target_hidden_layers",
         "created_at_unix_ms",
+        *TRAJECTORY_PROVENANCE_CSV_FIELDS,
     ]
 
 
 def _csv_value(value: object) -> str:
-    if isinstance(value, list):
-        return ",".join(str(item) for item in value)
-    if isinstance(value, tuple):
-        return ",".join(str(item) for item in value)
     if value is None:
         return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    if isinstance(value, list):
+        if not value:
+            return ""
+        return ",".join(str(item) for item in value)
+    if isinstance(value, tuple):
+        if not value:
+            return ""
+        return ",".join(str(item) for item in value)
+    if isinstance(value, dict):
+        if not value:
+            return ""
+        return json.dumps(value, sort_keys=True)
     return str(value)
 
 
