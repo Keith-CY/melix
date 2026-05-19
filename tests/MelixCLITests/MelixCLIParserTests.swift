@@ -1959,6 +1959,13 @@ struct MelixCLIParserTests {
             "--model-idle-timeout-seconds", "300",
             "--json",
         ])
+        let namedStartCommand = try MelixCLIParser.parse([
+            "server",
+            "start",
+            "gemma-31b",
+            "--model", "mlx-community/gemma-4-31b-it-4bit",
+            "--port", "12434",
+        ])
         let resumeCommand = try MelixCLIParser.parse([
             "server",
             "resume",
@@ -1981,6 +1988,10 @@ struct MelixCLIParserTests {
         }
         guard case .serverStart(let titledStartOptions) = titledStartCommand else {
             Issue.record("Expected titled serverStart command")
+            return
+        }
+        guard case .serverStart(let namedStartOptions) = namedStartCommand else {
+            Issue.record("Expected named serverStart command")
             return
         }
         guard case .serverResume(let resumeOptions) = resumeCommand else {
@@ -2011,6 +2022,11 @@ struct MelixCLIParserTests {
         #expect(titledStartOptions.timeoutSeconds == 240)
         #expect(titledStartOptions.modelIdleTimeoutSeconds == 300)
         #expect(titledStartOptions.json)
+        #expect(namedStartOptions.serverSessionID == "gemma-31b")
+        #expect(namedStartOptions.serverTitle == "gemma-31b")
+        #expect(namedStartOptions.defaultModelID == "mlx-community/gemma-4-31b-it-4bit")
+        #expect(namedStartOptions.servedModelIDs == ["mlx-community/gemma-4-31b-it-4bit"])
+        #expect(namedStartOptions.port == 12434)
         #expect(resumeOptions.serverSessionID == "server-session-3")
         #expect(!resumeOptions.json)
         #expect(wakeOptions.serverSessionID == "server-session-4")

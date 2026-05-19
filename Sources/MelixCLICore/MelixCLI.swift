@@ -1092,9 +1092,12 @@ public struct ServerControlOptions: Equatable, Sendable {
         modelIdleTimeoutSeconds: Int = 0,
         json: Bool = false
     ) {
-        self.serverSessionID = serverSessionID.isEmpty
-            ? ServerSessionRuntimeStore.defaultServerSessionID
-            : serverSessionID
+        if serverSessionID.isEmpty || serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID {
+            self.serverSessionID = MelixServerStartShortcutName.sessionIDCandidate(for: serverTitle)
+                ?? ServerSessionRuntimeStore.defaultServerSessionID
+        } else {
+            self.serverSessionID = serverSessionID
+        }
         self.serverTitle = serverTitle
         let resolvedDefaultModelID = MelixServerModelRosterNormalizer.resolvedDefaultModelID(
             defaultModelID,
@@ -1115,6 +1118,23 @@ public struct ServerControlOptions: Equatable, Sendable {
         self.json = json
     }
 
+}
+
+private enum MelixServerStartShortcutName {
+    private static let allowedSessionIDScalars = CharacterSet(
+        charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789._-"
+    )
+
+    static func sessionIDCandidate(for title: String) -> String? {
+        let candidate = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !candidate.isEmpty else {
+            return nil
+        }
+        guard candidate.rangeOfCharacter(from: allowedSessionIDScalars.inverted) == nil else {
+            return nil
+        }
+        return candidate
+    }
 }
 
 public struct ServerIdlePolicyOptions: Equatable, Sendable {
@@ -8928,6 +8948,7 @@ public actor MelixCLIRunner {
     private func upsertServerSessionForStartIfNeeded(_ options: ServerControlOptions) throws -> String {
         let title = options.serverTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let host = options.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let titleSessionID = MelixServerStartShortcutName.sessionIDCandidate(for: title)
         let hasShortcutConfiguration = title.isEmpty == false
             || options.defaultModelID.isEmpty == false
             || options.servedModelIDs.isEmpty == false
@@ -8948,7 +8969,11 @@ public actor MelixCLIRunner {
 
         var resolvedID = ""
         let state = try mutateOperatorState { current in
-            if let index = current.serverSessions.firstIndex(where: { $0.id == title || $0.title == title }) {
+            if let index = current.serverSessions.firstIndex(where: { session in
+                session.id == title
+                    || session.title == title
+                    || titleSessionID.map { session.id == $0 } == true
+            }) {
                 var session = current.serverSessions[index]
                 session.title = title
                 applyServerControlOptions(options, to: &session)
@@ -8969,8 +8994,12 @@ public actor MelixCLIRunner {
                 current.selectedServerSessionID = session.id
                 resolvedID = session.id
             } else {
+                let createdID = nextServerStartShortcutSessionID(
+                    options: options,
+                    existingSessions: current.serverSessions
+                )
                 let created = MelixOperatorServerSessionState(
-                    id: nextGeneratedServerSessionID(in: current.serverSessions),
+                    id: createdID,
                     title: title,
                     defaultModelID: options.defaultModelID,
                     servedModelIDs: options.servedModelIDs,
@@ -9002,6 +9031,19 @@ public actor MelixCLIRunner {
             index += 1
         }
         return "server-session-\(index)"
+    }
+
+    private func nextServerStartShortcutSessionID(
+        options: ServerControlOptions,
+        existingSessions: [MelixOperatorServerSessionState]
+    ) -> String {
+        let id = options.serverSessionID
+        guard id != ServerSessionRuntimeStore.defaultServerSessionID,
+              !existingSessions.contains(where: { $0.id == id })
+        else {
+            return nextGeneratedServerSessionID(in: existingSessions)
+        }
+        return id
     }
 
     private func markServerSessionUnavailable(
