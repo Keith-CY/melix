@@ -528,7 +528,8 @@ class ModelOpsJobRegistry:
         manifest_path: str = "",
     ) -> dict[str, Any] | None:
         if derived_model_id and not manifest_path:
-            lookup = self._cached_active_derived_model_by_id().get(derived_model_id)
+            cached_by_id = self._cached_active_derived_model_by_id()
+            lookup = cached_by_id.get(derived_model_id)
             if lookup is not None:
                 target_payload = lookup.target_payload
                 if target_payload is not None:
@@ -546,7 +547,7 @@ class ModelOpsJobRegistry:
             normalized_model_id = derived_model_id.strip()
             if not normalized_model_id or normalized_model_id == derived_model_id:
                 return None
-            lookup = self._cached_active_derived_model_by_id().get(normalized_model_id)
+            lookup = cached_by_id.get(normalized_model_id)
             if lookup is None:
                 return None
             resolved_activation_manifest_path = lookup.resolved_activation_manifest_path

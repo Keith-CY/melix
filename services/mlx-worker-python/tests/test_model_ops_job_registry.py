@@ -607,6 +607,40 @@ def test_resolve_derived_model_target_uses_cached_model_id_lookup(
     assert row_iterations == 0
 
 
+def test_resolve_derived_model_target_trimmed_id_reuses_lookup_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = ModelOpsJobRegistry()
+    job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    registry.attach_manifest(
+        job.job_id,
+        json.dumps(
+            {
+                "derived_model_id": "melix-dev-active",
+                "derived_model_path": "/runtime/activate/melix-dev-active",
+                "activation_mode": "fused_derived_model",
+            }
+        ),
+    )
+    registry.complete(job.job_id, "/runtime/activate/melix-dev-active/manifest.json")
+
+    original_lookup = registry._cached_active_derived_model_by_id
+    lookup_calls = 0
+
+    def counted_lookup() -> dict[str, Any]:
+        nonlocal lookup_calls
+        lookup_calls += 1
+        return original_lookup()
+
+    monkeypatch.setattr(registry, "_cached_active_derived_model_by_id", counted_lookup)
+
+    target = registry.resolve_derived_model_target(derived_model_id=" melix-dev-active ")
+
+    assert target is not None
+    assert target["derived_model_id"] == "melix-dev-active"
+    assert lookup_calls == 1
+
+
 def test_resolve_derived_model_target_model_id_uses_cached_resolved_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
