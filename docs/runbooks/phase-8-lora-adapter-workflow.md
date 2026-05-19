@@ -208,6 +208,11 @@ Expected training behavior:
   `response_only_boundary` metadata and defaults to `response_only=true` with
   `mask_prompt=true` so user, system, and tool-observation context does not
   receive loss
+- agentic trace SFT keeps the operator-facing SFT `training_mode` (`lora`,
+  `qlora`, or `dora`) but adapter receipts and runner configs record
+  `training_objective=agentic_sft` and
+  `dataset_contract=agentic_tool_trace`; incompatible explicit
+  `training_objective` overrides fail before backend execution
 - adapter receipts keep the source trace count in `dataset_sample_count` and
   record expanded trainer rows in `trainer_dataset_sample_count`
 - Hugging Face dataset materialization is cached under `<jobs_root>/datasets/<cache-key>`

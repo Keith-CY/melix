@@ -296,6 +296,16 @@ for trainer rows plus response-only/mask-prompt boundary counts. Adapter
 receipts keep `dataset_sample_count` as the source trace count and add
 `trainer_dataset_sample_count` for the expanded trainer rows.
 
+LoRA SFT over `agentic_tool_trace` packages is a distinct supervised objective.
+The operator still selects an SFT `training_mode` such as `lora`, `qlora`, or
+`dora`, but the normalized worker config and adapter receipt must record
+`training_objective: agentic_sft` and
+`dataset_contract: agentic_tool_trace`. The trainer-facing rows remain
+`chat_messages`; the source dataset format and dataset contract remain
+`agentic_tool_trace` so provenance, validation, and later RL/evaluation reuse
+do not collapse into generic SFT. Explicit incompatible
+`training_objective` overrides must fail before backend execution.
+
 ## Provenance Fields
 
 LoRA, RL, benchmark, and evaluation artifacts that consume a trajectory package

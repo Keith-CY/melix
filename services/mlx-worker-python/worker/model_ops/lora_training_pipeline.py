@@ -418,6 +418,33 @@ def _write_alignment_trace(path: Path, samples: list[dict[str, Any]]) -> None:
 
 
 def _validate_alignment_inputs(*, config: LoRATrainingConfig, samples: list[dict[str, Any]]) -> None:
+    if config.training_objective == "agentic_sft":
+        if config.dataset_contract != "agentic_tool_trace":
+            raise ModelOperationError(
+                code="invalid_agentic_sft_dataset",
+                message="agentic_sft requires the agentic_tool_trace dataset contract.",
+                details={
+                    "training_objective": config.training_objective,
+                    "dataset_contract": config.dataset_contract,
+                    "required_dataset_contract": "agentic_tool_trace",
+                },
+            )
+        for sample_index, sample in enumerate(samples):
+            missing_fields = [
+                field
+                for field in ("trace_id", "turns", "final_answer")
+                if field not in sample
+            ]
+            if missing_fields:
+                raise ModelOperationError(
+                    code="invalid_agentic_sft_dataset",
+                    message="agentic_sft samples must preserve normalized trace fields.",
+                    details={
+                        "sample_index": str(sample_index),
+                        "missing_fields": ",".join(missing_fields),
+                    },
+                )
+
     alignment = config.alignment
     if alignment is None:
         return

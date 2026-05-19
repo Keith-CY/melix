@@ -112,6 +112,10 @@ _SFT_TRAINING_MODES = {"lora", "qlora", "dora"}
 _PREFERENCE_TRAINING_MODES = {"dpo", "orpo", "cpo"}
 _RL_TRAINING_MODES = {"grpo", "rlhf"}
 _CPT_TRAINING_MODES = {"cpt"}
+_TRAINING_OBJECTIVE_EXT_KEYS = (
+    "training_objective",
+    "melix.training_objective",
+)
 _SUPPORTED_TRAINING_MODES = (
     _SFT_TRAINING_MODES
     | _PREFERENCE_TRAINING_MODES
@@ -379,6 +383,12 @@ def normalize_training_config(
             message=f"Unsupported training_mode: {training_mode}",
         )
     mode_contract = _resolve_training_mode_contract(training_mode, dataset_format)
+    _validate_requested_training_objective(
+        ext,
+        contract=mode_contract,
+        training_mode=training_mode,
+        dataset_format=dataset_format,
+    )
     alignment = _resolve_alignment_config(
         training_mode=training_mode,
         dataset_contract=mode_contract["dataset_contract"],
@@ -673,11 +683,20 @@ def _resolve_training_mode_contract(training_mode: str, dataset_format: str) -> 
                     "actual_format": dataset_format,
                 },
             )
+        training_objective = (
+            "agentic_sft"
+            if dataset_format == "agentic_tool_trace"
+            else "supervised_finetuning"
+        )
         return {
-            "training_objective": "supervised_finetuning",
+            "training_objective": training_objective,
             "adapter_algorithm": "dora" if training_mode == "dora" else "lora",
             "preference_loss": "",
-            "dataset_contract": "sft",
+            "dataset_contract": (
+                "agentic_tool_trace"
+                if dataset_format == "agentic_tool_trace"
+                else "sft"
+            ),
         }
 
     if training_mode in _PREFERENCE_TRAINING_MODES:
@@ -750,6 +769,42 @@ def _resolve_training_mode_contract(training_mode: str, dataset_format: str) -> 
         "preference_loss": "",
         "dataset_contract": "text_completion",
     }
+
+
+def _requested_training_objective(ext: dict[str, str]) -> str:
+    for key in _TRAINING_OBJECTIVE_EXT_KEYS:
+        value = ext.get(key, "").strip().lower()
+        if value:
+            return value
+    return ""
+
+
+def _validate_requested_training_objective(
+    ext: dict[str, str],
+    *,
+    contract: dict[str, str],
+    training_mode: str,
+    dataset_format: str,
+) -> None:
+    requested_objective = _requested_training_objective(ext)
+    if not requested_objective:
+        return
+    required_objective = contract["training_objective"]
+    if requested_objective == required_objective:
+        return
+    raise ModelOperationError(
+        code="invalid_training_objective",
+        message=(
+            f"training_objective={requested_objective} is not compatible "
+            f"with training_mode={training_mode}."
+        ),
+        details={
+            "training_mode": training_mode,
+            "training_objective": requested_objective,
+            "required_training_objective": required_objective,
+            "dataset_format": dataset_format,
+        },
+    )
 
 
 def _resolve_adapter_family(
