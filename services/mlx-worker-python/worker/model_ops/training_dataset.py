@@ -15,6 +15,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from worker.model_ops import agentic_sft_formatter
 from worker.model_ops.errors import ModelOperationError
 
 _SUPPORTED_FORMATS = {
@@ -62,6 +63,7 @@ class NormalizedDatasetSnapshot:
     sample_count: int
     validation_sample_count: int
     format: str
+    trainer_format: str
 
 
 @dataclass(frozen=True)
@@ -536,11 +538,39 @@ def write_normalized_dataset_snapshot(
     samples_path = dataset_dir / "samples.jsonl"
     train_path = dataset_dir / "train.jsonl"
     valid_path = dataset_dir / "valid.jsonl"
+    agentic_train_path = dataset_dir / "agentic-traces.train.jsonl"
+    agentic_valid_path = dataset_dir / "agentic-traces.valid.jsonl"
+
+    trainer_format = dataset.format
+    train_samples = dataset.normalized_samples
+    validation_samples = dataset.normalized_validation_samples
+    agentic_projection: dict[str, Any] = {}
+    if dataset.format == "agentic_tool_trace":
+        trainer_format = "chat_messages"
+        train_samples, train_projection_metrics = agentic_sft_formatter.format_trace_rows(
+            dataset.normalized_samples
+        )
+        validation_samples, validation_projection_metrics = agentic_sft_formatter.format_trace_rows(
+            dataset.normalized_validation_samples
+        )
+        agentic_projection = {
+            "trainer_format": trainer_format,
+            "agentic_sft_formatter": agentic_sft_formatter.AGENTIC_SFT_FORMATTER_ID,
+            "agentic_trace_train_path": str(agentic_train_path),
+            "agentic_trace_valid_path": (
+                str(agentic_valid_path) if dataset.normalized_validation_samples else ""
+            ),
+            "agentic_sft_projection_metrics": agentic_sft_formatter.merge_projection_metrics(
+                train_projection_metrics,
+                validation_projection_metrics,
+            ),
+        }
 
     manifest_payload = {
         "schema_version": "melix.training_dataset_snapshot.v1",
         "dataset_id": dataset.dataset_id,
         "format": dataset.format,
+        "trainer_format": trainer_format,
         "sample_count": dataset.sample_count,
         "validation_sample_count": dataset.validation_sample_count,
         "version": dataset.version,
@@ -550,17 +580,26 @@ def write_normalized_dataset_snapshot(
     }
     if dataset.format == "agentic_tool_trace":
         manifest_payload.update(_agentic_trace_snapshot_manifest_fields(dataset))
+        manifest_payload.update(agentic_projection)
     if manifest_overrides:
         manifest_payload.update(manifest_overrides)
     manifest_path.write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
 
-    _write_duplicate_jsonl_rows((samples_path, train_path), dataset.normalized_samples)
-    if dataset.normalized_validation_samples:
-        _write_jsonl_rows(valid_path, dataset.normalized_validation_samples)
+    _write_duplicate_jsonl_rows((samples_path, train_path), train_samples)
+    if dataset.format == "agentic_tool_trace":
+        _write_jsonl_rows(agentic_train_path, dataset.normalized_samples)
+    elif agentic_train_path.exists():
+        agentic_train_path.unlink()
+    if validation_samples:
+        _write_jsonl_rows(valid_path, validation_samples)
+        if dataset.format == "agentic_tool_trace":
+            _write_jsonl_rows(agentic_valid_path, dataset.normalized_validation_samples)
     else:
         if valid_path.exists():
             valid_path.unlink()
         valid_path = None
+        if agentic_valid_path.exists():
+            agentic_valid_path.unlink()
 
     return NormalizedDatasetSnapshot(
         dataset_dir=dataset_dir,
@@ -571,6 +610,7 @@ def write_normalized_dataset_snapshot(
         sample_count=dataset.sample_count,
         validation_sample_count=dataset.validation_sample_count,
         format=dataset.format,
+        trainer_format=trainer_format,
     )
 
 

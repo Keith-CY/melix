@@ -98,6 +98,7 @@ Supported package formats:
 - `prompt_completion`
 - `text_completion`
 - `preference_pair`
+- `agentic_tool_trace`
 
 Example `manifest.json`:
 
@@ -199,6 +200,9 @@ swift run melix lora train \
 Expected training behavior:
 
 - dataset validation runs before backend execution
+- `agentic_tool_trace` packages are accepted by SFT modes and projected into a
+  trainer-facing `chat_messages` snapshot while preserving the original
+  normalized trace rows in sibling `agentic-traces.*.jsonl` evidence files
 - Hugging Face dataset materialization is cached under `<jobs_root>/datasets/<cache-key>`
 - Melix supports `lora`, `qlora`, `dora`, `dpo`, `orpo`, and `cpt` through the same `train_lora` surface
 - `dora` records `adapter_algorithm=dora` and `dora_enabled=true` in the adapter manifest

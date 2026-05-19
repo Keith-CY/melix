@@ -258,6 +258,27 @@ The snapshot JSONL rows must preserve the sample envelope and normalized turns.
 Consumers must read the snapshot, not the mutable source package, once a job has
 started.
 
+For LoRA SFT, the snapshot also writes a trainer-facing projection. The source
+snapshot manifest keeps `format: agentic_tool_trace` and records
+`trainer_format: chat_messages`. `samples.jsonl`, `train.jsonl`, and
+`valid.jsonl` contain the supervised `messages` rows consumed by the local
+trainer. Sibling `agentic-traces.train.jsonl` and
+`agentic-traces.valid.jsonl` files preserve the original normalized trace rows
+for provenance, audit, replay, and later RL/evaluation reuse.
+
+The v1 SFT projection formats:
+
+- top-level media references as an optional system message
+- assistant `tool_call` objects as deterministic JSON text in an assistant
+  message
+- tool observations as `tool` role messages bound to the source tool-call id
+- the final answer as the supervised assistant answer
+
+Response-only and mask-prompt boundaries for tool-call tokens are governed by a
+later child issue. The first LoRA SFT slice therefore keeps response-only
+support disabled for `agentic_tool_trace` even though the trainer-facing rows
+use the `chat_messages` shape.
+
 ## Provenance Fields
 
 LoRA, RL, benchmark, and evaluation artifacts that consume a trajectory package
