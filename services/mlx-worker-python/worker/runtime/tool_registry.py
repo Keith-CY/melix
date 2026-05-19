@@ -168,6 +168,7 @@ class ToolRegistry:
         self._parser_contract_version = parser_contract_version.strip()
         self._validate()
         self._tool_names = tuple(tool.name for tool in self._tools)
+        self._tool_names_list = list(self._tool_names)
         self._tool_by_name = {tool.name: tool for tool in self._tools}
         self._selection_cache: dict[tuple[str, ...], ToolRegistry] = {}
         self._worker_tool_config_bytes: bytes = b""
@@ -194,6 +195,8 @@ class ToolRegistry:
             cached_selection = self._selection_cache.get(names)
             if cached_selection is not None:
                 return cached_selection
+        elif names == self._tool_names_list:
+            return self
 
         requested_names_list: list[str] = []
         seen_names: set[str] = set()
