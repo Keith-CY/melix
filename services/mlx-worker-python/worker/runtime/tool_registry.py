@@ -261,7 +261,7 @@ def built_in_tool_registry() -> ToolRegistry:
 
 
 def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> common_pb2.ToolConfig:
-    if names is None:
+    if names is None or tuple(names) == BUILTIN_AGENTIC_TOOL_NAMES:
         return common_pb2.ToolConfig.FromString(_BUILTIN_TOOL_CONFIG_BYTES)
     registry = built_in_tool_registry().select(names)
     return registry.as_worker_tool_config()

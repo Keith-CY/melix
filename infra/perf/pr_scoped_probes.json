@@ -3779,6 +3779,17 @@
         "key": "built_in_tool_config_distinct_objects_mean",
         "unit": "calls",
         "direction": "informational"
+      },
+      {
+        "key": "full_selection_tool_config_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "full_selection_tool_config_distinct_objects_mean",
+        "unit": "calls",
+        "direction": "informational"
       }
     ]
   },

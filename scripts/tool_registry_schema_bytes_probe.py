@@ -14,6 +14,7 @@ sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 
 from worker.runtime import tool_registry as tool_registry_module  # noqa: E402
 from worker.runtime.tool_registry import (  # noqa: E402
+    BUILTIN_AGENTIC_TOOL_NAMES,
     ToolDescriptor,
     built_in_tool_config,
     built_in_tool_registry,
@@ -31,6 +32,8 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     schema_byte_count_calls: list[float] = []
     built_in_config_elapsed_samples: list[float] = []
     built_in_config_distinct_objects: list[float] = []
+    full_selection_config_elapsed_samples: list[float] = []
+    full_selection_config_distinct_objects: list[float] = []
     checksum = 0
     original_schema_byte_count = getattr(ToolDescriptor, "schema_byte_count", None)
 
@@ -86,6 +89,21 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
                 checksum += len(config.tools) + len(config.schema_version)
             built_in_config_elapsed_samples.append((time.perf_counter() - config_started) * 1000.0)
             built_in_config_distinct_objects.append(float(distinct_config_count))
+
+            first_full_selection_config = built_in_tool_config(BUILTIN_AGENTIC_TOOL_NAMES)
+            distinct_full_selection_config_count = 0
+            full_selection_started = time.perf_counter()
+            for _index in range(iterations):
+                config = built_in_tool_config(BUILTIN_AGENTIC_TOOL_NAMES)
+                if config is not first_full_selection_config:
+                    distinct_full_selection_config_count += 1
+                checksum += len(config.tools) + len(config.schema_version)
+            full_selection_config_elapsed_samples.append(
+                (time.perf_counter() - full_selection_started) * 1000.0
+            )
+            full_selection_config_distinct_objects.append(
+                float(distinct_full_selection_config_count)
+            )
     finally:
         tool_registry_module.ToolDescriptor.json_schema = original_json_schema
         if original_schema_byte_count is None:
@@ -103,6 +121,12 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         ),
         "built_in_tool_config_distinct_objects_mean": statistics.fmean(
             built_in_config_distinct_objects
+        ),
+        "full_selection_tool_config_elapsed_ms_mean": statistics.fmean(
+            full_selection_config_elapsed_samples
+        ),
+        "full_selection_tool_config_distinct_objects_mean": statistics.fmean(
+            full_selection_config_distinct_objects
         ),
         "schema_bytes": float(expected_schema_bytes),
         "checksum": float(checksum),
