@@ -10,6 +10,7 @@ from packages.protocol.python.worker.v1 import common_pb2
 
 _COMPACT_SORTED_JSON_ENCODER = json.JSONEncoder(separators=(",", ":"), sort_keys=True)
 _TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+_SELECTION_CACHE_MAX_SIZE = 32
 
 TOOL_REGISTRY_SCHEMA_VERSION = "melix.agentic_tool_registry.v1"
 BUILTIN_TOOLSET_VERSION = "melix.agentic_tools.builtin.v1"
@@ -156,6 +157,7 @@ class ToolRegistry:
         self._parser = parser.strip()
         self._parser_contract_version = parser_contract_version.strip()
         self._validate()
+        self._tool_names = tuple(tool.name for tool in self._tools)
         self._tool_by_name = {tool.name: tool for tool in self._tools}
         self._selection_cache: dict[tuple[str, ...], ToolRegistry] = {}
         self._metrics = ToolRegistryMetrics(
@@ -169,13 +171,23 @@ class ToolRegistry:
         return self._tools
 
     def names(self) -> tuple[str, ...]:
-        return tuple(tool.name for tool in self._tools)
+        return self._tool_names
 
     def metrics(self) -> ToolRegistryMetrics:
         return self._metrics
 
     def select(self, names: list[str] | tuple[str, ...]) -> ToolRegistry:
-        requested_names = tuple(dict.fromkeys(name.strip() for name in names if name.strip()))
+        requested_names_list: list[str] = []
+        seen_names: set[str] = set()
+        for name in names:
+            normalized_name = name.strip()
+            if not normalized_name or normalized_name in seen_names:
+                continue
+            seen_names.add(normalized_name)
+            requested_names_list.append(normalized_name)
+        requested_names = tuple(requested_names_list)
+        if requested_names == self._tool_names:
+            return self
         cached_selection = self._selection_cache.get(requested_names)
         if cached_selection is not None:
             return cached_selection
@@ -191,6 +203,8 @@ class ToolRegistry:
             parser=self._parser,
             parser_contract_version=self._parser_contract_version,
         )
+        if len(self._selection_cache) >= _SELECTION_CACHE_MAX_SIZE:
+            self._selection_cache.clear()
         self._selection_cache[requested_names] = selection
         return selection
 

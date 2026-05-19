@@ -125,6 +125,27 @@ def test_tool_registry_select_reuses_cached_selected_registry() -> None:
     assert selected.names() == ("visit", "image_crop")
 
 
+def test_tool_registry_select_returns_self_for_complete_selection() -> None:
+    registry = built_in_tool_registry()
+
+    selected = registry.select([" " + name + " " for name in BUILTIN_AGENTIC_TOOL_NAMES])
+
+    assert selected is registry
+    assert registry.names() == BUILTIN_AGENTIC_TOOL_NAMES
+
+
+def test_tool_registry_selection_cache_is_bounded() -> None:
+    registry = built_in_tool_registry()
+
+    for index in range(40):
+        registry._selection_cache[("visit", f"probe_{index}")] = registry
+
+    selected = registry.select(["image_crop"])
+
+    assert selected.names() == ("image_crop",)
+    assert registry._selection_cache == {("image_crop",): selected}
+
+
 def test_tool_registry_exports_worker_tool_config_metadata() -> None:
     config = built_in_tool_config(["image_crop", "local_compute"])
 
