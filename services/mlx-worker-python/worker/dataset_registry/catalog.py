@@ -38,6 +38,10 @@ _SPLIT_ALIASES = {
 }
 _JSON_DECODER = json.JSONDecoder()
 _JSON_ROW_ARRAY_KEYS = frozenset({"rows", "data"})
+_DEFAULT_CONFIG_PARTS = frozenset({"data", "default"})
+_DEFAULT_CONFIG_FIRST_PARTS = frozenset(
+    {"data", "train", "test", "validation", "valid", "dev"}
+)
 _JSON_LIMITED_PREVIEW_CHUNK_CHARS = 64 * 1024
 
 
@@ -904,7 +908,7 @@ def _inferred_config(relative_path: str) -> str:
 
 
 def _inferred_split_and_config(relative_path: str) -> tuple[str, str]:
-    parts = tuple(part for part in relative_path.replace("\\", "/").split("/") if part)
+    parts = [part for part in relative_path.replace("\\", "/").split("/") if part]
     if not parts:
         return "", "default"
     filename = parts[-1]
@@ -912,7 +916,7 @@ def _inferred_split_and_config(relative_path: str) -> tuple[str, str]:
     split = _split_alias_from_candidate(stem)
     if not split:
         for candidate in parts[:-1]:
-            if candidate in {"data", "default"}:
+            if candidate in _DEFAULT_CONFIG_PARTS:
                 continue
             split = _split_alias_from_candidate(candidate)
             if split:
@@ -920,7 +924,7 @@ def _inferred_split_and_config(relative_path: str) -> tuple[str, str]:
     if len(parts) < 2:
         return split, "default"
     first = parts[0]
-    if first in {"data", "train", "test", "validation", "valid", "dev"}:
+    if first in _DEFAULT_CONFIG_FIRST_PARTS:
         return split, "default"
     return split, first
 
