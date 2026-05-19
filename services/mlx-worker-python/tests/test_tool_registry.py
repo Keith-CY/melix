@@ -85,6 +85,15 @@ def test_tool_registry_metrics_snapshot_updates_for_selected_registry() -> None:
     )
 
 
+def test_tool_registry_names_reuses_registry_snapshot() -> None:
+    registry = built_in_tool_registry()
+    expected_names = registry.names()
+    object.__setattr__(registry, "_tools", ())
+
+    assert registry.names() is expected_names
+    assert registry.names() == BUILTIN_AGENTIC_TOOL_NAMES
+
+
 def test_tool_registry_rejects_duplicate_tool_names() -> None:
     registry = built_in_tool_registry()
 
