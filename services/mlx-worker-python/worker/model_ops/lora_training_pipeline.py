@@ -111,6 +111,7 @@ class LoRATrainingPipeline:
             format_name=normalized_snapshot.format,
             manifest_path=normalized_snapshot.manifest_path,
         )
+        trainer_dataset_format = normalized_snapshot.trainer_format
 
         emit("apply_lora", 0.65)
         adapter_output_dir = output_dir / "adapter"
@@ -128,7 +129,7 @@ class LoRATrainingPipeline:
                 adapter_output_dir=adapter_output_dir,
                 normalized_dataset_dir=normalized_snapshot.dataset_dir,
                 config=config,
-                dataset_format=dataset.package.format,
+                dataset_format=trainer_dataset_format,
                 resume_source_path=resume_context["resume_source_path"],
                 source_model_kind=source_model.model_kind,
                 source_model_ext=dict(source_model.ext),
@@ -200,6 +201,7 @@ class LoRATrainingPipeline:
             "dataset_source_kind": dataset.source_kind,
             "dataset_id": dataset.package.dataset_id,
             "dataset_format": dataset.package.format,
+            "trainer_dataset_format": trainer_dataset_format,
             "dataset_version": dataset.package.version,
             "dataset_sample_count": dataset.package.sample_count,
             "dataset_source_manifest_path": str(dataset.package.manifest_path),

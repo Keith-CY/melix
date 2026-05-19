@@ -59,6 +59,14 @@ def _write_agentic_dataset_package(root: Path) -> Path:
     sample = {
         "trace_id": "trace-001",
         "question": "Use tools before answering.",
+        "media_refs": [
+            {
+                "id": "page-image",
+                "uri": "images/page.png",
+                "mime_type": "image/png",
+            }
+        ],
+        "tools": [{"name": "visit"}],
         "turns": [
             {"role": "user", "content": "Read the page."},
             {
@@ -261,8 +269,44 @@ def test_train_lora_records_agentic_trajectory_provenance_in_adapter_manifest(
     assert payload["trajectory_snapshot_manifest_path"] == payload["normalized_dataset_manifest_path"]
     assert payload["trajectory_provenance_field_count"] >= 8
     assert payload["trajectory_reward_policy_present"] is True
+    assert payload["trainer_dataset_format"] == "chat_messages"
     assert runner.last_train_request is not None
-    assert runner.last_train_request.dataset_format == "agentic_tool_trace"
+    assert runner.last_train_request.dataset_format == "chat_messages"
+    assert runner.last_train_request.config.dataset_contract == "sft"
+
+    normalized_dataset_path = Path(payload["normalized_dataset_manifest_path"])
+    normalized_payload = json.loads(normalized_dataset_path.read_text(encoding="utf-8"))
+    train_row = json.loads((normalized_dataset_path.parent / "train.jsonl").read_text(encoding="utf-8"))
+    trace_row = json.loads(
+        (normalized_dataset_path.parent / "agentic-traces.train.jsonl").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert normalized_payload["format"] == "agentic_tool_trace"
+    assert normalized_payload["trainer_format"] == "chat_messages"
+    assert normalized_payload["agentic_sft_projection_metrics"] == {
+        "sample_count": 1,
+        "tool_call_count": 1,
+        "tool_observation_count": 1,
+        "media_ref_count": 1,
+        "final_answer_count": 1,
+    }
+    assert train_row["tools"] == [{"name": "visit"}]
+    assert train_row["messages"][0]["content"] == (
+        "Media references:\n- id=page-image; uri=images/page.png; mime_type=image/png"
+    )
+    assert train_row["messages"][1]["content"] == "Read the page."
+    assert train_row["messages"][2]["content"] == (
+        'Tool call: {"arguments":{"url":"fixture://doc"},"id":"visit-1",'
+        '"name":"visit"}'
+    )
+    assert train_row["messages"][3]["content"] == (
+        'Tool observation for visit-1: {"text":"The answer is MELIX."}'
+    )
+    assert train_row["messages"][-1]["content"] == "Final answer: MELIX"
+    assert trace_row["trace_id"] == "trace-001"
+    assert trace_row["turns"][1]["tool_call"]["name"] == "visit"
 
 
 def test_alignment_rl_trace_runner_attaches_trajectory_provenance(tmp_path: Path) -> None:

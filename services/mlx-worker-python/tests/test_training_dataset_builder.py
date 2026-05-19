@@ -127,6 +127,15 @@ def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
 ) -> None:
     package_path = tmp_path / "dataset-package"
     package_path.mkdir(parents=True, exist_ok=True)
+    stale_agentic_train_path = (
+        tmp_path / "exports" / "normalized_dataset" / "agentic-traces.train.jsonl"
+    )
+    stale_agentic_valid_path = (
+        tmp_path / "exports" / "normalized_dataset" / "agentic-traces.valid.jsonl"
+    )
+    stale_agentic_train_path.parent.mkdir(parents=True, exist_ok=True)
+    stale_agentic_train_path.write_text("stale\n", encoding="utf-8")
+    stale_agentic_valid_path.write_text("stale\n", encoding="utf-8")
     dataset = TrainingDatasetPackage(
         package_path=package_path,
         manifest_path=package_path / "manifest.json",
@@ -161,6 +170,8 @@ def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
     assert "trajectory_quality_metrics" not in payload
     assert "trajectory_trace_digest" not in payload
     assert "trajectory_schema_version" not in payload
+    assert stale_agentic_train_path.exists() is False
+    assert stale_agentic_valid_path.exists() is False
 
     agentic_package_path = tmp_path / "agentic-package"
     agentic_package_path.mkdir(parents=True, exist_ok=True)
@@ -247,6 +258,21 @@ def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
     mutated_samples = [dict(samples[0], final_answer="Changed")]
 
     assert agentic_payload["format"] == "agentic_tool_trace"
+    assert agentic_payload["trainer_format"] == "chat_messages"
+    assert agentic_payload["agentic_sft_formatter"] == "melix.agentic_tool_trace.sft_formatter.v1"
+    assert agentic_payload["agentic_trace_train_path"].endswith(
+        "normalized_dataset/agentic-traces.train.jsonl"
+    )
+    assert agentic_payload["agentic_trace_valid_path"].endswith(
+        "normalized_dataset/agentic-traces.valid.jsonl"
+    )
+    assert agentic_payload["agentic_sft_projection_metrics"] == {
+        "sample_count": 2,
+        "tool_call_count": 1,
+        "tool_observation_count": 1,
+        "media_ref_count": 2,
+        "final_answer_count": 2,
+    }
     assert agentic_payload["source_package_path"] == str(agentic_package_path)
     assert agentic_payload["source_dataset_id"] == "source-agentic-package"
     assert agentic_payload["source_manifest_fields"] == {
@@ -296,13 +322,50 @@ def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
             {"index": 1, "trace_id": "trace-valid", "terms": ["GOLD-SECRET"]}
         ],
     }
-    assert agentic_snapshot.train_path.read_text(encoding="utf-8") == (
-        json.dumps(samples[0]) + "\n"
-    )
+    assert agentic_snapshot.format == "agentic_tool_trace"
+    assert agentic_snapshot.trainer_format == "chat_messages"
+    train_row = json.loads(agentic_snapshot.train_path.read_text(encoding="utf-8"))
+    assert train_row["tools"] == [{"name": "image_crop"}]
+    assert train_row["messages"] == [
+        {
+            "role": "system",
+            "content": "Media references:\n- id=image-1; uri=images/sign-one.jpg",
+        },
+        {"role": "user", "content": "Inspect image one."},
+        {
+            "role": "assistant",
+            "content": (
+                'Tool call: {"arguments":{"media_ref":"image-1"},"id":"call-1",'
+                '"name":"image_crop"}'
+            ),
+        },
+        {
+            "role": "tool",
+            "content": (
+                'Tool observation for call-1: {"text":"The sign reads MELIX LABS."}'
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": "The sign says MELIX LABS.\n\nFinal answer: MELIX LABS",
+        },
+    ]
+    assert json.loads(
+        (agentic_snapshot.dataset_dir / "agentic-traces.train.jsonl").read_text(
+            encoding="utf-8"
+        )
+    ) == samples[0]
     assert agentic_snapshot.valid_path is not None
-    assert agentic_snapshot.valid_path.read_text(encoding="utf-8") == (
-        json.dumps(validation_samples[0]) + "\n"
-    )
+    valid_row = json.loads(agentic_snapshot.valid_path.read_text(encoding="utf-8"))
+    assert valid_row["messages"][-1] == {
+        "role": "assistant",
+        "content": "The label says GOLD-SECRET.\n\nFinal answer: GOLD-SECRET",
+    }
+    assert json.loads(
+        (agentic_snapshot.dataset_dir / "agentic-traces.valid.jsonl").read_text(
+            encoding="utf-8"
+        )
+    ) == validation_samples[0]
 
 
 def test_write_normalized_dataset_snapshot_clears_stale_valid_jsonl_when_no_validation_samples(
