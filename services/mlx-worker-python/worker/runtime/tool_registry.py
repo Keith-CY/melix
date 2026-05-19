@@ -8,6 +8,7 @@ from typing import Any
 from packages.protocol.python.worker.v1 import common_pb2
 
 
+_TOOL_CONFIG_FROM_BYTES = common_pb2.ToolConfig.FromString
 _COMPACT_SORTED_JSON_ENCODER = json.JSONEncoder(separators=(",", ":"), sort_keys=True)
 _TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _SELECTION_CACHE_MAX_SIZE = 32
@@ -233,7 +234,7 @@ class ToolRegistry:
 
     def as_worker_tool_config(self) -> common_pb2.ToolConfig:
         if self._worker_tool_config_bytes:
-            return common_pb2.ToolConfig.FromString(self._worker_tool_config_bytes)
+            return _TOOL_CONFIG_FROM_BYTES(self._worker_tool_config_bytes)
         config = common_pb2.ToolConfig(
             tools=[tool.as_worker_tool_definition() for tool in self._tools],
             schema_format="openai-function",
@@ -267,11 +268,11 @@ def built_in_tool_registry() -> ToolRegistry:
 
 def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> common_pb2.ToolConfig:
     if names is None:
-        return common_pb2.ToolConfig.FromString(_BUILTIN_TOOL_CONFIG_BYTES)
+        return _TOOL_CONFIG_FROM_BYTES(_BUILTIN_TOOL_CONFIG_BYTES)
     requested_names = tuple(names)
     cached_config_bytes = _BUILTIN_TOOL_CONFIG_SELECTION_BYTES.get(requested_names)
     if cached_config_bytes is not None:
-        return common_pb2.ToolConfig.FromString(cached_config_bytes)
+        return _TOOL_CONFIG_FROM_BYTES(cached_config_bytes)
     registry = _BUILTIN_TOOL_CONFIG_REGISTRY.select(requested_names)
     config = registry.as_worker_tool_config()
     _BUILTIN_TOOL_CONFIG_SELECTION_BYTES[registry.names()] = config.SerializeToString()
