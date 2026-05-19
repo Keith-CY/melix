@@ -104,6 +104,39 @@ def test_tool_descriptor_required_arguments_reuses_cached_snapshot() -> None:
     assert tool.schema_payload()["required"] == ["media_ref", "region"]
 
 
+def test_tool_descriptor_schema_payload_reuses_cached_argument_schemas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool = built_in_tool_registry().tools[0]
+
+    def fail_json_schema(self: ToolArgumentDescriptor) -> dict[str, str]:  # pragma: no cover
+        raise AssertionError("schema_payload() should reuse cached argument schemas")
+
+    monkeypatch.setattr(ToolArgumentDescriptor, "json_schema", fail_json_schema)
+
+    payload = tool.schema_payload()
+
+    assert payload["properties"]["media_ref"] == {
+        "type": "string",
+        "description": "Identifier or URI for the source image.",
+    }
+
+
+def test_tool_descriptor_schema_payload_returns_isolated_mutable_payloads() -> None:
+    tool = built_in_tool_registry().tools[0]
+
+    first_payload = tool.schema_payload()
+    first_payload["properties"]["media_ref"]["description"] = "mutated"
+    first_payload["required"].append("mutated")
+
+    second_payload = tool.schema_payload()
+
+    assert second_payload["properties"]["media_ref"]["description"] == (
+        "Identifier or URI for the source image."
+    )
+    assert second_payload["required"] == ["media_ref", "region"]
+
+
 def test_tool_registry_rejects_duplicate_tool_names() -> None:
     registry = built_in_tool_registry()
 
