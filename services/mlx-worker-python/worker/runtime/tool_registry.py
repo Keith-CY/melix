@@ -266,7 +266,7 @@ class ToolRegistry:
 
 
 def built_in_tool_registry() -> ToolRegistry:
-    return ToolRegistry(_BUILTIN_AGENTIC_TOOLS)
+    return _BUILTIN_TOOL_CONFIG_REGISTRY
 
 
 def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> common_pb2.ToolConfig:

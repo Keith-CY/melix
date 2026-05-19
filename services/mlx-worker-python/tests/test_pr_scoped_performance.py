@@ -242,6 +242,7 @@ def test_tool_registry_names_probe_script_emits_metrics(
 
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["registry_factory_elapsed_ms_mean"] >= 0.0
     assert metrics["names_calls_mean"] == 20.0
     assert metrics["same_names_object_calls_mean"] == 20.0
 
