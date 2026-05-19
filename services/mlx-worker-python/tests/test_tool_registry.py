@@ -163,6 +163,22 @@ def test_tool_registry_select_tuple_cache_hit_skips_name_lookup(monkeypatch: pyt
         registry.select(["image_crop", "visit"])
 
 
+def test_tool_registry_select_caches_raw_tuple_alias_after_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = built_in_tool_registry()
+    selected = registry.select((" visit ", "image_crop", "visit", ""))
+
+    monkeypatch.setattr(registry, "_tool_by_name", {})
+
+    assert selected.names() == ("visit", "image_crop")
+    assert registry._selection_cache[(" visit ", "image_crop", "visit", "")] is selected
+    del registry._selection_cache[("visit", "image_crop")]
+    assert registry.select((" visit ", "image_crop", "visit", "")) is selected
+    with pytest.raises(ToolRegistryError, match="Unknown tool registry entry requested"):
+        registry.select(["layout_parse"])
+
+
 def test_tool_registry_select_returns_self_for_complete_selection() -> None:
     registry = built_in_tool_registry()
 
@@ -183,6 +199,21 @@ def test_tool_registry_selection_cache_is_bounded() -> None:
 
     assert selected.names() == ("image_crop",)
     assert registry._selection_cache == {("image_crop",): selected}
+
+
+def test_tool_registry_raw_tuple_alias_keeps_selection_cache_bounded() -> None:
+    registry = built_in_tool_registry()
+
+    for index in range(31):
+        registry._selection_cache[("visit", f"probe_{index}")] = registry
+
+    selected = registry.select((" visit ", "image_crop", "visit"))
+
+    assert selected.names() == ("visit", "image_crop")
+    assert registry._selection_cache == {
+        ("visit", "image_crop"): selected,
+        (" visit ", "image_crop", "visit"): selected,
+    }
 
 
 def test_tool_registry_exports_worker_tool_config_metadata() -> None:
