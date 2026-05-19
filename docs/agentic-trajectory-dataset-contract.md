@@ -262,7 +262,9 @@ For LoRA SFT, the snapshot also writes a trainer-facing projection. The source
 snapshot manifest keeps `format: agentic_tool_trace` and records
 `trainer_format: chat_messages`. `samples.jsonl`, `train.jsonl`, and
 `valid.jsonl` contain the supervised `messages` rows consumed by the local
-trainer. Sibling `agentic-traces.train.jsonl` and
+trainer. A single source trace may produce multiple trainer rows: one for each
+assistant tool-call span that should receive loss and one for the final-answer
+span. Sibling `agentic-traces.train.jsonl` and
 `agentic-traces.valid.jsonl` files preserve the original normalized trace rows
 for provenance, audit, replay, and later RL/evaluation reuse.
 
@@ -274,10 +276,25 @@ The v1 SFT projection formats:
 - tool observations as `tool` role messages bound to the source tool-call id
 - the final answer as the supervised assistant answer
 
-Response-only and mask-prompt boundaries for tool-call tokens are governed by a
-later child issue. The first LoRA SFT slice therefore keeps response-only
-support disabled for `agentic_tool_trace` even though the trainer-facing rows
-use the `chat_messages` shape.
+Response-only and mask-prompt support for `agentic_tool_trace` depends on this
+row split. MLX-LM's current chat dataset exposes one contiguous prompt boundary
+per row, so Melix ends each projected row with the assistant span that should
+receive loss. Earlier user, system, assistant reasoning, and tool-observation
+messages remain context and are masked by `mask_prompt=true`. Each projected row
+records a `response_only_boundary` object with:
+
+- `policy_id: melix.agentic_tool_trace.response_only_boundaries.v1`
+- `mask_prompt: true`
+- `trainable_role: assistant`
+- `trainable_kind: tool_call` or `final_answer`
+- `trainable_message_index`
+- `trace_id` when available
+
+The normalized snapshot manifest records `source_trace_sample_count`,
+`trainer_sample_count`, `agentic_sft_boundary_policy`, and projection metrics
+for trainer rows plus response-only/mask-prompt boundary counts. Adapter
+receipts keep `dataset_sample_count` as the source trace count and add
+`trainer_dataset_sample_count` for the expanded trainer rows.
 
 ## Provenance Fields
 

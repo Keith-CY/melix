@@ -172,6 +172,7 @@ def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
     assert "trajectory_schema_version" not in payload
     assert stale_agentic_train_path.exists() is False
     assert stale_agentic_valid_path.exists() is False
+    assert training_dataset_module.trainer_sample_counts(dataset) == (1, 0)
 
     agentic_package_path = tmp_path / "agentic-package"
     agentic_package_path.mkdir(parents=True, exist_ok=True)
@@ -229,7 +230,7 @@ def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
         normalized_samples=samples,
         normalized_validation_samples=validation_samples,
         validation_sample_count=1,
-        response_only_supported=False,
+        response_only_supported=True,
         manifest_fields={
             "schema_version": "melix.training_dataset_package.v1",
             "dataset_id": "agentic-package",
@@ -248,6 +249,7 @@ def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
             "media_root": "images/",
         },
     )
+    assert training_dataset_module.trainer_sample_counts(agentic_dataset) == (2, 1)
 
     agentic_snapshot = write_normalized_dataset_snapshot(
         agentic_dataset,
@@ -260,6 +262,17 @@ def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
     assert agentic_payload["format"] == "agentic_tool_trace"
     assert agentic_payload["trainer_format"] == "chat_messages"
     assert agentic_payload["agentic_sft_formatter"] == "melix.agentic_tool_trace.sft_formatter.v1"
+    assert (
+        agentic_payload["agentic_sft_boundary_policy"]
+        == "melix.agentic_tool_trace.response_only_boundaries.v1"
+    )
+    assert agentic_payload["sample_count"] == 2
+    assert agentic_payload["validation_sample_count"] == 1
+    assert agentic_payload["source_trace_sample_count"] == 1
+    assert agentic_payload["source_trace_validation_sample_count"] == 1
+    assert agentic_payload["trainer_sample_count"] == 2
+    assert agentic_payload["trainer_validation_sample_count"] == 1
+    assert agentic_payload["response_only_supported"] is True
     assert agentic_payload["agentic_trace_train_path"].endswith(
         "normalized_dataset/agentic-traces.train.jsonl"
     )
@@ -268,10 +281,13 @@ def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
     )
     assert agentic_payload["agentic_sft_projection_metrics"] == {
         "sample_count": 2,
+        "trainer_row_count": 3,
         "tool_call_count": 1,
         "tool_observation_count": 1,
         "media_ref_count": 2,
         "final_answer_count": 2,
+        "response_only_boundary_count": 3,
+        "mask_prompt_boundary_count": 3,
     }
     assert agentic_payload["source_package_path"] == str(agentic_package_path)
     assert agentic_payload["source_dataset_id"] == "source-agentic-package"
@@ -324,9 +340,47 @@ def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
     }
     assert agentic_snapshot.format == "agentic_tool_trace"
     assert agentic_snapshot.trainer_format == "chat_messages"
-    train_row = json.loads(agentic_snapshot.train_path.read_text(encoding="utf-8"))
-    assert train_row["tools"] == [{"name": "image_crop"}]
-    assert train_row["messages"] == [
+    assert agentic_snapshot.sample_count == 2
+    assert agentic_snapshot.validation_sample_count == 1
+    train_rows = [
+        json.loads(line)
+        for line in agentic_snapshot.train_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(train_rows) == 2
+    assert train_rows[0]["tools"] == [{"name": "image_crop"}]
+    assert train_rows[0]["response_only_boundary"] == {
+        "policy_id": "melix.agentic_tool_trace.response_only_boundaries.v1",
+        "mask_prompt": True,
+        "trainable_role": "assistant",
+        "trainable_kind": "tool_call",
+        "trainable_message_index": 2,
+        "trace_id": "trace-train",
+    }
+    assert train_rows[0]["messages"] == [
+        {
+            "role": "system",
+            "content": "Media references:\n- id=image-1; uri=images/sign-one.jpg",
+        },
+        {"role": "user", "content": "Inspect image one."},
+        {
+            "role": "assistant",
+            "content": (
+                'Tool call: {"arguments":{"media_ref":"image-1"},"id":"call-1",'
+                '"name":"image_crop"}'
+            ),
+        },
+    ]
+    assert train_rows[1]["tools"] == [{"name": "image_crop"}]
+    assert train_rows[1]["response_only_boundary"] == {
+        "policy_id": "melix.agentic_tool_trace.response_only_boundaries.v1",
+        "mask_prompt": True,
+        "trainable_role": "assistant",
+        "trainable_kind": "final_answer",
+        "trainable_message_index": 4,
+        "trace_id": "trace-train",
+    }
+    assert train_rows[1]["messages"] == [
         {
             "role": "system",
             "content": "Media references:\n- id=image-1; uri=images/sign-one.jpg",
@@ -357,6 +411,14 @@ def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
     ) == samples[0]
     assert agentic_snapshot.valid_path is not None
     valid_row = json.loads(agentic_snapshot.valid_path.read_text(encoding="utf-8"))
+    assert valid_row["response_only_boundary"] == {
+        "policy_id": "melix.agentic_tool_trace.response_only_boundaries.v1",
+        "mask_prompt": True,
+        "trainable_role": "assistant",
+        "trainable_kind": "final_answer",
+        "trainable_message_index": 2,
+        "trace_id": "trace-valid",
+    }
     assert valid_row["messages"][-1] == {
         "role": "assistant",
         "content": "The label says GOLD-SECRET.\n\nFinal answer: GOLD-SECRET",
@@ -763,7 +825,6 @@ def test_load_training_dataset_package_supports_agentic_tool_trace_contract(
     package = load_training_dataset_package(str(package_path))
 
     assert package.format == "agentic_tool_trace"
-    assert package.response_only_supported is False
     assert package.normalized_samples == [sample]
 
 

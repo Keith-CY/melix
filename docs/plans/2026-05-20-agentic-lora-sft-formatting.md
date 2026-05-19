@@ -30,15 +30,18 @@ handoff:
 - Preserve original normalized trace rows in sibling snapshot evidence files.
 - Keep `dataset_format=agentic_tool_trace` in adapter receipts while passing
   the trainer the projected `chat_messages` row shape.
-- Keep response-only masking disabled for `agentic_tool_trace`; issue #687 owns
-  response-only and mask-prompt boundaries for tool-call tokens.
+- Split each trace into trainer rows that end at one trainable assistant span,
+  so MLX-LM's single contiguous `mask_prompt` boundary trains tool-call tokens
+  and final-answer tokens without training user/system/tool-observation context.
+- Record response-only boundary metadata for each projected row.
 
 Out of scope:
 
 - Schema or protobuf changes.
 - Network-backed tool execution.
 - Claiming quality or benchmark improvement.
-- Enabling response-only masking for agentic traces.
+- A custom MLX-LM loss that trains multiple disjoint assistant spans in a
+  single row.
 
 ## Implementation Plan
 
@@ -51,7 +54,9 @@ Out of scope:
 4. Pass the trainer-facing format from the normalized snapshot into
    `TrainingRequest` while preserving source trajectory provenance in adapter
    receipts.
-5. Add focused tests for the formatter, snapshot artifacts, and LoRA pipeline
+5. Enable response-only masking for `agentic_tool_trace` by default after
+   projecting each trainable assistant span into a separate chat row.
+6. Add focused tests for the formatter, snapshot artifacts, and LoRA pipeline
    handoff.
 
 ## Performance And Metrics
@@ -66,6 +71,9 @@ Measurement points:
 - Formatted tool-observation count.
 - Formatted media-reference count.
 - Formatted final-answer count.
+- Trainer row count.
+- Response-only boundary count.
+- Mask-prompt boundary count.
 - Focused pytest runtime for dataset builder and LoRA pipeline tests.
 - Changed-scope coverage for touched Python files, target >= 95%.
 
@@ -78,6 +86,9 @@ training data preparation path.
 - `agentic_tool_trace` snapshots expose `trainer_format: chat_messages`.
 - `train.jsonl` and `valid.jsonl` contain supervised `messages` rows with
   deterministic tool-call, observation, media-reference, and final-answer text.
+- Each projected row ends with the one assistant span that should receive loss
+  for that row, and records `response_only_boundary` metadata.
+- Agentic SFT defaults to `response_only=true` and `mask_prompt=true`.
 - Original normalized traces are preserved in sibling JSONL evidence files.
 - LoRA training still reports `dataset_format: agentic_tool_trace` and records
   `trainer_dataset_format: chat_messages`.

@@ -25,6 +25,7 @@ from worker.model_ops.training_dataset import (
     HFDatasetFetcher,
     ResolvedTrainingDatasetPackage,
     resolve_training_dataset_package,
+    trainer_sample_counts,
     write_normalized_dataset_snapshot,
 )
 from worker.productization.lora_experiment_store import LoraExperimentStore
@@ -80,6 +81,9 @@ class LoRATrainingPipeline:
             sample_limit=_int_ext(request_ext, "sample_limit"),
             max_characters_per_sample=_int_ext(request_ext, "max_characters_per_sample"),
         )
+        trainer_sample_count, trainer_validation_sample_count = trainer_sample_counts(
+            dataset.package
+        )
 
         emit("normalize_config", 0.35)
         config = normalize_training_config(
@@ -87,8 +91,8 @@ class LoRATrainingPipeline:
             ext=request_ext,
             dataset_format=dataset.package.format,
             response_only_supported=dataset.package.response_only_supported,
-            sample_count=dataset.package.sample_count,
-            validation_sample_count=dataset.package.validation_sample_count,
+            sample_count=trainer_sample_count,
+            validation_sample_count=trainer_validation_sample_count,
         )
         _validate_alignment_inputs(
             config=config,
@@ -204,6 +208,8 @@ class LoRATrainingPipeline:
             "trainer_dataset_format": trainer_dataset_format,
             "dataset_version": dataset.package.version,
             "dataset_sample_count": dataset.package.sample_count,
+            "trainer_dataset_sample_count": normalized_snapshot.sample_count,
+            "trainer_dataset_validation_sample_count": normalized_snapshot.validation_sample_count,
             "dataset_source_manifest_path": str(dataset.package.manifest_path),
             "dataset_materialized_package_path": str(dataset.materialized_package_path),
             "dataset_cache_key": dataset.cache_key,

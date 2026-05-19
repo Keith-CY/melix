@@ -270,13 +270,26 @@ def test_train_lora_records_agentic_trajectory_provenance_in_adapter_manifest(
     assert payload["trajectory_provenance_field_count"] >= 8
     assert payload["trajectory_reward_policy_present"] is True
     assert payload["trainer_dataset_format"] == "chat_messages"
+    assert payload["trainer_dataset_sample_count"] == 2
+    assert payload["trainer_dataset_validation_sample_count"] == 0
+    assert payload["response_only"] is True
+    assert payload["mask_prompt"] is True
     assert runner.last_train_request is not None
     assert runner.last_train_request.dataset_format == "chat_messages"
     assert runner.last_train_request.config.dataset_contract == "sft"
+    assert runner.last_train_request.config.response_only is True
+    assert runner.last_train_request.config.mask_prompt is True
+    assert runner.last_train_request.config.batch_size == 2
 
     normalized_dataset_path = Path(payload["normalized_dataset_manifest_path"])
     normalized_payload = json.loads(normalized_dataset_path.read_text(encoding="utf-8"))
-    train_row = json.loads((normalized_dataset_path.parent / "train.jsonl").read_text(encoding="utf-8"))
+    train_rows = [
+        json.loads(line)
+        for line in (normalized_dataset_path.parent / "train.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
     trace_row = json.loads(
         (normalized_dataset_path.parent / "agentic-traces.train.jsonl").read_text(
             encoding="utf-8"
@@ -285,26 +298,43 @@ def test_train_lora_records_agentic_trajectory_provenance_in_adapter_manifest(
 
     assert normalized_payload["format"] == "agentic_tool_trace"
     assert normalized_payload["trainer_format"] == "chat_messages"
+    assert normalized_payload["sample_count"] == 2
+    assert normalized_payload["source_trace_sample_count"] == 1
+    assert normalized_payload["trainer_sample_count"] == 2
+    assert normalized_payload["response_only_supported"] is True
+    assert (
+        normalized_payload["agentic_sft_boundary_policy"]
+        == "melix.agentic_tool_trace.response_only_boundaries.v1"
+    )
     assert normalized_payload["agentic_sft_projection_metrics"] == {
         "sample_count": 1,
+        "trainer_row_count": 2,
         "tool_call_count": 1,
         "tool_observation_count": 1,
         "media_ref_count": 1,
         "final_answer_count": 1,
+        "response_only_boundary_count": 2,
+        "mask_prompt_boundary_count": 2,
     }
-    assert train_row["tools"] == [{"name": "visit"}]
-    assert train_row["messages"][0]["content"] == (
+    assert len(train_rows) == 2
+    assert train_rows[0]["tools"] == [{"name": "visit"}]
+    assert train_rows[0]["response_only_boundary"]["trainable_kind"] == "tool_call"
+    assert train_rows[0]["response_only_boundary"]["trainable_message_index"] == 2
+    assert train_rows[0]["messages"][0]["content"] == (
         "Media references:\n- id=page-image; uri=images/page.png; mime_type=image/png"
     )
-    assert train_row["messages"][1]["content"] == "Read the page."
-    assert train_row["messages"][2]["content"] == (
+    assert train_rows[0]["messages"][1]["content"] == "Read the page."
+    assert train_rows[0]["messages"][2]["content"] == (
         'Tool call: {"arguments":{"url":"fixture://doc"},"id":"visit-1",'
         '"name":"visit"}'
     )
-    assert train_row["messages"][3]["content"] == (
+    assert train_rows[1]["tools"] == [{"name": "visit"}]
+    assert train_rows[1]["response_only_boundary"]["trainable_kind"] == "final_answer"
+    assert train_rows[1]["response_only_boundary"]["trainable_message_index"] == 4
+    assert train_rows[1]["messages"][3]["content"] == (
         'Tool observation for visit-1: {"text":"The answer is MELIX."}'
     )
-    assert train_row["messages"][-1]["content"] == "Final answer: MELIX"
+    assert train_rows[1]["messages"][-1]["content"] == "Final answer: MELIX"
     assert trace_row["trace_id"] == "trace-001"
     assert trace_row["turns"][1]["tool_call"]["name"] == "visit"
 
