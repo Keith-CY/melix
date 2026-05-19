@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from worker.trajectory_provenance import normalize_trajectory_provenance
+
 from worker.productization.git_env import scrub_git_local_env
 
 
@@ -527,6 +529,68 @@ def _model_memory_summary(
     return default_model_memory_summary()
 
 
+def _trajectory_provenance_from_records(
+    *records: dict[str, object],
+) -> dict[str, object]:
+    for record in records:
+        provenance = normalize_trajectory_provenance(record)
+        if provenance:
+            return provenance
+    return {}
+
+
+def _trajectory_provenance_from_objects(
+    *objects: object,
+) -> dict[str, object]:
+    for item in objects:
+        if isinstance(item, dict):
+            provenance = normalize_trajectory_provenance(item)
+        else:
+            provenance = normalize_trajectory_provenance(
+                getattr(item, "trajectory_provenance", None)
+            )
+        if provenance:
+            return provenance
+    return {}
+
+
+def _artifacts_with_trajectory_provenance(
+    artifacts: tuple[RunEvidenceArtifact, ...],
+    provenance: dict[str, object],
+    artifact_root: Path,
+) -> tuple[RunEvidenceArtifact, ...]:
+    snapshot_path = str(provenance.get("trajectory_snapshot_manifest_path", "")).strip()
+    package_path = str(provenance.get("trajectory_package_path", "")).strip()
+    extra_artifacts: list[RunEvidenceArtifact] = []
+    if snapshot_path:
+        extra_artifacts.append(
+            RunEvidenceArtifact(
+                kind="trajectory_snapshot_manifest",
+                path=_artifact_path(Path(snapshot_path), artifact_root),
+                role="trajectory_snapshot_manifest",
+            )
+        )
+    if package_path:
+        extra_artifacts.append(
+            RunEvidenceArtifact(
+                kind="trajectory_package",
+                path=_artifact_path(Path(package_path), artifact_root),
+                role="trajectory_package",
+            )
+        )
+    if not extra_artifacts:
+        return artifacts
+    seen = {(artifact.kind, artifact.path) for artifact in artifacts}
+    merged = [*artifacts]
+    for artifact in extra_artifacts:
+        key = (artifact.kind, artifact.path)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(artifact)
+    return tuple(merged)
+
+
 def build_serving_benchmark_run_evidence(
     *,
     job: Any,
@@ -553,6 +617,8 @@ def build_serving_benchmark_run_evidence(
         RunEvidenceArtifact(kind=kind, path=_artifact_path(path, artifact_root), role=kind)
         for kind, path in sorted(artifact_paths.items())
     )
+    context_rows_tuple = tuple(context_rows)
+    batch_rows_tuple = tuple(batch_rows)
     run_started_at_monotonic_ms = _run_started_at_monotonic_ms(
         artifact_write_started_at_monotonic_ms=artifact_write_started_at_monotonic_ms,
         duration_ms=max(int(job.updated_at_unix_ms) - int(job.created_at_unix_ms), 0),
@@ -587,7 +653,7 @@ def build_serving_benchmark_run_evidence(
             trace_id=trace_id,
             parent_span_id=root_span_id,
             started_at_monotonic_ms=run_started_at_monotonic_ms + 1,
-            rows=(*tuple(context_rows), *tuple(batch_rows)),
+            rows=(*context_rows_tuple, *batch_rows_tuple),
         ),
         *tuple(telemetry_probes),
         artifact_write_probe(
@@ -599,6 +665,25 @@ def build_serving_benchmark_run_evidence(
             artifact_count=len(artifacts),
         ),
     )
+    trajectory_provenance = _trajectory_provenance_from_objects(job)
+    if not trajectory_provenance:
+        trajectory_provenance = _trajectory_provenance_from_records(
+            *context_rows_tuple,
+            *batch_rows_tuple,
+        )
+    artifacts_with_trajectory = _artifacts_with_trajectory_provenance(
+        artifacts,
+        trajectory_provenance,
+        artifact_root,
+    )
+    domain_results: dict[str, object] = {
+        "serving_benchmark": {
+            "job": job.to_dict(),
+            "results": [result.to_dict() for result in results],
+        },
+    }
+    if trajectory_provenance:
+        domain_results["trajectory_provenance"] = trajectory_provenance
     return RunEvidenceEnvelope(
         run_id=job.job_id,
         melix_commit=commit,
@@ -639,15 +724,10 @@ def build_serving_benchmark_run_evidence(
         probe_timeline=probe_timeline,
         telemetry_summary=telemetry_summary or default_telemetry_summary(),
         model_memory_summary=_model_memory_summary(model_memory_summary),
-        artifacts=artifacts,
+        artifacts=artifacts_with_trajectory,
         failure_summary=_failure_summary(job.status),
         fallback_summary=_fallback_summary(job.parameters),
-        domain_results={
-            "serving_benchmark": {
-                "job": job.to_dict(),
-                "results": [result.to_dict() for result in results],
-            },
-        },
+        domain_results=domain_results,
     )
 
 
@@ -676,6 +756,7 @@ def build_evaluation_run_evidence(
         RunEvidenceArtifact(kind=kind, path=_artifact_path(path, artifact_root), role=kind)
         for kind, path in sorted(artifact_paths.items())
     )
+    samples_tuple = tuple(samples)
     run_started_at_monotonic_ms = _run_started_at_monotonic_ms(
         artifact_write_started_at_monotonic_ms=artifact_write_started_at_monotonic_ms,
         duration_ms=max(int(job.updated_at_unix_ms) - int(job.created_at_unix_ms), 0),
@@ -710,7 +791,7 @@ def build_evaluation_run_evidence(
             trace_id=trace_id,
             parent_span_id=root_span_id,
             started_at_monotonic_ms=run_started_at_monotonic_ms + 1,
-            samples=samples,
+            samples=samples_tuple,
         ),
         *tuple(telemetry_probes),
         artifact_write_probe(
@@ -722,6 +803,21 @@ def build_evaluation_run_evidence(
             artifact_count=len(artifacts),
         ),
     )
+    trajectory_provenance = _trajectory_provenance_from_objects(job, *samples_tuple)
+    artifacts_with_trajectory = _artifacts_with_trajectory_provenance(
+        artifacts,
+        trajectory_provenance,
+        artifact_root,
+    )
+    domain_results: dict[str, object] = {
+        "evaluation": {
+            "job": job.to_dict(),
+            "result": result.to_dict(),
+            "sample_count": sample_count,
+        },
+    }
+    if trajectory_provenance:
+        domain_results["trajectory_provenance"] = trajectory_provenance
     return RunEvidenceEnvelope(
         run_id=job.job_id,
         melix_commit=commit,
@@ -757,16 +853,10 @@ def build_evaluation_run_evidence(
         probe_timeline=probe_timeline,
         telemetry_summary=telemetry_summary or default_telemetry_summary(),
         model_memory_summary=_model_memory_summary(model_memory_summary),
-        artifacts=artifacts,
+        artifacts=artifacts_with_trajectory,
         failure_summary=_failure_summary(job.status, failure_count=result.failure_count),
         fallback_summary=_fallback_summary(job.parameters),
-        domain_results={
-            "evaluation": {
-                "job": job.to_dict(),
-                "result": result.to_dict(),
-                "sample_count": sample_count,
-            },
-        },
+        domain_results=domain_results,
     )
 
 

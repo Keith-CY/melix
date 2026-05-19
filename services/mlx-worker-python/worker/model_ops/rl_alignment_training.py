@@ -13,6 +13,10 @@ from packages.protocol.python.worker.v1 import common_pb2
 
 from worker.model_ops.errors import ModelOperationError
 from worker.runtime.agentic_tools import execute_agentic_tool_calls
+from worker.trajectory_provenance import (
+    append_trajectory_provenance,
+    load_trajectory_provenance_from_snapshot_dir,
+)
 
 
 @dataclass(frozen=True)
@@ -106,6 +110,9 @@ def train_alignment_rl_trace(
 
     started_at = time.perf_counter()
     samples = _load_training_rows(request.normalized_dataset_dir / "train.jsonl")
+    trajectory_provenance = load_trajectory_provenance_from_snapshot_dir(
+        request.normalized_dataset_dir,
+    )
     reward_scorer = _resolve_reward_model_scorer(alignment, reward_runtime)
     if alignment.alignment_algorithm == "grpo":
         if alignment.candidate_generation_mode == "runtime_generate":
@@ -144,6 +151,9 @@ def train_alignment_rl_trace(
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     latest_checkpoint_path = checkpoint_dir / "adapters.safetensors"
 
+    if trajectory_provenance:
+        for row in policy_updates.trace_rows:
+            row.update(trajectory_provenance)
     _write_jsonl(policy_update_trace_path, policy_updates.trace_rows)
     adapter_config = _load_resume_adapter_config(request.resume_source_path) or {
         "fine_tune_type": "lora",
@@ -174,6 +184,9 @@ def train_alignment_rl_trace(
             ),
         }
     )
+    if trajectory_provenance:
+        append_trajectory_provenance(adapter_config, trajectory_provenance)
+        adapter_config["trajectory_provenance_field_count"] = len(trajectory_provenance)
     adapter_config_path.write_text(json.dumps(adapter_config, indent=2) + "\n", encoding="utf-8")
     weights_bytes = _alignment_adapter_weights_bytes(
         source_weights_path=request.resume_source_path,

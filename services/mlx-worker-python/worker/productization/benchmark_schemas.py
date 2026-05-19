@@ -11,6 +11,7 @@ from worker.productization.evaluation_schemas import (
     build_evaluation_result_record,
     build_evaluation_sample_record,
 )
+from worker.trajectory_provenance import append_trajectory_provenance
 
 
 _SERVING_BENCHMARK_JOB_SCHEMA_VERSION = "melix.serving_benchmark_job.v1"
@@ -55,6 +56,7 @@ class ServingBenchmarkJob:
     created_at_unix_ms: int
     updated_at_unix_ms: int
     suite_metadata: dict[str, dict[str, object]] = field(default_factory=dict)
+    trajectory_provenance: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -84,6 +86,7 @@ class ServingBenchmarkJob:
                 suite_id: dict(metadata)
                 for suite_id, metadata in self.suite_metadata.items()
             }
+        append_trajectory_provenance(payload, self.trajectory_provenance)
         return payload
 
 
@@ -136,6 +139,7 @@ class ServingBenchmarkContextRow:
     agentic_tool_calls: tuple[dict[str, object], ...] = ()
     agentic_tool_observations: tuple[dict[str, object], ...] = ()
     agentic_tool_metrics: dict[str, float] | None = None
+    trajectory_provenance: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -190,6 +194,7 @@ class ServingBenchmarkContextRow:
             observations=self.agentic_tool_observations,
             metrics=self.agentic_tool_metrics,
         )
+        append_trajectory_provenance(payload, self.trajectory_provenance)
         return payload
 
 
@@ -242,6 +247,7 @@ class ServingBenchmarkBatchRow:
     agentic_tool_calls: tuple[dict[str, object], ...] = ()
     agentic_tool_observations: tuple[dict[str, object], ...] = ()
     agentic_tool_metrics: dict[str, float] | None = None
+    trajectory_provenance: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -296,6 +302,7 @@ class ServingBenchmarkBatchRow:
             observations=self.agentic_tool_observations,
             metrics=self.agentic_tool_metrics,
         )
+        append_trajectory_provenance(payload, self.trajectory_provenance)
         return payload
 
 
@@ -333,9 +340,10 @@ class BenchmarkMatrixJob:
     created_at_unix_ms: int
     updated_at_unix_ms: int
     parameters: dict[str, str] = field(default_factory=dict)
+    trajectory_provenance: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "schema_version": self.schema_version,
             "job_id": self.job_id,
             "model_id": self.model_id,
@@ -349,6 +357,8 @@ class BenchmarkMatrixJob:
             "created_at_unix_ms": self.created_at_unix_ms,
             "updated_at_unix_ms": self.updated_at_unix_ms,
         }
+        append_trajectory_provenance(payload, self.trajectory_provenance)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -481,6 +491,7 @@ class BenchmarkMatrixRequestRow:
     agentic_tool_calls: tuple[dict[str, object], ...] = ()
     agentic_tool_observations: tuple[dict[str, object], ...] = ()
     agentic_tool_metrics: dict[str, float] | None = None
+    trajectory_provenance: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -538,6 +549,7 @@ class BenchmarkMatrixRequestRow:
             observations=self.agentic_tool_observations,
             metrics=self.agentic_tool_metrics,
         )
+        append_trajectory_provenance(payload, self.trajectory_provenance)
         return payload
 
 
@@ -563,6 +575,7 @@ def build_serving_benchmark_job(
     created_at_unix_ms: int = 0,
     updated_at_unix_ms: int = 0,
     suite_metadata: dict[str, dict[str, object]] | None = None,
+    trajectory_provenance: dict[str, object] | None = None,
 ) -> ServingBenchmarkJob:
     return ServingBenchmarkJob(
         schema_version=_SERVING_BENCHMARK_JOB_SCHEMA_VERSION,
@@ -586,6 +599,7 @@ def build_serving_benchmark_job(
         created_at_unix_ms=created_at_unix_ms,
         updated_at_unix_ms=updated_at_unix_ms,
         suite_metadata=dict(suite_metadata or {}),
+        trajectory_provenance=dict(trajectory_provenance or {}),
     )
 
 
@@ -619,6 +633,7 @@ def build_benchmark_matrix_job(
     created_at_unix_ms: int = 0,
     updated_at_unix_ms: int = 0,
     parameters: dict[str, str] | None = None,
+    trajectory_provenance: dict[str, object] | None = None,
 ) -> BenchmarkMatrixJob:
     return BenchmarkMatrixJob(
         schema_version=_BENCHMARK_MATRIX_JOB_SCHEMA_VERSION,
@@ -633,6 +648,7 @@ def build_benchmark_matrix_job(
         created_at_unix_ms=created_at_unix_ms,
         updated_at_unix_ms=updated_at_unix_ms,
         parameters=dict(parameters or {}),
+        trajectory_provenance=dict(trajectory_provenance or {}),
     )
 
 
@@ -765,6 +781,7 @@ def build_benchmark_matrix_request_row(
     agentic_tool_calls: tuple[dict[str, object], ...] = (),
     agentic_tool_observations: tuple[dict[str, object], ...] = (),
     agentic_tool_metrics: dict[str, float] | None = None,
+    trajectory_provenance: dict[str, object] | None = None,
 ) -> BenchmarkMatrixRequestRow:
     return BenchmarkMatrixRequestRow(
         job_id=job_id,
@@ -817,6 +834,7 @@ def build_benchmark_matrix_request_row(
         agentic_tool_calls=tuple(dict(call) for call in agentic_tool_calls),
         agentic_tool_observations=tuple(dict(observation) for observation in agentic_tool_observations),
         agentic_tool_metrics=dict(agentic_tool_metrics or {}),
+        trajectory_provenance=dict(trajectory_provenance or {}),
     )
 
 
@@ -868,6 +886,7 @@ def build_serving_benchmark_context_row(
     agentic_tool_calls: tuple[dict[str, object], ...] = (),
     agentic_tool_observations: tuple[dict[str, object], ...] = (),
     agentic_tool_metrics: dict[str, float] | None = None,
+    trajectory_provenance: dict[str, object] | None = None,
 ) -> ServingBenchmarkContextRow:
     return ServingBenchmarkContextRow(
         schema_version="melix.serving_benchmark_context_row.v1",
@@ -917,6 +936,7 @@ def build_serving_benchmark_context_row(
         agentic_tool_calls=tuple(dict(call) for call in agentic_tool_calls),
         agentic_tool_observations=tuple(dict(observation) for observation in agentic_tool_observations),
         agentic_tool_metrics=dict(agentic_tool_metrics or {}),
+        trajectory_provenance=dict(trajectory_provenance or {}),
     )
 
 
@@ -968,6 +988,7 @@ def build_serving_benchmark_batch_row(
     agentic_tool_calls: tuple[dict[str, object], ...] = (),
     agentic_tool_observations: tuple[dict[str, object], ...] = (),
     agentic_tool_metrics: dict[str, float] | None = None,
+    trajectory_provenance: dict[str, object] | None = None,
 ) -> ServingBenchmarkBatchRow:
     return ServingBenchmarkBatchRow(
         schema_version="melix.serving_benchmark_batch_row.v1",
@@ -1017,6 +1038,7 @@ def build_serving_benchmark_batch_row(
         agentic_tool_calls=tuple(dict(call) for call in agentic_tool_calls),
         agentic_tool_observations=tuple(dict(observation) for observation in agentic_tool_observations),
         agentic_tool_metrics=dict(agentic_tool_metrics or {}),
+        trajectory_provenance=dict(trajectory_provenance or {}),
     )
 
 
@@ -1062,6 +1084,7 @@ def build_evaluation_job(
     output_dir: str = "",
     created_at_unix_ms: int = 0,
     updated_at_unix_ms: int = 0,
+    trajectory_provenance: dict[str, object] | None = None,
 ) -> EvaluationJob:
     return build_evaluation_job_record(
         job_id=job_id,
@@ -1077,6 +1100,7 @@ def build_evaluation_job(
         output_dir=output_dir,
         created_at_unix_ms=created_at_unix_ms,
         updated_at_unix_ms=updated_at_unix_ms,
+        trajectory_provenance=trajectory_provenance,
     )
 
 
@@ -1114,19 +1138,24 @@ def build_evaluation_sample(
     correct: bool,
     time_s: float,
     parse_status: str,
+    trajectory_provenance: dict[str, object] | None = None,
 ) -> EvaluationSample:
     return build_evaluation_sample_record(
         job_id=job_id,
         suite_id=suite_id,
         dataset_id=dataset_id,
         sample_id=sample_id,
-        question=question,
-        expected=expected,
-        predicted=predicted,
+        system="",
+        input_text=question,
+        target=expected,
         raw_response=raw_response,
-        correct=correct,
+        extracted_result=predicted,
+        typed_score=1.0 if correct else 0.0,
         time_s=time_s,
-        parse_status=parse_status,
+        extraction_status=parse_status,
+        validation_status="validated",
+        failure_reason="" if correct else "incorrect",
+        trajectory_provenance=trajectory_provenance,
     )
 
 

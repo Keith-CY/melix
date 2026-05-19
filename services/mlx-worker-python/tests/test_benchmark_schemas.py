@@ -364,6 +364,56 @@ def test_benchmark_rows_preserve_agentic_tool_evidence() -> None:
     assert request_row["agentic_tool_metrics"]["agentic_tool.call_count"] == 1.0
 
 
+def test_benchmark_job_and_rows_preserve_trajectory_provenance() -> None:
+    provenance = {
+        "trajectory_dataset_id": "opensearch-vl.dev",
+        "trajectory_dataset_version": "2026-05-19",
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_snapshot_manifest_path": "/tmp/run/normalized_dataset/manifest.json",
+        "trajectory_split": "train",
+        "trajectory_trace_digest": "abc123",
+        "trajectory_toolset_version": "melix.agentic_tools.builtin.v1",
+        "trajectory_reward_policy_id": "reward-policy.v1",
+        "trajectory_quality_metrics": {"agentic_trace_count": 1},
+    }
+    job = build_serving_benchmark_job(
+        job_id="bench-123",
+        model_id="melix-dev-text",
+        source_repo="local",
+        suites=("agentic",),
+        parameters={},
+        status="completed",
+        output_dir="/tmp/bench",
+        trajectory_provenance=provenance,
+    ).to_dict()
+    context_row = build_serving_benchmark_context_row(
+        job_id="bench-123",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="local",
+        suite="agentic",
+        context_length=64,
+        generation_length=16,
+        batch_size=1,
+        repeat_index=0,
+        prefill_tokens_per_second=24.5,
+        decode_tokens_per_second=51.25,
+        ttft_ms=11.2,
+        request_latency_ms=42.8,
+        peak_memory_bytes=4096.0,
+        speedup_vs_batch_1=1.0,
+        cache_profile="cold",
+        reasoning_mode="",
+        structured_output_mode="",
+        trajectory_provenance=provenance,
+    ).to_dict()
+
+    assert job["trajectory_dataset_id"] == "opensearch-vl.dev"
+    assert context_row["trajectory_trace_digest"] == "abc123"
+    assert context_row["trajectory_split"] == "train"
+    assert context_row["trajectory_quality_metrics"]["agentic_trace_count"] == 1
+
+
 def test_build_serving_benchmark_results_groups_metrics_by_suite() -> None:
     results = build_serving_benchmark_results(
         job_id="bench-123",

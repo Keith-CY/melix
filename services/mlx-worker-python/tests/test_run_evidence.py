@@ -21,6 +21,7 @@ from worker.productization.run_evidence import (
     summarize_run_evidence_probes,
     summarize_probe_timeline,
     validate_run_evidence_payload,
+    _artifacts_with_trajectory_provenance,
 )
 
 
@@ -394,6 +395,34 @@ def test_probe_summary_ignores_malformed_run_evidence_payloads() -> None:
 
     assert summary["probe_count"] == 1
     assert summary["runs"][0]["run_id"] == "run-with-probes"
+
+
+def test_trajectory_provenance_artifacts_deduplicate_existing_entries(
+    tmp_path: Path,
+) -> None:
+    artifact_root = tmp_path / "run"
+    snapshot_manifest = artifact_root / "normalized_dataset" / "manifest.json"
+    package_path = tmp_path / "packages" / "opensearch-vl.dev"
+    existing = (
+        RunEvidenceArtifact(
+            kind="trajectory_snapshot_manifest",
+            path="normalized_dataset/manifest.json",
+            role="trajectory_snapshot_manifest",
+        ),
+    )
+
+    artifacts = _artifacts_with_trajectory_provenance(
+        existing,
+        {
+            "trajectory_snapshot_manifest_path": str(snapshot_manifest),
+            "trajectory_package_path": str(package_path),
+        },
+        artifact_root,
+    )
+
+    assert [artifact.kind for artifact in artifacts].count("trajectory_snapshot_manifest") == 1
+    assert artifacts[-1].kind == "trajectory_package"
+    assert artifacts[-1].path == str(package_path)
 
 
 def _evidence(*, status: str) -> RunEvidenceEnvelope:

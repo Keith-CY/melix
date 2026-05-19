@@ -271,7 +271,9 @@ must expose trajectory provenance. The stable field names are:
 - `trajectory_snapshot_manifest_path`
 - `trajectory_trace_digest`
 - `trajectory_toolset_version`
+- `trajectory_registry_schema_version`
 - `trajectory_reward_policy_id`
+- `trajectory_leakage_policy_id`
 - `trajectory_quality_metrics`
 
 Artifact-specific schemas may nest these fields under a `trajectory` object when
