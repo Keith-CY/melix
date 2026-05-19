@@ -165,10 +165,7 @@ def _build_supervised_row(
     counters["response_only_boundary_count"] += 1
     counters["mask_prompt_boundary_count"] += 1
     row: dict[str, Any] = {
-        "messages": [
-            copy.deepcopy(message)
-            for message in [*prefix_messages, assistant_message]
-        ],
+        "messages": [message.copy() for message in [*prefix_messages, assistant_message]],
         "response_only_boundary": {
             "policy_id": AGENTIC_SFT_BOUNDARY_POLICY_ID,
             "mask_prompt": True,
@@ -181,7 +178,7 @@ def _build_supervised_row(
     if trace_id_value:
         row["response_only_boundary"]["trace_id"] = trace_id_value
     if tools is not None:
-        row["tools"] = copy.deepcopy(tools)
+        row["tools"] = tools
     return row
 
 
