@@ -165,6 +165,14 @@ or visit adapters can be introduced later only behind an explicit local
 configuration surface, secret redaction, and separate evidence fields that make
 external dependency use visible.
 
+Deterministic fixture runs may force adapter status through fixture context when
+testing failure handling. Status overrides must be available to every built-in
+adapter and must still emit normal `melix.agentic_tool_observation.v1` records.
+Cancellation is represented as observation status `failed` with
+`failure_stage: cancelled` and `cancelled: true` in the sanitized payload,
+because the v1 observation status set is intentionally limited to `completed`,
+`timeout`, and `failed`.
+
 ## Surface Contracts
 
 ### SFT Data Replay
