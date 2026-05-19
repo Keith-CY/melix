@@ -85,6 +85,58 @@ def test_tool_registry_metrics_snapshot_updates_for_selected_registry() -> None:
     )
 
 
+def test_tool_registry_names_reuses_registry_snapshot() -> None:
+    registry = built_in_tool_registry()
+    expected_names = registry.names()
+    object.__setattr__(registry, "_tools", ())
+
+    assert registry.names() is expected_names
+    assert registry.names() == BUILTIN_AGENTIC_TOOL_NAMES
+
+
+def test_tool_descriptor_required_arguments_reuses_cached_snapshot() -> None:
+    tool = built_in_tool_registry().tools[0]
+    expected_required_arguments = tool.required_arguments
+    object.__setattr__(tool, "arguments", ())
+
+    assert tool.required_arguments is expected_required_arguments
+    assert tool.required_arguments == ("media_ref", "region")
+    assert tool.schema_payload()["required"] == ["media_ref", "region"]
+
+
+def test_tool_descriptor_schema_payload_reuses_cached_argument_schemas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool = built_in_tool_registry().tools[0]
+
+    def fail_json_schema(self: ToolArgumentDescriptor) -> dict[str, str]:  # pragma: no cover
+        raise AssertionError("schema_payload() should reuse cached argument schemas")
+
+    monkeypatch.setattr(ToolArgumentDescriptor, "json_schema", fail_json_schema)
+
+    payload = tool.schema_payload()
+
+    assert payload["properties"]["media_ref"] == {
+        "type": "string",
+        "description": "Identifier or URI for the source image.",
+    }
+
+
+def test_tool_descriptor_schema_payload_returns_isolated_mutable_payloads() -> None:
+    tool = built_in_tool_registry().tools[0]
+
+    first_payload = tool.schema_payload()
+    first_payload["properties"]["media_ref"]["description"] = "mutated"
+    first_payload["required"].append("mutated")
+
+    second_payload = tool.schema_payload()
+
+    assert second_payload["properties"]["media_ref"]["description"] == (
+        "Identifier or URI for the source image."
+    )
+    assert second_payload["required"] == ["media_ref", "region"]
+
+
 def test_tool_registry_rejects_duplicate_tool_names() -> None:
     registry = built_in_tool_registry()
 
@@ -144,6 +196,22 @@ def test_tool_registry_select_tuple_cache_hit_skips_name_lookup(monkeypatch: pyt
         registry.select(["image_crop", "visit"])
 
 
+def test_tool_registry_select_caches_raw_tuple_alias_after_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = built_in_tool_registry()
+    selected = registry.select((" visit ", "image_crop", "visit", ""))
+
+    monkeypatch.setattr(registry, "_tool_by_name", {})
+
+    assert selected.names() == ("visit", "image_crop")
+    assert registry._selection_cache[(" visit ", "image_crop", "visit", "")] is selected
+    del registry._selection_cache[("visit", "image_crop")]
+    assert registry.select((" visit ", "image_crop", "visit", "")) is selected
+    with pytest.raises(ToolRegistryError, match="Unknown tool registry entry requested"):
+        registry.select(["layout_parse"])
+
+
 def test_tool_registry_select_returns_self_for_complete_selection() -> None:
     registry = built_in_tool_registry()
 
@@ -164,6 +232,21 @@ def test_tool_registry_selection_cache_is_bounded() -> None:
 
     assert selected.names() == ("image_crop",)
     assert registry._selection_cache == {("image_crop",): selected}
+
+
+def test_tool_registry_raw_tuple_alias_keeps_selection_cache_bounded() -> None:
+    registry = built_in_tool_registry()
+
+    for index in range(31):
+        registry._selection_cache[("visit", f"probe_{index}")] = registry
+
+    selected = registry.select((" visit ", "image_crop", "visit"))
+
+    assert selected.names() == ("visit", "image_crop")
+    assert registry._selection_cache == {
+        ("visit", "image_crop"): selected,
+        (" visit ", "image_crop", "visit"): selected,
+    }
 
 
 def test_tool_registry_exports_worker_tool_config_metadata() -> None:

@@ -63,6 +63,10 @@ class ToolDescriptor:
     tool_kind: str
     observation_kind: str
     arguments: tuple[ToolArgumentDescriptor, ...]
+    _cached_required_arguments: tuple[str, ...] = field(default=(), init=False, repr=False)
+    _cached_schema_properties: tuple[tuple[str, dict[str, Any]], ...] = field(
+        default=(), init=False, repr=False
+    )
     _cached_schema: str = field(default="", init=False, repr=False)
     _cached_schema_bytes: int = field(default=0, init=False, repr=False)
 
@@ -89,21 +93,26 @@ class ToolDescriptor:
                     f"Duplicate argument {argument.name} in tool registry entry {normalized_name}."
                 )
             argument_names.add(argument.name)
+        required_arguments = tuple(argument.name for argument in self.arguments if argument.required)
+        object.__setattr__(self, "_cached_required_arguments", required_arguments)
+        schema_properties = tuple(
+            (argument.name, argument.json_schema()) for argument in self.arguments
+        )
+        object.__setattr__(self, "_cached_schema_properties", schema_properties)
         cached_schema = _COMPACT_SORTED_JSON_ENCODER.encode(self.schema_payload())
         object.__setattr__(self, "_cached_schema", cached_schema)
         object.__setattr__(self, "_cached_schema_bytes", len(cached_schema.encode("utf-8")))
 
     @property
     def required_arguments(self) -> tuple[str, ...]:
-        return tuple(argument.name for argument in self.arguments if argument.required)
+        return self._cached_required_arguments
 
     def schema_payload(self) -> dict[str, Any]:
         return {
             "type": "object",
             "additionalProperties": False,
             "properties": {
-                argument.name: argument.json_schema()
-                for argument in self.arguments
+                name: schema.copy() for name, schema in self._cached_schema_properties
             },
             "required": list(self.required_arguments),
         }
@@ -210,9 +219,12 @@ class ToolRegistry:
             parser=self._parser,
             parser_contract_version=self._parser_contract_version,
         )
-        if len(self._selection_cache) >= _SELECTION_CACHE_MAX_SIZE:
+        cache_raw_tuple = isinstance(names, tuple) and names != requested_names
+        if len(self._selection_cache) >= _SELECTION_CACHE_MAX_SIZE - int(cache_raw_tuple):
             self._selection_cache.clear()
         self._selection_cache[requested_names] = selection
+        if cache_raw_tuple:
+            self._selection_cache[names] = selection
         return selection
 
     def as_openai_tools(self) -> list[dict[str, Any]]:
