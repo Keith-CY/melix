@@ -2814,6 +2814,31 @@ def test_probe_id_index_reuses_cached_mapping_without_reiterating() -> None:
     assert second is first
 
 
+def test_probe_id_index_reuses_cached_mapping_without_reiterating() -> None:
+    probes = (
+        ProbeDefinition(
+            probe_id="target",
+            name="Target",
+            runner="ubuntu-latest",
+            watch_globs=(),
+            test_command="",
+            coverage_command="",
+            probe_impl="command_json",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+    )
+    cache = pr_scoped_performance_module._PROBE_ID_INDEX_CACHE
+    cache.clear()
+
+    first = _probe_id_to_index(probes)
+    second = _probe_id_to_index(probes)
+
+    cache.clear()
+    assert first == {"target": 0}
+    assert second is first
+
+
 def test_load_probe_registry_refreshes_cache_when_file_changes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
