@@ -3731,6 +3731,49 @@
     ]
   },
   {
+    "id": "response-only-boundary-slotted-records",
+    "name": "Response-only boundary slotted records",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/model_ops/response_only_boundary.py",
+      "services/mlx-worker-python/tests/test_response_only_boundary.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/response_only_boundary_slots_probe.py",
+      "infra/perf/pr_scoped_probes.json"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_response_only_boundary.py::test_probe_summarizes_train_set_without_rereading_disk services/mlx-worker-python/tests/test_response_only_boundary.py::test_probe_returns_empty_when_response_only_is_disabled services/mlx-worker-python/tests/test_response_only_boundary.py::test_aggregate_response_only_boundaries_handles_empty_and_full services/mlx-worker-python/tests/test_response_only_boundary.py::test_response_only_boundary_records_are_slotted services/mlx-worker-python/tests/test_response_only_boundary.py::test_aggregate_response_only_boundaries_marks_truncated_labels services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_response_only_boundary_slots_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_response_only_boundary_slots_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_response_only_boundary.py::test_probe_summarizes_train_set_without_rereading_disk services/mlx-worker-python/tests/test_response_only_boundary.py::test_probe_returns_empty_when_response_only_is_disabled services/mlx-worker-python/tests/test_response_only_boundary.py::test_aggregate_response_only_boundaries_handles_empty_and_full services/mlx-worker-python/tests/test_response_only_boundary.py::test_response_only_boundary_records_are_slotted services/mlx-worker-python/tests/test_response_only_boundary.py::test_aggregate_response_only_boundaries_marks_truncated_labels services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_response_only_boundary_slots_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_response_only_boundary_slots_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/model_ops/response_only_boundary.py services/mlx-worker-python/tests/test_response_only_boundary.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/response_only_boundary_slots_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'SCRIPT=\"scripts/response_only_boundary_slots_probe.py\"; if [ -f \"$SCRIPT\" ]; then python3 \"$SCRIPT\"; else for CANDIDATE in \"../head/$SCRIPT\" \"${GITHUB_WORKSPACE:-}/head/$SCRIPT\"; do if [ -f \"$CANDIDATE\" ]; then python3 \"$CANDIDATE\"; exit $?; fi; done; echo \"missing probe script fallback for $SCRIPT\" >&2; exit 2; fi'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "construction_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "aggregation_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "instance_dict_count_mean",
+        "unit": "instances",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      }
+    ]
+  },
+  {
     "id": "tool-registry-schema-bytes-cache",
     "name": "Tool registry schema byte-count cache",
     "runner": "ubuntu-latest",

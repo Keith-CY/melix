@@ -361,6 +361,16 @@ def test_aggregate_response_only_boundaries_handles_empty_and_full() -> None:
     }
 
 
+def test_response_only_boundary_records_are_slotted() -> None:
+    boundary = ResponseOnlyBoundary(assistant_offset=8, total_tokens=10)
+    aggregate = aggregate_response_only_boundaries([boundary])
+
+    assert not hasattr(boundary, "__dict__")
+    assert not hasattr(aggregate, "__dict__")
+    assert boundary.response_tokens == 2
+    assert aggregate.trainable_response_token_count == 2
+
+
 def test_aggregate_response_only_boundaries_marks_truncated_labels() -> None:
     boundaries = [
         ResponseOnlyBoundary(assistant_offset=8, total_tokens=10),
