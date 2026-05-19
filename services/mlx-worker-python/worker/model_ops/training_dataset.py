@@ -49,6 +49,7 @@ class TrainingDatasetPackage:
     normalized_validation_samples: list[dict[str, Any]]
     validation_sample_count: int
     response_only_supported: bool
+    manifest_fields: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -246,6 +247,7 @@ def _build_training_dataset_package(
         normalized_validation_samples=normalized_validation_samples,
         validation_sample_count=len(normalized_validation_samples),
         response_only_supported=format_name in {"chat_messages", "prompt_completion"},
+        manifest_fields=dict(manifest) if format_name == "agentic_tool_trace" else None,
     )
 
 
@@ -546,6 +548,8 @@ def write_normalized_dataset_snapshot(
         "source_samples_path": str(dataset.samples_path),
         "response_only_supported": dataset.response_only_supported,
     }
+    if dataset.format == "agentic_tool_trace":
+        manifest_payload.update(_agentic_trace_snapshot_manifest_fields(dataset))
     if manifest_overrides:
         manifest_payload.update(manifest_overrides)
     manifest_path.write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
@@ -1856,6 +1860,7 @@ def _build_quality_and_token_stats(
         "dirty_samples": dirty_samples,
     }
     if format_name == "agentic_tool_trace":
+        agentic_metrics.pop("_trace_turn_count_sum", None)
         quality.update(agentic_metrics)
 
     return (
@@ -1882,11 +1887,18 @@ def _build_quality_and_token_stats(
 def _new_agentic_trace_quality_metrics() -> dict[str, Any]:
     return {
         "agentic_trace_count": 0,
+        "trace_turn_count_min": 0,
+        "trace_turn_count_max": 0,
+        "trace_turn_count_avg": 0.0,
         "tool_call_count": 0,
         "tool_observation_count": 0,
+        "media_ref_count": 0,
+        "reward_coverage_count": 0,
+        "fatal_stage_coverage_count": 0,
         "fatal_trace_count": 0,
         "leakage_count": 0,
         "leakage_samples": [],
+        "_trace_turn_count_sum": 0,
     }
 
 
@@ -1898,9 +1910,24 @@ def _update_agentic_trace_quality_metrics(
     sample_limit: int,
 ) -> None:
     metrics["agentic_trace_count"] += 1
+    turns = sample.get("turns", [])
+    turn_count = len(turns) if isinstance(turns, list) else 0
+    metrics["_trace_turn_count_sum"] += turn_count
+    if metrics["agentic_trace_count"] == 1:
+        metrics["trace_turn_count_min"] = turn_count
+        metrics["trace_turn_count_max"] = turn_count
+    else:
+        metrics["trace_turn_count_min"] = min(metrics["trace_turn_count_min"], turn_count)
+        metrics["trace_turn_count_max"] = max(metrics["trace_turn_count_max"], turn_count)
     if str(sample.get("fatal_stage", "")).strip():
         metrics["fatal_trace_count"] += 1
-    turns = sample.get("turns", [])
+    if "fatal_stage" in sample:
+        metrics["fatal_stage_coverage_count"] += 1
+    media_refs = sample.get("media_refs", [])
+    if isinstance(media_refs, list):
+        metrics["media_ref_count"] += len(media_refs)
+    if isinstance(sample.get("reward"), Mapping):
+        metrics["reward_coverage_count"] += 1
     if isinstance(turns, list):
         for turn in turns:
             if not isinstance(turn, dict):
@@ -1921,6 +1948,12 @@ def _update_agentic_trace_quality_metrics(
                     "terms": leaked_terms,
                 }
             )
+    trace_count = metrics["agentic_trace_count"]
+    if trace_count > 0:
+        metrics["trace_turn_count_avg"] = round(
+            metrics["_trace_turn_count_sum"] / trace_count,
+            3,
+        )
 
 
 def _build_token_stats(samples: Iterable[dict[str, Any]], format_name: str) -> dict[str, Any]:
@@ -2253,6 +2286,62 @@ def _agentic_trace_duplicate_key(sample: dict[str, Any]) -> bytes:
     return hashlib.sha256(
         json.dumps(_agentic_trace_text_segments(sample), ensure_ascii=False).encode("utf-8")
     ).digest()
+
+
+def _agentic_trace_snapshot_manifest_fields(
+    dataset: TrainingDatasetPackage,
+) -> dict[str, Any]:
+    manifest = dataset.manifest_fields or {}
+    quality, _ = _build_quality_and_token_stats(
+        chain(dataset.normalized_samples, dataset.normalized_validation_samples),
+        "agentic_tool_trace",
+    )
+    quality.pop("_trace_turn_count_sum", None)
+    trace_digest = _agentic_trace_digest(
+        chain(dataset.normalized_samples, dataset.normalized_validation_samples)
+    )
+    preserved_manifest_fields = {
+        key: copy.deepcopy(value)
+        for key, value in manifest.items()
+        if key
+        not in {
+            "schema_version",
+            "dataset_id",
+            "format",
+            "sample_count",
+            "validation_sample_count",
+            "version",
+        }
+    }
+    fields: dict[str, Any] = {
+        "source_package_path": str(dataset.package_path),
+        "source_dataset_id": str(manifest.get("source_dataset_id", dataset.dataset_id)),
+        "source_manifest_fields": preserved_manifest_fields,
+        "trajectory_schema_version": str(
+            manifest.get("trajectory_schema_version", "melix.agentic_tool_trace.v1")
+        ),
+        "trajectory_split": str(manifest.get("source_split", "train")),
+        "trajectory_quality_metrics": quality,
+        "trajectory_trace_digest": trace_digest,
+    }
+    for source_field, output_field in (
+        ("toolset_version", "trajectory_toolset_version"),
+        ("registry_schema_version", "trajectory_registry_schema_version"),
+        ("reward_policy_id", "trajectory_reward_policy_id"),
+        ("leakage_policy_id", "trajectory_leakage_policy_id"),
+    ):
+        value = str(manifest.get(source_field, "")).strip()
+        if value:
+            fields[output_field] = value
+    return fields
+
+
+def _agentic_trace_digest(samples: Iterable[dict[str, Any]]) -> str:
+    digest = hashlib.sha256()
+    for sample in samples:
+        digest.update(_canonical_sample_key(sample).encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
 
 
 def _canonical_sample_key(sample: dict[str, Any]) -> str:

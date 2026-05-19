@@ -140,6 +140,7 @@ def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
         normalized_validation_samples=[],
         validation_sample_count=0,
         response_only_supported=False,
+        manifest_fields={"trajectory_schema_version": "ignored-for-non-agentic"},
     )
 
     snapshot = write_normalized_dataset_snapshot(
@@ -157,6 +158,151 @@ def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
     assert payload["validation_strategy"] == "hf_split"
     assert payload["validation_sample_count"] == 3
     assert payload["hf_valid_split"] == "validation"
+    assert "trajectory_quality_metrics" not in payload
+    assert "trajectory_trace_digest" not in payload
+    assert "trajectory_schema_version" not in payload
+
+    agentic_package_path = tmp_path / "agentic-package"
+    agentic_package_path.mkdir(parents=True, exist_ok=True)
+    samples = [
+        {
+            "trace_id": "trace-train",
+            "question": "Which label is visible?",
+            "media_refs": [{"id": "image-1", "uri": "images/sign-one.jpg"}],
+            "tools": [{"name": "image_crop"}],
+            "turns": [
+                {"role": "user", "content": "Inspect image one.", "media_refs": ["image-1"]},
+                {
+                    "role": "assistant",
+                    "tool_call": {
+                        "id": "call-1",
+                        "name": "image_crop",
+                        "arguments": {"media_ref": "image-1"},
+                    },
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call-1",
+                    "observation": {"text": "The sign reads MELIX LABS."},
+                },
+                {"role": "assistant", "content": "The sign says MELIX LABS."},
+            ],
+            "final_answer": "MELIX LABS",
+            "reward": {"final_answer": 1.0},
+            "fatal_stage": "",
+        }
+    ]
+    validation_samples = [
+        {
+            "trace_id": "trace-valid",
+            "question": "Which label is hidden?",
+            "media_refs": [{"id": "image-2", "uri": "images/sign-two.jpg"}],
+            "turns": [
+                {"role": "user", "content": "Inspect image two."},
+                {"role": "assistant", "content": "The label says GOLD-SECRET."},
+            ],
+            "final_answer": "GOLD-SECRET",
+            "fatal_stage": "observation_leak",
+            "leakage_terms": ["GOLD-SECRET"],
+        }
+    ]
+    agentic_dataset = TrainingDatasetPackage(
+        package_path=agentic_package_path,
+        manifest_path=agentic_package_path / "manifest.json",
+        samples_path=agentic_package_path / "samples.jsonl",
+        schema_version="melix.training_dataset_package.v1",
+        dataset_id="agentic-package",
+        format="agentic_tool_trace",
+        sample_count=1,
+        version="2026-05-19",
+        normalized_samples=samples,
+        normalized_validation_samples=validation_samples,
+        validation_sample_count=1,
+        response_only_supported=False,
+        manifest_fields={
+            "schema_version": "melix.training_dataset_package.v1",
+            "dataset_id": "agentic-package",
+            "format": "agentic_tool_trace",
+            "sample_count": 1,
+            "version": "2026-05-19",
+            "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+            "toolset_version": "melix.agentic_tools.builtin.v1",
+            "registry_schema_version": "melix.agentic_tool_registry.v1",
+            "reward_policy_id": "reward-policy.v1",
+            "leakage_policy_id": "leakage-policy.v1",
+            "source_dataset_id": "source-agentic-package",
+            "source_split": "train",
+            "source_revision": "rev-123",
+            "license": "MIT",
+            "media_root": "images/",
+        },
+    )
+
+    agentic_snapshot = write_normalized_dataset_snapshot(
+        agentic_dataset,
+        output_dir=tmp_path / "agentic-exports",
+        manifest_overrides={"validation_strategy": "source_validation"},
+    )
+    agentic_payload = json.loads(agentic_snapshot.manifest_path.read_text(encoding="utf-8"))
+    mutated_samples = [dict(samples[0], final_answer="Changed")]
+
+    assert agentic_payload["format"] == "agentic_tool_trace"
+    assert agentic_payload["source_package_path"] == str(agentic_package_path)
+    assert agentic_payload["source_dataset_id"] == "source-agentic-package"
+    assert agentic_payload["source_manifest_fields"] == {
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "toolset_version": "melix.agentic_tools.builtin.v1",
+        "registry_schema_version": "melix.agentic_tool_registry.v1",
+        "reward_policy_id": "reward-policy.v1",
+        "leakage_policy_id": "leakage-policy.v1",
+        "source_dataset_id": "source-agentic-package",
+        "source_split": "train",
+        "source_revision": "rev-123",
+        "license": "MIT",
+        "media_root": "images/",
+    }
+    assert agentic_payload["trajectory_schema_version"] == "melix.agentic_tool_trace.v1"
+    assert agentic_payload["trajectory_split"] == "train"
+    assert agentic_payload["trajectory_toolset_version"] == "melix.agentic_tools.builtin.v1"
+    assert (
+        agentic_payload["trajectory_registry_schema_version"]
+        == "melix.agentic_tool_registry.v1"
+    )
+    assert agentic_payload["trajectory_reward_policy_id"] == "reward-policy.v1"
+    assert agentic_payload["trajectory_leakage_policy_id"] == "leakage-policy.v1"
+    assert agentic_payload["trajectory_trace_digest"] == training_dataset_module._agentic_trace_digest(
+        samples + validation_samples
+    )
+    assert agentic_payload["trajectory_trace_digest"] != training_dataset_module._agentic_trace_digest(
+        mutated_samples + validation_samples
+    )
+    assert agentic_payload["trajectory_quality_metrics"] == {
+        "duplicate_count": 0,
+        "duplicate_sample_indices": [],
+        "dirty_count": 1,
+        "dirty_samples": [{"index": 1, "reasons": ["leakage_terms"]}],
+        "agentic_trace_count": 2,
+        "trace_turn_count_min": 2,
+        "trace_turn_count_max": 4,
+        "trace_turn_count_avg": 3.0,
+        "tool_call_count": 1,
+        "tool_observation_count": 1,
+        "media_ref_count": 2,
+        "reward_coverage_count": 1,
+        "fatal_stage_coverage_count": 2,
+        "fatal_trace_count": 1,
+        "leakage_count": 1,
+        "leakage_samples": [
+            {"index": 1, "trace_id": "trace-valid", "terms": ["GOLD-SECRET"]}
+        ],
+    }
+    assert agentic_snapshot.train_path.read_text(encoding="utf-8") == (
+        json.dumps(samples[0]) + "\n"
+    )
+    assert agentic_snapshot.valid_path is not None
+    assert agentic_snapshot.valid_path.read_text(encoding="utf-8") == (
+        json.dumps(validation_samples[0]) + "\n"
+    )
 
 
 def test_write_normalized_dataset_snapshot_clears_stale_valid_jsonl_when_no_validation_samples(
