@@ -117,7 +117,11 @@ class DeterministicAgenticToolRuntime:
             raise AgenticToolRuntimeError(f"Unknown agentic tool requested: {tool_name}")
         _validate_required_arguments(descriptor, arguments)
         try:
-            payload = self._execute_payload(tool_name=tool_name, arguments=arguments)
+            payload = self._execute_payload(
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                arguments=arguments,
+            )
         except (AgenticToolRuntimeError, SyntaxError, TypeError, ValueError) as exc:
             payload = {"error": str(exc), "_status": "failed"}
         status = str(payload.pop("_status", "completed"))
@@ -150,7 +154,20 @@ class DeterministicAgenticToolRuntime:
             "required_argument_count": metrics.required_argument_count,
         }
 
-    def _execute_payload(self, *, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _execute_payload(
+        self,
+        *,
+        tool_name: str,
+        tool_call_id: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        status_override = _status_override_payload(
+            fixture_context=self._fixture_context,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+        )
+        if status_override is not None:
+            return status_override
         if tool_name == "text_search":
             return _text_search_payload(arguments=arguments, fixture_context=self._fixture_context)
         if tool_name == "image_search":
@@ -207,6 +224,48 @@ def _validate_required_arguments(descriptor: ToolDescriptor, arguments: dict[str
     if missing:
         joined = ", ".join(missing)
         raise AgenticToolRuntimeError(f"Missing required arguments for {descriptor.name}: {joined}")
+
+
+def _status_override_payload(
+    *,
+    fixture_context: dict[str, Any],
+    tool_name: str,
+    tool_call_id: str,
+) -> dict[str, Any] | None:
+    overrides = _context_mapping(fixture_context, "tool_status_overrides")
+    raw_override = overrides.get(tool_call_id, overrides.get(tool_name, overrides.get("*")))
+    if raw_override is None:
+        return None
+    if isinstance(raw_override, str):
+        override = {"status": raw_override}
+    elif isinstance(raw_override, dict):
+        override = dict(raw_override)
+    else:
+        raise AgenticToolRuntimeError("Agentic tool status override must be a string or JSON object.")
+
+    raw_status = str(override.get("status", "")).strip().lower()
+    message = str(override.get("message", "")).strip()
+    failure_stage = str(override.get("failure_stage", "")).strip()
+    if raw_status == "timeout":
+        return {
+            "text": message or f"{tool_name} timed out before producing a result.",
+            "failure_stage": failure_stage or "tool_timeout",
+            "_status": "timeout",
+        }
+    if raw_status in ("cancel", "cancelled", "canceled"):
+        return {
+            "error": message or f"{tool_name} was cancelled before producing a result.",
+            "failure_stage": failure_stage or "cancelled",
+            "cancelled": True,
+            "_status": "failed",
+        }
+    if raw_status == "failed":
+        return {
+            "error": message or f"{tool_name} failed before producing a result.",
+            "failure_stage": failure_stage or "tool_execution",
+            "_status": "failed",
+        }
+    raise AgenticToolRuntimeError(f"Unsupported agentic tool status override: {raw_status or '<empty>'}")
 
 
 def _text_search_payload(*, arguments: dict[str, Any], fixture_context: dict[str, Any]) -> dict[str, Any]:
