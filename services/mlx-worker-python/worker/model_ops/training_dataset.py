@@ -1860,6 +1860,12 @@ def _build_quality_and_token_stats(
         "dirty_samples": dirty_samples,
     }
     if format_name == "agentic_tool_trace":
+        trace_count = agentic_metrics["agentic_trace_count"]
+        if trace_count > 0:
+            agentic_metrics["trace_turn_count_avg"] = round(
+                agentic_metrics["_trace_turn_count_sum"] / trace_count,
+                3,
+            )
         agentic_metrics.pop("_trace_turn_count_sum", None)
         quality.update(agentic_metrics)
 
@@ -1948,12 +1954,6 @@ def _update_agentic_trace_quality_metrics(
                     "terms": leaked_terms,
                 }
             )
-    trace_count = metrics["agentic_trace_count"]
-    if trace_count > 0:
-        metrics["trace_turn_count_avg"] = round(
-            metrics["_trace_turn_count_sum"] / trace_count,
-            3,
-        )
 
 
 def _build_token_stats(samples: Iterable[dict[str, Any]], format_name: str) -> dict[str, Any]:
@@ -2296,7 +2296,6 @@ def _agentic_trace_snapshot_manifest_fields(
         chain(dataset.normalized_samples, dataset.normalized_validation_samples),
         "agentic_tool_trace",
     )
-    quality.pop("_trace_turn_count_sum", None)
     trace_digest = _agentic_trace_digest(
         chain(dataset.normalized_samples, dataset.normalized_validation_samples)
     )
