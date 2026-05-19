@@ -6,6 +6,7 @@ import pytest
 
 from packages.protocol.python.worker.v1 import common_pb2
 
+from worker.runtime import tool_registry as tool_registry_module
 from worker.runtime.tool_registry import (
     BUILTIN_AGENTIC_TOOL_NAMES,
     ToolArgumentDescriptor,
@@ -247,6 +248,66 @@ def test_tool_registry_raw_tuple_alias_keeps_selection_cache_bounded() -> None:
         ("visit", "image_crop"): selected,
         (" visit ", "image_crop", "visit"): selected,
     }
+
+
+def test_built_in_tool_config_without_names_uses_cached_serialized_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_config = built_in_tool_config()
+
+    def fail_as_worker_tool_config(self: ToolRegistry) -> common_pb2.ToolConfig:
+        raise AssertionError("built_in_tool_config() should reuse cached serialized config")
+
+    monkeypatch.setattr(ToolRegistry, "as_worker_tool_config", fail_as_worker_tool_config)
+
+    config = built_in_tool_config()
+
+    assert config == expected_config
+    assert config is not expected_config
+    config.tools[0].name = "mutated"
+    assert built_in_tool_config().tools[0].name == "image_crop"
+
+
+def test_built_in_tool_config_full_selection_uses_cached_serialized_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_config = built_in_tool_config()
+
+    def fail_as_worker_tool_config(self: ToolRegistry) -> common_pb2.ToolConfig:
+        raise AssertionError(  # pragma: no cover
+            "full built-in selection should reuse cached serialized config"
+        )
+
+    monkeypatch.setattr(ToolRegistry, "as_worker_tool_config", fail_as_worker_tool_config)
+
+    tuple_config = built_in_tool_config(BUILTIN_AGENTIC_TOOL_NAMES)
+    list_config = built_in_tool_config(list(BUILTIN_AGENTIC_TOOL_NAMES))
+
+    assert tuple_config == expected_config
+    assert list_config == expected_config
+    assert tuple_config is not expected_config
+    assert list_config is not expected_config
+    tuple_config.tools[0].name = "mutated"
+    assert built_in_tool_config(BUILTIN_AGENTIC_TOOL_NAMES).tools[0].name == "image_crop"
+
+
+def test_built_in_tool_config_partial_selection_uses_cached_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_built_in_tool_registry() -> ToolRegistry:
+        raise AssertionError(  # pragma: no cover
+            "partial built_in_tool_config() should reuse the cached built-in registry"
+        )
+
+    monkeypatch.setattr(
+        tool_registry_module,
+        "built_in_tool_registry",
+        fail_built_in_tool_registry,
+    )
+
+    config = built_in_tool_config(["image_crop", "local_compute"])
+
+    assert [tool.name for tool in config.tools] == ["image_crop", "local_compute"]
 
 
 def test_tool_registry_exports_worker_tool_config_metadata() -> None:

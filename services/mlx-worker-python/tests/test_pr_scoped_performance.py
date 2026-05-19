@@ -206,6 +206,9 @@ def test_tool_registry_schema_bytes_probe_script_emits_metrics(
     assert metrics["schema_payload_elapsed_ms_mean"] >= 0.0
     assert metrics["json_schema_calls_mean"] == 0.0
     assert metrics["schema_byte_count_calls_mean"] == 0.0
+    assert metrics["built_in_tool_config_elapsed_ms_mean"] >= 0.0
+    assert metrics["built_in_tool_config_distinct_objects_mean"] == 20.0
+    assert metrics["partial_selection_tool_config_elapsed_ms_mean"] >= 0.0
 
 
 def test_tool_registry_select_probe_script_emits_metrics(
