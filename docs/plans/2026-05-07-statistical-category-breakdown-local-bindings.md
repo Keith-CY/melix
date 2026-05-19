@@ -23,6 +23,8 @@ The first accepted slice removed the per-row `row_get = row.get` bound-method al
 
 This follow-up slice keeps the same category semantics but moves the common non-empty category-label path from `row.get("category_label", "")` to direct key access with a `KeyError` skip for missing labels. The registered probe workload always carries category labels, so the hot path avoids the default-argument dictionary lookup while existing tests continue to cover missing and blank labels.
 
+The 2026-05-19 slice keeps that direct-key category label path and narrows another hot aggregation step: it replaces `defaultdict(lambda: [0, 0, 0])` with an explicit `dict.get(...)` miss path, avoids calling `str(...)` for already-string category labels, and increments correctness counters only when the row field is truthy. Missing, blank, non-string, sorted-key, and rounding semantics remain unchanged.
+
 ## Acceptance Metric
 
 Accept only if the registered category breakdown probe keeps the same checksum/sample counts and improves `elapsed_ms_mean` versus the origin/main baseline in repeated local samples.
