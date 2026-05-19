@@ -152,6 +152,7 @@ def main() -> int:
 
     active_elapsed_ms: list[float] = []
     resolve_elapsed_ms: list[float] = []
+    trimmed_resolve_elapsed_ms: list[float] = []
     manifest_path_elapsed_ms: list[float] = []
     for _ in range(sample_count):
         started = time.perf_counter()
@@ -167,6 +168,12 @@ def main() -> int:
             raise RuntimeError("derived-model lookup returned the wrong target")
 
         started = time.perf_counter()
+        trimmed_target = registry.resolve_derived_model_target(derived_model_id=f" {target_model_id} ")
+        trimmed_resolve_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
+        if not trimmed_target or trimmed_target.get("derived_model_id") != target_model_id:
+            raise RuntimeError("trimmed derived-model lookup returned the wrong target")
+
+        started = time.perf_counter()
         manifest_path_target = registry.resolve_derived_model_target(manifest_path=target_manifest_path)
         manifest_path_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
         if not manifest_path_target or manifest_path_target.get("derived_model_id") != target_model_id:
@@ -180,6 +187,7 @@ def main() -> int:
         "elapsed_ms_mean": round(
             statistics.fmean(active_elapsed_ms)
             + statistics.fmean(resolve_elapsed_ms)
+            + statistics.fmean(trimmed_resolve_elapsed_ms)
             + statistics.fmean(manifest_path_elapsed_ms)
             + statistics.fmean(restore_elapsed_ms),
             6,
@@ -188,6 +196,7 @@ def main() -> int:
         "manifest_path_elapsed_ms_mean": round(statistics.fmean(manifest_path_elapsed_ms), 6),
         "removed_count": float(job_count - active_count),
         "resolve_target_elapsed_ms_mean": round(statistics.fmean(resolve_elapsed_ms), 6),
+        "resolve_trimmed_target_elapsed_ms_mean": round(statistics.fmean(trimmed_resolve_elapsed_ms), 6),
         "restore_elapsed_ms_mean": round(statistics.fmean(restore_elapsed_ms), 6),
         "restore_elapsed_ms_min": round(min(restore_elapsed_ms), 6),
         "restored_job_count": float(restored_job_count),
