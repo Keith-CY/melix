@@ -213,9 +213,12 @@ class ToolRegistry:
             parser=self._parser,
             parser_contract_version=self._parser_contract_version,
         )
-        if len(self._selection_cache) >= _SELECTION_CACHE_MAX_SIZE:
+        cache_raw_tuple = isinstance(names, tuple) and names != requested_names
+        if len(self._selection_cache) >= _SELECTION_CACHE_MAX_SIZE - int(cache_raw_tuple):
             self._selection_cache.clear()
         self._selection_cache[requested_names] = selection
+        if cache_raw_tuple:
+            self._selection_cache[names] = selection
         return selection
 
     def as_openai_tools(self) -> list[dict[str, Any]]:
