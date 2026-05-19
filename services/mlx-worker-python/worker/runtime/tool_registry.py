@@ -169,6 +169,7 @@ class ToolRegistry:
         self._tool_names = tuple(tool.name for tool in self._tools)
         self._tool_by_name = {tool.name: tool for tool in self._tools}
         self._selection_cache: dict[tuple[str, ...], ToolRegistry] = {}
+        self._worker_tool_config_bytes: bytes = b""
         self._metrics = ToolRegistryMetrics(
             tool_count=len(self._tools),
             schema_bytes=sum(tool.schema_byte_count() for tool in self._tools),
@@ -231,7 +232,9 @@ class ToolRegistry:
         return [tool.as_openai_tool() for tool in self._tools]
 
     def as_worker_tool_config(self) -> common_pb2.ToolConfig:
-        return common_pb2.ToolConfig(
+        if self._worker_tool_config_bytes:
+            return common_pb2.ToolConfig.FromString(self._worker_tool_config_bytes)
+        config = common_pb2.ToolConfig(
             tools=[tool.as_worker_tool_definition() for tool in self._tools],
             schema_format="openai-function",
             schema_version=self._schema_version,
@@ -239,6 +242,8 @@ class ToolRegistry:
             parser=self._parser,
             parser_contract_version=self._parser_contract_version,
         )
+        self._worker_tool_config_bytes = config.SerializeToString()
+        return config
 
     def _validate(self) -> None:
         if not self._schema_version:
