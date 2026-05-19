@@ -24,23 +24,33 @@ _SELECTIONS: tuple[tuple[str, ...], ...] = (
 
 def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     registry = built_in_tool_registry()
+    full_selection = list(registry.names())
     elapsed_samples: list[float] = []
+    full_list_self_samples: list[float] = []
     checksum = 0
 
     for _ in range(sample_count):
+        full_list_self_count = 0
         started = time.perf_counter()
         for index in range(iterations):
-            selected = registry.select(_SELECTIONS[index % len(_SELECTIONS)])
+            if index % 5 == 0:
+                selected = registry.select(full_selection)
+                if selected is registry:
+                    full_list_self_count += 1
+            else:
+                selected = registry.select(_SELECTIONS[index % len(_SELECTIONS)])
             checksum += len(selected.tools)
         elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        full_list_self_samples.append(float(full_list_self_count))
 
     return {
         "elapsed_ms_mean": statistics.fmean(elapsed_samples),
         "select_calls_mean": float(iterations),
+        "full_list_self_hits_mean": statistics.fmean(full_list_self_samples),
         "checksum": float(checksum),
         "iterations": float(iterations),
         "sample_count": float(sample_count),
-        "selection_case_count": float(len(_SELECTIONS)),
+        "selection_case_count": float(len(_SELECTIONS) + 1),
     }
 
 

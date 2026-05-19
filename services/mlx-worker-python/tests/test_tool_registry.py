@@ -231,6 +231,21 @@ def test_tool_registry_select_returns_self_for_complete_selection() -> None:
     assert registry.names() == BUILTIN_AGENTIC_TOOL_NAMES
 
 
+def test_tool_registry_select_exact_full_list_skips_normalization() -> None:
+    class StripCountingName(str):
+        strip_calls = 0
+
+        def strip(self, chars: str | None = None) -> str:  # pragma: no cover - exact-list fast path skips this
+            type(self).strip_calls += 1
+            return super().strip(chars)
+
+    registry = built_in_tool_registry()
+    exact_names = [StripCountingName(name) for name in BUILTIN_AGENTIC_TOOL_NAMES]
+
+    assert registry.select(exact_names) is registry
+    assert StripCountingName.strip_calls == 0
+
+
 def test_tool_registry_selection_cache_is_bounded() -> None:
     registry = built_in_tool_registry()
 

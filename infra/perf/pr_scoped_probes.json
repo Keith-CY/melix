@@ -3827,6 +3827,12 @@
         "key": "select_calls_mean",
         "unit": "calls",
         "direction": "informational"
+      },
+      {
+        "key": "full_list_self_hits_mean",
+        "unit": "calls",
+        "direction": "higher_is_better",
+        "warn_pct": 0.0
       }
     ]
   },
