@@ -37,6 +37,16 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-
 PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python python3 scripts/tool_registry_select_probe.py
 ```
 
+## Slice update: selected-registry cache
+
+The next incremental slice keeps the same `tool-registry-select-name-index-cache`
+registered probe and narrows the optimization to repeated `ToolRegistry.select()`
+calls with the same normalized requested-name tuple. The registry now caches the
+constructed selected `ToolRegistry` per tuple after unknown-name validation,
+so hot selection loops avoid rebuilding the selected registry, its name index,
+and its aggregate metrics snapshot. Selection order, whitespace normalization,
+deduplication, and unknown-name errors remain unchanged.
+
 ## Acceptance Criteria
 
 - Focused behavior tests pass locally on Linux.

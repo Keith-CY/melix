@@ -116,6 +116,15 @@ def test_tool_registry_select_reuses_cached_name_index() -> None:
     assert selected.names() == ("visit", "image_crop")
 
 
+def test_tool_registry_select_reuses_cached_selected_registry() -> None:
+    registry = built_in_tool_registry()
+
+    selected = registry.select([" visit ", "image_crop", "visit"])
+
+    assert registry.select(["visit", "image_crop"]) is selected
+    assert selected.names() == ("visit", "image_crop")
+
+
 def test_tool_registry_exports_worker_tool_config_metadata() -> None:
     config = built_in_tool_config(["image_crop", "local_compute"])
 
