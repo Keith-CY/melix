@@ -38,6 +38,14 @@ EXPECTED = {
 }
 
 
+def _prewarm_cache() -> None:
+    for family_id, raw_value in CASES:
+        training_config._resolve_target_modules(
+            raw_value,
+            profile=training_config._FAMILY_PROFILES[family_id],
+        )
+
+
 def _run_once() -> tuple[float, float, int]:
     checksum = 0
     tracemalloc.start()
@@ -58,6 +66,7 @@ def _run_once() -> tuple[float, float, int]:
 
 
 def main() -> None:
+    _prewarm_cache()
     samples = [_run_once() for _ in range(SAMPLES)]
     print(
         json.dumps(

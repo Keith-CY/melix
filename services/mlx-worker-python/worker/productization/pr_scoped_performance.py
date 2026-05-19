@@ -138,7 +138,9 @@ _PROBE_REGISTRY_CACHE: dict[str, tuple[int, int, tuple[ProbeDefinition, ...]]] =
 
 def _probe_registry_cache_key(path: str | Path) -> str:
     raw_path = os.fspath(path)
-    return raw_path if os.path.isabs(raw_path) else os.path.abspath(raw_path)
+    if raw_path.startswith(os.sep):
+        return raw_path
+    return os.path.abspath(raw_path)
 
 
 def _parse_probe_registry_payload(payload: object) -> tuple[ProbeDefinition, ...]:
@@ -699,6 +701,7 @@ def _probe_pr_scoped_performance_registry_cache(repo_root: Path) -> dict[str, fl
     for _ in range(sample_count):
         if isinstance(cache, dict):
             cache.clear()
+        module.load_probe_registry(registry_path)
         started = time.perf_counter()
         for _ in range(load_iterations):
             module.load_probe_registry(registry_path)
