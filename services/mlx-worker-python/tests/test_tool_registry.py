@@ -107,6 +107,14 @@ def test_tool_registry_selects_tools_in_requested_order() -> None:
     assert selected.names() == ("visit", "image_crop")
 
 
+def test_tool_registry_select_trims_blanks_and_deduplicates_in_one_pass() -> None:
+    registry = built_in_tool_registry()
+
+    selected = registry.select([" visit ", "", "image_crop", "visit", "  "])
+
+    assert selected.names() == ("visit", "image_crop")
+
+
 def test_tool_registry_select_reuses_cached_name_index() -> None:
     registry = ToolRegistry(built_in_tool_registry().tools)
     object.__setattr__(registry, "_tools", ())
