@@ -52,6 +52,9 @@ def main() -> None:
         rerank_docs_per_second = len(rerank_documents) / max(rerank_ms / 1000, 0.001)
 
         health_ms, health_payload = timed_json_request(f"http://127.0.0.1:{stack.http_port}/health")
+        diagnostics_ms, diagnostics_payload = timed_json_request(
+            f"http://127.0.0.1:{stack.http_port}/v1/melix/health"
+        )
         cache_ms, cache_payload = timed_json_request(f"http://127.0.0.1:{stack.http_port}/v1/cache/stats")
 
         print(
@@ -65,9 +68,14 @@ def main() -> None:
         print(
             "health "
             f"status={health_payload['status']} latency_ms={health_ms:.2f} "
-            f"swift_text={health_payload['routes']['swift_text']} "
-            f"python_embedding={health_payload['routes']['python_embedding']} "
-            f"python_rerank={health_payload['routes']['python_rerank']}"
+            f"service={health_payload['service']}"
+        )
+        print(
+            "health_diagnostics "
+            f"status={diagnostics_payload['status']} latency_ms={diagnostics_ms:.2f} "
+            f"swift_text={diagnostics_payload['routes']['swift_text']} "
+            f"python_embedding={diagnostics_payload['routes']['python_embedding']} "
+            f"python_rerank={diagnostics_payload['routes']['python_rerank']}"
         )
         print(
             "cache_stats "

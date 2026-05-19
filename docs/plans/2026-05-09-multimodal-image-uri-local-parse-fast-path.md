@@ -24,10 +24,13 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-
 - Reuse a module-level empty `ParseResult` for local image references rather than allocating an equivalent object for each local path.
 - Store parsed image-reference records in a slotted dataclass to avoid per-reference instance dictionaries.
 - Read local image references directly from the parsed `Path` in `_bytes_from_image_uri`, preserving the missing-file error while avoiding a separate `Path.exists()` stat on the valid hot path.
-- Keep remote `http`/`https` and `file://` parsing behavior unchanged.
+- Keep remote `http`/`https` parsing behavior unchanged, while allowing
+  unescaped `file://` references to reuse the local-path fast path.
 
 ## Success Metrics
 
 - Focused tests pass.
 - Changed-scope coverage is at least 95%.
-- Local registered probe reports lower `elapsed_ms_mean` with unchanged `urlparse_calls_mean` for the synthetic mixed local-path/file-URI workload.
+- Local registered probe reports lower `elapsed_ms_mean` with
+  `urlparse_calls_mean == 0.0` for the synthetic mixed local-path/file-URI
+  workload.

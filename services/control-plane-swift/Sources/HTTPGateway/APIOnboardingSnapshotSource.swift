@@ -15,7 +15,15 @@ struct APIOnboardingSnapshotSource: Sendable {
             title: "Local Service",
             summary: "Readiness and operational inspection routes for same-host automation.",
             status: .shipped,
-            endpointIDs: ["health", "well_known", "capabilities", "instructions", "config_metadata", "cache_stats"]
+            endpointIDs: [
+                "health",
+                "health_diagnostics",
+                "well_known",
+                "capabilities",
+                "instructions",
+                "config_metadata",
+                "cache_stats",
+            ]
         ),
         SurfaceDefinition(
             id: "openai_compatible",
@@ -58,7 +66,15 @@ struct APIOnboardingSnapshotSource: Sendable {
             surfaceID: "local_service",
             method: "GET",
             path: "/health",
-            summary: "Probe process readiness, listener state, and current model counts.",
+            summary: "Probe same-host process liveness without route or model diagnostics.",
+            streaming: false
+        ),
+        EndpointDefinition(
+            id: "health_diagnostics",
+            surfaceID: "local_service",
+            method: "GET",
+            path: "/v1/melix/health",
+            summary: "Inspect authenticated route readiness and current model counts.",
             streaming: false
         ),
         EndpointDefinition(

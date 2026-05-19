@@ -99,6 +99,18 @@ def test_prepare_video_input_accepts_uri_and_infers_format_from_reference() -> N
     assert len(prepared.sha256_hex) == 64
 
 
+def test_prepare_video_input_accepts_short_public_remote_authority_fast_path() -> None:
+    part = common_pb2.MessagePart(
+        video_uri="https://ex.co/media/demo.mov",
+        media=common_pb2.MediaMetadata(format="mov"),
+    )
+
+    prepared = prepare_video_input(part)
+
+    assert prepared.reference == "https://ex.co/media/demo.mov"
+    assert prepared.filename == "demo.mov"
+
+
 def test_prepare_video_input_accepts_local_uri_and_mime_type_resolution() -> None:
     part = common_pb2.MessagePart(
         video_uri="/tmp/local-demo",
@@ -200,11 +212,13 @@ def test_parse_video_reference_decodes_remote_and_file_uris_once() -> None:
     local = _parse_video_reference("file:///tmp/local%20demo.webm")
 
     assert remote.scheme == "https"
+    assert remote.authority == "example.com"
     assert remote.decoded_path == "/media/demo clip.mov"
     assert remote.path_name == "demo clip.mov"
     assert remote.path_suffix == "mov"
 
     assert local.scheme == "file"
+    assert local.authority == ""
     assert local.decoded_path == "/tmp/local demo.webm"
     assert local.path_name == "local demo.webm"
     assert local.path_suffix == "webm"
@@ -280,6 +294,55 @@ def test_uri_identity_hash_preserves_nul_framed_payload_digest() -> None:
         ),
         (
             common_pb2.MessagePart(
+                video_uri="http://example.com/demo.mov",
+                media=common_pb2.MediaMetadata(format="mov"),
+            ),
+            "Unsupported video URI scheme: http.",
+        ),
+        (
+            common_pb2.MessagePart(
+                video_uri="https:///demo.mov",
+                media=common_pb2.MediaMetadata(format="mov"),
+            ),
+            "Remote video URI requires a host.",
+        ),
+        (
+            common_pb2.MessagePart(
+                video_uri="https://localhost/demo.mov",
+                media=common_pb2.MediaMetadata(format="mov"),
+            ),
+            "Remote video URI host is not allowed: localhost.",
+        ),
+        (
+            common_pb2.MessagePart(
+                video_uri="https://127.0.0.1/demo.mov",
+                media=common_pb2.MediaMetadata(format="mov"),
+            ),
+            "Remote video URI host is not allowed: 127.0.0.1.",
+        ),
+        (
+            common_pb2.MessagePart(
+                video_uri="https://@/demo.mov",
+                media=common_pb2.MediaMetadata(format="mov"),
+            ),
+            "Remote video URI requires a host.",
+        ),
+        (
+            common_pb2.MessagePart(
+                video_uri="https://:/demo.mov",
+                media=common_pb2.MediaMetadata(format="mov"),
+            ),
+            "Remote video URI requires a host.",
+        ),
+        (
+            common_pb2.MessagePart(
+                video_uri="https://[::1]/demo.mov",
+                media=common_pb2.MediaMetadata(format="mov"),
+            ),
+            "Remote video URI host is not allowed: ::1.",
+        ),
+        (
+            common_pb2.MessagePart(
                 video_uri="https://example.com/demo",
                 media=common_pb2.MediaMetadata(mime_type="video/x-matroska"),
             ),
@@ -336,3 +399,8 @@ def test_prepare_video_input_rejects_invalid_contracts(
 ) -> None:
     with pytest.raises(VideoPreprocessError, match=message):
         prepare_video_input(part)
+
+
+def test_validate_video_uri_accepts_parsed_and_string_remote_references() -> None:
+    video_preprocessing._validate_video_uri(_parse_video_reference("https://example.com/demo.mov"))
+    video_preprocessing._validate_video_uri("https://123-example.com/demo.mov")

@@ -7,7 +7,7 @@ Define one explicit contract for accepted video inputs, media metadata, and prep
 ## Scope
 
 - add normalized video-input fields and validation rules
-- define accepted local, remote, and inline media forms
+- define accepted local, admitted remote, and inline media forms
 - expose duration, frame-budget, and preprocessing-bound metadata
 
 ## Files
@@ -20,6 +20,11 @@ Define one explicit contract for accepted video inputs, media metadata, and prep
 
 - Video normalization should share concepts with image and audio ingress where possible, but duration and frame-budget metadata must remain explicit.
 - Unsupported containers, missing metadata, and oversized preprocessing requests should fail with structured errors.
+- Issue #621 tightened production remote media ingress on `2026-05-15`: remote
+  video URLs are HTTPS-only and must pass public-host admission before worker
+  dereference. Local paths, `file:` URLs, and inline payloads remain supported;
+  loopback, private, link-local, `http`, and malformed remote URLs are refusal
+  cases.
 
 ## Verification
 
@@ -29,7 +34,7 @@ Define one explicit contract for accepted video inputs, media metadata, and prep
 
 ## Acceptance
 
-- Video ingress is normalized and test-covered across supported source forms.
+- Video ingress is normalized and test-covered across supported source forms and refusal cases.
 - Duration, frame-budget, and validation failures are inspectable through the shared request model.
 
 ## Completion Notes

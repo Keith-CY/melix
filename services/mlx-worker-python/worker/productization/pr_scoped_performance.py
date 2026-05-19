@@ -673,7 +673,7 @@ def _probe_command_json(
         raise ValueError("probe_command must emit a JSON object")
     metrics: dict[str, float] = {}
     for key, value in payload.items():
-        if isinstance(value, bool) or not isinstance(value, int | float):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError(f"probe_command metric {key} must be numeric")
         metrics[str(key)] = float(value)
     return metrics

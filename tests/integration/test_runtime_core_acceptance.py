@@ -67,13 +67,15 @@ def test_runtime_core_keeps_text_embedding_and_rerank_models_warm_concurrently()
 
 
 def test_runtime_core_prefill_memory_guard_rejects_live_requests() -> None:
+    process_budget_bytes = 64 * 1024 * 1024
+    prefill_headroom_bytes = 64 * 1024 * 1024
     stack = LiveMelixStack(
         Path(__file__).resolve().parents[2],
         environment_overrides={
-            # 16 prompt tokens with 16384 bytes of headroom requires 49152 bytes
-            # during prefill, so this budget exercises the request guard after load.
-            "MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES": "40960",
-            "MELIX_SWIFT_TEXT_WORKER_PREFILL_MEMORY_HEADROOM_BYTES": "16384",
+            # Keep the live load budget above normal deterministic backend RSS
+            # variance, then make prefill headroom exceed the same budget.
+            "MELIX_SWIFT_TEXT_WORKER_PROCESS_MEMORY_BUDGET_BYTES": str(process_budget_bytes),
+            "MELIX_SWIFT_TEXT_WORKER_PREFILL_MEMORY_HEADROOM_BYTES": str(prefill_headroom_bytes),
         },
     )
 
@@ -89,7 +91,7 @@ def test_runtime_core_prefill_memory_guard_rejects_live_requests() -> None:
             "swift_text.prefill_memory_guard_rejection_count",
             minimum=1,
         )
-        assert metrics["swift_text.prefill_guard_last_budget_bytes"] == 40960
+        assert metrics["swift_text.prefill_guard_last_budget_bytes"] == process_budget_bytes
         assert metrics["swift_text.prefill_guard_last_prompt_tokens"] >= 16
         assert metrics["swift_text.prefill_guard_last_required_bytes"] > metrics["swift_text.prefill_guard_last_budget_bytes"]
     finally:

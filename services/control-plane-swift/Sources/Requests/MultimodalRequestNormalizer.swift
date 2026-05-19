@@ -8,6 +8,7 @@ public enum MultimodalRequestNormalizationError: Error, Equatable {
     case unsupportedURIScheme(String, String)
     case unsupportedMediaFormat(String, String)
     case invalidPreprocessingBound(String, String)
+    case externalMediaURLBlocked(String)
 }
 
 extension MultimodalRequestNormalizationError {
@@ -25,6 +26,8 @@ extension MultimodalRequestNormalizationError {
             return "Unsupported \(kind) format: \(format)."
         case let .invalidPreprocessingBound(field, reason):
             return "\(field) \(reason)."
+        case let .externalMediaURLBlocked(message):
+            return message
         }
     }
 }
@@ -426,14 +429,18 @@ public struct MultimodalRequestNormalizer: Sendable {
         }
 
         if !inlineOnly, let url = reference.url, !url.isEmpty {
-            normalized.imageUri = url
+            let receipt = try mediaURLAdmissionReceipt(url, mediaKind: "image")
+            normalized.imageUri = url.trimmingCharacters(in: .whitespacesAndNewlines)
             normalized.media.sourceKind = .mediaSourceUri
+            apply(receipt, to: &normalized.media)
             return normalized
         }
 
         if inlineOnly, let url = reference.url, !url.isEmpty {
-            normalized.imageUri = url
+            let receipt = try mediaURLAdmissionReceipt(url, mediaKind: "image")
+            normalized.imageUri = url.trimmingCharacters(in: .whitespacesAndNewlines)
             normalized.media.sourceKind = .mediaSourceUri
+            apply(receipt, to: &normalized.media)
             return normalized
         }
 
@@ -465,8 +472,10 @@ public struct MultimodalRequestNormalizer: Sendable {
         normalized.media.filename = reference.filename ?? ""
 
         if let url = reference.url, !url.isEmpty {
-            normalized.audioUri = url
+            let receipt = try mediaURLAdmissionReceipt(url, mediaKind: "audio")
+            normalized.audioUri = url.trimmingCharacters(in: .whitespacesAndNewlines)
             normalized.media.sourceKind = .mediaSourceUri
+            apply(receipt, to: &normalized.media)
             return normalized
         }
 
@@ -510,9 +519,10 @@ public struct MultimodalRequestNormalizer: Sendable {
         try validateVideoTimeBounds(normalized.media)
 
         if let url = reference.url?.trimmingCharacters(in: .whitespacesAndNewlines), !url.isEmpty {
-            try validateVideoURLScheme(url)
+            let receipt = try mediaURLAdmissionReceipt(url, mediaKind: "video")
             normalized.videoUri = url
             normalized.media.sourceKind = .mediaSourceUri
+            apply(receipt, to: &normalized.media)
             return normalized
         }
 
@@ -583,17 +593,6 @@ public struct MultimodalRequestNormalizer: Sendable {
         return candidate
     }
 
-    private func validateVideoURLScheme(_ rawURL: String) throws {
-        let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let components = URLComponents(string: trimmed) else {
-            return
-        }
-        let scheme = components.scheme?.lowercased() ?? ""
-        guard scheme.isEmpty || scheme == "file" || scheme == "http" || scheme == "https" else {
-            throw MultimodalRequestNormalizationError.unsupportedURIScheme("video", scheme)
-        }
-    }
-
     private func validatedPositiveBound(_ value: Int, field: String) throws -> UInt32 {
         guard value > 0 else {
             throw MultimodalRequestNormalizationError.invalidPreprocessingBound(field, "must be greater than 0")
@@ -634,5 +633,34 @@ public struct MultimodalRequestNormalizer: Sendable {
                 "must be less than or equal to duration_ms"
             )
         }
+    }
+
+    private func mediaURLAdmissionReceipt(
+        _ rawURL: String,
+        mediaKind: String
+    ) throws -> ExternalMediaURLAdmissionReceipt {
+        do {
+            return try ExternalMediaURLAdmission.validate(rawURL, mediaKind: mediaKind)
+        } catch let error as ExternalMediaURLAdmissionError {
+            if case let .unsupportedScheme(scheme) = error {
+                throw MultimodalRequestNormalizationError.unsupportedURIScheme(mediaKind, scheme)
+            }
+            throw MultimodalRequestNormalizationError.externalMediaURLBlocked(error.operatorMessage)
+        }
+    }
+
+    private func apply(
+        _ receipt: ExternalMediaURLAdmissionReceipt,
+        to media: inout Melix_Worker_V1_MediaMetadata
+    ) {
+        media.preprocessingHints["external_url_policy"] = receipt.policy
+        media.preprocessingHints["external_url_source_kind"] = receipt.sourceKind
+        if !receipt.scheme.isEmpty {
+            media.preprocessingHints["external_url_scheme"] = receipt.scheme
+        }
+        if !receipt.host.isEmpty {
+            media.preprocessingHints["external_url_host"] = receipt.host
+        }
+        media.preprocessingHints["external_url_receipt"] = receipt.reason
     }
 }

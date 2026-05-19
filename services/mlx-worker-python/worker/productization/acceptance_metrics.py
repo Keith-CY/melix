@@ -60,7 +60,9 @@ def build_phase6_vision_metrics_report(
 ) -> dict[str, Any]:
     checks = {
         "vision.ingress.local_image_success": bool(ingress.get("local_image_success")),
-        "vision.ingress.remote_image_success": bool(ingress.get("remote_image_success")),
+        "vision.ingress.remote_image_refusal_success": bool(
+            ingress.get("remote_image_refusal_success")
+        ),
         "vision.ingress.multi_image_success": bool(ingress.get("multi_image_success")),
         "vision.ocr.default_stop_success": bool(ocr.get("default_stop_success")),
         "vision.vlm.tool_call_success": bool(vlm.get("tool_call_success")),
@@ -73,8 +75,8 @@ def build_phase6_vision_metrics_report(
         "vision.ingress.local_image_success_rate": _success_rate(
             int(checks["vision.ingress.local_image_success"]), 1
         ),
-        "vision.ingress.remote_image_success_rate": _success_rate(
-            int(checks["vision.ingress.remote_image_success"]), 1
+        "vision.ingress.remote_image_refusal_success_rate": _success_rate(
+            int(checks["vision.ingress.remote_image_refusal_success"]), 1
         ),
         "vision.ingress.multi_image_success_rate": _success_rate(
             int(checks["vision.ingress.multi_image_success"]), 1
@@ -157,7 +159,7 @@ def build_phase16_video_metrics_report(
 ) -> dict[str, Any]:
     checks = {
         "video.local_path_success": bool(local_path.get("success")),
-        "video.remote_url_success": bool(remote_url.get("success")),
+        "video.remote_url_refusal_success": bool(remote_url.get("success")),
         "video.bounded_window_success": bool(bounded_window.get("success")),
         "video.routing.text_protection_success": bool(routing.get("text_protection_success")),
     }
@@ -169,8 +171,8 @@ def build_phase16_video_metrics_report(
         "video.local_path_success_rate": _success_rate(
             int(checks["video.local_path_success"]), 1
         ),
-        "video.remote_url_success_rate": _success_rate(
-            int(checks["video.remote_url_success"]), 1
+        "video.remote_url_refusal_success_rate": _success_rate(
+            int(checks["video.remote_url_refusal_success"]), 1
         ),
         "video.bounded_window_success_rate": _success_rate(
             int(checks["video.bounded_window_success"]), 1
@@ -181,7 +183,7 @@ def build_phase16_video_metrics_report(
         "video.local_path.request_latency_ms": _rounded_float(
             local_path.get("request_latency_ms")
         ),
-        "video.remote_url.request_latency_ms": _rounded_float(
+        "video.remote_url_refusal.request_latency_ms": _rounded_float(
             remote_url.get("request_latency_ms")
         ),
         "video.bounded_window.request_latency_ms": _rounded_float(
@@ -228,7 +230,7 @@ def build_phase16_video_metrics_report(
         "checks": checks,
         "metrics": metrics,
         "local_path": local_path,
-        "remote_url": remote_url,
+        "remote_url_refusal": remote_url,
         "bounded_window": bounded_window,
         "routing": routing,
     }

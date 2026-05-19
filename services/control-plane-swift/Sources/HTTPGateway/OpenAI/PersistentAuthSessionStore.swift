@@ -224,12 +224,23 @@ public actor PersistentAuthSessionStore {
         }
 
         let startedAt = Date()
-        if record.revokedAtUnixMs == 0 {
-            record.revokedAtUnixMs = nowUnixMs()
-            sessionRecords[tokenHash] = record
-            if record.rememberMe {
-                try writePersistedRecords()
-            }
+        guard record.revokedAtUnixMs == 0 else {
+            await metricsStore.set(
+                Date().timeIntervalSince(startedAt) * 1000,
+                forKey: "persistent_session.sign_out_latency_ms"
+            )
+            await updateMetrics()
+            return .failure(.revokedSession(
+                sessionID: record.sessionID,
+                keyID: record.keyID,
+                rememberMe: record.rememberMe
+            ))
+        }
+
+        record.revokedAtUnixMs = nowUnixMs()
+        sessionRecords[tokenHash] = record
+        if record.rememberMe {
+            try writePersistedRecords()
         }
         await metricsStore.set(
             Date().timeIntervalSince(startedAt) * 1000,

@@ -120,9 +120,9 @@ struct DesktopChatMarkdownCodeBlockPresentation: Equatable, Sendable {
 }
 
 enum DesktopChatMarkdownCodeBlockClipboard {
-    static func copy(_ code: String, to pasteboard: NSPasteboard = .general) {
+    static func copy(_ code: String, to pasteboard: any RuntimePasteboardWriting = NSPasteboard.general) {
         pasteboard.clearContents()
-        pasteboard.setString(code, forType: .string)
+        _ = pasteboard.setString(code, forType: .string)
     }
 }
 

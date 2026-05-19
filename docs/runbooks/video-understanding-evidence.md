@@ -9,7 +9,8 @@ plane metrics by hand.
 The smoke covers four evidence paths:
 
 - one short local video path request
-- one remote video URL request served by a repository-owned local fixture server
+- one blocked loopback remote video URL request that proves unsafe remote media
+  is rejected before worker download or dereference
 - one bounded multi-frame inline workload with explicit `frame_budget`, `start_ms`, and `end_ms`
 - one concurrent video-plus-text routing probe that records scheduler protection metrics
 
@@ -35,11 +36,11 @@ The payload includes:
 
 - `checks`
   - `video.local_path_success`
-  - `video.remote_url_success`
+  - `video.remote_url_refusal_success`
   - `video.bounded_window_success`
   - `video.routing.text_protection_success`
 - `metrics`
-  - per-scenario request latency for local-path, remote-URL, bounded-window, and routing probes
+  - per-scenario request latency for local-path, blocked remote-URL, bounded-window, and routing probes
   - `vision.video_first_token_ms`
   - `vision.preprocess_latency_ms`
   - `vision.video_frame_count`
@@ -59,7 +60,7 @@ The payload includes:
 Use the smoke output to answer these operator questions:
 
 - Does Melix still accept local-path video references through the live HTTP path?
-- Does remote-URL video ingress still work without depending on an external network resource?
+- Does unsafe loopback remote-URL video ingress fail before worker download or dereference?
 - Are bounded multi-frame requests preserving the requested frame budget and clip window?
 - Are temporary-media cleanup counters visible for inline video workloads?
 - Does text traffic still surface measurable protection metrics while video work is active?
@@ -83,11 +84,12 @@ If the local-path scenario fails:
 - verify the path exists on disk and ends with a supported container suffix such as `.mp4`
 - inspect the response excerpt for normalization failures around `input_video.url`
 
-If the remote-URL scenario fails:
+If the remote-URL refusal scenario fails:
 
-- confirm the smoke still points at the local fixture server `http://127.0.0.1:*`
-- do not replace the fixture with an internet-hosted URL; repository-owned evidence must stay
-  offline and deterministic
+- confirm the smoke still points at a loopback `http://127.0.0.1/...` URL and
+  expects `invalid_argument`
+- do not replace the refusal probe with an internet-hosted URL; repository-owned
+  evidence must stay offline and deterministic
 
 If the bounded-window scenario fails:
 

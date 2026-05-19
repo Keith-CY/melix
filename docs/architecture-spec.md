@@ -184,6 +184,30 @@ V1 should expose these local endpoints:
 - `GET /v1/models`
 - `GET /v1/cache/stats`
 - `GET /health`
+- `GET /v1/melix/health`
+
+`GET /health` is public liveness only. Route readiness and model counts belong
+to the authenticated `GET /v1/melix/health` diagnostics endpoint.
+
+When gateway authentication is enabled, all non-liveness routes share the same
+access policy before body decoding or worker dispatch. Shared API-key mode
+accepts both `x-api-key` and `Authorization: Bearer` only for configured keys;
+the accepted key ID is the rate-limit identity for both header forms and for
+persistent auth sessions issued from that key. Rate-limit refusals must not
+echo raw credentials.
+
+MCP tool integration must discover configuration only from explicit operator
+inputs or Melix-owned state: `MELIX_MCP_CONFIG_PATH` first, then
+`$MELIX_HOME/config/mcp-tools.json`. Process current working directory files are
+not configuration sources. Diagnostics must expose the requested/effective MCP
+policy, refused high-risk namespaces, operator override source, and discovery
+receipt.
+
+Remote media ingress must pass URL admission before a request can reach any
+future download or worker dereference path. Local paths and `file:` URLs remain
+local media references. Remote media URLs require `https` and a public host;
+loopback, private, link-local, and malformed hosts fail with typed operator
+errors and refusal metrics.
 
 The gateway should also leave room for Ollama-compatible local endpoints such as:
 

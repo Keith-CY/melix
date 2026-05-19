@@ -23,7 +23,7 @@ def test_responses_endpoint_auto_injects_mcp_tools_from_repo_owned_config() -> N
                     {
                         "source_id": "filesystem",
                         "enabled": True,
-                        "namespaces": ["tools.fs.read", "tools.fs.write"],
+                        "namespaces": ["tools.fs.read", "tools.search", "tools.fs.write"],
                     },
                     {
                         "source_id": "disabled-search",
@@ -72,6 +72,7 @@ def test_responses_endpoint_auto_injects_mcp_tools_from_repo_owned_config() -> N
         assert values["mcp.disabled_tool_source_count"] == 1
         assert values["mcp.tool_injection_count"] >= 1
         assert values["mcp.configured_tool_count"] == 2
+        assert values["mcp.refused_tool_count"] == 1
         assert values["mcp.tool_injection_success_rate"] == 1
     finally:
         stack.stop()

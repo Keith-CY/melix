@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import csv
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import hashlib
 import io
 from collections.abc import Iterator
@@ -1197,7 +1197,7 @@ def _generated_at(evidence_rows: tuple[dict[str, object], ...]) -> str:
         return "1970-01-01T00:00:00Z"
     value = max(ended_at_values)
     seconds = value / 1000.0 if value > 10_000_000_000 else float(value)
-    return datetime.fromtimestamp(seconds, UTC).isoformat().replace("+00:00", "Z")
+    return datetime.fromtimestamp(seconds, timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _identity_value(evidence_rows: tuple[dict[str, object], ...], field_name: str) -> str:

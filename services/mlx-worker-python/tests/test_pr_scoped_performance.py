@@ -1855,7 +1855,7 @@ def test_multimodal_preprocessing_uri_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["iteration_count"] == 3.0
     assert metrics["sample_count"] == 1.0
-    assert metrics["urlparse_calls_mean"] == 3.0
+    assert metrics["urlparse_calls_mean"] == 0.0
     assert metrics["read_bytes_calls_mean"] == 3.0
     assert metrics["image_parts_per_iteration"] == 2.0
     assert metrics["elapsed_ms_mean"] >= 0
@@ -1869,7 +1869,7 @@ def test_multimodal_image_uri_parse_probe_script_emits_metrics(capsys: pytest.Ca
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["sample_count"] == 5.0
     assert metrics["prepared_image_count"] == 640.0
-    assert metrics["urlparse_calls_mean"] == 320.0
+    assert metrics["urlparse_calls_mean"] == 0.0
     assert metrics["unquote_calls_mean"] == 0.0
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
@@ -2418,6 +2418,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     registry_probe = None
     maintenance_probe = None
     integration_helper_probe = None
+    video_preprocessing_probe = None
     worker_registry_probe = None
     swift_probe = None
     for probe in load_probe_registry(REGISTRY_PATH):
@@ -2432,6 +2433,8 @@ def test_registered_probes_expose_focused_commands() -> None:
             maintenance_probe = probe
         if probe.probe_id == "integration-swift-binary-resolution-scandir":
             integration_helper_probe = probe
+        if probe.probe_id == "video-preprocessing-uri-byte-length-reuse":
+            video_preprocessing_probe = probe
         if probe.probe_id == "worker-registry-resident-bytes-accumulator":
             worker_registry_probe = probe
         if probe.probe_id == "swift-cli-json-envelope-encoding":
@@ -2476,6 +2479,16 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert integration_helper_metrics["remove_tree_peak_bytes_delta_mean"].warn_pct == 0.0
     assert integration_helper_metrics["remove_tree_peak_bytes_delta_mean"].warn_abs == 65536.0
 
+    assert video_preprocessing_probe is not None
+    video_preprocessing_metrics = {
+        metric.key: metric for metric in video_preprocessing_probe.metrics
+    }
+    assert video_preprocessing_metrics["elapsed_ms_mean"].warn_abs == 50.0
+    assert video_preprocessing_metrics["byte_length_getattrs_per_call"].warn_pct == 0.0
+    assert video_preprocessing_metrics["byte_length_getattrs_per_call"].warn_abs == 0.0
+    assert video_preprocessing_metrics["parse_calls_per_call"].warn_pct == 0.0
+    assert video_preprocessing_metrics["parse_calls_per_call"].warn_abs == 0.0
+
     assert swift_probe is not None
     assert "MelixCLIRunnerTests/(" in swift_probe.test_command
     assert "MelixCLITests/MelixCLIRunnerTests" not in swift_probe.test_command
@@ -2510,7 +2523,11 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
         seen_ids.add(probe_id)
         assert raw_probe.get("watch_globs"), f"{probe_id} must declare changed-file globs"
         assert raw_probe.get("test_command", "").strip(), f"{probe_id} must declare a focused test command"
-        assert raw_probe.get("coverage_command", "").strip(), f"{probe_id} must declare a coverage command"
+        coverage_command = str(raw_probe.get("coverage_command", ""))
+        assert coverage_command.strip(), f"{probe_id} must declare a coverage command"
+        assert "python scripts/changed_scope_coverage.py" not in coverage_command
+        if "scripts/changed_scope_coverage.py" in coverage_command:
+            assert "python3 scripts/changed_scope_coverage.py" in coverage_command
         assert raw_probe.get("probe_command", "").strip() or raw_probe.get("probe_impl") != "command_json"
         assert raw_probe.get("metrics"), f"{probe_id} must declare metrics"
         for glob in raw_probe.get("watch_globs", []):

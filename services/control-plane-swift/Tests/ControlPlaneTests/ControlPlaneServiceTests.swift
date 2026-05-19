@@ -65,10 +65,13 @@ struct ControlPlaneServiceTests {
         #expect(response.snapshot.mcpTools.defaultParserMode == "json")
         #expect(response.snapshot.mcpTools.enabledSourceCount == 1)
         #expect(response.snapshot.mcpTools.resolvedToolCount == 2)
-        #expect(response.snapshot.mcpTools.sources.count == 2)
-        #expect(response.snapshot.mcpTools.sources[0].sourceID == "disabled-search")
-        #expect(response.snapshot.mcpTools.sources[1].sourceID == "filesystem")
-        #expect(response.snapshot.mcpTools.sources[1].namespaces == ["tools.fs.read", "tools.fs.write"])
+        #expect(response.snapshot.mcpTools.sources.count == 3)
+        #expect(response.snapshot.mcpTools.sources[0].sourceID == "config-discovery")
+        #expect(response.snapshot.mcpTools.sources[0].namespaces == ["explicit"])
+        #expect(response.snapshot.mcpTools.sources[0].policyState == "explicit_or_melix_home_only")
+        #expect(response.snapshot.mcpTools.sources[1].sourceID == "disabled-search")
+        #expect(response.snapshot.mcpTools.sources[2].sourceID == "filesystem")
+        #expect(response.snapshot.mcpTools.sources[2].namespaces == ["tools.fs.read", "tools.fs.write"])
     }
 
     @Test("handshake exposes typed tooling settings state")
@@ -165,6 +168,8 @@ struct ControlPlaneServiceTests {
                 .contains("Native /api/chat") == true
         )
         #expect(endpoints["health"]?.path == "/health")
+        #expect(endpoints["health"]?.summary.contains("liveness") == true)
+        #expect(endpoints["health_diagnostics"]?.path == "/v1/melix/health")
         #expect(endpoints["cache_stats"]?.path == "/v1/cache/stats")
         #expect(endpoints["responses"]?.streaming == true)
         #expect(endpoints["messages"]?.surfaceID == "anthropic_messages")

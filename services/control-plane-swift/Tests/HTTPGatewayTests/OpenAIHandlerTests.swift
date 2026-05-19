@@ -179,6 +179,66 @@ struct OpenAIHandlerTests {
         #expect(await metricsStore.value(forKey: "gateway.auth_validation_failures") == 0)
     }
 
+    @Test("gateway rate limits by accepted credential identity across compatible headers")
+    func gatewayRateLimitsByAcceptedCredentialIdentityAcrossCompatibleHeaders() async throws {
+        let metricsStore = MetricsStore()
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-gateway-rate-limit-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+        let gatewayConfigStore = GatewayConfigStore(
+            storeURL: tempDirectory.appendingPathComponent("gateway-config.json"),
+            defaults: ["MELIX_GATEWAY_RATE_LIMIT_PER_MINUTE": "1"]
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "codex", label: "Codex", tokenHint: "codex", token: "sk-codex"),
+                ]
+            ),
+            gatewayConfigStore: gatewayConfigStore,
+            gatewayRateLimiter: GatewayRateLimiter(now: { Date(timeIntervalSince1970: 1_000) })
+        )
+
+        let accepted = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["x-api-key": "sk-codex"],
+                body: Data()
+            )
+        )
+        let rejected = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: ["Authorization": "Bearer sk-codex"],
+                body: Data()
+            )
+        )
+        let rejectedPayload = try await jsonPayload(from: rejected.body)
+        let error = try #require(rejectedPayload["error"] as? [String: Any])
+        let rateLimit = try #require(error["rate_limit"] as? [String: Any])
+
+        #expect(accepted.statusCode == 200)
+        #expect(rejected.statusCode == 429)
+        #expect(error["code"] as? String == "rate_limited")
+        #expect(rateLimit["identity"] as? String == "credential:codex")
+        #expect(rateLimit["limit_per_minute"] as? Int == 1)
+        #expect(rejected.headers["retry-after"] == "60")
+        #expect(rejected.headers["x-ratelimit-limit"] == "1")
+        #expect(await metricsStore.value(forKey: "gateway.rate_limited_request_count") == 1)
+        #expect(await metricsStore.value(forKey: "gateway.rate_limit_remaining") == 0)
+    }
+
     @Test("GET /v1/models enforces bearer-token gateway access and rejects disallowed headers")
     func getModelsEnforcesBearerTokenGatewayAccessAndRejectsDisallowedHeaders() async throws {
         let metricsStore = MetricsStore()
@@ -316,7 +376,12 @@ struct OpenAIHandlerTests {
             )
         )
         let operatorRoutes: [(HTTPMethod, String, String, Bool)] = [
+            (.get, "/.well-known/melix.json", "missing_api_key", true),
+            (.get, "/api/capabilities", "missing_api_key", true),
+            (.get, "/api/instructions", "missing_api_key", true),
+            (.get, "/api/config-metadata", "missing_api_key", true),
             (.get, "/v1/models", "missing_api_key", true),
+            (.get, "/v1/melix/health", "missing_api_key", true),
             (.get, "/v1/cache/stats", "missing_api_key", true),
             (.post, "/v1/melix/auth/session", "missing_api_key", true),
             (.get, "/v1/melix/auth/session", "missing_session", false),
@@ -346,9 +411,13 @@ struct OpenAIHandlerTests {
         let health = try await handler.handle(
             HTTPRequest(method: .get, path: "/health", headers: [:], body: Data())
         )
+        let healthPayload = try await collectBody(health.body)
 
         let gatewayPolicyFailures = operatorRoutes.filter(\.3).count
         #expect(health.statusCode == 200)
+        #expect(healthPayload.contains("\"status\":\"ok\""))
+        #expect(!healthPayload.contains("routes"))
+        #expect(!healthPayload.contains("models_ready"))
         #expect(await metricsStore.value(forKey: "gateway.auth_validation_failures") == Double(gatewayPolicyFailures))
         #expect(await metricsStore.value(forKey: "route_auth_policy") == 2)
     }
@@ -421,6 +490,16 @@ struct OpenAIHandlerTests {
                 body: Data()
             )
         )
+        let duplicateSignOutResponse = try await handler.handle(
+            HTTPRequest(
+                method: .delete,
+                path: "/v1/melix/auth/session",
+                headers: ["X-Melix-Session": sessionToken],
+                body: Data()
+            )
+        )
+        let duplicateSignOutPayload = try await jsonPayload(from: duplicateSignOutResponse.body)
+        let duplicateSignOutError = try #require(duplicateSignOutPayload["error"] as? [String: Any])
         let rejectedResponse = try await handler.handle(
             HTTPRequest(
                 method: .get,
@@ -437,6 +516,8 @@ struct OpenAIHandlerTests {
         #expect(modelsResponse.statusCode == 200)
         #expect(inspectResponse.statusCode == 200)
         #expect(signOutResponse.statusCode == 200)
+        #expect(duplicateSignOutResponse.statusCode == 401)
+        #expect(duplicateSignOutError["code"] as? String == "revoked_session")
         #expect(rejectedResponse.statusCode == 401)
         #expect(error["code"] as? String == "revoked_session")
         #expect(sessionState["state"] as? String == "revoked")
@@ -6755,6 +6836,51 @@ struct OpenAIHandlerTests {
         #expect(invalidMaskPayload.contains("mask_base64 must be valid base64."))
     }
 
+    @Test("image edit endpoints reject private external media URLs before worker dispatch")
+    func imageEditEndpointsRejectPrivateExternalMediaURLsBeforeWorkerDispatch() async throws {
+        let textClient = ScriptedWorkerClient(events: [])
+        let imageClient = ScriptedPhaseFiveWorkerClient()
+        let metricsStore = MetricsStore()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devImageModel()])
+        _ = await catalog.loadModel(id: "melix-dev-image", dispatchHandle: "melix-dev-image::python")
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+                abortRegistry: AbortRegistry()
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: textClient,
+                pythonCompatibilityClient: imageClient,
+                modelCatalog: catalog
+            ),
+            metricsStore: metricsStore
+        )
+        let privateURLBody = try #require(
+            """
+            {
+              "id": "image-edit-private-url",
+              "model": "melix-dev-image",
+              "prompt": "use remote",
+              "image_url": "https://127.0.0.1/source.png"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/images/edits", headers: [:], body: privateURLBody)
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+
+        #expect(response.statusCode == 400)
+        #expect(error["code"] as? String == "invalid_argument")
+        #expect(error["message"] as? String == "External media URL host is not allowed: 127.0.0.1.")
+        #expect(await imageClient.lastImageEditRequest == nil)
+        #expect(await metricsStore.value(forKey: "external_media.url_refusal_count") == 1)
+        #expect(await metricsStore.value(forKey: "external_media.refusal.private_or_loopback_host") == 1)
+    }
+
     @Test("image edit responses map failed and completed states into payloads and job summaries")
     func imageEditResponsesMapFailedAndCompletedStatesIntoPayloadsAndJobSummaries() async throws {
         let textClient = ScriptedWorkerClient(events: [])
@@ -7100,8 +7226,8 @@ struct OpenAIHandlerTests {
         }
     }
 
-    @Test("GET /health reports route readiness and model counts")
-    func getHealthReportsRouteReadinessAndModelCounts() async throws {
+    @Test("GET /v1/melix/health reports authenticated route readiness and model counts")
+    func getHealthDiagnosticsReportsRouteReadinessAndModelCounts() async throws {
         let healthyClient = ScriptedWorkerClient(events: [])
         let unhealthyClient = UnavailableWorkerClient()
         let metricsStore = MetricsStore()
@@ -7122,7 +7248,7 @@ struct OpenAIHandlerTests {
         )
 
         let response = try await handler.handle(
-            HTTPRequest(method: .get, path: "/health", headers: [:], body: Data())
+            HTTPRequest(method: .get, path: "/v1/melix/health", headers: [:], body: Data())
         )
         let payload = try await collectBody(response.body)
         let metrics = await metricsStore.snapshot()
@@ -7137,11 +7263,11 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"python_image\":true"))
         #expect(payload.contains("\"models_ready\":3"))
         #expect(payload.contains("\"models_total\":3"))
-        #expect(metrics.values["operator.health_latency_ms", default: -1] >= 0)
+        #expect(metrics.values["operator.health_diagnostics_latency_ms", default: -1] >= 0)
     }
 
-    @Test("GET /health reports ok when all routes are ready and pinned models count as ready")
-    func getHealthReportsOkWhenAllRoutesAreReadyAndPinnedModelsCountAsReady() async throws {
+    @Test("GET /v1/melix/health reports ok when all routes are ready and pinned models count as ready")
+    func getHealthDiagnosticsReportsOkWhenAllRoutesAreReadyAndPinnedModelsCountAsReady() async throws {
         let healthyTextClient = ScriptedWorkerClient(events: [])
         let healthyPythonClient = ScriptedPhaseFiveWorkerClient()
 
@@ -7169,7 +7295,7 @@ struct OpenAIHandlerTests {
         )
 
         let response = try await handler.handle(
-            HTTPRequest(method: .get, path: "/health", headers: [:], body: Data())
+            HTTPRequest(method: .get, path: "/v1/melix/health", headers: [:], body: Data())
         )
         let payload = try await collectBody(response.body)
 
@@ -7179,8 +7305,8 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"models_total\":3"))
     }
 
-    @Test("GET /health reports missing route clients as false when a registry is present")
-    func getHealthReportsMissingRouteClientsAsFalseWhenARegistryIsPresent() async throws {
+    @Test("GET /v1/melix/health reports missing route clients as false when a registry is present")
+    func getHealthDiagnosticsReportsMissingRouteClientsAsFalseWhenARegistryIsPresent() async throws {
         let healthyTextClient = ScriptedWorkerClient(events: [])
         let handler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: [warmModel()]),
@@ -7192,7 +7318,7 @@ struct OpenAIHandlerTests {
         )
 
         let response = try await handler.handle(
-            HTTPRequest(method: .get, path: "/health", headers: [:], body: Data())
+            HTTPRequest(method: .get, path: "/v1/melix/health", headers: [:], body: Data())
         )
         let payload = try await collectBody(response.body)
 
@@ -7202,8 +7328,8 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"python_model_operations\":false"))
     }
 
-    @Test("GET /health degrades cleanly when no worker registry is wired")
-    func getHealthDegradesCleanlyWithoutAWorkerRegistry() async throws {
+    @Test("GET /v1/melix/health degrades cleanly when no worker registry is wired")
+    func getHealthDiagnosticsDegradesCleanlyWithoutAWorkerRegistry() async throws {
         let handler = OpenAIHandler(
             modelCatalog: ModelCatalog(seedModels: [warmModel()]),
             requestCoordinator: RequestCoordinator(
@@ -7213,7 +7339,7 @@ struct OpenAIHandlerTests {
         )
 
         let response = try await handler.handle(
-            HTTPRequest(method: .get, path: "/health", headers: [:], body: Data())
+            HTTPRequest(method: .get, path: "/v1/melix/health", headers: [:], body: Data())
         )
         let payload = try await collectBody(response.body)
 
@@ -7225,6 +7351,31 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"python_model_operations\":false"))
         #expect(payload.contains("\"python_transcription\":false"))
         #expect(payload.contains("\"python_speech\":false"))
+    }
+
+    @Test("GET /health returns liveness only")
+    func getHealthReturnsLivenessOnly() async throws {
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .get, path: "/health", headers: [:], body: Data())
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("\"service\":\"melix-control-plane\""))
+        #expect(payload.contains("\"status\":\"ok\""))
+        #expect(!payload.contains("routes"))
+        #expect(!payload.contains("models_ready"))
+        #expect(await metricsStore.value(forKey: "operator.health_latency_ms") >= 0)
     }
 
     @Test("GET discovery endpoints expose machine readable local runtime contracts")
@@ -7347,11 +7498,14 @@ struct OpenAIHandlerTests {
 
         let localService = try #require(onboarding.surfaces.first { $0.surfaceID == "local_service" })
         #expect(localService.endpointIds.contains("well_known"))
+        #expect(localService.endpointIds.contains("health_diagnostics"))
         #expect(localService.endpointIds.contains("capabilities"))
         #expect(localService.endpointIds.contains("instructions"))
         #expect(localService.endpointIds.contains("config_metadata"))
         let endpointIDs = Set(onboarding.endpoints.map(\.endpointID))
-        #expect(endpointIDs.isSuperset(of: ["well_known", "capabilities", "instructions", "config_metadata"]))
+        #expect(endpointIDs.isSuperset(
+            of: ["health_diagnostics", "well_known", "capabilities", "instructions", "config_metadata"]
+        ))
     }
 
     @Test("GET capabilities discovery renders all model residency states")

@@ -30,6 +30,7 @@ enum MelixControlPlaneBootstrap {
             Double(mcpToolCatalog.sources.filter { !$0.enabled }.count),
             forKey: "mcp.disabled_tool_source_count"
         )
+        await metricsStore.set(Double(mcpToolCatalog.refusedNamespaceCount), forKey: "mcp.refused_tool_count")
         await metricsStore.set(gatewayAccessPolicy.metricModeCode, forKey: "gateway.auth_mode_code")
         await metricsStore.set(Double(gatewayAccessPolicy.acceptedAPIKeyCount), forKey: "gateway.accepted_api_key_count")
         await metricsStore.set(gatewayAccessPolicy.sharedAccessEnabled ? 1 : 0, forKey: "shared_access.enabled")
@@ -44,6 +45,9 @@ enum MelixControlPlaneBootstrap {
         await metricsStore.set(0, forKey: "gateway.generation_default_merge_count")
         await metricsStore.set(0, forKey: "gateway.speculative_config_apply_ms")
         await metricsStore.set(0, forKey: "gateway.auth_validation_failures")
+        await metricsStore.set(0, forKey: "http.request_header_rejected_count")
+        await metricsStore.set(0, forKey: "http.request_body_rejected_count")
+        await metricsStore.set(0, forKey: "http.forwarded_prefix_rejected_count")
         await metricsStore.set(0, forKey: "shared_access.accepted_client_count")
         await metricsStore.set(0, forKey: "shared_access.rejected_request_count")
         await metricsStore.set(0, forKey: "persistent_session.active_session_count")
@@ -137,7 +141,8 @@ enum MelixControlPlaneBootstrap {
         let server = try BootstrapHTTPServer(
             host: gatewayRuntimeBinding.host,
             port: UInt16(gatewayRuntimeBinding.port),
-            handler: handler
+            handler: handler,
+            metricsStore: metricsStore
         )
         try await server.start()
         await metricsStore.set(
@@ -188,15 +193,17 @@ private struct BootstrapEnvironment {
 private final class BootstrapHTTPServer: @unchecked Sendable {
     private let listener: NWListener
     private let handler: OpenAIHandler
+    private let metricsStore: MetricsStore
     private let host: String
     private let queue = DispatchQueue(label: "com.melix.http-gateway")
 
-    init(host: String, port: UInt16, handler: OpenAIHandler) throws {
+    init(host: String, port: UInt16, handler: OpenAIHandler, metricsStore: MetricsStore) throws {
         guard let port = NWEndpoint.Port(rawValue: port) else {
             throw BootstrapHTTPServerError.invalidPort
         }
         self.host = host
         self.handler = handler
+        self.metricsStore = metricsStore
         listener = try NWListener(using: .tcp, on: port)
     }
 
@@ -244,7 +251,7 @@ private final class BootstrapHTTPServer: @unchecked Sendable {
             }
 
             let updatedBuffer = buffer + (data ?? Data())
-            switch Self.parseRequest(from: updatedBuffer) {
+            switch HTTPGatewayRequestParser.parseRequest(from: updatedBuffer) {
             case .success(let request):
                 Task {
                     let response = try await self.handler.handle(request)
@@ -256,11 +263,25 @@ private final class BootstrapHTTPServer: @unchecked Sendable {
                     return
                 }
                 self.receive(on: connection, buffer: updatedBuffer)
-            case .failure(.invalid):
+            case .failure(let parseError):
                 Task {
-                    try await self.send(Self.badRequestResponse(), on: connection)
+                    await self.recordParserRefusal(parseError)
+                    try await self.send(Self.errorResponse(for: parseError), on: connection)
                 }
             }
+        }
+    }
+
+    private func recordParserRefusal(_ parseError: HTTPGatewayRequestParseError) async {
+        switch parseError {
+        case .headersTooLarge, .duplicateHeader:
+            await metricsStore.increment("http.request_header_rejected_count")
+        case .bodyTooLarge, .unsupportedChunkedBody:
+            await metricsStore.increment("http.request_body_rejected_count")
+        case .invalidForwardedPrefix:
+            await metricsStore.increment("http.forwarded_prefix_rejected_count")
+        case .incomplete, .invalidRequest:
+            break
         }
     }
 
@@ -285,12 +306,8 @@ private final class BootstrapHTTPServer: @unchecked Sendable {
         connection.cancel()
     }
 
-    private static func badRequestResponse() -> HTTPResponse {
-        HTTPResponse(
-            statusCode: 400,
-            headers: ["content-type": "application/json"],
-            body: .data(Data(#"{"error":{"code":"bad_request","message":"Unable to parse HTTP request."}}"#.utf8))
-        )
+    private static func errorResponse(for parseError: HTTPGatewayRequestParseError) -> HTTPResponse {
+        HTTPGatewayRequestParser.errorResponse(for: parseError)
     }
 
     private static func headerBlock(statusCode: Int, headers: [String: String]) -> Data {
@@ -315,6 +332,10 @@ private final class BootstrapHTTPServer: @unchecked Sendable {
             return "Not Found"
         case 409:
             return "Conflict"
+        case 413:
+            return "Payload Too Large"
+        case 431:
+            return "Request Header Fields Too Large"
         case 503:
             return "Service Unavailable"
         default:
@@ -322,71 +343,10 @@ private final class BootstrapHTTPServer: @unchecked Sendable {
         }
     }
 
-    private static func parseRequest(from data: Data) -> Result<HTTPRequest, ParseError> {
-        guard let headerRange = data.range(of: Data("\r\n\r\n".utf8)) else {
-            return .failure(.incomplete)
-        }
-
-        let headerData = data[..<headerRange.lowerBound]
-        guard let headerText = String(data: headerData, encoding: .utf8) else {
-            return .failure(.invalid)
-        }
-
-        let lines = headerText.components(separatedBy: "\r\n")
-        guard let requestLine = lines.first else {
-            return .failure(.invalid)
-        }
-
-        let requestParts = requestLine.split(separator: " ")
-        guard requestParts.count == 3 else {
-            return .failure(.invalid)
-        }
-
-        let method: HTTPMethod
-        switch String(requestParts[0]).uppercased() {
-        case "GET":
-            method = .get
-        case "POST":
-            method = .post
-        case "DELETE":
-            method = .delete
-        default:
-            return .failure(.invalid)
-        }
-
-        var headers: [String: String] = [:]
-        for line in lines.dropFirst() {
-            let pair = line.split(separator: ":", maxSplits: 1)
-            guard pair.count == 2 else { continue }
-            headers[String(pair[0]).lowercased()] = String(pair[1]).trimmingCharacters(in: .whitespaces)
-        }
-
-        let bodyStart = headerRange.upperBound
-        let contentLength = Int(headers["content-length"] ?? "0") ?? 0
-        let expectedBodyEnd = bodyStart + contentLength
-        guard data.count >= expectedBodyEnd else {
-            return .failure(.incomplete)
-        }
-
-        let body = data[bodyStart..<expectedBodyEnd]
-        return .success(
-            HTTPRequest(
-                method: method,
-                path: String(requestParts[1]),
-                headers: headers,
-                body: Data(body)
-            )
-        )
-    }
 }
 
 private enum BootstrapHTTPServerError: Error {
     case invalidPort
-}
-
-private enum ParseError: Error {
-    case incomplete
-    case invalid
 }
 
 private final class ListenerStartState: @unchecked Sendable {

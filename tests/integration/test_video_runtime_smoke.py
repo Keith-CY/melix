@@ -18,7 +18,7 @@ def test_video_runtime_smoke_records_live_video_operator_evidence() -> None:
     assert payload["ok"] is True
     checks = payload["checks"]
     assert checks["video.local_path_success"] is True
-    assert checks["video.remote_url_success"] is True
+    assert checks["video.remote_url_refusal_success"] is True
     assert checks["video.bounded_window_success"] is True
     assert checks["video.routing.text_protection_success"] is True
 
@@ -34,7 +34,8 @@ def test_video_runtime_smoke_records_live_video_operator_evidence() -> None:
 
     scenarios = payload["scenarios"]
     assert scenarios["local_path"]["source_reference"].endswith("local-smoke.mp4")
-    assert scenarios["remote_url"]["source_reference"].startswith("http://127.0.0.1:")
+    assert scenarios["blocked_remote_url"]["source_reference"].startswith("http://127.0.0.1/")
+    assert "Unsupported video URI scheme: http." in scenarios["blocked_remote_url"]["response_excerpt"]
     assert scenarios["bounded_window"]["source_reference"] == "inline_bytes:bounded-window.mp4"
     assert "Video content: bounded-window.mp4" in scenarios["bounded_window"]["response_excerpt"]
     assert "Echo:" in scenarios["routing"]["text_response_excerpt"]

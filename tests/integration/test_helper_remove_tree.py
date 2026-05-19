@@ -42,6 +42,7 @@ def test_remove_tree_skips_initial_path_exists_stat(
     root = tmp_path / "runtime-state"
     nested = root / "state"
     nested.mkdir(parents=True)
+    (nested / "cache").mkdir()
     (nested / "session.json").write_text("{}", encoding="utf-8")
 
     def fail_exists(self: Path):  # pragma: no cover - exercised only on regression
@@ -79,14 +80,19 @@ def test_remove_tree_ignores_disappearing_directory_before_scan(
     root = tmp_path / "runtime-state"
     nested = root / "state"
     nested.mkdir(parents=True)
+    (nested / "cache").mkdir()
     (nested / "session.json").write_text("{}", encoding="utf-8")
     original_scandir = helpers.os.scandir
     original_rmdir = helpers.os.rmdir
 
     def tracked_scandir(path: str):
         if Path(path).name == "state":
-            for child in Path(path).iterdir():
-                child.unlink()
+            with original_scandir(path) as entries:
+                for child in entries:
+                    if child.is_dir():
+                        original_rmdir(child.path)
+                    else:
+                        Path(child.path).unlink()
             original_rmdir(path)
             raise FileNotFoundError(path)
         return original_scandir(path)

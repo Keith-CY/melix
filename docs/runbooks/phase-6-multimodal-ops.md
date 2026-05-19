@@ -93,7 +93,7 @@ The repository-owned report builder is `worker.productization.build_phase6_visio
 The integration evidence path validates these `checks` keys:
 
 - `vision.ingress.local_image_success`
-- `vision.ingress.remote_image_success`
+- `vision.ingress.remote_image_refusal_success`
 - `vision.ingress.multi_image_success`
 - `vision.ocr.default_stop_success`
 - `vision.vlm.tool_call_success`

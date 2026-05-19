@@ -258,15 +258,21 @@ def test_health_and_cache_endpoints_return_operator_state() -> None:
         with urllib.request.urlopen(f"http://127.0.0.1:{stack.http_port}/health", timeout=10) as response:
             health_payload = json.loads(response.read().decode("utf-8"))
 
+        with urllib.request.urlopen(f"http://127.0.0.1:{stack.http_port}/v1/melix/health", timeout=10) as response:
+            health_diagnostics_payload = json.loads(response.read().decode("utf-8"))
+
         with urllib.request.urlopen(f"http://127.0.0.1:{stack.http_port}/v1/cache/stats", timeout=10) as response:
             cache_payload = json.loads(response.read().decode("utf-8"))
 
-        assert health_payload["status"] in {"ok", "degraded"}
-        assert health_payload["routes"]["swift_text"] is True
-        assert "python_embedding" in health_payload["routes"]
-        assert "python_rerank" in health_payload["routes"]
-        assert "python_transcription" in health_payload["routes"]
-        assert "python_speech" in health_payload["routes"]
+        assert health_payload["status"] == "ok"
+        assert health_payload["service"] == "melix-control-plane"
+        assert "routes" not in health_payload
+        assert health_diagnostics_payload["status"] in {"ok", "degraded"}
+        assert health_diagnostics_payload["routes"]["swift_text"] is True
+        assert "python_embedding" in health_diagnostics_payload["routes"]
+        assert "python_rerank" in health_diagnostics_payload["routes"]
+        assert "python_transcription" in health_diagnostics_payload["routes"]
+        assert "python_speech" in health_diagnostics_payload["routes"]
         assert cache_payload["l1_bytes"] >= 0
         assert cache_payload["l2_bytes"] >= 0
     finally:

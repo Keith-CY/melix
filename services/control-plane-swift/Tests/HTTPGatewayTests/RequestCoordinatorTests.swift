@@ -3618,6 +3618,7 @@ struct RequestCoordinatorTests {
         var textModel = ModelCatalog.devTextModel()
         textModel.settings.defaultAccelerationMode = .activeKvQuantized
         textModel.settings.accelerationProfileID = ""
+        textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,active_kv_quantized"
         let catalog = ModelCatalog(seedModels: [textModel])
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
@@ -3655,6 +3656,7 @@ struct RequestCoordinatorTests {
         var textModel = ModelCatalog.devTextModel()
         textModel.settings.defaultAccelerationMode = .activeKvQuantized
         textModel.settings.accelerationProfileID = "balanced"
+        textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,active_kv_quantized"
         let catalog = ModelCatalog(seedModels: [textModel])
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
@@ -3692,6 +3694,7 @@ struct RequestCoordinatorTests {
         var textModel = ModelCatalog.devTextModel()
         textModel.settings.defaultAccelerationMode = .activeKvQuantized
         textModel.settings.accelerationProfileID = "q8"
+        textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,active_kv_quantized"
         let catalog = ModelCatalog(seedModels: [textModel])
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),

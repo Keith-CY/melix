@@ -136,6 +136,13 @@ public struct SessionLifecycleSmokeRunner: Sendable {
         )
         let idleToSleepMS = elapsedMS(since: idleStartedAt)
 
+        _ = try await client.updateServerIdlePolicy(
+            serverSessionID: serverSessionID,
+            autoSleepEnabled: true,
+            lightSleepAfterSeconds: 10,
+            deepSleepAfterSeconds: 30
+        )
+
         let wakeStartedAt = now()
         let wakeExecution = try await client.startChat(
             ControlPlaneChatRequest(

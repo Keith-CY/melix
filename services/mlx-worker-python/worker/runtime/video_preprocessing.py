@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 import hashlib
+import ipaddress
 from urllib.parse import unquote, urlparse
 
 
@@ -41,6 +42,7 @@ class PreparedVideoInput:
 class ParsedVideoReference:
     raw: str
     scheme: str
+    authority: str
     decoded_path: str
     path_name: str
     path_suffix: str
@@ -80,7 +82,7 @@ def prepare_video_input(part) -> PreparedVideoInput:
     if not uri:
         raise VideoPreprocessError("No video input provided.")
     parsed_reference = _parse_video_reference(uri)
-    _validate_video_uri(parsed_reference)
+    _validate_parsed_video_uri(parsed_reference)
     format_candidates: tuple[str | ParsedVideoReference, ...] = (
         (filename, parsed_reference) if filename else (parsed_reference,)
     )
@@ -147,6 +149,7 @@ def _parse_video_reference(reference: str) -> ParsedVideoReference:
     return ParsedVideoReference(
         raw=reference,
         scheme=parsed.scheme,
+        authority=parsed.netloc,
         decoded_path=decoded_path,
         path_name=path_name,
         path_suffix=path_suffix,
@@ -164,9 +167,79 @@ def _validate_video_uri(reference: str | ParsedVideoReference) -> None:
     parsed_reference = (
         reference if isinstance(reference, ParsedVideoReference) else _parse_video_reference(reference)
     )
-    if parsed_reference.scheme in {"", "file", "http", "https"}:
+    _validate_parsed_video_uri(parsed_reference)
+
+
+def _validate_parsed_video_uri(reference: ParsedVideoReference) -> None:
+    scheme = reference.scheme
+    if scheme in {"", "file"}:
         return
-    raise VideoPreprocessError(f"Unsupported video URI scheme: {parsed_reference.scheme}.")
+    if scheme == "https":
+        authority = reference.authority
+        if not authority:
+            raise VideoPreprocessError("Remote video URI requires a host.")
+        if _is_plain_allowed_remote_authority(authority):
+            return
+        _validate_non_plain_remote_video_reference(authority)
+        return
+    raise VideoPreprocessError(f"Unsupported video URI scheme: {scheme}.")
+
+
+def _validate_non_plain_remote_video_reference(authority: str) -> None:
+    authority = authority.rsplit("@", 1)[-1].strip()
+    if not authority:
+        raise VideoPreprocessError("Remote video URI requires a host.")
+    first_character = authority[0]
+    if first_character != "[" and not first_character.isdigit() and ":" not in authority:
+        if _is_plain_allowed_remote_authority(authority):
+            return
+        authority_lower = authority.lower()
+    else:
+        authority_lower = authority.lower()
+    host = _host_from_authority(authority_lower)
+    if not host:
+        raise VideoPreprocessError("Remote video URI requires a host.")
+    if host == "localhost" or host.endswith(".localhost"):
+        raise VideoPreprocessError(f"Remote video URI host is not allowed: {host}.")
+    if not _looks_like_ip_literal(host):
+        return
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return
+    if address.is_private or address.is_loopback or address.is_link_local:
+        raise VideoPreprocessError(f"Remote video URI host is not allowed: {host}.")
+
+
+def _is_plain_allowed_remote_authority(authority: str) -> bool:
+    first_character = authority[0]
+    if first_character == "[" or first_character.isdigit() or "@" in authority or ":" in authority:
+        return False
+    if len(authority) < len("localhost"):
+        return True
+    if authority[-1] not in {"t", "T"}:
+        return True
+    return not _authority_mentions_localhost(authority.lower())
+
+
+def _authority_mentions_localhost(authority: str) -> bool:
+    return (
+        authority == "localhost"
+        or authority.startswith("localhost:")
+        or authority.endswith(".localhost")
+        or ".localhost:" in authority
+    )
+
+
+def _host_from_authority(authority: str) -> str:
+    if authority.startswith("["):
+        end_index = authority.find("]")
+        return authority[1:end_index] if end_index > 1 else ""
+    return authority.split(":", 1)[0]
+
+
+def _looks_like_ip_literal(host: str) -> bool:
+    return ":" in host or host[0].isdigit()
 
 
 def _resolve_video_format(

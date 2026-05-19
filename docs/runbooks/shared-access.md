@@ -62,7 +62,26 @@ or:
 Authorization: Bearer sk-codex
 ```
 
+Both header forms resolve to the configured key ID. Rate limiting uses that
+accepted credential identity, not the literal header name, so the same key
+shares one quota across OpenAI-compatible clients that prefer bearer tokens and
+Melix clients that prefer `x-api-key`.
+
 When the same keyring is configured with `MELIX_GATEWAY_SHARED_ACCESS_ENABLED=false`, Melix keeps local trust active, rejects explicit shared-auth headers, and advertises the key hints as `Configured, Disabled` in the desktop state.
+
+### Rate Limit
+
+The active gateway listener enforces `rate_limit_per_minute` from the gateway
+configuration summary. Operators can set the default with:
+
+```bash
+export MELIX_GATEWAY_RATE_LIMIT_PER_MINUTE=120
+```
+
+Rejected requests return `429 rate_limited` with `retry-after`,
+`x-ratelimit-limit`, and `x-ratelimit-remaining` headers. The JSON body includes
+only the normalized credential identity, limit, and retry delay; raw tokens are
+not echoed.
 
 ## Operator Checks
 
@@ -92,11 +111,12 @@ Expected failure probes:
 
 ### Route Parity
 
-The same shared-access policy applies to every operator-facing route except `/health`, including
-text generation, embeddings, rerank, audio transcription, audio speech, image generation/editing,
-cache stats, auth session creation, and unknown routes. Missing credentials in shared-enabled mode
-must return `401 missing_api_key` before request body decoding or worker dispatch. Session inspect
-and revoke routes require `X-Melix-Session`; missing session credentials return
+The same shared-access policy applies to every operator-facing route except public liveness
+`/health`, including text generation, embeddings, rerank, audio transcription, audio speech,
+image generation/editing, authenticated health diagnostics at `/v1/melix/health`, discovery,
+cache stats, auth session creation, and unknown routes. Missing credentials in shared-enabled
+mode must return `401 missing_api_key` before request body decoding or worker dispatch. Session
+inspect and revoke routes require `X-Melix-Session`; missing session credentials return
 `401 missing_session` and do not fall through to the route handler.
 
 ### Desktop State
@@ -130,6 +150,10 @@ M9.3 records these metrics in the touched scope:
 - `gateway.accepted_api_key_count`
 - `shared_access.accepted_client_count`
 - `shared_access.rejected_request_count`
+- `gateway.rate_limit_per_minute`
+- `gateway.rate_limit_remaining`
+- `gateway.rate_limit_last_admission`
+- `gateway.rate_limited_request_count`
 
 Supporting snapshot and bootstrap probes also expose:
 

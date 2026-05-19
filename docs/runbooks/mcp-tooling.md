@@ -23,16 +23,37 @@ Point `MELIX_MCP_CONFIG_PATH` at a JSON file with this structure:
 
 Rules:
 
+- Discovery order is `MELIX_MCP_CONFIG_PATH`, then
+  `$MELIX_HOME/config/mcp-tools.json`, then no MCP config.
+- Melix does not discover `./mcp-tools.json` or any other process current
+  working directory file during packaged/default local launch.
 - `default_parser_mode` is used when no request-level or model-level parser selection is already present.
 - Only enabled sources contribute namespaces to auto-injection.
 - Namespaces are deduplicated in source order after disabled sources are removed.
+- High-risk namespaces from enabled sources are blocked by default before auto-injection. Namespace
+  strings containing execution, shell, process, write-filesystem, or upload markers are refused
+  unless the exact namespace is allowlisted through `MELIX_MCP_HIGH_RISK_ALLOWLIST`.
+
+Example operator allowlist:
+
+```bash
+MELIX_MCP_HIGH_RISK_ALLOWLIST=tools.fs.write,tools.network.upload \
+MELIX_MCP_CONFIG_PATH=/path/to/mcp.json \
+bash scripts/dev_up.sh
+```
 
 ## Runtime Behavior
 
 - The control-plane handshake advertises the `mcp-tools` feature when MCP configuration is present.
 - The effective MCP catalog appears in the typed server snapshot under `mcp_tools`.
+- `mcp_tools.sources` starts with a `config-discovery` receipt. Its namespace
+  records the active discovery source: `environment`, `melixHome`, `explicit`,
+  or `none`.
+- `mcp_tools` includes the requested policy, effective policy, operator override source, and
+  refused namespaces so operator surfaces can explain why configured tools were not exposed.
 - Structured text requests record `melix.mcp.source_ids` when MCP namespaces are auto-injected.
-- Control-plane metrics record `mcp.tool_injection_count`, `mcp.configured_tool_count`, and `mcp.tool_injection_success_rate`.
+- Control-plane metrics record `mcp.tool_injection_count`, `mcp.configured_tool_count`,
+  `mcp.refused_tool_count`, and `mcp.tool_injection_success_rate`.
 
 ## Deterministic Smoke
 
@@ -45,12 +66,19 @@ PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" uv run --project services/
 The smoke command:
 
 - writes a temporary MCP config fixture
+- verifies that default policy injects safe namespaces while refusing one high-risk namespace
 - boots the deterministic local Melix stack with `MELIX_MCP_CONFIG_PATH`
 - sends one `/v1/responses` request
 - verifies that MCP injection metrics were recorded
 
 ## Troubleshooting
 
-- If the handshake does not advertise `mcp-tools`, confirm `MELIX_MCP_CONFIG_PATH` points at a readable file.
+- If the handshake does not advertise `mcp-tools`, confirm
+  `MELIX_MCP_CONFIG_PATH` points at a readable file or
+  `$MELIX_HOME/config/mcp-tools.json` exists.
+- If a repo-local `mcp-tools.json` is ignored, move it under `MELIX_HOME/config`
+  or pass it explicitly with `MELIX_MCP_CONFIG_PATH`.
+- If a configured namespace is absent from the effective catalog, inspect `mcp_tools.refused_namespaces`
+  and `mcp.refused_tool_count`.
 - If `mcp.tool_injection_count` stays at `0`, confirm the request path is a structured-tool-capable text endpoint and not an unsupported route.
 - If the control plane starts but no namespaces are injected, inspect the source `enabled` flags and make sure each namespace string is non-empty.

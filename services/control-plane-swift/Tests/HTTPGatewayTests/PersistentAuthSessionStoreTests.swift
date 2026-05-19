@@ -108,6 +108,44 @@ struct PersistentAuthSessionStoreTests {
         #expect(await metricsStore.value(forKey: "persistent_session.remembered_session_count") == 0)
     }
 
+    @Test("store consumes session revocation atomically")
+    func storeConsumesSessionRevocationAtomically() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-persistent-session-revoke-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let metricsStore = MetricsStore()
+        let store = PersistentAuthSessionStore(
+            storeURL: temporaryRoot.appendingPathComponent("persistent-auth-sessions.json"),
+            metricsStore: metricsStore,
+            retentionTTLSeconds: 3600,
+            nowUnixMs: { 10_000 }
+        )
+        let issued = try await store.issueSession(keyID: "desktop-agent", rememberMe: true)
+
+        async let first = store.revokeSessionToken(issued.token)
+        async let second = store.revokeSessionToken(issued.token)
+        let results = try await [first, second]
+        let successCount = results.filter { result in
+            if case .success = result {
+                return true
+            }
+            return false
+        }.count
+        let revokedCount = results.filter { result in
+            result == .failure(.revokedSession(
+                sessionID: issued.metadata.sessionID,
+                keyID: "desktop-agent",
+                rememberMe: true
+            ))
+        }.count
+
+        #expect(successCount == 1)
+        #expect(revokedCount == 1)
+        #expect(await metricsStore.value(forKey: "persistent_session.active_session_count") == 0)
+    }
+
     @Test("store restore reports malformed roots and decode failures and revoke misses")
     func storeRestoreReportsMalformedRootsAndDecodeFailuresAndRevokeMisses() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory

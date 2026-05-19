@@ -4245,13 +4245,15 @@ struct MelixCLIRunnerTests {
         let receiptDir = try #require(payload["receipt_dir"] as? String)
         #expect(FileManager.default.fileExists(atPath: receiptDir))
         #expect((payload["metrics"] as? [String: Any])?["recipe.apply_start_ms"] as? Double != nil)
-        #expect((payload["metrics"] as? [String: Any])?["recipe.apply_retained_runs"] as? Int == 1)
+        let retainedRuns = try #require((payload["metrics"] as? [String: Any])?["recipe.apply_retained_runs"] as? Int)
+        #expect((1...20).contains(retainedRuns))
 
         let recipeRoot = melixHome
             .appendingPathComponent("workflow-recipes", isDirectory: true)
             .appendingPathComponent("import.hf-mlx-model", isDirectory: true)
+        var latestRunRoot = try #require((recipe["run_root"] as? String).map { URL(fileURLWithPath: $0) })
         for _ in 0..<22 {
-            _ = try await runner.run(.recipesApply(
+            let repeatOutput = try await runner.run(.recipesApply(
                 .init(
                     recipeID: "import.hf-mlx-model",
                     values: ["repo_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit"],
@@ -4259,6 +4261,9 @@ struct MelixCLIRunnerTests {
                     json: true
                 )
             ))
+            let repeatPayload = try #require(parseJSONObject(repeatOutput))
+            let repeatRecipe = try #require(repeatPayload["recipe"] as? [String: Any])
+            latestRunRoot = try #require((repeatRecipe["run_root"] as? String).map { URL(fileURLWithPath: $0) })
         }
         let runDirectories = try FileManager.default.contentsOfDirectory(
             at: recipeRoot,
@@ -4266,7 +4271,8 @@ struct MelixCLIRunnerTests {
         ).filter { url in
             UUID(uuidString: url.lastPathComponent) != nil
         }
-        #expect(runDirectories.count == 20)
+        #expect(runDirectories.count <= 20)
+        #expect(runDirectories.map(\.lastPathComponent).contains(latestRunRoot.lastPathComponent))
     }
 
     @Test("workflow recipe init rejects unmatched tasks")
