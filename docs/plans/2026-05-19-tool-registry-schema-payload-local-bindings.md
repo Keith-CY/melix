@@ -25,6 +25,27 @@ commands and reports `schema_payload_elapsed_ms_mean` as the primary metric for
 this slice. The same watch glob also triggers adjacent tool registry registered
 probes in CI.
 
+## Follow-up Slice: Slotted Descriptor Snapshots
+
+The 2026-05-19 follow-up keeps the tool registry API and copy-on-return schema
+payload behavior unchanged, but marks the small immutable dataclass snapshots as
+slotted: `ToolArgumentDescriptor`, `ToolDescriptor`, and `ToolRegistryMetrics`.
+These objects are read repeatedly by the registered tool-registry probes and do
+not need per-instance `__dict__` storage. The same slice also caches serialized
+built-in tool configs for normalized partial selections so repeated
+`built_in_tool_config((...))` calls avoid re-entering registry selection while
+still returning fresh mutable protobuf objects.
+
+Expected effect:
+
+- reduce per-descriptor memory overhead;
+- improve repeated partial-selection `built_in_tool_config((...))` calls by
+  reusing cached serialized protobuf bytes;
+- keep `schema_payload_elapsed_ms_mean`, `elapsed_ms_mean`, and adjacent
+  tool-registry probe timings neutral-to-improved;
+- preserve mutation isolation for returned schema payload dictionaries and
+  protobuf configs.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.

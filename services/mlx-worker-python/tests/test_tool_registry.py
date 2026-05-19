@@ -95,6 +95,14 @@ def test_tool_registry_names_reuses_registry_snapshot() -> None:
     assert registry.names() == BUILTIN_AGENTIC_TOOL_NAMES
 
 
+def test_tool_registry_descriptors_use_slotted_snapshots() -> None:
+    registry = built_in_tool_registry()
+
+    assert not hasattr(registry.metrics(), "__dict__")
+    assert not hasattr(registry.tools[0], "__dict__")
+    assert not hasattr(registry.tools[0].arguments[0], "__dict__")
+
+
 def test_tool_descriptor_required_arguments_reuses_cached_snapshot() -> None:
     tool = built_in_tool_registry().tools[0]
     expected_required_arguments = tool.required_arguments
@@ -308,6 +316,26 @@ def test_built_in_tool_config_partial_selection_uses_cached_registry(
     config = built_in_tool_config(["image_crop", "local_compute"])
 
     assert [tool.name for tool in config.tools] == ["image_crop", "local_compute"]
+
+
+def test_built_in_tool_config_partial_selection_reuses_serialized_selection_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_config = built_in_tool_config(["image_crop", "local_compute"])
+
+    def fail_select(self: ToolRegistry, names: list[str] | tuple[str, ...]) -> ToolRegistry:
+        raise AssertionError(  # pragma: no cover
+            "cached partial built_in_tool_config() should skip registry selection"
+        )
+
+    monkeypatch.setattr(ToolRegistry, "select", fail_select)
+
+    config = built_in_tool_config(["image_crop", "local_compute"])
+
+    assert config == expected_config
+    assert config is not expected_config
+    config.tools[0].name = "mutated"
+    assert built_in_tool_config(["image_crop", "local_compute"]).tools[0].name == "image_crop"
 
 
 def test_tool_registry_worker_tool_config_reuses_cached_serialized_snapshot(

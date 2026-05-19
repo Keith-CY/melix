@@ -30,7 +30,7 @@ class ToolRegistryError(ValueError):
     pass
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ToolArgumentDescriptor:
     name: str
     json_type: str
@@ -56,7 +56,7 @@ class ToolArgumentDescriptor:
         }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ToolDescriptor:
     name: str
     description: str
@@ -143,7 +143,7 @@ class ToolDescriptor:
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ToolRegistryMetrics:
     tool_count: int
     schema_bytes: int
@@ -266,10 +266,16 @@ def built_in_tool_registry() -> ToolRegistry:
 
 
 def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> common_pb2.ToolConfig:
-    if names is None or tuple(names) == BUILTIN_AGENTIC_TOOL_NAMES:
+    if names is None:
         return common_pb2.ToolConfig.FromString(_BUILTIN_TOOL_CONFIG_BYTES)
-    registry = _BUILTIN_TOOL_CONFIG_REGISTRY.select(names)
-    return registry.as_worker_tool_config()
+    requested_names = tuple(names)
+    cached_config_bytes = _BUILTIN_TOOL_CONFIG_SELECTION_BYTES.get(requested_names)
+    if cached_config_bytes is not None:
+        return common_pb2.ToolConfig.FromString(cached_config_bytes)
+    registry = _BUILTIN_TOOL_CONFIG_REGISTRY.select(requested_names)
+    config = registry.as_worker_tool_config()
+    _BUILTIN_TOOL_CONFIG_SELECTION_BYTES[registry.names()] = config.SerializeToString()
+    return config
 
 
 def _arg(
@@ -358,6 +364,9 @@ _BUILTIN_TOOL_CONFIG_REGISTRY = ToolRegistry(_BUILTIN_AGENTIC_TOOLS)
 _BUILTIN_TOOL_CONFIG_BYTES = (
     _BUILTIN_TOOL_CONFIG_REGISTRY.as_worker_tool_config().SerializeToString()
 )
+_BUILTIN_TOOL_CONFIG_SELECTION_BYTES: dict[tuple[str, ...], bytes] = {
+    BUILTIN_AGENTIC_TOOL_NAMES: _BUILTIN_TOOL_CONFIG_BYTES,
+}
 
 
 __all__ = [
