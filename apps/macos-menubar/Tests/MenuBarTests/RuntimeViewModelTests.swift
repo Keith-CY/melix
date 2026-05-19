@@ -7923,6 +7923,7 @@ struct RuntimeViewModelTests {
         )
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
+        try await waitForFakeControlPlaneSubscription(client)
 
         viewModel.beginDiagnosticsRunMonitorForTest(
             stage: .benchmark,
@@ -7932,7 +7933,9 @@ struct RuntimeViewModelTests {
             detailText: "test run"
         )
         await client.sendBenchmarkProgress(jobID: "bench-progress", suite: "smoke", pct: 42)
-        try await Task.sleep(nanoseconds: 20_000_000)
+        try await waitForRuntimeViewModelCondition("benchmark progress should reach diagnostics run monitor") {
+            viewModel.diagnosticsRunMonitor?.progressFraction == 0.42
+        }
 
         let benchMonitor = try #require(viewModel.diagnosticsRunMonitor)
         #expect(benchMonitor.startedAt != nil)
@@ -7956,7 +7959,9 @@ struct RuntimeViewModelTests {
             prefillTotalTokens: 60,
             activeRequests: 1
         )
-        try await Task.sleep(nanoseconds: 20_000_000)
+        try await waitForRuntimeViewModelCondition("request progress should reach diagnostics run monitor") {
+            viewModel.diagnosticsRunMonitor?.progressFraction == 0.5
+        }
 
         let evalMonitor = try #require(viewModel.diagnosticsRunMonitor)
         #expect(evalMonitor.stage == .evaluation)
@@ -13171,6 +13176,26 @@ private func waitForRuntimeViewModelCondition(
     }
 
     throw MenuBarTestError(description: description)
+}
+
+private func waitForFakeControlPlaneSubscription(
+    _ client: FakeControlPlaneXPCClient,
+    minimumCount: Int = 1,
+    timeout: Duration = .seconds(2),
+    pollInterval: Duration = .milliseconds(10)
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if await client.subscriptionRequests.count >= minimumCount {
+            return
+        }
+        try await Task.sleep(for: pollInterval)
+    }
+
+    let actualCount = await client.subscriptionRequests.count
+    throw MenuBarTestError(
+        description: "expected at least \(minimumCount) subscription request(s), got \(actualCount)"
+    )
 }
 
 private func waitForRuntimeMetric(

@@ -263,6 +263,21 @@ private enum GatewayAuthorizationResolution {
     case failure(HTTPResponse)
 }
 
+private struct OpenAIModelIdleSweepRequest: Sendable {
+    let servedModelIDs: [String]
+    let idleTimeoutSeconds: UInt32
+}
+
+private struct ResolvedOpenAITextRequest: Sendable {
+    let translated: TranslatedChatRequest
+    let idleSweepRequest: OpenAIModelIdleSweepRequest?
+}
+
+private struct ResolvedServedModel: Sendable {
+    let modelID: String
+    let idleSweepRequest: OpenAIModelIdleSweepRequest?
+}
+
 private actor ModelIdleSweepScheduler {
     private let modelCatalog: ModelCatalog
     private let workerRegistry: WorkerRegistry?
@@ -303,6 +318,10 @@ private actor ModelIdleSweepScheduler {
         self.lastSweepStartedAt = startedAt
         sweepInFlight = true
         Task.detached(priority: .background) { [modelCatalog, workerRegistry, metricsStore, servedModelIDs, idleTimeoutSeconds] in
+            // sweepIdleModels is declared async (not async throws), so markSweepFinished
+            // is always reached. If its signature ever gains `throws`, wrap the call in
+            // do/catch and call markSweepFinished() in both branches to keep the circuit
+            // breaker from getting permanently stuck.
             _ = await OnDemandModelLoader.sweepIdleModels(
                 servedModelIDs: servedModelIDs,
                 idleTimeoutSeconds: idleTimeoutSeconds,
@@ -812,17 +831,18 @@ public struct OpenAIHandler: Sendable {
             } else {
                 try translator.normalize(chatRequest)
             }
-            let translated = try await translatedRequest(normalized)
-            guard translated.stream else {
+            let resolvedRequest = try await translatedRequest(normalized)
+            guard resolvedRequest.translated.stream else {
                 return try await nonStreamChatCompletionsResponse(
-                    translated: translated,
+                    resolvedRequest: resolvedRequest,
                     requestStartedAt: requestStartedAt
                 )
             }
             return try await streamResponse(
-                translated: translated,
+                translated: resolvedRequest.translated,
                 shape: .chatCompletions,
-                requestStartedAt: requestStartedAt
+                requestStartedAt: requestStartedAt,
+                idleSweepRequest: resolvedRequest.idleSweepRequest
             )
         } catch let error as MultimodalRequestNormalizationError {
             return invalidArgumentResponse(message: error.operatorMessage)
@@ -908,21 +928,25 @@ public struct OpenAIHandler: Sendable {
         requestStartedAt: Date
     ) async throws -> HTTPResponse {
         do {
-            var translated = try await translatedRequest(normalized)
+            var resolvedRequest = try await translatedRequest(normalized)
             if shape == .messages, hasNonEmptyHeader(named: "x-api-key", in: headers) {
-                var workerRequest = translated.workerRequest
+                var workerRequest = resolvedRequest.translated.workerRequest
                 workerRequest.execution.ext["melix.messages.x_api_key_present"] = "true"
-                translated = TranslatedChatRequest(
-                    requestID: translated.requestID,
-                    modelID: translated.modelID,
-                    workerRequest: workerRequest,
-                    stream: translated.stream
+                resolvedRequest = ResolvedOpenAITextRequest(
+                    translated: TranslatedChatRequest(
+                        requestID: resolvedRequest.translated.requestID,
+                        modelID: resolvedRequest.translated.modelID,
+                        workerRequest: workerRequest,
+                        stream: resolvedRequest.translated.stream
+                    ),
+                    idleSweepRequest: resolvedRequest.idleSweepRequest
                 )
             }
             return try await streamResponse(
-                translated: translated,
+                translated: resolvedRequest.translated,
                 shape: shape,
-                requestStartedAt: requestStartedAt
+                requestStartedAt: requestStartedAt,
+                idleSweepRequest: resolvedRequest.idleSweepRequest
             )
         } catch let error as HTTPRequestHandlingError {
             return httpErrorResponse(for: error)
@@ -1910,15 +1934,15 @@ public struct OpenAIHandler: Sendable {
 
     private func translatedRequest(
         _ normalized: NormalizedTextRequest
-    ) async throws -> TranslatedChatRequest {
+    ) async throws -> ResolvedOpenAITextRequest {
         guard normalized.stream || normalized.endpoint == .chatCompletions else {
             throw HTTPRequestHandlingError.streamRequired
         }
-        let resolvedModelID = try await resolveServedModelID(
+        let resolved = try await resolveServedModelID(
             requestedModelID: normalized.model,
             endpoint: .textGeneration
         )
-        let routed = normalized.replacingModel(resolvedModelID)
+        let routed = normalized.replacingModel(resolved.modelID)
         if await shouldRefreshRegistryBeforeTextRequest(modelID: routed.model) {
             await RegistrySnapshotSync.syncModelsIfAvailable(
                 modelCatalog: modelCatalog,
@@ -1987,10 +2011,13 @@ public struct OpenAIHandler: Sendable {
             mcpToolCatalog: mcpToolCatalog
         )
         await recordShapingMetrics(for: translated, startedAt: shapingStartedAt)
-        return requestWithVLMTextOnlyBatchingMetadata(
-            translated,
-            model: resolvedModel,
-            normalizedRequest: routed
+        return ResolvedOpenAITextRequest(
+            translated: requestWithVLMTextOnlyBatchingMetadata(
+                translated,
+                model: resolvedModel,
+                normalizedRequest: routed
+            ),
+            idleSweepRequest: resolved.idleSweepRequest
         )
     }
 
@@ -2079,7 +2106,7 @@ public struct OpenAIHandler: Sendable {
     private func resolveServedModelID(
         requestedModelID: String,
         endpoint: HTTPGatewayEndpointFamily
-    ) async throws -> String {
+    ) async throws -> ResolvedServedModel {
         let startedAt = Date()
         let roster: (defaultModelID: String, servedModelIDs: [String], modelIdleTimeoutSeconds: UInt32, explicit: Bool)
         if let configured = await gatewayConfigStore.activeModelRosterIfConfigured(runtimeBinding: gatewayRuntimeBinding) {
@@ -2112,11 +2139,23 @@ public struct OpenAIHandler: Sendable {
             await metricsStore.increment("gateway.model_not_served_count")
             throw HTTPRequestHandlingError.modelNotServed(resolvedModelID)
         }
-        await idleSweepScheduler.schedule(
-            servedModelIDs: roster.servedModelIDs,
-            idleTimeoutSeconds: roster.modelIdleTimeoutSeconds
+        return ResolvedServedModel(
+            modelID: resolvedModelID,
+            idleSweepRequest: OpenAIModelIdleSweepRequest(
+                servedModelIDs: roster.servedModelIDs,
+                idleTimeoutSeconds: roster.modelIdleTimeoutSeconds
+            )
         )
-        return resolvedModelID
+    }
+
+    private func scheduleIdleSweepIfNeeded(_ request: OpenAIModelIdleSweepRequest?) async {
+        guard let request else {
+            return
+        }
+        await idleSweepScheduler.schedule(
+            servedModelIDs: request.servedModelIDs,
+            idleTimeoutSeconds: request.idleTimeoutSeconds
+        )
     }
 
     private func defaultServedModelIDs(
@@ -2137,9 +2176,10 @@ public struct OpenAIHandler: Sendable {
     }
 
     private func nonStreamChatCompletionsResponse(
-        translated: TranslatedChatRequest,
+        resolvedRequest: ResolvedOpenAITextRequest,
         requestStartedAt: Date
     ) async throws -> HTTPResponse {
+        let translated = resolvedRequest.translated
         var workerRequest = translated.workerRequest
         workerRequest.stream = true
         workerRequest.returnUsage = true
@@ -2165,6 +2205,7 @@ public struct OpenAIHandler: Sendable {
         do {
             let modelID = translated.modelID
             await modelCatalog.beginRequest(modelID: modelID)
+            await scheduleIdleSweepIfNeeded(resolvedRequest.idleSweepRequest)
             defer {
                 // `defer` cannot await; finish asynchronously so non-stream
                 // aggregation always releases request activity on this model.
@@ -2344,7 +2385,8 @@ public struct OpenAIHandler: Sendable {
     private func streamResponse(
         translated: TranslatedChatRequest,
         shape: SSEStreamWriter.StreamShape,
-        requestStartedAt: Date
+        requestStartedAt: Date,
+        idleSweepRequest: OpenAIModelIdleSweepRequest? = nil
     ) async throws -> HTTPResponse {
         let execution: CoordinatedChatExecution
 
@@ -2358,6 +2400,7 @@ public struct OpenAIHandler: Sendable {
         }
 
         await modelCatalog.beginRequest(modelID: translated.modelID)
+        await scheduleIdleSweepIfNeeded(idleSweepRequest)
         let stream = sseWriter.encode(
             stream: execution.stream,
             requestID: execution.requestID,

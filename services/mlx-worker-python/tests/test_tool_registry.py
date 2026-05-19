@@ -59,6 +59,32 @@ def test_tool_registry_metrics_reuses_cached_schema_byte_counts(monkeypatch: pyt
     assert registry.metrics().schema_bytes == expected_schema_bytes
 
 
+def test_tool_registry_metrics_reuses_registry_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = built_in_tool_registry()
+    expected_metrics = registry.metrics()
+
+    def fail_schema_byte_count(self: ToolDescriptor) -> int:
+        raise AssertionError("metrics() should reuse the registry metrics snapshot")
+
+    monkeypatch.setattr(ToolDescriptor, "schema_byte_count", fail_schema_byte_count)
+
+    with pytest.raises(AssertionError, match=r"metrics\(\) should reuse"):
+        registry.tools[0].schema_byte_count()
+    assert registry.metrics() is expected_metrics
+    assert registry.metrics().schema_bytes == expected_metrics.schema_bytes
+
+
+def test_tool_registry_metrics_snapshot_updates_for_selected_registry() -> None:
+    registry = built_in_tool_registry()
+
+    selected = registry.select(["visit", "image_crop", "visit"])
+
+    assert selected.metrics().tool_count == 2
+    assert selected.metrics().schema_bytes == sum(
+        tool.schema_byte_count() for tool in selected.tools
+    )
+
+
 def test_tool_registry_rejects_duplicate_tool_names() -> None:
     registry = built_in_tool_registry()
 
@@ -81,6 +107,14 @@ def test_tool_registry_selects_tools_in_requested_order() -> None:
     assert selected.names() == ("visit", "image_crop")
 
 
+def test_tool_registry_select_trims_blanks_and_deduplicates_in_one_pass() -> None:
+    registry = built_in_tool_registry()
+
+    selected = registry.select([" visit ", "", "image_crop", "visit", "  "])
+
+    assert selected.names() == ("visit", "image_crop")
+
+
 def test_tool_registry_select_reuses_cached_name_index() -> None:
     registry = ToolRegistry(built_in_tool_registry().tools)
     object.__setattr__(registry, "_tools", ())
@@ -88,6 +122,48 @@ def test_tool_registry_select_reuses_cached_name_index() -> None:
     selected = registry.select(["visit", "image_crop", "visit"])
 
     assert selected.names() == ("visit", "image_crop")
+
+
+def test_tool_registry_select_reuses_cached_selected_registry() -> None:
+    registry = built_in_tool_registry()
+
+    selected = registry.select([" visit ", "image_crop", "visit"])
+
+    assert registry.select(["visit", "image_crop"]) is selected
+    assert selected.names() == ("visit", "image_crop")
+
+
+def test_tool_registry_select_tuple_cache_hit_skips_name_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = built_in_tool_registry()
+    selected = registry.select(("visit", "image_crop"))
+
+    monkeypatch.setattr(registry, "_tool_by_name", {})
+
+    assert registry.select(("visit", "image_crop")) is selected
+    with pytest.raises(ToolRegistryError, match="Unknown tool registry entry requested"):
+        registry.select(["image_crop", "visit"])
+
+
+def test_tool_registry_select_returns_self_for_complete_selection() -> None:
+    registry = built_in_tool_registry()
+
+    selected = registry.select([" " + name + " " for name in BUILTIN_AGENTIC_TOOL_NAMES])
+
+    assert selected is registry
+    assert registry.select(BUILTIN_AGENTIC_TOOL_NAMES) is registry
+    assert registry.names() == BUILTIN_AGENTIC_TOOL_NAMES
+
+
+def test_tool_registry_selection_cache_is_bounded() -> None:
+    registry = built_in_tool_registry()
+
+    for index in range(40):
+        registry._selection_cache[("visit", f"probe_{index}")] = registry
+
+    selected = registry.select(["image_crop"])
+
+    assert selected.names() == ("image_crop",)
+    assert registry._selection_cache == {("image_crop",): selected}
 
 
 def test_tool_registry_exports_worker_tool_config_metadata() -> None:

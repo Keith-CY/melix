@@ -250,14 +250,14 @@ struct RuntimeEvidenceReportStateTests {
             viewModel: viewModel,
             foundation: viewModel.desktopFoundationState
         )
-        let pasteboard = NSPasteboard(name: NSPasteboard.Name("melix.debug-bundle.copy.\(UUID().uuidString)"))
+        let pasteboard = RecordingPasteboard()
 
         #expect(RuntimeDiagnosticsArtifactClipboard.copy(" /tmp/melix-debug/bench-1/manifest.json ", to: pasteboard))
-        #expect(pasteboard.string(forType: .string) == "/tmp/melix-debug/bench-1/manifest.json")
+        #expect(pasteboard.string == "/tmp/melix-debug/bench-1/manifest.json")
         #expect(RuntimeDiagnosticsArtifactClipboard.copy("   ", to: pasteboard) == false)
 
         #expect(diagnosticsView.copyDebugBundleArtifactPath(" /tmp/melix-debug/bench-1/events.jsonl ", to: pasteboard))
-        #expect(pasteboard.string(forType: .string) == "/tmp/melix-debug/bench-1/events.jsonl")
+        #expect(pasteboard.string == "/tmp/melix-debug/bench-1/events.jsonl")
         #expect(viewModel.diagnosticsDebugBundleMessage == "Copied debug bundle artifact path: /tmp/melix-debug/bench-1/events.jsonl.")
         #expect(viewModel.diagnosticsDebugBundleErrorMessage.isEmpty)
 

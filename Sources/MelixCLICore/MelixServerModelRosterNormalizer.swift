@@ -24,6 +24,11 @@ public enum MelixServerModelRosterNormalizer {
         _ modelIDs: [String],
         defaultModelID: String
     ) -> [String] {
+        // If both modelIDs and defaultModelID are empty, normalized() returns [].
+        // The GatewayConfigStore strict validator (missingDefaultModelID /
+        // missingServedModelIDs) is the authoritative gate that prevents an empty
+        // roster from reaching the serving path; callers here are CLI/operator/desktop
+        // state initialisation where a blank roster is treated as unconfigured.
         normalized(
             modelIDs.isEmpty ? [defaultModelID] : modelIDs,
             defaultModelID: defaultModelID

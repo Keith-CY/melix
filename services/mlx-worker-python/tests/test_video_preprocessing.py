@@ -322,6 +322,27 @@ def test_uri_identity_hash_preserves_nul_framed_payload_digest() -> None:
         ),
         (
             common_pb2.MessagePart(
+                video_uri="https://@/demo.mov",
+                media=common_pb2.MediaMetadata(format="mov"),
+            ),
+            "Remote video URI requires a host.",
+        ),
+        (
+            common_pb2.MessagePart(
+                video_uri="https://:/demo.mov",
+                media=common_pb2.MediaMetadata(format="mov"),
+            ),
+            "Remote video URI requires a host.",
+        ),
+        (
+            common_pb2.MessagePart(
+                video_uri="https://[::1]/demo.mov",
+                media=common_pb2.MediaMetadata(format="mov"),
+            ),
+            "Remote video URI host is not allowed: ::1.",
+        ),
+        (
+            common_pb2.MessagePart(
                 video_uri="https://example.com/demo",
                 media=common_pb2.MediaMetadata(mime_type="video/x-matroska"),
             ),
@@ -378,3 +399,8 @@ def test_prepare_video_input_rejects_invalid_contracts(
 ) -> None:
     with pytest.raises(VideoPreprocessError, match=message):
         prepare_video_input(part)
+
+
+def test_validate_video_uri_accepts_parsed_and_string_remote_references() -> None:
+    video_preprocessing._validate_video_uri(_parse_video_reference("https://example.com/demo.mov"))
+    video_preprocessing._validate_video_uri("https://123-example.com/demo.mov")

@@ -1298,9 +1298,9 @@ struct DesktopFoundationViewTests {
             ])
         )
 
-        let pasteboard = NSPasteboard(name: NSPasteboard.Name("melix.discovery.copy.\(UUID().uuidString)"))
+        let pasteboard = RecordingPasteboard()
         #expect(RuntimeDiscoveryClipboard.copy("/repo/docs/plans", to: pasteboard))
-        #expect(pasteboard.string(forType: .string) == "/repo/docs/plans")
+        #expect(pasteboard.string == "/repo/docs/plans")
         #expect(RuntimeDiscoveryClipboard.copy("   ", to: pasteboard) == false)
 
         var openedURL: URL?
@@ -7150,7 +7150,7 @@ struct DesktopFoundationViewTests {
         // keep comments readable
         """
         let presentation = DesktopChatMarkdownCodeBlockPresentation(language: " swift ", code: code)
-        let pasteboard = NSPasteboard(name: NSPasteboard.Name("melix.chat.markdown.copy.\(UUID().uuidString)"))
+        let pasteboard = RecordingPasteboard()
 
         DesktopChatMarkdownCodeBlockClipboard.copy(code, to: pasteboard)
 
@@ -7158,7 +7158,7 @@ struct DesktopFoundationViewTests {
         #expect(presentation.copyAccessibilityLabel == "Copy code")
         #expect(String(presentation.highlightedCode.characters) == code)
         #expect(presentation.highlightedCode.runs.contains { $0.foregroundColor != nil })
-        #expect(pasteboard.string(forType: .string) == code)
+        #expect(pasteboard.string == code)
     }
 
     @Test("chat markdown code language badges and highlighter branches")

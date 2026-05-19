@@ -7693,8 +7693,8 @@ struct DesktopDiagnosticsToolSectionView: View {
     @discardableResult
     func copyDebugBundleArtifactPath(
         _ path: String,
-        to pasteboard: NSPasteboard = .general,
-        clipboardWriter: (String, NSPasteboard) -> Bool = RuntimeDiagnosticsArtifactClipboard.copy(_:to:)
+        to pasteboard: any RuntimePasteboardWriting = NSPasteboard.general,
+        clipboardWriter: (String, any RuntimePasteboardWriting) -> Bool = RuntimeDiagnosticsArtifactClipboard.copy(_:to:)
     ) -> Bool {
         let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmedPath.isEmpty == false else {
@@ -10413,7 +10413,7 @@ func desktopAPIAuthenticationReferenceText(selectedExport: AgentIntegrationExpor
 
 enum RuntimeDiagnosticsArtifactClipboard {
     @discardableResult
-    static func copy(_ value: String, to pasteboard: NSPasteboard = .general) -> Bool {
+    static func copy(_ value: String, to pasteboard: any RuntimePasteboardWriting = NSPasteboard.general) -> Bool {
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmedValue.isEmpty == false else {
             return false

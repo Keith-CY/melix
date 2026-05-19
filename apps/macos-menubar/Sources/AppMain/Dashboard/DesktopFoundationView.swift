@@ -2565,7 +2565,7 @@ struct DesktopAPIReferenceTabView: View {
 
 enum RuntimeDiscoveryClipboard {
     @discardableResult
-    static func copy(_ value: String, to pasteboard: NSPasteboard = .general) -> Bool {
+    static func copy(_ value: String, to pasteboard: any RuntimePasteboardWriting = NSPasteboard.general) -> Bool {
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmedValue.isEmpty == false else {
             return false

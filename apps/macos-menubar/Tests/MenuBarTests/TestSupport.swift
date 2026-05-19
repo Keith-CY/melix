@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 @testable import AppMain
@@ -14,6 +15,26 @@ enum MenuBarTestEnvironment {
     static var bootstrapConditionTimeout: Duration {
         let environment = ProcessInfo.processInfo.environment
         return environment["GITHUB_ACTIONS"] == "true" ? .seconds(10) : .seconds(5)
+    }
+}
+
+final class RecordingPasteboard: RuntimePasteboardWriting {
+    private(set) var string: String?
+    private(set) var clearCount = 0
+
+    @discardableResult
+    func clearContents() -> Int {
+        clearCount += 1
+        string = nil
+        return clearCount
+    }
+
+    func setString(_ string: String, forType dataType: NSPasteboard.PasteboardType) -> Bool {
+        guard dataType == .string else {
+            return false
+        }
+        self.string = string
+        return true
     }
 }
 

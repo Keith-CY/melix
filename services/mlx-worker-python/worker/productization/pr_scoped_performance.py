@@ -138,7 +138,9 @@ _PROBE_REGISTRY_CACHE: dict[str, tuple[int, int, tuple[ProbeDefinition, ...]]] =
 
 def _probe_registry_cache_key(path: str | Path) -> str:
     raw_path = os.fspath(path)
-    return raw_path if os.path.isabs(raw_path) else os.path.abspath(raw_path)
+    if raw_path.startswith(os.sep):
+        return raw_path
+    return os.path.abspath(raw_path)
 
 
 def _parse_probe_registry_payload(payload: object) -> tuple[ProbeDefinition, ...]:
@@ -671,7 +673,7 @@ def _probe_command_json(
         raise ValueError("probe_command must emit a JSON object")
     metrics: dict[str, float] = {}
     for key, value in payload.items():
-        if isinstance(value, bool) or not isinstance(value, int | float):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError(f"probe_command metric {key} must be numeric")
         metrics[str(key)] = float(value)
     return metrics
@@ -699,6 +701,7 @@ def _probe_pr_scoped_performance_registry_cache(repo_root: Path) -> dict[str, fl
     for _ in range(sample_count):
         if isinstance(cache, dict):
             cache.clear()
+        module.load_probe_registry(registry_path)
         started = time.perf_counter()
         for _ in range(load_iterations):
             module.load_probe_registry(registry_path)
@@ -2482,7 +2485,16 @@ def _match_probe_indexes(
     cache_key = (id(probes), len(probes), changed_path_tuple)
     cached = _MATCH_PROBE_INDEXES_CACHE.get(cache_key)
     if cached is None:
-        cached = _match_probe_indexes_uncached(probes=probes, changed_paths=changed_path_tuple)
+        changed_path_set = (
+            changed_paths
+            if isinstance(changed_paths, (set, frozenset))
+            else frozenset(changed_path_tuple)
+        )
+        cached = _match_probe_indexes_uncached(
+            probes=probes,
+            changed_paths=changed_path_tuple,
+            changed_path_set=changed_path_set,
+        )
         _MATCH_PROBE_INDEXES_CACHE[cache_key] = cached
     return cached
 
@@ -2491,13 +2503,14 @@ def _match_probe_indexes_uncached(
     *,
     probes: tuple[ProbeDefinition, ...],
     changed_paths: tuple[str, ...],
+    changed_path_set: set[str] | frozenset[str],
 ) -> frozenset[int]:
     exact_path_to_probe_indexes, wildcard_glob_matchers = _probe_match_indexes(probes)
     matched_probe_indexes: set[int] = set()
-    for path in changed_paths:
-        probe_indexes = exact_path_to_probe_indexes.get(path)
-        if probe_indexes is not None:
-            matched_probe_indexes.update(probe_indexes)
+    matched_probe_indexes_update = matched_probe_indexes.update
+    exact_path_to_probe_indexes_get = exact_path_to_probe_indexes.get
+    for path in exact_path_to_probe_indexes.keys() & changed_path_set:
+        matched_probe_indexes_update(exact_path_to_probe_indexes_get(path, ()))
     if not wildcard_glob_matchers:
         return frozenset(matched_probe_indexes)
     for path in changed_paths:
@@ -2505,7 +2518,7 @@ def _match_probe_indexes_uncached(
             if prefix and not path.startswith(prefix):
                 continue
             if pattern.match(path) is not None:
-                matched_probe_indexes.update(probe_indexes)
+                matched_probe_indexes_update(probe_indexes)
     return frozenset(matched_probe_indexes)
 
 

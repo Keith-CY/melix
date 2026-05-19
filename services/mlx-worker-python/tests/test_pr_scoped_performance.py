@@ -203,8 +203,7 @@ def test_tool_registry_schema_bytes_probe_script_emits_metrics(
     assert metrics["schema_bytes"] > 0.0
     assert metrics["elapsed_ms_mean"] >= 0.0
     assert metrics["json_schema_calls_mean"] == 0.0
-    tool_count = len(probe_script["built_in_tool_registry"]().tools)
-    assert metrics["schema_byte_count_calls_mean"] == 20.0 * tool_count
+    assert metrics["schema_byte_count_calls_mean"] == 0.0
 
 
 def test_tool_registry_select_probe_script_emits_metrics(
@@ -2501,7 +2500,11 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
         seen_ids.add(probe_id)
         assert raw_probe.get("watch_globs"), f"{probe_id} must declare changed-file globs"
         assert raw_probe.get("test_command", "").strip(), f"{probe_id} must declare a focused test command"
-        assert raw_probe.get("coverage_command", "").strip(), f"{probe_id} must declare a coverage command"
+        coverage_command = str(raw_probe.get("coverage_command", ""))
+        assert coverage_command.strip(), f"{probe_id} must declare a coverage command"
+        assert "python scripts/changed_scope_coverage.py" not in coverage_command
+        if "scripts/changed_scope_coverage.py" in coverage_command:
+            assert "python3 scripts/changed_scope_coverage.py" in coverage_command
         assert raw_probe.get("probe_command", "").strip() or raw_probe.get("probe_impl") != "command_json"
         assert raw_probe.get("metrics"), f"{probe_id} must declare metrics"
         for glob in raw_probe.get("watch_globs", []):
@@ -2665,6 +2668,38 @@ def test_load_probe_registry_uses_absolute_cache_key_without_resolving(
     assert scope["selected_count"] == 0
 
 
+def test_load_probe_registry_absolutizes_relative_cache_keys(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    registry_path = tmp_path / "probe-registry.json"
+    registry_path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "demo",
+                    "name": "Demo",
+                    "probe_impl": "command_json",
+                    "probe_command": "python3 -c \"import json; print(json.dumps({'elapsed_ms_mean': 1.0}))\"",
+                    "metrics": [{"key": "elapsed_ms_mean", "unit": "ms", "direction": "lower_is_better"}],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cache = pr_scoped_performance_module._PROBE_REGISTRY_CACHE
+    cache.clear()
+    monkeypatch.chdir(tmp_path)
+
+    try:
+        first = load_probe_registry("probe-registry.json")
+        second = load_probe_registry(registry_path)
+    finally:
+        cache.clear()
+
+    assert second is first
+
+
 def test_scope_report_with_no_matching_probe_returns_empty_selection() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -2801,6 +2836,31 @@ def test_build_scope_report_reuses_scope_cached_registry_without_double_stat(
     assert second["selected_probes"] == first["selected_probes"]
     assert selected_cache_populated
     assert build_scope_report(registry_path=registry_path, changed_files=[])["selected_probes"] == []
+
+
+def test_probe_id_index_reuses_cached_mapping_without_reiterating() -> None:
+    probes = (
+        ProbeDefinition(
+            probe_id="target",
+            name="Target",
+            runner="ubuntu-latest",
+            watch_globs=(),
+            test_command="",
+            coverage_command="",
+            probe_impl="command_json",
+            probe_command="",
+            metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+        ),
+    )
+    cache = pr_scoped_performance_module._PROBE_ID_INDEX_CACHE
+    cache.clear()
+
+    first = _probe_id_to_index(probes)
+    second = _probe_id_to_index(probes)
+
+    cache.clear()
+    assert first == {"target": 0}
+    assert second is first
 
 
 def test_probe_id_index_reuses_cached_mapping_without_reiterating() -> None:
@@ -3391,6 +3451,7 @@ def test_job_registry_probe_script_emits_metrics(capsys: pytest.CaptureFixture[s
     payload = json.loads(capsys.readouterr().out)
     assert payload["active_manifest_elapsed_ms_mean"] > 0
     assert payload["resolve_target_elapsed_ms_mean"] > 0
+    assert payload["resolve_trimmed_target_elapsed_ms_mean"] > 0
     assert payload["restore_elapsed_ms_mean"] > 0
     assert payload["restore_elapsed_ms_min"] > 0
     assert payload["active_manifest_count"] == 960.0
