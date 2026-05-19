@@ -94,7 +94,10 @@ def test_dataset_catalog_inferred_split_and_config_preserves_legacy_helpers() ->
     assert catalog._inferred_split_and_config("data/train-00000-of-00001.jsonl") == ("train", "default")
     assert catalog._inferred_split_and_config("custom\\test.json") == ("test", "custom")
     assert catalog._inferred_split_and_config("validation/shard-00000.jsonl") == ("validation", "default")
+    assert catalog._inferred_split_and_config("valid/shard-00000.jsonl") == ("validation", "default")
+    assert catalog._inferred_split_and_config("dev/shard-00000.jsonl") == ("validation", "default")
     assert catalog._inferred_split_and_config("data/shard-00000.jsonl") == ("", "default")
+    assert catalog._inferred_split_and_config("default/test-00000.jsonl") == ("test", "default")
     assert catalog._inferred_split_and_config("README.md") == ("", "default")
     assert catalog._inferred_split_and_config("") == ("", "default")
 
