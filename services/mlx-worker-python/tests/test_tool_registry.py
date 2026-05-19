@@ -59,6 +59,32 @@ def test_tool_registry_metrics_reuses_cached_schema_byte_counts(monkeypatch: pyt
     assert registry.metrics().schema_bytes == expected_schema_bytes
 
 
+def test_tool_registry_metrics_reuses_registry_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = built_in_tool_registry()
+    expected_metrics = registry.metrics()
+
+    def fail_schema_byte_count(self: ToolDescriptor) -> int:
+        raise AssertionError("metrics() should reuse the registry metrics snapshot")
+
+    monkeypatch.setattr(ToolDescriptor, "schema_byte_count", fail_schema_byte_count)
+
+    with pytest.raises(AssertionError, match=r"metrics\(\) should reuse"):
+        registry.tools[0].schema_byte_count()
+    assert registry.metrics() is expected_metrics
+    assert registry.metrics().schema_bytes == expected_metrics.schema_bytes
+
+
+def test_tool_registry_metrics_snapshot_updates_for_selected_registry() -> None:
+    registry = built_in_tool_registry()
+
+    selected = registry.select(["visit", "image_crop", "visit"])
+
+    assert selected.metrics().tool_count == 2
+    assert selected.metrics().schema_bytes == sum(
+        tool.schema_byte_count() for tool in selected.tools
+    )
+
+
 def test_tool_registry_rejects_duplicate_tool_names() -> None:
     registry = built_in_tool_registry()
 
