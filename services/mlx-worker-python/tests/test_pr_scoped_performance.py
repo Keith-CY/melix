@@ -203,6 +203,7 @@ def test_tool_registry_schema_bytes_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["schema_bytes"] > 0.0
     assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["schema_payload_elapsed_ms_mean"] >= 0.0
     assert metrics["json_schema_calls_mean"] == 0.0
     assert metrics["schema_byte_count_calls_mean"] == 0.0
 

@@ -63,6 +63,7 @@ class ToolDescriptor:
     tool_kind: str
     observation_kind: str
     arguments: tuple[ToolArgumentDescriptor, ...]
+    _cached_required_arguments: tuple[str, ...] = field(default=(), init=False, repr=False)
     _cached_schema: str = field(default="", init=False, repr=False)
     _cached_schema_bytes: int = field(default=0, init=False, repr=False)
 
@@ -89,13 +90,15 @@ class ToolDescriptor:
                     f"Duplicate argument {argument.name} in tool registry entry {normalized_name}."
                 )
             argument_names.add(argument.name)
+        required_arguments = tuple(argument.name for argument in self.arguments if argument.required)
+        object.__setattr__(self, "_cached_required_arguments", required_arguments)
         cached_schema = _COMPACT_SORTED_JSON_ENCODER.encode(self.schema_payload())
         object.__setattr__(self, "_cached_schema", cached_schema)
         object.__setattr__(self, "_cached_schema_bytes", len(cached_schema.encode("utf-8")))
 
     @property
     def required_arguments(self) -> tuple[str, ...]:
-        return tuple(argument.name for argument in self.arguments if argument.required)
+        return self._cached_required_arguments
 
     def schema_payload(self) -> dict[str, Any]:
         return {

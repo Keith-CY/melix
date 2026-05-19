@@ -94,6 +94,16 @@ def test_tool_registry_names_reuses_registry_snapshot() -> None:
     assert registry.names() == BUILTIN_AGENTIC_TOOL_NAMES
 
 
+def test_tool_descriptor_required_arguments_reuses_cached_snapshot() -> None:
+    tool = built_in_tool_registry().tools[0]
+    expected_required_arguments = tool.required_arguments
+    object.__setattr__(tool, "arguments", ())
+
+    assert tool.required_arguments is expected_required_arguments
+    assert tool.required_arguments == ("media_ref", "region")
+    assert tool.schema_payload()["required"] == ["media_ref", "region"]
+
+
 def test_tool_registry_rejects_duplicate_tool_names() -> None:
     registry = built_in_tool_registry()
 
