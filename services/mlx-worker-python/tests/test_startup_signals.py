@@ -483,6 +483,24 @@ def test_log_excerpt_skips_missing_paths_without_exists_probe(
     assert startup_signals_module._log_excerpt(missing_log, existing_log) == "ready"
 
 
+def test_log_excerpt_preserves_multiple_log_order_without_list_join(tmp_path: Path) -> None:
+    control_log = tmp_path / "control-plane.stderr.log"
+    worker_log = tmp_path / "python-worker.stderr.log"
+    control_log.write_text("booting\ncontrol ready\n", encoding="utf-8")
+    worker_log.write_text("booting\nworker ready\n", encoding="utf-8")
+
+    assert startup_signals_module._log_excerpt(control_log, worker_log) == "control ready | worker ready"
+
+
+def test_log_excerpt_skips_empty_logs_during_single_pass_combine(tmp_path: Path) -> None:
+    empty_log = tmp_path / "empty.stderr.log"
+    worker_log = tmp_path / "python-worker.stderr.log"
+    empty_log.write_text("\n\t\n", encoding="utf-8")
+    worker_log.write_text("booting\nworker ready\n", encoding="utf-8")
+
+    assert startup_signals_module._log_excerpt(empty_log, worker_log) == "worker ready"
+
+
 def test_read_last_nonempty_line_ignores_trailing_blank_lines(tmp_path: Path) -> None:
     log_path = tmp_path / "control-plane.stderr.log"
     log_path.write_text("booting\nready\n\n", encoding="utf-8")
