@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -153,6 +154,160 @@ def test_benchmark_text_cases_preserve_agentic_tool_fixture_contract() -> None:
     assert cases[0].prompt == "Find the receipt total."
     assert cases[0].tool_calls[0]["name"] == "visit"
     assert cases[0].tool_fixture_context["pages"]["fixture://receipt"]["text"] == "Total is 42."
+
+
+def test_default_catalog_materializes_agentic_fixture_suites_without_remote_fetch(
+    tmp_path: Path,
+) -> None:
+    def fail_fetcher(endpoint: str, params: dict[str, str]) -> dict[str, object]:
+        raise AssertionError(f"agentic fixture suite should not fetch remote data: {endpoint} {params}")
+
+    catalog = BenchmarkSuiteCatalog(hf_dataset_fetcher=fail_fetcher)
+    definitions_by_id = {
+        definition.suite_id: definition
+        for definition in catalog.list_definitions()
+        if definition.task_kind == "text-generation"
+    }
+
+    assert definitions_by_id["agentic_image"].title == "Agentic Image Fixture"
+    assert definitions_by_id["agentic_search"].title == "Agentic Search Fixture"
+    assert definitions_by_id["agentic_visit"].title == "Agentic Visit Fixture"
+
+    image_suite = catalog.resolve_suite(
+        "agentic_image",
+        jobs_root=tmp_path,
+        parameters={"sample_size": "1"},
+    )
+    search_suite = catalog.resolve_suite(
+        "agentic_search",
+        jobs_root=tmp_path,
+        parameters={"sample_size": "1"},
+    )
+    visit_suite = catalog.resolve_suite(
+        "agentic_visit",
+        jobs_root=tmp_path,
+        parameters={"sample_size": "1"},
+    )
+
+    assert image_suite.source_kind == "melix_benchmark_fixture"
+    assert image_suite.metadata()["dataset_uri"] == (
+        "melix-fixture://benchmark/agentic-image.dev.v1"
+    )
+    assert image_suite.metadata()["fixture_package_id"] == "agentic-image.dev.v1"
+    assert image_suite.dataset_path == "agentic-image.dev.v1"
+    assert image_suite.prompt_batches == (
+        "Inspect the storefront image, find the matching visual listing, and answer with the visible brand.",
+    )
+    assert [call["name"] for call in image_suite.cases[0].tool_calls] == [
+        "image_crop",
+        "image_search",
+    ]
+    assert image_suite.cases[0].tool_fixture_context["crops"]["storefront#sign"]["text"] == "MELIX LABS"
+    assert image_suite.cases[0].tool_fixture_context["image_corpus"][0]["media_ref"] == "storefront"
+
+    assert search_suite.source_kind == "melix_benchmark_fixture"
+    assert search_suite.metadata()["dataset_uri"] == (
+        "melix-fixture://benchmark/agentic-search.dev.v1"
+    )
+    assert search_suite.cases[0].tool_calls[0]["name"] == "text_search"
+    assert search_suite.cases[0].tool_fixture_context["text_corpus"][0]["id"] == "doc-melix-runtime"
+
+    assert visit_suite.source_kind == "melix_benchmark_fixture"
+    assert visit_suite.metadata()["dataset_uri"] == (
+        "melix-fixture://benchmark/agentic-visit.dev.v1"
+    )
+    assert visit_suite.cases[0].tool_calls[0]["name"] == "visit"
+    assert visit_suite.cases[0].tool_fixture_context["pages"]["fixture://melix/runtime"]["title"] == (
+        "Melix Runtime Brief"
+    )
+
+    manifest = json.loads(
+        (image_suite.materialized_package_path / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["source_kind"] == "melix_benchmark_fixture"
+    assert manifest["fixture_package_id"] == "agentic-image.dev.v1"
+    assert manifest["dataset_uri"] == "melix-fixture://benchmark/agentic-image.dev.v1"
+
+
+def test_benchmark_fixture_materialization_raises_typed_errors_for_invalid_packages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture_root = tmp_path / "fixtures"
+    monkeypatch.setattr(benchmark_suites, "_BENCHMARK_FIXTURES_ROOT", fixture_root)
+
+    missing_definition = BenchmarkSuiteDefinition(
+        task_kind="text-generation",
+        suite_id="missing-fixture",
+        title="Missing Fixture",
+        dataset_path="missing.dev.v1",
+        dataset_name="default",
+        dataset_revision="1",
+        dataset_split="validation",
+        prompt_feature="prompt",
+        text_feature="",
+        image_feature="",
+        source_image_feature="",
+        mask_feature="",
+        default_prompt="",
+        default_sample_size=1,
+        default_batch_factor=1,
+        fixture_package_id="missing.dev.v1",
+    )
+    with pytest.raises(ModelOperationError) as missing_error:
+        benchmark_suites._materialize_benchmark_suite(
+            missing_definition,
+            cache_root=tmp_path / "cache-missing",
+            fetch_json=FakeBenchmarkSuiteFetcher(),
+            sample_hint=1,
+        )
+    assert missing_error.value.code == "invalid_benchmark_suite"
+    assert missing_error.value.details["fixture_package_id"] == "missing.dev.v1"
+
+    empty_fixture_root = fixture_root / "empty.dev.v1"
+    empty_fixture_root.mkdir(parents=True)
+    (empty_fixture_root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.benchmark_fixture_package.v1",
+                "fixture_package_id": "empty.dev.v1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (empty_fixture_root / "samples.jsonl").write_text("\n", encoding="utf-8")
+    empty_definition = replace(
+        missing_definition,
+        suite_id="empty-fixture",
+        dataset_path="empty.dev.v1",
+        fixture_package_id="empty.dev.v1",
+    )
+    with pytest.raises(ModelOperationError) as empty_error:
+        benchmark_suites._materialize_benchmark_suite(
+            empty_definition,
+            cache_root=tmp_path / "cache-empty",
+            fetch_json=FakeBenchmarkSuiteFetcher(),
+            sample_hint=1,
+        )
+    assert empty_error.value.code == "invalid_benchmark_suite"
+    assert empty_error.value.details["fixture_package_id"] == "empty.dev.v1"
+
+    invalid_definition = replace(
+        missing_definition,
+        suite_id="invalid-fixture",
+        dataset_path="../bad",
+        fixture_package_id="../bad",
+    )
+    with pytest.raises(ModelOperationError) as invalid_error:
+        benchmark_suites._materialize_benchmark_suite(
+            invalid_definition,
+            cache_root=tmp_path / "cache-invalid",
+            fetch_json=FakeBenchmarkSuiteFetcher(),
+            sample_hint=1,
+        )
+    assert invalid_error.value.code == "invalid_benchmark_suite"
+    assert invalid_error.value.details == {"fixture_package_id": "../bad"}
 
 
 def test_load_materialized_rows_streams_without_read_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

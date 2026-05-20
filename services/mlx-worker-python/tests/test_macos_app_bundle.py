@@ -189,11 +189,16 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
         repo_root
         / "services/mlx-worker-python/fixtures/evaluation/top200.event-extraction.top20.v1"
     )
+    benchmark_fixture_root = (
+        repo_root
+        / "services/mlx-worker-python/fixtures/benchmark/agentic-image.dev.v1"
+    )
     full_fixture_root = (
         repo_root
         / "services/mlx-worker-python/fixtures/evaluation/top200.event-extraction.full.v1"
     )
     top20_fixture_root.mkdir(parents=True)
+    benchmark_fixture_root.mkdir(parents=True)
     full_fixture_root.mkdir(parents=True)
     (repo_root / "packages/protocol/python").mkdir(parents=True)
     (repo_root / "scripts").mkdir(parents=True)
@@ -218,6 +223,22 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
             + "\n"
             for index in range(20)
         ),
+        encoding="utf-8",
+    )
+    (benchmark_fixture_root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.benchmark_fixture_package.v1",
+                "fixture_package_id": "agentic-image.dev.v1",
+                "suite_id": "agentic_image",
+                "sample_count": 1,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (benchmark_fixture_root / "samples.jsonl").write_text(
+        json.dumps({"prompt": "Inspect the image.", "tool_calls": []}) + "\n",
         encoding="utf-8",
     )
     (full_fixture_root / "samples.jsonl").write_text(
@@ -282,6 +303,9 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
     bundled_top20 = bundled_repo_root / "services/mlx-worker-python/fixtures/evaluation/top200.event-extraction.top20.v1"
     assert bundled_top20.joinpath("manifest.json").exists() is True
     assert len(bundled_top20.joinpath("samples.jsonl").read_text(encoding="utf-8").splitlines()) == 20
+    bundled_agentic_image = bundled_repo_root / "services/mlx-worker-python/fixtures/benchmark/agentic-image.dev.v1"
+    assert bundled_agentic_image.joinpath("manifest.json").exists() is True
+    assert bundled_agentic_image.joinpath("samples.jsonl").exists() is True
     assert bundled_repo_root.joinpath(
         "services/mlx-worker-python/fixtures/evaluation/top200.event-extraction.full.v1"
     ).exists() is False

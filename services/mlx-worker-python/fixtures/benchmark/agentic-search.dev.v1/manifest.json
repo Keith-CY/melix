@@ -1,0 +1,9 @@
+{
+  "schema_version": "melix.benchmark_fixture_package.v1",
+  "fixture_package_id": "agentic-search.dev.v1",
+  "suite_id": "agentic_search",
+  "task_kind": "text-generation",
+  "version": "1",
+  "sample_count": 1,
+  "split": "validation"
+}

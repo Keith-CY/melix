@@ -449,6 +449,47 @@ Dataset references select the dataset source only. Existing field mapping,
 split, config, sample-size, and suite semantics still determine how rows become
 benchmark prompts or evaluation samples.
 
+## Benchmark Fixture Sources
+
+Benchmark suites may also materialize from repository-owned fixture packages
+under `services/mlx-worker-python/fixtures/benchmark/`. These sources are used
+when CI or local agentic benchmark runs need deterministic prompts and tool
+fixture context without remote dataset or network search dependencies.
+
+The checked-in benchmark fixture package shape is:
+
+- `manifest.json`
+  - `schema_version: melix.benchmark_fixture_package.v1`
+  - `fixture_package_id`
+  - `suite_id`
+  - `task_kind`
+  - `version`
+  - `sample_count`
+  - `split`
+- `samples.jsonl`
+  - one JSON object per benchmark row
+  - for agentic `text-generation` suites, each row must include `prompt`
+  - tool-use rows may include `tool_calls` and `tool_fixture_context`
+
+Fixture-backed benchmark materialization must write the standard benchmark
+materialization package with:
+
+- `source_kind: melix_benchmark_fixture`
+- `dataset_uri: melix-fixture://benchmark/<fixture_package_id>`
+- `fixture_package_id`
+
+The default fixture-backed agentic benchmark suites are:
+
+- `agentic_image`: deterministic image-inspection and image-search tool path
+- `agentic_search`: deterministic text-search tool path
+- `agentic_visit`: deterministic page-visit tool path
+
+These suites use `task_kind: text-generation` because they benchmark agentic
+tool-use prompts and preserve the shared `tool_calls` plus
+`tool_fixture_context` row contract. The tool names and observation semantics
+remain governed by `docs/unified-agentic-tool-runtime-contract.md`; benchmark
+fixtures must not introduce benchmark-only tool names.
+
 ## Task Kinds
 
 Melix benchmark and evaluation targets use the following task-aligned values:
