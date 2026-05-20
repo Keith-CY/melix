@@ -1357,6 +1357,9 @@ Report semantics:
 - lower is better for latency, duration, memory, byte, queue-wait, warmup, prefill, decode,
   failure-count, failed-count, speculative rollback, rejected-token, speculative fallback, draft
   proposal, target verification, and DFlash rollback metrics
+- lower is better for matched-context agentic tool-turn cost and reliability metrics:
+  tool-call count, completed-tool count, observation count, turn count, tool latency,
+  observation bytes, fatal rate, timeout count, and failed-tool count
 - higher is better for throughput, success-rate, accuracy, typed-score, pass-rate, and win-count
   metrics, plus speculative acceptance and accepted-token metrics
 - runtime metadata from job parameters is rendered as metadata rows; matching values are `ok`, and

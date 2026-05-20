@@ -7,12 +7,13 @@ tool-use cost and failure shape at the request and matrix-cell levels.
 
 ## Scope
 
-- Covers issue #706 under the OpenSearch-VL agentic benchmark metrics direction.
+- Covers issue #706 and issue #707 under the OpenSearch-VL agentic benchmark
+  metrics direction.
 - Adds additive fields to benchmark row schemas and persisted CSV/JSONL outputs:
   `tool_call_count`, `tool_latency_ms`, `observation_bytes`, `fatal_rate`, and
   `turn_count`.
-- Keeps direction-aware report semantics for these fields out of scope for
-  issue #707.
+- Defines direction-aware report semantics for these fields in
+  `docs/plans/2026-05-20-agentic-benchmark-report-directions.md`.
 
 ## Architecture
 
@@ -76,7 +77,5 @@ fields so existing export/report paths do not split the benchmark contract.
 
 ## Known Gaps
 
-- Direction semantics for these metrics are intentionally deferred to issue
-  #707.
 - Fixture-backed agentic benchmark suite catalog entries are deferred to
   milestone 2.
