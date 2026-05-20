@@ -110,11 +110,11 @@ def test_grpo_policy_updates_persist_reward_components_and_fatal_stage(
     assert trace_rows[0]["scored_candidates"][0]["reward_components"]["total"] == pytest.approx(-1.2)
     assert trace_rows[0]["scored_candidates"][1]["reward_components"]["total"] == pytest.approx(-2.6)
     assert result.metrics.reward_mean == pytest.approx(-1.9)
-    assert result.metrics.reward_component_final_answer_mean == pytest.approx(0.8)
+    assert result.metrics.reward_component_final_answer_mean == pytest.approx(0.6)
     assert result.metrics.reward_component_tool_efficiency_mean == pytest.approx(-1.0)
-    assert result.metrics.reward_component_format_mean == pytest.approx(0.0)
+    assert result.metrics.reward_component_format_mean == pytest.approx(-0.5)
     assert result.metrics.reward_component_fatal_failure_mean == pytest.approx(-1.0)
-    assert result.metrics.reward_component_total_mean == pytest.approx(-1.2)
+    assert result.metrics.reward_component_total_mean == pytest.approx(-1.9)
     assert result.metrics.fatal_trace_count == 1
 
 
@@ -166,11 +166,12 @@ def test_lora_training_pipeline_records_grpo_reward_component_metrics(
         Path(result.manifest["alignment_run_manifest_path"]).read_text(encoding="utf-8")
     )
     metrics = alignment_manifest["metrics"]
-    assert metrics["reward_component_final_answer_mean"] == pytest.approx(0.6)
+    assert metrics["reward_mean"] == pytest.approx(0.65)
+    assert metrics["reward_component_final_answer_mean"] == pytest.approx(0.35)
     assert metrics["reward_component_tool_efficiency_mean"] == pytest.approx(0.2)
     assert metrics["reward_component_format_mean"] == pytest.approx(0.1)
     assert metrics["reward_component_fatal_failure_mean"] == pytest.approx(0.0)
-    assert metrics["reward_component_total_mean"] == pytest.approx(0.9)
+    assert metrics["reward_component_total_mean"] == pytest.approx(0.65)
     assert metrics["fatal_trace_count"] == 0
 
 

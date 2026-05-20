@@ -406,7 +406,9 @@ def _grpo_policy_updates(
         reward_values.extend(scores)
         selected = max(scored_candidates, key=lambda candidate: candidate["reward_components"]["total"])
         selected_components = dict(selected["reward_components"])
-        reward_component_summaries.append(selected_components)
+        reward_component_summaries.extend(
+            dict(candidate["reward_components"]) for candidate in scored_candidates
+        )
         group_margins.append(max(scores) - min(scores))
         group_mean = sum(scores) / len(scores)
         group_variances.append(sum((score - group_mean) ** 2 for score in scores) / len(scores))
@@ -538,7 +540,9 @@ def _grpo_runtime_policy_updates(
         reward_values.extend(scores)
         selected = max(generated_candidates, key=lambda candidate: candidate["reward_components"]["total"])
         selected_components = dict(selected["reward_components"])
-        reward_component_summaries.append(selected_components)
+        reward_component_summaries.extend(
+            dict(candidate["reward_components"]) for candidate in generated_candidates
+        )
         group_margins.append(max(scores) - min(scores))
         group_mean = sum(scores) / len(scores)
         group_variances.append(sum((score - group_mean) ** 2 for score in scores) / len(scores))

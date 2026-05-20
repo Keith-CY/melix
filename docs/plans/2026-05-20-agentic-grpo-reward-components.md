@@ -46,6 +46,8 @@ Success metrics:
 
 - Every selected GRPO and RLHF policy-update row includes `reward_components`.
 - GRPO candidate rows include component scores for each candidate.
+- GRPO component means use all scored/generated candidate components so
+  `reward_component_total_mean` stays aligned with `reward_mean`.
 - Fatal samples record `fatal_stage`, `fatal_penalty_applied`, and a negative
   `fatal_failure` component.
 - Alignment metrics report component means and fatal counts.
