@@ -166,10 +166,21 @@ def aggregate_response_only_boundaries(
     total_trainable_response_tokens = 0
     truncated_response_sample_count = 0
     fully_truncated_response_sample_count = 0
+    has_truncation_limit = max_seq_length is not None and max_seq_length > 0
+    effective_limit = max_seq_length if has_truncation_limit else 0
     for entry in boundaries:
         offset = entry.assistant_offset
-        response_tokens = entry.response_tokens
-        trainable_response_tokens = entry.trainable_response_tokens(max_seq_length)
+        total_tokens = entry.total_tokens
+        response_tokens = total_tokens - offset
+        if response_tokens < 0:
+            response_tokens = 0
+        if has_truncation_limit:
+            effective_total = total_tokens if total_tokens < effective_limit else effective_limit
+        else:
+            effective_total = total_tokens
+        trainable_response_tokens = effective_total - offset
+        if trainable_response_tokens < 0:
+            trainable_response_tokens = 0
         if sample_count == 0:
             boundary_min = offset
             boundary_max = offset
