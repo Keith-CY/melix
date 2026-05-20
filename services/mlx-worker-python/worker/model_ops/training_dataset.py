@@ -880,6 +880,18 @@ def _normalize_sample(
                             message="prompt_candidate candidate scores must be numeric.",
                             details={"candidate_index": str(candidate_index)},
                         ) from exc
+                for key in ("reward", "reward_components"):
+                    if key in candidate:
+                        if not isinstance(candidate[key], Mapping):
+                            raise ModelOperationError(
+                                code="invalid_dataset_package",
+                                message=f"prompt_candidate candidate {key} must be a JSON object.",
+                                details={"candidate_index": str(candidate_index)},
+                            )
+                        candidate_payload[key] = dict(candidate[key])
+                for key in ("format_valid", "format_score", "fatal_stage"):
+                    if key in candidate:
+                        candidate_payload[key] = candidate[key]
             else:
                 raise ModelOperationError(
                     code="invalid_dataset_package",
@@ -894,10 +906,30 @@ def _normalize_sample(
                 )
             candidate_payload["text"] = _truncate_text(candidate_text, max_characters_per_sample)
             normalized_candidates.append(candidate_payload)
-        return {
+        payload: dict[str, Any] = {
             "prompt": _truncate_text(prompt, max_characters_per_sample),
             "candidates": normalized_candidates,
         }
+        for key in (
+            "reward",
+            "reward_components",
+            "tool_budget",
+            "format_valid",
+            "format_score",
+            "fatal_stage",
+            "tool_calls",
+            "tool_fixture_context",
+            "tool_context",
+        ):
+            if key in sample:
+                value = sample[key]
+                if key in {"reward", "reward_components"} and not isinstance(value, Mapping):
+                    raise ModelOperationError(
+                        code="invalid_dataset_package",
+                        message=f"prompt_candidate {key} must be a JSON object.",
+                    )
+                payload[key] = dict(value) if isinstance(value, Mapping) else value
+        return payload
 
     if format_name == "reward_scored":
         prompt = str(sample.get("prompt", "")).strip()

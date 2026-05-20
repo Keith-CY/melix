@@ -537,6 +537,22 @@ def _alignment_manifest_payload(
                 "kl_penalty": alignment.kl_penalty,
                 "candidate_generation_mode": alignment.candidate_generation_mode,
                 "candidate_scoring_mode": alignment.candidate_scoring_mode,
+                "reward_component_final_answer_mean": (
+                    training_result.metrics.reward_component_final_answer_mean
+                ),
+                "reward_component_tool_efficiency_mean": (
+                    training_result.metrics.reward_component_tool_efficiency_mean
+                ),
+                "reward_component_format_mean": (
+                    training_result.metrics.reward_component_format_mean
+                ),
+                "reward_component_fatal_failure_mean": (
+                    training_result.metrics.reward_component_fatal_failure_mean
+                ),
+                "reward_component_total_mean": (
+                    training_result.metrics.reward_component_total_mean
+                ),
+                "fatal_trace_count": training_result.metrics.fatal_trace_count,
             }
         )
         if training_result.metrics.candidate_generation_backend:

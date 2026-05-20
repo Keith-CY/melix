@@ -174,6 +174,112 @@ def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
     assert stale_agentic_valid_path.exists() is False
     assert training_dataset_module.trainer_sample_counts(dataset) == (1, 0)
 
+    prompt_candidate_package_path = tmp_path / "prompt-candidate-package"
+    prompt_candidate_package_path.mkdir(parents=True, exist_ok=True)
+    (prompt_candidate_package_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": "prompt-candidate-package",
+                "format": "prompt_candidate",
+                "sample_count": 1,
+                "version": "1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (prompt_candidate_package_path / "samples.jsonl").write_text(
+        json.dumps(
+            {
+                "prompt": "Choose.",
+                "reward_components": {"tool_efficiency": 0.2},
+                "tool_budget": 2,
+                "format_score": 0.1,
+                "fatal_stage": "answer_invalid",
+                "tool_calls": [{"id": "tool-1"}],
+                "tool_fixture_context": {"pages": {}},
+                "tool_context": {"pages": {}},
+                "candidates": [
+                    {
+                        "text": "A",
+                        "score": 1.0,
+                        "reward_components": {"final_answer": 1.0},
+                        "format_score": 0.3,
+                        "fatal_stage": "parser_failure",
+                    },
+                    {"text": "B", "score": 0.0},
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    prompt_candidate_package = load_training_dataset_package(prompt_candidate_package_path)
+    prompt_candidate_sample = prompt_candidate_package.normalized_samples[0]
+
+    assert prompt_candidate_sample["reward_components"] == {"tool_efficiency": 0.2}
+    assert prompt_candidate_sample["tool_budget"] == 2
+    assert prompt_candidate_sample["format_score"] == 0.1
+    assert prompt_candidate_sample["fatal_stage"] == "answer_invalid"
+    assert prompt_candidate_sample["tool_calls"] == [{"id": "tool-1"}]
+    assert prompt_candidate_sample["tool_fixture_context"] == {"pages": {}}
+    assert prompt_candidate_sample["tool_context"] == {"pages": {}}
+    assert prompt_candidate_sample["candidates"][0]["reward_components"] == {"final_answer": 1.0}
+    assert prompt_candidate_sample["candidates"][0]["format_score"] == 0.3
+    assert prompt_candidate_sample["candidates"][0]["fatal_stage"] == "parser_failure"
+
+    bad_prompt_candidate_package_path = tmp_path / "bad-prompt-candidate-package"
+    bad_prompt_candidate_package_path.mkdir(parents=True, exist_ok=True)
+    (bad_prompt_candidate_package_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": "bad-prompt-candidate-package",
+                "format": "prompt_candidate",
+                "sample_count": 1,
+                "version": "1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (bad_prompt_candidate_package_path / "samples.jsonl").write_text(
+        json.dumps(
+            {
+                "prompt": "Choose.",
+                "reward_components": "bad",
+                "candidates": [
+                    {"text": "A", "score": 1.0},
+                    {"text": "B", "score": 0.0, "reward": "bad"},
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ModelOperationError, match="candidate reward must be a JSON object"):
+        load_training_dataset_package(bad_prompt_candidate_package_path)
+
+    (bad_prompt_candidate_package_path / "samples.jsonl").write_text(
+        json.dumps(
+            {
+                "prompt": "Choose.",
+                "reward_components": "bad",
+                "candidates": [
+                    {"text": "A", "score": 1.0},
+                    {"text": "B", "score": 0.0},
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ModelOperationError, match="prompt_candidate reward_components must be a JSON object"):
+        load_training_dataset_package(bad_prompt_candidate_package_path)
+
     agentic_package_path = tmp_path / "agentic-package"
     agentic_package_path.mkdir(parents=True, exist_ok=True)
     samples = [
