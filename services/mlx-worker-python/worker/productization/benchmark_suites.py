@@ -17,6 +17,8 @@ from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.training_dataset import HFDatasetFetcher
 
 _HF_DATASETS_SERVER_URL = "https://datasets-server.huggingface.co"
+_BENCHMARK_FIXTURES_ROOT = Path(__file__).resolve().parents[2] / "fixtures" / "benchmark"
+_BENCHMARK_FIXTURE_SOURCE_KIND = "melix_benchmark_fixture"
 
 
 @dataclass(frozen=True)
@@ -36,6 +38,7 @@ class BenchmarkSuiteDefinition:
     default_prompt: str
     default_sample_size: int
     default_batch_factor: int
+    fixture_package_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -69,6 +72,7 @@ class ResolvedBenchmarkSuite:
     hf_snapshot_id: str = ""
     hf_snapshot_path: str = ""
     hf_cache_repo_path: str = ""
+    fixture_package_id: str = ""
 
     def metadata(self) -> dict[str, object]:
         metadata: dict[str, object] = {
@@ -91,6 +95,8 @@ class ResolvedBenchmarkSuite:
             metadata["hf_snapshot_id"] = self.hf_snapshot_id
             metadata["hf_snapshot_path"] = self.hf_snapshot_path
             metadata["hf_cache_repo_path"] = self.hf_cache_repo_path
+        if self.fixture_package_id:
+            metadata["fixture_package_id"] = self.fixture_package_id
         return metadata
 
 
@@ -174,7 +180,9 @@ class BenchmarkSuiteCatalog:
                 dataset_name=materialized["dataset_name"],
                 dataset_revision=definition.dataset_revision,
                 dataset_split=definition.dataset_split,
-            ),
+            )
+            if not materialized.get("dataset_uri")
+            else str(materialized["dataset_uri"]),
             materialized_package_path=materialized["package_path"],
             cache_key=materialized["cache_key"],
             cache_hit=materialized["cache_hit"],
@@ -182,6 +190,7 @@ class BenchmarkSuiteCatalog:
             hf_snapshot_id=materialized.get("hf_snapshot_id", ""),
             hf_snapshot_path=materialized.get("hf_snapshot_path", ""),
             hf_cache_repo_path=materialized.get("hf_cache_repo_path", ""),
+            fixture_package_id=materialized.get("fixture_package_id", ""),
             sample_size=sample_size,
             batch_factor=batch_factor,
             prompt_batches=tuple(case.prompt for case in cases),
@@ -226,6 +235,60 @@ def default_benchmark_suite_definitions() -> tuple[BenchmarkSuiteDefinition, ...
             default_prompt="",
             default_sample_size=5,
             default_batch_factor=1,
+        ),
+        BenchmarkSuiteDefinition(
+            task_kind="text-generation",
+            suite_id="agentic_image",
+            title="Agentic Image Fixture",
+            dataset_path="agentic-image.dev.v1",
+            dataset_name="default",
+            dataset_revision="1",
+            dataset_split="validation",
+            prompt_feature="prompt",
+            text_feature="",
+            image_feature="",
+            source_image_feature="",
+            mask_feature="",
+            default_prompt="",
+            default_sample_size=1,
+            default_batch_factor=1,
+            fixture_package_id="agentic-image.dev.v1",
+        ),
+        BenchmarkSuiteDefinition(
+            task_kind="text-generation",
+            suite_id="agentic_search",
+            title="Agentic Search Fixture",
+            dataset_path="agentic-search.dev.v1",
+            dataset_name="default",
+            dataset_revision="1",
+            dataset_split="validation",
+            prompt_feature="prompt",
+            text_feature="",
+            image_feature="",
+            source_image_feature="",
+            mask_feature="",
+            default_prompt="",
+            default_sample_size=1,
+            default_batch_factor=1,
+            fixture_package_id="agentic-search.dev.v1",
+        ),
+        BenchmarkSuiteDefinition(
+            task_kind="text-generation",
+            suite_id="agentic_visit",
+            title="Agentic Visit Fixture",
+            dataset_path="agentic-visit.dev.v1",
+            dataset_name="default",
+            dataset_revision="1",
+            dataset_split="validation",
+            prompt_feature="prompt",
+            text_feature="",
+            image_feature="",
+            source_image_feature="",
+            mask_feature="",
+            default_prompt="",
+            default_sample_size=1,
+            default_batch_factor=1,
+            fixture_package_id="agentic-visit.dev.v1",
         ),
         BenchmarkSuiteDefinition(
             task_kind="image-to-text",
@@ -385,12 +448,24 @@ def _materialize_benchmark_suite(
             "cache_key": cache_key,
             "cache_hit": True,
             "source_kind": str(manifest.get("source_kind", "hf_dataset")),
+            "dataset_uri": str(manifest.get("dataset_uri", "")),
+            "fixture_package_id": str(manifest.get("fixture_package_id", "")),
             "hf_snapshot_id": str(manifest.get("hf_snapshot_id", "")),
             "hf_snapshot_path": str(manifest.get("hf_snapshot_path", "")),
             "hf_cache_repo_path": str(manifest.get("hf_cache_repo_path", "")),
             "dataset_name": str(manifest.get("dataset_name", definition.dataset_name or "default")),
             "rows": _load_materialized_rows(rows_path, limit=sample_hint),
         }
+
+    if definition.fixture_package_id:
+        return _materialize_fixture_benchmark_suite(
+            definition,
+            package_path=package_path,
+            manifest_path=manifest_path,
+            rows_path=rows_path,
+            cache_key=cache_key,
+            sample_hint=sample_hint,
+        )
 
     source_kind = "hf_dataset"
     local_snapshot = None
@@ -464,9 +539,90 @@ def _materialize_benchmark_suite(
         "cache_key": cache_key,
         "cache_hit": False,
         "source_kind": source_kind,
+        "dataset_uri": "",
+        "fixture_package_id": "",
         "hf_snapshot_id": local_snapshot.snapshot_id if local_snapshot is not None else "",
         "hf_snapshot_path": str(local_snapshot.snapshot_path) if local_snapshot is not None else "",
         "hf_cache_repo_path": str(local_snapshot.cache_repo_path) if local_snapshot is not None else "",
+        "dataset_name": dataset_name,
+        "rows": rows,
+    }
+
+
+def _materialize_fixture_benchmark_suite(
+    definition: BenchmarkSuiteDefinition,
+    *,
+    package_path: Path,
+    manifest_path: Path,
+    rows_path: Path,
+    cache_key: str,
+    sample_hint: int,
+) -> dict[str, Any]:
+    fixture_dir = _benchmark_fixture_package_path(definition.fixture_package_id)
+    source_manifest_path = fixture_dir / "manifest.json"
+    source_rows_path = fixture_dir / "samples.jsonl"
+    if not source_manifest_path.is_file() or not source_rows_path.is_file():
+        raise ModelOperationError(
+            code="invalid_benchmark_suite",
+            message="Benchmark fixture package is missing manifest.json or samples.jsonl.",
+            details={
+                "suite_id": definition.suite_id,
+                "task_kind": definition.task_kind,
+                "fixture_package_id": definition.fixture_package_id,
+            },
+        )
+
+    source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
+    fixture_package_id = str(
+        source_manifest.get("fixture_package_id") or definition.fixture_package_id
+    )
+    rows = _load_materialized_rows(source_rows_path, limit=sample_hint)
+    if not rows:
+        raise ModelOperationError(
+            code="invalid_benchmark_suite",
+            message="Benchmark fixture package did not contain any usable rows.",
+            details={
+                "suite_id": definition.suite_id,
+                "task_kind": definition.task_kind,
+                "fixture_package_id": fixture_package_id,
+            },
+        )
+
+    dataset_name = str(source_manifest.get("dataset_name") or definition.dataset_name or "default")
+    dataset_uri = _benchmark_fixture_dataset_uri(fixture_package_id)
+    package_path.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "schema_version": "melix.benchmark_suite_materialization.v1",
+        "source_kind": _BENCHMARK_FIXTURE_SOURCE_KIND,
+        "task_kind": definition.task_kind,
+        "suite_id": definition.suite_id,
+        "dataset_path": definition.dataset_path,
+        "dataset_name": dataset_name,
+        "dataset_revision": definition.dataset_revision,
+        "dataset_split": definition.dataset_split,
+        "dataset_uri": dataset_uri,
+        "fixture_package_id": fixture_package_id,
+        "fixture_package_path": str(fixture_dir),
+        "fixture_schema_version": str(source_manifest.get("schema_version", "")),
+        "prompt_feature": definition.prompt_feature,
+        "text_feature": definition.text_feature,
+        "image_feature": definition.image_feature,
+        "source_image_feature": definition.source_image_feature,
+        "mask_feature": definition.mask_feature,
+        "default_prompt": definition.default_prompt,
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    _write_jsonl_rows(rows_path, rows)
+    return {
+        "package_path": package_path,
+        "cache_key": cache_key,
+        "cache_hit": False,
+        "source_kind": _BENCHMARK_FIXTURE_SOURCE_KIND,
+        "dataset_uri": dataset_uri,
+        "fixture_package_id": fixture_package_id,
+        "hf_snapshot_id": "",
+        "hf_snapshot_path": "",
+        "hf_cache_repo_path": "",
         "dataset_name": dataset_name,
         "rows": rows,
     }
@@ -500,6 +656,7 @@ def _definition_with_dataset_override(
         image_feature=parameters.get("image_feature", "").strip() or definition.image_feature,
         source_image_feature=parameters.get("source_image_feature", "").strip() or definition.source_image_feature,
         mask_feature=parameters.get("mask_feature", "").strip() or definition.mask_feature,
+        fixture_package_id="",
     )
 
 
@@ -753,9 +910,25 @@ def _benchmark_suite_cache_key(definition: BenchmarkSuiteDefinition) -> str:
             definition.source_image_feature,
             definition.mask_feature,
             definition.default_prompt,
+            definition.fixture_package_id,
         ]
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _benchmark_fixture_package_path(fixture_package_id: str) -> Path:
+    normalized = fixture_package_id.strip()
+    if not normalized or "/" in normalized or "\\" in normalized:
+        raise ModelOperationError(
+            code="invalid_benchmark_suite",
+            message="Invalid benchmark fixture package id.",
+            details={"fixture_package_id": fixture_package_id},
+        )
+    return _BENCHMARK_FIXTURES_ROOT / normalized
+
+
+def _benchmark_fixture_dataset_uri(fixture_package_id: str) -> str:
+    return f"melix-fixture://benchmark/{fixture_package_id}"
 
 
 def _hf_dataset_uri(

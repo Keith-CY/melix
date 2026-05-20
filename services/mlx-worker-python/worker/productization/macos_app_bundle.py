@@ -19,6 +19,11 @@ from worker.productization.startup_signals import default_update_channel_path
 
 
 _BUNDLED_EVALUATION_FIXTURE_IDS = ("top200.event-extraction.top20.v1",)
+_BUNDLED_BENCHMARK_FIXTURE_IDS = (
+    "agentic-image.dev.v1",
+    "agentic-search.dev.v1",
+    "agentic-visit.dev.v1",
+)
 
 
 @dataclass(frozen=True)
@@ -547,11 +552,13 @@ def _copy_repo_subset(repo_root: Path, target_root: Path) -> None:
     protocol_root = target_root / "packages/protocol/python"
     scripts_root = target_root / "scripts"
     evaluation_fixtures_root = worker_root / "fixtures/evaluation"
+    benchmark_fixtures_root = worker_root / "fixtures/benchmark"
 
     (worker_root / "worker").mkdir(parents=True, exist_ok=True)
     protocol_root.mkdir(parents=True, exist_ok=True)
     scripts_root.mkdir(parents=True, exist_ok=True)
     evaluation_fixtures_root.mkdir(parents=True, exist_ok=True)
+    benchmark_fixtures_root.mkdir(parents=True, exist_ok=True)
 
     shutil.copytree(
         repo_root / "services/mlx-worker-python/worker",
@@ -575,6 +582,17 @@ def _copy_repo_subset(repo_root: Path, target_root: Path) -> None:
         shutil.copytree(
             source_root,
             evaluation_fixtures_root / dataset_id,
+            dirs_exist_ok=True,
+            symlinks=True,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
+    for fixture_package_id in _BUNDLED_BENCHMARK_FIXTURE_IDS:
+        source_root = repo_root / "services/mlx-worker-python/fixtures/benchmark" / fixture_package_id
+        if not source_root.is_dir():
+            continue
+        shutil.copytree(
+            source_root,
+            benchmark_fixtures_root / fixture_package_id,
             dirs_exist_ok=True,
             symlinks=True,
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
