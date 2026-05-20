@@ -29,6 +29,7 @@ from worker.model_registry.catalog import (
     _local_model_id,
     _metadata_payload_has_mlx_signal,
     _read_text_prefix,
+    _text_layer_count,
     _text_lora_support_metadata,
 )
 
@@ -2301,6 +2302,53 @@ def test_registry_snapshot_applies_text_family_adapter_metadata_from_local_confi
     assert qwen3moe.ext["melix.lora.support_tier"] == "experimental"
     assert qwen3moe.ext["melix.lora.training_ready"] == "true"
     assert qwen3moe.ext["melix.lora.default_target_preset"] == "attention"
+
+
+def test_registry_snapshot_records_text_config_layer_count_for_text_model(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "Qwen3.5-9B-MLX-8bit" / "main"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/Qwen3.5-9B-MLX-8bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "qwen3_5",
+            "text_config": {
+                "model_type": "qwen3_5_text",
+                "num_hidden_layers": 32,
+            },
+        },
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    model = discovered["mlx-community/Qwen3.5-9B-MLX-8bit"]
+
+    assert model.model_kind == "text"
+    assert model.ext["text_layer_count"] == "32"
+
+
+def test_text_layer_count_metadata_prefers_top_level_count() -> None:
+    assert _text_layer_count(
+        {
+            "num_hidden_layers": 24,
+            "text_config": {"num_hidden_layers": 32},
+        }
+    ) == 24
+
+
+def test_text_layer_count_metadata_falls_back_to_nested_text_config() -> None:
+    assert _text_layer_count(
+        {
+            "model_type": "qwen3_5",
+            "text_config": {"num_hidden_layers": 32},
+        }
+    ) == 32
 
 
 def test_registry_snapshot_marks_dflash_draft_metadata_from_local_config(tmp_path: Path) -> None:
