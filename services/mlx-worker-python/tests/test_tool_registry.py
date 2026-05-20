@@ -127,6 +127,7 @@ def test_tool_registry_names_reuses_registry_snapshot() -> None:
 def test_tool_registry_descriptors_use_slotted_snapshots() -> None:
     registry = built_in_tool_registry()
 
+    assert not hasattr(registry, "__dict__")
     assert not hasattr(registry.metrics(), "__dict__")
     assert not hasattr(registry.tools[0], "__dict__")
     assert not hasattr(registry.tools[0].arguments[0], "__dict__")
