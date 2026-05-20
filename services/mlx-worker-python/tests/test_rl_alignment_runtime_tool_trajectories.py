@@ -121,6 +121,15 @@ def test_mlx_lm_runner_runtime_grpo_executes_candidate_tool_trajectories(
 
     assert row["selected_candidate_index"] == 0
     assert row["selected_candidate_text"] == "selected tool-backed answer"
+    assert row["candidate_reward_trace_schema_version"] == (
+        "melix.alignment_candidate_reward_trace.v1"
+    )
+    assert row["candidate_reward_trace_count"] == 2
+    assert row["candidate_reward_trace_total_count"] == 2
+    assert result.metrics.candidate_reward_trace_count == 2
+    assert result.metrics.candidate_reward_trace_schema_version == (
+        "melix.alignment_candidate_reward_trace.v1"
+    )
     assert row["selected_candidate_tool_call_count"] == 1
     assert row["agentic_tool_calls"][0]["id"] == "visit-selected"
     assert row["agentic_tool_observations"][0]["payload"]["text"] == "Selected source."
@@ -131,6 +140,41 @@ def test_mlx_lm_runner_runtime_grpo_executes_candidate_tool_trajectories(
     assert row["generated_candidates"][1]["tool_calls"][1]["name"] == "local_compute"
     assert row["generated_candidates"][1]["agentic_tool_metrics"]["agentic_tool.call_count"] == 2.0
     assert row["generated_candidates"][1]["reward_components"]["tool_efficiency"] == -1.0
+
+    candidate_trace_rows = [
+        json.loads(line)
+        for line in Path(result.metrics.candidate_reward_trace_path).read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+    adapter_config = json.loads(result.adapter_config_path.read_text(encoding="utf-8"))
+    selected_trace = candidate_trace_rows[0]
+    extra_trace = candidate_trace_rows[1]
+
+    assert adapter_config["candidate_reward_trace_path"] == (
+        result.metrics.candidate_reward_trace_path
+    )
+    assert adapter_config["candidate_reward_trace_count"] == 2
+    assert adapter_config["candidate_reward_trace_schema_version"] == (
+        "melix.alignment_candidate_reward_trace.v1"
+    )
+    assert row["candidate_reward_trace_path"] == result.metrics.candidate_reward_trace_path
+    assert selected_trace["schema_version"] == "melix.alignment_candidate_reward_trace.v1"
+    assert selected_trace["sample_index"] == 0
+    assert selected_trace["candidate_index"] == 0
+    assert selected_trace["selected"] is True
+    assert selected_trace["candidate_text"] == "selected tool-backed answer"
+    assert selected_trace["reward_components"] == row["reward_components"]
+    assert selected_trace["agentic_tool_calls"][0]["id"] == "visit-selected"
+    assert selected_trace["agentic_tool_observations"][0]["payload"]["text"] == "Selected source."
+    assert selected_trace["agentic_tool_metrics"]["agentic_tool.call_count"] == 1.0
+    assert len(selected_trace["replay_fingerprint"]) == 64
+    assert extra_trace["candidate_index"] == 1
+    assert extra_trace["selected"] is False
+    assert extra_trace["tool_call_count"] == 2
+    assert extra_trace["agentic_tool_observation_count"] == 2
+    assert extra_trace["tool_calls"][1]["name"] == "local_compute"
+    assert "agentic_tool_observations" not in extra_trace
 
 
 def test_alignment_runtime_tool_helpers_cover_namespaces_and_invalid_events() -> None:

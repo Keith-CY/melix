@@ -2700,6 +2700,34 @@ def test_run_subprocess_extracts_terminal_structured_result_without_splitlines(
 
     assert runner._run_subprocess("train", payload_path, error_code="backend_training_failure") == structured_payload
 
+    metrics = TrainingMetrics(
+        job_duration_ms=10.0,
+        tokens_seen=4,
+        examples_seen=2,
+        loss_final=0.4,
+        loss_best=0.3,
+        learning_rate_final=1e-4,
+        candidate_reward_trace_path="/tmp/candidate_reward_traces.jsonl",
+        candidate_reward_trace_count=2,
+        candidate_reward_trace_schema_version="melix.alignment_candidate_reward_trace.v1",
+    )
+    result = TrainingResult(
+        weights_path=tmp_path / "adapters.safetensors",
+        adapter_config_path=tmp_path / "adapter_config.json",
+        metrics=metrics,
+        execution_backend="native",
+    )
+    restored = mlx_lm_runner_module._deserialize_training_result(
+        mlx_lm_runner_module._serialize_training_result(result)
+    )
+
+    assert restored.metrics.candidate_reward_trace_path == "/tmp/candidate_reward_traces.jsonl"
+    assert restored.metrics.candidate_reward_trace_count == 2
+    assert (
+        restored.metrics.candidate_reward_trace_schema_version
+        == "melix.alignment_candidate_reward_trace.v1"
+    )
+
 
 def test_run_subprocess_rejects_missing_structured_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     payload_path = tmp_path / "payload.json"

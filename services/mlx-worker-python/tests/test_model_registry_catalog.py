@@ -1030,6 +1030,33 @@ def test_registry_root_tree_records_plain_local_weight_presence_during_single_sc
 
 
 
+def test_registry_root_tree_skips_hf_prune_relative_probe_for_plain_dirs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    for index in range(3):
+        config_dir = root / f"plain-model-{index}"
+        _write_model_config(config_dir, {"model_type": "qwen3"})
+        _write_weights(config_dir)
+
+    def fail_plain_prune_probe(root_path: Path, current: Path) -> bool:  # pragma: no cover
+        raise AssertionError(f"plain registry scans should not run HF prune relative checks: {root_path} {current}")
+
+    monkeypatch.setattr(catalog_module, "_is_hf_cache_pruned_subtree", fail_plain_prune_probe)
+
+    manifest_paths, plain_scans, hf_cache_repo_dirs = WorkerModelCatalog._scan_registry_root_tree_with_hf_repos(root)
+
+    assert manifest_paths == ()
+    assert hf_cache_repo_dirs == ()
+    assert [scan.model_dir for scan in plain_scans] == [
+        (root / "plain-model-0").resolve(),
+        (root / "plain-model-1").resolve(),
+        (root / "plain-model-2").resolve(),
+    ]
+
+
+
 def test_registry_snapshot_reuses_plain_local_tree_scan_and_config_payload(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
