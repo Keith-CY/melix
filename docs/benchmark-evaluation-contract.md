@@ -755,6 +755,11 @@ Each completed matrix cell must persist one summary row with:
 - `ttft_p95_ms`
 - `request_latency_p50_ms`
 - `request_latency_p95_ms`
+- `tool_call_count`
+- `tool_latency_ms`
+- `observation_bytes`
+- `fatal_rate`
+- `turn_count`
 - `created_at_unix_ms`
 
 ### Matrix Request-Level Outputs
@@ -806,7 +811,20 @@ Each completed matrix request row must persist:
 - `dflash_block_size`
 - `dflash_rollback_count`
 - `dflash_target_hidden_layers`
+- `tool_call_count`
+- `tool_latency_ms`
+- `observation_bytes`
+- `fatal_rate`
+- `turn_count`
 - `created_at_unix_ms`
+
+The agentic tool-turn fields are derived from the shared agentic tool runtime
+records governed by `docs/unified-agentic-tool-runtime-contract.md`.
+`tool_call_count`, `observation_bytes`, and `turn_count` are request counts or
+byte totals. `tool_latency_ms` is total tool adapter time for the row.
+Request-level `fatal_rate` is `1.0` when any tool observation for that request
+has timeout or failed status and `0.0` otherwise. Matrix summary `fatal_rate`
+is the fraction of requests in the cell with a fatal tool outcome.
 
 ### Matrix Export Formats
 

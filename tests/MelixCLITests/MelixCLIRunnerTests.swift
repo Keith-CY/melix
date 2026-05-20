@@ -9239,8 +9239,8 @@ struct MelixCLIRunnerTests {
 
         #expect(response["job_id"] as? String == "bench-matrix-1")
         #expect(response["row_count"] as? Int == 1)
-        #expect(csv.contains("job_id,task_kind,source_repo,model_id,suite_id,context_length,generation_length,batch_size,cache_profile,acceleration_profile,reasoning_mode,structured_output_mode,concurrency_level,repeats,requests,duration_seconds,ttft_mean_ms,ttft_std_ms,request_latency_mean_ms,request_latency_std_ms,prefill_tokens_per_second_mean,decode_tokens_per_second_mean,throughput_requests_per_second,throughput_tokens_per_second,success_rate,peak_memory_bytes_max,queue_wait_mean_ms,queue_wait_p95_ms,cell_wall_ms,completed_count,failed_count,ttft_p50_ms,ttft_p95_ms,request_latency_p50_ms,request_latency_p95_ms,created_at_unix_ms"))
-        #expect(csv.contains("bench-matrix-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,smoke,1024,128,2,cold,,enabled,plain_text,1,3,24,0,24.45,1.2,88.4,3.1,1400.0,58.2,3.8,221.5,1.0,2147483648,5.1,9.2,0.0,0,0,0.0,0.0,0.0,0.0,1712200000000"))
+        #expect(csv.contains("job_id,task_kind,source_repo,model_id,suite_id,context_length,generation_length,batch_size,cache_profile,acceleration_profile,reasoning_mode,structured_output_mode,concurrency_level,repeats,requests,duration_seconds,ttft_mean_ms,ttft_std_ms,request_latency_mean_ms,request_latency_std_ms,prefill_tokens_per_second_mean,decode_tokens_per_second_mean,throughput_requests_per_second,throughput_tokens_per_second,success_rate,peak_memory_bytes_max,queue_wait_mean_ms,queue_wait_p95_ms,cell_wall_ms,completed_count,failed_count,ttft_p50_ms,ttft_p95_ms,request_latency_p50_ms,request_latency_p95_ms,tool_call_count,tool_latency_ms,observation_bytes,fatal_rate,turn_count,created_at_unix_ms"))
+        #expect(csv.contains("bench-matrix-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,smoke,1024,128,2,cold,,enabled,plain_text,1,3,24,0,24.45,1.2,88.4,3.1,1400.0,58.2,3.8,221.5,1.0,2147483648,5.1,9.2,0.0,0,0,0.0,0.0,0.0,0.0,2,12.5,96,0.5,4,1712200000000"))
     }
 
     @Test("bench matrix export-summary-csv returns the written path in plain text")
@@ -9291,8 +9291,8 @@ struct MelixCLIRunnerTests {
 
         #expect(response["job_id"] as? String == "bench-matrix-1")
         #expect(response["row_count"] as? Int == 1)
-        #expect(csv.contains("job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,acceleration_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms,request_latency_ms,prefill_tokens_per_second,decode_tokens_per_second,queue_wait_ms,peak_memory_bytes,status,error_code,dataset_materialize_ms,prompt_render_ms,warmup_ms,prefill_ms,decode_ms,tokens_in,tokens_out,first_token_index,cache_hit,runtime_kind,error_stage,speculative_acceptance_rate,speculative_rollback_rate,speculative_accepted_tokens,speculative_rejected_tokens,speculative_fallback_count,speculative_num_draft_tokens,speculative_draft_model_configured,speculative_draft_propose_ms,speculative_target_verify_ms,dflash_enabled,dflash_block_size,dflash_rollback_count,dflash_target_hidden_layers,created_at_unix_ms"))
-        #expect(csv.contains("bench-matrix-1,cell-1,text-generation,smoke,1024,128,2,cold,,enabled,plain_text,1,0,0,24.45,88.4,1400.0,58.2,5.1,2147483648,completed,,0.0,0.0,0.0,0.0,0.0,0,0,0,false,,,0.0,0.0,0,0,0,0,false,0.0,0.0,false,0,0,0,1712200000000"))
+        #expect(csv.contains("job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,acceleration_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms,request_latency_ms,prefill_tokens_per_second,decode_tokens_per_second,queue_wait_ms,peak_memory_bytes,status,error_code,dataset_materialize_ms,prompt_render_ms,warmup_ms,prefill_ms,decode_ms,tokens_in,tokens_out,first_token_index,cache_hit,runtime_kind,error_stage,speculative_acceptance_rate,speculative_rollback_rate,speculative_accepted_tokens,speculative_rejected_tokens,speculative_fallback_count,speculative_num_draft_tokens,speculative_draft_model_configured,speculative_draft_propose_ms,speculative_target_verify_ms,dflash_enabled,dflash_block_size,dflash_rollback_count,dflash_target_hidden_layers,tool_call_count,tool_latency_ms,observation_bytes,fatal_rate,turn_count,created_at_unix_ms"))
+        #expect(csv.contains("bench-matrix-1,cell-1,text-generation,smoke,1024,128,2,cold,,enabled,plain_text,1,0,0,24.45,88.4,1400.0,58.2,5.1,2147483648,completed,,0.0,0.0,0.0,0.0,0.0,0,0,0,false,,,0.0,0.0,0,0,0,0,false,0.0,0.0,false,0,0,0,1,6.25,48,0.0,2,1712200000000"))
     }
 
     @Test("bench matrix export-requests-csv returns the written path in plain text")
@@ -12593,6 +12593,11 @@ private func makeBenchmarkExportBundleJSON() -> String {
           "peak_memory_bytes_max": 2147483648,
           "queue_wait_mean_ms": 5.1,
           "queue_wait_p95_ms": 9.2,
+          "tool_call_count": 2,
+          "tool_latency_ms": 12.5,
+          "observation_bytes": 96,
+          "fatal_rate": 0.5,
+          "turn_count": 4,
           "created_at_unix_ms": 1712200000000
         }
       ],
@@ -12619,6 +12624,11 @@ private func makeBenchmarkExportBundleJSON() -> String {
           "peak_memory_bytes": 2147483648,
           "status": "completed",
           "error_code": "",
+          "tool_call_count": 1,
+          "tool_latency_ms": 6.25,
+          "observation_bytes": 48,
+          "fatal_rate": 0.0,
+          "turn_count": 2,
           "created_at_unix_ms": 1712200000000
         }
       ],

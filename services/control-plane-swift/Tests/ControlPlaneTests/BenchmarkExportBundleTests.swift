@@ -348,8 +348,9 @@ struct BenchmarkExportBundleTests {
         let bundle = try ControlPlaneBenchmarkExportBundle.decode(json: emptyBenchmarkMatrixExportBundleJSON)
 
         #expect(bundle.benchmarkMatrixHistoryEntries() == [])
-        #expect(bundle.benchmarkMatrixSummaryCSV().contains("cell_wall_ms,completed_count,failed_count,ttft_p50_ms,ttft_p95_ms,request_latency_p50_ms,request_latency_p95_ms"))
+        #expect(bundle.benchmarkMatrixSummaryCSV().contains("cell_wall_ms,completed_count,failed_count,ttft_p50_ms,ttft_p95_ms,request_latency_p50_ms,request_latency_p95_ms,tool_call_count,tool_latency_ms,observation_bytes,fatal_rate,turn_count"))
         #expect(bundle.benchmarkMatrixRequestsCSV().contains("dataset_materialize_ms,prompt_render_ms,warmup_ms,prefill_ms,decode_ms,tokens_in,tokens_out,first_token_index,cache_hit,runtime_kind,error_stage,speculative_acceptance_rate"))
+        #expect(bundle.benchmarkMatrixRequestsCSV().contains("dflash_enabled,dflash_block_size,dflash_rollback_count,dflash_target_hidden_layers,tool_call_count,tool_latency_ms,observation_bytes,fatal_rate,turn_count"))
     }
 
     @Test("decodes additive probe fields in benchmark matrix and evaluation exports")
@@ -369,6 +370,11 @@ struct BenchmarkExportBundleTests {
         #expect(summary.failedCount == 1)
         #expect(summary.ttftP50MS == 21.0)
         #expect(summary.requestLatencyP95MS == 91.0)
+        #expect(summary.toolCallCount == 2)
+        #expect(summary.toolLatencyMS == 12.5)
+        #expect(summary.observationBytes == 96)
+        #expect(summary.fatalRate == 0.5)
+        #expect(summary.turnCount == 4)
         #expect(request.datasetMaterializeMS == 1.1)
         #expect(request.promptRenderMS == 2.2)
         #expect(request.prefillMS == 4.4)
@@ -393,6 +399,11 @@ struct BenchmarkExportBundleTests {
         #expect(request.dflashBlockSize == 16)
         #expect(request.dflashRollbackCount == 2)
         #expect(request.dflashTargetHiddenLayers == 12)
+        #expect(request.toolCallCount == 1)
+        #expect(request.toolLatencyMS == 6.25)
+        #expect(request.observationBytes == 48)
+        #expect(request.fatalRate == 1.0)
+        #expect(request.turnCount == 2)
         #expect(sample.sampleRenderMS == 10.1)
         #expect(sample.inferenceMS == 20.2)
         #expect(sample.extractionMS == 30.3)
@@ -401,8 +412,8 @@ struct BenchmarkExportBundleTests {
         #expect(sample.rawResponseChars == 11)
         #expect(sample.extractedResultChars == 3)
         #expect(sample.failureStage == "scoring")
-        #expect(bundle.benchmarkMatrixSummaryCSV().contains("456.7,3,1,21.0,29.0,80.0,91.0"))
-        #expect(bundle.benchmarkMatrixRequestsCSV().contains("1.1,2.2,3.3,4.4,5.5,128,32,7,true,swift-text,decode,0.8,0.2,24,6,1,4,true,8.8,9.9,true,16,2,12"))
+        #expect(bundle.benchmarkMatrixSummaryCSV().contains("456.7,3,1,21.0,29.0,80.0,91.0,2,12.5,96,0.5,4"))
+        #expect(bundle.benchmarkMatrixRequestsCSV().contains("1.1,2.2,3.3,4.4,5.5,128,32,7,true,swift-text,decode,0.8,0.2,24,6,1,4,true,8.8,9.9,true,16,2,12,1,6.25,48,1.0,2"))
         #expect(bundle.evaluationSamplesCSV().contains("10.1,20.2,30.3,40.4,50.5,11,3,scoring"))
         let sampleJSONL = try bundle.evaluationSamplesJSONL()
         #expect(sampleJSONL.contains(#""failure_stage":"scoring""#))
@@ -1702,6 +1713,11 @@ private let benchmarkEvaluationProbeBundleJSON = """
       "ttft_p95_ms": 29.0,
       "request_latency_p50_ms": 80.0,
       "request_latency_p95_ms": 91.0,
+      "tool_call_count": 2,
+      "tool_latency_ms": 12.5,
+      "observation_bytes": 96,
+      "fatal_rate": 0.5,
+      "turn_count": 4,
       "created_at_unix_ms": 1712600000000
     }
   ],
@@ -1752,6 +1768,11 @@ private let benchmarkEvaluationProbeBundleJSON = """
       "dflash_block_size": 16,
       "dflash_rollback_count": 2,
       "dflash_target_hidden_layers": 12,
+      "tool_call_count": 1,
+      "tool_latency_ms": 6.25,
+      "observation_bytes": 48,
+      "fatal_rate": 1.0,
+      "turn_count": 2,
       "created_at_unix_ms": 1712600000000
     }
   ],

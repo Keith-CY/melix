@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any
 
 from worker.runtime.tool_observation import (
@@ -78,12 +79,14 @@ class DeterministicAgenticToolRuntime:
         trace_turns: list[dict[str, Any]] = []
         status_counts = {"completed": 0, "timeout": 0, "failed": 0}
         emitted_bytes = 0
+        latency_ms = 0.0
         for call_index, call in enumerate(normalized_calls):
             result = self.execute(
                 tool_name=str(call["name"]),
                 arguments=dict(call["arguments"]),
                 tool_call_id=str(call.get("id") or f"call-{call_index + 1}"),
             )
+            latency_ms += result.duration_ms
             status_counts[result.status] += 1
             observation_payload = result.observation.as_agentic_trace_observation()
             observations.append(observation_payload)
@@ -96,6 +99,7 @@ class DeterministicAgenticToolRuntime:
             "agentic_tool.timeout_count": float(status_counts["timeout"]),
             "agentic_tool.failed_count": float(status_counts["failed"]),
             "agentic_tool.observation_emitted_bytes": float(emitted_bytes),
+            "agentic_tool.latency_ms": round(latency_ms, 6),
         }
         return AgenticToolRun(
             registry_receipt=self.registry_receipt(),
@@ -116,6 +120,7 @@ class DeterministicAgenticToolRuntime:
         if descriptor is None:
             raise AgenticToolRuntimeError(f"Unknown agentic tool requested: {tool_name}")
         _validate_required_arguments(descriptor, arguments)
+        started_at = perf_counter()
         try:
             payload = self._execute_payload(
                 tool_name=tool_name,
@@ -138,6 +143,7 @@ class DeterministicAgenticToolRuntime:
             tool_name=tool_name,
             status=status,
             observation=observation,
+            duration_ms=round(max(0.0, (perf_counter() - started_at) * 1_000.0), 6),
         )
 
     def registry_receipt(self) -> dict[str, Any]:

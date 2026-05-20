@@ -852,8 +852,14 @@ def test_benchmark_probe_collector_aggregates_agentic_tool_metrics() -> None:
                 "agentic_tool_metrics": {
                     "agentic_tool.call_count": 1.0,
                     "agentic_tool.completed_count": 1.0,
+                    "agentic_tool.latency_ms": 5.0,
                     "agentic_tool.observation_emitted_bytes": 20.0,
                 },
+                "tool_call_count": 1,
+                "tool_latency_ms": 5.0,
+                "observation_bytes": 20,
+                "fatal_rate": 0.0,
+                "turn_count": 2,
             },
             {
                 "suite_id": "agentic",
@@ -864,8 +870,14 @@ def test_benchmark_probe_collector_aggregates_agentic_tool_metrics() -> None:
                     "agentic_tool.call_count": 3.0,
                     "agentic_tool.completed_count": 2.0,
                     "agentic_tool.failed_count": 1.0,
+                    "agentic_tool.latency_ms": 15.0,
                     "agentic_tool.observation_emitted_bytes": 40.0,
                 },
+                "tool_call_count": 3,
+                "tool_latency_ms": 15.0,
+                "observation_bytes": 40,
+                "fatal_rate": 1.0,
+                "turn_count": 6,
             },
         ],
         prefix="bench.context",
@@ -875,7 +887,13 @@ def test_benchmark_probe_collector_aggregates_agentic_tool_metrics() -> None:
     assert metrics[f"bench.context.{label}.agentic_tool.call_count_mean"] == 2.0
     assert metrics[f"bench.context.{label}.agentic_tool.completed_count_mean"] == 1.5
     assert metrics[f"bench.context.{label}.agentic_tool.failed_count_mean"] == 1.0
+    assert metrics[f"bench.context.{label}.agentic_tool.latency_ms_mean"] == 10.0
     assert metrics[f"bench.context.{label}.agentic_tool.observation_emitted_bytes_mean"] == 30.0
+    assert metrics[f"bench.context.{label}.tool_call_count_sum"] == 4.0
+    assert metrics[f"bench.context.{label}.tool_latency_ms_mean"] == 10.0
+    assert metrics[f"bench.context.{label}.observation_bytes_sum"] == 60.0
+    assert metrics[f"bench.context.{label}.fatal_rate_rate"] == 0.5
+    assert metrics[f"bench.context.{label}.turn_count_sum"] == 8.0
 
 
 def test_probe_collectors_use_expected_sparse_row_scan_strategy() -> None:

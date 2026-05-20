@@ -178,6 +178,10 @@ class BenchmarkStore:
         request_rows: tuple[BenchmarkMatrixRequestRow, ...],
     ) -> dict[str, Path]:
         jobs_root.mkdir(parents=True, exist_ok=True)
+        summary_rows = self._attach_matrix_tool_turn_summary_fields(
+            summary_rows=summary_rows,
+            request_rows=request_rows,
+        )
 
         job_path = jobs_root / "bench-matrix-job.json"
         job_path.write_text(
@@ -254,3 +258,116 @@ class BenchmarkStore:
                     yield [normalize_csv_value(payload_get(field, "")) for field in fieldnames]
 
             csv_writer.writerows(csv_rows())
+
+    @staticmethod
+    def _attach_matrix_tool_turn_summary_fields(
+        *,
+        summary_rows: tuple[BenchmarkMatrixSummaryRow, ...],
+        request_rows: tuple[BenchmarkMatrixRequestRow, ...],
+    ) -> tuple[BenchmarkMatrixSummaryRow, ...]:
+        if not summary_rows or not request_rows:
+            return summary_rows
+        if not all(isinstance(row, BenchmarkMatrixSummaryRow) for row in summary_rows):
+            return summary_rows
+        if not all(isinstance(row, BenchmarkMatrixRequestRow) for row in request_rows):
+            return summary_rows
+
+        has_tool_turn_fields = any(
+            row.tool_call_count
+            or row.tool_latency_ms
+            or row.observation_bytes
+            or row.fatal_rate
+            or row.turn_count
+            for row in request_rows
+        )
+        if not has_tool_turn_fields:
+            return summary_rows
+
+        aggregates_by_cell_key: dict[
+            tuple[str, int, int, int, str, str, str, int],
+            tuple[int, int, float, int, int, int],
+        ] = {}
+        for row in request_rows:
+            key = (
+                row.suite_id,
+                row.context_length,
+                row.generation_length,
+                row.batch_size,
+                row.cache_profile,
+                row.reasoning_mode,
+                row.structured_output_mode,
+                row.concurrency_level,
+            )
+            (
+                count,
+                tool_call_count,
+                tool_latency_ms,
+                observation_bytes,
+                fatal_count,
+                turn_count,
+            ) = aggregates_by_cell_key.get(key, (0, 0, 0.0, 0, 0, 0))
+            aggregates_by_cell_key[key] = (
+                count + 1,
+                tool_call_count + row.tool_call_count,
+                tool_latency_ms + row.tool_latency_ms,
+                observation_bytes + row.observation_bytes,
+                fatal_count + (1 if row.fatal_rate > 0.0 else 0),
+                turn_count + row.turn_count,
+            )
+
+        hydrated_rows: list[BenchmarkMatrixSummaryRow] = []
+        for row in summary_rows:
+            if (
+                row.tool_call_count
+                or row.tool_latency_ms
+                or row.observation_bytes
+                or row.fatal_rate
+                or row.turn_count
+            ):
+                hydrated_rows.append(row)
+                continue
+            aggregate = aggregates_by_cell_key.get(
+                (
+                    row.suite_id,
+                    row.context_length,
+                    row.generation_length,
+                    row.batch_size,
+                    row.cache_profile,
+                    row.reasoning_mode,
+                    row.structured_output_mode,
+                    row.concurrency_level,
+                )
+            )
+            if aggregate is None:
+                hydrated_rows.append(row)
+                continue
+            (
+                count,
+                tool_call_count,
+                tool_latency_ms,
+                observation_bytes,
+                fatal_count,
+                turn_count,
+            ) = aggregate
+            if not (
+                tool_call_count
+                or tool_latency_ms
+                or observation_bytes
+                or fatal_count
+                or turn_count
+            ):
+                hydrated_rows.append(row)
+                continue
+            hydrated_rows.append(
+                BenchmarkMatrixSummaryRow(
+                    **{
+                        **row.__dict__,
+                        "tool_call_count": tool_call_count,
+                        "tool_latency_ms": round(tool_latency_ms, 6),
+                        "observation_bytes": observation_bytes,
+                        "fatal_rate": round(fatal_count / max(count, 1), 6),
+                        "turn_count": turn_count,
+                    }
+                )
+            )
+        return tuple(hydrated_rows)

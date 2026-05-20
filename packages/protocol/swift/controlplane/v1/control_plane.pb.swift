@@ -4155,6 +4155,31 @@ public nonisolated struct Melix_Controlplane_V1_BenchmarkMatrixSummaryRow: @unch
     set {_uniqueStorage()._createdAtUnixMs = newValue}
   }
 
+  public var toolCallCount: UInt32 {
+    get {_storage._toolCallCount}
+    set {_uniqueStorage()._toolCallCount = newValue}
+  }
+
+  public var toolLatencyMs: Double {
+    get {_storage._toolLatencyMs}
+    set {_uniqueStorage()._toolLatencyMs = newValue}
+  }
+
+  public var observationBytes: UInt64 {
+    get {_storage._observationBytes}
+    set {_uniqueStorage()._observationBytes = newValue}
+  }
+
+  public var fatalRate: Double {
+    get {_storage._fatalRate}
+    set {_uniqueStorage()._fatalRate = newValue}
+  }
+
+  public var turnCount: UInt32 {
+    get {_storage._turnCount}
+    set {_uniqueStorage()._turnCount = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -12575,7 +12600,7 @@ nonisolated extension Melix_Controlplane_V1_BenchmarkMatrixJobSummary: SwiftProt
 
 nonisolated extension Melix_Controlplane_V1_BenchmarkMatrixSummaryRow: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".BenchmarkMatrixSummaryRow"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}job_id\0\u{3}task_kind\0\u{3}source_repo\0\u{3}model_id\0\u{3}suite_id\0\u{3}context_length\0\u{3}generation_length\0\u{3}batch_size\0\u{3}cache_profile\0\u{3}reasoning_mode\0\u{3}structured_output_mode\0\u{3}concurrency_level\0\u{1}repeats\0\u{1}requests\0\u{3}duration_seconds\0\u{3}ttft_mean_ms\0\u{3}ttft_std_ms\0\u{3}request_latency_mean_ms\0\u{3}request_latency_std_ms\0\u{3}prefill_tokens_per_second_mean\0\u{3}decode_tokens_per_second_mean\0\u{3}throughput_requests_per_second\0\u{3}throughput_tokens_per_second\0\u{3}success_rate\0\u{3}peak_memory_bytes_max\0\u{3}queue_wait_mean_ms\0\u{3}queue_wait_p95_ms\0\u{3}created_at_unix_ms\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}job_id\0\u{3}task_kind\0\u{3}source_repo\0\u{3}model_id\0\u{3}suite_id\0\u{3}context_length\0\u{3}generation_length\0\u{3}batch_size\0\u{3}cache_profile\0\u{3}reasoning_mode\0\u{3}structured_output_mode\0\u{3}concurrency_level\0\u{1}repeats\0\u{1}requests\0\u{3}duration_seconds\0\u{3}ttft_mean_ms\0\u{3}ttft_std_ms\0\u{3}request_latency_mean_ms\0\u{3}request_latency_std_ms\0\u{3}prefill_tokens_per_second_mean\0\u{3}decode_tokens_per_second_mean\0\u{3}throughput_requests_per_second\0\u{3}throughput_tokens_per_second\0\u{3}success_rate\0\u{3}peak_memory_bytes_max\0\u{3}queue_wait_mean_ms\0\u{3}queue_wait_p95_ms\0\u{3}created_at_unix_ms\0\u{3}tool_call_count\0\u{3}tool_latency_ms\0\u{3}observation_bytes\0\u{3}fatal_rate\0\u{3}turn_count\0")
 
   fileprivate class _StorageClass {
     var _jobID: String = String()
@@ -12606,6 +12631,11 @@ nonisolated extension Melix_Controlplane_V1_BenchmarkMatrixSummaryRow: SwiftProt
     var _queueWaitMeanMs: Double = 0
     var _queueWaitP95Ms: Double = 0
     var _createdAtUnixMs: Int64 = 0
+    var _toolCallCount: UInt32 = 0
+    var _toolLatencyMs: Double = 0
+    var _observationBytes: UInt64 = 0
+    var _fatalRate: Double = 0
+    var _turnCount: UInt32 = 0
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -12644,6 +12674,11 @@ nonisolated extension Melix_Controlplane_V1_BenchmarkMatrixSummaryRow: SwiftProt
       _queueWaitMeanMs = source._queueWaitMeanMs
       _queueWaitP95Ms = source._queueWaitP95Ms
       _createdAtUnixMs = source._createdAtUnixMs
+      _toolCallCount = source._toolCallCount
+      _toolLatencyMs = source._toolLatencyMs
+      _observationBytes = source._observationBytes
+      _fatalRate = source._fatalRate
+      _turnCount = source._turnCount
     }
   }
 
@@ -12690,6 +12725,11 @@ nonisolated extension Melix_Controlplane_V1_BenchmarkMatrixSummaryRow: SwiftProt
         case 26: try { try decoder.decodeSingularDoubleField(value: &_storage._queueWaitMeanMs) }()
         case 27: try { try decoder.decodeSingularDoubleField(value: &_storage._queueWaitP95Ms) }()
         case 28: try { try decoder.decodeSingularInt64Field(value: &_storage._createdAtUnixMs) }()
+        case 29: try { try decoder.decodeSingularUInt32Field(value: &_storage._toolCallCount) }()
+        case 30: try { try decoder.decodeSingularDoubleField(value: &_storage._toolLatencyMs) }()
+        case 31: try { try decoder.decodeSingularUInt64Field(value: &_storage._observationBytes) }()
+        case 32: try { try decoder.decodeSingularDoubleField(value: &_storage._fatalRate) }()
+        case 33: try { try decoder.decodeSingularUInt32Field(value: &_storage._turnCount) }()
         default: break
         }
       }
@@ -12782,6 +12822,21 @@ nonisolated extension Melix_Controlplane_V1_BenchmarkMatrixSummaryRow: SwiftProt
       if _storage._createdAtUnixMs != 0 {
         try visitor.visitSingularInt64Field(value: _storage._createdAtUnixMs, fieldNumber: 28)
       }
+      if _storage._toolCallCount != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._toolCallCount, fieldNumber: 29)
+      }
+      if _storage._toolLatencyMs.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._toolLatencyMs, fieldNumber: 30)
+      }
+      if _storage._observationBytes != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._observationBytes, fieldNumber: 31)
+      }
+      if _storage._fatalRate.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._fatalRate, fieldNumber: 32)
+      }
+      if _storage._turnCount != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._turnCount, fieldNumber: 33)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -12819,6 +12874,11 @@ nonisolated extension Melix_Controlplane_V1_BenchmarkMatrixSummaryRow: SwiftProt
         if _storage._queueWaitMeanMs != rhs_storage._queueWaitMeanMs {return false}
         if _storage._queueWaitP95Ms != rhs_storage._queueWaitP95Ms {return false}
         if _storage._createdAtUnixMs != rhs_storage._createdAtUnixMs {return false}
+        if _storage._toolCallCount != rhs_storage._toolCallCount {return false}
+        if _storage._toolLatencyMs != rhs_storage._toolLatencyMs {return false}
+        if _storage._observationBytes != rhs_storage._observationBytes {return false}
+        if _storage._fatalRate != rhs_storage._fatalRate {return false}
+        if _storage._turnCount != rhs_storage._turnCount {return false}
         return true
       }
       if !storagesAreEqual {return false}

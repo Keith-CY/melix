@@ -40,6 +40,7 @@ def test_agentic_tool_runtime_executes_all_builtin_tools_with_shared_observation
     assert run.registry_receipt["toolset_version"] == "melix.agentic_tools.builtin.v1"
     assert run.metrics["agentic_tool.call_count"] == 6.0
     assert run.metrics["agentic_tool.completed_count"] == 6.0
+    assert run.metrics["agentic_tool.latency_ms"] >= 0.0
     assert [observation["status"] for observation in run.observations] == ["completed"] * 6
     assert run.observations[-1]["payload"]["result"] == 14
     assert len(run.trace_turns) == 12

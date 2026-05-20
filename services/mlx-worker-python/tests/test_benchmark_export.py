@@ -345,6 +345,11 @@ def _write_bench_matrix_run_fixture(root: Path, *, job_id: str) -> None:
             "peak_memory_bytes_max": 2147483648,
             "queue_wait_mean_ms": 5.1,
             "queue_wait_p95_ms": 9.2,
+            "tool_call_count": 2,
+            "tool_latency_ms": 12.5,
+            "observation_bytes": 96,
+            "fatal_rate": 0.5,
+            "turn_count": 4,
             "created_at_unix_ms": 111,
         }) + "\n"
     )
@@ -371,6 +376,11 @@ def _write_bench_matrix_run_fixture(root: Path, *, job_id: str) -> None:
             "peak_memory_bytes": 2147483648,
             "status": "completed",
             "error_code": "",
+            "tool_call_count": 1,
+            "tool_latency_ms": 6.25,
+            "observation_bytes": 48,
+            "fatal_rate": 0.0,
+            "turn_count": 2,
             "created_at_unix_ms": 111,
         }) + "\n"
     )
@@ -1487,16 +1497,19 @@ def test_build_benchmark_matrix_summary_and_requests_csv_use_canonical_rows(tmp_
     request_lines = requests_csv.splitlines()
     assert "job_id,task_kind,source_repo,model_id,suite_id,context_length" in summary_lines[0]
     assert "cell_wall_ms,completed_count,failed_count" in summary_lines[0]
+    assert "tool_call_count,tool_latency_ms,observation_bytes,fatal_rate,turn_count" in summary_lines[0]
     assert "job_id,cell_id,task_kind,suite_id,context_length,generation_length" in request_lines[0]
     assert "dataset_materialize_ms,prompt_render_ms,warmup_ms" in request_lines[0]
     assert summary_lines[1].startswith(
         "bench-matrix-1,text-generation,HuggingFaceH4/ultrachat_200k,melix-dev-text,smoke,1024,128,2,cold,enabled,plain_text,1,3,24,0,24.45,1.2,88.4,3.1,1400.0,58.2,3.8,221.5,1.0,2147483648,5.1,9.2,"
     )
     assert list(csv.DictReader(io.StringIO(summary_csv)))[0]["created_at_unix_ms"] == "111"
+    assert list(csv.DictReader(io.StringIO(summary_csv)))[0]["tool_call_count"] == "2"
     assert request_lines[1].startswith(
         "bench-matrix-1,cell-1,text-generation,smoke,1024,128,2,cold,enabled,plain_text,1,0,0,24.45,88.4,1400.0,58.2,5.1,2147483648,completed,,"
     )
     assert list(csv.DictReader(io.StringIO(requests_csv)))[0]["created_at_unix_ms"] == "111"
+    assert list(csv.DictReader(io.StringIO(requests_csv)))[0]["tool_latency_ms"] == "6.25"
 
 
 def test_export_csv_preserves_probe_columns() -> None:
@@ -1581,6 +1594,7 @@ def test_export_csv_preserves_probe_columns() -> None:
     assert "dataset_materialize_ms,prompt_render_ms,warmup_ms,prefill_ms,decode_ms" in context_header
     assert "tokens_in,tokens_out,first_token_index,cache_hit,runtime_kind,error_stage" in context_header
     assert "cell_wall_ms,completed_count,failed_count,ttft_p50_ms,ttft_p95_ms" in matrix_header
+    assert "tool_call_count,tool_latency_ms,observation_bytes,fatal_rate,turn_count" in matrix_header
 
 
 def test_build_comparison_table_produces_markdown_with_metric_columns() -> None:
