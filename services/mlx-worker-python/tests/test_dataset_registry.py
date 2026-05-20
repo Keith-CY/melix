@@ -13,6 +13,7 @@ from worker.model_ops.errors import ModelOperationError
 from worker.dataset_registry.catalog import (
     DatasetCatalog,
     DatasetFile,
+    DatasetSnapshot,
     read_hf_dataset_snapshot_rows,
 )
 
@@ -55,6 +56,45 @@ def test_dataset_file_is_frozen_slots_value_record() -> None:
     }
     with pytest.raises(FrozenInstanceError):
         dataset_file.size_bytes = 43  # type: ignore[misc]
+
+
+def test_dataset_snapshot_is_frozen_slots_value_record(tmp_path: Path) -> None:
+    dataset_file = DatasetFile(
+        relative_path="data/train-00000-of-00001.jsonl",
+        size_bytes=42,
+        file_format="jsonl",
+    )
+    snapshot = DatasetSnapshot(
+        dataset_id="org/repo@main",
+        repo_id="org/repo",
+        revision="main",
+        snapshot_id="abc123",
+        snapshot_path=tmp_path / "snapshot",
+        cache_repo_path=tmp_path / "cache-repo",
+        source_kind="hf_cache_snapshot",
+        files=(dataset_file,),
+        total_bytes=42,
+        splits=("train",),
+        configs=("default",),
+    )
+
+    assert not hasattr(snapshot, "__dict__")
+    assert snapshot.to_dict() == {
+        "dataset_id": "org/repo@main",
+        "repo_id": "org/repo",
+        "revision": "main",
+        "snapshot_id": "abc123",
+        "snapshot_path": str(tmp_path / "snapshot"),
+        "cache_repo_path": str(tmp_path / "cache-repo"),
+        "source_kind": "hf_cache_snapshot",
+        "files": [dataset_file.to_dict()],
+        "total_bytes": 42,
+        "splits": ["train"],
+        "configs": ["default"],
+        "restore_command": "melix dataset hub download --repo-id org/repo --revision main",
+    }
+    with pytest.raises(FrozenInstanceError):
+        snapshot.total_bytes = 43  # type: ignore[misc]
 
 
 def test_dataset_catalog_discovers_default_huggingface_cache_snapshot(tmp_path: Path) -> None:
