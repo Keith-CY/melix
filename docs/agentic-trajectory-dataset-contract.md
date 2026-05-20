@@ -247,6 +247,18 @@ turns. Candidate-group-wide reward trace persistence is owned by the
 candidate-level reward trace milestone, but the runtime generation slice must
 not copy one sample-level tool replay across all generated candidates.
 
+The candidate-level reward trace milestone persists one
+`melix.alignment_candidate_reward_trace.v1` JSONL row per generated GRPO
+candidate. The alignment run manifest and adapter config must expose the trace
+path, row count, and schema version. Each candidate trace row records the
+sample index, candidate index, generation and scoring modes, score, ordered
+reward components, fatal stage, group reward context, selected flag, replay
+fingerprint, tool-call count, observation count, and candidate-local tool
+metrics. The selected candidate trace row must also carry the selected
+candidate's registry receipt, tool calls, observations, metrics, and turns so
+release gates and compare workflows can audit the selected trajectory without
+reconstructing it from nested policy-update fields.
+
 `fatal_stage` records the first stage that invalidates later trajectory tokens
 or observations. Supported stage names are:
 
