@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from worker.productization.benchmark_schemas import (
+    BenchmarkMatrixRequestRow,
+    benchmark_matrix_tool_turn_summary_fields,
     build_benchmark_matrix_job,
     build_benchmark_matrix_request_row,
     build_benchmark_matrix_summary_row,
@@ -28,6 +30,43 @@ def _default_speculative_dflash_fields() -> dict[str, object]:
         "dflash_block_size": 0,
         "dflash_rollback_count": 0,
         "dflash_target_hidden_layers": 0,
+    }
+
+
+def _default_agentic_benchmark_fields() -> dict[str, object]:
+    return {
+        "tool_call_count": 0,
+        "tool_latency_ms": 0.0,
+        "observation_bytes": 0,
+        "fatal_rate": 0.0,
+        "turn_count": 0,
+    }
+
+
+def _default_request_row_fields() -> dict[str, object]:
+    return {
+        "job_id": "bench-matrix-1",
+        "cell_id": "cell-1",
+        "task_kind": "text-generation",
+        "suite_id": "agentic",
+        "context_length": 64,
+        "generation_length": 16,
+        "batch_size": 1,
+        "cache_profile": "cold",
+        "reasoning_mode": "",
+        "structured_output_mode": "",
+        "concurrency_level": 1,
+        "repeat_index": 0,
+        "request_index": 0,
+        "ttft_ms": 11.2,
+        "request_latency_ms": 42.8,
+        "prefill_tokens_per_second": 24.5,
+        "decode_tokens_per_second": 51.25,
+        "queue_wait_ms": 0.0,
+        "peak_memory_bytes": 4096,
+        "status": "completed",
+        "error_code": "",
+        "created_at_unix_ms": 101,
     }
 
 
@@ -152,6 +191,7 @@ def test_build_serving_benchmark_context_and_batch_rows_include_canonical_fields
         "runtime_kind": "",
         "error_stage": "",
         **_default_speculative_dflash_fields(),
+        **_default_agentic_benchmark_fields(),
     }
     assert batch_row == {
         "schema_version": "melix.serving_benchmark_batch_row.v1",
@@ -185,6 +225,7 @@ def test_build_serving_benchmark_context_and_batch_rows_include_canonical_fields
         "runtime_kind": "",
         "error_stage": "",
         **_default_speculative_dflash_fields(),
+        **_default_agentic_benchmark_fields(),
     }
 
 
@@ -309,7 +350,16 @@ def test_benchmark_rows_preserve_agentic_tool_evidence() -> None:
         "agentic_tool_registry": {"toolset_version": "melix.agentic_tools.builtin.v1"},
         "agentic_tool_calls": ({"id": "call-1", "name": "visit", "arguments": {"url": "fixture://page"}},),
         "agentic_tool_observations": ({"status": "completed", "payload": {"text": "Visited."}},),
-        "agentic_tool_metrics": {"agentic_tool.call_count": 1.0},
+        "agentic_tool_metrics": {
+            "agentic_tool.call_count": 1.0,
+            "agentic_tool.latency_ms": 12.5,
+            "agentic_tool.observation_emitted_bytes": 42.0,
+        },
+        "tool_call_count": 1,
+        "tool_latency_ms": 12.5,
+        "observation_bytes": 42,
+        "fatal_rate": 0.0,
+        "turn_count": 2,
     }
     context_row = build_serving_benchmark_context_row(
         job_id="bench-123",
@@ -360,8 +410,137 @@ def test_benchmark_rows_preserve_agentic_tool_evidence() -> None:
 
     assert context_row["agentic_tool_registry"]["toolset_version"] == "melix.agentic_tools.builtin.v1"
     assert context_row["agentic_tool_calls"][0]["name"] == "visit"
+    assert context_row["tool_call_count"] == 1
+    assert context_row["tool_latency_ms"] == 12.5
+    assert context_row["observation_bytes"] == 42
+    assert context_row["fatal_rate"] == 0.0
+    assert context_row["turn_count"] == 2
     assert request_row["agentic_tool_observations"][0]["payload"]["text"] == "Visited."
     assert request_row["agentic_tool_metrics"]["agentic_tool.call_count"] == 1.0
+    assert request_row["tool_call_count"] == 1
+
+
+def test_benchmark_rows_derive_tool_turn_fields_from_agentic_metrics() -> None:
+    tool_metrics = {
+        "agentic_tool.call_count": 2.0,
+        "agentic_tool.latency_ms": 15.25,
+        "agentic_tool.observation_count": 2.0,
+        "agentic_tool.observation_emitted_bytes": 128.0,
+        "agentic_tool.timeout_count": 1.0,
+        "agentic_tool.failed_count": 0.0,
+    }
+
+    context_row = build_serving_benchmark_context_row(
+        job_id="bench-123",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="local",
+        suite="agentic",
+        context_length=64,
+        generation_length=16,
+        batch_size=1,
+        repeat_index=0,
+        prefill_tokens_per_second=24.5,
+        decode_tokens_per_second=51.25,
+        ttft_ms=11.2,
+        request_latency_ms=42.8,
+        peak_memory_bytes=4096.0,
+        speedup_vs_batch_1=1.0,
+        cache_profile="cold",
+        reasoning_mode="",
+        structured_output_mode="",
+        agentic_tool_metrics=tool_metrics,
+    ).to_dict()
+    request_row = build_benchmark_matrix_request_row(
+        **_default_request_row_fields(),
+        agentic_tool_metrics=tool_metrics,
+    ).to_dict()
+
+    assert context_row["tool_call_count"] == 2
+    assert context_row["tool_latency_ms"] == 15.25
+    assert context_row["observation_bytes"] == 128
+    assert context_row["fatal_rate"] == 1.0
+    assert context_row["turn_count"] == 4
+    assert request_row["tool_call_count"] == 2
+    assert request_row["fatal_rate"] == 1.0
+
+
+def test_benchmark_rows_preserve_explicit_tool_turn_fields_and_tolerate_bad_metrics() -> None:
+    request_row = build_benchmark_matrix_request_row(
+        **_default_request_row_fields(),
+        agentic_tool_metrics={
+            "agentic_tool.call_count": object(),  # type: ignore[dict-item]
+            "agentic_tool.observation_count": "bad",  # type: ignore[dict-item]
+        },
+        tool_call_count=3,
+        tool_latency_ms=4.5,
+        observation_bytes=64,
+        fatal_rate=0.25,
+        turn_count=7,
+    ).to_dict()
+    batch_row = build_serving_benchmark_batch_row(
+        job_id="bench-123",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="local",
+        suite="agentic",
+        context_length=64,
+        generation_length=16,
+        batch_size=2,
+        repeat_index=0,
+        prefill_tokens_per_second=24.5,
+        decode_tokens_per_second=51.25,
+        ttft_ms=11.2,
+        request_latency_ms=42.8,
+        peak_memory_bytes=4096.0,
+        speedup_vs_batch_1=1.0,
+        cache_profile="cold",
+        reasoning_mode="",
+        structured_output_mode="",
+        agentic_tool_metrics={"agentic_tool.call_count": 1.0},
+    ).to_dict()
+
+    assert request_row["tool_call_count"] == 3
+    assert request_row["tool_latency_ms"] == 4.5
+    assert request_row["observation_bytes"] == 64
+    assert request_row["fatal_rate"] == 0.25
+    assert request_row["turn_count"] == 7
+    assert batch_row["tool_call_count"] == 1
+
+
+def test_benchmark_matrix_tool_turn_summary_fields_aggregate_requests() -> None:
+    rows: tuple[BenchmarkMatrixRequestRow, ...] = (
+        build_benchmark_matrix_request_row(
+            **_default_request_row_fields(),
+            agentic_tool_metrics={
+                "agentic_tool.call_count": 1.0,
+                "agentic_tool.latency_ms": 2.5,
+                "agentic_tool.observation_count": 1.0,
+                "agentic_tool.observation_emitted_bytes": 40.0,
+            },
+        ),
+        build_benchmark_matrix_request_row(
+            **{
+                **_default_request_row_fields(),
+                "request_index": 1,
+            },
+            agentic_tool_metrics={
+                "agentic_tool.call_count": 1.0,
+                "agentic_tool.latency_ms": 3.25,
+                "agentic_tool.observation_count": 1.0,
+                "agentic_tool.observation_emitted_bytes": 88.0,
+                "agentic_tool.timeout_count": 1.0,
+            },
+        ),
+    )
+
+    assert benchmark_matrix_tool_turn_summary_fields(rows) == {
+        "tool_call_count": 2,
+        "tool_latency_ms": 5.75,
+        "observation_bytes": 128,
+        "fatal_rate": 0.5,
+        "turn_count": 4,
+    }
 
 
 def test_benchmark_job_and_rows_preserve_trajectory_provenance() -> None:
@@ -491,6 +670,11 @@ def test_build_benchmark_matrix_job_and_rows_preserve_canonical_fields() -> None
         ttft_p95_ms=25.0,
         request_latency_p50_ms=88.4,
         request_latency_p95_ms=90.0,
+        tool_call_count=3,
+        tool_latency_ms=18.5,
+        observation_bytes=128,
+        fatal_rate=0.25,
+        turn_count=6,
         created_at_unix_ms=101,
     )
     request_row = build_benchmark_matrix_request_row(
@@ -567,6 +751,11 @@ def test_build_benchmark_matrix_job_and_rows_preserve_canonical_fields() -> None
         "ttft_p95_ms": 25.0,
         "request_latency_p50_ms": 88.4,
         "request_latency_p95_ms": 90.0,
+        "tool_call_count": 3,
+        "tool_latency_ms": 18.5,
+        "observation_bytes": 128,
+        "fatal_rate": 0.25,
+        "turn_count": 6,
         "created_at_unix_ms": 101,
     }
     assert request_row.to_dict() == {
@@ -603,6 +792,7 @@ def test_build_benchmark_matrix_job_and_rows_preserve_canonical_fields() -> None
         "runtime_kind": "",
         "error_stage": "",
         **_default_speculative_dflash_fields(),
+        **_default_agentic_benchmark_fields(),
         "created_at_unix_ms": 101,
     }
 

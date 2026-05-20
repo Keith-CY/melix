@@ -903,6 +903,11 @@ def _canonical_benchmark_row_columns() -> list[str]:
         "dflash_block_size",
         "dflash_rollback_count",
         "dflash_target_hidden_layers",
+        "tool_call_count",
+        "tool_latency_ms",
+        "observation_bytes",
+        "fatal_rate",
+        "turn_count",
         *TRAJECTORY_PROVENANCE_CSV_FIELDS,
     ]
 
@@ -1036,6 +1041,11 @@ def _canonical_benchmark_matrix_summary_columns() -> list[str]:
         "ttft_p95_ms",
         "request_latency_p50_ms",
         "request_latency_p95_ms",
+        "tool_call_count",
+        "tool_latency_ms",
+        "observation_bytes",
+        "fatal_rate",
+        "turn_count",
         "created_at_unix_ms",
         *TRAJECTORY_PROVENANCE_CSV_FIELDS,
     ]
@@ -1088,6 +1098,11 @@ def _canonical_benchmark_matrix_request_columns() -> list[str]:
         "dflash_block_size",
         "dflash_rollback_count",
         "dflash_target_hidden_layers",
+        "tool_call_count",
+        "tool_latency_ms",
+        "observation_bytes",
+        "fatal_rate",
+        "turn_count",
         "created_at_unix_ms",
         *TRAJECTORY_PROVENANCE_CSV_FIELDS,
     ]

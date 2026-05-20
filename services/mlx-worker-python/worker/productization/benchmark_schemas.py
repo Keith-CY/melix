@@ -19,6 +19,14 @@ _SERVING_BENCHMARK_RESULT_SCHEMA_VERSION = "melix.serving_benchmark_result.v1"
 _BENCHMARK_MATRIX_JOB_SCHEMA_VERSION = "melix.benchmark_matrix_job.v1"
 
 
+_AGENTIC_TOOL_CALL_COUNT_KEY = "agentic_tool.call_count"
+_AGENTIC_TOOL_LATENCY_MS_KEY = "agentic_tool.latency_ms"
+_AGENTIC_TOOL_OBSERVATION_COUNT_KEY = "agentic_tool.observation_count"
+_AGENTIC_TOOL_OBSERVATION_BYTES_KEY = "agentic_tool.observation_emitted_bytes"
+_AGENTIC_TOOL_TIMEOUT_COUNT_KEY = "agentic_tool.timeout_count"
+_AGENTIC_TOOL_FAILED_COUNT_KEY = "agentic_tool.failed_count"
+
+
 @dataclass(frozen=True)
 class BenchmarkMetricValue:
     name: str
@@ -135,6 +143,11 @@ class ServingBenchmarkContextRow:
     dflash_block_size: int = 0
     dflash_rollback_count: int = 0
     dflash_target_hidden_layers: int = 0
+    tool_call_count: int = 0
+    tool_latency_ms: float = 0.0
+    observation_bytes: int = 0
+    fatal_rate: float = 0.0
+    turn_count: int = 0
     agentic_tool_registry: dict[str, object] | None = None
     agentic_tool_calls: tuple[dict[str, object], ...] = ()
     agentic_tool_observations: tuple[dict[str, object], ...] = ()
@@ -186,6 +199,11 @@ class ServingBenchmarkContextRow:
             "dflash_block_size": self.dflash_block_size,
             "dflash_rollback_count": self.dflash_rollback_count,
             "dflash_target_hidden_layers": self.dflash_target_hidden_layers,
+            "tool_call_count": self.tool_call_count,
+            "tool_latency_ms": self.tool_latency_ms,
+            "observation_bytes": self.observation_bytes,
+            "fatal_rate": self.fatal_rate,
+            "turn_count": self.turn_count,
         }
         _append_agentic_tool_evidence(
             payload,
@@ -243,6 +261,11 @@ class ServingBenchmarkBatchRow:
     dflash_block_size: int = 0
     dflash_rollback_count: int = 0
     dflash_target_hidden_layers: int = 0
+    tool_call_count: int = 0
+    tool_latency_ms: float = 0.0
+    observation_bytes: int = 0
+    fatal_rate: float = 0.0
+    turn_count: int = 0
     agentic_tool_registry: dict[str, object] | None = None
     agentic_tool_calls: tuple[dict[str, object], ...] = ()
     agentic_tool_observations: tuple[dict[str, object], ...] = ()
@@ -294,6 +317,11 @@ class ServingBenchmarkBatchRow:
             "dflash_block_size": self.dflash_block_size,
             "dflash_rollback_count": self.dflash_rollback_count,
             "dflash_target_hidden_layers": self.dflash_target_hidden_layers,
+            "tool_call_count": self.tool_call_count,
+            "tool_latency_ms": self.tool_latency_ms,
+            "observation_bytes": self.observation_bytes,
+            "fatal_rate": self.fatal_rate,
+            "turn_count": self.turn_count,
         }
         _append_agentic_tool_evidence(
             payload,
@@ -397,6 +425,11 @@ class BenchmarkMatrixSummaryRow:
     ttft_p95_ms: float = 0.0
     request_latency_p50_ms: float = 0.0
     request_latency_p95_ms: float = 0.0
+    tool_call_count: int = 0
+    tool_latency_ms: float = 0.0
+    observation_bytes: int = 0
+    fatal_rate: float = 0.0
+    turn_count: int = 0
     created_at_unix_ms: int = 0
 
     def to_dict(self) -> dict[str, object]:
@@ -435,6 +468,11 @@ class BenchmarkMatrixSummaryRow:
             "ttft_p95_ms": self.ttft_p95_ms,
             "request_latency_p50_ms": self.request_latency_p50_ms,
             "request_latency_p95_ms": self.request_latency_p95_ms,
+            "tool_call_count": self.tool_call_count,
+            "tool_latency_ms": self.tool_latency_ms,
+            "observation_bytes": self.observation_bytes,
+            "fatal_rate": self.fatal_rate,
+            "turn_count": self.turn_count,
             "created_at_unix_ms": self.created_at_unix_ms,
         }
 
@@ -487,6 +525,11 @@ class BenchmarkMatrixRequestRow:
     dflash_block_size: int = 0
     dflash_rollback_count: int = 0
     dflash_target_hidden_layers: int = 0
+    tool_call_count: int = 0
+    tool_latency_ms: float = 0.0
+    observation_bytes: int = 0
+    fatal_rate: float = 0.0
+    turn_count: int = 0
     agentic_tool_registry: dict[str, object] | None = None
     agentic_tool_calls: tuple[dict[str, object], ...] = ()
     agentic_tool_observations: tuple[dict[str, object], ...] = ()
@@ -540,6 +583,11 @@ class BenchmarkMatrixRequestRow:
             "dflash_block_size": self.dflash_block_size,
             "dflash_rollback_count": self.dflash_rollback_count,
             "dflash_target_hidden_layers": self.dflash_target_hidden_layers,
+            "tool_call_count": self.tool_call_count,
+            "tool_latency_ms": self.tool_latency_ms,
+            "observation_bytes": self.observation_bytes,
+            "fatal_rate": self.fatal_rate,
+            "turn_count": self.turn_count,
             "created_at_unix_ms": self.created_at_unix_ms,
         }
         _append_agentic_tool_evidence(
@@ -621,6 +669,64 @@ def _append_agentic_tool_evidence(
         payload["agentic_tool_metrics"] = dict(metrics)
 
 
+def _agentic_metric_float(metrics: dict[str, float] | None, key: str) -> float:
+    if not metrics:
+        return 0.0
+    try:
+        return float(metrics.get(key, 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _agentic_metric_int(metrics: dict[str, float] | None, key: str) -> int:
+    return int(_agentic_metric_float(metrics, key))
+
+
+def _derived_agentic_benchmark_fields(
+    *,
+    metrics: dict[str, float] | None,
+    tool_call_count: int,
+    tool_latency_ms: float,
+    observation_bytes: int,
+    fatal_rate: float,
+    turn_count: int,
+) -> dict[str, object]:
+    if not metrics:
+        return {
+            "tool_call_count": tool_call_count,
+            "tool_latency_ms": tool_latency_ms,
+            "observation_bytes": observation_bytes,
+            "fatal_rate": fatal_rate,
+            "turn_count": turn_count,
+        }
+    derived_tool_call_count = _agentic_metric_int(metrics, _AGENTIC_TOOL_CALL_COUNT_KEY)
+    derived_observation_count = _agentic_metric_int(metrics, _AGENTIC_TOOL_OBSERVATION_COUNT_KEY)
+    timeout_count = _agentic_metric_float(metrics, _AGENTIC_TOOL_TIMEOUT_COUNT_KEY)
+    failed_count = _agentic_metric_float(metrics, _AGENTIC_TOOL_FAILED_COUNT_KEY)
+    return {
+        "tool_call_count": tool_call_count or derived_tool_call_count,
+        "tool_latency_ms": tool_latency_ms
+        or _agentic_metric_float(metrics, _AGENTIC_TOOL_LATENCY_MS_KEY),
+        "observation_bytes": observation_bytes
+        or _agentic_metric_int(metrics, _AGENTIC_TOOL_OBSERVATION_BYTES_KEY),
+        "fatal_rate": fatal_rate or (1.0 if timeout_count + failed_count > 0.0 else 0.0),
+        "turn_count": turn_count or (derived_tool_call_count + derived_observation_count),
+    }
+
+
+def benchmark_matrix_tool_turn_summary_fields(
+    rows: tuple["BenchmarkMatrixRequestRow", ...],
+) -> dict[str, object]:
+    fatal_count = sum(1 for row in rows if row.fatal_rate > 0.0)
+    return {
+        "tool_call_count": sum(row.tool_call_count for row in rows),
+        "tool_latency_ms": round(sum(row.tool_latency_ms for row in rows), 6),
+        "observation_bytes": sum(row.observation_bytes for row in rows),
+        "fatal_rate": round(fatal_count / max(len(rows), 1), 6),
+        "turn_count": sum(row.turn_count for row in rows),
+    }
+
+
 def build_benchmark_matrix_job(
     *,
     job_id: str,
@@ -688,6 +794,11 @@ def build_benchmark_matrix_summary_row(
     ttft_p95_ms: float = 0.0,
     request_latency_p50_ms: float = 0.0,
     request_latency_p95_ms: float = 0.0,
+    tool_call_count: int = 0,
+    tool_latency_ms: float = 0.0,
+    observation_bytes: int = 0,
+    fatal_rate: float = 0.0,
+    turn_count: int = 0,
     created_at_unix_ms: int = 0,
 ) -> BenchmarkMatrixSummaryRow:
     return BenchmarkMatrixSummaryRow(
@@ -725,6 +836,11 @@ def build_benchmark_matrix_summary_row(
         ttft_p95_ms=ttft_p95_ms,
         request_latency_p50_ms=request_latency_p50_ms,
         request_latency_p95_ms=request_latency_p95_ms,
+        tool_call_count=tool_call_count,
+        tool_latency_ms=tool_latency_ms,
+        observation_bytes=observation_bytes,
+        fatal_rate=fatal_rate,
+        turn_count=turn_count,
         created_at_unix_ms=created_at_unix_ms,
     )
 
@@ -777,12 +893,25 @@ def build_benchmark_matrix_request_row(
     dflash_block_size: int = 0,
     dflash_rollback_count: int = 0,
     dflash_target_hidden_layers: int = 0,
+    tool_call_count: int = 0,
+    tool_latency_ms: float = 0.0,
+    observation_bytes: int = 0,
+    fatal_rate: float = 0.0,
+    turn_count: int = 0,
     agentic_tool_registry: dict[str, object] | None = None,
     agentic_tool_calls: tuple[dict[str, object], ...] = (),
     agentic_tool_observations: tuple[dict[str, object], ...] = (),
     agentic_tool_metrics: dict[str, float] | None = None,
     trajectory_provenance: dict[str, object] | None = None,
 ) -> BenchmarkMatrixRequestRow:
+    agentic_fields = _derived_agentic_benchmark_fields(
+        metrics=agentic_tool_metrics,
+        tool_call_count=tool_call_count,
+        tool_latency_ms=tool_latency_ms,
+        observation_bytes=observation_bytes,
+        fatal_rate=fatal_rate,
+        turn_count=turn_count,
+    )
     return BenchmarkMatrixRequestRow(
         job_id=job_id,
         cell_id=cell_id,
@@ -830,6 +959,11 @@ def build_benchmark_matrix_request_row(
         dflash_block_size=dflash_block_size,
         dflash_rollback_count=dflash_rollback_count,
         dflash_target_hidden_layers=dflash_target_hidden_layers,
+        tool_call_count=int(agentic_fields["tool_call_count"]),
+        tool_latency_ms=float(agentic_fields["tool_latency_ms"]),
+        observation_bytes=int(agentic_fields["observation_bytes"]),
+        fatal_rate=float(agentic_fields["fatal_rate"]),
+        turn_count=int(agentic_fields["turn_count"]),
         agentic_tool_registry=dict(agentic_tool_registry or {}),
         agentic_tool_calls=tuple(dict(call) for call in agentic_tool_calls),
         agentic_tool_observations=tuple(dict(observation) for observation in agentic_tool_observations),
@@ -882,12 +1016,25 @@ def build_serving_benchmark_context_row(
     dflash_block_size: int = 0,
     dflash_rollback_count: int = 0,
     dflash_target_hidden_layers: int = 0,
+    tool_call_count: int = 0,
+    tool_latency_ms: float = 0.0,
+    observation_bytes: int = 0,
+    fatal_rate: float = 0.0,
+    turn_count: int = 0,
     agentic_tool_registry: dict[str, object] | None = None,
     agentic_tool_calls: tuple[dict[str, object], ...] = (),
     agentic_tool_observations: tuple[dict[str, object], ...] = (),
     agentic_tool_metrics: dict[str, float] | None = None,
     trajectory_provenance: dict[str, object] | None = None,
 ) -> ServingBenchmarkContextRow:
+    agentic_fields = _derived_agentic_benchmark_fields(
+        metrics=agentic_tool_metrics,
+        tool_call_count=tool_call_count,
+        tool_latency_ms=tool_latency_ms,
+        observation_bytes=observation_bytes,
+        fatal_rate=fatal_rate,
+        turn_count=turn_count,
+    )
     return ServingBenchmarkContextRow(
         schema_version="melix.serving_benchmark_context_row.v1",
         job_id=job_id,
@@ -932,6 +1079,11 @@ def build_serving_benchmark_context_row(
         dflash_block_size=dflash_block_size,
         dflash_rollback_count=dflash_rollback_count,
         dflash_target_hidden_layers=dflash_target_hidden_layers,
+        tool_call_count=int(agentic_fields["tool_call_count"]),
+        tool_latency_ms=float(agentic_fields["tool_latency_ms"]),
+        observation_bytes=int(agentic_fields["observation_bytes"]),
+        fatal_rate=float(agentic_fields["fatal_rate"]),
+        turn_count=int(agentic_fields["turn_count"]),
         agentic_tool_registry=dict(agentic_tool_registry or {}),
         agentic_tool_calls=tuple(dict(call) for call in agentic_tool_calls),
         agentic_tool_observations=tuple(dict(observation) for observation in agentic_tool_observations),
@@ -984,12 +1136,25 @@ def build_serving_benchmark_batch_row(
     dflash_block_size: int = 0,
     dflash_rollback_count: int = 0,
     dflash_target_hidden_layers: int = 0,
+    tool_call_count: int = 0,
+    tool_latency_ms: float = 0.0,
+    observation_bytes: int = 0,
+    fatal_rate: float = 0.0,
+    turn_count: int = 0,
     agentic_tool_registry: dict[str, object] | None = None,
     agentic_tool_calls: tuple[dict[str, object], ...] = (),
     agentic_tool_observations: tuple[dict[str, object], ...] = (),
     agentic_tool_metrics: dict[str, float] | None = None,
     trajectory_provenance: dict[str, object] | None = None,
 ) -> ServingBenchmarkBatchRow:
+    agentic_fields = _derived_agentic_benchmark_fields(
+        metrics=agentic_tool_metrics,
+        tool_call_count=tool_call_count,
+        tool_latency_ms=tool_latency_ms,
+        observation_bytes=observation_bytes,
+        fatal_rate=fatal_rate,
+        turn_count=turn_count,
+    )
     return ServingBenchmarkBatchRow(
         schema_version="melix.serving_benchmark_batch_row.v1",
         job_id=job_id,
@@ -1034,6 +1199,11 @@ def build_serving_benchmark_batch_row(
         dflash_block_size=dflash_block_size,
         dflash_rollback_count=dflash_rollback_count,
         dflash_target_hidden_layers=dflash_target_hidden_layers,
+        tool_call_count=int(agentic_fields["tool_call_count"]),
+        tool_latency_ms=float(agentic_fields["tool_latency_ms"]),
+        observation_bytes=int(agentic_fields["observation_bytes"]),
+        fatal_rate=float(agentic_fields["fatal_rate"]),
+        turn_count=int(agentic_fields["turn_count"]),
         agentic_tool_registry=dict(agentic_tool_registry or {}),
         agentic_tool_calls=tuple(dict(call) for call in agentic_tool_calls),
         agentic_tool_observations=tuple(dict(observation) for observation in agentic_tool_observations),

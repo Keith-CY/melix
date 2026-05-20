@@ -50,6 +50,11 @@ _REQUEST_PROBE_KEYS = (
     "dflash_block_size",
     "dflash_rollback_count",
     "dflash_target_hidden_layers",
+    "tool_call_count",
+    "tool_latency_ms",
+    "observation_bytes",
+    "fatal_rate",
+    "turn_count",
 )
 _REQUEST_PROBE_KEY_SET = frozenset(_REQUEST_PROBE_KEYS)
 _COUNT_PROBE_KEYS = {
@@ -57,11 +62,15 @@ _COUNT_PROBE_KEYS = {
     "speculative_rejected_tokens",
     "speculative_fallback_count",
     "dflash_rollback_count",
+    "tool_call_count",
+    "observation_bytes",
+    "turn_count",
 }
 _RATE_PROBE_KEYS = {
     "cache_hit",
     "speculative_draft_model_configured",
     "dflash_enabled",
+    "fatal_rate",
 }
 _EVALUATION_SAMPLE_PROBE_KEYS = (
     "sample_render_ms",
@@ -78,6 +87,7 @@ _AGENTIC_TOOL_METRIC_KEYS = (
     "agentic_tool.completed_count",
     "agentic_tool.timeout_count",
     "agentic_tool.failed_count",
+    "agentic_tool.latency_ms",
     "agentic_tool.observation_emitted_bytes",
 )
 _MATRIX_SUMMARY_METRIC_KEYS = (
@@ -88,6 +98,11 @@ _MATRIX_SUMMARY_METRIC_KEYS = (
     "throughput_tokens_per_second",
     "success_rate",
     "failed_count",
+    "tool_call_count",
+    "tool_latency_ms",
+    "observation_bytes",
+    "fatal_rate",
+    "turn_count",
 )
 _EVALUATION_SUMMARY_METRIC_KEYS = ("failure_count", "duration_seconds")
 _EVALUATION_REPRODUCIBILITY_KEYS = (

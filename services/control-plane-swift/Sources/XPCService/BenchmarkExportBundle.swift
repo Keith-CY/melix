@@ -371,6 +371,11 @@ public struct ControlPlaneBenchmarkMatrixSummaryCSVRow: Codable, Equatable, Send
     public let ttftP95MS: Double
     public let requestLatencyP50MS: Double
     public let requestLatencyP95MS: Double
+    public let toolCallCount: Int
+    public let toolLatencyMS: Double
+    public let observationBytes: UInt64
+    public let fatalRate: Double
+    public let turnCount: Int
     public let createdAtUnixMS: Int64
 
     enum CodingKeys: String, CodingKey {
@@ -409,6 +414,11 @@ public struct ControlPlaneBenchmarkMatrixSummaryCSVRow: Codable, Equatable, Send
         case ttftP95MS = "ttft_p95_ms"
         case requestLatencyP50MS = "request_latency_p50_ms"
         case requestLatencyP95MS = "request_latency_p95_ms"
+        case toolCallCount = "tool_call_count"
+        case toolLatencyMS = "tool_latency_ms"
+        case observationBytes = "observation_bytes"
+        case fatalRate = "fatal_rate"
+        case turnCount = "turn_count"
         case createdAtUnixMS = "created_at_unix_ms"
     }
 
@@ -449,6 +459,11 @@ public struct ControlPlaneBenchmarkMatrixSummaryCSVRow: Codable, Equatable, Send
         ttftP95MS = try container.decodeIfPresent(Double.self, forKey: .ttftP95MS) ?? 0
         requestLatencyP50MS = try container.decodeIfPresent(Double.self, forKey: .requestLatencyP50MS) ?? 0
         requestLatencyP95MS = try container.decodeIfPresent(Double.self, forKey: .requestLatencyP95MS) ?? 0
+        toolCallCount = try container.decodeIfPresent(Int.self, forKey: .toolCallCount) ?? 0
+        toolLatencyMS = try container.decodeIfPresent(Double.self, forKey: .toolLatencyMS) ?? 0
+        observationBytes = try container.decodeIfPresent(UInt64.self, forKey: .observationBytes) ?? 0
+        fatalRate = try container.decodeIfPresent(Double.self, forKey: .fatalRate) ?? 0
+        turnCount = try container.decodeIfPresent(Int.self, forKey: .turnCount) ?? 0
         createdAtUnixMS = try container.decodeIfPresent(Int64.self, forKey: .createdAtUnixMS) ?? 0
     }
 }
@@ -500,6 +515,11 @@ public struct ControlPlaneBenchmarkMatrixRequestCSVRow: Codable, Equatable, Send
     public let dflashBlockSize: Int
     public let dflashRollbackCount: Int
     public let dflashTargetHiddenLayers: Int
+    public let toolCallCount: Int
+    public let toolLatencyMS: Double
+    public let observationBytes: UInt64
+    public let fatalRate: Double
+    public let turnCount: Int
     public let createdAtUnixMS: Int64
 
     enum CodingKeys: String, CodingKey {
@@ -549,6 +569,11 @@ public struct ControlPlaneBenchmarkMatrixRequestCSVRow: Codable, Equatable, Send
         case dflashBlockSize = "dflash_block_size"
         case dflashRollbackCount = "dflash_rollback_count"
         case dflashTargetHiddenLayers = "dflash_target_hidden_layers"
+        case toolCallCount = "tool_call_count"
+        case toolLatencyMS = "tool_latency_ms"
+        case observationBytes = "observation_bytes"
+        case fatalRate = "fatal_rate"
+        case turnCount = "turn_count"
         case createdAtUnixMS = "created_at_unix_ms"
     }
 
@@ -600,6 +625,11 @@ public struct ControlPlaneBenchmarkMatrixRequestCSVRow: Codable, Equatable, Send
         dflashBlockSize = try container.decodeIfPresent(Int.self, forKey: .dflashBlockSize) ?? 0
         dflashRollbackCount = try container.decodeIfPresent(Int.self, forKey: .dflashRollbackCount) ?? 0
         dflashTargetHiddenLayers = try container.decodeIfPresent(Int.self, forKey: .dflashTargetHiddenLayers) ?? 0
+        toolCallCount = try container.decodeIfPresent(Int.self, forKey: .toolCallCount) ?? 0
+        toolLatencyMS = try container.decodeIfPresent(Double.self, forKey: .toolLatencyMS) ?? 0
+        observationBytes = try container.decodeIfPresent(UInt64.self, forKey: .observationBytes) ?? 0
+        fatalRate = try container.decodeIfPresent(Double.self, forKey: .fatalRate) ?? 0
+        turnCount = try container.decodeIfPresent(Int.self, forKey: .turnCount) ?? 0
         createdAtUnixMS = try container.decodeIfPresent(Int64.self, forKey: .createdAtUnixMS) ?? 0
     }
 }
@@ -1686,12 +1716,12 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
 
     public func benchmarkMatrixSummaryCSV(jobID: String? = nil) -> String {
         let rows = benchmarkMatrixSummaryCSVRows(jobID: jobID)
-        let header = "job_id,task_kind,source_repo,model_id,suite_id,context_length,generation_length,batch_size,cache_profile,acceleration_profile,reasoning_mode,structured_output_mode,concurrency_level,repeats,requests,duration_seconds,ttft_mean_ms,ttft_std_ms,request_latency_mean_ms,request_latency_std_ms,prefill_tokens_per_second_mean,decode_tokens_per_second_mean,throughput_requests_per_second,throughput_tokens_per_second,success_rate,peak_memory_bytes_max,queue_wait_mean_ms,queue_wait_p95_ms,cell_wall_ms,completed_count,failed_count,ttft_p50_ms,ttft_p95_ms,request_latency_p50_ms,request_latency_p95_ms,created_at_unix_ms"
+        let header = "job_id,task_kind,source_repo,model_id,suite_id,context_length,generation_length,batch_size,cache_profile,acceleration_profile,reasoning_mode,structured_output_mode,concurrency_level,repeats,requests,duration_seconds,ttft_mean_ms,ttft_std_ms,request_latency_mean_ms,request_latency_std_ms,prefill_tokens_per_second_mean,decode_tokens_per_second_mean,throughput_requests_per_second,throughput_tokens_per_second,success_rate,peak_memory_bytes_max,queue_wait_mean_ms,queue_wait_p95_ms,cell_wall_ms,completed_count,failed_count,ttft_p50_ms,ttft_p95_ms,request_latency_p50_ms,request_latency_p95_ms,tool_call_count,tool_latency_ms,observation_bytes,fatal_rate,turn_count,created_at_unix_ms"
         guard rows.isEmpty == false else {
             return header + "\n"
         }
         let body = rows.map { row in
-            [
+            let fields: [String] = [
                 row.jobID,
                 row.taskKind,
                 row.sourceRepo,
@@ -1727,10 +1757,14 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
                 String(row.ttftP95MS),
                 String(row.requestLatencyP50MS),
                 String(row.requestLatencyP95MS),
+                String(row.toolCallCount),
+                String(row.toolLatencyMS),
+                String(row.observationBytes),
+                String(row.fatalRate),
+                String(row.turnCount),
                 String(row.createdAtUnixMS),
             ]
-            .map(Self.csvField)
-            .joined(separator: ",")
+            return fields.map(Self.csvField).joined(separator: ",")
         }
         return ([header] + body).joined(separator: "\n") + "\n"
     }
@@ -1763,7 +1797,7 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
 
     public func benchmarkMatrixRequestsCSV(jobID: String? = nil) -> String {
         let rows = benchmarkMatrixRequestRows(jobID: jobID)
-        let header = "job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,acceleration_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms,request_latency_ms,prefill_tokens_per_second,decode_tokens_per_second,queue_wait_ms,peak_memory_bytes,status,error_code,dataset_materialize_ms,prompt_render_ms,warmup_ms,prefill_ms,decode_ms,tokens_in,tokens_out,first_token_index,cache_hit,runtime_kind,error_stage,speculative_acceptance_rate,speculative_rollback_rate,speculative_accepted_tokens,speculative_rejected_tokens,speculative_fallback_count,speculative_num_draft_tokens,speculative_draft_model_configured,speculative_draft_propose_ms,speculative_target_verify_ms,dflash_enabled,dflash_block_size,dflash_rollback_count,dflash_target_hidden_layers,created_at_unix_ms"
+        let header = "job_id,cell_id,task_kind,suite_id,context_length,generation_length,batch_size,cache_profile,acceleration_profile,reasoning_mode,structured_output_mode,concurrency_level,repeat_index,request_index,ttft_ms,request_latency_ms,prefill_tokens_per_second,decode_tokens_per_second,queue_wait_ms,peak_memory_bytes,status,error_code,dataset_materialize_ms,prompt_render_ms,warmup_ms,prefill_ms,decode_ms,tokens_in,tokens_out,first_token_index,cache_hit,runtime_kind,error_stage,speculative_acceptance_rate,speculative_rollback_rate,speculative_accepted_tokens,speculative_rejected_tokens,speculative_fallback_count,speculative_num_draft_tokens,speculative_draft_model_configured,speculative_draft_propose_ms,speculative_target_verify_ms,dflash_enabled,dflash_block_size,dflash_rollback_count,dflash_target_hidden_layers,tool_call_count,tool_latency_ms,observation_bytes,fatal_rate,turn_count,created_at_unix_ms"
         guard rows.isEmpty == false else {
             return header + "\n"
         }
@@ -1815,6 +1849,11 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
                 String(row.dflashBlockSize),
                 String(row.dflashRollbackCount),
                 String(row.dflashTargetHiddenLayers),
+                String(row.toolCallCount),
+                String(row.toolLatencyMS),
+                String(row.observationBytes),
+                String(row.fatalRate),
+                String(row.turnCount),
                 String(row.createdAtUnixMS),
             ]
             return fields.map(Self.csvField).joined(separator: ",")

@@ -309,6 +309,11 @@ def test_persist_benchmark_matrix_writes_job_summary_request_and_csv_artifacts(
             peak_memory_bytes_max=2_147_483_648,
             queue_wait_mean_ms=5.1,
             queue_wait_p95_ms=9.2,
+            tool_call_count=2,
+            tool_latency_ms=12.5,
+            observation_bytes=96,
+            fatal_rate=0.5,
+            turn_count=4,
             created_at_unix_ms=101,
         ),
     )
@@ -336,6 +341,11 @@ def test_persist_benchmark_matrix_writes_job_summary_request_and_csv_artifacts(
             status="completed",
             error_code="",
             created_at_unix_ms=101,
+            tool_call_count=1,
+            tool_latency_ms=6.25,
+            observation_bytes=48,
+            fatal_rate=0.0,
+            turn_count=2,
         ),
     )
 
@@ -371,6 +381,11 @@ def test_persist_benchmark_matrix_writes_job_summary_request_and_csv_artifacts(
     assert "job_id,cell_id,task_kind,suite_id,context_length,generation_length" in persisted["requests_csv"].read_text(
         encoding="utf-8"
     )
+    assert "tool_call_count,tool_latency_ms,observation_bytes,fatal_rate,turn_count" in persisted[
+        "summary_csv"
+    ].read_text(encoding="utf-8")
+    assert ",2,12.5,96,0.5,4," in persisted["summary_csv"].read_text(encoding="utf-8")
+    assert ",1,6.25,48,0.0,2," in persisted["requests_csv"].read_text(encoding="utf-8")
     run_record = json.loads(persisted["run_record"].read_text(encoding="utf-8"))
     assert run_record["schema_version"] == "melix.run_record.v1"
     assert run_record["run_kind"] == "benchmark_matrix"
@@ -460,6 +475,326 @@ def test_persist_benchmark_matrix_serializes_each_row_once_per_persist(tmp_path:
 
     assert summary_row.calls == 1
     assert request_row.calls == 1
+
+
+def test_attach_matrix_tool_turn_summary_fields_ignores_non_schema_request_rows() -> None:
+    summary_row = build_benchmark_matrix_summary_row(
+        job_id="bench-matrix-non-schema",
+        task_kind="text-generation",
+        source_repo="HuggingFaceH4/ultrachat_200k",
+        model_id="melix-dev-text",
+        suite_id="smoke",
+        context_length=1024,
+        generation_length=128,
+        batch_size=2,
+        cache_profile="cold",
+        reasoning_mode="enabled",
+        structured_output_mode="plain_text",
+        concurrency_level=1,
+        repeats=1,
+        requests=1,
+        duration_seconds=0,
+        ttft_mean_ms=24.45,
+        ttft_std_ms=0.0,
+        request_latency_mean_ms=88.4,
+        request_latency_std_ms=0.0,
+        prefill_tokens_per_second_mean=1400.0,
+        decode_tokens_per_second_mean=58.2,
+        throughput_requests_per_second=3.8,
+        throughput_tokens_per_second=221.5,
+        success_rate=1.0,
+        peak_memory_bytes_max=2_147_483_648,
+        queue_wait_mean_ms=5.1,
+        queue_wait_p95_ms=9.2,
+    )
+    request_row = _CountingRow(
+        {
+            "job_id": "bench-matrix-non-schema",
+            "cell_id": "cell-1",
+            "task_kind": "text-generation",
+            "suite_id": "smoke",
+            "context_length": 1024,
+            "generation_length": 128,
+            "batch_size": 2,
+            "cache_profile": "cold",
+            "reasoning_mode": "enabled",
+            "structured_output_mode": "plain_text",
+            "concurrency_level": 1,
+            "tool_call_count": 1,
+        }
+    )
+
+    hydrated = BenchmarkStore._attach_matrix_tool_turn_summary_fields(
+        summary_rows=(summary_row,),
+        request_rows=(request_row,),
+    )
+
+    assert hydrated == (summary_row,)
+    assert request_row.calls == 0
+
+
+def test_attach_matrix_tool_turn_summary_fields_hydrates_matching_summary_rows() -> None:
+    summary_row = build_benchmark_matrix_summary_row(
+        job_id="bench-matrix-hydrate",
+        task_kind="text-generation",
+        source_repo="HuggingFaceH4/ultrachat_200k",
+        model_id="melix-dev-text",
+        suite_id="smoke",
+        context_length=1024,
+        generation_length=128,
+        batch_size=2,
+        cache_profile="cold",
+        reasoning_mode="enabled",
+        structured_output_mode="plain_text",
+        concurrency_level=1,
+        repeats=2,
+        requests=2,
+        duration_seconds=0,
+        ttft_mean_ms=24.45,
+        ttft_std_ms=0.0,
+        request_latency_mean_ms=88.4,
+        request_latency_std_ms=0.0,
+        prefill_tokens_per_second_mean=1400.0,
+        decode_tokens_per_second_mean=58.2,
+        throughput_requests_per_second=3.8,
+        throughput_tokens_per_second=221.5,
+        success_rate=1.0,
+        peak_memory_bytes_max=2_147_483_648,
+        queue_wait_mean_ms=5.1,
+        queue_wait_p95_ms=9.2,
+    )
+    first_request_row = build_benchmark_matrix_request_row(
+        job_id="bench-matrix-hydrate",
+        cell_id="cell-1",
+        task_kind="text-generation",
+        suite_id="smoke",
+        context_length=1024,
+        generation_length=128,
+        batch_size=2,
+        cache_profile="cold",
+        reasoning_mode="enabled",
+        structured_output_mode="plain_text",
+        concurrency_level=1,
+        repeat_index=0,
+        request_index=0,
+        ttft_ms=24.45,
+        request_latency_ms=88.4,
+        prefill_tokens_per_second=1400.0,
+        decode_tokens_per_second=58.2,
+        queue_wait_ms=5.1,
+        peak_memory_bytes=2_147_483_648,
+        status="completed",
+        error_code="",
+        created_at_unix_ms=101,
+        tool_call_count=1,
+        tool_latency_ms=6.25,
+        observation_bytes=48,
+        fatal_rate=0.0,
+        turn_count=2,
+    )
+    second_request_row = build_benchmark_matrix_request_row(
+        job_id="bench-matrix-hydrate",
+        cell_id="cell-1",
+        task_kind="text-generation",
+        suite_id="smoke",
+        context_length=1024,
+        generation_length=128,
+        batch_size=2,
+        cache_profile="cold",
+        reasoning_mode="enabled",
+        structured_output_mode="plain_text",
+        concurrency_level=1,
+        repeat_index=0,
+        request_index=1,
+        ttft_ms=25.0,
+        request_latency_ms=90.0,
+        prefill_tokens_per_second=1300.0,
+        decode_tokens_per_second=55.0,
+        queue_wait_ms=5.4,
+        peak_memory_bytes=2_147_483_648,
+        status="completed",
+        error_code="",
+        created_at_unix_ms=102,
+        tool_call_count=2,
+        tool_latency_ms=3.75,
+        observation_bytes=12,
+        fatal_rate=1.0,
+        turn_count=3,
+    )
+
+    hydrated = BenchmarkStore._attach_matrix_tool_turn_summary_fields(
+        summary_rows=(summary_row,),
+        request_rows=(first_request_row, second_request_row),
+    )
+
+    assert hydrated[0] is not summary_row
+    assert hydrated[0].tool_call_count == 3
+    assert hydrated[0].tool_latency_ms == 10.0
+    assert hydrated[0].observation_bytes == 60
+    assert hydrated[0].fatal_rate == 0.5
+    assert hydrated[0].turn_count == 5
+
+
+def test_attach_matrix_tool_turn_summary_fields_preserves_explicit_and_unmatched_rows() -> None:
+    explicit_row = build_benchmark_matrix_summary_row(
+        job_id="bench-matrix-explicit",
+        task_kind="text-generation",
+        source_repo="HuggingFaceH4/ultrachat_200k",
+        model_id="melix-dev-text",
+        suite_id="smoke",
+        context_length=1024,
+        generation_length=128,
+        batch_size=2,
+        cache_profile="cold",
+        reasoning_mode="enabled",
+        structured_output_mode="plain_text",
+        concurrency_level=1,
+        repeats=1,
+        requests=1,
+        duration_seconds=0,
+        ttft_mean_ms=24.45,
+        ttft_std_ms=0.0,
+        request_latency_mean_ms=88.4,
+        request_latency_std_ms=0.0,
+        prefill_tokens_per_second_mean=1400.0,
+        decode_tokens_per_second_mean=58.2,
+        throughput_requests_per_second=3.8,
+        throughput_tokens_per_second=221.5,
+        success_rate=1.0,
+        peak_memory_bytes_max=2_147_483_648,
+        queue_wait_mean_ms=5.1,
+        queue_wait_p95_ms=9.2,
+        tool_call_count=9,
+    )
+    unmatched_row = build_benchmark_matrix_summary_row(
+        job_id="bench-matrix-unmatched",
+        task_kind="text-generation",
+        source_repo="HuggingFaceH4/ultrachat_200k",
+        model_id="melix-dev-text",
+        suite_id="other",
+        context_length=512,
+        generation_length=128,
+        batch_size=2,
+        cache_profile="cold",
+        reasoning_mode="enabled",
+        structured_output_mode="plain_text",
+        concurrency_level=1,
+        repeats=1,
+        requests=1,
+        duration_seconds=0,
+        ttft_mean_ms=24.45,
+        ttft_std_ms=0.0,
+        request_latency_mean_ms=88.4,
+        request_latency_std_ms=0.0,
+        prefill_tokens_per_second_mean=1400.0,
+        decode_tokens_per_second_mean=58.2,
+        throughput_requests_per_second=3.8,
+        throughput_tokens_per_second=221.5,
+        success_rate=1.0,
+        peak_memory_bytes_max=2_147_483_648,
+        queue_wait_mean_ms=5.1,
+        queue_wait_p95_ms=9.2,
+    )
+    request_row = build_benchmark_matrix_request_row(
+        job_id="bench-matrix-explicit",
+        cell_id="cell-1",
+        task_kind="text-generation",
+        suite_id="smoke",
+        context_length=1024,
+        generation_length=128,
+        batch_size=2,
+        cache_profile="cold",
+        reasoning_mode="enabled",
+        structured_output_mode="plain_text",
+        concurrency_level=1,
+        repeat_index=0,
+        request_index=0,
+        ttft_ms=24.45,
+        request_latency_ms=88.4,
+        prefill_tokens_per_second=1400.0,
+        decode_tokens_per_second=58.2,
+        queue_wait_ms=5.1,
+        peak_memory_bytes=2_147_483_648,
+        status="completed",
+        error_code="",
+        created_at_unix_ms=101,
+        tool_call_count=1,
+    )
+
+    hydrated = BenchmarkStore._attach_matrix_tool_turn_summary_fields(
+        summary_rows=(explicit_row, unmatched_row),
+        request_rows=(request_row,),
+    )
+
+    assert hydrated[0] is explicit_row
+    assert hydrated[1] is unmatched_row
+    assert BenchmarkStore._attach_matrix_tool_turn_summary_fields(
+        summary_rows=(explicit_row,),
+        request_rows=(),
+    ) == (explicit_row,)
+
+
+def test_attach_matrix_tool_turn_summary_fields_skips_zero_tool_turn_requests() -> None:
+    summary_row = build_benchmark_matrix_summary_row(
+        job_id="bench-matrix-zero-tool-turns",
+        task_kind="text-generation",
+        source_repo="HuggingFaceH4/ultrachat_200k",
+        model_id="melix-dev-text",
+        suite_id="smoke",
+        context_length=1024,
+        generation_length=128,
+        batch_size=2,
+        cache_profile="cold",
+        reasoning_mode="enabled",
+        structured_output_mode="plain_text",
+        concurrency_level=1,
+        repeats=1,
+        requests=1,
+        duration_seconds=0,
+        ttft_mean_ms=24.45,
+        ttft_std_ms=0.0,
+        request_latency_mean_ms=88.4,
+        request_latency_std_ms=0.0,
+        prefill_tokens_per_second_mean=1400.0,
+        decode_tokens_per_second_mean=58.2,
+        throughput_requests_per_second=3.8,
+        throughput_tokens_per_second=221.5,
+        success_rate=1.0,
+        peak_memory_bytes_max=2_147_483_648,
+        queue_wait_mean_ms=5.1,
+        queue_wait_p95_ms=9.2,
+    )
+    request_row = build_benchmark_matrix_request_row(
+        job_id="bench-matrix-zero-tool-turns",
+        cell_id="cell-1",
+        task_kind="text-generation",
+        suite_id="smoke",
+        context_length=1024,
+        generation_length=128,
+        batch_size=2,
+        cache_profile="cold",
+        reasoning_mode="enabled",
+        structured_output_mode="plain_text",
+        concurrency_level=1,
+        repeat_index=0,
+        request_index=0,
+        ttft_ms=24.45,
+        request_latency_ms=88.4,
+        prefill_tokens_per_second=1400.0,
+        decode_tokens_per_second=58.2,
+        queue_wait_ms=5.1,
+        peak_memory_bytes=2_147_483_648,
+        status="completed",
+        error_code="",
+        created_at_unix_ms=101,
+    )
+
+    hydrated = BenchmarkStore._attach_matrix_tool_turn_summary_fields(
+        summary_rows=(summary_row,),
+        request_rows=(request_row,),
+    )
+
+    assert hydrated[0] is summary_row
 
 
 def test_persist_benchmark_matrix_preserves_empty_jsonl_artifacts(tmp_path: Path) -> None:

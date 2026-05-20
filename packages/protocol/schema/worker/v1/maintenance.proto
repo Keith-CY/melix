@@ -244,6 +244,11 @@ message BenchmarkMatrixSummaryRow {
   double queue_wait_mean_ms = 26;
   double queue_wait_p95_ms = 27;
   int64 created_at_unix_ms = 28;
+  uint32 tool_call_count = 29;
+  double tool_latency_ms = 30;
+  uint64 observation_bytes = 31;
+  double fatal_rate = 32;
+  uint32 turn_count = 33;
 }
 
 message RunBenchMatrixResponse {
