@@ -1925,6 +1925,31 @@ def test_deterministic_embedding_duplicate_probe_script_emits_metrics(
     assert metrics["checksum"] > 0
 
 
+def test_stream_assembler_parser_mode_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_STREAM_ASSEMBLER_PARSER_MODE_CHUNKS", "180")
+    monkeypatch.setenv("MELIX_STREAM_ASSEMBLER_PARSER_MODE_SAMPLES", "1")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/stream_assembler_parser_mode_probe.py"),
+            run_name="__main__",
+        )
+    assert exc_info.value.code == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 1.0
+    assert metrics["chunk_count"] == 180.0
+    assert metrics["tool_call_count"] == 2.0
+    assert metrics["harmony_channel_count"] == 2.0
+    assert metrics["channel_name_calls_mean"] == 2.0
+    assert metrics["channel_name_checksum"] > 0.0
+    assert metrics["elapsed_ms_mean"] >= 0
+
+
+
 def test_stream_assembler_structural_prefix_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

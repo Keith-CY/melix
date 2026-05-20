@@ -318,6 +318,12 @@ def test_plain_buffer_with_marker_still_holds_partial_structural_prefix() -> Non
     assert completed.metrics["stream_prefix_hold_chars"] == len("<tool_ca")
 
 
+def test_pipe_channel_name_preserves_split_semantics_for_probe_workload() -> None:
+    assert RequestStreamAssembler._pipe_channel_name("  Thought\tmetadata ") == "thought"
+    assert RequestStreamAssembler._pipe_channel_name("FINAL") == "final"
+    assert RequestStreamAssembler._pipe_channel_name(" \n ") == ""
+
+
 def test_harmony_thought_channel_is_suppressed_from_public_content() -> None:
     assembler = RequestStreamAssembler(
         request_id="req-harmony-thought",
