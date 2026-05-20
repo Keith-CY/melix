@@ -148,6 +148,83 @@ def test_grpo_policy_updates_persist_reward_components_and_fatal_stage(
     assert trace_rows[0]["rollout_trajectory_digest"] == result.metrics.rollout_trajectory_digest
 
 
+def test_grpo_policy_updates_clamp_fatal_positive_advantage_metadata(
+    tmp_path: Path,
+) -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={"training_mode": "grpo", "grpo_candidate_count": "2"},
+        dataset_format="prompt_candidate",
+        response_only_supported=False,
+        sample_count=1,
+    )
+    normalized_dataset_dir = tmp_path / "normalized"
+    normalized_dataset_dir.mkdir()
+    (normalized_dataset_dir / "train.jsonl").write_text(
+        json.dumps(
+            {
+                "prompt": "Pick the stronger response.",
+                "candidates": [
+                    {
+                        "text": "High scalar answer with fatal continuation.",
+                        "score": 0.9,
+                        "fatal_stage": "post_fatal_continuation",
+                    },
+                    {"text": "Safe lower scalar answer.", "score": -0.5},
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-grpo-fatal-clamp",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=normalized_dataset_dir,
+        config=config,
+        dataset_format="prompt_candidate",
+    )
+
+    result = mlx_lm_runner_module.MLXLMRunner().train(request)
+    trace_rows = [
+        json.loads(line)
+        for line in Path(result.metrics.policy_update_trace_path).read_text(encoding="utf-8").splitlines()
+    ]
+    row = trace_rows[0]
+    selected_candidate = row["scored_candidates"][0]
+    nonfatal_candidate = row["scored_candidates"][1]
+    adapter_config = json.loads(result.adapter_config_path.read_text(encoding="utf-8"))
+
+    assert row["selected_candidate_index"] == 0
+    assert row["fatal_aware_grpo_schema_version"] == "melix.fatal_aware_grpo.v1"
+    assert row["fatal_state_mask"] is True
+    assert row["fatal_state_mask_reason"] == "post_fatal_continuation"
+    assert row["grpo_advantage_raw"] == pytest.approx(0.2)
+    assert row["grpo_advantage_clamped"] == 0.0
+    assert row["grpo_advantage_clamp_applied"] is True
+    assert row["grpo_advantage_clamp_reason"] == "fatal_state_positive_advantage"
+    assert row["group_fatal_candidate_count"] == 1
+    assert row["group_advantage_clamped_candidate_count"] == 1
+    assert selected_candidate["fatal_state_mask"] is True
+    assert selected_candidate["grpo_advantage_raw"] == pytest.approx(0.2)
+    assert selected_candidate["grpo_advantage_clamped"] == 0.0
+    assert selected_candidate["grpo_advantage_clamp_applied"] is True
+    assert nonfatal_candidate["fatal_state_mask"] is False
+    assert nonfatal_candidate["grpo_advantage_raw"] == pytest.approx(-0.2)
+    assert nonfatal_candidate["grpo_advantage_clamped"] == pytest.approx(-0.2)
+    assert result.metrics.fatal_aware_grpo_schema_version == "melix.fatal_aware_grpo.v1"
+    assert result.metrics.fatal_candidate_count == 1
+    assert result.metrics.selected_fatal_candidate_count == 1
+    assert result.metrics.advantage_clamped_candidate_count == 1
+    assert adapter_config["fatal_aware_grpo_schema_version"] == "melix.fatal_aware_grpo.v1"
+    assert adapter_config["fatal_candidate_count"] == 1
+    assert adapter_config["selected_fatal_candidate_count"] == 1
+    assert adapter_config["advantage_clamped_candidate_count"] == 1
+
+
 def test_lora_training_pipeline_records_grpo_reward_component_metrics(
     tmp_path: Path,
 ) -> None:
@@ -213,6 +290,10 @@ def test_lora_training_pipeline_records_grpo_reward_component_metrics(
     assert metrics["reward_component_fatal_failure_mean"] == pytest.approx(0.0)
     assert metrics["reward_component_total_mean"] == pytest.approx(0.65)
     assert metrics["fatal_trace_count"] == 0
+    assert metrics["fatal_aware_grpo_schema_version"] == "melix.fatal_aware_grpo.v1"
+    assert metrics["fatal_candidate_count"] == 0
+    assert metrics["selected_fatal_candidate_count"] == 0
+    assert metrics["advantage_clamped_candidate_count"] == 0
 
 
 def test_alignment_rollout_manifest_fields_cover_rlhf_and_reward_model_defaults(
@@ -276,6 +357,7 @@ def test_alignment_rollout_manifest_fields_cover_rlhf_and_reward_model_defaults(
 
 def test_grpo_reward_component_helpers_cover_explicit_and_edge_paths() -> None:
     from worker.model_ops.rl_alignment_training import (
+        _candidate_fatal_stage,
         _reward_component_summary,
         _reward_components_for_candidate,
     )
@@ -319,6 +401,43 @@ def test_grpo_reward_component_helpers_cover_explicit_and_edge_paths() -> None:
     )
     assert under_budget["tool_efficiency"] == pytest.approx(0.0)
     assert under_budget["format"] == pytest.approx(-1.0)
+    fallback_failed_tool_run = type(
+        "ObservationOnlyRun",
+        (),
+        {
+            "metrics": [],
+            "observations": [
+                "not-an-observation",
+                {"status": "failed"},
+            ],
+        },
+    )()
+    fallback_timeout_tool_run = type(
+        "ObservationOnlyRun",
+        (),
+        {
+            "metrics": [],
+            "observations": [
+                {"status": "timeout"},
+            ],
+        },
+    )()
+    assert (
+        _candidate_fatal_stage(
+            {},
+            {},
+            tool_run=fallback_failed_tool_run,
+        )
+        == "tool_execution_failure"
+    )
+    assert (
+        _candidate_fatal_stage(
+            {},
+            {},
+            tool_run=fallback_timeout_tool_run,
+        )
+        == "tool_timeout"
+    )
     assert _reward_component_summary([])["total"] == pytest.approx(0.0)
 
 
