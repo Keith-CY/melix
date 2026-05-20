@@ -19,6 +19,7 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     registry = built_in_tool_registry()
     expected_names = BUILTIN_AGENTIC_TOOL_NAMES
     elapsed_samples: list[float] = []
+    registry_factory_elapsed_samples: list[float] = []
     same_object_samples: list[float] = []
     checksum = 0
 
@@ -36,8 +37,16 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         elapsed_samples.append((time.perf_counter() - started) * 1000.0)
         same_object_samples.append(float(same_object_count))
 
+        started = time.perf_counter()
+        for _index in range(iterations):
+            if built_in_tool_registry().names() != expected_names:  # pragma: no cover
+                raise RuntimeError("built-in tool registry returned unexpected names")
+            checksum += 1
+        registry_factory_elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+
     return {
         "elapsed_ms_mean": statistics.fmean(elapsed_samples),
+        "registry_factory_elapsed_ms_mean": statistics.fmean(registry_factory_elapsed_samples),
         "names_calls_mean": float(iterations),
         "same_names_object_calls_mean": statistics.fmean(same_object_samples),
         "checksum": float(checksum),
