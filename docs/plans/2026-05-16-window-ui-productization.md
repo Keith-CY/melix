@@ -103,6 +103,38 @@ tracked. Durable information-architecture decisions copied from that artifact:
 - Surface backend gaps as visible disabled states or receipts instead of
   zero-like placeholders.
 
+## Gemini UX Review Loop
+
+On 2026-05-20, the all-pane native screenshot contact sheet was reviewed in
+Gemini to critique the operator UX. The first review found the base UI clean and
+consistent, but called out five improvement areas:
+
+- Tools navigation creates a second sidebar that compresses dense workspaces.
+- Dense configuration panes need stronger input boundaries and focus affordance.
+- Chat, Image, and Server empty states should become actionable quick starts.
+- Command Center should visually align with the main app instead of appearing
+  as a separate dark-framed surface in screenshot evidence.
+- Primary actions should become more predictable across repetitive workflows.
+
+This polish slice intentionally implements the low-risk, screenshot-visible
+items first: stronger shared input styling, actionable empty-state guidance, and
+Command Center screenshot framing. The navigation and CTA placement findings
+remain architectural follow-ups because flattening Tools IA or introducing a
+global action rail affects every workflow and should be designed as a separate
+product change.
+
+The second and third Gemini review passes identified concrete production-polish
+blockers in the updated screenshot: Models Library title and badge wrapping,
+Command Center title and grid anchoring, Synthetic Datasets column-row baseline
+alignment, API workspace padding/background rhythm, Downloads and Batch Runs
+action spacing, Image defaults text density, and Chat header picker alignment.
+Those items are included in this slice because they are localized layout fixes
+that preserve the existing workflow contracts. A final native screenshot set was
+generated after these iterations; the in-app browser could no longer upload the
+last screenshot to Gemini because the browser backend reported file uploads as
+unsupported and its virtual clipboard was unavailable, so final acceptance is
+grounded in local screenshot evidence plus the passing Swift view tests.
+
 ## Execution Rules
 
 1. Implement Units in issue-number order from #1093 through #1189.
