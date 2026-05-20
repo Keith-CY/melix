@@ -222,11 +222,19 @@ class ToolRegistry:
         cached_selection = self._selection_cache.get(requested_names)
         if cached_selection is not None:
             return cached_selection
-        missing_names = [name for name in requested_names if name not in self._tool_by_name]
+        tool_by_name = self._tool_by_name
+        missing_sentinel = object()
+        selected: list[ToolDescriptor] = []
+        missing_names: list[str] = []
+        for name in requested_names:
+            tool = tool_by_name.get(name, missing_sentinel)
+            if tool is missing_sentinel:
+                missing_names.append(name)
+            else:
+                selected.append(tool)
         if missing_names:
             joined = ", ".join(missing_names)
             raise ToolRegistryError(f"Unknown tool registry entry requested: {joined}")
-        selected = [self._tool_by_name[name] for name in requested_names]
         selection = ToolRegistry(
             selected,
             schema_version=self._schema_version,
