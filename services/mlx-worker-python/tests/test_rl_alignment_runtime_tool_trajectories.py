@@ -177,6 +177,116 @@ def test_mlx_lm_runner_runtime_grpo_executes_candidate_tool_trajectories(
     assert "agentic_tool_observations" not in extra_trace
 
 
+def test_runtime_grpo_marks_tool_timeout_candidate_as_fatal_mask(
+    tmp_path: Path,
+) -> None:
+    class TimeoutPolicyBackend:
+        runtime_name = "timeout-policy-runtime"
+
+        def load_model(self, model_spec):
+            return {"model_id": model_spec.model_id, "model_path": model_spec.model_path}
+
+        def generate_tokens(self, loaded_model, prompt: str, sampling, cancel_event, execution_ext=None):
+            del loaded_model, sampling, cancel_event, execution_ext
+            if "candidate 1" in prompt:
+                yield RuntimeToolCallEvent(
+                    call_id="timeout-visit",
+                    tool_name="visit",
+                    arguments_json_fragment=json.dumps({"url": "fixture://timeout"}),
+                )
+                yield RuntimeTokenEvent(text="fatal timeout answer")
+            else:
+                yield RuntimeTokenEvent(text="ordinary fallback response")
+
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={
+            "training_mode": "grpo",
+            "grpo_candidate_count": "2",
+            "candidate_generation_mode": "runtime_generate",
+            "candidate_generation_max_tokens": "16",
+        },
+        dataset_format="prompt_candidate",
+        response_only_supported=False,
+        sample_count=1,
+    )
+    normalized_dataset_dir = tmp_path / "normalized"
+    normalized_dataset_dir.mkdir()
+    (normalized_dataset_dir / "train.jsonl").write_text(
+        json.dumps(
+            {
+                "prompt": "Use tools and answer.",
+                "tool_fixture_context": {
+                    "tool_status_overrides": {
+                        "timeout-visit": {
+                            "status": "timeout",
+                            "message": "visit timeout",
+                        },
+                    },
+                },
+                "candidates": [
+                    {"text": "fatal timeout answer", "score": 2.0},
+                    {"text": "ordinary fallback response", "score": 0.2},
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-grpo-runtime-fatal-mask",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=normalized_dataset_dir,
+        config=config,
+        dataset_format="prompt_candidate",
+    )
+
+    result = mlx_lm_runner_module.MLXLMRunner(
+        policy_runtime=MLXTextRuntime(backend=TimeoutPolicyBackend())
+    ).train(request)
+
+    trace_rows = [
+        json.loads(line)
+        for line in Path(result.metrics.policy_update_trace_path).read_text(encoding="utf-8").splitlines()
+    ]
+    candidate_trace_rows = [
+        json.loads(line)
+        for line in Path(result.metrics.candidate_reward_trace_path).read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+    row = trace_rows[0]
+    timeout_trace = candidate_trace_rows[0]
+    safe_trace = candidate_trace_rows[1]
+
+    assert row["selected_candidate_index"] == 0
+    assert row["fatal_stage"] == "tool_timeout"
+    assert row["fatal_state_mask"] is True
+    assert row["fatal_state_mask_reason"] == "tool_timeout"
+    assert row["grpo_advantage_raw"] == pytest.approx(0.5)
+    assert row["grpo_advantage_clamped"] == 0.0
+    assert row["group_fatal_candidate_count"] == 1
+    assert row["group_advantage_clamped_candidate_count"] == 1
+    assert timeout_trace["fatal_aware_grpo_schema_version"] == "melix.fatal_aware_grpo.v1"
+    assert timeout_trace["fatal_stage"] == "tool_timeout"
+    assert timeout_trace["fatal_state_mask"] is True
+    assert timeout_trace["fatal_state_mask_reason"] == "tool_timeout"
+    assert timeout_trace["grpo_advantage_raw"] == pytest.approx(0.5)
+    assert timeout_trace["grpo_advantage_clamped"] == 0.0
+    assert timeout_trace["grpo_advantage_clamp_applied"] is True
+    assert timeout_trace["grpo_advantage_clamp_reason"] == "fatal_state_positive_advantage"
+    assert timeout_trace["agentic_tool_metrics"]["agentic_tool.timeout_count"] == 1.0
+    assert safe_trace["fatal_state_mask"] is False
+    assert safe_trace["grpo_advantage_raw"] == pytest.approx(-0.5)
+    assert safe_trace["grpo_advantage_clamped"] == pytest.approx(-0.5)
+    assert result.metrics.fatal_candidate_count == 1
+    assert result.metrics.selected_fatal_candidate_count == 1
+    assert result.metrics.advantage_clamped_candidate_count == 1
+
+
 def test_alignment_runtime_tool_helpers_cover_namespaces_and_invalid_events() -> None:
     from worker.model_ops.rl_alignment_training import (
         _agentic_tool_run_for_generated_candidate,

@@ -252,12 +252,27 @@ The candidate-level reward trace milestone persists one
 candidate. The alignment run manifest and adapter config must expose the trace
 path, row count, and schema version. Each candidate trace row records the
 sample index, candidate index, generation and scoring modes, score, ordered
-reward components, fatal stage, group reward context, selected flag, replay
-fingerprint, tool-call count, observation count, and candidate-local tool
-metrics. The selected candidate trace row must also carry the selected
-candidate's registry receipt, tool calls, observations, metrics, and turns so
-release gates and compare workflows can audit the selected trajectory without
-reconstructing it from nested policy-update fields.
+reward components, fatal stage, fatal-aware GRPO metadata, group reward context,
+selected flag, replay fingerprint, tool-call count, observation count, and
+candidate-local tool metrics. The selected candidate trace row must also carry
+the selected candidate's registry receipt, tool calls, observations, metrics,
+and turns so release gates and compare workflows can audit the selected
+trajectory without reconstructing it from nested policy-update fields.
+
+The fatal-aware GRPO metadata uses schema version `melix.fatal_aware_grpo.v1`
+and is additive to the candidate trace schema:
+
+- `fatal_state_mask`: true when the candidate has a non-empty fatal stage.
+- `fatal_state_mask_reason`: the fatal stage that caused the mask.
+- `grpo_advantage_raw`: candidate reward total minus the group reward mean.
+- `grpo_advantage_clamped`: the one-sided fatal-aware advantage.
+- `grpo_advantage_clamp_applied`: true when a fatal positive advantage was
+  clamped.
+- `grpo_advantage_clamp_reason`: `fatal_state_positive_advantage` when clamped.
+
+Fatal candidates may keep zero or negative advantage for penalty accounting, but
+must not retain positive advantage. A fatal candidate with positive raw advantage
+must record `grpo_advantage_clamped: 0.0`.
 
 `fatal_stage` records the first stage that invalidates later trajectory tokens
 or observations. Supported stage names are:
@@ -301,6 +316,9 @@ snapshot, or artifact boundaries. The required v1 metrics are:
 | `media_ref_count` | Total media references. |
 | `reward_coverage_count` | Traces with structured reward objects. |
 | `fatal_stage_coverage_count` | Traces with the `fatal_stage` field present. |
+| `fatal_candidate_count` | GRPO candidates with `fatal_state_mask: true`. |
+| `selected_fatal_candidate_count` | Selected GRPO candidates with `fatal_state_mask: true`. |
+| `advantage_clamped_candidate_count` | Fatal GRPO candidates whose positive raw advantage was clamped. |
 
 Performance probes and success metrics for child issues must name these fields
 or justify why they are not relevant to that slice.
