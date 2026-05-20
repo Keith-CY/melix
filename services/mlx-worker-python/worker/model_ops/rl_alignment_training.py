@@ -20,10 +20,13 @@ from worker.trajectory_provenance import (
     load_trajectory_provenance_from_snapshot_dir,
 )
 
+CANDIDATE_REWARD_TRACE_SCHEMA_VERSION = "melix.alignment_candidate_reward_trace.v1"
+
 
 @dataclass(frozen=True)
 class PolicyUpdateResult:
     trace_rows: list[dict[str, Any]]
+    candidate_reward_trace_rows: list[dict[str, Any]]
     reward_values: list[float]
     reward_component_summaries: list[dict[str, float]]
     group_margins: list[float]
@@ -157,6 +160,7 @@ def train_alignment_rl_trace(
     weights_path = request.adapter_output_dir / "adapters.safetensors"
     adapter_config_path = request.adapter_output_dir / "adapter_config.json"
     policy_update_trace_path = request.adapter_output_dir / "policy_updates.jsonl"
+    candidate_reward_trace_path = request.adapter_output_dir / "candidate_reward_traces.jsonl"
     checkpoint_dir = request.adapter_output_dir / "checkpoint-1"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     latest_checkpoint_path = checkpoint_dir / "adapters.safetensors"
@@ -175,7 +179,18 @@ def train_alignment_rl_trace(
     )
     for row in policy_updates.trace_rows:
         row.update(rollout_manifest_fields)
+        if policy_updates.candidate_reward_trace_rows:
+            row["candidate_reward_trace_path"] = str(candidate_reward_trace_path)
+            row["candidate_reward_trace_total_count"] = len(
+                policy_updates.candidate_reward_trace_rows
+            )
     _write_jsonl(policy_update_trace_path, policy_updates.trace_rows)
+    if policy_updates.candidate_reward_trace_rows:
+        for row in policy_updates.candidate_reward_trace_rows:
+            if trajectory_provenance:
+                row.update(trajectory_provenance)
+            row.update(rollout_manifest_fields)
+        _write_jsonl(candidate_reward_trace_path, policy_updates.candidate_reward_trace_rows)
     adapter_config = _load_resume_adapter_config(request.resume_source_path) or {
         "fine_tune_type": "lora",
         "lora_parameters": {
@@ -192,6 +207,17 @@ def train_alignment_rl_trace(
             "alignment_algorithm": alignment.alignment_algorithm,
             "execution_backend": policy_updates.execution_backend,
             "policy_update_trace_path": str(policy_update_trace_path),
+            "candidate_reward_trace_path": (
+                str(candidate_reward_trace_path)
+                if policy_updates.candidate_reward_trace_rows
+                else ""
+            ),
+            "candidate_reward_trace_count": len(policy_updates.candidate_reward_trace_rows),
+            "candidate_reward_trace_schema_version": (
+                CANDIDATE_REWARD_TRACE_SCHEMA_VERSION
+                if policy_updates.candidate_reward_trace_rows
+                else ""
+            ),
             "reward_model_manifest_path": alignment.reward_model_manifest_path,
             "reference_model_path": alignment.reference_model_path,
             "kl_penalty": alignment.kl_penalty,
@@ -260,6 +286,17 @@ def train_alignment_rl_trace(
             candidate_group_reward_margin_mean=_mean(policy_updates.group_margins),
             candidate_group_reward_variance_mean=_mean(policy_updates.group_variances),
             policy_update_trace_path=str(policy_update_trace_path),
+            candidate_reward_trace_path=(
+                str(candidate_reward_trace_path)
+                if policy_updates.candidate_reward_trace_rows
+                else ""
+            ),
+            candidate_reward_trace_count=len(policy_updates.candidate_reward_trace_rows),
+            candidate_reward_trace_schema_version=(
+                CANDIDATE_REWARD_TRACE_SCHEMA_VERSION
+                if policy_updates.candidate_reward_trace_rows
+                else ""
+            ),
             candidate_generation_mode=policy_updates.candidate_generation_mode,
             candidate_generation_backend=policy_updates.candidate_generation_backend,
             candidate_scoring_mode=policy_updates.candidate_scoring_mode,
@@ -469,6 +506,7 @@ def _grpo_policy_updates(
             trace_rows[-1]["reward_model_id"] = reward_scorer.reward_model_id
     return PolicyUpdateResult(
         trace_rows=trace_rows,
+        candidate_reward_trace_rows=[],
         reward_values=reward_values,
         reward_component_summaries=reward_component_summaries,
         group_margins=group_margins,
@@ -510,6 +548,7 @@ def _grpo_runtime_policy_updates(
     cancel_event = threading.Event()
 
     trace_rows: list[dict[str, Any]] = []
+    candidate_reward_trace_rows: list[dict[str, Any]] = []
     reward_values: list[float] = []
     reward_component_summaries: list[dict[str, float]] = []
     group_margins: list[float] = []
@@ -557,11 +596,13 @@ def _grpo_runtime_policy_updates(
                 tool_run=generated.tool_run,
                 include_sample_fatal=True,
             )
+            fatal_stage = _fatal_stage_for_candidate(sample, {"text": generated.text})
             generated_candidate = {
                 "index": candidate_index,
                 "text": generated.text,
                 "score": score,
                 "reward_components": reward_components,
+                "fatal_stage": fatal_stage,
                 "generation_prompt": generation_prompt,
                 "source": "policy_runtime",
             }
@@ -577,6 +618,7 @@ def _grpo_runtime_policy_updates(
         reward_values.extend(scores)
         selected = max(generated_candidates, key=lambda candidate: candidate["reward_components"]["total"])
         selected_components = dict(selected["reward_components"])
+        selected_index = selected["index"]
         reward_component_summaries.extend(
             dict(candidate["reward_components"]) for candidate in generated_candidates
         )
@@ -592,7 +634,7 @@ def _grpo_runtime_policy_updates(
                 "candidate_generation_backend": runtime_name,
                 "candidate_scoring_mode": request.config.alignment.candidate_scoring_mode,
                 "prompt": prompt,
-                "selected_candidate_index": selected["index"],
+                "selected_candidate_index": selected_index,
                 "selected_candidate_text": selected["text"],
                 "selected_text": selected["text"],
                 "selected_reward": selected_components["total"],
@@ -606,15 +648,34 @@ def _grpo_runtime_policy_updates(
                 "generated_candidates": generated_candidates,
             }
         )
-        selected_tool_run = generated_tool_runs.get(selected["index"])
+        selected_tool_run = generated_tool_runs.get(selected_index)
         _attach_agentic_tool_run(trace_rows[-1], selected_tool_run)
         if selected.get("tool_calls"):
             trace_rows[-1]["selected_candidate_tool_call_count"] = len(selected["tool_calls"])
         if reward_scorer is not None:
             trace_rows[-1]["reward_scoring_backend"] = reward_scorer.runtime_name
             trace_rows[-1]["reward_model_id"] = reward_scorer.reward_model_id
+        sample_candidate_rows = _runtime_candidate_reward_trace_rows(
+            sample_index=sample_index,
+            prompt=prompt,
+            generated_candidates=generated_candidates,
+            generated_tool_runs=generated_tool_runs,
+            selected_index=selected_index,
+            group_reward_mean=group_mean,
+            group_reward_margin=group_margins[-1],
+            group_reward_variance=group_variances[-1],
+            candidate_generation_backend=runtime_name,
+            candidate_scoring_mode=request.config.alignment.candidate_scoring_mode,
+            reward_scorer=reward_scorer,
+        )
+        candidate_reward_trace_rows.extend(sample_candidate_rows)
+        trace_rows[-1]["candidate_reward_trace_schema_version"] = (
+            CANDIDATE_REWARD_TRACE_SCHEMA_VERSION
+        )
+        trace_rows[-1]["candidate_reward_trace_count"] = len(sample_candidate_rows)
     return PolicyUpdateResult(
         trace_rows=trace_rows,
+        candidate_reward_trace_rows=candidate_reward_trace_rows,
         reward_values=reward_values,
         reward_component_summaries=reward_component_summaries,
         group_margins=group_margins,
@@ -700,6 +761,7 @@ def _rlhf_policy_updates(
         trace_rows.append(row)
     return PolicyUpdateResult(
         trace_rows=trace_rows,
+        candidate_reward_trace_rows=[],
         reward_values=reward_values,
         reward_component_summaries=reward_component_summaries,
         group_margins=[],
@@ -751,6 +813,84 @@ def _attach_runtime_candidate_tool_evidence(
         return
     candidate["agentic_tool_metrics"] = dict(tool_run.metrics)
     candidate["agentic_tool_observation_count"] = len(tool_run.observations)
+
+
+def _runtime_candidate_reward_trace_rows(
+    *,
+    sample_index: int,
+    prompt: str,
+    generated_candidates: list[dict[str, Any]],
+    generated_tool_runs: dict[int, Any],
+    selected_index: int,
+    group_reward_mean: float,
+    group_reward_margin: float,
+    group_reward_variance: float,
+    candidate_generation_backend: str,
+    candidate_scoring_mode: str,
+    reward_scorer: RewardModelScorer | None,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for candidate in generated_candidates:
+        candidate_index = int(candidate["index"])
+        reward_components = dict(candidate["reward_components"])
+        tool_run = generated_tool_runs.get(candidate_index)
+        row = {
+            "schema_version": CANDIDATE_REWARD_TRACE_SCHEMA_VERSION,
+            "sample_index": sample_index,
+            "candidate_index": candidate_index,
+            "selected": candidate_index == selected_index,
+            "alignment_algorithm": "grpo",
+            "candidate_generation_mode": "runtime_generate",
+            "candidate_generation_backend": candidate_generation_backend,
+            "candidate_scoring_mode": candidate_scoring_mode,
+            "prompt": prompt,
+            "candidate_text": str(candidate.get("text", "")),
+            "score": float(candidate["score"]),
+            "reward_components": reward_components,
+            "reward_total": float(reward_components["total"]),
+            "fatal_stage": candidate.get("fatal_stage", "").strip(),
+            "fatal_penalty_applied": float(reward_components["fatal_failure"]) < 0.0,
+            "group_reward_mean": group_reward_mean,
+            "group_reward_margin": group_reward_margin,
+            "group_reward_variance": group_reward_variance,
+            "candidate_count": len(generated_candidates),
+            "source": str(candidate.get("source", "")),
+            "generation_prompt": str(candidate.get("generation_prompt", "")),
+            "tool_call_count": len(candidate.get("tool_calls", [])),
+            "agentic_tool_observation_count": candidate.get(
+                "agentic_tool_observation_count", 0
+            ),
+            "replay_fingerprint": _candidate_replay_fingerprint(candidate),
+        }
+        if isinstance(candidate.get("tool_calls"), list):
+            row["tool_calls"] = [dict(call) for call in candidate["tool_calls"]]
+        if isinstance(candidate.get("agentic_tool_metrics"), dict):
+            row["agentic_tool_metrics"] = dict(candidate["agentic_tool_metrics"])
+        if reward_scorer is not None:
+            row["reward_scoring_backend"] = reward_scorer.runtime_name
+            row["reward_model_id"] = reward_scorer.reward_model_id
+        if candidate_index == selected_index:
+            _attach_agentic_tool_run(row, tool_run)
+        rows.append(row)
+    return rows
+
+
+def _candidate_replay_fingerprint(candidate: dict[str, Any]) -> str:
+    payload = {
+        "text": candidate.get("text", ""),
+        "score": candidate.get("score"),
+        "reward_components": candidate.get("reward_components", {}),
+        "tool_calls": candidate.get("tool_calls", []),
+        "agentic_tool_metrics": candidate.get("agentic_tool_metrics", {}),
+    }
+    return hashlib.sha256(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 _REWARD_COMPONENT_KEYS = (

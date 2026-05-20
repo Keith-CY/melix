@@ -97,6 +97,9 @@ class TrainingMetrics:
     candidate_group_reward_margin_mean: float = 0.0
     candidate_group_reward_variance_mean: float = 0.0
     policy_update_trace_path: str = ""
+    candidate_reward_trace_path: str = ""
+    candidate_reward_trace_count: int = 0
+    candidate_reward_trace_schema_version: str = ""
     candidate_generation_mode: str = ""
     candidate_generation_backend: str = ""
     candidate_scoring_mode: str = ""
