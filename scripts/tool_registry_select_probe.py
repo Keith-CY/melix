@@ -12,7 +12,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 
-from worker.runtime.tool_registry import built_in_tool_registry  # noqa: E402
+from worker.runtime.tool_registry import (  # noqa: E402
+    built_in_tool_config,
+    built_in_tool_registry,
+)
 
 _SELECTIONS: tuple[tuple[str, ...], ...] = (
     ("visit", "image_crop", "visit"),
@@ -27,6 +30,8 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     full_selection = list(registry.names())
     elapsed_samples: list[float] = []
     full_list_self_samples: list[float] = []
+    full_config_template_elapsed_samples: list[float] = []
+    full_config_template_samples: list[float] = []
     checksum = 0
 
     for _ in range(sample_count):
@@ -43,10 +48,26 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         elapsed_samples.append((time.perf_counter() - started) * 1000.0)
         full_list_self_samples.append(float(full_list_self_count))
 
+        full_config_iterations = iterations // 5
+        full_config_template_count = 0
+        full_config_started = time.perf_counter()
+        for _index in range(full_config_iterations):
+            config = built_in_tool_config(full_selection)
+            full_config_template_count += 1
+            checksum += len(config.tools)
+        full_config_template_elapsed_samples.append(
+            (time.perf_counter() - full_config_started) * 1000.0
+        )
+        full_config_template_samples.append(float(full_config_template_count))
+
     return {
         "elapsed_ms_mean": statistics.fmean(elapsed_samples),
         "select_calls_mean": float(iterations),
         "full_list_self_hits_mean": statistics.fmean(full_list_self_samples),
+        "full_config_template_elapsed_ms_mean": statistics.fmean(
+            full_config_template_elapsed_samples
+        ),
+        "full_config_template_hits_mean": statistics.fmean(full_config_template_samples),
         "checksum": float(checksum),
         "iterations": float(iterations),
         "sample_count": float(sample_count),

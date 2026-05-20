@@ -323,6 +323,13 @@ def test_built_in_tool_config_without_names_uses_cached_serialized_snapshot(
 def test_built_in_tool_config_full_selection_uses_cached_serialized_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    class IterCountingList(list[str]):
+        iter_calls = 0
+
+        def __iter__(self):  # pragma: no cover - exact-list fast path must not iterate
+            type(self).iter_calls += 1
+            return super().__iter__()
+
     expected_config = built_in_tool_config()
 
     def fail_as_worker_tool_config(self: ToolRegistry) -> common_pb2.ToolConfig:
@@ -333,11 +340,13 @@ def test_built_in_tool_config_full_selection_uses_cached_serialized_snapshot(
     monkeypatch.setattr(ToolRegistry, "as_worker_tool_config", fail_as_worker_tool_config)
 
     tuple_config = built_in_tool_config(BUILTIN_AGENTIC_TOOL_NAMES)
-    list_config = built_in_tool_config(list(BUILTIN_AGENTIC_TOOL_NAMES))
+    full_list = IterCountingList(BUILTIN_AGENTIC_TOOL_NAMES)
+    list_config = built_in_tool_config(full_list)
 
     assert tuple_config == expected_config
     assert list_config == expected_config
     assert tuple_config is not expected_config
+    assert IterCountingList.iter_calls == 0
     assert list_config is not expected_config
     tuple_config.tools[0].name = "mutated"
     assert built_in_tool_config(BUILTIN_AGENTIC_TOOL_NAMES).tools[0].name == "image_crop"
