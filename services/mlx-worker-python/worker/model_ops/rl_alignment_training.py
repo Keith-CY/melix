@@ -14,6 +14,7 @@ from packages.protocol.python.worker.v1 import common_pb2
 from worker.model_ops.alignment_rollout_manifest import build_alignment_rollout_manifest_fields
 from worker.model_ops.errors import ModelOperationError
 from worker.runtime.agentic_tools import execute_agentic_tool_calls
+from worker.runtime.tool_registry import BUILTIN_AGENTIC_TOOL_NAMES
 from worker.trajectory_provenance import (
     append_trajectory_provenance,
     load_trajectory_provenance_from_snapshot_dir,
@@ -34,6 +35,13 @@ class PolicyUpdateResult:
     candidate_generation_backend: str = ""
     reward_scoring_backend: str = ""
     generated_candidate_count: int = 0
+
+
+@dataclass(frozen=True)
+class RuntimeGeneratedCandidate:
+    text: str
+    tool_calls: list[dict[str, Any]]
+    tool_run: Any | None
 
 
 @dataclass(frozen=True)
@@ -515,49 +523,56 @@ def _grpo_runtime_policy_updates(
             else _scored_seed_candidates(sample, sample_index=sample_index)
         )
         generated_candidates: list[dict[str, Any]] = []
-        tool_run = _agentic_tool_run_for_sample(sample)
+        generated_tool_runs: dict[int, Any] = {}
         for candidate_index in range(candidate_count):
             generation_prompt = _runtime_generation_prompt(
                 prompt,
                 candidate_index=candidate_index,
                 candidate_count=candidate_count,
             )
-            generated_text = _generate_candidate_text(
+            generated = _generate_runtime_candidate(
                 policy_runtime,
                 loaded_model,
                 generation_prompt,
                 sampling,
                 cancel_event,
+                sample=sample,
             )
             if request.config.alignment.candidate_scoring_mode == "reward_model":
                 if reward_scorer is None:
                     raise _missing_reward_scorer_error()
                 score = reward_scorer.score_response(
                     prompt=prompt,
-                    response=generated_text,
+                    response=generated.text,
                     alignment_algorithm="grpo",
                     sample_index=sample_index,
                     candidate_index=candidate_index,
                 )
             else:
-                score = _seed_overlap_proxy_score(generated_text, seed_candidates)
+                score = _seed_overlap_proxy_score(generated.text, seed_candidates)
             reward_components = _reward_components_for_candidate(
                 sample=sample,
-                candidate={"text": generated_text},
+                candidate={"text": generated.text},
                 score=score,
-                tool_run=tool_run,
+                tool_run=generated.tool_run,
                 include_sample_fatal=True,
             )
-            generated_candidates.append(
-                {
-                    "index": candidate_index,
-                    "text": generated_text,
-                    "score": score,
-                    "reward_components": reward_components,
-                    "generation_prompt": generation_prompt,
-                    "source": "policy_runtime",
-                }
+            generated_candidate = {
+                "index": candidate_index,
+                "text": generated.text,
+                "score": score,
+                "reward_components": reward_components,
+                "generation_prompt": generation_prompt,
+                "source": "policy_runtime",
+            }
+            _attach_runtime_candidate_tool_evidence(
+                generated_candidate,
+                generated.tool_calls,
+                generated.tool_run,
             )
+            if generated.tool_run is not None:
+                generated_tool_runs[candidate_index] = generated.tool_run
+            generated_candidates.append(generated_candidate)
         scores = [candidate["reward_components"]["total"] for candidate in generated_candidates]
         reward_values.extend(scores)
         selected = max(generated_candidates, key=lambda candidate: candidate["reward_components"]["total"])
@@ -583,7 +598,7 @@ def _grpo_runtime_policy_updates(
                 "selected_reward": selected_components["total"],
                 "reward_components": selected_components,
                 "reward_total": selected_components["total"],
-                "fatal_stage": _fatal_stage_for_candidate(sample, {"text": selected["text"]}),
+                "fatal_stage": _fatal_stage_for_candidate(sample, selected),
                 "fatal_penalty_applied": selected_components["fatal_failure"] < 0.0,
                 "group_reward_mean": group_mean,
                 "group_reward_margin": group_margins[-1],
@@ -591,7 +606,10 @@ def _grpo_runtime_policy_updates(
                 "generated_candidates": generated_candidates,
             }
         )
-        _attach_agentic_tool_run(trace_rows[-1], tool_run)
+        selected_tool_run = generated_tool_runs.get(selected["index"])
+        _attach_agentic_tool_run(trace_rows[-1], selected_tool_run)
+        if selected.get("tool_calls"):
+            trace_rows[-1]["selected_candidate_tool_call_count"] = len(selected["tool_calls"])
         if reward_scorer is not None:
             trace_rows[-1]["reward_scoring_backend"] = reward_scorer.runtime_name
             trace_rows[-1]["reward_model_id"] = reward_scorer.reward_model_id
@@ -719,6 +737,20 @@ def _attach_agentic_tool_run(row: dict[str, Any], tool_run: Any | None) -> None:
     ]
     row["agentic_tool_metrics"] = dict(tool_run.metrics)
     row["turns"] = [dict(turn) for turn in tool_run.trace_turns]
+
+
+def _attach_runtime_candidate_tool_evidence(
+    candidate: dict[str, Any],
+    tool_calls: list[dict[str, Any]],
+    tool_run: Any | None,
+) -> None:
+    if not tool_calls:
+        return
+    candidate["tool_calls"] = [dict(call) for call in tool_calls]
+    if tool_run is None:
+        return
+    candidate["agentic_tool_metrics"] = dict(tool_run.metrics)
+    candidate["agentic_tool_observation_count"] = len(tool_run.observations)
 
 
 _REWARD_COMPONENT_KEYS = (
@@ -1001,21 +1033,31 @@ def _runtime_generation_prompt(prompt: str, *, candidate_index: int, candidate_c
     )
 
 
-def _generate_candidate_text(
+def _generate_runtime_candidate(
     policy_runtime: Any,
     loaded_model: Any,
     generation_prompt: str,
     sampling: SimpleNamespace,
     cancel_event: threading.Event,
-) -> str:
+    *,
+    sample: dict[str, Any],
+) -> RuntimeGeneratedCandidate:
     chunks: list[str] = []
+    tool_calls: list[dict[str, Any]] = []
     for event in policy_runtime.generate_tokens(
         loaded_model,
         generation_prompt,
         sampling,
         cancel_event,
-        execution_ext={"melix.alignment.candidate_generation": "grpo"},
+        execution_ext={
+            "melix.alignment.candidate_generation": "grpo",
+            "melix.tool_parser.mode": "qwen",
+            "melix.tool_parser.namespaces": _runtime_tool_namespaces(sample),
+        },
     ):
+        if _is_runtime_tool_call_event(event):
+            tool_calls.append(_tool_call_from_runtime_event(event))
+            continue
         text = str(getattr(event, "text", event) or "")
         if text:
             chunks.append(text)
@@ -1026,7 +1068,91 @@ def _generate_candidate_text(
             message="GRPO runtime candidate generation returned an empty candidate.",
             details={"candidate_generation_mode": "runtime_generate"},
         )
-    return generated_text
+    return RuntimeGeneratedCandidate(
+        text=generated_text,
+        tool_calls=tool_calls,
+        tool_run=_agentic_tool_run_for_generated_candidate(sample, tool_calls),
+    )
+
+
+def _generate_candidate_text(
+    policy_runtime: Any,
+    loaded_model: Any,
+    generation_prompt: str,
+    sampling: SimpleNamespace,
+    cancel_event: threading.Event,
+) -> str:
+    return _generate_runtime_candidate(
+        policy_runtime,
+        loaded_model,
+        generation_prompt,
+        sampling,
+        cancel_event,
+        sample={},
+    ).text
+
+
+def _is_runtime_tool_call_event(event: Any) -> bool:
+    return (
+        hasattr(event, "tool_name")
+        and hasattr(event, "arguments_json_fragment")
+        and hasattr(event, "call_id")
+    )
+
+
+def _tool_call_from_runtime_event(event: Any) -> dict[str, Any]:
+    raw_arguments = str(getattr(event, "arguments_json_fragment", "") or "{}").strip() or "{}"
+    try:
+        arguments = json.loads(raw_arguments)
+    except json.JSONDecodeError as exc:
+        raise ModelOperationError(
+            code="alignment_generation_failed",
+            message="GRPO runtime candidate generation emitted invalid tool-call JSON.",
+            details={
+                "candidate_generation_mode": "runtime_generate",
+                "tool_name": str(getattr(event, "tool_name", "")),
+            },
+        ) from exc
+    if not isinstance(arguments, dict):
+        raise ModelOperationError(
+            code="alignment_generation_failed",
+            message="GRPO runtime candidate generation emitted non-object tool-call arguments.",
+            details={
+                "candidate_generation_mode": "runtime_generate",
+                "tool_name": str(getattr(event, "tool_name", "")),
+            },
+        )
+    return {
+        "id": str(getattr(event, "call_id", "") or ""),
+        "name": str(getattr(event, "tool_name", "") or ""),
+        "arguments": arguments,
+    }
+
+
+def _agentic_tool_run_for_generated_candidate(
+    sample: dict[str, Any],
+    tool_calls: list[dict[str, Any]],
+) -> Any | None:
+    if not tool_calls:
+        return None
+    fixture_context = sample.get("tool_fixture_context") or sample.get("tool_context")
+    return execute_agentic_tool_calls(
+        tool_calls,
+        fixture_context=fixture_context if isinstance(fixture_context, dict) else {},
+    )
+
+
+def _runtime_tool_namespaces(sample: dict[str, Any]) -> str:
+    tools = sample.get("tools")
+    if isinstance(tools, list):
+        names = [
+            str(tool.get("name", "")).strip()
+            for tool in tools
+            if isinstance(tool, dict) and str(tool.get("name", "")).strip()
+        ]
+        if names:
+            return ",".join(dict.fromkeys(names))
+    return ",".join(BUILTIN_AGENTIC_TOOL_NAMES)
 
 
 def _scored_seed_candidates(sample: dict[str, Any], *, sample_index: int) -> list[dict[str, Any]]:
