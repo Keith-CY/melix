@@ -8,6 +8,9 @@ import pytest
 from packages.protocol.python.worker.v1 import common_pb2
 from worker.model_ops import mlx_lm_runner as mlx_lm_runner_module
 from worker.model_ops import training_config as training_config_module
+from worker.model_ops.alignment_rollout_manifest import (
+    build_alignment_rollout_manifest_fields_from_training_metrics,
+)
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.lora_training_pipeline import LoRATrainingPipeline
 from worker.model_ops.training_dataset import load_training_dataset_package
@@ -35,6 +38,19 @@ def _text_model(*, model_path: str = "models/plain-llama") -> common_pb2.ModelSp
     )
     model.ext["text_layer_count"] = "2"
     return model
+
+
+def _minimal_training_metrics(**overrides: object) -> mlx_lm_runner_module.TrainingMetrics:
+    values = {
+        "job_duration_ms": 12.0,
+        "tokens_seen": 8,
+        "examples_seen": 1,
+        "loss_final": 0.2,
+        "loss_best": 0.2,
+        "learning_rate_final": 1e-4,
+    }
+    values.update(overrides)
+    return mlx_lm_runner_module.TrainingMetrics(**values)
 
 
 def test_grpo_policy_updates_persist_reward_components_and_fatal_stage(
@@ -116,6 +132,20 @@ def test_grpo_policy_updates_persist_reward_components_and_fatal_stage(
     assert result.metrics.reward_component_fatal_failure_mean == pytest.approx(-1.0)
     assert result.metrics.reward_component_total_mean == pytest.approx(-1.9)
     assert result.metrics.fatal_trace_count == 1
+    assert result.metrics.rollout_manifest_schema_version == "melix.alignment_rollout_manifest.v1"
+    assert result.metrics.rollout_candidate_count == 2
+    assert result.metrics.rollout_reward_policy_id == "melix.agentic_grpo_reward_components.v1"
+    assert result.metrics.rollout_reference_model_path == str(tmp_path / "base-model")
+    assert len(result.metrics.rollout_trajectory_digest) == 64
+    adapter_config = json.loads(result.adapter_config_path.read_text(encoding="utf-8"))
+    assert adapter_config["rollout_candidate_count"] == 2
+    assert adapter_config["rollout_reward_policy_id"] == result.metrics.rollout_reward_policy_id
+    assert adapter_config["rollout_reference_model_path"] == str(tmp_path / "base-model")
+    assert adapter_config["rollout_trajectory_digest"] == result.metrics.rollout_trajectory_digest
+    assert trace_rows[0]["rollout_candidate_count"] == 2
+    assert trace_rows[0]["rollout_reward_policy_id"] == result.metrics.rollout_reward_policy_id
+    assert trace_rows[0]["rollout_reference_model_path"] == str(tmp_path / "base-model")
+    assert trace_rows[0]["rollout_trajectory_digest"] == result.metrics.rollout_trajectory_digest
 
 
 def test_lora_training_pipeline_records_grpo_reward_component_metrics(
@@ -166,6 +196,16 @@ def test_lora_training_pipeline_records_grpo_reward_component_metrics(
         Path(result.manifest["alignment_run_manifest_path"]).read_text(encoding="utf-8")
     )
     metrics = alignment_manifest["metrics"]
+    assert result.manifest["rollout_manifest_schema_version"] == "melix.alignment_rollout_manifest.v1"
+    assert result.manifest["rollout_candidate_count"] == 2
+    assert result.manifest["rollout_reward_policy_id"] == "melix.agentic_grpo_reward_components.v1"
+    assert result.manifest["rollout_reference_model_path"] == str(tmp_path / "base-model")
+    assert result.manifest["rollout_trajectory_digest"] == alignment_manifest["rollout_trajectory_digest"]
+    assert alignment_manifest["rollout_manifest_schema_version"] == "melix.alignment_rollout_manifest.v1"
+    assert alignment_manifest["rollout_candidate_count"] == 2
+    assert alignment_manifest["rollout_reward_policy_id"] == "melix.agentic_grpo_reward_components.v1"
+    assert alignment_manifest["rollout_reference_model_path"] == str(tmp_path / "base-model")
+    assert len(alignment_manifest["rollout_trajectory_digest"]) == 64
     assert metrics["reward_mean"] == pytest.approx(0.65)
     assert metrics["reward_component_final_answer_mean"] == pytest.approx(0.35)
     assert metrics["reward_component_tool_efficiency_mean"] == pytest.approx(0.2)
@@ -173,6 +213,65 @@ def test_lora_training_pipeline_records_grpo_reward_component_metrics(
     assert metrics["reward_component_fatal_failure_mean"] == pytest.approx(0.0)
     assert metrics["reward_component_total_mean"] == pytest.approx(0.65)
     assert metrics["fatal_trace_count"] == 0
+
+
+def test_alignment_rollout_manifest_fields_cover_rlhf_and_reward_model_defaults(
+    tmp_path: Path,
+) -> None:
+    rlhf_fields = build_alignment_rollout_manifest_fields_from_training_metrics(
+        metrics=_minimal_training_metrics(),
+        alignment_algorithm="rlhf",
+        configured_candidate_count=8,
+        candidate_scoring_mode="dataset",
+        explicit_reference_model_path="",
+        default_reference_model_path=str(tmp_path / "base-model"),
+        trajectory_provenance={},
+        trace_rows=[{"response": "Helpful answer.", "reward_score": 0.9}],
+    )
+    assert rlhf_fields["rollout_manifest_schema_version"] == "melix.alignment_rollout_manifest.v1"
+    assert rlhf_fields["rollout_candidate_count"] == 1
+    assert rlhf_fields["rollout_reward_policy_id"] == "melix.rlhf_dataset_reward.v1"
+    assert rlhf_fields["rollout_reference_model_path"] == str(tmp_path / "base-model")
+    assert len(rlhf_fields["rollout_trajectory_digest"]) == 64
+
+    reward_model_fields = build_alignment_rollout_manifest_fields_from_training_metrics(
+        metrics=_minimal_training_metrics(),
+        alignment_algorithm="grpo",
+        configured_candidate_count=2,
+        candidate_scoring_mode="reward_model",
+        explicit_reference_model_path="",
+        default_reference_model_path=str(tmp_path / "base-model"),
+        trajectory_provenance={},
+        trace_rows=[{"prompt": "Draft two answers."}],
+    )
+    assert reward_model_fields["rollout_candidate_count"] == 2
+    assert reward_model_fields["rollout_reward_policy_id"] == "melix.reward_model_scoring.v1"
+    assert reward_model_fields["rollout_reference_model_path"] == str(tmp_path / "base-model")
+    assert len(reward_model_fields["rollout_trajectory_digest"]) == 64
+
+    metrics_fields = build_alignment_rollout_manifest_fields_from_training_metrics(
+        metrics=_minimal_training_metrics(
+            rollout_manifest_schema_version="melix.alignment_rollout_manifest.v1",
+            rollout_candidate_count=3,
+            rollout_reward_policy_id="reward-policy.from-metrics",
+            rollout_reference_model_path=str(tmp_path / "reference-model"),
+            rollout_trajectory_digest="d" * 64,
+        ),
+        alignment_algorithm="grpo",
+        configured_candidate_count=2,
+        candidate_scoring_mode="dataset",
+        explicit_reference_model_path="",
+        default_reference_model_path=str(tmp_path / "base-model"),
+        trajectory_provenance={},
+        trace_rows=[],
+    )
+    assert metrics_fields == {
+        "rollout_manifest_schema_version": "melix.alignment_rollout_manifest.v1",
+        "rollout_candidate_count": 3,
+        "rollout_reward_policy_id": "reward-policy.from-metrics",
+        "rollout_reference_model_path": str(tmp_path / "reference-model"),
+        "rollout_trajectory_digest": "d" * 64,
+    }
 
 
 def test_grpo_reward_component_helpers_cover_explicit_and_edge_paths() -> None:

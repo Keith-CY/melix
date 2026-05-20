@@ -11,6 +11,7 @@ from typing import Any
 
 from packages.protocol.python.worker.v1 import common_pb2
 
+from worker.model_ops.alignment_rollout_manifest import build_alignment_rollout_manifest_fields
 from worker.model_ops.errors import ModelOperationError
 from worker.runtime.agentic_tools import execute_agentic_tool_calls
 from worker.trajectory_provenance import (
@@ -155,6 +156,17 @@ def train_alignment_rl_trace(
     if trajectory_provenance:
         for row in policy_updates.trace_rows:
             row.update(trajectory_provenance)
+    rollout_manifest_fields = build_alignment_rollout_manifest_fields(
+        alignment_algorithm=alignment.alignment_algorithm,
+        configured_candidate_count=alignment.grpo_candidate_count,
+        candidate_scoring_mode=policy_updates.candidate_scoring_mode,
+        explicit_reference_model_path=alignment.reference_model_path,
+        default_reference_model_path=str(request.model_path),
+        trajectory_provenance=trajectory_provenance,
+        trace_rows=policy_updates.trace_rows,
+    )
+    for row in policy_updates.trace_rows:
+        row.update(rollout_manifest_fields)
     _write_jsonl(policy_update_trace_path, policy_updates.trace_rows)
     adapter_config = _load_resume_adapter_config(request.resume_source_path) or {
         "fine_tune_type": "lora",
@@ -185,6 +197,7 @@ def train_alignment_rl_trace(
             ),
         }
     )
+    adapter_config.update(rollout_manifest_fields)
     if trajectory_provenance:
         append_trajectory_provenance(adapter_config, trajectory_provenance)
         adapter_config["trajectory_provenance_field_count"] = len(trajectory_provenance)
@@ -244,6 +257,15 @@ def train_alignment_rl_trace(
             candidate_scoring_mode=policy_updates.candidate_scoring_mode,
             reward_scoring_backend=policy_updates.reward_scoring_backend,
             generated_candidate_count=policy_updates.generated_candidate_count,
+            rollout_manifest_schema_version=str(
+                rollout_manifest_fields["rollout_manifest_schema_version"]
+            ),
+            rollout_candidate_count=int(rollout_manifest_fields["rollout_candidate_count"]),
+            rollout_reward_policy_id=str(rollout_manifest_fields["rollout_reward_policy_id"]),
+            rollout_reference_model_path=str(
+                rollout_manifest_fields["rollout_reference_model_path"]
+            ),
+            rollout_trajectory_digest=str(rollout_manifest_fields["rollout_trajectory_digest"]),
         ),
         execution_backend=policy_updates.execution_backend,
     )

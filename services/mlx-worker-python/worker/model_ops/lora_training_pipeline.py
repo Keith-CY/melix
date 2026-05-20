@@ -11,6 +11,9 @@ from typing import Any, Callable
 
 from packages.protocol.python.worker.v1 import common_pb2
 
+from worker.model_ops.alignment_rollout_manifest import (
+    build_alignment_rollout_manifest_fields_from_training_metrics,
+)
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.lora_runtime_metadata import build_quantized_lora_manifest_fields
 from worker.model_ops.multimodal_lora_contracts import (
@@ -39,6 +42,14 @@ from worker.trajectory_provenance import (
 
 
 _NUMERIC_TOKEN_RE = re.compile(r"\d+")
+_ROLLOUT_ALIGNMENT_ALGORITHMS = frozenset({"grpo", "rlhf"})
+_ROLLOUT_MANIFEST_FIELD_KEYS = (
+    "rollout_manifest_schema_version",
+    "rollout_candidate_count",
+    "rollout_reward_policy_id",
+    "rollout_reference_model_path",
+    "rollout_trajectory_digest",
+)
 
 
 @dataclass(frozen=True)
@@ -356,6 +367,13 @@ class LoRATrainingPipeline:
                 trajectory_provenance=trajectory_provenance,
                 created_at_unix_ms=persisted_at_unix_ms,
             )
+            manifest.update(
+                {
+                    key: alignment_manifest[key]
+                    for key in _ROLLOUT_MANIFEST_FIELD_KEYS
+                    if key in alignment_manifest
+                }
+            )
             alignment_manifest_path.write_text(
                 json.dumps(alignment_manifest, indent=2) + "\n",
                 encoding="utf-8",
@@ -528,6 +546,17 @@ def _alignment_manifest_payload(
         metrics.update(reward_summary)
     provenance = normalize_trajectory_provenance(trajectory_provenance)
     metrics.update(alignment_metrics_trajectory_provenance(provenance))
+    rollout_manifest_fields = (
+        _rollout_manifest_fields_from_training_result(
+            source_model=source_model,
+            config=config,
+            training_result=training_result,
+            trajectory_provenance=provenance,
+            fallback_trace_rows=dataset.package.normalized_samples,
+        )
+        if alignment.alignment_algorithm in _ROLLOUT_ALIGNMENT_ALGORITHMS
+        else {}
+    )
     if alignment.dataset_contract in {"prompt_candidate", "reward_scored"}:
         metrics.update(
             {
@@ -606,8 +635,32 @@ def _alignment_manifest_payload(
         "created_at_unix_ms": created_at_unix_ms,
         "updated_at_unix_ms": created_at_unix_ms,
     }
+    if rollout_manifest_fields:
+        payload.update(rollout_manifest_fields)
     append_trajectory_provenance(payload, provenance)
     return payload
+
+
+def _rollout_manifest_fields_from_training_result(
+    *,
+    source_model: common_pb2.ModelSpec,
+    config: LoRATrainingConfig,
+    training_result: TrainingResult,
+    trajectory_provenance: dict[str, Any],
+    fallback_trace_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    alignment = config.alignment
+    assert alignment is not None
+    return build_alignment_rollout_manifest_fields_from_training_metrics(
+        metrics=training_result.metrics,
+        alignment_algorithm=alignment.alignment_algorithm,
+        configured_candidate_count=alignment.grpo_candidate_count,
+        candidate_scoring_mode=alignment.candidate_scoring_mode,
+        explicit_reference_model_path=alignment.reference_model_path,
+        default_reference_model_path=source_model.model_path,
+        trajectory_provenance=trajectory_provenance,
+        trace_rows=fallback_trace_rows,
+    )
 
 
 def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
