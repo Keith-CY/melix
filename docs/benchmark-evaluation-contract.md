@@ -741,7 +741,9 @@ target identity explicit without requiring readers to inspect runtime state.
 row was produced by an adapter-backed LoRA target. `base_model_id` identifies
 the source model used as the comparison baseline. Adapter rows must include the
 adapter package manifest path, adapter set hash, and activation mode when those
-values are available from benchmark job parameters.
+values are available from benchmark job parameters. Base rows must clear
+adapter-only fields during persistence and export collection so stale adapter
+metadata from older request rows cannot be interpreted as LoRA lineage.
 
 ### Compatibility Aliases
 

@@ -357,26 +357,41 @@ class BenchmarkStore:
     ) -> tuple[ServingBenchmarkRequestRow, ...]:
         metadata = _benchmark_compare_identity(job.to_dict())
         metadata_is_adapter = metadata["compare_target_kind"] == "adapter"
-        return tuple(
-            replace(
-                row,
-                compare_target_kind=(
-                    metadata["compare_target_kind"]
-                    if metadata_is_adapter and row.compare_target_kind == "base"
-                    else row.compare_target_kind or metadata["compare_target_kind"]
-                ),
-                base_model_id=(
-                    metadata["base_model_id"]
-                    if metadata_is_adapter and row.base_model_id == row.model_id
-                    else row.base_model_id or metadata["base_model_id"]
-                ),
-                adapter_manifest_path=row.adapter_manifest_path or metadata["adapter_manifest_path"],
-                adapter_set_hash=row.adapter_set_hash or metadata["adapter_set_hash"],
-                adapter_activation_mode=row.adapter_activation_mode or metadata["adapter_activation_mode"],
+        rows: list[ServingBenchmarkRequestRow] = []
+        for row in (row for row in request_rows if isinstance(row, ServingBenchmarkRequestRow)):
+            if not metadata_is_adapter:
+                rows.append(
+                    replace(
+                        row,
+                        compare_target_kind="base",
+                        base_model_id=metadata["base_model_id"] or row.model_id,
+                        adapter_manifest_path="",
+                        adapter_set_hash="",
+                        adapter_activation_mode="",
+                    )
+                )
+                continue
+            rows.append(
+                replace(
+                    row,
+                    compare_target_kind=(
+                        metadata["compare_target_kind"]
+                        if row.compare_target_kind == "base"
+                        else row.compare_target_kind or metadata["compare_target_kind"]
+                    ),
+                    base_model_id=(
+                        metadata["base_model_id"]
+                        if row.base_model_id == row.model_id
+                        else row.base_model_id or metadata["base_model_id"]
+                    ),
+                    adapter_manifest_path=row.adapter_manifest_path
+                    or metadata["adapter_manifest_path"],
+                    adapter_set_hash=row.adapter_set_hash or metadata["adapter_set_hash"],
+                    adapter_activation_mode=row.adapter_activation_mode
+                    or metadata["adapter_activation_mode"],
+                )
             )
-            for row in request_rows
-            if isinstance(row, ServingBenchmarkRequestRow)
-        )
+        return tuple(rows)
 
     def persist_benchmark_matrix(
         self,

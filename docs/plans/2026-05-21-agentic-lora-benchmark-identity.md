@@ -13,6 +13,8 @@ identity to request-level and tool-turn performance.
   and their CSV export.
 - Automatically annotates collected request rows from `bench-job.json`
   parameters when persisted rows predate the new fields.
+- Normalizes base request rows by clearing adapter-only fields during store
+  persistence and export collection.
 - Keeps PR/report delta rendering out of scope for issue #713.
 
 ## Architecture
@@ -44,6 +46,8 @@ registry during export.
   - adapter-backed rows expose adapter lineage without parsing nested runtime
     metadata.
   - base rows expose `compare_target_kind: base` and stable `base_model_id`.
+  - base rows clear adapter-only fields even when an older persisted row
+    contains stale adapter identity.
   - CSV exports include the new identity columns.
   - existing request-row exports remain backward compatible when no adapter
     metadata exists.

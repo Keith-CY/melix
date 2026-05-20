@@ -306,6 +306,64 @@ def test_persist_serving_benchmark_request_rows_attach_adapter_identity(
     assert jsonl_row["adapter_activation_mode"] == "adapter_backed_runtime"
 
 
+def test_persist_serving_benchmark_clears_stale_adapter_identity_for_base_rows(
+    tmp_path: Path,
+) -> None:
+    store = BenchmarkStore(telemetry_collector=fixture_telemetry_collector())
+    jobs_root = tmp_path / "bench"
+    job = build_serving_benchmark_job(
+        job_id="bench-base",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="local",
+        suites=("agentic_visit",),
+        parameters={},
+        status="completed",
+        output_dir=str(jobs_root),
+    )
+    results = build_serving_benchmark_results(
+        job_id="bench-base",
+        metrics={"bench.agentic_visit.ttft_ms": 24.45},
+        units={"bench.agentic_visit.ttft_ms": "ms"},
+        report_path=str(jobs_root / "bench-report.md"),
+        report_markdown="# Melix Bench\n",
+    )
+    request_row = build_serving_benchmark_request_row(
+        job_id="bench-base",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="local",
+        suite="agentic_visit",
+        context_length=64,
+        generation_length=16,
+        batch_size=1,
+        repeat_index=0,
+        request_index=0,
+        phase="final_answer",
+        phase_index=0,
+        status="completed",
+        compare_target_kind="adapter",
+        base_model_id="melix-dev-text-base",
+        adapter_manifest_path="/tmp/stale.adapter.json",
+        adapter_set_hash="text-family-llama",
+        adapter_activation_mode="stale",
+    )
+
+    persisted = store.persist_serving_benchmark(
+        jobs_root=jobs_root,
+        job=job,
+        results=results,
+        request_rows=(request_row,),
+    )
+
+    jsonl_row = json.loads(persisted["request_rows_jsonl"].read_text(encoding="utf-8").splitlines()[0])
+    assert jsonl_row["compare_target_kind"] == "base"
+    assert jsonl_row["base_model_id"] == "melix-dev-text"
+    assert jsonl_row["adapter_manifest_path"] == ""
+    assert jsonl_row["adapter_set_hash"] == ""
+    assert jsonl_row["adapter_activation_mode"] == ""
+
+
 def test_persist_serving_benchmark_derives_request_phase_rows_from_context_rows(
     tmp_path: Path,
 ) -> None:

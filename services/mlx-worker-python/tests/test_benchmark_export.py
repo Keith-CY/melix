@@ -787,6 +787,29 @@ def test_collect_benchmark_artifacts_does_not_treat_family_hash_as_adapter_ident
     assert row["adapter_set_hash"] == ""
 
 
+def test_collect_benchmark_artifacts_clears_stale_adapter_identity_for_base_rows(
+    tmp_path: Path,
+) -> None:
+    _write_bench_fixtures(tmp_path)
+    request_path = tmp_path / "bench-request-rows.jsonl"
+    request_row = json.loads(request_path.read_text(encoding="utf-8"))
+    request_row["compare_target_kind"] = "adapter"
+    request_row["base_model_id"] = "melix-dev-text-base"
+    request_row["adapter_manifest_path"] = "/tmp/stale.adapter.json"
+    request_row["adapter_set_hash"] = "text-family-llama"
+    request_row["adapter_activation_mode"] = "stale"
+    request_path.write_text(json.dumps(request_row) + "\n", encoding="utf-8")
+
+    result = collect_benchmark_artifacts(tmp_path)
+    row = result["benchmark_request_rows"][0]
+
+    assert row["compare_target_kind"] == "base"
+    assert row["base_model_id"] == "melix-dev-text"
+    assert row["adapter_manifest_path"] == ""
+    assert row["adapter_set_hash"] == ""
+    assert row["adapter_activation_mode"] == ""
+
+
 def test_collect_benchmark_artifacts_skips_request_row_annotation_without_metadata() -> None:
     rows: list[dict[str, object]] = [
         {

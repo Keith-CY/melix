@@ -859,17 +859,22 @@ def _annotate_benchmark_request_rows(
         if not metadata:
             continue
         metadata_is_adapter = metadata["compare_target_kind"] == "adapter"
+        if not metadata_is_adapter:
+            row["compare_target_kind"] = "base"
+            row["base_model_id"] = metadata["base_model_id"] or str(row.get("model_id", ""))
+            row["adapter_manifest_path"] = ""
+            row["adapter_set_hash"] = ""
+            row["adapter_activation_mode"] = ""
+            continue
         for key, value in metadata.items():
             if (
-                metadata_is_adapter
-                and key == "compare_target_kind"
+                key == "compare_target_kind"
                 and row.get(key) == "base"
             ):
                 row[key] = value
                 continue
             if (
-                metadata_is_adapter
-                and key == "base_model_id"
+                key == "base_model_id"
                 and row.get(key) == row.get("model_id")
             ):
                 row[key] = value
