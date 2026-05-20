@@ -8,12 +8,13 @@ from typing import Any
 from packages.protocol.python.worker.v1 import common_pb2
 
 
-_TOOL_CONFIG_FROM_BYTES = common_pb2.ToolConfig.FromString
+_TOOL_CONFIG = common_pb2.ToolConfig
+_TOOL_CONFIG_FROM_BYTES = _TOOL_CONFIG.FromString
 _COMPACT_SORTED_JSON_ENCODER = json.JSONEncoder(separators=(",", ":"), sort_keys=True)
 
 
 def _copy_tool_config(template: common_pb2.ToolConfig) -> common_pb2.ToolConfig:
-    config = common_pb2.ToolConfig()
+    config = _TOOL_CONFIG()
     config.CopyFrom(template)
     return config
 _TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
