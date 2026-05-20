@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import types
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ import worker.dataset_registry.catalog as catalog
 from worker.model_ops.errors import ModelOperationError
 from worker.dataset_registry.catalog import (
     DatasetCatalog,
+    DatasetFile,
     read_hf_dataset_snapshot_rows,
 )
 
@@ -36,6 +38,23 @@ def _write_hf_dataset_snapshot(
             handle.write("\n")
     (snapshot_dir / "README.md").write_text("# Dataset\n", encoding="utf-8")
     return snapshot_dir
+
+
+def test_dataset_file_is_frozen_slots_value_record() -> None:
+    dataset_file = DatasetFile(
+        relative_path="data/train-00000-of-00001.jsonl",
+        size_bytes=42,
+        file_format="jsonl",
+    )
+
+    assert not hasattr(dataset_file, "__dict__")
+    assert dataset_file.to_dict() == {
+        "relative_path": "data/train-00000-of-00001.jsonl",
+        "size_bytes": 42,
+        "file_format": "jsonl",
+    }
+    with pytest.raises(FrozenInstanceError):
+        dataset_file.size_bytes = 43  # type: ignore[misc]
 
 
 def test_dataset_catalog_discovers_default_huggingface_cache_snapshot(tmp_path: Path) -> None:

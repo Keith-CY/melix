@@ -45,7 +45,7 @@ _DEFAULT_CONFIG_FIRST_PARTS = frozenset(
 _JSON_LIMITED_PREVIEW_CHUNK_CHARS = 16 * 1024
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DatasetFile:
     relative_path: str
     size_bytes: int
