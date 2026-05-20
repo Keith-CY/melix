@@ -210,6 +210,15 @@ the selected policy-update row must reflect the selected candidate's tool
 trajectory. Sample-level replay evidence may seed fixture context, but it must
 not be reused as the trajectory for every generated candidate.
 
+Online GRPO must also persist candidate-level reward traces as a first-class
+artifact. Each generated candidate row must bind the candidate text, score,
+reward components, fatal stage, tool-call sequence, observation summary,
+selected flag, and replay fingerprint to the same registry and observation
+contract used by the selected policy update. The selected candidate row must
+include the full selected tool trajectory; non-selected rows may include
+summaries plus candidate-local tool metrics unless a later milestone expands
+full non-selected observation retention.
+
 Fatal-aware behavior must distinguish:
 
 - valid pre-failure reasoning

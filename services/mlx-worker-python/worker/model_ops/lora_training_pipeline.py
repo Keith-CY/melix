@@ -590,6 +590,11 @@ def _alignment_manifest_payload(
             metrics["reward_scoring_backend"] = training_result.metrics.reward_scoring_backend
         if training_result.metrics.generated_candidate_count:
             metrics["generated_candidate_count"] = training_result.metrics.generated_candidate_count
+        metrics["candidate_reward_trace_path"] = training_result.metrics.candidate_reward_trace_path
+        metrics["candidate_reward_trace_count"] = training_result.metrics.candidate_reward_trace_count
+        metrics["candidate_reward_trace_schema_version"] = (
+            training_result.metrics.candidate_reward_trace_schema_version
+        )
         if training_result.metrics.policy_update_count or training_result.metrics.policy_update_trace_path:
             metrics["reward_mean"] = training_result.metrics.reward_mean
             metrics["reward_p50"] = training_result.metrics.reward_p50
