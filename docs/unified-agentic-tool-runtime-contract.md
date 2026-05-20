@@ -203,6 +203,13 @@ trajectory must record:
 - reward components
 - replay fingerprint for deterministic reruns
 
+For online GRPO `runtime_generate`, tool-call events emitted by the policy
+runtime are candidate-local. The rollout runner must execute each candidate's
+tool calls through the shared adapter layer before scoring that candidate, and
+the selected policy-update row must reflect the selected candidate's tool
+trajectory. Sample-level replay evidence may seed fixture context, but it must
+not be reused as the trajectory for every generated candidate.
+
 Fatal-aware behavior must distinguish:
 
 - valid pre-failure reasoning
