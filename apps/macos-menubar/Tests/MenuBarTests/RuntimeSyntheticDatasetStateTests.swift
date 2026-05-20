@@ -785,7 +785,7 @@ struct RuntimeSyntheticDatasetStateTests {
     @Test("synthetic dataset navigation has icon category and session persistence mapping")
     func syntheticDatasetNavigationHasIconCategoryAndSessionPersistenceMapping() throws {
         #expect(DesktopToolSection.syntheticDatasets.symbolName == "sparkles.rectangle.stack")
-        #expect(DesktopToolCategory.build.sections.contains(.syntheticDatasets))
+        #expect(DesktopToolCategory.workflows.sections.contains(.syntheticDatasets))
 
         let state = OperatorSessionState(
             selectedSurface: .tools,

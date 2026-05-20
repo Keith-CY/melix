@@ -4,10 +4,15 @@ import MelixControlPlaneCore
 
 public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendable {
     case chat = "Chat"
+    case commandCenter = "Command Center"
     case image = "Image"
     case server = "Server"
+    case models = "Models"
+    case workflows = "Workflows"
+    case diagnostics = "Diagnostics"
     case tools = "Tools"
     case api = "API"
+    case settings = "Settings"
 
     public var id: String {
         rawValue
@@ -17,15 +22,29 @@ public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendabl
         switch self {
         case .chat:
             return "message"
+        case .commandCenter:
+            return "command.circle"
         case .image:
             return "photo.on.rectangle"
         case .server:
             return "network"
+        case .models:
+            return "square.stack.3d.up"
+        case .workflows:
+            return "point.3.connected.trianglepath.dotted"
+        case .diagnostics:
+            return "stethoscope"
         case .tools:
             return "wrench.and.screwdriver"
         case .api:
             return "chevron.left.forwardslash.chevron.right"
+        case .settings:
+            return "slider.horizontal.3"
         }
+    }
+
+    public static var visibleNavigationCases: [DesktopSurface] {
+        [.chat, .commandCenter, .server, .models, .workflows, .diagnostics, .image, .api, .settings]
     }
 }
 
@@ -73,8 +92,8 @@ public enum DesktopToolSection: String, CaseIterable, Identifiable, Codable, Sen
 
 public enum DesktopToolCategory: String, CaseIterable, Identifiable, Codable, Sendable {
     case models = "Models"
-    case build = "Build"
-    case validate = "Validate"
+    case workflows = "Workflows"
+    case diagnostics = "Diagnostics"
     case system = "System"
 
     public var id: String { rawValue }
@@ -83,13 +102,99 @@ public enum DesktopToolCategory: String, CaseIterable, Identifiable, Codable, Se
         switch self {
         case .models:
             return [.modelsLibrary, .downloads]
-        case .build:
-            return [.training, .workflowRecipes, .syntheticDatasets]
-        case .validate:
-            return [.batchRuns, .jobs, .diagnostics]
+        case .workflows:
+            return [.training, .workflowRecipes, .syntheticDatasets, .batchRuns, .jobs]
+        case .diagnostics:
+            return [.diagnostics, .logs]
         case .system:
-            return [.logs, .settings]
+            return [.settings]
         }
+    }
+}
+
+public enum DesktopSurfaceDomain: String, CaseIterable, Identifiable, Sendable {
+    case models = "Models"
+    case workflows = "Workflows"
+    case diagnostics = "Diagnostics"
+    case settings = "Settings"
+
+    public var id: String { rawValue }
+
+    public var surface: DesktopSurface {
+        switch self {
+        case .models:
+            return .models
+        case .workflows:
+            return .workflows
+        case .diagnostics:
+            return .diagnostics
+        case .settings:
+            return .settings
+        }
+    }
+
+    public var sections: [DesktopToolSection] {
+        switch self {
+        case .models:
+            return [.modelsLibrary, .downloads]
+        case .workflows:
+            return [.training, .workflowRecipes, .syntheticDatasets, .batchRuns, .jobs]
+        case .diagnostics:
+            return [.diagnostics, .logs]
+        case .settings:
+            return [.settings]
+        }
+    }
+}
+
+extension DesktopToolSection {
+    public var domain: DesktopSurfaceDomain {
+        switch self {
+        case .modelsLibrary, .downloads:
+            return .models
+        case .training, .workflowRecipes, .syntheticDatasets, .batchRuns, .jobs:
+            return .workflows
+        case .diagnostics, .logs:
+            return .diagnostics
+        case .settings:
+            return .settings
+        }
+    }
+
+    public var domainTitle: String {
+        switch self {
+        case .modelsLibrary:
+            return "Library"
+        case .syntheticDatasets:
+            return "Synthetic Datasets"
+        default:
+            return rawValue
+        }
+    }
+
+    public var breadcrumbTitle: String {
+        "\(domain.rawValue) / \(domainTitle)"
+    }
+}
+
+extension DesktopSurface {
+    public var domain: DesktopSurfaceDomain? {
+        switch self {
+        case .models:
+            return .models
+        case .workflows:
+            return .workflows
+        case .diagnostics:
+            return .diagnostics
+        case .settings:
+            return .settings
+        case .chat, .commandCenter, .image, .server, .tools, .api:
+            return nil
+        }
+    }
+
+    public var isDomainSurface: Bool {
+        domain != nil
     }
 }
 
@@ -162,7 +267,11 @@ public struct DesktopPaneVisibilityState: Identifiable, Codable, Equatable, Send
     }
 
     public static func defaultState(for surface: DesktopSurface) -> DesktopPaneVisibilityState {
-        DesktopPaneVisibilityState(surface: surface)
+        DesktopPaneVisibilityState(
+            surface: surface,
+            showsSidebar: true,
+            showsInspector: surface == .chat
+        )
     }
 
     public static var defaultStates: [DesktopPaneVisibilityState] {
@@ -203,14 +312,24 @@ public struct DesktopRuntimeEndpointState: Equatable, Sendable {
 extension DesktopSurface {
     init(paneVisibilityID rawValue: String) {
         switch Self.normalizedPaneVisibilityID(rawValue) {
+        case "commandcenter":
+            self = .commandCenter
         case "image":
             self = .image
         case "server":
             self = .server
+        case "models":
+            self = .models
+        case "workflows":
+            self = .workflows
+        case "diagnostics":
+            self = .diagnostics
         case "tools":
             self = .tools
         case "api":
             self = .api
+        case "settings":
+            self = .settings
         default:
             self = .chat
         }
@@ -220,14 +339,24 @@ extension DesktopSurface {
         switch self {
         case .chat:
             return "chat"
+        case .commandCenter:
+            return "commandCenter"
         case .image:
             return "image"
         case .server:
             return "server"
+        case .models:
+            return "models"
+        case .workflows:
+            return "workflows"
+        case .diagnostics:
+            return "diagnostics"
         case .tools:
             return "tools"
         case .api:
             return "api"
+        case .settings:
+            return "settings"
         }
     }
 

@@ -28,7 +28,7 @@ struct AppScreenshotCaptureTests {
             return false
         }.count
 
-        #expect(workspaceSurfaces.sorted() == DesktopSurface.allCases.map(\.rawValue).sorted())
+        #expect(workspaceSurfaces.sorted() == DesktopSurface.visibleNavigationCases.map(\.rawValue).sorted())
         #expect(toolSections.sorted() == DesktopToolSection.allCases.map(\.rawValue).sorted())
         #expect(commandCenterCount == 1)
     }
@@ -86,7 +86,7 @@ struct AppScreenshotCaptureTests {
                 width: 640,
                 height: 420
             ),
-            cases: [.workspace(.tools), .toolSection(.downloads), .commandCenter]
+            cases: [.workspace(.models), .toolSection(.downloads), .commandCenter]
         )
 
         let manifest = try await runner.run()
@@ -104,11 +104,11 @@ struct AppScreenshotCaptureTests {
         #expect(manifest.width == 640)
         #expect(manifest.height == 420)
         #expect(manifest.screenshots.map(\.id) == [
-            "workspace-tools",
-            "workspace-tools-downloads",
+            "workspace-models",
+            "workspace-models-downloads",
             "command-center",
         ])
-        #expect(firstScreenshot.surface == "Tools")
+        #expect(firstScreenshot.surface == "Models")
         #expect(firstScreenshot.toolSection == "")
         #expect(screenshot.id == "command-center")
         #expect(screenshot.surface == "")

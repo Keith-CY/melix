@@ -356,14 +356,24 @@ private extension DesktopServerSessionLifecycle {
 private extension DesktopSurface {
     init(operatorSessionID rawValue: String) {
         switch Self.normalizedOperatorSessionID(rawValue) {
+        case "commandcenter":
+            self = .commandCenter
         case "image":
             self = .image
         case "server":
             self = .server
+        case "models":
+            self = .models
+        case "workflows":
+            self = .workflows
+        case "diagnostics":
+            self = .diagnostics
         case "tools":
             self = .tools
         case "api":
             self = .api
+        case "settings":
+            self = .settings
         default:
             self = .chat
         }
@@ -373,14 +383,24 @@ private extension DesktopSurface {
         switch self {
         case .chat:
             return "chat"
+        case .commandCenter:
+            return "commandCenter"
         case .image:
             return "image"
         case .server:
             return "server"
+        case .models:
+            return "models"
+        case .workflows:
+            return "workflows"
+        case .diagnostics:
+            return "diagnostics"
         case .tools:
             return "tools"
         case .api:
             return "api"
+        case .settings:
+            return "settings"
         }
     }
 

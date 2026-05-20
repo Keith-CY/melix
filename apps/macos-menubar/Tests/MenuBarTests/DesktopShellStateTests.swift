@@ -5,14 +5,14 @@ import Testing
 
 @Suite("Desktop Shell State", .serialized)
 struct DesktopShellStateTests {
-    @Test("pane visibility defaults keep sidebars visible and inspectors collapsed")
-    func paneVisibilityDefaultsKeepSidebarsVisibleAndInspectorsCollapsed() throws {
+    @Test("pane visibility defaults keep sidebars visible and chat inspector open")
+    func paneVisibilityDefaultsKeepSidebarsVisibleAndChatInspectorOpen() throws {
         for surface in DesktopSurface.allCases {
             let state = DesktopPaneVisibilityState.defaultState(for: surface)
 
             #expect(state.surface == surface)
             #expect(state.showsSidebar)
-            #expect(state.showsInspector == false)
+            #expect(state.showsInspector == (surface == .chat))
         }
 
         let encodedLegacyState = """
@@ -53,7 +53,7 @@ struct DesktopShellStateTests {
         #expect(customized.paneVisibility.first(where: { $0.surface == .tools })?.showsSidebar == false)
         #expect(customized.paneVisibility.first(where: { $0.surface == .tools })?.showsInspector == true)
         #expect(customized.paneVisibility.first(where: { $0.surface == .chat })?.showsSidebar == true)
-        #expect(customized.paneVisibility.first(where: { $0.surface == .chat })?.showsInspector == false)
+        #expect(customized.paneVisibility.first(where: { $0.surface == .chat })?.showsInspector == true)
     }
 
     @Test("lifecycle capability flags cover operator-facing states")

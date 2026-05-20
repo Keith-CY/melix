@@ -88,7 +88,6 @@ struct DesktopPolishSmokeTests {
         )
         await viewModel.start()
         await viewModel.refreshDownloadQueueState()
-        viewModel.selectSurface(.tools)
         viewModel.selectToolSection(.downloads)
         await viewModel.refreshDownloadQueueState()
 
@@ -199,14 +198,14 @@ struct DesktopPolishSmokeTests {
         #expect(persistedQueue.count == 1)
         #expect(restoredViewModel.downloadQueue.count == 1)
         #expect(restoredSelectedToolSection == .downloads)
-        #expect(surfaceGroundingCount == DesktopSurface.allCases.count)
+        #expect(surfaceGroundingCount == DesktopSurface.visibleNavigationCases.count)
         #expect(toolSectionGroundingCount == DesktopToolSection.allCases.count)
     }
 }
 
 @MainActor
 private func groundedSurfaceCount(for viewModel: RuntimeViewModel) -> Int {
-    DesktopSurface.allCases.reduce(into: 0) { count, surface in
+    DesktopSurface.visibleNavigationCases.reduce(into: 0) { count, surface in
         viewModel.selectSurface(surface)
         if hostedDesktopPolishViewHasSubviews(DesktopWorkspaceShellView(viewModel: viewModel)) {
             count += 1
@@ -252,7 +251,6 @@ private func groundedToolSectionCount(for viewModel: RuntimeViewModel) -> Int {
 
     return sectionChecks.reduce(into: 0) { count, candidate in
         let (section, isGrounded) = candidate
-        viewModel.selectSurface(.tools)
         viewModel.selectToolSection(section)
         if isGrounded() {
             count += 1

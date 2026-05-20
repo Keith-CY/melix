@@ -242,7 +242,7 @@ struct DesktopShellTabStripView: View {
 
     var body: some View {
         HStack(spacing: 3) {
-            ForEach(DesktopSurface.allCases) { surface in
+            ForEach(DesktopSurface.visibleNavigationCases) { surface in
                 Button {
                     selectSurface(surface)
                 } label: {
@@ -277,14 +277,24 @@ struct DesktopShellTabStripView: View {
         switch surface {
         case .chat:
             return "1"
-        case .image:
+        case .commandCenter:
             return "2"
         case .server:
             return "3"
-        case .tools:
+        case .models:
             return "4"
-        case .api:
+        case .workflows:
             return "5"
+        case .diagnostics:
+            return "6"
+        case .image:
+            return "7"
+        case .api:
+            return "8"
+        case .settings:
+            return "9"
+        case .tools:
+            return "0"
         }
     }
 }

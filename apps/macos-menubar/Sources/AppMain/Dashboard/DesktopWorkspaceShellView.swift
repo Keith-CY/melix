@@ -27,6 +27,8 @@ struct DesktopWorkspaceShellView: View {
                         showsSidebar: paneVisibilityBinding(.sidebar, for: .chat),
                         showsInspector: paneVisibilityBinding(.inspector, for: .chat)
                     )
+                case .commandCenter:
+                    DesktopCommandCenterView(viewModel: viewModel)
                 case .image:
                     DesktopImageTabView(
                         viewModel: viewModel,
@@ -39,8 +41,33 @@ struct DesktopWorkspaceShellView: View {
                         showsSidebar: paneVisibilityBinding(.sidebar, for: .server),
                         showsInspector: paneVisibilityBinding(.inspector, for: .server)
                     )
+                case .models:
+                    DesktopDomainWorkspaceView(
+                        domain: .models,
+                        viewModel: viewModel,
+                        foundation: foundation,
+                        showsSidebar: paneVisibilityBinding(.sidebar, for: .models),
+                        showsInspector: paneVisibilityBinding(.inspector, for: .models)
+                    )
+                case .workflows:
+                    DesktopDomainWorkspaceView(
+                        domain: .workflows,
+                        viewModel: viewModel,
+                        foundation: foundation,
+                        showsSidebar: paneVisibilityBinding(.sidebar, for: .workflows),
+                        showsInspector: paneVisibilityBinding(.inspector, for: .workflows)
+                    )
+                case .diagnostics:
+                    DesktopDomainWorkspaceView(
+                        domain: .diagnostics,
+                        viewModel: viewModel,
+                        foundation: foundation,
+                        showsSidebar: paneVisibilityBinding(.sidebar, for: .diagnostics),
+                        showsInspector: paneVisibilityBinding(.inspector, for: .diagnostics)
+                    )
                 case .tools:
-                    DesktopToolsWorkspaceView(
+                    DesktopDomainWorkspaceView(
+                        domain: viewModel.selectedToolSection.domain,
                         viewModel: viewModel,
                         foundation: foundation,
                         showsSidebar: paneVisibilityBinding(.sidebar, for: .tools),
@@ -52,6 +79,14 @@ struct DesktopWorkspaceShellView: View {
                         foundation: foundation,
                         showsSidebar: paneVisibilityBinding(.sidebar, for: .api),
                         showsInspector: paneVisibilityBinding(.inspector, for: .api)
+                    )
+                case .settings:
+                    DesktopDomainWorkspaceView(
+                        domain: .settings,
+                        viewModel: viewModel,
+                        foundation: foundation,
+                        showsSidebar: paneVisibilityBinding(.sidebar, for: .settings),
+                        showsInspector: paneVisibilityBinding(.inspector, for: .settings)
                     )
                 }
             }
@@ -663,7 +698,6 @@ private struct DesktopCommandCenterRecoveryPanel: View {
                             .foregroundStyle(.secondary)
                         Spacer()
                         Button(DesktopCommandCenterView.downloadRecoveryOverflowActionTitle) {
-                            viewModel.selectSurface(.tools)
                             viewModel.selectToolSection(.downloads)
                         }
                         .buttonStyle(.bordered)
@@ -1245,14 +1279,37 @@ private struct DesktopServerCreationEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if viewModel.selectedServerCreationKind == .localServer {
-                MelixSectionCard("New Local Session") {
+                DesktopServerCreationStepperHeader(
+                    title: "Local Server Setup",
+                    steps: ["Runtime", "Review"],
+                    activeIndex: viewModel.serverModelOptions.isEmpty ? 0 : 1
+                )
+                MelixSectionCard("Runtime") {
                     localServerCreationContent
                 }
             } else {
+                DesktopServerCreationStepperHeader(
+                    title: "Remote Server Setup",
+                    steps: ["Endpoint", "Authentication", "Capabilities Test", "Review"],
+                    activeIndex: remoteServerActiveStepIndex
+                )
                 DesktopRemoteServerEditor(viewModel: viewModel)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var remoteServerActiveStepIndex: Int {
+        if viewModel.remoteServerBaseURLDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return 0
+        }
+        if viewModel.remoteServerAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return 1
+        }
+        if viewModel.remoteServerDefaultModelIDDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return 2
+        }
+        return 3
     }
 
     private var localServerCreationContent: some View {
@@ -1332,6 +1389,39 @@ private struct DesktopServerCreationEditor: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct DesktopServerCreationStepperHeader: View {
+    let title: String
+    let steps: [String]
+    let activeIndex: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.headline)
+            HStack(spacing: 8) {
+                ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                    HStack(spacing: 6) {
+                        Text("\(index + 1)")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(index <= activeIndex ? .white : .secondary)
+                            .frame(width: 18, height: 18)
+                            .background(index <= activeIndex ? MelixDesignTokens.accent : Color.secondary.opacity(0.16), in: Circle())
+                        Text(step)
+                            .font(.caption.weight(index == activeIndex ? .semibold : .medium))
+                            .foregroundStyle(index == activeIndex ? .primary : .secondary)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(index == activeIndex ? MelixDesignTokens.accent.opacity(0.10) : Color.secondary.opacity(0.04), in: Capsule())
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -1869,91 +1959,183 @@ private struct DesktopServerSessionInspector: View {
     let viewModel: RuntimeViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Inspector")
-                .font(.headline)
-
-            if let session = viewModel.selectedServerSession {
-                GroupBox("Status") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(session.lifecycleSummaryText)
-                            .font(.headline)
-                        Text(session.lastKnownModelStateText.isEmpty ? session.modelID : "\(session.modelID) • \(session.lastKnownModelStateText)")
-                            .foregroundStyle(.secondary)
-                        Text(session.runtimeDetailText)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                GroupBox("Listener") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Requested: \(session.baseURL)")
-                            .font(.body.monospaced())
-                        Text("Effective: \(session.effectiveBaseURL)")
-                            .font(.body.monospaced())
-                        Text(
-                            session.gatewayConfigRequiresRestart
-                                ? "\(session.gatewayConfigSourceText) • restart required to move the live listener"
-                                : session.gatewayConfigSourceText
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        HStack {
-                            Button("Copy URL") {
-                                copyToPasteboard(session.effectiveBaseURL)
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
+        if let session = viewModel.selectedServerSession {
+            DesktopInspectorContractView(
+                title: "Server Inspector",
+                context: "\(session.title) • \(session.modelID)",
+                health: session.lifecycleSummaryText,
+                metrics: "\(session.effectiveBaseURL) • \(session.idlePolicySummaryText)",
+                actions: [
+                    DesktopInspectorActionRow(title: "Copy URL", systemImage: "doc.on.doc") {
+                        copyToPasteboard(session.effectiveBaseURL)
+                    },
+                    DesktopInspectorActionRow(title: "Open Command Center", systemImage: "command.circle") {
+                        viewModel.selectSurface(.commandCenter)
+                    },
+                ],
+                evidence: [session.runtimeDetailText, session.lastError].filter { $0.isEmpty == false }
+            ) {
                 DesktopServerGatewayAccessSummaryView(session: session)
-
-                GroupBox("Power Policy") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(session.idlePolicySummaryText)
-                            .font(.headline)
-                        Text("Wake reason: \(session.wakeReason.rawValue)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
                 DesktopBoundAgentIntegrationPanel(viewModel: viewModel)
-
-                if !session.lastError.isEmpty {
-                    GroupBox("Error") {
-                        Text(session.lastError)
-                            .foregroundStyle(MelixDesignTokens.StatusColor.error)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-            } else {
-                Text("Server status and copy actions appear here.")
-                    .foregroundStyle(.secondary)
             }
-
-            Spacer()
+        } else {
+            DesktopInspectorContractView(
+                title: "Server Inspector",
+                context: "No server selected",
+                health: "Choose or create a server target",
+                metrics: "No runtime metrics",
+                actions: [
+                    DesktopInspectorActionRow(title: "Create Local Server", systemImage: "plus.circle") {
+                        viewModel.beginServerCreation(kind: .localServer)
+                    },
+                    DesktopInspectorActionRow(title: "Create Remote Server", systemImage: "network.badge.shield.half.filled") {
+                        viewModel.beginServerCreation(kind: .remoteServer)
+                    },
+                ],
+                evidence: ["Server status and copy actions appear here."]
+            )
         }
-        .padding(20)
     }
 }
 
-private struct DesktopToolsWorkspaceView: View {
+struct DesktopInspectorActionRow: Identifiable {
+    let id = UUID()
+    let title: String
+    let systemImage: String
+    let action: @MainActor () -> Void
+}
+
+struct DesktopInspectorContractView<ExtraContent: View>: View {
+    let title: String
+    let context: String
+    let health: String
+    let metrics: String
+    let actions: [DesktopInspectorActionRow]
+    let evidence: [String]
+    @ViewBuilder let extraContent: () -> ExtraContent
+
+    init(
+        title: String,
+        context: String,
+        health: String,
+        metrics: String,
+        actions: [DesktopInspectorActionRow],
+        evidence: [String],
+        @ViewBuilder extraContent: @escaping () -> ExtraContent
+    ) {
+        self.title = title
+        self.context = context
+        self.health = health
+        self.metrics = metrics
+        precondition(actions.count <= 3, "DesktopInspectorContractView supports at most 3 actions")
+        self.actions = actions
+        self.evidence = evidence
+        self.extraContent = extraContent
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(title)
+                .font(.headline)
+            inspectorSection("Context", value: context)
+            inspectorSection("Health", value: health)
+            inspectorSection("Metrics", value: metrics)
+
+            GroupBox("Actions") {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(actions.prefix(3)) { action in
+                        Button {
+                            action.action()
+                        } label: {
+                            Label(action.title, systemImage: action.systemImage)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    if actions.isEmpty {
+                        Text("No contextual actions.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            GroupBox("Evidence") {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(evidence.prefix(4).enumerated()), id: \.offset) { _, item in
+                        Text(item)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .textSelection(.enabled)
+                    }
+                    if evidence.isEmpty {
+                        Text("No evidence yet.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            extraContent()
+
+            Spacer(minLength: 0)
+        }
+        .padding(20)
+    }
+
+    private func inspectorSection(_ title: String, value: String) -> some View {
+        GroupBox(title) {
+            Text(value.isEmpty ? "Unavailable" : value)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+extension DesktopInspectorContractView where ExtraContent == EmptyView {
+    init(
+        title: String,
+        context: String,
+        health: String,
+        metrics: String,
+        actions: [DesktopInspectorActionRow],
+        evidence: [String]
+    ) {
+        self.init(
+            title: title,
+            context: context,
+            health: health,
+            metrics: metrics,
+            actions: actions,
+            evidence: evidence
+        ) {
+            EmptyView()
+        }
+    }
+}
+
+private struct DesktopDomainWorkspaceView: View {
+    let domain: DesktopSurfaceDomain
     let viewModel: RuntimeViewModel
     let foundation: DesktopFoundationState
     @Binding var showsSidebar: Bool
     @Binding var showsInspector: Bool
 
     init(
+        domain: DesktopSurfaceDomain,
         viewModel: RuntimeViewModel,
         foundation: DesktopFoundationState,
         showsSidebar: Binding<Bool>,
         showsInspector: Binding<Bool>
     ) {
+        self.domain = domain
         self.viewModel = viewModel
         self.foundation = foundation
         _showsSidebar = showsSidebar
@@ -1969,7 +2151,8 @@ private struct DesktopToolsWorkspaceView: View {
                 isVisible: showsSidebar,
                 idealWidth: 250
             ) {
-                DesktopToolsCategorySidebarView(
+                DesktopDomainSidebarView(
+                    domain: domain,
                     selectedToolSection: viewModel.selectedToolSection,
                     selectToolSection: viewModel.selectToolSection
                 )
@@ -1978,7 +2161,10 @@ private struct DesktopToolsWorkspaceView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    DesktopWorkspaceHeader(title: viewModel.selectedToolSection.rawValue) {}
+                    DesktopWorkspaceHeader(
+                        title: viewModel.selectedToolSection.breadcrumbTitle,
+                        subtitle: domainSubtitle
+                    ) {}
 
                     switch viewModel.selectedToolSection {
                     case .modelsLibrary:
@@ -2013,44 +2199,107 @@ private struct DesktopToolsWorkspaceView: View {
                 isVisible: showsInspector,
                 idealWidth: 300
             ) {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("Inspector")
-                        .font(.headline)
-
-                    if let primaryModel = viewModel.primaryModel {
-                        GroupBox("Primary Model") {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(primaryModel.displayName)
-                                    .font(.headline)
-                                Text("\(primaryModel.modelID) • \(primaryModel.stateText)")
-                                    .foregroundStyle(.secondary)
-                                Text(primaryModel.memoryText)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-
-                    if let operation = viewModel.lastModelOperation {
-                        GroupBox("Last Operation") {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(operation.operation)
-                                    .font(.headline)
-                                Text(operation.outputPath)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-
-                    Spacer()
-                }
-                .padding(20)
+                DesktopInspectorContractView(
+                    title: "\(domain.rawValue) Inspector",
+                    context: viewModel.selectedToolSection.breadcrumbTitle,
+                    health: domainHealthText,
+                    metrics: domainMetricsText,
+                    actions: domainActions,
+                    evidence: domainEvidence
+                )
             }
         }
         .background(workspaceBackground)
+    }
+
+    private var domainSubtitle: String {
+        switch domain {
+        case .models:
+            return "Manage local model assets, downloads, compatibility, quantization, and adapters."
+        case .workflows:
+            return "Run training, recipes, synthetic data generation, batch jobs, and job review."
+        case .diagnostics:
+            return "Audit benchmark, matrix, evaluation, and log evidence for runtime behavior."
+        case .settings:
+            return "Configure runtime discovery, product install state, and operator preferences."
+        }
+    }
+
+    private var domainHealthText: String {
+        switch domain {
+        case .models:
+            return viewModel.primaryModel?.stateText ?? "No primary model"
+        case .workflows:
+            return viewModel.lastModelOperation?.stage ?? "No active workflow"
+        case .diagnostics:
+            return viewModel.diagnosticsRunMonitor?.statusText ?? "Ready for diagnostics"
+        case .settings:
+            return String(describing: foundation.healthState)
+        }
+    }
+
+    private var domainMetricsText: String {
+        switch domain {
+        case .models:
+            return viewModel.primaryModel?.memoryText ?? "Model metrics unavailable"
+        case .workflows:
+            return viewModel.lastModelOperation?.operation ?? "No operation recorded"
+        case .diagnostics:
+            return viewModel.diagnosticsRunMonitor?.primaryMetricText ?? "No recent diagnostic metric"
+        case .settings:
+            return foundation.connectionStateText
+        }
+    }
+
+    private var domainActions: [DesktopInspectorActionRow] {
+        switch domain {
+        case .models:
+            return [
+                DesktopInspectorActionRow(title: "Open Downloads", systemImage: "arrow.down.circle") {
+                    viewModel.selectToolSection(.downloads)
+                },
+                DesktopInspectorActionRow(title: "Open Command Center", systemImage: "command.circle") {
+                    viewModel.selectSurface(.commandCenter)
+                },
+            ]
+        case .workflows:
+            return [
+                DesktopInspectorActionRow(title: "Open Jobs", systemImage: "list.bullet.rectangle.portrait") {
+                    viewModel.selectToolSection(.jobs)
+                },
+                DesktopInspectorActionRow(title: "Open Diagnostics", systemImage: "stethoscope") {
+                    viewModel.selectToolSection(.diagnostics)
+                },
+            ]
+        case .diagnostics:
+            return [
+                DesktopInspectorActionRow(title: "Run Benchmark", systemImage: "gauge.with.dots.needle.67percent") {
+                    Task { await viewModel.runBench() }
+                },
+                DesktopInspectorActionRow(title: "Open Logs", systemImage: "doc.text.magnifyingglass") {
+                    viewModel.selectToolSection(.logs)
+                },
+            ]
+        case .settings:
+            return [
+                DesktopInspectorActionRow(title: "Open Command Center", systemImage: "command.circle") {
+                    viewModel.selectSurface(.commandCenter)
+                },
+            ]
+        }
+    }
+
+    private var domainEvidence: [String] {
+        switch domain {
+        case .models:
+            return [viewModel.lastModelOperation?.outputPath, viewModel.primaryModel?.modelID].compactMap { $0 }.filter { $0.isEmpty == false }
+        case .workflows:
+            return [viewModel.lastModelOperation?.outputPath, viewModel.selectedRuntimeJob?.artifactRoot].compactMap { $0 }.filter { $0.isEmpty == false }
+        case .diagnostics:
+            return [viewModel.diagnosticsRunMonitor?.artifactText, viewModel.diagnosticsRunMonitor?.detailText].compactMap { $0 }.filter { $0.isEmpty == false }
+        case .settings:
+            return [foundation.connectionDetailText, foundation.serverStateText].filter { $0.isEmpty == false }
+        }
     }
 
     private var toolsWorkspaceBackground: Color {
@@ -2063,7 +2312,8 @@ private struct DesktopToolsWorkspaceView: View {
     }
 }
 
-struct DesktopToolsCategorySidebarView: View {
+struct DesktopDomainSidebarView: View {
+    let domain: DesktopSurfaceDomain
     let selectedToolSection: DesktopToolSection
     let selectToolSection: (DesktopToolSection) -> Void
 
@@ -2073,34 +2323,26 @@ struct DesktopToolsCategorySidebarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Tools")
+            Text(domain.rawValue)
                 .font(.headline)
-            ForEach(DesktopToolCategory.allCases) { category in
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(category.rawValue)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
-                    ForEach(category.sections) { section in
-                        Button {
-                            selectToolSection(section)
-                        } label: {
-                            Label(section.rawValue, systemImage: section.symbolName)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 10)
-                                .background(
-                                    selectedToolSection == section
-                                    ? MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.selected)
-                                    : Color.secondary.opacity(0.06),
-                                    in: RoundedRectangle(cornerRadius: 12)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .help(section.rawValue)
-                        .accessibilityLabel(Self.accessibilityLabel(category: category, section: section))
-                    }
+            ForEach(domain.sections) { section in
+                Button {
+                    selectToolSection(section)
+                } label: {
+                    Label(section.domainTitle, systemImage: section.symbolName)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(
+                            selectedToolSection == section
+                            ? MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.selected)
+                            : Color.secondary.opacity(0.06),
+                            in: RoundedRectangle(cornerRadius: 12)
+                        )
                 }
+                .buttonStyle(.plain)
+                .help(section.breadcrumbTitle)
+                .accessibilityLabel("\(domain.rawValue) \(section.domainTitle)")
             }
             Spacer()
         }
@@ -2322,6 +2564,22 @@ struct DesktopWorkflowRecipesToolSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            DesktopWorkflowStickyActionBar(
+                title: "Recipe Workflow",
+                status: workflowRecipeActionStatus,
+                primaryTitle: "Plan Recipe",
+                primarySystemImage: "list.clipboard",
+                primaryDisabled: viewModel.workflowRecipePlanCanRun == false,
+                primaryAction: planRecipeAction
+            ) {
+                Button("Refresh Catalog", action: refreshCatalogAction)
+                    .disabled(viewModel.workflowRecipeCatalogInProgress)
+                Button("Inspect URI", action: inspectURIAction)
+                    .disabled(viewModel.workflowRecipeURIInspectCanRun == false)
+                Button("Apply Recipe", action: applyRecipeAction)
+                    .disabled(viewModel.workflowRecipeApplyCanRun == false)
+            }
+
             HStack(alignment: .bottom, spacing: 10) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Task filter")
@@ -2587,6 +2845,27 @@ struct DesktopWorkflowRecipesToolSectionView: View {
 
     func applyRecipeAction() {
         Task { await viewModel.applyWorkflowRecipe() }
+    }
+
+    private var workflowRecipeActionStatus: String {
+        if viewModel.workflowRecipePlanInProgress {
+            return "Planning selected recipe pipeline."
+        }
+        if viewModel.workflowRecipeApplyInProgress {
+            return "Applying recipe pipeline."
+        }
+        if viewModel.workflowRecipeURIInspectInProgress {
+            return "Inspecting URI and candidate workflow inputs."
+        }
+        if viewModel.workflowRecipePlanMessage.isEmpty == false {
+            return viewModel.workflowRecipePlanMessage
+        }
+        if viewModel.workflowRecipeApplyMessage.isEmpty == false {
+            return viewModel.workflowRecipeApplyMessage
+        }
+        return viewModel.selectedWorkflowRecipeID.isEmpty
+            ? "Select a recipe or inspect a URI before planning."
+            : "Recipe selected; plan, dry-run, or apply from one action rail."
     }
 
     private var uriInspectionPanel: some View {
@@ -3359,6 +3638,20 @@ struct DesktopSyntheticDatasetToolSectionView: View {
             Text("Synthetic Dataset Studio")
                 .font(.title3.weight(.semibold))
 
+            DesktopWorkflowStickyActionBar(
+                title: "Dataset Package",
+                status: syntheticDatasetActionStatus,
+                primaryTitle: "Preview Dataset",
+                primarySystemImage: "tablecells.badge.ellipsis",
+                primaryDisabled: viewModel.syntheticDatasetCanPreview == false,
+                primaryAction: previewDatasetAction
+            ) {
+                Button("Add Column", action: addColumnAction)
+                    .disabled(viewModel.syntheticDatasetColumnDraftCanAdd == false)
+                Button("Create Dataset", action: createDatasetAction)
+                    .disabled(viewModel.syntheticDatasetCanCreate == false)
+            }
+
             if viewModel.syntheticDatasetPreviewMessage.isEmpty == false {
                 Text(viewModel.syntheticDatasetPreviewMessage)
                     .font(.caption)
@@ -3544,6 +3837,25 @@ struct DesktopSyntheticDatasetToolSectionView: View {
 
     func createDatasetAction() {
         Task { await viewModel.createSyntheticDataset() }
+    }
+
+    private var syntheticDatasetActionStatus: String {
+        if viewModel.syntheticDatasetPreviewInProgress {
+            return "Preview is generating rows and artifact metadata."
+        }
+        if viewModel.syntheticDatasetCreateInProgress {
+            return "Dataset package creation is running."
+        }
+        if viewModel.syntheticDatasetPreviewErrorMessage.isEmpty == false {
+            return viewModel.syntheticDatasetPreviewErrorMessage
+        }
+        if viewModel.syntheticDatasetCreateErrorMessage.isEmpty == false {
+            return viewModel.syntheticDatasetCreateErrorMessage
+        }
+        if viewModel.syntheticDatasetBaseFormValidationMessages.isEmpty {
+            return "Base form is valid; preview before creating the package."
+        }
+        return viewModel.syntheticDatasetBaseFormValidationMessages.map(\.message).joined(separator: " • ")
     }
 
     private var columnEditorPanel: some View {
@@ -4031,6 +4343,20 @@ struct DesktopBatchRunsToolSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            DesktopWorkflowStickyActionBar(
+                title: "Batch Execution",
+                status: batchRunActionStatus,
+                primaryTitle: "Run Preflight",
+                primarySystemImage: "checklist.checked",
+                primaryDisabled: viewModel.batchRunPreflightCanRun == false,
+                primaryAction: requestBatchRunPreflight
+            ) {
+                Button("Refresh Status", action: requestBatchRunStatus)
+                    .disabled(viewModel.batchRunStatusCanRefresh == false)
+                Button("Resume Batch", action: requestBatchRunResume)
+                    .disabled(viewModel.batchRunResumeCanRun == false)
+            }
+
             Text("Batch runs coordinate model-list driven benchmark and evaluation workflows with explicit preflight state.")
                 .foregroundStyle(.secondary)
 
@@ -4073,6 +4399,34 @@ struct DesktopBatchRunsToolSectionView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func requestBatchRunPreflight() {
+        Task { await viewModel.requestBatchRunPreflight() }
+    }
+
+    private func requestBatchRunStatus() {
+        Task { await viewModel.requestBatchRunStatus() }
+    }
+
+    private func requestBatchRunResume() {
+        Task { await viewModel.requestBatchRunResume() }
+    }
+
+    private var batchRunActionStatus: String {
+        if viewModel.batchRunPreflightInProgress {
+            return "Running preflight against the current model list and config."
+        }
+        if viewModel.batchRunStatusInProgress {
+            return "Refreshing manifest status for the batch run."
+        }
+        if viewModel.batchRunResumeInProgress {
+            return "Resuming missing or failed batch work."
+        }
+        if viewModel.batchRunSetupValidationMessages.isEmpty {
+            return viewModel.batchRunSetupSummaryText
+        }
+        return viewModel.batchRunSetupValidationMessages.map(\.message).joined(separator: " • ")
     }
 
     private func batchTextEditor(title: String, text: Binding<String>, prompt: String) -> some View {
@@ -4991,6 +5345,25 @@ struct DesktopTrainingToolSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            DesktopWorkflowStickyActionBar(
+                title: "LoRA Workflow",
+                status: workflowActionHelperText,
+                primaryTitle: "Train LoRA",
+                primarySystemImage: "figure.strengthtraining.traditional",
+                primaryDisabled: viewModel.isLoraWorkflowActionInProgress,
+                primaryAction: startTrainLoRATask
+            ) {
+                Button("Save Draft") {
+                    viewModel.saveCurrentLoraTrainingJobDraft()
+                }
+                Button("Activate Adapter", action: startActivateAdapterTask)
+                    .disabled(
+                        viewModel.selectedAdapterPackage == nil
+                        || viewModel.loraFusedActivationUnavailableText != nil
+                        || viewModel.isLoraWorkflowActionInProgress
+                    )
+            }
+
             Text("Train adapters from a local package or a controlled Hugging Face dataset, then activate the saved adapter into a derived text model.")
                 .foregroundStyle(.secondary)
 
@@ -5031,6 +5404,20 @@ struct DesktopTrainingToolSectionView: View {
             Text(primaryModelDetailText)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(workflowModeBadges, id: \.self) { badge in
+                    Text(badge)
+                        .font(.caption.weight(.semibold))
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .fixedSize(horizontal: true, vertical: false)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(badge)
+                }
+            }
 
             workflowActionBar
 
@@ -5115,6 +5502,14 @@ struct DesktopTrainingToolSectionView: View {
             return "\(trainingMode) • \(datasetMode) • \(activation) • \(adapter.activationStatusText.lowercased())"
         }
         return "\(trainingMode) • \(datasetMode) • \(activation)"
+    }
+
+    private var workflowModeBadges: [String] {
+        [
+            viewModel.loraTrainingMode.title,
+            viewModel.loraDatasetSourceKind.title,
+            viewModel.loraActivationMode.title,
+        ]
     }
 
     private var selectedConfigurationContent: some View {
@@ -6686,6 +7081,45 @@ private struct DesktopInlineEmptyStateView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
+    }
+}
+
+private struct DesktopWorkflowStickyActionBar<SecondaryActions: View>: View {
+    let title: String
+    let status: String
+    let primaryTitle: String
+    let primarySystemImage: String
+    let primaryDisabled: Bool
+    let primaryAction: () -> Void
+    @ViewBuilder let secondaryActions: () -> SecondaryActions
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.headline)
+                Text(status)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 12)
+            secondaryActions()
+                .buttonStyle(.bordered)
+            Button(action: primaryAction) {
+                Label(primaryTitle, systemImage: primarySystemImage)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(primaryDisabled)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 2)
     }
 }
 
@@ -10347,11 +10781,11 @@ struct DesktopAPIWorkspaceView: View {
 
                     switch selectedSection {
                     case .overview:
-                        GroupBox("Base URL") {
-                            Text(defaultBaseURL)
-                                .font(.body.monospaced())
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
+                        DesktopAPIEndpointConsoleView(
+                            baseURL: defaultBaseURL,
+                            selectedSession: viewModel.selectedServerSession,
+                            selectedExport: viewModel.selectedAgentIntegrationExport
+                        )
                     case .authentication:
                         DesktopAPIAuthenticationReferenceView(
                             referenceText: desktopAPIAuthenticationReferenceText(
@@ -10423,6 +10857,104 @@ struct DesktopAPIWorkspaceView: View {
 
     private var defaultBaseURL: String {
         viewModel.desktopRuntimeEndpointState.effectiveBaseURL
+    }
+}
+
+private struct DesktopAPIEndpointConsoleView: View {
+    let baseURL: String
+    let selectedSession: DesktopServerSessionState?
+    let selectedExport: AgentIntegrationExport?
+
+    private var modelID: String {
+        if let modelID = selectedSession?.modelID, !modelID.isEmpty {
+            return modelID
+        }
+        return "melix-dev-text"
+    }
+
+    private var chatEndpoint: String {
+        "\(baseURL)/v1/chat/completions"
+    }
+
+    private var modelsEndpoint: String {
+        "\(baseURL)/v1/models"
+    }
+
+    private var sampleRequest: String {
+        """
+        curl \(chatEndpoint) \\
+          -H "Content-Type: application/json" \\
+          -d '{
+            "model": "\(modelID)",
+            "messages": [
+              {"role": "user", "content": "Summarize the runtime status."}
+            ]
+          }'
+        """
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            MelixSectionCard("Endpoint Console") {
+                VStack(alignment: .leading, spacing: 12) {
+                    DesktopAPIEndpointRow(
+                        title: "Chat Completions",
+                        endpoint: chatEndpoint,
+                        detail: selectedSession?.lifecycleSummaryText ?? "No server session selected."
+                    )
+                    DesktopAPIEndpointRow(
+                        title: "Models",
+                        endpoint: modelsEndpoint,
+                        detail: selectedSession?.sharedAccessSummaryText ?? "Model list follows the selected runtime."
+                    )
+                    HStack(spacing: 8) {
+                        Button("Copy Chat URL") {
+                            copyToPasteboard(chatEndpoint)
+                        }
+                        Button("Copy Sample Request") {
+                            copyToPasteboard(sampleRequest)
+                        }
+                        if let selectedExport {
+                            Button("Copy Agent Config") {
+                                copyToPasteboard(selectedExport.configFragment)
+                            }
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            MelixSectionCard("Sample Request") {
+                Text(sampleRequest)
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+}
+
+private struct DesktopAPIEndpointRow: View {
+    let title: String
+    let endpoint: String
+    let detail: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(endpoint)
+                .font(.body.monospaced())
+                .textSelection(.enabled)
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 

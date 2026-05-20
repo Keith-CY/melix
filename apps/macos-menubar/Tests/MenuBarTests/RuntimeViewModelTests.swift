@@ -1295,7 +1295,7 @@ struct RuntimeViewModelTests {
         let persistedPayload = try #require(
             JSONSerialization.jsonObject(with: persistedData) as? [String: Any]
         )
-        #expect(persistedPayload["selected_surface"] as? String == "tools")
+        #expect(persistedPayload["selected_surface"] as? String == "diagnostics")
         #expect(persistedPayload["selected_tool_section"] as? String == "diagnostics")
 
         let restoredViewModel = RuntimeViewModel(
@@ -1304,7 +1304,7 @@ struct RuntimeViewModelTests {
         )
         await restoredViewModel.start()
 
-        #expect(restoredViewModel.selectedSurface == .tools)
+        #expect(restoredViewModel.selectedSurface == .diagnostics)
         #expect(restoredViewModel.selectedToolSection == .diagnostics)
     }
 
@@ -1348,7 +1348,7 @@ struct RuntimeViewModelTests {
         )
         await restoredViewModel.start()
 
-        #expect(restoredViewModel.selectedSurface == .tools)
+        #expect(restoredViewModel.selectedSurface == .models)
         #expect(restoredViewModel.selectedToolSection == .modelsLibrary)
     }
 
@@ -1981,7 +1981,7 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedSurface == .api)
 
         viewModel.selectToolSection(.diagnostics)
-        #expect(viewModel.selectedSurface == .tools)
+        #expect(viewModel.selectedSurface == .diagnostics)
         #expect(viewModel.selectedToolSection == .diagnostics)
 
         viewModel.openCommandCenter()
@@ -9917,7 +9917,7 @@ struct RuntimeViewModelTests {
         )
 
         viewModel.prepareSelectedLoraTrainingJobFollowUp(.benchmark)
-        #expect(viewModel.selectedSurface == .tools)
+        #expect(viewModel.selectedSurface == .diagnostics)
         #expect(viewModel.selectedToolSection == .diagnostics)
         #expect(viewModel.preferredDiagnosticsStage == .benchmark)
         #expect(viewModel.selectedBenchmarkModelID == "melix-dev-text-lora")
@@ -9927,11 +9927,11 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedEvaluationModelID == "melix-dev-text-lora")
 
         viewModel.prepareSelectedLoraTrainingJobFollowUp(.activation)
-        #expect(viewModel.selectedSurface == .tools)
+        #expect(viewModel.selectedSurface == .workflows)
         #expect(viewModel.selectedToolSection == .training)
 
         viewModel.prepareSelectedLoraTrainingJobFollowUp(.publish)
-        #expect(viewModel.selectedSurface == .tools)
+        #expect(viewModel.selectedSurface == .workflows)
         #expect(viewModel.selectedToolSection == .training)
 
         viewModel.prepareSelectedLoraTrainingJobFollowUp(.conversion)
