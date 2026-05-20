@@ -25,7 +25,7 @@ CRASH_PATTERNS = (
 _BYTE_WHITESPACE = bytes(value for value in range(256) if chr(value).isspace())
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class UpdateCheckResult:
     checked: bool
     update_available: bool
