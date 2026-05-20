@@ -71,6 +71,9 @@ class ToolDescriptor:
     observation_kind: str
     arguments: tuple[ToolArgumentDescriptor, ...]
     _cached_required_arguments: tuple[str, ...] = field(default=(), init=False, repr=False)
+    _cached_required_arguments_list: list[str] = field(
+        default_factory=list, init=False, repr=False
+    )
     _cached_schema_properties: tuple[tuple[str, dict[str, Any]], ...] = field(
         default=(), init=False, repr=False
     )
@@ -102,6 +105,7 @@ class ToolDescriptor:
             argument_names.add(argument.name)
         required_arguments = tuple(argument.name for argument in self.arguments if argument.required)
         object.__setattr__(self, "_cached_required_arguments", required_arguments)
+        object.__setattr__(self, "_cached_required_arguments_list", list(required_arguments))
         schema_properties = tuple(
             (argument.name, argument.json_schema()) for argument in self.arguments
         )
@@ -116,12 +120,12 @@ class ToolDescriptor:
 
     def schema_payload(self) -> dict[str, Any]:
         schema_properties = self._cached_schema_properties
-        required_arguments = self._cached_required_arguments
+        required_arguments = self._cached_required_arguments_list
         return {
             "type": "object",
             "additionalProperties": False,
             "properties": {name: schema.copy() for name, schema in schema_properties},
-            "required": list(required_arguments),
+            "required": required_arguments.copy(),
         }
 
     def json_schema(self) -> str:
