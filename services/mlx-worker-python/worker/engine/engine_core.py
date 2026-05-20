@@ -488,6 +488,8 @@ class EngineCore:
         sampling: common_pb2.SamplingConfig,
         stop_sequences: tuple[str, ...],
     ) -> common_pb2.SamplingConfig:
+        if not stop_sequences and not sampling.stop:
+            return sampling
         if tuple(sampling.stop) == stop_sequences:
             return sampling
         resolved = common_pb2.SamplingConfig()
