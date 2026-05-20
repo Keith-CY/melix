@@ -20,6 +20,7 @@ TRAJECTORY_PROVENANCE_FIELDS = (
     "trajectory_leakage_policy_id",
     "trajectory_package_path",
     "trajectory_quality_metrics",
+    "agentic_sft_token_metrics",
 )
 
 TRAJECTORY_PROVENANCE_CSV_FIELDS = TRAJECTORY_PROVENANCE_FIELDS
@@ -84,6 +85,7 @@ def trajectory_provenance_from_snapshot_manifest(
         ("trajectory_leakage_policy_id", "trajectory_leakage_policy_id"),
         ("source_package_path", "trajectory_package_path"),
         ("trajectory_quality_metrics", "trajectory_quality_metrics"),
+        ("agentic_sft_token_metrics", "agentic_sft_token_metrics"),
     ):
         value = manifest.get(source_field)
         if value in ("", None):
@@ -134,6 +136,9 @@ def adapter_manifest_trajectory_provenance(
     payload["trajectory_reward_policy_present"] = bool(
         normalized.get("trajectory_reward_policy_id")
     )
+    token_metrics = normalized.get("agentic_sft_token_metrics")
+    if isinstance(token_metrics, Mapping):
+        payload.update(_agentic_sft_token_metric_aliases(token_metrics))
     return payload
 
 
@@ -155,3 +160,19 @@ def alignment_metrics_trajectory_provenance(
             quality_metrics.get("reward_coverage_count", 0) or 0
         )
     return metrics
+
+
+def _agentic_sft_token_metric_aliases(metrics: Mapping[str, Any]) -> dict[str, Any]:
+    aliases: dict[str, Any] = {}
+    estimator = str(metrics.get("estimator", "")).strip()
+    if estimator:
+        aliases["training.agentic_sft.token_estimator"] = estimator
+    for source_key, alias_key in (
+        ("source_trace_count", "training.agentic_sft.source_trace_count"),
+        ("trace_tokens", "training.agentic_sft.trace_tokens"),
+        ("tool_call_tokens", "training.agentic_sft.tool_call_tokens"),
+        ("observation_tokens", "training.agentic_sft.observation_tokens"),
+        ("final_answer_tokens", "training.agentic_sft.final_answer_tokens"),
+    ):
+        aliases[alias_key] = int(metrics.get(source_key, 0) or 0)
+    return aliases

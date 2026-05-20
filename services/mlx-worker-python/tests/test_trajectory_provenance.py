@@ -319,6 +319,39 @@ def test_train_lora_records_agentic_trajectory_provenance_in_adapter_manifest(
         "response_only_boundary_count": 2,
         "mask_prompt_boundary_count": 2,
     }
+    assert normalized_payload["agentic_sft_token_metrics"]["estimator"] == "whitespace_v1"
+    assert normalized_payload["agentic_sft_token_metrics"]["source_trace_count"] == 1
+    assert normalized_payload["agentic_sft_token_metrics"]["trace_tokens"] > 0
+    assert normalized_payload["agentic_sft_token_metrics"]["tool_call_tokens"] > 0
+    assert normalized_payload["agentic_sft_token_metrics"]["observation_tokens"] > 0
+    assert normalized_payload["agentic_sft_token_metrics"]["final_answer_tokens"] > 0
+    assert payload["agentic_sft_token_metrics"] == normalized_payload[
+        "agentic_sft_token_metrics"
+    ]
+    assert (
+        payload["training.agentic_sft.token_estimator"]
+        == normalized_payload["agentic_sft_token_metrics"]["estimator"]
+    )
+    assert (
+        payload["training.agentic_sft.source_trace_count"]
+        == normalized_payload["agentic_sft_token_metrics"]["source_trace_count"]
+    )
+    assert (
+        payload["training.agentic_sft.trace_tokens"]
+        == normalized_payload["agentic_sft_token_metrics"]["trace_tokens"]
+    )
+    assert (
+        payload["training.agentic_sft.tool_call_tokens"]
+        == normalized_payload["agentic_sft_token_metrics"]["tool_call_tokens"]
+    )
+    assert (
+        payload["training.agentic_sft.observation_tokens"]
+        == normalized_payload["agentic_sft_token_metrics"]["observation_tokens"]
+    )
+    assert (
+        payload["training.agentic_sft.final_answer_tokens"]
+        == normalized_payload["agentic_sft_token_metrics"]["final_answer_tokens"]
+    )
     assert len(train_rows) == 2
     assert train_rows[0]["tools"] == [{"name": "visit"}]
     assert train_rows[0]["response_only_boundary"]["trainable_kind"] == "tool_call"

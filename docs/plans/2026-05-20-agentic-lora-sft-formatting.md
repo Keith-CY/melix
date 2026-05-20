@@ -77,6 +77,8 @@ Measurement points:
 - Formatted tool-observation count.
 - Formatted media-reference count.
 - Formatted final-answer count.
+- Agentic SFT `whitespace_v1` token metrics for source traces, tool-call
+  spans, tool-observation spans, and final-answer spans.
 - Trainer row count.
 - Response-only boundary count.
 - Mask-prompt boundary count.
@@ -103,4 +105,7 @@ training data preparation path.
 - Original normalized traces are preserved in sibling JSONL evidence files.
 - LoRA training still reports `dataset_format: agentic_tool_trace` and records
   `trainer_dataset_format: chat_messages`.
+- Normalized snapshot manifests and adapter receipts persist
+  `agentic_sft_token_metrics` with trace, tool-call, observation, and
+  final-answer token counts.
 - Focused tests and changed-scope coverage pass.

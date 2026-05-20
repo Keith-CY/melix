@@ -57,6 +57,7 @@ class TrainingDatasetPackage:
 class NormalizedDatasetSnapshot:
     dataset_dir: Path
     manifest_path: Path
+    manifest_payload: dict[str, Any]
     samples_path: Path
     train_path: Path
     valid_path: Path | None
@@ -553,11 +554,15 @@ def write_normalized_dataset_snapshot(
     agentic_projection: dict[str, Any] = {}
     if dataset.format == "agentic_tool_trace":
         trainer_format = "chat_messages"
+        train_token_metrics = agentic_sft_formatter.new_token_metrics()
         train_samples, train_projection_metrics = agentic_sft_formatter.format_trace_rows(
-            dataset.normalized_samples
+            dataset.normalized_samples,
+            token_metrics=train_token_metrics,
         )
+        validation_token_metrics = agentic_sft_formatter.new_token_metrics()
         validation_samples, validation_projection_metrics = agentic_sft_formatter.format_trace_rows(
-            dataset.normalized_validation_samples
+            dataset.normalized_validation_samples,
+            token_metrics=validation_token_metrics,
         )
         trainer_sample_count = len(train_samples)
         trainer_validation_sample_count = len(validation_samples)
@@ -576,6 +581,10 @@ def write_normalized_dataset_snapshot(
             "agentic_sft_projection_metrics": agentic_sft_formatter.merge_projection_metrics(
                 train_projection_metrics,
                 validation_projection_metrics,
+            ),
+            "agentic_sft_token_metrics": agentic_sft_formatter.merge_token_metrics(
+                train_token_metrics,
+                validation_token_metrics,
             ),
         }
 
@@ -617,6 +626,7 @@ def write_normalized_dataset_snapshot(
     return NormalizedDatasetSnapshot(
         dataset_dir=dataset_dir,
         manifest_path=manifest_path,
+        manifest_payload=manifest_payload,
         samples_path=samples_path,
         train_path=train_path,
         valid_path=valid_path,
