@@ -10,9 +10,12 @@ by LoRA dataset preparation and trainer manifest aggregation:
 - `scripts/response_only_boundary_slots_probe.py`
 - `infra/perf/pr_scoped_probes.json`
 
-The slice keeps response-only masking semantics unchanged. It only removes
+The original slice kept response-only masking semantics unchanged while removing
 per-instance `__dict__` allocation from the immutable boundary and aggregate
-records by using slotted dataclasses.
+records by using slotted dataclasses. The 2026-05-20 follow-up keeps the same
+registered probe and inlines response-token and truncation arithmetic inside the
+single-pass aggregate loop to avoid repeated property/method dispatch per
+boundary record.
 
 ## Registered probe
 
