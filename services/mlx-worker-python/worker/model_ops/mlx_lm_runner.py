@@ -91,6 +91,10 @@ class TrainingMetrics:
     reward_component_fatal_failure_mean: float = 0.0
     reward_component_total_mean: float = 0.0
     fatal_trace_count: int = 0
+    fatal_aware_grpo_schema_version: str = ""
+    fatal_candidate_count: int = 0
+    selected_fatal_candidate_count: int = 0
+    advantage_clamped_candidate_count: int = 0
     policy_update_count: int = 0
     selected_candidate_count: int = 0
     candidate_group_count: int = 0

@@ -582,6 +582,16 @@ def _alignment_manifest_payload(
                     training_result.metrics.reward_component_total_mean
                 ),
                 "fatal_trace_count": training_result.metrics.fatal_trace_count,
+                "fatal_aware_grpo_schema_version": (
+                    training_result.metrics.fatal_aware_grpo_schema_version
+                ),
+                "fatal_candidate_count": training_result.metrics.fatal_candidate_count,
+                "selected_fatal_candidate_count": (
+                    training_result.metrics.selected_fatal_candidate_count
+                ),
+                "advantage_clamped_candidate_count": (
+                    training_result.metrics.advantage_clamped_candidate_count
+                ),
             }
         )
         if training_result.metrics.candidate_generation_backend:
