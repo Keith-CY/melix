@@ -10,6 +10,12 @@ from packages.protocol.python.worker.v1 import common_pb2
 
 _TOOL_CONFIG_FROM_BYTES = common_pb2.ToolConfig.FromString
 _COMPACT_SORTED_JSON_ENCODER = json.JSONEncoder(separators=(",", ":"), sort_keys=True)
+
+
+def _copy_tool_config(template: common_pb2.ToolConfig) -> common_pb2.ToolConfig:
+    config = common_pb2.ToolConfig()
+    config.CopyFrom(template)
+    return config
 _TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _SELECTION_CACHE_MAX_SIZE = 32
 
@@ -266,20 +272,20 @@ class ToolRegistry:
 
 
 def built_in_tool_registry() -> ToolRegistry:
-    return ToolRegistry(_BUILTIN_AGENTIC_TOOLS)
+    return _BUILTIN_TOOL_CONFIG_REGISTRY
 
 
 def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> common_pb2.ToolConfig:
     if names is None:
-        return _TOOL_CONFIG_FROM_BYTES(_BUILTIN_TOOL_CONFIG_BYTES)
+        return _copy_tool_config(_BUILTIN_TOOL_CONFIG_TEMPLATE)
     requested_names = tuple(names)
-    cached_config_bytes = _BUILTIN_TOOL_CONFIG_SELECTION_BYTES.get(requested_names)
-    if cached_config_bytes is not None:
-        return _TOOL_CONFIG_FROM_BYTES(cached_config_bytes)
+    cached_config = _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES.get(requested_names)
+    if cached_config is not None:
+        return _copy_tool_config(cached_config)
     registry = _BUILTIN_TOOL_CONFIG_REGISTRY.select(requested_names)
     config = registry.as_worker_tool_config()
-    _BUILTIN_TOOL_CONFIG_SELECTION_BYTES[registry.names()] = config.SerializeToString()
-    return config
+    _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES[registry.names()] = config
+    return _copy_tool_config(config)
 
 
 def _arg(
@@ -368,8 +374,9 @@ _BUILTIN_TOOL_CONFIG_REGISTRY = ToolRegistry(_BUILTIN_AGENTIC_TOOLS)
 _BUILTIN_TOOL_CONFIG_BYTES = (
     _BUILTIN_TOOL_CONFIG_REGISTRY.as_worker_tool_config().SerializeToString()
 )
-_BUILTIN_TOOL_CONFIG_SELECTION_BYTES: dict[tuple[str, ...], bytes] = {
-    BUILTIN_AGENTIC_TOOL_NAMES: _BUILTIN_TOOL_CONFIG_BYTES,
+_BUILTIN_TOOL_CONFIG_TEMPLATE = _TOOL_CONFIG_FROM_BYTES(_BUILTIN_TOOL_CONFIG_BYTES)
+_BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES: dict[tuple[str, ...], common_pb2.ToolConfig] = {
+    BUILTIN_AGENTIC_TOOL_NAMES: _BUILTIN_TOOL_CONFIG_TEMPLATE,
 }
 
 

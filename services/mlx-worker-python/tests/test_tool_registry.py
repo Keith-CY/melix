@@ -33,6 +33,35 @@ def test_built_in_agentic_tool_registry_exports_stable_contracts() -> None:
     assert schemas[0]["x-melix-observation-kind"] == "image_region"
 
 
+def test_built_in_tool_registry_reuses_singleton_snapshot() -> None:
+    registry = built_in_tool_registry()
+
+    assert built_in_tool_registry() is registry
+    assert registry.names() == BUILTIN_AGENTIC_TOOL_NAMES
+
+
+def test_built_in_tool_config_returns_isolated_template_copies() -> None:
+    first_config = built_in_tool_config()
+    first_config.tools.pop()
+    first_config.schema_version = "mutated"
+
+    second_config = built_in_tool_config()
+
+    assert len(second_config.tools) == len(BUILTIN_AGENTIC_TOOL_NAMES)
+    assert second_config.schema_version == tool_registry_module.TOOL_REGISTRY_SCHEMA_VERSION
+
+
+def test_built_in_tool_config_selection_returns_isolated_template_copies() -> None:
+    first_config = built_in_tool_config(("image_crop", "local_compute"))
+    first_config.tools.pop()
+    first_config.schema_version = "mutated"
+
+    second_config = built_in_tool_config(("image_crop", "local_compute"))
+
+    assert [tool.name for tool in second_config.tools] == ["image_crop", "local_compute"]
+    assert second_config.schema_version == tool_registry_module.TOOL_REGISTRY_SCHEMA_VERSION
+
+
 def test_built_in_tool_schemas_are_object_contracts_with_required_arguments() -> None:
     registry = built_in_tool_registry()
 
@@ -87,7 +116,7 @@ def test_tool_registry_metrics_snapshot_updates_for_selected_registry() -> None:
 
 
 def test_tool_registry_names_reuses_registry_snapshot() -> None:
-    registry = built_in_tool_registry()
+    registry = ToolRegistry(built_in_tool_registry().tools)
     expected_names = registry.names()
     object.__setattr__(registry, "_tools", ())
 
@@ -186,7 +215,7 @@ def test_tool_registry_select_reuses_cached_name_index() -> None:
 
 
 def test_tool_registry_select_reuses_cached_selected_registry() -> None:
-    registry = built_in_tool_registry()
+    registry = ToolRegistry(built_in_tool_registry().tools)
 
     selected = registry.select([" visit ", "image_crop", "visit"])
 
@@ -195,7 +224,7 @@ def test_tool_registry_select_reuses_cached_selected_registry() -> None:
 
 
 def test_tool_registry_select_tuple_cache_hit_skips_name_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
-    registry = built_in_tool_registry()
+    registry = ToolRegistry(built_in_tool_registry().tools)
     selected = registry.select(("visit", "image_crop"))
 
     monkeypatch.setattr(registry, "_tool_by_name", {})
@@ -208,7 +237,7 @@ def test_tool_registry_select_tuple_cache_hit_skips_name_lookup(monkeypatch: pyt
 def test_tool_registry_select_caches_raw_tuple_alias_after_normalization(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    registry = built_in_tool_registry()
+    registry = ToolRegistry(built_in_tool_registry().tools)
     selected = registry.select((" visit ", "image_crop", "visit", ""))
 
     monkeypatch.setattr(registry, "_tool_by_name", {})
@@ -247,7 +276,7 @@ def test_tool_registry_select_exact_full_list_skips_normalization() -> None:
 
 
 def test_tool_registry_selection_cache_is_bounded() -> None:
-    registry = built_in_tool_registry()
+    registry = ToolRegistry(built_in_tool_registry().tools)
 
     for index in range(40):
         registry._selection_cache[("visit", f"probe_{index}")] = registry
@@ -259,7 +288,7 @@ def test_tool_registry_selection_cache_is_bounded() -> None:
 
 
 def test_tool_registry_raw_tuple_alias_keeps_selection_cache_bounded() -> None:
-    registry = built_in_tool_registry()
+    registry = ToolRegistry(built_in_tool_registry().tools)
 
     for index in range(31):
         registry._selection_cache[("visit", f"probe_{index}")] = registry
