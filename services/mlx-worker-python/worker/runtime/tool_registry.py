@@ -296,9 +296,15 @@ def built_in_tool_registry() -> ToolRegistry:
 def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> common_pb2.ToolConfig:
     if names is None:
         return _copy_tool_config(_BUILTIN_TOOL_CONFIG_TEMPLATE)
-    if names == _BUILTIN_TOOL_CONFIG_NAMES_LIST:
-        return _copy_tool_config(_BUILTIN_TOOL_CONFIG_TEMPLATE)
-    requested_names = tuple(names)
+    if isinstance(names, tuple):
+        cached_config = _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES.get(names)
+        if cached_config is not None:
+            return _copy_tool_config(cached_config)
+        requested_names = names
+    else:
+        if names == _BUILTIN_TOOL_CONFIG_NAMES_LIST:
+            return _copy_tool_config(_BUILTIN_TOOL_CONFIG_TEMPLATE)
+        requested_names = tuple(names)
     cached_config = _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES.get(requested_names)
     if cached_config is not None:
         return _copy_tool_config(cached_config)
