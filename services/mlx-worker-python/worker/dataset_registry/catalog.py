@@ -59,7 +59,7 @@ class DatasetFile:
         }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DatasetSnapshot:
     dataset_id: str
     repo_id: str
