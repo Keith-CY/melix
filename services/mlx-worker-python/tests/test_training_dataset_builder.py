@@ -289,6 +289,20 @@ def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
         "response_only_boundary_count": 3,
         "mask_prompt_boundary_count": 3,
     }
+    assert agentic_payload[
+        "agentic_sft_token_metrics"
+    ] == training_dataset_module.agentic_sft_formatter.merge_token_metrics(
+        training_dataset_module.agentic_sft_formatter.collect_token_metrics(samples),
+        training_dataset_module.agentic_sft_formatter.collect_token_metrics(
+            validation_samples
+        ),
+    )
+    assert agentic_payload["agentic_sft_token_metrics"]["estimator"] == "whitespace_v1"
+    assert agentic_payload["agentic_sft_token_metrics"]["source_trace_count"] == 2
+    assert agentic_payload["agentic_sft_token_metrics"]["trace_tokens"] > 0
+    assert agentic_payload["agentic_sft_token_metrics"]["tool_call_tokens"] > 0
+    assert agentic_payload["agentic_sft_token_metrics"]["observation_tokens"] > 0
+    assert agentic_payload["agentic_sft_token_metrics"]["final_answer_tokens"] > 0
     assert agentic_payload["source_package_path"] == str(agentic_package_path)
     assert agentic_payload["source_dataset_id"] == "source-agentic-package"
     assert agentic_payload["source_manifest_fields"] == {

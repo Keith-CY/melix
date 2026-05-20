@@ -6,6 +6,7 @@ from typing import Any, Iterable, Mapping
 
 AGENTIC_SFT_FORMATTER_ID = "melix.agentic_tool_trace.sft_formatter.v1"
 AGENTIC_SFT_BOUNDARY_POLICY_ID = "melix.agentic_tool_trace.response_only_boundaries.v1"
+AGENTIC_SFT_TOKEN_ESTIMATOR_ID = "whitespace_v1"
 
 
 def new_projection_metrics() -> dict[str, int]:
@@ -34,6 +35,49 @@ def merge_projection_metrics(
     return merged
 
 
+def new_token_metrics() -> dict[str, Any]:
+    return {
+        "estimator": AGENTIC_SFT_TOKEN_ESTIMATOR_ID,
+        "source_trace_count": 0,
+        "trace_tokens": 0,
+        "tool_call_tokens": 0,
+        "observation_tokens": 0,
+        "final_answer_tokens": 0,
+    }
+
+
+def merge_token_metrics(*metrics_items: Mapping[str, Any]) -> dict[str, Any]:
+    merged = new_token_metrics()
+    for metrics in metrics_items:
+        for key in (
+            "source_trace_count",
+            "trace_tokens",
+            "tool_call_tokens",
+            "observation_tokens",
+            "final_answer_tokens",
+        ):
+            try:
+                merged[key] += int(metrics.get(key, 0) or 0)
+            except (TypeError, ValueError):
+                continue
+    return merged
+
+
+def collect_token_metrics(samples: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    metrics = new_token_metrics()
+    for sample in samples:
+        metrics["source_trace_count"] += 1
+        sample_metrics = _sample_token_metrics(sample)
+        for key in (
+            "trace_tokens",
+            "tool_call_tokens",
+            "observation_tokens",
+            "final_answer_tokens",
+        ):
+            metrics[key] += sample_metrics[key]
+    return metrics
+
+
 def count_trace_trainer_rows(samples: Iterable[dict[str, Any]]) -> int:
     row_count = 0
     for sample in samples:
@@ -51,10 +95,14 @@ def count_trace_trainer_rows(samples: Iterable[dict[str, Any]]) -> int:
 
 def format_trace_rows(
     samples: Iterable[dict[str, Any]],
+    *,
+    token_metrics: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     rows: list[dict[str, Any]] = []
     metrics = new_projection_metrics()
     for sample in samples:
+        if token_metrics is not None:
+            _add_sample_token_metrics(token_metrics, sample)
         rows.extend(format_trace_row(sample, metrics))
     return rows, metrics
 
@@ -124,7 +172,7 @@ def format_trace_row(
     final_answer = str(sample.get("final_answer", "")).strip()
     if final_answer:
         counters["final_answer_count"] += 1
-        final_content = f"Final answer: {final_answer}"
+        final_content = _project_final_answer(final_answer)
         if context_messages and context_messages[-1]["role"] == "assistant":
             existing_content = context_messages[-1]["content"].strip()
             if existing_content == final_answer:
@@ -198,6 +246,91 @@ def _format_media_ref(media_ref: Any) -> str:
     if not parts:
         return "- {}"
     return "- " + "; ".join(parts)
+
+
+def _sample_token_metrics(sample: dict[str, Any]) -> dict[str, int]:
+    context_tokens = 0
+    tool_call_tokens = 0
+    observation_tokens = 0
+    final_answer_tokens = 0
+    assistant_contexts: list[str] = []
+    media_refs = sample.get("media_refs")
+    if isinstance(media_refs, list) and media_refs:
+        context_tokens += _count_whitespace_tokens(
+            "Media references:\n"
+            + "\n".join(_format_media_ref(media_ref) for media_ref in media_refs)
+        )
+    final_answer = str(sample.get("final_answer", "")).strip()
+
+    for raw_turn in sample.get("turns", []):
+        if not isinstance(raw_turn, Mapping):
+            continue
+        role = str(raw_turn.get("role", "")).strip()
+        if role in {"system", "user"}:
+            context_tokens += _count_whitespace_tokens(raw_turn.get("content", ""))
+            continue
+        if role == "assistant":
+            content = _format_assistant_turn(raw_turn)
+            if not content:
+                continue
+            if isinstance(raw_turn.get("tool_call"), Mapping):
+                tool_call_tokens += _count_whitespace_tokens(content)
+            else:
+                assistant_contexts.append(content)
+            continue
+        if role == "tool":
+            observation_tokens += _count_whitespace_tokens(_format_tool_turn(raw_turn))
+
+    if final_answer:
+        final_answer_content = _project_final_answer(final_answer)
+        if assistant_contexts:
+            context_tokens += sum(
+                _count_whitespace_tokens(content) for content in assistant_contexts[:-1]
+            )
+            existing_content = assistant_contexts[-1].strip()
+            if existing_content == final_answer:
+                final_answer_content = _project_final_answer(final_answer)
+            elif final_answer_content not in existing_content:
+                final_answer_content = f"{existing_content}\n\n{final_answer_content}"
+            else:
+                final_answer_content = existing_content
+        final_answer_tokens = _count_whitespace_tokens(final_answer_content)
+    else:
+        context_tokens += sum(
+            _count_whitespace_tokens(content) for content in assistant_contexts
+        )
+
+    return {
+        "trace_tokens": (
+            context_tokens
+            + tool_call_tokens
+            + observation_tokens
+            + final_answer_tokens
+        ),
+        "tool_call_tokens": tool_call_tokens,
+        "observation_tokens": observation_tokens,
+        "final_answer_tokens": final_answer_tokens,
+    }
+
+
+def _add_sample_token_metrics(metrics: dict[str, Any], sample: dict[str, Any]) -> None:
+    metrics["source_trace_count"] += 1
+    sample_metrics = _sample_token_metrics(sample)
+    for key in (
+        "trace_tokens",
+        "tool_call_tokens",
+        "observation_tokens",
+        "final_answer_tokens",
+    ):
+        metrics[key] += sample_metrics[key]
+
+
+def _count_whitespace_tokens(value: Any) -> int:
+    return len(str(value or "").strip().split())
+
+
+def _project_final_answer(final_answer: str) -> str:
+    return f"Final answer: {final_answer}"
 
 
 def _format_assistant_turn(turn: Mapping[str, Any]) -> str:
