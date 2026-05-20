@@ -2027,6 +2027,7 @@ struct DesktopInspectorContractView<ExtraContent: View>: View {
         self.context = context
         self.health = health
         self.metrics = metrics
+        precondition(actions.count <= 3, "DesktopInspectorContractView supports at most 3 actions")
         self.actions = actions
         self.evidence = evidence
         self.extraContent = extraContent

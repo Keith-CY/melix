@@ -14,7 +14,7 @@ enum DesktopChatLayoutMetrics {
     static let readableWorkspaceMaxWidth: CGFloat = 980
 }
 
-enum DesktopChatStarterPrompt: String, CaseIterable, Identifiable {
+private enum DesktopChatStarterPrompt: String, CaseIterable, Identifiable {
     case runtimeState = "Explain current runtime state"
     case benchmark = "Benchmark the active model"
     case syntheticDataset = "Draft a synthetic dataset recipe"
