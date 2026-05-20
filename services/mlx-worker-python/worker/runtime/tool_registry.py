@@ -162,20 +162,6 @@ class ToolRegistryMetrics:
 
 
 class ToolRegistry:
-    __slots__ = (
-        "_metrics",
-        "_parser",
-        "_parser_contract_version",
-        "_schema_version",
-        "_selection_cache",
-        "_tool_by_name",
-        "_tool_names",
-        "_tool_names_list",
-        "_tools",
-        "_toolset_version",
-        "_worker_tool_config_bytes",
-    )
-
     def __init__(
         self,
         tools: list[ToolDescriptor] | tuple[ToolDescriptor, ...],

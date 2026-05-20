@@ -15,8 +15,6 @@ This Python-only performance slice is limited to the built-in tool config select
 - extend the registered tool-registry select probe with separate full-list
   `built_in_tool_config()` workload metrics without folding that workload into
   the existing selection elapsed metric.
-- remove per-instance `ToolRegistry` dictionaries so cached registry and
-  selection objects have lower steady-state attribute and allocation overhead.
 
 It does not change tool descriptor definitions, protobuf schemas, generated outputs, parser contracts, or non-exact partial-selection behavior.
 
