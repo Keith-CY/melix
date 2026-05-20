@@ -1482,7 +1482,7 @@ class WorkerModelCatalog:
             current = stack.pop()
             if current.name in _REGISTRY_SCAN_PRUNED_DIR_NAMES:
                 continue
-            if _is_hf_cache_pruned_subtree(resolved_root, current):
+            if current.name in {"snapshots", "refs"} and _is_hf_cache_pruned_subtree(resolved_root, current):
                 continue
             try:
                 with os.scandir(os.fspath(current)) as entries:
