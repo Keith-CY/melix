@@ -1440,6 +1440,45 @@ struct OpenAIHandlerTests {
         #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == nil)
     }
 
+    @Test("POST /v1/chat/completions does not normalize explicit VLM batch-generator non-greedy sampling")
+    func postChatCompletionsDoesNotNormalizeExplicitVLMBatchGeneratorNonGreedySampling() async throws {
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: "req-http-gemma4-vlm-explicit-batch-non-greedy",
+            configureModel: { model in
+                model.settings.ext["melix.vlm.text_only_batch_generator"] = "true"
+            }
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "temperature": 0.7,
+              "messages": [
+                { "role": "user", "content": "Reply briefly." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == "true")
+        #expect(abs(Double(generateRequest.sampling.temperature) - 0.7) < 1e-6)
+        #expect(generateRequest.sampling.topP != 1)
+        #expect(await harness.textClient.lastGenerateRequest == nil)
+    }
+
     @Test("POST /v1/chat/completions auto-enables Gemma4 VLM batch-generator with explicit greedy top-p")
     func postChatCompletionsAutoEnablesGemma4VLMBatchGeneratorWithExplicitGreedyTopP() async throws {
         let harness = makeGemma4VLMOpenAIHandler(requestID: "req-http-gemma4-vlm-explicit-top-p")
