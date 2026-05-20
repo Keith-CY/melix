@@ -308,6 +308,7 @@ struct DesktopCommandCenterView: View {
         let foundation = liveFoundation
         let chatSessions = liveChatSessions
         let serverSessions = liveServerSessions
+        let horizontalPadding = DesktopCommandCenterVisuals.contentPadding
 
         ScrollView {
             VStack(alignment: .leading, spacing: DesktopCommandCenterVisuals.sectionSpacing) {
@@ -323,7 +324,7 @@ struct DesktopCommandCenterView: View {
                             DesktopCommandCenterPressurePanel(foundation: foundation)
                             DesktopCommandCenterActivityPanel(foundation: foundation)
                         }
-                        .frame(minWidth: DesktopCommandCenterVisuals.primaryColumnMinimumWidth)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
 
                         VStack(alignment: .leading, spacing: DesktopCommandCenterVisuals.sectionSpacing) {
                             DesktopCommandCenterRecoveryPanel(
@@ -336,8 +337,9 @@ struct DesktopCommandCenterView: View {
                                 serverSessions: serverSessions
                             )
                         }
-                        .frame(width: DesktopCommandCenterVisuals.secondaryColumnWidth)
+                        .frame(width: DesktopCommandCenterVisuals.secondaryColumnWidth, alignment: .topLeading)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                     VStack(alignment: .leading, spacing: DesktopCommandCenterVisuals.sectionSpacing) {
                         DesktopCommandCenterRuntimePanel(foundation: foundation)
@@ -355,13 +357,15 @@ struct DesktopCommandCenterView: View {
                     }
                 }
             }
-            .padding(DesktopCommandCenterVisuals.contentPadding)
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, MelixDesignTokens.Spacing.xxl)
             .frame(
                 maxWidth: DesktopCommandCenterVisuals.maxContentWidth,
                 alignment: .leading
             )
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(MelixDesignTokens.Palette.backgroundBase.color)
+        .background(MelixDesignTokens.Palette.backgroundBase.color.ignoresSafeArea())
     }
 
     private var liveFoundation: DesktopFoundationState {
@@ -390,9 +394,8 @@ enum DesktopCommandCenterVisuals {
     static let activitySectionTitle = "Recent Activity"
     static let sessionSummarySectionTitle = "Session Summary"
     static let primaryModelTitle = "Primary Model"
-    static let maxContentWidth: CGFloat = 1120
-    static let primaryColumnMinimumWidth: CGFloat = 520
-    static let secondaryColumnWidth: CGFloat = 320
+    static let maxContentWidth: CGFloat = 1180
+    static let secondaryColumnWidth: CGFloat = 340
     static let contentPadding = MelixDesignTokens.Spacing.huge
     static let sectionSpacing = MelixDesignTokens.Spacing.xl
     static let columnSpacing = MelixDesignTokens.Spacing.huge
@@ -408,7 +411,6 @@ private struct DesktopCommandCenterHeaderView: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: MelixDesignTokens.Spacing.lg) {
             VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.sm) {
-                Text(DesktopCommandCenterVisuals.operatorLabel).melixSectionLabel()
                 Text(DesktopCommandCenterVisuals.windowTitle)
                     .font(MelixDesignTokens.Typography.largeTitle)
                 Text(foundation.title)
@@ -1027,6 +1029,25 @@ private struct DesktopServerMetricCard: View {
     }
 }
 
+@MainActor
+enum DesktopServerCreationActions {
+    static func addLocalServer(viewModel: RuntimeViewModel) {
+        viewModel.beginServerCreation(kind: .localServer)
+    }
+
+    static func addRemoteServer(viewModel: RuntimeViewModel) {
+        viewModel.beginServerCreation(kind: .remoteServer)
+    }
+
+    static func makeAddLocalServerAction(viewModel: RuntimeViewModel) -> () -> Void {
+        { addLocalServer(viewModel: viewModel) }
+    }
+
+    static func makeAddRemoteServerAction(viewModel: RuntimeViewModel) -> () -> Void {
+        { addRemoteServer(viewModel: viewModel) }
+    }
+}
+
 private struct DesktopServerSessionSidebar: View {
     let viewModel: RuntimeViewModel
 
@@ -1037,12 +1058,8 @@ private struct DesktopServerSessionSidebar: View {
                     .font(.headline)
                 Spacer()
                 Menu {
-                    Button("Add Local Server") {
-                        viewModel.beginServerCreation(kind: .localServer)
-                    }
-                    Button("Add Remote Server") {
-                        viewModel.beginServerCreation(kind: .remoteServer)
-                    }
+                    Button("Add Local Server", action: DesktopServerCreationActions.makeAddLocalServerAction(viewModel: viewModel))
+                    Button("Add Remote Server", action: DesktopServerCreationActions.makeAddRemoteServerAction(viewModel: viewModel))
                 } label: {
                     Image(systemName: "plus")
                 }
@@ -1053,11 +1070,19 @@ private struct DesktopServerSessionSidebar: View {
             }
 
             if viewModel.serverTargets.isEmpty {
-                ContentUnavailableView(
-                    "No Servers",
-                    systemImage: "network.slash",
-                    description: Text("Create a local or remote server target.")
-                )
+                MelixActionableEmptyState(
+                    title: "No Servers Yet",
+                    systemImage: "server.rack",
+                    detail: "Create a local Apple Silicon runtime or connect a remote provider before chatting, benchmarking, or generating artifacts."
+                ) {
+                    VStack(spacing: MelixDesignTokens.Spacing.sm) {
+                        Button("Add Local Server", action: DesktopServerCreationActions.makeAddLocalServerAction(viewModel: viewModel))
+                        .buttonStyle(.borderedProminent)
+
+                        Button("Add Remote Server", action: DesktopServerCreationActions.makeAddRemoteServerAction(viewModel: viewModel))
+                        .buttonStyle(.bordered)
+                    }
+                }
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 8) {
@@ -1145,7 +1170,7 @@ private struct DesktopRemoteServerEditor: View {
                             set: { viewModel.remoteServerIDDraft = $0 }
                         )
                     )
-                    .textFieldStyle(.roundedBorder)
+                    .melixOperatorTextFieldStyle()
                     .disabled(viewModel.isRemoteServerIDEditable == false)
 
                     TextField(
@@ -1155,7 +1180,7 @@ private struct DesktopRemoteServerEditor: View {
                             set: { viewModel.remoteServerTitleDraft = $0 }
                         )
                     )
-                    .textFieldStyle(.roundedBorder)
+                    .melixOperatorTextFieldStyle()
                 }
 
                 HStack(alignment: .top, spacing: 12) {
@@ -1179,7 +1204,7 @@ private struct DesktopRemoteServerEditor: View {
                             set: { viewModel.remoteServerDefaultModelIDDraft = $0 }
                         )
                     )
-                    .textFieldStyle(.roundedBorder)
+                    .melixOperatorTextFieldStyle()
                 }
 
                 TextField(
@@ -1189,7 +1214,7 @@ private struct DesktopRemoteServerEditor: View {
                         set: { viewModel.remoteServerBaseURLDraft = $0 }
                     )
                 )
-                .textFieldStyle(.roundedBorder)
+                .melixOperatorTextFieldStyle()
                 .disabled(viewModel.isRemoteServerBaseURLEditable == false)
 
                 SecureField(
@@ -1199,7 +1224,7 @@ private struct DesktopRemoteServerEditor: View {
                         set: { viewModel.remoteServerAPIKeyDraft = $0 }
                     )
                 )
-                .textFieldStyle(.roundedBorder)
+                .melixOperatorTextFieldStyle()
 
                 HStack(alignment: .top, spacing: 12) {
                     TextField(
@@ -1210,7 +1235,7 @@ private struct DesktopRemoteServerEditor: View {
                         ),
                         format: .number
                     )
-                    .textFieldStyle(.roundedBorder)
+                    .melixOperatorTextFieldStyle()
 
                     TextField(
                         "Rate limit / min",
@@ -1220,7 +1245,7 @@ private struct DesktopRemoteServerEditor: View {
                         ),
                         format: .number
                     )
-                    .textFieldStyle(.roundedBorder)
+                    .melixOperatorTextFieldStyle()
                 }
 
                 HStack {
@@ -1311,7 +1336,7 @@ private struct DesktopServerCreationEditor: View {
                         set: { viewModel.newLocalServerTitleDraft = $0 }
                     )
                 )
-                .textFieldStyle(.roundedBorder)
+                .melixOperatorTextFieldStyle()
 
                 Picker(
                     "Served Model",
@@ -1334,7 +1359,7 @@ private struct DesktopServerCreationEditor: View {
                             set: { viewModel.newLocalServerHostDraft = $0 }
                         )
                     )
-                    .textFieldStyle(.roundedBorder)
+                    .melixOperatorTextFieldStyle()
 
                     TextField(
                         "Port",
@@ -1344,7 +1369,7 @@ private struct DesktopServerCreationEditor: View {
                         ),
                         format: .number
                     )
-                    .textFieldStyle(.roundedBorder)
+                    .melixOperatorTextFieldStyle()
                     .frame(maxWidth: 120)
                 }
 
@@ -1577,7 +1602,7 @@ private struct DesktopServerSessionEditor: View {
                                         set: { viewModel.updateSelectedServerSessionHost($0) }
                                     )
                                 )
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
 
                                 TextField(
                                     "Port",
@@ -1587,7 +1612,7 @@ private struct DesktopServerSessionEditor: View {
                                     ),
                                     format: .number
                                 )
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
                                 .frame(maxWidth: 120)
                             }
 
@@ -1602,7 +1627,7 @@ private struct DesktopServerSessionEditor: View {
                                     ),
                                     format: .number
                                 )
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
 
                                 TextField(
                                     "Timeout (s)",
@@ -1612,7 +1637,7 @@ private struct DesktopServerSessionEditor: View {
                                     ),
                                     format: .number
                                 )
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
                             }
 
                             Text(
@@ -1710,7 +1735,7 @@ private struct DesktopServerSessionEditor: View {
                                     ),
                                     format: .number
                                 )
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
 
                                 TextField(
                                     "Deep sleep after (s)",
@@ -1720,7 +1745,7 @@ private struct DesktopServerSessionEditor: View {
                                     ),
                                     format: .number
                                 )
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
 
                             }
 
@@ -1731,11 +1756,19 @@ private struct DesktopServerSessionEditor: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 } else {
-                    ContentUnavailableView(
-                        "No Server Selected",
+                    MelixActionableEmptyState(
+                        title: "No Server Selected",
                         systemImage: "server.rack",
-                        description: Text("Choose a server from the list or create a new one.")
-                    )
+                        detail: "Pick an existing server in the sidebar, or start a new target when this workspace is empty."
+                    ) {
+                        HStack(spacing: MelixDesignTokens.Spacing.sm) {
+                            Button("Add Local Server", action: DesktopServerCreationActions.makeAddLocalServerAction(viewModel: viewModel))
+                            .buttonStyle(.borderedProminent)
+
+                            Button("Add Remote Server", action: DesktopServerCreationActions.makeAddRemoteServerAction(viewModel: viewModel))
+                            .buttonStyle(.bordered)
+                        }
+                    }
                 }
 
                 Spacer()
@@ -1761,7 +1794,7 @@ private struct DesktopServerSessionEditor: View {
                                         ),
                                         format: .number
                                     )
-                                    .textFieldStyle(.roundedBorder)
+                                    .melixOperatorTextFieldStyle()
 
                                     TextField(
                                         "Top P",
@@ -1771,7 +1804,7 @@ private struct DesktopServerSessionEditor: View {
                                         ),
                                         format: .number
                                     )
-                                    .textFieldStyle(.roundedBorder)
+                                    .melixOperatorTextFieldStyle()
                                 }
 
                                 HStack {
@@ -1783,7 +1816,7 @@ private struct DesktopServerSessionEditor: View {
                                         ),
                                         format: .number
                                     )
-                                    .textFieldStyle(.roundedBorder)
+                                    .melixOperatorTextFieldStyle()
 
                                     TextField(
                                         "Stream interval",
@@ -1793,7 +1826,7 @@ private struct DesktopServerSessionEditor: View {
                                         ),
                                         format: .number
                                     )
-                                    .textFieldStyle(.roundedBorder)
+                                    .melixOperatorTextFieldStyle()
                                 }
 
                                 HStack {
@@ -1805,7 +1838,7 @@ private struct DesktopServerSessionEditor: View {
                                         ),
                                         format: .number
                                     )
-                                    .textFieldStyle(.roundedBorder)
+                                    .melixOperatorTextFieldStyle()
                                 }
 
                                 Toggle(
@@ -1825,7 +1858,7 @@ private struct DesktopServerSessionEditor: View {
                                         ),
                                         format: .number
                                     )
-                                    .textFieldStyle(.roundedBorder)
+                                    .melixOperatorTextFieldStyle()
 
                                     TextField(
                                         "Completion batch size",
@@ -1835,7 +1868,7 @@ private struct DesktopServerSessionEditor: View {
                                         ),
                                         format: .number
                                     )
-                                    .textFieldStyle(.roundedBorder)
+                                    .melixOperatorTextFieldStyle()
                                 }
 
                                 Picker(
@@ -1883,7 +1916,7 @@ private struct DesktopServerSessionEditor: View {
                             set: { viewModel.updateSelectedServerSessionDraftModelID($0) }
                         )
                     )
-                    .textFieldStyle(.roundedBorder)
+                    .melixOperatorTextFieldStyle()
 
                     TextField(
                         "Num draft tokens",
@@ -1893,7 +1926,7 @@ private struct DesktopServerSessionEditor: View {
                         ),
                         format: .number
                     )
-                    .textFieldStyle(.roundedBorder)
+                    .melixOperatorTextFieldStyle()
                 }
                 Text("Draft model settings apply only when Speculative Decode is selected.")
                     .font(.caption)
@@ -2318,6 +2351,22 @@ struct DesktopDomainSidebarView: View {
 struct DesktopDownloadsToolSectionView: View {
     let viewModel: RuntimeViewModel
 
+    func quantizeModelAction() {
+        Task { await viewModel.quantizePrimaryModel() }
+    }
+
+    func convertModelAction() {
+        Task { await viewModel.convertPrimaryModel() }
+    }
+
+    func downloadModelAction() {
+        Task { await viewModel.downloadPrimaryModel() }
+    }
+
+    func uploadArtifactAction() {
+        Task { await viewModel.uploadPrimaryModel() }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Model ingress and artifact publishing stay under Tools, not Server.")
@@ -2335,33 +2384,49 @@ struct DesktopDownloadsToolSectionView: View {
 
                     Spacer(minLength: 12)
 
-                    Picker(
-                        "Quant Mode",
-                        selection: Binding(
-                            get: { viewModel.selectedQuantizationMode },
-                            set: { viewModel.selectedQuantizationMode = $0 }
-                        )
-                    ) {
-                        ForEach(RuntimeQuantizationMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 128)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Quant Mode")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .textCase(.uppercase)
 
-                    Picker(
-                        "Quant Profile",
-                        selection: Binding(
-                            get: { viewModel.selectedQuantizationProfileID },
-                            set: { viewModel.selectQuantizationProfile($0) }
-                        )
-                    ) {
-                        ForEach(viewModel.availableQuantizationProfileIDs, id: \.self) { profileID in
-                            Text(profileID).tag(profileID)
+                        Picker(
+                            "Quant Mode",
+                            selection: Binding(
+                                get: { viewModel.selectedQuantizationMode },
+                                set: { viewModel.selectedQuantizationMode = $0 }
+                            )
+                        ) {
+                            ForEach(RuntimeQuantizationMode.allCases) { mode in
+                                Text(mode.title).tag(mode)
+                            }
                         }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(width: 124)
                     }
-                    .pickerStyle(.menu)
-                    .frame(maxWidth: 120)
+
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Quant Profile")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .textCase(.uppercase)
+
+                        Picker(
+                            "Quant Profile",
+                            selection: Binding(
+                                get: { viewModel.selectedQuantizationProfileID },
+                                set: { viewModel.selectQuantizationProfile($0) }
+                            )
+                        ) {
+                            ForEach(viewModel.availableQuantizationProfileIDs, id: \.self) { profileID in
+                                Text(profileID).tag(profileID)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(width: 132)
+                    }
 
                     if viewModel.hasExplicitModelOperationTarget {
                         Button("Use Primary Model") {
@@ -2384,30 +2449,26 @@ struct DesktopDownloadsToolSectionView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            HStack {
-                Button("Quantize Model") {
-                    Task { await viewModel.quantizePrimaryModel() }
-                }
-                .buttonStyle(.bordered)
-                .fixedSize(horizontal: true, vertical: false)
+            MelixSectionCard("Model Ingest Actions") {
+                HStack(alignment: .center, spacing: 10) {
+                    Button("Quantize Model", action: quantizeModelAction)
+                    .buttonStyle(.bordered)
+                    .fixedSize(horizontal: true, vertical: false)
 
-                Button("Convert Model") {
-                    Task { await viewModel.convertPrimaryModel() }
-                }
-                .buttonStyle(.bordered)
-                .fixedSize(horizontal: true, vertical: false)
+                    Button("Convert Model", action: convertModelAction)
+                    .buttonStyle(.bordered)
+                    .fixedSize(horizontal: true, vertical: false)
 
-                Button("Download Model") {
-                    Task { await viewModel.downloadPrimaryModel() }
-                }
-                .buttonStyle(.borderedProminent)
-                .fixedSize(horizontal: true, vertical: false)
+                    Button("Download Model", action: downloadModelAction)
+                    .buttonStyle(.borderedProminent)
+                    .fixedSize(horizontal: true, vertical: false)
 
-                Button("Upload Artifact") {
-                    Task { await viewModel.uploadPrimaryModel() }
+                    Button("Upload Artifact", action: uploadArtifactAction)
+                    .buttonStyle(.bordered)
+                    .fixedSize(horizontal: true, vertical: false)
                 }
-                .buttonStyle(.bordered)
-                .fixedSize(horizontal: true, vertical: false)
+                .padding(.top, MelixDesignTokens.Spacing.xs)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             MelixSectionCard("Download Queue") {
@@ -2530,7 +2591,7 @@ struct DesktopWorkflowRecipesToolSectionView: View {
                             set: { viewModel.updateWorkflowRecipeTaskFilter($0) }
                         )
                     )
-                    .textFieldStyle(.roundedBorder)
+                    .melixOperatorTextFieldStyle()
                 }
                 Button("Refresh Catalog", action: refreshCatalogAction)
                 .buttonStyle(.borderedProminent)
@@ -2547,7 +2608,7 @@ struct DesktopWorkflowRecipesToolSectionView: View {
                             set: { viewModel.updateWorkflowRecipeURIInspectDraft($0) }
                         )
                     )
-                    .textFieldStyle(.roundedBorder)
+                    .melixOperatorTextFieldStyle()
                 }
                 Button("Inspect URI", action: inspectURIAction)
                     .buttonStyle(.bordered)
@@ -2820,7 +2881,7 @@ struct DesktopWorkflowRecipesToolSectionView: View {
                             set: { viewModel.updateWorkflowRecipeInitTaskDraft($0) }
                         )
                     )
-                    .textFieldStyle(.roundedBorder)
+                    .melixOperatorTextFieldStyle()
                 }
                 Button("Preview Recipe Init", action: previewRecipeInitAction)
                     .buttonStyle(.bordered)
@@ -2948,7 +3009,7 @@ struct DesktopWorkflowRecipesToolSectionView: View {
     }
 
     private var recipeVariablesPanel: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .bottom, spacing: 10) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Variable key")
@@ -2961,8 +3022,9 @@ struct DesktopWorkflowRecipesToolSectionView: View {
                             set: { viewModel.updateWorkflowRecipeSetKeyDraft($0) }
                         )
                     )
-                    .textFieldStyle(.roundedBorder)
+                    .melixOperatorTextFieldStyle()
                 }
+                .frame(maxWidth: .infinity)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Variable value")
                         .font(.caption)
@@ -2974,15 +3036,21 @@ struct DesktopWorkflowRecipesToolSectionView: View {
                             set: { viewModel.updateWorkflowRecipeSetValueDraft($0) }
                         )
                     )
-                    .textFieldStyle(.roundedBorder)
+                    .melixOperatorTextFieldStyle()
                 }
+                .frame(maxWidth: .infinity)
                 Button("Add --set", action: addRecipeVariableAction)
                     .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .frame(height: MelixDesignTokens.ControlMetrics.operatorFieldHeight)
                     .disabled(viewModel.workflowRecipeSetEditorCanAdd == false)
                 Button("Clear Variables", action: clearRecipeVariablesAction)
                     .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .frame(height: MelixDesignTokens.ControlMetrics.operatorFieldHeight)
                     .disabled(viewModel.workflowRecipeSetRows.isEmpty)
             }
+            .padding(.bottom, MelixDesignTokens.Spacing.xs)
 
             if viewModel.workflowRecipeSetRows.isEmpty {
                 Text("No recipe variables configured.")
@@ -3034,7 +3102,7 @@ struct DesktopWorkflowRecipesToolSectionView: View {
                             set: { viewModel.updateWorkflowRecipePlanOutputPathDraft($0) }
                         )
                     )
-                    .textFieldStyle(.roundedBorder)
+                    .melixOperatorTextFieldStyle()
                 }
                 Button("Plan Recipe", action: planRecipeAction)
                     .buttonStyle(.borderedProminent)
@@ -3118,7 +3186,7 @@ struct DesktopWorkflowRecipesToolSectionView: View {
                             set: { viewModel.updateWorkflowRecipeApplyFromStepDraft($0) }
                         )
                     )
-                    .textFieldStyle(.roundedBorder)
+                    .melixOperatorTextFieldStyle()
                     .frame(minWidth: 180)
                 }
 
@@ -3799,6 +3867,7 @@ struct DesktopSyntheticDatasetToolSectionView: View {
                         set: { viewModel.updateSyntheticDatasetColumnNameDraft($0) }
                     )
                 )
+                .frame(maxWidth: .infinity)
                 formField(
                     "Column Type",
                     text: Binding(
@@ -3806,6 +3875,7 @@ struct DesktopSyntheticDatasetToolSectionView: View {
                         set: { viewModel.updateSyntheticDatasetColumnTypeDraft($0) }
                     )
                 )
+                .frame(maxWidth: .infinity)
                 formField(
                     "JSON or Path",
                     text: Binding(
@@ -3813,10 +3883,15 @@ struct DesktopSyntheticDatasetToolSectionView: View {
                         set: { viewModel.updateSyntheticDatasetColumnPayloadDraft($0) }
                     )
                 )
+                .frame(maxWidth: .infinity)
                 Button("Add Column", action: addColumnAction)
                     .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .frame(height: MelixDesignTokens.ControlMetrics.operatorFieldHeight)
+                    .frame(minWidth: 112)
                     .disabled(viewModel.syntheticDatasetColumnDraftCanAdd == false)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if viewModel.syntheticDatasetColumnEditorErrorMessage.isEmpty == false {
                 Text(viewModel.syntheticDatasetColumnEditorErrorMessage)
@@ -4120,7 +4195,7 @@ struct DesktopSyntheticDatasetToolSectionView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             TextField(label, text: text)
-                .textFieldStyle(.roundedBorder)
+                .melixOperatorTextFieldStyle()
         }
     }
 
@@ -4398,8 +4473,8 @@ struct DesktopBatchRunsToolSectionView: View {
     }
 
     private var batchRunOperations: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 8) {
                 DesktopJobsOperationButton(
                     title: "Run Preflight",
                     isEnabled: viewModel.batchRunPreflightCanRun
@@ -4424,6 +4499,12 @@ struct DesktopBatchRunsToolSectionView: View {
 
                 batchRunOperationStatus
             }
+            .padding(MelixDesignTokens.Spacing.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                Color.secondary.opacity(0.05),
+                in: RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.md, style: .continuous)
+            )
 
             Text(viewModel.batchRunResumeSummaryText)
                 .font(.caption)
@@ -5323,16 +5404,17 @@ struct DesktopTrainingToolSectionView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 8) {
                 ForEach(workflowModeBadges, id: \.self) { badge in
-                    TextField("", text: .constant(badge))
-                        .textFieldStyle(.plain)
-                        .allowsHitTesting(false)
+                    Text(badge)
                         .font(.caption.weight(.semibold))
+                        .textSelection(.enabled)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                         .fixedSize(horizontal: true, vertical: false)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(badge)
                 }
             }
 
@@ -5789,7 +5871,7 @@ struct DesktopTrainingToolSectionView: View {
                 DesktopPassiveCaptionLabel(title: "Import Config Path")
                 HStack(spacing: 8) {
                     TextField("Import Config Path", text: stringBinding(\.loraTrainingJobImportPath))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                     Button("Import") {
                         viewModel.importLoraTrainingJobConfigFromPath()
                     }
@@ -5802,7 +5884,7 @@ struct DesktopTrainingToolSectionView: View {
                 DesktopPassiveCaptionLabel(title: "Export Config Path")
                 HStack(spacing: 8) {
                     TextField("Export Config Path", text: stringBinding(\.loraTrainingJobExportPath))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                     Button("Export") {
                         viewModel.exportSelectedLoraTrainingJobConfigToPath()
                     }
@@ -5840,7 +5922,7 @@ struct DesktopTrainingToolSectionView: View {
 
                     DesktopEditorialField("Adapter Name") {
                         TextField("Adapter Name", text: stringBinding(\.loraAdapterName))
-                            .textFieldStyle(.roundedBorder)
+                            .melixOperatorTextFieldStyle()
                     }
                 }
             }
@@ -5864,10 +5946,10 @@ struct DesktopTrainingToolSectionView: View {
                     DesktopEditorialField(viewModel.loraDatasetSourceKind == .localPackage ? "Dataset URI" : "HF Dataset Path") {
                         if viewModel.loraDatasetSourceKind == .localPackage {
                             TextField("Dataset URI", text: stringBinding(\.loraDatasetURI))
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
                         } else {
                             TextField("HF Dataset Path", text: stringBinding(\.loraHFDatasetPath))
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
                         }
                     }
 
@@ -5902,27 +5984,27 @@ struct DesktopTrainingToolSectionView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         DesktopEditorialField("Reference Model Path") {
                             TextField("Optional reference model path", text: stringBinding(\.loraReferenceModelPath))
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
                         }
 
                         if viewModel.loraTrainingMode == .grpo {
                             DesktopEditorialField("GRPO Candidate Count") {
                                 TextField("Candidates per prompt", text: stringBinding(\.loraGRPOCandidateCount))
-                                    .textFieldStyle(.roundedBorder)
+                                    .melixOperatorTextFieldStyle()
                             }
                         }
 
                         if viewModel.loraTrainingMode == .rlhf {
                             DesktopEditorialField("Reward Model Manifest") {
                                 TextField("Reward model manifest path", text: stringBinding(\.loraRewardModelManifestPath))
-                                    .textFieldStyle(.roundedBorder)
+                                    .melixOperatorTextFieldStyle()
                             }
                         }
 
                         if viewModel.loraTrainingMode == .grpo || viewModel.loraTrainingMode == .rlhf {
                             DesktopEditorialField("KL Penalty") {
                                 TextField("Optional KL penalty", text: stringBinding(\.loraKLPenalty))
-                                    .textFieldStyle(.roundedBorder)
+                                    .melixOperatorTextFieldStyle()
                             }
                         }
                     }
@@ -5950,12 +6032,12 @@ struct DesktopTrainingToolSectionView: View {
                         detail: "Leave blank to derive from the base model and adapter name."
                     ) {
                         TextField("Optional group id", text: stringBinding(\.loraExperimentGroupID))
-                            .textFieldStyle(.roundedBorder)
+                            .melixOperatorTextFieldStyle()
                     }
 
                     DesktopEditorialField("Target Repo") {
                         TextField("Target Repo", text: stringBinding(\.loraTargetRepo))
-                            .textFieldStyle(.roundedBorder)
+                            .melixOperatorTextFieldStyle()
                     }
                 }
             }
@@ -5970,35 +6052,35 @@ struct DesktopTrainingToolSectionView: View {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 12) {
                 DesktopEditorialField("Config / Name") {
                     TextField("Config / Name", text: stringBinding(\.loraHFDatasetName))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Revision") {
                     TextField("Revision", text: stringBinding(\.loraHFDatasetRevision))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Train Split") {
                     TextField("Train Split", text: stringBinding(\.loraHFTrainSplit))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Valid Split") {
                     TextField("Valid Split", text: stringBinding(\.loraHFValidSplit))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Text Feature") {
                     TextField("Text Feature", text: stringBinding(\.loraTextFeature))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Prompt Feature") {
                     TextField("Prompt Feature", text: stringBinding(\.loraPromptFeature))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Completion Feature") {
                     TextField("Completion Feature", text: stringBinding(\.loraCompletionFeature))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Chat Feature") {
                     TextField("Chat Feature", text: stringBinding(\.loraChatFeature))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                 }
             }
         }
@@ -6018,55 +6100,55 @@ struct DesktopTrainingToolSectionView: View {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 12) {
                 DesktopEditorialField("Rank") {
                     TextField("Rank", text: stringBinding(\.loraRank))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Alpha") {
                     TextField("Alpha", text: stringBinding(\.loraAlpha))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Dropout") {
                     TextField("Dropout", text: stringBinding(\.loraDropout))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Batch Size") {
                     TextField("Batch Size", text: stringBinding(\.loraBatchSize))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Epochs") {
                     TextField("Epochs", text: stringBinding(\.loraEpochs))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Max Steps") {
                     TextField("Optional max steps", text: stringBinding(\.loraMaxSteps))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Learning Rate") {
                     TextField("Learning Rate", text: stringBinding(\.loraLearningRate))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Max Seq Length") {
                     TextField("Max Seq Length", text: stringBinding(\.loraMaxSeqLength))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Sample Limit") {
                     TextField("Optional sample limit", text: stringBinding(\.loraSampleLimit))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Gradient Accumulation") {
                     TextField("Optional accumulation steps", text: stringBinding(\.loraGradientAccumulation))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Target Modules") {
                     TextField("Target Modules", text: stringBinding(\.loraTargetModules))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Num Layers") {
                     TextField("Num Layers", text: stringBinding(\.loraNumLayers))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Derived Model Alias") {
                     TextField("Derived Model Alias", text: stringBinding(\.loraDerivedModelAlias))
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                 }
             }
 
@@ -7598,7 +7680,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                         set: { viewModel.updateDiagnosticsDebugBundleRunIDDraft($0) }
                     )
                 )
-                .textFieldStyle(.roundedBorder)
+                .melixOperatorTextFieldStyle()
 
                 HStack(spacing: 8) {
                     TextField(
@@ -7608,7 +7690,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                             set: { viewModel.updateDiagnosticsDebugBundleSourcePathDraft($0) }
                         )
                     )
-                    .textFieldStyle(.roundedBorder)
+                    .melixOperatorTextFieldStyle()
 
                     TextField(
                         "Output path",
@@ -7617,7 +7699,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                             set: { viewModel.updateDiagnosticsDebugBundleOutputPathDraft($0) }
                         )
                     )
-                    .textFieldStyle(.roundedBorder)
+                    .melixOperatorTextFieldStyle()
                 }
 
                 HStack(spacing: 8) {
@@ -8038,7 +8120,7 @@ struct DesktopDiagnosticsToolSectionView: View {
 
     private var evidenceReportFilterField: some View {
         TextField("Filter report rows", text: $evidenceReportFilter)
-            .textFieldStyle(.roundedBorder)
+            .melixOperatorTextFieldStyle()
     }
 
     private func evidenceReportControlRow(report: RuntimeEvidenceReportState?) -> some View {
@@ -8639,7 +8721,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     set: { viewModel.benchmarkSampleSize = $0 }
                                 )
                             )
-                            .textFieldStyle(.roundedBorder)
+                            .melixOperatorTextFieldStyle()
                             TextField(
                                 "Batch Factor",
                                 text: Binding(
@@ -8647,7 +8729,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     set: { viewModel.benchmarkBatchFactor = $0 }
                                 )
                             )
-                            .textFieldStyle(.roundedBorder)
+                            .melixOperatorTextFieldStyle()
                             TextField(
                                 "Repeats",
                                 text: Binding(
@@ -8655,7 +8737,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     set: { viewModel.benchRepeats = $0 }
                                 )
                             )
-                            .textFieldStyle(.roundedBorder)
+                            .melixOperatorTextFieldStyle()
                         }
 
                         HStack(spacing: 16) {
@@ -8912,7 +8994,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     set: { viewModel.benchMatrixRepeats = $0 }
                                 )
                             )
-                            .textFieldStyle(.roundedBorder)
+                            .melixOperatorTextFieldStyle()
 
                             Picker(
                                 "Load Budget",
@@ -8935,7 +9017,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.benchMatrixRequests = $0 }
                                     )
                                 )
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
                             } else {
                                 TextField(
                                     "Duration Seconds",
@@ -8944,7 +9026,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.benchMatrixDurationSeconds = $0 }
                                     )
                                 )
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
                             }
                         }
 
@@ -9356,7 +9438,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     set: { viewModel.evaluationPromptIDDraft = $0 }
                                 )
                             )
-                            .textFieldStyle(.roundedBorder)
+                            .melixOperatorTextFieldStyle()
                             .disabled(viewModel.isEvaluationPromptIDEditable == false)
 
                             TextField(
@@ -9366,7 +9448,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     set: { viewModel.evaluationPromptTitleDraft = $0 }
                                 )
                             )
-                            .textFieldStyle(.roundedBorder)
+                            .melixOperatorTextFieldStyle()
                             .disabled(
                                 viewModel.isEvaluationPromptIDEditable == false
                                     || viewModel.isEvaluationPromptDraftEditable == false
@@ -9419,7 +9501,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     set: { viewModel.evaluationSemanticJudgeModelID = $0 }
                                 )
                             )
-                            .textFieldStyle(.roundedBorder)
+                            .melixOperatorTextFieldStyle()
                         }
                     }
 
@@ -9456,7 +9538,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     set: { viewModel.evaluationSourcePath = $0 }
                                 )
                             )
-                            .textFieldStyle(.roundedBorder)
+                            .melixOperatorTextFieldStyle()
                         case .huggingFaceDataset:
                             HStack(spacing: 16) {
                                 TextField(
@@ -9466,7 +9548,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationHFDatasetPath = $0 }
                                     )
                                 )
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
                                 TextField(
                                     "Config",
                                     text: Binding(
@@ -9474,7 +9556,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationHFDatasetName = $0 }
                                     )
                                 )
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
                             }
                             HStack(spacing: 16) {
                                 TextField(
@@ -9484,7 +9566,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationHFDatasetRevision = $0 }
                                     )
                                 )
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
                                 TextField(
                                     "Split",
                                     text: Binding(
@@ -9492,7 +9574,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationHFDatasetSplit = $0 }
                                     )
                                 )
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
                             }
                         }
                     }
@@ -9511,7 +9593,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationFieldSystemPath = $0 }
                                     )
                                 )
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
                                 TextField(
                                     "Input Text Path",
                                     text: Binding(
@@ -9519,7 +9601,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationFieldInputTextPath = $0 }
                                     )
                                 )
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
                             }
 
                             HStack(spacing: 16) {
@@ -9530,7 +9612,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationFieldTargetPath = $0 }
                                     )
                                 )
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
                                 TextField(
                                     "Sample ID Path",
                                     text: Binding(
@@ -9538,7 +9620,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationFieldSampleIDPath = $0 }
                                     )
                                 )
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
                             }
 
                             Text("Profile")
@@ -9553,7 +9635,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationResultKind = $0 }
                                     )
                                 )
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
                                 TextField(
                                     "Extraction Mode",
                                     text: Binding(
@@ -9561,7 +9643,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationExtractionMode = $0 }
                                     )
                                 )
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
                                 TextField(
                                     "Threshold",
                                     text: Binding(
@@ -9569,7 +9651,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationThreshold = $0 }
                                     )
                                 )
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
                             }
 
                             HStack(spacing: 16) {
@@ -9580,7 +9662,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationOutputSchemaJSON = $0 }
                                     )
                                 )
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
                                 TextField(
                                     "Ignored Paths",
                                     text: Binding(
@@ -9588,7 +9670,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationIgnoredPaths = $0 }
                                     )
                                 )
-                                .textFieldStyle(.roundedBorder)
+                                .melixOperatorTextFieldStyle()
                             }
                         }
                     }
@@ -9699,7 +9781,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                 set: { viewModel.evaluationSampleSize = $0 }
                             )
                         )
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                         TextField(
                             "Batch Factor",
                             text: Binding(
@@ -9707,7 +9789,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                 set: { viewModel.evaluationBatchFactor = $0 }
                             )
                         )
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                         TextField(
                             "Few-shot",
                             text: Binding(
@@ -9715,7 +9797,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                 set: { viewModel.evaluationFewShot = $0 }
                             )
                         )
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                         TextField(
                             "Seed",
                             text: Binding(
@@ -9723,7 +9805,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                 set: { viewModel.evaluationSeed = $0 }
                             )
                         )
-                        .textFieldStyle(.roundedBorder)
+                        .melixOperatorTextFieldStyle()
                     }
 
                         HStack(spacing: 16) {
@@ -9734,7 +9816,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     set: { viewModel.evaluationScoringMode = $0 }
                                 )
                             )
-                            .textFieldStyle(.roundedBorder)
+                            .melixOperatorTextFieldStyle()
                             TextField(
                                 "Code Exec Policy",
                                 text: Binding(
@@ -9742,7 +9824,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     set: { viewModel.evaluationCodeExecPolicy = $0 }
                                 )
                             )
-                            .textFieldStyle(.roundedBorder)
+                            .melixOperatorTextFieldStyle()
                         }
                     }
 
@@ -10688,7 +10770,8 @@ struct DesktopAPIWorkspaceView: View {
                     }
                     Spacer()
                 }
-                .padding(20)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 24)
             }
 
             ScrollView {
@@ -10721,8 +10804,10 @@ struct DesktopAPIWorkspaceView: View {
                         DesktopAPIReferenceTabView(foundation: foundation)
                     }
                 }
-                .padding(20)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 24)
             }
+            .background(MelixDesignTokens.Palette.backgroundBase.color)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             DesktopWorkspacePaneSlot(
@@ -10780,7 +10865,10 @@ private struct DesktopAPIEndpointConsoleView: View {
     let selectedExport: AgentIntegrationExport?
 
     private var modelID: String {
-        selectedSession?.modelID.isEmpty == false ? selectedSession?.modelID ?? "melix-dev-text" : "melix-dev-text"
+        if let modelID = selectedSession?.modelID, !modelID.isEmpty {
+            return modelID
+        }
+        return "melix-dev-text"
     }
 
     private var chatEndpoint: String {

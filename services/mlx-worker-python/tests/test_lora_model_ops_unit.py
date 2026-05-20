@@ -2707,6 +2707,10 @@ def test_run_subprocess_extracts_terminal_structured_result_without_splitlines(
         loss_final=0.4,
         loss_best=0.3,
         learning_rate_final=1e-4,
+        fatal_aware_grpo_schema_version="melix.fatal_aware_grpo.v1",
+        fatal_candidate_count=1,
+        selected_fatal_candidate_count=1,
+        advantage_clamped_candidate_count=1,
         candidate_reward_trace_path="/tmp/candidate_reward_traces.jsonl",
         candidate_reward_trace_count=2,
         candidate_reward_trace_schema_version="melix.alignment_candidate_reward_trace.v1",
@@ -2723,6 +2727,10 @@ def test_run_subprocess_extracts_terminal_structured_result_without_splitlines(
 
     assert restored.metrics.candidate_reward_trace_path == "/tmp/candidate_reward_traces.jsonl"
     assert restored.metrics.candidate_reward_trace_count == 2
+    assert restored.metrics.fatal_aware_grpo_schema_version == "melix.fatal_aware_grpo.v1"
+    assert restored.metrics.fatal_candidate_count == 1
+    assert restored.metrics.selected_fatal_candidate_count == 1
+    assert restored.metrics.advantage_clamped_candidate_count == 1
     assert (
         restored.metrics.candidate_reward_trace_schema_version
         == "melix.alignment_candidate_reward_trace.v1"

@@ -501,9 +501,21 @@ def _copy_swiftpm_resource_bundles(source_root: Path, target_roots: list[Path]) 
             continue
         for target_root in target_roots:
             target = target_root / source.name
+            backup = target.with_name(f"{target.name}.melix-backup")
+            if backup.exists():
+                shutil.rmtree(backup)
             if target.exists():
-                shutil.rmtree(target)
-            shutil.copytree(source, target, symlinks=True)
+                target.rename(backup)
+            try:
+                shutil.copytree(source, target, symlinks=True)
+            except Exception:
+                if target.exists():
+                    shutil.rmtree(target)
+                if backup.exists():
+                    backup.rename(target)
+                raise
+            if backup.exists():
+                shutil.rmtree(backup)
             copied_paths.append(target)
     return copied_paths
 

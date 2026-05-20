@@ -6,7 +6,10 @@ from pathlib import Path
 
 import pytest
 
+import worker.productization.macos_app_bundle as macos_app_bundle_module
+
 from worker.productization.macos_app_bundle import (
+    _copy_swiftpm_resource_bundles,
     _copy_packaged_script,
     archive_macos_app_bundle,
     build_macos_app_bundle_layout,
@@ -338,6 +341,42 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
     ):
         assert isinstance(timings[key], float)
         assert timings[key] >= 0.0
+
+
+def test_copy_swiftpm_resource_bundles_restores_existing_bundle_on_copy_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_root = tmp_path / "source"
+    source_bundle = source_root / "MelixMacOSMenubar_AppMain.bundle"
+    source_bundle.mkdir(parents=True)
+    (source_bundle / "fresh.txt").write_text("new", encoding="utf-8")
+    target_root = tmp_path / "target"
+    target_bundle = target_root / source_bundle.name
+    target_bundle.mkdir(parents=True)
+    (target_bundle / "existing.txt").write_text("old", encoding="utf-8")
+
+    original_copytree = macos_app_bundle_module.shutil.copytree
+
+    def fail_copytree(source: Path, target: Path, **kwargs: object) -> None:
+        target.mkdir(parents=True)
+        (target / "partial.txt").write_text("partial", encoding="utf-8")
+        raise OSError(f"copy failed for {source}")
+
+    monkeypatch.setattr(macos_app_bundle_module.shutil, "copytree", fail_copytree)
+
+    with pytest.raises(OSError, match="copy failed"):
+        _copy_swiftpm_resource_bundles(source_root, [target_root])
+
+    assert (target_bundle / "existing.txt").read_text(encoding="utf-8") == "old"
+    assert (target_bundle / "partial.txt").exists() is False
+    assert (target_root / f"{target_bundle.name}.melix-backup").exists() is False
+
+    monkeypatch.setattr(macos_app_bundle_module.shutil, "copytree", original_copytree)
+    copied_paths = _copy_swiftpm_resource_bundles(source_root, [target_root])
+
+    assert copied_paths == [target_bundle]
+    assert (target_bundle / "fresh.txt").read_text(encoding="utf-8") == "new"
+    assert (target_bundle / "existing.txt").exists() is False
 
 
 def test_write_unsigned_macos_app_bundle_requires_an_icon_file(tmp_path: Path) -> None:

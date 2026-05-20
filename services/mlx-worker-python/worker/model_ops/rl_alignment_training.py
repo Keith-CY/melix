@@ -21,6 +21,8 @@ from worker.trajectory_provenance import (
 )
 
 CANDIDATE_REWARD_TRACE_SCHEMA_VERSION = "melix.alignment_candidate_reward_trace.v1"
+FATAL_AWARE_GRPO_SCHEMA_VERSION = "melix.fatal_aware_grpo.v1"
+_GRPO_FATAL_POSITIVE_ADVANTAGE_CLAMP_REASON = "fatal_state_positive_advantage"
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,9 @@ class PolicyUpdateResult:
     candidate_generation_backend: str = ""
     reward_scoring_backend: str = ""
     generated_candidate_count: int = 0
+    fatal_candidate_count: int = 0
+    selected_fatal_candidate_count: int = 0
+    advantage_clamped_candidate_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -207,6 +212,14 @@ def train_alignment_rl_trace(
             "alignment_algorithm": alignment.alignment_algorithm,
             "execution_backend": policy_updates.execution_backend,
             "policy_update_trace_path": str(policy_update_trace_path),
+            "fatal_aware_grpo_schema_version": (
+                FATAL_AWARE_GRPO_SCHEMA_VERSION
+                if alignment.alignment_algorithm == "grpo"
+                else ""
+            ),
+            "fatal_candidate_count": policy_updates.fatal_candidate_count,
+            "selected_fatal_candidate_count": policy_updates.selected_fatal_candidate_count,
+            "advantage_clamped_candidate_count": policy_updates.advantage_clamped_candidate_count,
             "candidate_reward_trace_path": (
                 str(candidate_reward_trace_path)
                 if policy_updates.candidate_reward_trace_rows
@@ -280,6 +293,14 @@ def train_alignment_rl_trace(
                 for row in policy_updates.trace_rows
                 if str(row.get("fatal_stage", "")).strip()
             ),
+            fatal_aware_grpo_schema_version=(
+                FATAL_AWARE_GRPO_SCHEMA_VERSION
+                if alignment.alignment_algorithm == "grpo"
+                else ""
+            ),
+            fatal_candidate_count=policy_updates.fatal_candidate_count,
+            selected_fatal_candidate_count=policy_updates.selected_fatal_candidate_count,
+            advantage_clamped_candidate_count=policy_updates.advantage_clamped_candidate_count,
             policy_update_count=len(policy_updates.trace_rows),
             selected_candidate_count=policy_updates.selected_count,
             candidate_group_count=len(policy_updates.group_margins),
@@ -406,6 +427,9 @@ def _grpo_policy_updates(
     reward_component_summaries: list[dict[str, float]] = []
     group_margins: list[float] = []
     group_variances: list[float] = []
+    fatal_candidate_count = 0
+    selected_fatal_candidate_count = 0
+    advantage_clamped_candidate_count = 0
     for sample_index, sample in enumerate(samples):
         candidates = sample.get("candidates")
         if not isinstance(candidates, list) or len(candidates) < candidate_count:
@@ -461,12 +485,19 @@ def _grpo_policy_updates(
                 tool_run=tool_run,
                 include_sample_fatal=True,
             )
+            fatal_stage = _candidate_fatal_stage(
+                sample,
+                candidate,
+                tool_run=tool_run,
+                include_sample_fatal=True,
+            )
             scored_candidates.append(
                 {
                     "index": candidate_index,
                     "text": candidate_text,
                     "score": score,
                     "reward_components": candidate_components,
+                    "fatal_stage": fatal_stage,
                 }
             )
         scores = [candidate["reward_components"]["total"] for candidate in scored_candidates]
@@ -479,10 +510,21 @@ def _grpo_policy_updates(
         group_margins.append(max(scores) - min(scores))
         group_mean = sum(scores) / len(scores)
         group_variances.append(sum((score - group_mean) ** 2 for score in scores) / len(scores))
+        group_metadata = _annotate_grpo_group_metadata(
+            scored_candidates,
+            group_reward_mean=group_mean,
+        )
+        fatal_candidate_count += group_metadata["fatal_candidate_count"]
+        advantage_clamped_candidate_count += group_metadata[
+            "advantage_clamped_candidate_count"
+        ]
+        if bool(selected["fatal_state_mask"]):
+            selected_fatal_candidate_count += 1
         trace_rows.append(
             {
                 "sample_index": sample_index,
                 "alignment_algorithm": "grpo",
+                **_grpo_selected_policy_metadata(selected),
                 "candidate_generation_mode": "scored_trace",
                 "candidate_scoring_mode": candidate_scoring_mode,
                 "prompt": str(sample.get("prompt", "")),
@@ -492,10 +534,14 @@ def _grpo_policy_updates(
                 "selected_reward": selected_components["total"],
                 "reward_components": selected_components,
                 "reward_total": selected_components["total"],
-                "fatal_stage": _fatal_stage_for_candidate(sample, candidates[selected["index"]]),
+                "fatal_stage": selected["fatal_stage"],
                 "fatal_penalty_applied": selected_components["fatal_failure"] < 0.0,
                 "group_reward_mean": group_mean,
                 "group_reward_margin": group_margins[-1],
+                "group_fatal_candidate_count": group_metadata["fatal_candidate_count"],
+                "group_advantage_clamped_candidate_count": group_metadata[
+                    "advantage_clamped_candidate_count"
+                ],
                 "candidate_count": len(scored_candidates),
                 "scored_candidates": scored_candidates,
             }
@@ -520,6 +566,9 @@ def _grpo_policy_updates(
         candidate_generation_mode="scored_trace",
         candidate_scoring_mode=candidate_scoring_mode,
         reward_scoring_backend=reward_scorer.runtime_name if reward_scorer is not None else "",
+        fatal_candidate_count=fatal_candidate_count,
+        selected_fatal_candidate_count=selected_fatal_candidate_count,
+        advantage_clamped_candidate_count=advantage_clamped_candidate_count,
     )
 
 
@@ -554,6 +603,9 @@ def _grpo_runtime_policy_updates(
     group_margins: list[float] = []
     group_variances: list[float] = []
     generated_candidate_total = 0
+    fatal_candidate_count = 0
+    selected_fatal_candidate_count = 0
+    advantage_clamped_candidate_count = 0
     for sample_index, sample in enumerate(samples):
         prompt = str(sample.get("prompt", ""))
         seed_candidates = (
@@ -596,7 +648,12 @@ def _grpo_runtime_policy_updates(
                 tool_run=generated.tool_run,
                 include_sample_fatal=True,
             )
-            fatal_stage = _fatal_stage_for_candidate(sample, {"text": generated.text})
+            fatal_stage = _candidate_fatal_stage(
+                sample,
+                {"text": generated.text},
+                tool_run=generated.tool_run,
+                include_sample_fatal=True,
+            )
             generated_candidate = {
                 "index": candidate_index,
                 "text": generated.text,
@@ -625,11 +682,22 @@ def _grpo_runtime_policy_updates(
         group_margins.append(max(scores) - min(scores))
         group_mean = sum(scores) / len(scores)
         group_variances.append(sum((score - group_mean) ** 2 for score in scores) / len(scores))
+        group_metadata = _annotate_grpo_group_metadata(
+            generated_candidates,
+            group_reward_mean=group_mean,
+        )
+        fatal_candidate_count += group_metadata["fatal_candidate_count"]
+        advantage_clamped_candidate_count += group_metadata[
+            "advantage_clamped_candidate_count"
+        ]
+        if bool(selected["fatal_state_mask"]):
+            selected_fatal_candidate_count += 1
         generated_candidate_total += len(generated_candidates)
         trace_rows.append(
             {
                 "sample_index": sample_index,
                 "alignment_algorithm": "grpo",
+                **_grpo_selected_policy_metadata(selected),
                 "candidate_generation_mode": "runtime_generate",
                 "candidate_generation_backend": runtime_name,
                 "candidate_scoring_mode": request.config.alignment.candidate_scoring_mode,
@@ -640,10 +708,14 @@ def _grpo_runtime_policy_updates(
                 "selected_reward": selected_components["total"],
                 "reward_components": selected_components,
                 "reward_total": selected_components["total"],
-                "fatal_stage": _fatal_stage_for_candidate(sample, selected),
+                "fatal_stage": selected["fatal_stage"],
                 "fatal_penalty_applied": selected_components["fatal_failure"] < 0.0,
                 "group_reward_mean": group_mean,
                 "group_reward_margin": group_margins[-1],
+                "group_fatal_candidate_count": group_metadata["fatal_candidate_count"],
+                "group_advantage_clamped_candidate_count": group_metadata[
+                    "advantage_clamped_candidate_count"
+                ],
                 "candidate_count": len(generated_candidates),
                 "generated_candidates": generated_candidates,
             }
@@ -664,6 +736,10 @@ def _grpo_runtime_policy_updates(
             group_reward_mean=group_mean,
             group_reward_margin=group_margins[-1],
             group_reward_variance=group_variances[-1],
+            group_fatal_candidate_count=group_metadata["fatal_candidate_count"],
+            group_advantage_clamped_candidate_count=group_metadata[
+                "advantage_clamped_candidate_count"
+            ],
             candidate_generation_backend=runtime_name,
             candidate_scoring_mode=request.config.alignment.candidate_scoring_mode,
             reward_scorer=reward_scorer,
@@ -691,6 +767,9 @@ def _grpo_runtime_policy_updates(
         candidate_scoring_mode=request.config.alignment.candidate_scoring_mode,
         reward_scoring_backend=reward_scorer.runtime_name if reward_scorer is not None else "",
         generated_candidate_count=generated_candidate_total,
+        fatal_candidate_count=fatal_candidate_count,
+        selected_fatal_candidate_count=selected_fatal_candidate_count,
+        advantage_clamped_candidate_count=advantage_clamped_candidate_count,
     )
 
 
@@ -778,6 +857,72 @@ def _rlhf_policy_updates(
     )
 
 
+def _annotate_grpo_group_metadata(
+    candidates: list[dict[str, Any]],
+    *,
+    group_reward_mean: float,
+) -> dict[str, int]:
+    fatal_candidate_count = 0
+    advantage_clamped_candidate_count = 0
+    for candidate in candidates:
+        reward_components = dict(candidate["reward_components"])
+        metadata = _grpo_advantage_metadata(
+            reward_total=float(reward_components["total"]),
+            group_reward_mean=group_reward_mean,
+            fatal_stage=str(candidate.get("fatal_stage", "")).strip(),
+        )
+        candidate.update(metadata)
+        if metadata["fatal_state_mask"]:
+            fatal_candidate_count += 1
+        if metadata["grpo_advantage_clamp_applied"]:
+            advantage_clamped_candidate_count += 1
+    return {
+        "fatal_candidate_count": fatal_candidate_count,
+        "advantage_clamped_candidate_count": advantage_clamped_candidate_count,
+    }
+
+
+def _grpo_advantage_metadata(
+    *,
+    reward_total: float,
+    group_reward_mean: float,
+    fatal_stage: str,
+) -> dict[str, Any]:
+    normalized_fatal_stage = fatal_stage.strip()
+    raw_advantage = reward_total - group_reward_mean
+    fatal_state_mask = bool(normalized_fatal_stage)
+    clamp_applied = fatal_state_mask and raw_advantage > 0.0
+    return {
+        "fatal_aware_grpo_schema_version": FATAL_AWARE_GRPO_SCHEMA_VERSION,
+        "fatal_state_mask": fatal_state_mask,
+        "fatal_state_mask_reason": normalized_fatal_stage if fatal_state_mask else "",
+        "grpo_advantage_raw": raw_advantage,
+        "grpo_advantage_clamped": 0.0 if clamp_applied else raw_advantage,
+        "grpo_advantage_clamp_applied": clamp_applied,
+        "grpo_advantage_clamp_reason": (
+            _GRPO_FATAL_POSITIVE_ADVANTAGE_CLAMP_REASON if clamp_applied else ""
+        ),
+    }
+
+
+def _grpo_selected_policy_metadata(selected_candidate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "fatal_aware_grpo_schema_version": str(
+            selected_candidate["fatal_aware_grpo_schema_version"]
+        ),
+        "fatal_state_mask": bool(selected_candidate["fatal_state_mask"]),
+        "fatal_state_mask_reason": str(selected_candidate["fatal_state_mask_reason"]),
+        "grpo_advantage_raw": float(selected_candidate["grpo_advantage_raw"]),
+        "grpo_advantage_clamped": float(selected_candidate["grpo_advantage_clamped"]),
+        "grpo_advantage_clamp_applied": bool(
+            selected_candidate["grpo_advantage_clamp_applied"]
+        ),
+        "grpo_advantage_clamp_reason": str(
+            selected_candidate["grpo_advantage_clamp_reason"]
+        ),
+    }
+
+
 def _agentic_tool_run_for_sample(sample: dict[str, Any]):
     tool_calls = sample.get("tool_calls")
     if not isinstance(tool_calls, list) or not tool_calls:
@@ -825,6 +970,8 @@ def _runtime_candidate_reward_trace_rows(
     group_reward_mean: float,
     group_reward_margin: float,
     group_reward_variance: float,
+    group_fatal_candidate_count: int,
+    group_advantage_clamped_candidate_count: int,
     candidate_generation_backend: str,
     candidate_scoring_mode: str,
     reward_scorer: RewardModelScorer | None,
@@ -840,6 +987,19 @@ def _runtime_candidate_reward_trace_rows(
             "candidate_index": candidate_index,
             "selected": candidate_index == selected_index,
             "alignment_algorithm": "grpo",
+            "fatal_aware_grpo_schema_version": str(
+                candidate["fatal_aware_grpo_schema_version"]
+            ),
+            "fatal_state_mask": bool(candidate["fatal_state_mask"]),
+            "fatal_state_mask_reason": str(candidate["fatal_state_mask_reason"]),
+            "grpo_advantage_raw": float(candidate["grpo_advantage_raw"]),
+            "grpo_advantage_clamped": float(candidate["grpo_advantage_clamped"]),
+            "grpo_advantage_clamp_applied": bool(
+                candidate["grpo_advantage_clamp_applied"]
+            ),
+            "grpo_advantage_clamp_reason": str(
+                candidate["grpo_advantage_clamp_reason"]
+            ),
             "candidate_generation_mode": "runtime_generate",
             "candidate_generation_backend": candidate_generation_backend,
             "candidate_scoring_mode": candidate_scoring_mode,
@@ -853,6 +1013,8 @@ def _runtime_candidate_reward_trace_rows(
             "group_reward_mean": group_reward_mean,
             "group_reward_margin": group_reward_margin,
             "group_reward_variance": group_reward_variance,
+            "group_fatal_candidate_count": group_fatal_candidate_count,
+            "group_advantage_clamped_candidate_count": group_advantage_clamped_candidate_count,
             "candidate_count": len(generated_candidates),
             "source": str(candidate.get("source", "")),
             "generation_prompt": str(candidate.get("generation_prompt", "")),
@@ -930,9 +1092,10 @@ def _reward_components_for_candidate(
             ),
         }
 
-    fatal_stage = _fatal_stage_for_candidate(
+    fatal_stage = _candidate_fatal_stage(
         sample,
         candidate,
+        tool_run=tool_run,
         include_sample_fatal=include_sample_fatal,
     )
     components.setdefault("fatal_failure", _FATAL_FAILURE_PENALTY if fatal_stage else 0.0)
@@ -1007,6 +1170,41 @@ def _fatal_stage_for_candidate(
         or (sample.get("fatal_stage") if include_sample_fatal else "")
         or ""
     ).strip()
+
+
+def _candidate_fatal_stage(
+    sample: dict[str, Any],
+    candidate: dict[str, Any],
+    *,
+    tool_run: Any | None,
+    include_sample_fatal: bool = True,
+) -> str:
+    explicit_stage = _fatal_stage_for_candidate(
+        sample,
+        candidate,
+        include_sample_fatal=include_sample_fatal,
+    )
+    if explicit_stage:
+        return explicit_stage
+    if tool_run is None:
+        return ""
+    metrics = getattr(tool_run, "metrics", {})
+    if isinstance(metrics, dict):
+        if float(metrics.get("agentic_tool.timeout_count", 0.0)) > 0.0:
+            return "tool_timeout"
+        if float(metrics.get("agentic_tool.failed_count", 0.0)) > 0.0:
+            return "tool_execution_failure"
+    observations = getattr(tool_run, "observations", ())
+    if isinstance(observations, (list, tuple)):
+        for observation in observations:
+            if not isinstance(observation, dict):
+                continue
+            status = str(observation.get("status", "")).strip()
+            if status == "timeout":
+                return "tool_timeout"
+            if status == "failed":
+                return "tool_execution_failure"
+    return ""
 
 
 def _ordered_reward_components(components: dict[str, float]) -> dict[str, float]:

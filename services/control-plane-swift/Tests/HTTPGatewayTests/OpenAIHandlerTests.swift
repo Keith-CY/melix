@@ -1374,6 +1374,248 @@ struct OpenAIHandlerTests {
         #expect(await textClient.lastGenerateRequest == nil)
     }
 
+    @Test("POST /v1/chat/completions auto-enables Gemma4 text-only VLM batch-generator admission")
+    func postChatCompletionsAutoEnablesGemma4TextOnlyVLMBatchGeneratorAdmission() async throws {
+        let harness = makeGemma4VLMOpenAIHandler(requestID: "req-http-gemma4-vlm-auto-batch")
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "temperature": 0,
+              "messages": [
+                { "role": "user", "content": "Reply briefly." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == "true")
+        #expect(generateRequest.sampling.temperature == 0)
+        #expect(generateRequest.sampling.topP == 1)
+        #expect(generateRequest.sampling.topK == 0)
+        #expect(await harness.textClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions keeps Gemma4 VLM batch-generator disabled for non-greedy requests")
+    func postChatCompletionsKeepsGemma4VLMBatchGeneratorDisabledForNonGreedyRequests() async throws {
+        let harness = makeGemma4VLMOpenAIHandler(requestID: "req-http-gemma4-vlm-non-greedy")
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "temperature": 0.7,
+              "messages": [
+                { "role": "user", "content": "Reply briefly." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == nil)
+    }
+
+    @Test("POST /v1/chat/completions does not normalize explicit VLM batch-generator non-greedy sampling")
+    func postChatCompletionsDoesNotNormalizeExplicitVLMBatchGeneratorNonGreedySampling() async throws {
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: "req-http-gemma4-vlm-explicit-batch-non-greedy",
+            configureModel: { model in
+                model.settings.ext["melix.vlm.text_only_batch_generator"] = "true"
+                model.settings.ext["melix.generation_config.top_p"] = "0.8"
+            }
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "temperature": 0.7,
+              "messages": [
+                { "role": "user", "content": "Reply briefly." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == "true")
+        #expect(abs(Double(generateRequest.sampling.temperature) - 0.7) < 1e-6)
+        #expect(abs(Double(generateRequest.sampling.topP) - 0.8) < 1e-6)
+        #expect(await harness.textClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions auto-enables Gemma4 VLM batch-generator with explicit greedy top-p")
+    func postChatCompletionsAutoEnablesGemma4VLMBatchGeneratorWithExplicitGreedyTopP() async throws {
+        let harness = makeGemma4VLMOpenAIHandler(requestID: "req-http-gemma4-vlm-explicit-top-p")
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "temperature": 0,
+              "top_p": 1,
+              "messages": [
+                { "role": "user", "content": "Reply briefly." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == "true")
+        #expect(generateRequest.sampling.topP == 1)
+    }
+
+    @Test("POST /v1/chat/completions keeps Gemma4 VLM batch-generator disabled for structured outputs")
+    func postChatCompletionsKeepsGemma4VLMBatchGeneratorDisabledForStructuredOutputs() async throws {
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: "req-http-gemma4-vlm-structured",
+            assistantText: #"{"answer":"ready"}"#
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "temperature": 0,
+              "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                  "name": "answer_contract",
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "answer": { "type": "string" }
+                    },
+                    "required": ["answer"]
+                  },
+                  "strict": true
+                }
+              },
+              "messages": [
+                { "role": "user", "content": "Return JSON." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == nil)
+        #expect(generateRequest.execution.ext["melix.structured_output.mode"] == "json_schema")
+    }
+
+    @Test("POST /v1/chat/completions keeps Gemma4 VLM batch-generator disabled for OpenAI tools")
+    func postChatCompletionsKeepsGemma4VLMBatchGeneratorDisabledForOpenAITools() async throws {
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: "req-http-gemma4-vlm-tools",
+            finishReason: "tool_calls",
+            assistantText: ""
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "temperature": 0,
+              "messages": [
+                { "role": "user", "content": "Call the terminal tool." }
+              ],
+              "tools": [
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "terminal",
+                    "description": "Run a shell command.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "command": { "type": "string" }
+                      },
+                      "required": ["command"]
+                    }
+                  }
+                }
+              ],
+              "tool_choice": "auto"
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(generateRequest.execution.hasToolConfig)
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == nil)
+        #expect(generateRequest.execution.ext["melix.tool_config.source"] == "openai_chat_tools")
+    }
+
     @Test("model sparse-prefill policy is applied to generated worker requests")
     func modelSparsePrefillPolicyIsAppliedToGeneratedWorkerRequests() async throws {
         var model = warmModel()
@@ -8284,6 +8526,49 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["http.reasoning_history_strip_count", default: 0] == 1)
         #expect(metrics.values["http.tool_call_history_strip_count", default: 0] == 1)
         #expect(metrics.values["http.shaping_ms", default: -1] >= 0)
+    }
+
+    private func makeGemma4VLMOpenAIHandler(
+        requestID: String,
+        finishReason: String = "stop",
+        assistantText: String = "ready",
+        configureModel: (inout Melix_Controlplane_V1_ModelSummary) -> Void = { _ in }
+    ) -> (handler: OpenAIHandler, textClient: ScriptedWorkerClient, vlmClient: ScriptedWorkerClient) {
+        var vlmModel = ModelCatalog.devVLMModel()
+        vlmModel.settings.ext["vision_family_id"] = "gemma4-v1"
+        vlmModel.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
+        vlmModel.settings.ext["melix.vlm.text_only_batch_generator"] = "false"
+        configureModel(&vlmModel)
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), vlmModel])
+        let textClient = ScriptedWorkerClient(events: [])
+        let vlmClient = ScriptedWorkerClient(
+            events: [
+                makeCompletedEvent(
+                    requestID: requestID,
+                    seq: 1,
+                    finishReason: finishReason,
+                    assistantText: assistantText
+                ),
+            ],
+            loadModelHandle: "melix-dev-vlm::python"
+        )
+        let workerRegistry = WorkerRegistry(
+            defaultTextClient: textClient,
+            pythonCompatibilityClient: vlmClient,
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: workerRegistry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: workerRegistry,
+            translator: ChatRequestTranslator(requestIDGenerator: { requestID }),
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
+        )
+        return (handler, textClient, vlmClient)
     }
 
     private func warmModel() -> Melix_Controlplane_V1_ModelSummary {

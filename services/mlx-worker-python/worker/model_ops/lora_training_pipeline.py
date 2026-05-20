@@ -582,6 +582,16 @@ def _alignment_manifest_payload(
                     training_result.metrics.reward_component_total_mean
                 ),
                 "fatal_trace_count": training_result.metrics.fatal_trace_count,
+                "fatal_aware_grpo_schema_version": (
+                    training_result.metrics.fatal_aware_grpo_schema_version
+                ),
+                "fatal_candidate_count": training_result.metrics.fatal_candidate_count,
+                "selected_fatal_candidate_count": (
+                    training_result.metrics.selected_fatal_candidate_count
+                ),
+                "advantage_clamped_candidate_count": (
+                    training_result.metrics.advantage_clamped_candidate_count
+                ),
             }
         )
         if training_result.metrics.candidate_generation_backend:
@@ -688,26 +698,27 @@ def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
             score_total += reward_score
         candidates = sample.get("candidates")
         candidate_scores: list[float] = []
-        candidate_scores_append = candidate_scores.append
-        candidate_score_min: float | None = None
-        candidate_score_max: float | None = None
-        candidate_score_total = 0.0
-        candidate_score_square_total = 0.0
         if is_instance(candidates, list_type):
-            for candidate in candidates:
-                if is_instance(candidate, dict_type) and "score" in candidate:
-                    candidate_score = to_float(candidate["score"])
-                    candidate_scores_append(candidate_score)
-                    candidate_score_total += candidate_score
-                    candidate_score_square_total += candidate_score * candidate_score
-                    if candidate_score_min is None or candidate_score < candidate_score_min:
-                        candidate_score_min = candidate_score
-                    if candidate_score_max is None or candidate_score > candidate_score_max:
-                        candidate_score_max = candidate_score
-        if candidate_scores:
-            scores_extend(candidate_scores)
-            score_total += candidate_score_total
+            candidate_scores = [
+                to_float(candidate["score"])
+                for candidate in candidates
+                if is_instance(candidate, dict_type) and "score" in candidate
+            ]
         candidate_score_count = len(candidate_scores)
+        if candidate_score_count:
+            scores_extend(candidate_scores)
+            candidate_score_total = 0.0
+            candidate_score_square_total = 0.0
+            candidate_score_min = candidate_scores[0]
+            candidate_score_max = candidate_score_min
+            for candidate_score in candidate_scores:
+                candidate_score_total += candidate_score
+                candidate_score_square_total += candidate_score * candidate_score
+                if candidate_score < candidate_score_min:
+                    candidate_score_min = candidate_score
+                if candidate_score > candidate_score_max:
+                    candidate_score_max = candidate_score
+            score_total += candidate_score_total
         if candidate_score_count >= 2:
             assert candidate_score_min is not None
             assert candidate_score_max is not None

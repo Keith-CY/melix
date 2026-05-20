@@ -505,35 +505,83 @@ private func phase8LoRAHostView<Content: View>(_ rootView: Content) -> NSView {
 @MainActor
 private func phase8LoRARenderedTextValues(in rootView: NSView) -> [String] {
     var values: [String] = []
-    if let textField = rootView as? NSTextField {
-        let value = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        if value.isEmpty == false {
-            values.append(value)
+    var visitedObjects = Set<ObjectIdentifier>()
+
+    func appendValue(_ value: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty == false {
+            values.append(trimmed)
         }
     }
-    if let button = rootView as? NSButton {
-        let title = button.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if title.isEmpty == false {
-            values.append(title)
+
+    func accessibilityString(_ object: NSObject, selectorName: String) -> String? {
+        let selector = NSSelectorFromString(selectorName)
+        guard object.responds(to: selector),
+              let value = object.perform(selector)?.takeUnretainedValue() as? String
+        else {
+            return nil
+        }
+        return value
+    }
+
+    func accessibilityChildren(_ object: NSObject) -> [Any] {
+        let selector = NSSelectorFromString("accessibilityChildren")
+        guard object.responds(to: selector),
+              let children = object.perform(selector)?.takeUnretainedValue() as? [Any]
+        else {
+            return []
+        }
+        return children
+    }
+
+    func visitAccessibilityElement(_ element: Any) {
+        if let view = element as? NSView {
+            visit(view)
+            return
+        }
+        guard let object = element as? NSObject else {
+            return
+        }
+        let identifier = ObjectIdentifier(object)
+        guard visitedObjects.insert(identifier).inserted else {
+            return
+        }
+        appendValue(accessibilityString(object, selectorName: "accessibilityLabel") ?? "")
+        appendValue(accessibilityString(object, selectorName: "accessibilityValue") ?? "")
+        appendValue(accessibilityString(object, selectorName: "accessibilityHelp") ?? "")
+        for child in accessibilityChildren(object) {
+            visitAccessibilityElement(child)
         }
     }
-    if let popup = rootView as? NSPopUpButton {
-        let title = popup.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if title.isEmpty == false {
-            values.append(title)
+
+    func visit(_ view: NSView) {
+        let identifier = ObjectIdentifier(view)
+        guard visitedObjects.insert(identifier).inserted else {
+            return
         }
-    }
-    if let segmented = rootView as? NSSegmentedControl {
-        for index in 0..<segmented.segmentCount {
-            let label = (segmented.label(forSegment: index) ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if label.isEmpty == false {
-                values.append(label)
+        appendValue(view.accessibilityLabel() ?? "")
+        if let textField = view as? NSTextField {
+            appendValue(textField.stringValue)
+        }
+        if let button = view as? NSButton {
+            appendValue(button.title)
+        }
+        if let popup = view as? NSPopUpButton {
+            appendValue(popup.title)
+        }
+        if let segmented = view as? NSSegmentedControl {
+            for index in 0..<segmented.segmentCount {
+                appendValue(segmented.label(forSegment: index) ?? "")
             }
         }
+        for subview in view.subviews {
+            visit(subview)
+        }
+        for child in view.accessibilityChildren() ?? [] {
+            visitAccessibilityElement(child)
+        }
     }
-    for subview in rootView.subviews {
-        values.append(contentsOf: phase8LoRARenderedTextValues(in: subview))
-    }
+
+    visit(rootView)
     return values
 }

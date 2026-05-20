@@ -212,12 +212,13 @@ not be reused as the trajectory for every generated candidate.
 
 Online GRPO must also persist candidate-level reward traces as a first-class
 artifact. Each generated candidate row must bind the candidate text, score,
-reward components, fatal stage, tool-call sequence, observation summary,
-selected flag, and replay fingerprint to the same registry and observation
-contract used by the selected policy update. The selected candidate row must
-include the full selected tool trajectory; non-selected rows may include
-summaries plus candidate-local tool metrics unless a later milestone expands
-full non-selected observation retention.
+reward components, fatal stage, fatal-state mask, raw GRPO advantage, clamped
+GRPO advantage, tool-call sequence, observation summary, selected flag, and
+replay fingerprint to the same registry and observation contract used by the
+selected policy update. The selected candidate row must include the full
+selected tool trajectory; non-selected rows may include summaries plus
+candidate-local tool metrics unless a later milestone expands full non-selected
+observation retention.
 
 Fatal-aware behavior must distinguish:
 
@@ -226,6 +227,11 @@ Fatal-aware behavior must distinguish:
 - timeout
 - parser failure
 - post-fatal continuation that must not be treated as normal reasoning
+
+Fatal-aware GRPO uses one-sided advantage clamping. Fatal trajectories may keep
+zero or negative advantage for penalty accounting, but positive raw advantage is
+clamped to `0.0` and marked with
+`grpo_advantage_clamp_reason: fatal_state_positive_advantage`.
 
 ### Benchmark
 

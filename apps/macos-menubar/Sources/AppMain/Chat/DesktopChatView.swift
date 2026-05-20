@@ -182,15 +182,21 @@ struct DesktopChatTabView: View {
 struct DesktopChatSessionSidebar: View {
     let viewModel: RuntimeViewModel
 
+    func createChatSessionAction() {
+        viewModel.createChatSession()
+    }
+
+    func openServerAction() {
+        viewModel.selectSurface(.server)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Chat Sessions")
                     .melixSectionLabel()
                 Spacer()
-                Button {
-                    viewModel.createChatSession()
-                } label: {
+                Button(action: createChatSessionAction) {
                     Image(systemName: "plus")
                 }
                 .buttonStyle(.plain)
@@ -200,11 +206,19 @@ struct DesktopChatSessionSidebar: View {
             }
 
             if viewModel.chatSessions.isEmpty {
-                ContentUnavailableView(
-                    "No Chat Sessions",
+                MelixActionableEmptyState(
+                    title: "No Chat Sessions",
                     systemImage: "message.badge",
-                    description: Text("Create a new chat after starting a Server Session.")
-                )
+                    detail: "Start a chat after choosing a local or remote server. Sessions keep transcript, model, and export context together."
+                ) {
+                    VStack(spacing: MelixDesignTokens.Spacing.sm) {
+                        Button("New Chat", action: createChatSessionAction)
+                        .buttonStyle(.borderedProminent)
+
+                        Button("Open Server", action: openServerAction)
+                        .buttonStyle(.bordered)
+                    }
+                }
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 6) {
@@ -275,23 +289,21 @@ struct DesktopChatSessionWorkspace: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
                     Text(viewModel.selectedChatSession?.title ?? "Chat")
                         .font(.title2.weight(.semibold))
-                    HStack(spacing: 8) {
-                        if let branch = viewModel.selectedChatSession?.displayBranchTitle {
-                            Text(branch)
-                                .font(.caption2)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(.quaternary, in: Capsule())
-                        }
-                        DesktopChatServerPicker(viewModel: viewModel)
+                    if let branch = viewModel.selectedChatSession?.displayBranchTitle {
+                        DesktopChatSessionBranchBadgeView(branch: branch)
                     }
                 }
-                Spacer()
+                Spacer(minLength: 12)
+                DesktopChatServerPicker(viewModel: viewModel)
+                    .alignmentGuide(.firstTextBaseline) { dimensions in
+                        dimensions[VerticalAlignment.center]
+                    }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if let notice = viewModel.selectedChatServerSession?.chatWorkspaceNoticeState {
                 VStack(alignment: .leading, spacing: 10) {
@@ -546,6 +558,19 @@ private struct DesktopChatEmptyStateView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 12)
+    }
+}
+
+struct DesktopChatSessionBranchBadgeView: View {
+    let branch: String
+
+    var body: some View {
+        Text(branch)
+            .font(.caption2)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(.quaternary, in: Capsule())
+            .accessibilityLabel(branch)
     }
 }
 
