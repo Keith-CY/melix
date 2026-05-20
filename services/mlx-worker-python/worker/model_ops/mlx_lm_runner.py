@@ -102,6 +102,11 @@ class TrainingMetrics:
     candidate_scoring_mode: str = ""
     reward_scoring_backend: str = ""
     generated_candidate_count: int = 0
+    rollout_manifest_schema_version: str = ""
+    rollout_candidate_count: int = 0
+    rollout_reward_policy_id: str = ""
+    rollout_reference_model_path: str = ""
+    rollout_trajectory_digest: str = ""
     multimodal_lora_nan_guard_triggered: bool = False
     unexpected_frozen_param_count: int = 0
     adapter_checkpoint_bytes: int = 0

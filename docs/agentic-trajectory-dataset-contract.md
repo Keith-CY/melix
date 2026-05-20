@@ -215,6 +215,29 @@ Agentic GRPO/RL rollout slices consume a stable component subset:
 Policy-update evidence must persist the component object that produced the
 scalar `total`, not only the total itself.
 
+### Rollout Manifest Fields
+
+Alignment artifacts that perform GRPO or RLHF rollout construction must persist
+a stable rollout manifest projection in the adapter manifest, alignment run
+manifest, and policy-update trace rows. The v1 fields are:
+
+- `rollout_manifest_schema_version`: `melix.alignment_rollout_manifest.v1`
+- `rollout_candidate_count`: configured candidate count for GRPO, or `1` for
+  RLHF response scoring.
+- `rollout_reward_policy_id`: reward policy used for candidate or response
+  scoring. Agentic dataset provenance supplies this when available; otherwise
+  Melix emits a deterministic built-in policy id for GRPO component scoring,
+  reward-model scoring, or dataset-score fallback.
+- `rollout_reference_model_path`: explicit reference model path when supplied,
+  otherwise the resolved source model path used for the alignment run.
+- `rollout_trajectory_digest`: the source trajectory digest from provenance
+  when present, otherwise a deterministic digest of the policy-update rows.
+
+The rollout manifest projection is additive. Existing fields such as
+`grpo_candidate_count`, `reference_model_path`, `reward_model_manifest_path`,
+`candidate_generation_mode`, and `candidate_scoring_mode` remain stable for
+legacy consumers.
+
 `fatal_stage` records the first stage that invalidates later trajectory tokens
 or observations. Supported stage names are:
 

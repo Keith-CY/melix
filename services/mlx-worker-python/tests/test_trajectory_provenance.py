@@ -438,8 +438,13 @@ def test_alignment_rl_trace_runner_attaches_trajectory_provenance(tmp_path: Path
 
     assert adapter_config["trajectory_dataset_id"] == "opensearch-vl.dev"
     assert adapter_config["trajectory_reward_policy_id"] == "reward-policy.v1"
+    assert adapter_config["rollout_candidate_count"] == 2
+    assert adapter_config["rollout_reward_policy_id"] == "reward-policy.v1"
+    assert adapter_config["rollout_reference_model_path"] == str(tmp_path / "base-model")
+    assert adapter_config["rollout_trajectory_digest"] == "abc123"
     assert adapter_config["trajectory_provenance_field_count"] >= 8
     assert trace_rows[0]["trajectory_trace_digest"] == "abc123"
+    assert trace_rows[0]["rollout_trajectory_digest"] == "abc123"
     assert trace_rows[0]["trajectory_snapshot_manifest_path"] == str(
         normalized_dataset_dir / "manifest.json"
     )
@@ -525,6 +530,10 @@ def test_alignment_manifest_payload_records_trajectory_provenance_metrics(
     )
 
     assert payload["trajectory_trace_digest"] == "abc123"
+    assert payload["rollout_candidate_count"] == 2
+    assert payload["rollout_reward_policy_id"] == "reward-policy.v1"
+    assert payload["rollout_reference_model_path"] == str(tmp_path / "base-model")
+    assert payload["rollout_trajectory_digest"] == "abc123"
     assert payload["metrics"]["trajectory_provenance_field_count"] == len(provenance)
     assert payload["metrics"]["trajectory_reward_policy_present"] == 1
     assert payload["metrics"]["trajectory_reward_component_coverage"] == 1
