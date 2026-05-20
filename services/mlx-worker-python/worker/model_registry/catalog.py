@@ -534,6 +534,22 @@ def _text_capability_metadata(
     }
 
 
+def _text_layer_count(config_payload: Mapping[str, object] | None) -> int:
+    layer_count = _config_positive_int(config_payload, "num_hidden_layers")
+    if layer_count == 0 and isinstance(config_payload, Mapping):
+        layer_count = _config_positive_int(config_payload.get("text_config"), "num_hidden_layers")
+    return layer_count
+
+
+def _merge_text_layer_count_metadata(
+    ext: dict[str, str],
+    config_payload: Mapping[str, object] | None,
+) -> None:
+    layer_count = _text_layer_count(config_payload)
+    if layer_count > 0:
+        ext["text_layer_count"] = str(layer_count)
+
+
 def _text_lora_support_metadata(
     family_id: str,
     *,
@@ -1593,6 +1609,7 @@ class WorkerModelCatalog:
                     default_route_kind="python_text_compatibility",
                 )
             )
+            _merge_text_layer_count_metadata(ext, config_payload)
         else:
             ext.update(
                 _vlm_capability_metadata(
@@ -1701,6 +1718,7 @@ class WorkerModelCatalog:
                     default_route_kind="python_text_compatibility",
                 )
             )
+            _merge_text_layer_count_metadata(normalized_ext, config_payload)
         if model_kind == "vlm":
             normalized_ext.update(
                 _vlm_capability_metadata(
