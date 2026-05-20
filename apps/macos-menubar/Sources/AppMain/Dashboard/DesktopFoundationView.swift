@@ -815,6 +815,7 @@ private struct DesktopRegistryEntryRowView: View {
     private var entryHeaderBadges: [DesktopRegistryBadgeItem] {
         var badges = [
             DesktopRegistryBadgeItem(
+                id: "source",
                 title: entry.sourceText,
                 tint: DesktopRegistryVisuals.sourceColor(entry.sourceText)
             )
@@ -822,6 +823,7 @@ private struct DesktopRegistryEntryRowView: View {
         if localModel?.runtimeCacheMissing == true {
             badges.append(
                 DesktopRegistryBadgeItem(
+                    id: "cache-status",
                     title: localModel?.runtimeCacheStatusText ?? "Cache Missing",
                     tint: MelixDesignTokens.StatusColor.warning
                 )
@@ -862,6 +864,7 @@ private struct DesktopHubModelCardContent: View {
                     titleFont: .headline,
                     badges: [
                         DesktopRegistryBadgeItem(
+                            id: "run-suitability",
                             title: card.runSuitabilityText,
                             tint: DesktopRegistryVisuals.fitColor(card.runSuitabilityText)
                         ),
@@ -918,6 +921,7 @@ struct DesktopRegistryEntryCardContent: View {
                     titleFont: .headline,
                     badges: [
                         DesktopRegistryBadgeItem(
+                            id: "source",
                             title: entry.sourceText,
                             tint: DesktopRegistryVisuals.sourceColor(entry.sourceText)
                         ),
@@ -1174,7 +1178,7 @@ private struct DesktopRegistryBadgeView: View {
 }
 
 private struct DesktopRegistryBadgeItem: Identifiable {
-    var id: String { title }
+    let id: String
     let title: String
     let tint: Color
 }

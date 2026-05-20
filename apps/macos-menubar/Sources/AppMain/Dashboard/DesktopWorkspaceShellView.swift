@@ -300,7 +300,7 @@ struct DesktopCommandCenterView: View {
                             DesktopCommandCenterSessionSummaryPanel(
                                 chatSessions: chatSessions,
                                 serverSessions: serverSessions
-                        )
+                            )
                         }
                         .frame(width: DesktopCommandCenterVisuals.secondaryColumnWidth, alignment: .topLeading)
                     }

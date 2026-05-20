@@ -93,7 +93,6 @@ struct DesktopImageJobsSidebar: View {
     }
 
     func chooseModelAction() {
-        viewModel.selectSurface(.tools)
         viewModel.selectToolSection(.modelsLibrary)
     }
 

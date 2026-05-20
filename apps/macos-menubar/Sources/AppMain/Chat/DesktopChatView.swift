@@ -257,11 +257,7 @@ struct DesktopChatSessionWorkspace: View {
                     Text(viewModel.selectedChatSession?.title ?? "Chat")
                         .font(.title2.weight(.semibold))
                     if let branch = viewModel.selectedChatSession?.displayBranchTitle {
-                        Text(branch)
-                            .font(.caption2)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(.quaternary, in: Capsule())
+                        DesktopChatSessionBranchBadgeView(branch: branch)
                     }
                 }
                 Spacer(minLength: 12)
@@ -431,6 +427,19 @@ struct DesktopChatSessionInspector: View {
             Spacer()
         }
         .padding(14)
+    }
+}
+
+struct DesktopChatSessionBranchBadgeView: View {
+    let branch: String
+
+    var body: some View {
+        Text(branch)
+            .font(.caption2)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(.quaternary, in: Capsule())
+            .accessibilityLabel(branch)
     }
 }
 

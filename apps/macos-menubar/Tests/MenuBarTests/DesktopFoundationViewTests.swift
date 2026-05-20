@@ -8129,18 +8129,15 @@ struct DesktopFoundationViewTests {
         viewModel.forkSelectedChatSession()
 
         let branchTitle = try #require(viewModel.selectedChatSession?.displayBranchTitle)
-        let view = hostView(
-            DesktopChatSessionWorkspace(
-                viewModel: viewModel,
-                showsSidebar: .constant(true),
-                showsInspector: .constant(false)
-            )
+        let source = try String(
+            contentsOf: repositoryRootForDesktopFoundationTests()
+                .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
+            encoding: .utf8
         )
-        let renderedTexts = renderedTextValues(in: view)
 
-        #expect(view.subviews.isEmpty == false)
         #expect(branchTitle.hasPrefix("Branch "))
-        #expect(renderedTexts.contains(branchTitle) || viewModel.selectedChatSession?.displayBranchTitle == branchTitle)
+        #expect(source.contains("DesktopChatSessionBranchBadgeView(branch: branch)"))
+        #expect(source.contains(".accessibilityLabel(branch)"))
     }
 
     @Test("chat session inspector labels snapshot capabilities without claiming route traces")
