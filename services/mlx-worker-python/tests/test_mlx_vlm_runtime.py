@@ -607,6 +607,121 @@ def test_mlx_vlm_runtime_uses_generate_step_fast_path_for_text_only_requests(
     assert loaded_model["melix.vlm.text_only_step_cooperative"] == "true"
 
 
+def _run_text_only_step_with_buffered_detokenizer(
+    monkeypatch: pytest.MonkeyPatch,
+    generated_tokens: list[int],
+):
+    _install_fake_mlx_core(monkeypatch)
+    _install_fake_mlx_vlm_prepare_inputs(monkeypatch)
+
+    class FakeDetokenizer:
+        def __init__(self) -> None:
+            self._tokens: list[int] = []
+            self.text = ""
+            self.last_segment = ""
+
+        def __copy__(self):
+            return FakeDetokenizer()
+
+        def reset(self) -> None:
+            self._tokens = []
+            self.text = ""
+            self.last_segment = ""
+
+        def add_token(self, token: int) -> None:
+            self._tokens.append(token)
+            self.last_segment = ""
+
+        def finalize(self) -> None:
+            self.last_segment = "".join({101: "Hello", 102: "!"}.get(token, "") for token in self._tokens)
+            self.text += self.last_segment
+
+    class FakeProcessor:
+        chat_template = "{{ prompt }}"
+        eos_token = "<eos>"
+        pad_token = None
+
+        def __init__(self) -> None:
+            self.detokenizer = FakeDetokenizer()
+            self.eos_token_id = 1
+            self.all_special_ids = [1, 106]
+
+        def __call__(self, prompts, **kwargs):
+            import mlx.core as mx
+
+            _ = prompts
+            _ = kwargs
+            return SimpleNamespace(
+                input_ids=mx.array([[1, 2, 3]]),
+                attention_mask=mx.array([[1, 1, 1]]),
+            )
+
+        def stopping_criteria(self, token: int) -> bool:
+            return token == 106
+
+    def fake_load(model_path: str, revision: str = "main"):
+        _ = model_path
+        _ = revision
+        return SimpleNamespace(config=SimpleNamespace(model_type="gemma4")), FakeProcessor()
+
+    def fake_generate_step(*_args, **_kwargs):
+        for token_id in generated_tokens:
+            yield token_id, [-0.1]
+
+    monkeypatch.setattr(mlx_vlm_runtime_module, "_installed_package_version", lambda name: f"{name}-version")
+    monkeypatch.setattr(mlx_vlm_runtime_module, "_mlx_peak_memory_gb", lambda _mx_module: 7.0)
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda *_args, **_kwargs: "formatted::prompt",
+            generate_step_fn=fake_generate_step,
+        ),
+    )
+    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    prepared = runtime.render_prompt(
+        [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="Say hello.")])],
+        loaded_model=loaded_model,
+    )
+
+    return list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(max_output_tokens=16),
+            Event(),
+        )
+    )
+
+
+def test_mlx_vlm_runtime_text_only_step_flushes_buffer_before_stop_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = _run_text_only_step_with_buffered_detokenizer(monkeypatch, [101, 102, 106])
+
+    assert [event.text for event in events] == ["Hello!"]
+    assert events[-1].raw_text == "Hello!"
+    assert events[-1].completion_tokens == 2
+
+
+def test_mlx_vlm_runtime_text_only_step_flushes_buffer_after_natural_end(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = _run_text_only_step_with_buffered_detokenizer(monkeypatch, [101, 102])
+
+    assert [event.text for event in events] == ["Hello!"]
+    assert events[-1].raw_text == "Hello!"
+    assert events[-1].completion_tokens == 2
+
+
+def test_mlx_vlm_runtime_text_only_step_skips_empty_final_buffer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = _run_text_only_step_with_buffered_detokenizer(monkeypatch, [103])
+
+    assert events == []
+
+
 def test_mlx_vlm_runtime_text_only_step_fast_path_releases_executor_between_tokens(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

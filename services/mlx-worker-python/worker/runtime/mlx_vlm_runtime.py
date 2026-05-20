@@ -1696,6 +1696,29 @@ class MLXVLMRuntime:
                 peak_memory_gb = _mlx_peak_memory_gb(mx)
             return peak_memory_gb
 
+        def finalized_text_event():
+            nonlocal cumulative_raw_text
+            detokenizer.finalize()
+            text = str(getattr(detokenizer, "last_segment", "") or "")
+            if not text:
+                return None
+            cumulative_raw_text += text
+            finished_at = time.perf_counter()
+            generation_elapsed = max(0.0, finished_at - (first_token_at or finished_at))
+            return RuntimeTokenEvent(
+                text=text,
+                raw_text=cumulative_raw_text,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                prompt_tps=0.0,
+                generation_tps=(completion_tokens / generation_elapsed) if generation_elapsed > 0 else 0.0,
+                peak_memory=cached_peak_memory_gb(),
+                finish_reason="stop",
+                speculative_fallback_count=1 if speculative_fallback_reason else None,
+                speculative_num_draft_tokens=0 if speculative_fallback_reason else None,
+                speculative_draft_model_configured=False if speculative_fallback_reason else None,
+            )
+
         for token, logprobs in self._backend.generate_step_fn(
             input_ids,
             loaded_model["model"],
@@ -1735,6 +1758,9 @@ class MLXVLMRuntime:
                 except (TypeError, ValueError):
                     continue
                 if callable(stopping_criteria) and stopping_criteria(token_id):
+                    event = finalized_text_event()
+                    if event is not None:
+                        yield event
                     return
                 detokenizer.add_token(token_id)
                 completion_tokens += 1
@@ -1760,26 +1786,9 @@ class MLXVLMRuntime:
                     speculative_draft_model_configured=False if speculative_fallback_reason else None,
                 )
 
-        detokenizer.finalize()
-        text = str(getattr(detokenizer, "last_segment", "") or "")
-        if not text:
-            return
-        cumulative_raw_text += text
-        finished_at = time.perf_counter()
-        generation_elapsed = max(0.0, finished_at - (first_token_at or finished_at))
-        yield RuntimeTokenEvent(
-            text=text,
-            raw_text=cumulative_raw_text,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            prompt_tps=0.0,
-            generation_tps=(completion_tokens / generation_elapsed) if generation_elapsed > 0 else 0.0,
-            peak_memory=cached_peak_memory_gb(),
-            finish_reason="stop",
-            speculative_fallback_count=1 if speculative_fallback_reason else None,
-            speculative_num_draft_tokens=0 if speculative_fallback_reason else None,
-            speculative_draft_model_configured=False if speculative_fallback_reason else None,
-        )
+        event = finalized_text_event()
+        if event is not None:
+            yield event
 
     def _can_use_text_only_step_fast_path(
         self,
