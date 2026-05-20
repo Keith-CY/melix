@@ -1136,7 +1136,7 @@ private struct DesktopRemoteServerEditor: View {
                             set: { viewModel.remoteServerIDDraft = $0 }
                         )
                     )
-                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                    .melixOperatorTextFieldStyle()
                     .disabled(viewModel.isRemoteServerIDEditable == false)
 
                     TextField(
@@ -1146,7 +1146,7 @@ private struct DesktopRemoteServerEditor: View {
                             set: { viewModel.remoteServerTitleDraft = $0 }
                         )
                     )
-                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                    .melixOperatorTextFieldStyle()
                 }
 
                 HStack(alignment: .top, spacing: 12) {
@@ -1170,7 +1170,7 @@ private struct DesktopRemoteServerEditor: View {
                             set: { viewModel.remoteServerDefaultModelIDDraft = $0 }
                         )
                     )
-                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                    .melixOperatorTextFieldStyle()
                 }
 
                 TextField(
@@ -1180,7 +1180,7 @@ private struct DesktopRemoteServerEditor: View {
                         set: { viewModel.remoteServerBaseURLDraft = $0 }
                     )
                 )
-                .textFieldStyle(MelixOperatorTextFieldStyle())
+                .melixOperatorTextFieldStyle()
                 .disabled(viewModel.isRemoteServerBaseURLEditable == false)
 
                 SecureField(
@@ -1190,7 +1190,7 @@ private struct DesktopRemoteServerEditor: View {
                         set: { viewModel.remoteServerAPIKeyDraft = $0 }
                     )
                 )
-                .textFieldStyle(MelixOperatorTextFieldStyle())
+                .melixOperatorTextFieldStyle()
 
                 HStack(alignment: .top, spacing: 12) {
                     TextField(
@@ -1201,7 +1201,7 @@ private struct DesktopRemoteServerEditor: View {
                         ),
                         format: .number
                     )
-                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                    .melixOperatorTextFieldStyle()
 
                     TextField(
                         "Rate limit / min",
@@ -1211,7 +1211,7 @@ private struct DesktopRemoteServerEditor: View {
                         ),
                         format: .number
                     )
-                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                    .melixOperatorTextFieldStyle()
                 }
 
                 HStack {
@@ -1279,7 +1279,7 @@ private struct DesktopServerCreationEditor: View {
                         set: { viewModel.newLocalServerTitleDraft = $0 }
                     )
                 )
-                .textFieldStyle(MelixOperatorTextFieldStyle())
+                .melixOperatorTextFieldStyle()
 
                 Picker(
                     "Served Model",
@@ -1302,7 +1302,7 @@ private struct DesktopServerCreationEditor: View {
                             set: { viewModel.newLocalServerHostDraft = $0 }
                         )
                     )
-                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                    .melixOperatorTextFieldStyle()
 
                     TextField(
                         "Port",
@@ -1312,7 +1312,7 @@ private struct DesktopServerCreationEditor: View {
                         ),
                         format: .number
                     )
-                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                    .melixOperatorTextFieldStyle()
                     .frame(maxWidth: 120)
                 }
 
@@ -1512,7 +1512,7 @@ private struct DesktopServerSessionEditor: View {
                                         set: { viewModel.updateSelectedServerSessionHost($0) }
                                     )
                                 )
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
 
                                 TextField(
                                     "Port",
@@ -1522,7 +1522,7 @@ private struct DesktopServerSessionEditor: View {
                                     ),
                                     format: .number
                                 )
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
                                 .frame(maxWidth: 120)
                             }
 
@@ -1537,7 +1537,7 @@ private struct DesktopServerSessionEditor: View {
                                     ),
                                     format: .number
                                 )
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
 
                                 TextField(
                                     "Timeout (s)",
@@ -1547,7 +1547,7 @@ private struct DesktopServerSessionEditor: View {
                                     ),
                                     format: .number
                                 )
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
                             }
 
                             Text(
@@ -1645,7 +1645,7 @@ private struct DesktopServerSessionEditor: View {
                                     ),
                                     format: .number
                                 )
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
 
                                 TextField(
                                     "Deep sleep after (s)",
@@ -1655,7 +1655,7 @@ private struct DesktopServerSessionEditor: View {
                                     ),
                                     format: .number
                                 )
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
 
                             }
 
@@ -1704,7 +1704,7 @@ private struct DesktopServerSessionEditor: View {
                                         ),
                                         format: .number
                                     )
-                                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                                    .melixOperatorTextFieldStyle()
 
                                     TextField(
                                         "Top P",
@@ -1714,7 +1714,7 @@ private struct DesktopServerSessionEditor: View {
                                         ),
                                         format: .number
                                     )
-                                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                                    .melixOperatorTextFieldStyle()
                                 }
 
                                 HStack {
@@ -1726,7 +1726,7 @@ private struct DesktopServerSessionEditor: View {
                                         ),
                                         format: .number
                                     )
-                                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                                    .melixOperatorTextFieldStyle()
 
                                     TextField(
                                         "Stream interval",
@@ -1736,7 +1736,7 @@ private struct DesktopServerSessionEditor: View {
                                         ),
                                         format: .number
                                     )
-                                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                                    .melixOperatorTextFieldStyle()
                                 }
 
                                 HStack {
@@ -1748,7 +1748,7 @@ private struct DesktopServerSessionEditor: View {
                                         ),
                                         format: .number
                                     )
-                                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                                    .melixOperatorTextFieldStyle()
                                 }
 
                                 Toggle(
@@ -1768,7 +1768,7 @@ private struct DesktopServerSessionEditor: View {
                                         ),
                                         format: .number
                                     )
-                                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                                    .melixOperatorTextFieldStyle()
 
                                     TextField(
                                         "Completion batch size",
@@ -1778,7 +1778,7 @@ private struct DesktopServerSessionEditor: View {
                                         ),
                                         format: .number
                                     )
-                                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                                    .melixOperatorTextFieldStyle()
                                 }
 
                                 Picker(
@@ -1826,7 +1826,7 @@ private struct DesktopServerSessionEditor: View {
                             set: { viewModel.updateSelectedServerSessionDraftModelID($0) }
                         )
                     )
-                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                    .melixOperatorTextFieldStyle()
 
                     TextField(
                         "Num draft tokens",
@@ -1836,7 +1836,7 @@ private struct DesktopServerSessionEditor: View {
                         ),
                         format: .number
                     )
-                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                    .melixOperatorTextFieldStyle()
                 }
                 Text("Draft model settings apply only when Speculative Decode is selected.")
                     .font(.caption)
@@ -2334,7 +2334,7 @@ struct DesktopWorkflowRecipesToolSectionView: View {
                             set: { viewModel.updateWorkflowRecipeTaskFilter($0) }
                         )
                     )
-                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                    .melixOperatorTextFieldStyle()
                 }
                 Button("Refresh Catalog", action: refreshCatalogAction)
                 .buttonStyle(.borderedProminent)
@@ -2351,7 +2351,7 @@ struct DesktopWorkflowRecipesToolSectionView: View {
                             set: { viewModel.updateWorkflowRecipeURIInspectDraft($0) }
                         )
                     )
-                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                    .melixOperatorTextFieldStyle()
                 }
                 Button("Inspect URI", action: inspectURIAction)
                     .buttonStyle(.bordered)
@@ -2603,7 +2603,7 @@ struct DesktopWorkflowRecipesToolSectionView: View {
                             set: { viewModel.updateWorkflowRecipeInitTaskDraft($0) }
                         )
                     )
-                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                    .melixOperatorTextFieldStyle()
                 }
                 Button("Preview Recipe Init", action: previewRecipeInitAction)
                     .buttonStyle(.bordered)
@@ -2744,7 +2744,7 @@ struct DesktopWorkflowRecipesToolSectionView: View {
                             set: { viewModel.updateWorkflowRecipeSetKeyDraft($0) }
                         )
                     )
-                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                    .melixOperatorTextFieldStyle()
                 }
                 .frame(maxWidth: .infinity)
                 VStack(alignment: .leading, spacing: 4) {
@@ -2758,7 +2758,7 @@ struct DesktopWorkflowRecipesToolSectionView: View {
                             set: { viewModel.updateWorkflowRecipeSetValueDraft($0) }
                         )
                     )
-                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                    .melixOperatorTextFieldStyle()
                 }
                 .frame(maxWidth: .infinity)
                 Button("Add --set", action: addRecipeVariableAction)
@@ -2824,7 +2824,7 @@ struct DesktopWorkflowRecipesToolSectionView: View {
                             set: { viewModel.updateWorkflowRecipePlanOutputPathDraft($0) }
                         )
                     )
-                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                    .melixOperatorTextFieldStyle()
                 }
                 Button("Plan Recipe", action: planRecipeAction)
                     .buttonStyle(.borderedProminent)
@@ -2908,7 +2908,7 @@ struct DesktopWorkflowRecipesToolSectionView: View {
                             set: { viewModel.updateWorkflowRecipeApplyFromStepDraft($0) }
                         )
                     )
-                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                    .melixOperatorTextFieldStyle()
                     .frame(minWidth: 180)
                 }
 
@@ -3884,7 +3884,7 @@ struct DesktopSyntheticDatasetToolSectionView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             TextField(label, text: text)
-                .textFieldStyle(MelixOperatorTextFieldStyle())
+                .melixOperatorTextFieldStyle()
         }
     }
 
@@ -5477,7 +5477,7 @@ struct DesktopTrainingToolSectionView: View {
                 DesktopPassiveCaptionLabel(title: "Import Config Path")
                 HStack(spacing: 8) {
                     TextField("Import Config Path", text: stringBinding(\.loraTrainingJobImportPath))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                     Button("Import") {
                         viewModel.importLoraTrainingJobConfigFromPath()
                     }
@@ -5490,7 +5490,7 @@ struct DesktopTrainingToolSectionView: View {
                 DesktopPassiveCaptionLabel(title: "Export Config Path")
                 HStack(spacing: 8) {
                     TextField("Export Config Path", text: stringBinding(\.loraTrainingJobExportPath))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                     Button("Export") {
                         viewModel.exportSelectedLoraTrainingJobConfigToPath()
                     }
@@ -5528,7 +5528,7 @@ struct DesktopTrainingToolSectionView: View {
 
                     DesktopEditorialField("Adapter Name") {
                         TextField("Adapter Name", text: stringBinding(\.loraAdapterName))
-                            .textFieldStyle(MelixOperatorTextFieldStyle())
+                            .melixOperatorTextFieldStyle()
                     }
                 }
             }
@@ -5552,10 +5552,10 @@ struct DesktopTrainingToolSectionView: View {
                     DesktopEditorialField(viewModel.loraDatasetSourceKind == .localPackage ? "Dataset URI" : "HF Dataset Path") {
                         if viewModel.loraDatasetSourceKind == .localPackage {
                             TextField("Dataset URI", text: stringBinding(\.loraDatasetURI))
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
                         } else {
                             TextField("HF Dataset Path", text: stringBinding(\.loraHFDatasetPath))
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
                         }
                     }
 
@@ -5590,27 +5590,27 @@ struct DesktopTrainingToolSectionView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         DesktopEditorialField("Reference Model Path") {
                             TextField("Optional reference model path", text: stringBinding(\.loraReferenceModelPath))
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
                         }
 
                         if viewModel.loraTrainingMode == .grpo {
                             DesktopEditorialField("GRPO Candidate Count") {
                                 TextField("Candidates per prompt", text: stringBinding(\.loraGRPOCandidateCount))
-                                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                                    .melixOperatorTextFieldStyle()
                             }
                         }
 
                         if viewModel.loraTrainingMode == .rlhf {
                             DesktopEditorialField("Reward Model Manifest") {
                                 TextField("Reward model manifest path", text: stringBinding(\.loraRewardModelManifestPath))
-                                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                                    .melixOperatorTextFieldStyle()
                             }
                         }
 
                         if viewModel.loraTrainingMode == .grpo || viewModel.loraTrainingMode == .rlhf {
                             DesktopEditorialField("KL Penalty") {
                                 TextField("Optional KL penalty", text: stringBinding(\.loraKLPenalty))
-                                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                                    .melixOperatorTextFieldStyle()
                             }
                         }
                     }
@@ -5638,12 +5638,12 @@ struct DesktopTrainingToolSectionView: View {
                         detail: "Leave blank to derive from the base model and adapter name."
                     ) {
                         TextField("Optional group id", text: stringBinding(\.loraExperimentGroupID))
-                            .textFieldStyle(MelixOperatorTextFieldStyle())
+                            .melixOperatorTextFieldStyle()
                     }
 
                     DesktopEditorialField("Target Repo") {
                         TextField("Target Repo", text: stringBinding(\.loraTargetRepo))
-                            .textFieldStyle(MelixOperatorTextFieldStyle())
+                            .melixOperatorTextFieldStyle()
                     }
                 }
             }
@@ -5658,35 +5658,35 @@ struct DesktopTrainingToolSectionView: View {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 12) {
                 DesktopEditorialField("Config / Name") {
                     TextField("Config / Name", text: stringBinding(\.loraHFDatasetName))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Revision") {
                     TextField("Revision", text: stringBinding(\.loraHFDatasetRevision))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Train Split") {
                     TextField("Train Split", text: stringBinding(\.loraHFTrainSplit))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Valid Split") {
                     TextField("Valid Split", text: stringBinding(\.loraHFValidSplit))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Text Feature") {
                     TextField("Text Feature", text: stringBinding(\.loraTextFeature))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Prompt Feature") {
                     TextField("Prompt Feature", text: stringBinding(\.loraPromptFeature))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Completion Feature") {
                     TextField("Completion Feature", text: stringBinding(\.loraCompletionFeature))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Chat Feature") {
                     TextField("Chat Feature", text: stringBinding(\.loraChatFeature))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                 }
             }
         }
@@ -5706,55 +5706,55 @@ struct DesktopTrainingToolSectionView: View {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 12) {
                 DesktopEditorialField("Rank") {
                     TextField("Rank", text: stringBinding(\.loraRank))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Alpha") {
                     TextField("Alpha", text: stringBinding(\.loraAlpha))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Dropout") {
                     TextField("Dropout", text: stringBinding(\.loraDropout))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Batch Size") {
                     TextField("Batch Size", text: stringBinding(\.loraBatchSize))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Epochs") {
                     TextField("Epochs", text: stringBinding(\.loraEpochs))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Max Steps") {
                     TextField("Optional max steps", text: stringBinding(\.loraMaxSteps))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Learning Rate") {
                     TextField("Learning Rate", text: stringBinding(\.loraLearningRate))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Max Seq Length") {
                     TextField("Max Seq Length", text: stringBinding(\.loraMaxSeqLength))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Sample Limit") {
                     TextField("Optional sample limit", text: stringBinding(\.loraSampleLimit))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Gradient Accumulation") {
                     TextField("Optional accumulation steps", text: stringBinding(\.loraGradientAccumulation))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Target Modules") {
                     TextField("Target Modules", text: stringBinding(\.loraTargetModules))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Num Layers") {
                     TextField("Num Layers", text: stringBinding(\.loraNumLayers))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                 }
                 DesktopEditorialField("Derived Model Alias") {
                     TextField("Derived Model Alias", text: stringBinding(\.loraDerivedModelAlias))
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                 }
             }
 
@@ -7247,7 +7247,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                         set: { viewModel.updateDiagnosticsDebugBundleRunIDDraft($0) }
                     )
                 )
-                .textFieldStyle(MelixOperatorTextFieldStyle())
+                .melixOperatorTextFieldStyle()
 
                 HStack(spacing: 8) {
                     TextField(
@@ -7257,7 +7257,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                             set: { viewModel.updateDiagnosticsDebugBundleSourcePathDraft($0) }
                         )
                     )
-                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                    .melixOperatorTextFieldStyle()
 
                     TextField(
                         "Output path",
@@ -7266,7 +7266,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                             set: { viewModel.updateDiagnosticsDebugBundleOutputPathDraft($0) }
                         )
                     )
-                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                    .melixOperatorTextFieldStyle()
                 }
 
                 HStack(spacing: 8) {
@@ -7687,7 +7687,7 @@ struct DesktopDiagnosticsToolSectionView: View {
 
     private var evidenceReportFilterField: some View {
         TextField("Filter report rows", text: $evidenceReportFilter)
-            .textFieldStyle(MelixOperatorTextFieldStyle())
+            .melixOperatorTextFieldStyle()
     }
 
     private func evidenceReportControlRow(report: RuntimeEvidenceReportState?) -> some View {
@@ -8288,7 +8288,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     set: { viewModel.benchmarkSampleSize = $0 }
                                 )
                             )
-                            .textFieldStyle(MelixOperatorTextFieldStyle())
+                            .melixOperatorTextFieldStyle()
                             TextField(
                                 "Batch Factor",
                                 text: Binding(
@@ -8296,7 +8296,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     set: { viewModel.benchmarkBatchFactor = $0 }
                                 )
                             )
-                            .textFieldStyle(MelixOperatorTextFieldStyle())
+                            .melixOperatorTextFieldStyle()
                             TextField(
                                 "Repeats",
                                 text: Binding(
@@ -8304,7 +8304,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     set: { viewModel.benchRepeats = $0 }
                                 )
                             )
-                            .textFieldStyle(MelixOperatorTextFieldStyle())
+                            .melixOperatorTextFieldStyle()
                         }
 
                         HStack(spacing: 16) {
@@ -8561,7 +8561,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     set: { viewModel.benchMatrixRepeats = $0 }
                                 )
                             )
-                            .textFieldStyle(MelixOperatorTextFieldStyle())
+                            .melixOperatorTextFieldStyle()
 
                             Picker(
                                 "Load Budget",
@@ -8584,7 +8584,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.benchMatrixRequests = $0 }
                                     )
                                 )
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
                             } else {
                                 TextField(
                                     "Duration Seconds",
@@ -8593,7 +8593,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.benchMatrixDurationSeconds = $0 }
                                     )
                                 )
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
                             }
                         }
 
@@ -9005,7 +9005,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     set: { viewModel.evaluationPromptIDDraft = $0 }
                                 )
                             )
-                            .textFieldStyle(MelixOperatorTextFieldStyle())
+                            .melixOperatorTextFieldStyle()
                             .disabled(viewModel.isEvaluationPromptIDEditable == false)
 
                             TextField(
@@ -9015,7 +9015,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     set: { viewModel.evaluationPromptTitleDraft = $0 }
                                 )
                             )
-                            .textFieldStyle(MelixOperatorTextFieldStyle())
+                            .melixOperatorTextFieldStyle()
                             .disabled(
                                 viewModel.isEvaluationPromptIDEditable == false
                                     || viewModel.isEvaluationPromptDraftEditable == false
@@ -9068,7 +9068,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     set: { viewModel.evaluationSemanticJudgeModelID = $0 }
                                 )
                             )
-                            .textFieldStyle(MelixOperatorTextFieldStyle())
+                            .melixOperatorTextFieldStyle()
                         }
                     }
 
@@ -9105,7 +9105,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     set: { viewModel.evaluationSourcePath = $0 }
                                 )
                             )
-                            .textFieldStyle(MelixOperatorTextFieldStyle())
+                            .melixOperatorTextFieldStyle()
                         case .huggingFaceDataset:
                             HStack(spacing: 16) {
                                 TextField(
@@ -9115,7 +9115,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationHFDatasetPath = $0 }
                                     )
                                 )
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
                                 TextField(
                                     "Config",
                                     text: Binding(
@@ -9123,7 +9123,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationHFDatasetName = $0 }
                                     )
                                 )
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
                             }
                             HStack(spacing: 16) {
                                 TextField(
@@ -9133,7 +9133,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationHFDatasetRevision = $0 }
                                     )
                                 )
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
                                 TextField(
                                     "Split",
                                     text: Binding(
@@ -9141,7 +9141,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationHFDatasetSplit = $0 }
                                     )
                                 )
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
                             }
                         }
                     }
@@ -9160,7 +9160,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationFieldSystemPath = $0 }
                                     )
                                 )
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
                                 TextField(
                                     "Input Text Path",
                                     text: Binding(
@@ -9168,7 +9168,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationFieldInputTextPath = $0 }
                                     )
                                 )
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
                             }
 
                             HStack(spacing: 16) {
@@ -9179,7 +9179,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationFieldTargetPath = $0 }
                                     )
                                 )
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
                                 TextField(
                                     "Sample ID Path",
                                     text: Binding(
@@ -9187,7 +9187,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationFieldSampleIDPath = $0 }
                                     )
                                 )
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
                             }
 
                             Text("Profile")
@@ -9202,7 +9202,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationResultKind = $0 }
                                     )
                                 )
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
                                 TextField(
                                     "Extraction Mode",
                                     text: Binding(
@@ -9210,7 +9210,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationExtractionMode = $0 }
                                     )
                                 )
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
                                 TextField(
                                     "Threshold",
                                     text: Binding(
@@ -9218,7 +9218,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationThreshold = $0 }
                                     )
                                 )
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
                             }
 
                             HStack(spacing: 16) {
@@ -9229,7 +9229,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationOutputSchemaJSON = $0 }
                                     )
                                 )
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
                                 TextField(
                                     "Ignored Paths",
                                     text: Binding(
@@ -9237,7 +9237,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                         set: { viewModel.evaluationIgnoredPaths = $0 }
                                     )
                                 )
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
                             }
                         }
                     }
@@ -9348,7 +9348,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                 set: { viewModel.evaluationSampleSize = $0 }
                             )
                         )
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                         TextField(
                             "Batch Factor",
                             text: Binding(
@@ -9356,7 +9356,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                 set: { viewModel.evaluationBatchFactor = $0 }
                             )
                         )
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                         TextField(
                             "Few-shot",
                             text: Binding(
@@ -9364,7 +9364,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                 set: { viewModel.evaluationFewShot = $0 }
                             )
                         )
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                         TextField(
                             "Seed",
                             text: Binding(
@@ -9372,7 +9372,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                 set: { viewModel.evaluationSeed = $0 }
                             )
                         )
-                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                        .melixOperatorTextFieldStyle()
                     }
 
                         HStack(spacing: 16) {
@@ -9383,7 +9383,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     set: { viewModel.evaluationScoringMode = $0 }
                                 )
                             )
-                            .textFieldStyle(MelixOperatorTextFieldStyle())
+                            .melixOperatorTextFieldStyle()
                             TextField(
                                 "Code Exec Policy",
                                 text: Binding(
@@ -9391,7 +9391,7 @@ struct DesktopDiagnosticsToolSectionView: View {
                                     set: { viewModel.evaluationCodeExecPolicy = $0 }
                                 )
                             )
-                            .textFieldStyle(MelixOperatorTextFieldStyle())
+                            .melixOperatorTextFieldStyle()
                         }
                     }
 

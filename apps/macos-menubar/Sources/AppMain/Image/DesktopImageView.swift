@@ -229,7 +229,7 @@ struct DesktopImageWorkspace: View {
                                     set: { viewModel.imageSize = $0 }
                                 )
                             )
-                            .textFieldStyle(MelixOperatorTextFieldStyle())
+                            .melixOperatorTextFieldStyle()
 
                             Stepper(
                                 "Variants \(viewModel.imageVariantCount)",
@@ -251,7 +251,7 @@ struct DesktopImageWorkspace: View {
                                             set: { viewModel.imageSteps = $0 }
                                         )
                                     )
-                                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                                    .melixOperatorTextFieldStyle()
 
                                     TextField(
                                         "Guidance",
@@ -260,7 +260,7 @@ struct DesktopImageWorkspace: View {
                                             set: { viewModel.imageGuidance = $0 }
                                         )
                                     )
-                                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                                    .melixOperatorTextFieldStyle()
 
                                     if selectedMode == .edit {
                                         TextField(
@@ -270,7 +270,7 @@ struct DesktopImageWorkspace: View {
                                                 set: { viewModel.imageStrength = $0 }
                                             )
                                         )
-                                        .textFieldStyle(MelixOperatorTextFieldStyle())
+                                        .melixOperatorTextFieldStyle()
                                     }
                                 }
 
@@ -281,7 +281,7 @@ struct DesktopImageWorkspace: View {
                                         set: { viewModel.imageNegativePrompt = $0 }
                                     )
                                 )
-                                .textFieldStyle(MelixOperatorTextFieldStyle())
+                                .melixOperatorTextFieldStyle()
 
                                 HStack {
                                     Button("Save Defaults", action: viewModel.applyImageDefaultsFromUI)
@@ -321,7 +321,7 @@ struct DesktopImageWorkspace: View {
                                     set: { viewModel.imageEditSourceURL = $0 }
                                 )
                             )
-                            .textFieldStyle(MelixOperatorTextFieldStyle())
+                            .melixOperatorTextFieldStyle()
 
                             TextField(
                                 "Mask URI (optional)",
@@ -330,7 +330,7 @@ struct DesktopImageWorkspace: View {
                                     set: { viewModel.imageEditMaskURL = $0 }
                                 )
                             )
-                            .textFieldStyle(MelixOperatorTextFieldStyle())
+                            .melixOperatorTextFieldStyle()
                         }
 
                         HStack {

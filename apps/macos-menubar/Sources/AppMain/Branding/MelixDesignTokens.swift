@@ -315,11 +315,11 @@ extension View {
     }
 }
 
-struct MelixOperatorTextFieldStyle: TextFieldStyle {
+struct MelixOperatorTextFieldModifier: ViewModifier {
     @FocusState private var isFocused: Bool
 
-    func _body(configuration: TextField<Self._Label>) -> some View {
-        configuration
+    func body(content: Content) -> some View {
+        content
             .textFieldStyle(.plain)
             .font(MelixDesignTokens.Typography.body)
             .padding(.horizontal, MelixDesignTokens.Spacing.md)
@@ -339,6 +339,12 @@ struct MelixOperatorTextFieldStyle: TextFieldStyle {
                     )
             )
             .focused($isFocused)
+    }
+}
+
+extension View {
+    func melixOperatorTextFieldStyle() -> some View {
+        modifier(MelixOperatorTextFieldModifier())
     }
 }
 

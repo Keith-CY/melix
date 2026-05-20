@@ -520,7 +520,7 @@ private struct DesktopRegistryTextField: View {
 
     var body: some View {
         TextField(title, text: $text)
-            .textFieldStyle(MelixOperatorTextFieldStyle())
+            .melixOperatorTextFieldStyle()
     }
 }
 
@@ -530,7 +530,7 @@ private struct DesktopRegistrySecureField: View {
 
     var body: some View {
         SecureField(title, text: $text)
-            .textFieldStyle(MelixOperatorTextFieldStyle())
+            .melixOperatorTextFieldStyle()
     }
 }
 
@@ -1174,7 +1174,7 @@ private struct DesktopRegistryBadgeView: View {
 }
 
 private struct DesktopRegistryBadgeItem: Identifiable {
-    let id = UUID()
+    var id: String { title }
     let title: String
     let tint: Color
 }
@@ -2108,7 +2108,7 @@ struct DesktopSettingsTabView: View {
                             set: { viewModel.updateRuntimeSettingDraft(key: $0, value: viewModel.runtimeSettingValueDraft) }
                         )
                     )
-                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                    .melixOperatorTextFieldStyle()
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Setting value")
@@ -2121,7 +2121,7 @@ struct DesktopSettingsTabView: View {
                             set: { viewModel.updateRuntimeSettingDraft(key: viewModel.runtimeSettingKeyDraft, value: $0) }
                         )
                     )
-                    .textFieldStyle(MelixOperatorTextFieldStyle())
+                    .melixOperatorTextFieldStyle()
                 }
             }
             HStack(spacing: 8) {
@@ -2216,7 +2216,7 @@ struct DesktopSettingsTabView: View {
                         set: { viewModel.updateRuntimeDiscoveryAliasQuery($0) }
                     )
                 )
-                .textFieldStyle(MelixOperatorTextFieldStyle())
+                .melixOperatorTextFieldStyle()
             }
             DesktopSettingsOperationButton(title: "Lookup Alias", isEnabled: viewModel.runtimeDiscoveryAliasLookupCanRun) {
                 Task { await viewModel.lookupRuntimeDiscoveryModelAlias() }
