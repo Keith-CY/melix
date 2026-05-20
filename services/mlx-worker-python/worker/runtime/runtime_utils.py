@@ -23,7 +23,7 @@ class CallableKwargSignature:
         return keyword in self.keyword_accessible_params
 
     def accepts(self, keyword: str) -> bool:
-        return self.declares(keyword) or self.accepts_var_keyword
+        return keyword in self.keyword_accessible_params or self.accepts_var_keyword
 
 
 _EMPTY_KWARG_SIGNATURE = CallableKwargSignature((), frozenset(), False)
