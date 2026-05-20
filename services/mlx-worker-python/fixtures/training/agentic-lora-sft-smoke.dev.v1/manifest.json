@@ -1,0 +1,17 @@
+{
+  "schema_version": "melix.training_dataset_package.v1",
+  "dataset_id": "agentic-lora-sft-smoke.dev.v1",
+  "format": "agentic_tool_trace",
+  "sample_count": 1,
+  "validation_sample_count": 1,
+  "version": "1",
+  "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+  "toolset_version": "melix.agentic_tools.builtin.v1",
+  "registry_schema_version": "melix.agentic_tool_registry.v1",
+  "reward_policy_id": "agentic-sft-smoke.reward.v1",
+  "leakage_policy_id": "agentic-sft-smoke.no-leakage.v1",
+  "source_dataset_id": "agentic-lora-sft-smoke",
+  "source_split": "train",
+  "source_revision": "fixture-v1",
+  "license": "Apache-2.0"
+}

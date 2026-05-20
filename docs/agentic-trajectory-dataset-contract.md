@@ -63,6 +63,12 @@ Current implementation anchors that future slices must reuse:
   - reports trace quality metrics and explicit leakage findings
 - `services/mlx-worker-python/fixtures/training/agentic-tool-trace.dev.v1/`
   - fixture package for the first repository-owned trace shape
+- `services/mlx-worker-python/fixtures/training/agentic-lora-sft-smoke.dev.v1/`
+  - clean train/validation fixture package for deterministic local agentic
+    LoRA SFT smoke runs
+- `scripts/agentic_lora_sft_smoke.py`
+  - deterministic smoke path that runs the LoRA SFT pipeline against the
+    checked-in agentic trace fixture without requiring a real MLX training run
 - `services/mlx-worker-python/worker/runtime/tool_registry.py`
   - defines the built-in tool registry receipt
 - `services/mlx-worker-python/worker/runtime/tool_observation.py`
