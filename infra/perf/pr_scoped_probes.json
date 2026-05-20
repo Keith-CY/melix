@@ -3876,6 +3876,12 @@
         "unit": "calls",
         "direction": "higher_is_better",
         "warn_pct": 0.0
+      },
+      {
+        "key": "full_config_template_hits_mean",
+        "unit": "calls",
+        "direction": "higher_is_better",
+        "warn_pct": 0.0
       }
     ]
   },

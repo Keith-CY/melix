@@ -282,6 +282,8 @@ def built_in_tool_registry() -> ToolRegistry:
 def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> common_pb2.ToolConfig:
     if names is None:
         return _copy_tool_config(_BUILTIN_TOOL_CONFIG_TEMPLATE)
+    if names == _BUILTIN_TOOL_CONFIG_NAMES_LIST:
+        return _copy_tool_config(_BUILTIN_TOOL_CONFIG_TEMPLATE)
     requested_names = tuple(names)
     cached_config = _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES.get(requested_names)
     if cached_config is not None:
@@ -375,6 +377,7 @@ _BUILTIN_AGENTIC_TOOLS = (
 
 
 _BUILTIN_TOOL_CONFIG_REGISTRY = ToolRegistry(_BUILTIN_AGENTIC_TOOLS)
+_BUILTIN_TOOL_CONFIG_NAMES_LIST = list(BUILTIN_AGENTIC_TOOL_NAMES)
 _BUILTIN_TOOL_CONFIG_BYTES = (
     _BUILTIN_TOOL_CONFIG_REGISTRY.as_worker_tool_config().SerializeToString()
 )
