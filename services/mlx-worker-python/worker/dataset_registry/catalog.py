@@ -42,7 +42,7 @@ _DEFAULT_CONFIG_PARTS = frozenset({"data", "default"})
 _DEFAULT_CONFIG_FIRST_PARTS = frozenset(
     {"data", "train", "test", "validation", "valid", "dev"}
 )
-_JSON_LIMITED_PREVIEW_CHUNK_CHARS = 64 * 1024
+_JSON_LIMITED_PREVIEW_CHUNK_CHARS = 16 * 1024
 
 
 @dataclass(frozen=True)
