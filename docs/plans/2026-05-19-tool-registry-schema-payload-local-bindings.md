@@ -46,6 +46,23 @@ Expected effect:
 - preserve mutation isolation for returned schema payload dictionaries and
   protobuf configs.
 
+## Follow-up Slice: Cached Required-Argument List Copy
+
+The 2026-05-20 follow-up keeps the same `ToolDescriptor.schema_payload()` API
+and copy-on-return behavior, but stores the required argument snapshot in both
+tuple and list form during descriptor initialization. `required_arguments`
+continues to expose the immutable tuple, while `schema_payload()` can copy the
+prebuilt list directly instead of rebuilding a list from the tuple on every
+call.
+
+Expected effect:
+
+- reduce repeated schema payload construction overhead measured by
+  `schema_payload_elapsed_ms_mean`;
+- keep returned schema payloads independently mutable;
+- leave registry selection, protobuf config serialization, and tool definitions
+  unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.
