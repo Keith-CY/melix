@@ -256,7 +256,7 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.selectedSurface == .image)
 
         DesktopWorkspaceCommand.selectToolSection(.downloads).perform(on: viewModel)
-        #expect(viewModel.selectedSurface == .tools)
+        #expect(viewModel.selectedSurface == .models)
         #expect(viewModel.selectedToolSection == .downloads)
 
         DesktopWorkspaceCommand.openCommandCenter.perform(on: viewModel)
@@ -272,14 +272,14 @@ struct DesktopFoundationViewTests {
         await viewModel.start()
 
         #expect(viewModel.isDesktopPaneVisible(.sidebar, for: .chat))
-        #expect(viewModel.isDesktopPaneVisible(.inspector, for: .chat) == false)
+        #expect(viewModel.isDesktopPaneVisible(.inspector, for: .chat))
         #expect(DesktopWorkspaceTitleBarCommandCenterButton.symbolName == "command.circle")
 
         let hosted = hostView(DesktopWorkspaceTitleBarActionsView(viewModel: viewModel))
         #expect(hosted.subviews.isEmpty == false)
 
         viewModel.toggleDesktopPane(.inspector)
-        #expect(viewModel.isDesktopPaneVisible(.inspector, for: .chat))
+        #expect(viewModel.isDesktopPaneVisible(.inspector, for: .chat) == false)
 
         viewModel.openCommandCenter()
         #expect(commandCenter.wasOpened)
@@ -345,9 +345,9 @@ struct DesktopFoundationViewTests {
     @MainActor
     func toolsCategoriesMapSectionsIntoStagedWorkflowGroups() {
         #expect(DesktopToolCategory.models.sections == [.modelsLibrary, .downloads])
-        #expect(DesktopToolCategory.build.sections == [.training, .workflowRecipes, .syntheticDatasets])
-        #expect(DesktopToolCategory.validate.sections == [.batchRuns, .jobs, .diagnostics])
-        #expect(DesktopToolCategory.system.sections == [.logs, .settings])
+        #expect(DesktopToolCategory.workflows.sections == [.training, .workflowRecipes, .syntheticDatasets, .batchRuns, .jobs])
+        #expect(DesktopToolCategory.diagnostics.sections == [.diagnostics, .logs])
+        #expect(DesktopToolCategory.system.sections == [.settings])
     }
 
     @Test("tool categories cover every tool section exactly once")
@@ -1594,7 +1594,10 @@ struct DesktopFoundationViewTests {
         #expect(shellSource.contains("\"Session Name\""))
         #expect(shellSource.contains("Button(\"Add Local Server\")"))
         #expect(shellSource.contains("Button(\"Add Remote Server\")"))
-        #expect(shellSource.contains("MelixSectionCard(\"New Local Session\")"))
+        #expect(shellSource.contains("DesktopServerCreationStepperHeader"))
+        #expect(shellSource.contains("\"Local Server Setup\""))
+        #expect(shellSource.contains("\"Remote Server Setup\""))
+        #expect(shellSource.contains("MelixSectionCard(\"Runtime\")"))
         #expect(shellSource.contains("\"Server Type\"") == false)
         #expect(shellSource.contains("Button(\"Create Local Server\")") == false)
         #expect(shellSource.contains(".disabled(viewModel.canCreateLocalServerFromDraft == false)"))
@@ -2495,7 +2498,6 @@ struct DesktopFoundationViewTests {
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
 
-        viewModel.selectSurface(.tools)
         viewModel.selectToolSection(.training)
         viewModel.loraDatasetSourceKind = .localPackage
         let localView = hostView(DesktopWorkspaceShellView(viewModel: viewModel), size: CGSize(width: 1200, height: 1400))
@@ -2523,20 +2525,16 @@ struct DesktopFoundationViewTests {
     @MainActor
     func toolsWorkspaceRendersCategoryFirstNavigation() async throws {
         let view = hostView(
-            DesktopToolsCategorySidebarView(
+            DesktopDomainSidebarView(
+                domain: .workflows,
                 selectedToolSection: .training,
                 selectToolSection: { _ in }
             )
         )
 
         #expect(view.subviews.isEmpty == false)
-        for category in DesktopToolCategory.allCases {
-            for section in category.sections {
-                #expect(
-                    DesktopToolsCategorySidebarView.accessibilityLabel(category: category, section: section)
-                        == "\(category.rawValue) \(section.rawValue)"
-                )
-            }
+        for section in DesktopSurfaceDomain.workflows.sections {
+            #expect(section.breadcrumbTitle == "Workflows / \(section.domainTitle)")
         }
     }
 
@@ -2549,7 +2547,7 @@ struct DesktopFoundationViewTests {
         let emptyView = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
         let emptyTexts = renderedTextValues(in: emptyView)
 
-        #expect(viewModel.selectedSurface == .tools)
+        #expect(viewModel.selectedSurface == .workflows)
         #expect(viewModel.selectedToolSection == .jobs)
         #expect(DesktopJobsToolSectionView.emptyStateTitle == "No Jobs Yet")
         #expect(emptyTexts.contains(DesktopJobsToolSectionView.emptyStateTitle))
@@ -2611,7 +2609,7 @@ struct DesktopFoundationViewTests {
         let buttons = renderedButtons(in: view)
         let preflightButton = try #require(buttons.first { $0.title == "Run Preflight" })
 
-        #expect(viewModel.selectedSurface == .tools)
+        #expect(viewModel.selectedSurface == .workflows)
         #expect(viewModel.selectedToolSection == .batchRuns)
         #expect(preflightButton.isEnabled == false)
         #expect(values.contains("0 models • 0 config values"))
@@ -7738,7 +7736,8 @@ struct DesktopFoundationViewTests {
 
         #expect(source.contains("DesktopChatServerPicker"))
         #expect(source.contains("bindSelectedChatSessionToServer"))
-        #expect(source.contains("MelixSectionCard(\"Model Capabilities\")"))
+        #expect(source.contains("DesktopInspectorContractView"))
+        #expect(source.contains("GroupBox(\"Model Capabilities\")"))
         #expect(source.contains("DesktopChatCapabilityIconGrid"))
         #expect(source.contains("MelixSectionCard(\"Runtime\")") == false)
         #expect(source.contains("Text(\"request \\(") == false)

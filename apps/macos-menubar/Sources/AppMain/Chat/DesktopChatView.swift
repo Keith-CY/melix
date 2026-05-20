@@ -11,6 +11,42 @@ enum DesktopChatLayoutMetrics {
     static let inspectorMaxWidth: CGFloat = 280
     static let collapsedRailWidth: CGFloat = 0
     static let composerMinHeight: CGFloat = 76
+    static let readableWorkspaceMaxWidth: CGFloat = 980
+}
+
+enum DesktopChatStarterPrompt: String, CaseIterable, Identifiable {
+    case runtimeState = "Explain current runtime state"
+    case benchmark = "Benchmark the active model"
+    case syntheticDataset = "Draft a synthetic dataset recipe"
+    case apiExample = "Show a local API request"
+
+    var id: String { rawValue }
+
+    var detail: String {
+        switch self {
+        case .runtimeState:
+            return "Summarize server, model, queue, and recent warnings."
+        case .benchmark:
+            return "Prepare a small latency and throughput run."
+        case .syntheticDataset:
+            return "Create a grounded workflow seed for data generation."
+        case .apiExample:
+            return "Copy a request shape for the selected endpoint."
+        }
+    }
+
+    var prompt: String {
+        switch self {
+        case .runtimeState:
+            return "Explain the current Melix runtime state and call out anything that needs attention."
+        case .benchmark:
+            return "Set up a quick benchmark for the active model and explain what metrics to watch."
+        case .syntheticDataset:
+            return "Draft a synthetic dataset recipe for event extraction and list the fields I should verify."
+        case .apiExample:
+            return "Show a local API request for the selected Melix server and explain the auth requirements."
+        }
+    }
 }
 
 enum DesktopChatTranscriptAutoScroll {
@@ -129,7 +165,8 @@ struct DesktopChatTabView: View {
                 showsSidebar: $showsSidebar,
                 showsInspector: $showsInspector
             )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: DesktopChatLayoutMetrics.readableWorkspaceMaxWidth, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
 
             DesktopWorkspacePaneSlot(
                 role: .inspector,
@@ -317,6 +354,8 @@ struct DesktopChatSessionWorkspace: View {
                                 )
                                 .id(entry.id)
                             }
+                        } else {
+                            DesktopChatEmptyStateView(viewModel: viewModel)
                         }
                         Color.clear
                             .frame(height: 1)
@@ -386,35 +425,127 @@ struct DesktopChatSessionInspector: View {
     let viewModel: RuntimeViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            MelixSectionCard("Session") {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(viewModel.selectedChatSession?.statusText ?? "Idle")
-                        .font(.headline)
-                    if let server = viewModel.selectedChatServerSession {
-                        Text(server.effectiveBaseURL)
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text("Choose a Server Session")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+        DesktopInspectorContractView(
+            title: "Chat Inspector",
+            context: runtimeContextText,
+            health: runtimeHealthText,
+            metrics: runtimeMetricsText,
+            actions: inspectorActions,
+            evidence: inspectorEvidence
+        ) {
+            GroupBox("Model Capabilities") {
+                DesktopChatCapabilityIconGrid(capabilities: viewModel.chatCapabilities)
+            }
+        }
+    }
+
+    private var runtimeContextText: String {
+        if let server = viewModel.selectedChatServerSession {
+            return "\(server.title) • \(server.modelID)"
+        }
+        return "No chat server selected"
+    }
+
+    private var runtimeHealthText: String {
+        viewModel.selectedChatServerSession?.lifecycleSummaryText
+            ?? viewModel.selectedChatSession?.statusText
+            ?? "Choose a server to start chatting"
+    }
+
+    private var runtimeMetricsText: String {
+        if let server = viewModel.selectedChatServerSession {
+            return "\(server.effectiveBaseURL) • \(server.runtimeDetailText)"
+        }
+        return viewModel.lastChatUsageText.isEmpty ? "No usage recorded" : viewModel.lastChatUsageText
+    }
+
+    private var inspectorActions: [DesktopInspectorActionRow] {
+        [
+            DesktopInspectorActionRow(title: "Open Command Center", systemImage: "command.circle") {
+                viewModel.selectSurface(.commandCenter)
+            },
+            DesktopInspectorActionRow(title: "Open Server", systemImage: "server.rack") {
+                viewModel.selectSurface(.server)
+            },
+            DesktopInspectorActionRow(title: "Open Diagnostics", systemImage: "stethoscope") {
+                viewModel.selectToolSection(.diagnostics)
+            },
+        ]
+    }
+
+    private var inspectorEvidence: [String] {
+        [
+            viewModel.selectedChatSession?.exportPath,
+            viewModel.selectedChatServerSession?.sharedAccessSummaryText,
+            viewModel.lastChatUsageText,
+        ]
+        .compactMap { $0 }
+        .filter { $0.isEmpty == false }
+    }
+}
+
+private struct DesktopChatEmptyStateView: View {
+    let viewModel: RuntimeViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Ask Melix")
+                    .font(.title3.weight(.semibold))
+                Text("Start from a runtime-aware prompt, or continue a recent local session.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 10)], spacing: 10) {
+                ForEach(DesktopChatStarterPrompt.allCases) { prompt in
+                    Button {
+                        viewModel.chatComposerText = prompt.prompt
+                    } label: {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(prompt.rawValue)
+                                .font(.headline)
+                            Text(prompt.detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 74, alignment: .leading)
+                        .padding(12)
+                        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.hairline), lineWidth: 1)
+                        )
                     }
-                    if let exportPath = viewModel.selectedChatSession?.exportPath, !exportPath.isEmpty {
-                        Text(exportPath)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
+                }
+            }
+
+            if viewModel.chatSessions.isEmpty == false {
+                MelixSectionCard("Recent Chats") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(viewModel.chatSessions.prefix(3)) { session in
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(session.title)
+                                    .font(.caption.weight(.semibold))
+                                Spacer()
+                                Text(session.summaryText)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
                     }
                 }
             }
 
-            MelixSectionCard("Model Capabilities") {
-                DesktopChatCapabilityIconGrid(capabilities: viewModel.chatCapabilities)
+            if let notice = viewModel.selectedChatServerSession?.chatWorkspaceNoticeState {
+                DesktopInlineNoticeCardView(notice: notice)
             }
-
-            Spacer()
         }
-        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 12)
     }
 }
 

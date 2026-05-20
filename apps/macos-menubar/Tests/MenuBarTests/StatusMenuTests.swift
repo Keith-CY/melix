@@ -250,7 +250,7 @@ struct StatusMenuTests {
 
         await viewModel.start()
         menu.perform(.openDownloads)
-        #expect(viewModel.selectedSurface == .tools)
+        #expect(viewModel.selectedSurface == .models)
         #expect(viewModel.selectedToolSection == .downloads)
 
         menu.perform(.openServer)

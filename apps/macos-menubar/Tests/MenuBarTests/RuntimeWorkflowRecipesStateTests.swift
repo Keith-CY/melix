@@ -894,7 +894,7 @@ struct RuntimeWorkflowRecipesStateTests {
         }
     }
 
-    @Test("workflow recipes workspace shell mounts through tools navigation")
+    @Test("workflow recipes workspace shell mounts through workflows navigation")
     @MainActor
     func workflowRecipesWorkspaceShellMountsThroughToolsNavigation() throws {
         let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
@@ -904,7 +904,7 @@ struct RuntimeWorkflowRecipesStateTests {
         let hosted = hostWorkflowRecipeView(DesktopWorkspaceShellView(viewModel: viewModel))
 
         #expect(hosted.subviews.isEmpty == false)
-        #expect(viewModel.selectedSurface == .tools)
+        #expect(viewModel.selectedSurface == .workflows)
         #expect(viewModel.selectedToolSection == .workflowRecipes)
     }
 

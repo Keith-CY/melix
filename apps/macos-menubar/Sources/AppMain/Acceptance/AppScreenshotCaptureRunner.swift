@@ -74,7 +74,7 @@ public enum AppScreenshotCaptureCase: Equatable, Sendable {
     case commandCenter
 
     public static var defaultCases: [AppScreenshotCaptureCase] {
-        DesktopSurface.allCases.map(AppScreenshotCaptureCase.workspace)
+        DesktopSurface.visibleNavigationCases.map(AppScreenshotCaptureCase.workspace)
             + DesktopToolSection.allCases.map(AppScreenshotCaptureCase.toolSection)
             + [.commandCenter]
     }
@@ -84,7 +84,7 @@ public enum AppScreenshotCaptureCase: Equatable, Sendable {
         case .workspace(let surface):
             return "workspace-\(Self.slug(surface.rawValue))"
         case .toolSection(let section):
-            return "workspace-tools-\(Self.slug(section.rawValue))"
+            return "workspace-\(Self.slug(section.domain.surface.rawValue))-\(Self.slug(section.rawValue))"
         case .commandCenter:
             return "command-center"
         }
@@ -105,8 +105,8 @@ public enum AppScreenshotCaptureCase: Equatable, Sendable {
         switch self {
         case .workspace(let surface):
             return surface
-        case .toolSection:
-            return .tools
+        case .toolSection(let section):
+            return section.domain.surface
         case .commandCenter:
             return nil
         }
@@ -249,13 +249,9 @@ public final class AppScreenshotCaptureRunner {
     private func apply(_ captureCase: AppScreenshotCaptureCase) {
         switch captureCase {
         case .workspace(let surface):
-            viewModel.selectedSurface = surface
-            if surface == .tools {
-                viewModel.selectedToolSection = .modelsLibrary
-            }
+            viewModel.selectSurface(surface)
         case .toolSection(let section):
-            viewModel.selectedSurface = .tools
-            viewModel.selectedToolSection = section
+            viewModel.selectToolSection(section)
         case .commandCenter:
             break
         }

@@ -764,7 +764,6 @@ public final class Phase8WindowUIAcceptanceRunner {
         mode: RuntimeLoraTrainingMode,
         releaseGate: Phase8WindowUIBusinessLineReleaseGate
     ) -> Phase8WindowUIBusinessLineEvidence {
-        viewModel.selectSurface(.tools)
         viewModel.selectToolSection(.training)
         viewModel.selectedLoraModelID = config.modelID
         viewModel.loraDatasetURI = config.trainingFixture
@@ -785,7 +784,7 @@ public final class Phase8WindowUIAcceptanceRunner {
         let selectable = viewModel.loraTrainingMode == mode
         let runnable = viewModel.selectedLoraModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             && viewModel.loraDatasetURI.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-        let inspectable = viewModel.selectedSurface == .tools && viewModel.selectedToolSection == .training
+        let inspectable = viewModel.selectedSurface == .workflows && viewModel.selectedToolSection == .training
         let routedCommand = mode.isAlignmentMode ? "alignment.train" : "lora.train"
 
         return Phase8WindowUIBusinessLineEvidence(
@@ -818,7 +817,6 @@ public final class Phase8WindowUIAcceptanceRunner {
         mode: RuntimeQuantizationMode,
         releaseGate: Phase8WindowUIBusinessLineReleaseGate
     ) -> Phase8WindowUIBusinessLineEvidence {
-        viewModel.selectSurface(.tools)
         viewModel.selectToolSection(.downloads)
         viewModel.selectQuantizationMode(mode.rawValue)
         viewModel.selectQuantizationProfile("q4")
@@ -826,7 +824,7 @@ public final class Phase8WindowUIAcceptanceRunner {
         let visible = RuntimeQuantizationMode.allCases.contains(mode)
         let selectable = viewModel.selectedQuantizationMode == mode
         let runnable = viewModel.modelOperationTargetModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-        let inspectable = viewModel.selectedSurface == .tools
+        let inspectable = viewModel.selectedSurface == .models
             && viewModel.selectedToolSection == .downloads
             && viewModel.availableQuantizationProfileIDs.contains(viewModel.selectedQuantizationProfileID)
 
