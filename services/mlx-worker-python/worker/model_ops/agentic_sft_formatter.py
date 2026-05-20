@@ -253,7 +253,7 @@ def _sample_token_metrics(sample: dict[str, Any]) -> dict[str, int]:
     tool_call_tokens = 0
     observation_tokens = 0
     final_answer_tokens = 0
-    assistant_contexts: list[str] = []
+    message_spans: list[dict[str, str]] = []
     media_refs = sample.get("media_refs")
     if isinstance(media_refs, list) and media_refs:
         context_tokens += _count_whitespace_tokens(
@@ -267,37 +267,58 @@ def _sample_token_metrics(sample: dict[str, Any]) -> dict[str, int]:
             continue
         role = str(raw_turn.get("role", "")).strip()
         if role in {"system", "user"}:
-            context_tokens += _count_whitespace_tokens(raw_turn.get("content", ""))
+            content = str(raw_turn.get("content", "")).strip()
+            if content:
+                message_spans.append(
+                    {"role": role, "content": content, "category": "context"}
+                )
             continue
         if role == "assistant":
             content = _format_assistant_turn(raw_turn)
             if not content:
                 continue
+            category = "context"
             if isinstance(raw_turn.get("tool_call"), Mapping):
                 tool_call_tokens += _count_whitespace_tokens(content)
-            else:
-                assistant_contexts.append(content)
+                category = "tool_call"
+            message_spans.append(
+                {"role": "assistant", "content": content, "category": category}
+            )
             continue
         if role == "tool":
-            observation_tokens += _count_whitespace_tokens(_format_tool_turn(raw_turn))
+            content = _format_tool_turn(raw_turn)
+            if content:
+                observation_tokens += _count_whitespace_tokens(content)
+                message_spans.append(
+                    {
+                        "role": "tool",
+                        "content": content,
+                        "category": "observation",
+                    }
+                )
 
     if final_answer:
         final_answer_content = _project_final_answer(final_answer)
-        if assistant_contexts:
+        if message_spans and message_spans[-1]["role"] == "assistant":
             context_tokens += sum(
-                _count_whitespace_tokens(content) for content in assistant_contexts[:-1]
+                _count_span_context_tokens(message) for message in message_spans[:-1]
             )
-            existing_content = assistant_contexts[-1].strip()
-            if existing_content == final_answer:
-                final_answer_content = _project_final_answer(final_answer)
-            elif final_answer_content not in existing_content:
-                final_answer_content = f"{existing_content}\n\n{final_answer_content}"
-            else:
-                final_answer_content = existing_content
+            existing_content = message_spans[-1]["content"].strip()
+            if existing_content != final_answer:
+                if final_answer_content not in existing_content:
+                    final_answer_content = (
+                        f"{existing_content}\n\n{final_answer_content}"
+                    )
+                else:
+                    final_answer_content = existing_content
+        else:
+            context_tokens += sum(
+                _count_span_context_tokens(message) for message in message_spans
+            )
         final_answer_tokens = _count_whitespace_tokens(final_answer_content)
     else:
         context_tokens += sum(
-            _count_whitespace_tokens(content) for content in assistant_contexts
+            _count_span_context_tokens(message) for message in message_spans
         )
 
     return {
@@ -311,6 +332,12 @@ def _sample_token_metrics(sample: dict[str, Any]) -> dict[str, int]:
         "observation_tokens": observation_tokens,
         "final_answer_tokens": final_answer_tokens,
     }
+
+
+def _count_span_context_tokens(message: Mapping[str, str]) -> int:
+    if message.get("category") != "context":
+        return 0
+    return _count_whitespace_tokens(message.get("content", ""))
 
 
 def _add_sample_token_metrics(metrics: dict[str, Any], sample: dict[str, Any]) -> None:

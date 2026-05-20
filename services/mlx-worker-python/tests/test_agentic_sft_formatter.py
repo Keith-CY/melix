@@ -235,3 +235,63 @@ def test_agentic_tool_trace_token_metrics_ignore_unusable_turns() -> None:
         "observation_tokens": 0,
         "final_answer_tokens": 4,
     }
+
+
+def test_agentic_tool_trace_token_metrics_do_not_merge_answer_across_tool_observation() -> None:
+    metrics = agentic_sft_formatter.collect_token_metrics(
+        [
+            {
+                "trace_id": "trace-tool-before-answer",
+                "turns": [
+                    {"role": "assistant", "content": "scratch plan"},
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-1",
+                        "observation": "tool evidence",
+                    },
+                ],
+                "final_answer": "final text",
+            }
+        ]
+    )
+
+    assert metrics == {
+        "estimator": "whitespace_v1",
+        "source_trace_count": 1,
+        "trace_tokens": 12,
+        "tool_call_tokens": 0,
+        "observation_tokens": 6,
+        "final_answer_tokens": 4,
+    }
+
+
+def test_agentic_tool_trace_token_metrics_merge_final_answer_into_last_tool_call_turn() -> None:
+    metrics = agentic_sft_formatter.collect_token_metrics(
+        [
+            {
+                "trace_id": "trace-tool-call-answer",
+                "turns": [
+                    {"role": "user", "content": "inspect"},
+                    {
+                        "role": "assistant",
+                        "content": "query",
+                        "tool_call": {
+                            "id": "call-1",
+                            "name": "search",
+                            "arguments": {"q": "alpha beta"},
+                        },
+                    },
+                ],
+                "final_answer": "done",
+            }
+        ]
+    )
+
+    assert metrics == {
+        "estimator": "whitespace_v1",
+        "source_trace_count": 1,
+        "trace_tokens": 14,
+        "tool_call_tokens": 5,
+        "observation_tokens": 0,
+        "final_answer_tokens": 8,
+    }
