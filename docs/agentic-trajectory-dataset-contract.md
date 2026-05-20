@@ -238,6 +238,15 @@ The rollout manifest projection is additive. Existing fields such as
 `candidate_generation_mode`, and `candidate_scoring_mode` remain stable for
 legacy consumers.
 
+For `candidate_generation_mode: runtime_generate`, GRPO candidates may include
+runtime-emitted tool calls. Melix must execute those calls through the unified
+agentic tool runtime and use the resulting candidate-local tool metrics when
+building reward components. The selected policy-update row must project the
+selected candidate's registry receipt, tool calls, observations, metrics, and
+turns. Candidate-group-wide reward trace persistence is owned by the
+candidate-level reward trace milestone, but the runtime generation slice must
+not copy one sample-level tool replay across all generated candidates.
+
 `fatal_stage` records the first stage that invalidates later trajectory tokens
 or observations. Supported stage names are:
 
