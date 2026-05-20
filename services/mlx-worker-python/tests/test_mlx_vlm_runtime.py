@@ -621,7 +621,11 @@ def _run_text_only_step_with_buffered_detokenizer(
             self.last_segment = ""
 
         def __copy__(self):
-            return FakeDetokenizer()
+            copy = FakeDetokenizer()
+            copy._tokens = list(self._tokens)
+            copy.text = self.text
+            copy.last_segment = self.last_segment
+            return copy
 
         def reset(self) -> None:
             self._tokens = []
