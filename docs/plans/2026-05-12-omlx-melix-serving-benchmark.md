@@ -458,6 +458,16 @@ not a fair source for direct Melix optimization deltas.
   `last_multimodal_decode_mode`, `last_multimodal_fallback_reason`, and
   `last_multimodal_decode_sync_mode` so live comparisons can prove whether the
   request used `text_only_step` or `text_only_batch_generator`.
+- The Gemma4 VLM text-only comparison exposed a production admission bottleneck:
+  imported Gemma4 `mlx_vlm` models advertise the experimental batch-generator as
+  disabled, so safe text-only greedy requests stayed at effective multimodal
+  capacity `1`. The accepted eligibility rule is automatic only for Python VLM
+  routes with `vision_family_id=gemma4-v1`, `melix.vlm.backend_id=mlx_vlm`,
+  text-only messages, explicit greedy sampling (`temperature=0` and either
+  omitted `top_p` or `top_p=1`), and no structured output, tool parser, tool
+  call, tool-choice, or explicit reasoning constraint. Media and constrained
+  output requests must remain fallback-only unless explicitly opted in by later
+  capability work.
 - The first opt-in live probes showed an empty-stream regression caused by a
   missing fallback-reason variable in the text-only step path, then showed that
   model-level `generation_config.json` defaults could keep a

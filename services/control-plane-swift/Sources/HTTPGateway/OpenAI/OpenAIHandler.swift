@@ -2039,6 +2039,11 @@ public struct OpenAIHandler: Sendable {
             workerRequest.execution.ext["melix.vlm.text_only_step_cooperative"] = "true"
         }
         let batchGeneratorEnabled = truthyModelMetadata(model.settings.ext["melix.vlm.text_only_batch_generator"])
+            || shouldAutoEnableVLMTextOnlyBatchGenerator(
+                model: model,
+                normalizedRequest: normalizedRequest,
+                workerRequest: workerRequest
+            )
         if batchGeneratorEnabled {
             workerRequest.execution.ext["melix.vlm.text_only_batch_generator"] = "true"
             if shouldNormalizeVLMTextOnlyBatchGeneratorSampling(
@@ -2055,6 +2060,39 @@ public struct OpenAIHandler: Sendable {
             workerRequest: workerRequest,
             stream: translated.stream
         )
+    }
+
+    private func shouldAutoEnableVLMTextOnlyBatchGenerator(
+        model: Melix_Controlplane_V1_ModelSummary,
+        normalizedRequest: NormalizedTextRequest,
+        workerRequest: Melix_Worker_V1_GenerateRequest
+    ) -> Bool {
+        guard normalizedIdentifier(model.settings.ext["vision_family_id"]) == "gemma4-v1" else {
+            return false
+        }
+        guard normalizedIdentifier(model.settings.ext["melix.vlm.backend_id"]) == "mlx_vlm" else {
+            return false
+        }
+        guard normalizedRequest.structuredOutput == nil,
+              normalizedRequest.toolParser == nil,
+              normalizedRequest.tools.isEmpty,
+              normalizedRequest.toolChoice == nil,
+              normalizedRequest.reasoningEffort == nil,
+              normalizedRequest.enableThinking != true,
+              normalizedRequest.thinking?.isEnabled != true
+        else {
+            return false
+        }
+        guard let requestedTemperature = normalizedRequest.temperature,
+              abs(requestedTemperature) < 1e-9,
+              abs(Double(workerRequest.sampling.temperature)) < 1e-6
+        else {
+            return false
+        }
+        if let requestedTopP = normalizedRequest.topP {
+            return abs(requestedTopP - 1) < 1e-9
+        }
+        return true
     }
 
     private func shouldNormalizeVLMTextOnlyBatchGeneratorSampling(
