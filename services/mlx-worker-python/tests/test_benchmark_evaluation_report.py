@@ -1642,6 +1642,18 @@ def test_metric_direction_fast_path_covers_report_probe_keys() -> None:
         "ttft_ms": "lower_is_better",
         "tokens_per_second": "higher_is_better",
         "request_latency_p95_ms": "lower_is_better",
+        "tool_call_count_sum": "lower_is_better",
+        "tool_latency_ms_mean": "lower_is_better",
+        "observation_bytes_sum": "lower_is_better",
+        "fatal_rate_rate": "lower_is_better",
+        "turn_count_sum": "lower_is_better",
+        "call_count_mean": "lower_is_better",
+        "observation_count_mean": "lower_is_better",
+        "completed_count_mean": "lower_is_better",
+        "timeout_count_mean": "lower_is_better",
+        "failed_count_mean": "lower_is_better",
+        "latency_ms_mean": "lower_is_better",
+        "observation_emitted_bytes_mean": "lower_is_better",
         "speculative_acceptance_rate_mean": "higher_is_better",
         "dflash_rollback_count_sum": "lower_is_better",
         "typed_score_mean": "higher_is_better",
@@ -1651,6 +1663,78 @@ def test_metric_direction_fast_path_covers_report_probe_keys() -> None:
     for metric_key, direction in expected.items():
         assert _METRIC_DIRECTION_BY_KEY[metric_key] == direction
         assert _metric_direction(f"bench.synthetic.{metric_key}") == direction
+
+
+def test_report_builder_warns_on_agentic_tool_turn_cost_regressions() -> None:
+    baseline = {
+        "benchmark_context_rows": [
+            {
+                "suite": "agentic",
+                "context_length": 128,
+                "generation_length": 32,
+                "batch_size": 1,
+                "tool_call_count": 1,
+                "tool_latency_ms": 5.0,
+                "observation_bytes": 16,
+                "fatal_rate": 0.0,
+                "turn_count": 2,
+                "agentic_tool_metrics": {
+                    "agentic_tool.call_count": 1.0,
+                    "agentic_tool.completed_count": 1.0,
+                    "agentic_tool.timeout_count": 0.0,
+                    "agentic_tool.failed_count": 0.0,
+                    "agentic_tool.latency_ms": 5.0,
+                    "agentic_tool.observation_emitted_bytes": 16.0,
+                },
+            }
+        ]
+    }
+    candidate = {
+        "benchmark_context_rows": [
+            {
+                "suite": "agentic",
+                "context_length": 128,
+                "generation_length": 32,
+                "batch_size": 1,
+                "tool_call_count": 2,
+                "tool_latency_ms": 9.0,
+                "observation_bytes": 64,
+                "fatal_rate": 1.0,
+                "turn_count": 4,
+                "agentic_tool_metrics": {
+                    "agentic_tool.call_count": 2.0,
+                    "agentic_tool.completed_count": 2.0,
+                    "agentic_tool.timeout_count": 1.0,
+                    "agentic_tool.failed_count": 1.0,
+                    "agentic_tool.latency_ms": 9.0,
+                    "agentic_tool.observation_emitted_bytes": 64.0,
+                },
+            }
+        ]
+    }
+
+    report = build_benchmark_evaluation_report(baseline=baseline, candidate=candidate)
+
+    rows_by_metric = {row["metric"]: row for row in report["rows"]}
+    label = "bench.context.agentic.ctx128.gen32.b1"
+    expected_warning_metrics = (
+        f"{label}.tool_call_count_sum",
+        f"{label}.tool_latency_ms_mean",
+        f"{label}.observation_bytes_sum",
+        f"{label}.fatal_rate_rate",
+        f"{label}.turn_count_sum",
+        f"{label}.agentic_tool.call_count_mean",
+        f"{label}.agentic_tool.completed_count_mean",
+        f"{label}.agentic_tool.timeout_count_mean",
+        f"{label}.agentic_tool.failed_count_mean",
+        f"{label}.agentic_tool.latency_ms_mean",
+        f"{label}.agentic_tool.observation_emitted_bytes_mean",
+    )
+
+    for metric in expected_warning_metrics:
+        row = rows_by_metric[metric]
+        assert row["direction"] == "lower_is_better"
+        assert row["status"] == "warning"
 
 
 def test_report_builder_aggregates_numeric_probe_values_without_normalizing_all_values() -> None:
