@@ -3595,11 +3595,28 @@ public final class RuntimeViewModel {
     }
 
     public func selectSurface(_ surface: DesktopSurface) {
-        selectedSurface = surface
-        if surface == .server {
+        selectedSurface = resolvedSurface(for: surface)
+        if selectedSurface == .server {
             refreshServerModelOptionsIfNeeded(rescan: false)
         }
+        if selectedSurface.isDomainSurface {
+            selectedToolSection = defaultToolSection(for: selectedSurface, current: selectedToolSection)
+        }
         notifyStateChanged()
+    }
+
+    private func resolvedSurface(for surface: DesktopSurface) -> DesktopSurface {
+        surface == .tools ? selectedToolSection.domain.surface : surface
+    }
+
+    private func defaultToolSection(
+        for surface: DesktopSurface,
+        current: DesktopToolSection
+    ) -> DesktopToolSection {
+        guard let domain = surface.domain else {
+            return current
+        }
+        return domain.sections.contains(current) ? current : domain.sections[0]
     }
 
     public func prepareNewRemoteServerDraft() {
@@ -4193,32 +4210,27 @@ public final class RuntimeViewModel {
         let targetModelID = loraFollowUpModelID(for: job)
         switch action {
         case .activation:
-            selectedSurface = .tools
-            selectedToolSection = .training
+            selectToolSectionWithoutNotifying(.training)
             if let adapterID = adapterPackageID(forManifestPath: loraAdapterManifestPath(for: job)) {
                 selectedAdapterPackageID = adapterID
             }
         case .publish:
-            selectedSurface = .tools
-            selectedToolSection = .training
+            selectToolSectionWithoutNotifying(.training)
             if let adapterID = adapterPackageID(forManifestPath: loraAdapterManifestPath(for: job)) {
                 selectedAdapterPackageID = adapterID
             }
         case .quantization, .conversion:
-            selectedSurface = .tools
-            selectedToolSection = .downloads
+            selectToolSectionWithoutNotifying(.downloads)
             selectedModelOperationTargetModelID = targetModelID
             selectedBenchmarkModelID = targetModelID
             selectedEvaluationModelID = targetModelID
         case .benchmark:
-            selectedSurface = .tools
-            selectedToolSection = .diagnostics
+            selectToolSectionWithoutNotifying(.diagnostics)
             preferredDiagnosticsStage = .benchmark
             selectedBenchmarkModelID = targetModelID
             selectLocalDiagnosticsTargetForLoraFollowUp()
         case .evaluation:
-            selectedSurface = .tools
-            selectedToolSection = .diagnostics
+            selectToolSectionWithoutNotifying(.diagnostics)
             preferredDiagnosticsStage = .evaluation
             selectedEvaluationModelID = targetModelID
             selectLocalDiagnosticsTargetForLoraFollowUp()
@@ -4227,10 +4239,14 @@ public final class RuntimeViewModel {
     }
 
     public func selectToolSection(_ section: DesktopToolSection) {
-        selectedSurface = .tools
-        selectedToolSection = section
+        selectToolSectionWithoutNotifying(section)
         persistOperatorSessionState(force: true)
         notifyStateChanged()
+    }
+
+    private func selectToolSectionWithoutNotifying(_ section: DesktopToolSection) {
+        selectedSurface = section.domain.surface
+        selectedToolSection = section
     }
 
     public var selectedRuntimeJob: RuntimeJobSummaryState? {
@@ -5443,8 +5459,7 @@ public final class RuntimeViewModel {
     }
 
     public func openPreferences() {
-        selectedSurface = .tools
-        selectedToolSection = .settings
+        selectToolSectionWithoutNotifying(.settings)
         notifyStateChanged()
     }
 
@@ -5816,8 +5831,7 @@ public final class RuntimeViewModel {
             return
         }
         selectedAdapterPackageID = id
-        selectedSurface = .tools
-        selectedToolSection = .training
+        selectToolSectionWithoutNotifying(.training)
         notifyStateChanged()
     }
 
@@ -11490,8 +11504,11 @@ public final class RuntimeViewModel {
             guard let restoredState = try operatorSessionStore.load() else {
                 return
             }
-            selectedSurface = restoredState.selectedSurface
             selectedToolSection = restoredState.selectedToolSection
+            selectedSurface = resolvedSurface(for: restoredState.selectedSurface)
+            if selectedSurface.isDomainSurface {
+                selectedToolSection = defaultToolSection(for: selectedSurface, current: selectedToolSection)
+            }
             selectedServerSessionID = restoredState.selectedServerSessionID
             selectedRuntimeJobID = restoredState.selectedRuntimeJobID
             desktopPaneVisibility = DesktopPaneVisibilityState.mergedWithDefaults(restoredState.paneVisibility)

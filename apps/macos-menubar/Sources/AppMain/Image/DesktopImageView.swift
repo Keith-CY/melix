@@ -170,6 +170,8 @@ struct DesktopImageWorkspace: View {
                 }
                 .pickerStyle(.segmented)
 
+                DesktopImageModeContextBanner(mode: selectedMode)
+
                 Picker(
                     "Model",
                     selection: Binding(
@@ -198,7 +200,7 @@ struct DesktopImageWorkspace: View {
                     }
                 }
 
-                MelixSectionCard(selectedMode.rawValue) {
+                MelixSectionCard(selectedMode.formTitle) {
                     VStack(alignment: .leading, spacing: 10) {
                         ZStack(alignment: .topLeading) {
                             TextEditor(
@@ -474,6 +476,67 @@ struct DesktopImageWorkspace: View {
 enum DesktopImageWorkspaceDefaults {
     static let showsAdvancedDefaults = false
     static let advancedDefaultsTitle = "Advanced Image Defaults"
+}
+
+private extension DesktopImageWorkspaceMode {
+    var formTitle: String {
+        switch self {
+        case .generate:
+            return "Generate New Artifact"
+        case .edit:
+            return "Edit Existing Artifact"
+        }
+    }
+
+    var contextTitle: String {
+        switch self {
+        case .generate:
+            return "Text to image"
+        case .edit:
+            return "Image to image"
+        }
+    }
+
+    var contextDetail: String {
+        switch self {
+        case .generate:
+            return "Generate starts from prompt, model, size, variants, and negative prompt defaults."
+        case .edit:
+            return "Edit requires a source URI or selected artifact, then applies edit, variation, or iteration mode."
+        }
+    }
+
+    var contextSymbolName: String {
+        switch self {
+        case .generate:
+            return "sparkles"
+        case .edit:
+            return "wand.and.stars.inverse"
+        }
+    }
+}
+
+private struct DesktopImageModeContextBanner: View {
+    let mode: DesktopImageWorkspaceMode
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: mode.contextSymbolName)
+                .foregroundStyle(MelixDesignTokens.accent)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(mode.contextTitle)
+                    .font(.headline)
+                Text(mode.contextDetail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(MelixDesignTokens.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+    }
 }
 
 struct DesktopImageInspector: View {

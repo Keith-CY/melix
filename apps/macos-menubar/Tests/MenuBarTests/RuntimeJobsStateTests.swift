@@ -340,7 +340,7 @@ struct RuntimeJobsStateTests {
         #expect(viewModel.selectedRuntimeJob == nil)
 
         viewModel.selectToolSection(.jobs)
-        #expect(viewModel.selectedSurface == .tools)
+        #expect(viewModel.selectedSurface == .workflows)
         #expect(viewModel.selectedToolSection == .jobs)
     }
 

@@ -29,6 +29,7 @@ class MacOSAppBundleLayout:
     resources_path: Path
     plist_path: Path
     launcher_path: Path
+    launcher_script_path: Path
     bundled_app_binary_path: Path
     bundled_cli_binary_path: Path
     bundled_swift_worker_binary_path: Path
@@ -55,6 +56,7 @@ def build_macos_app_bundle_layout(output_path: str | Path, app_name: str = "Meli
         resources_path=resources_path,
         plist_path=contents_path / "Info.plist",
         launcher_path=macos_path / app_name,
+        launcher_script_path=macos_path / f"{app_name}.sh",
         bundled_app_binary_path=resources_path / "melix-menubar",
         bundled_cli_binary_path=resources_path / "melix",
         bundled_swift_worker_binary_path=resources_path / "melix-text-worker-swift",
@@ -216,6 +218,74 @@ def render_launcher_script(
     )
 
 
+def render_native_launcher_source(*, script_name: str) -> str:
+    return "\n".join(
+        [
+            "#include <limits.h>",
+            "#include <mach-o/dyld.h>",
+            "#include <stdio.h>",
+            "#include <stdlib.h>",
+            "#include <string.h>",
+            "#include <unistd.h>",
+            "",
+            "int main(int argc, char *argv[]) {",
+            "    uint32_t executablePathSize = PATH_MAX;",
+            "    char executablePath[PATH_MAX];",
+            "    if (_NSGetExecutablePath(executablePath, &executablePathSize) != 0) {",
+            '        fputs("Unable to resolve Melix launcher path.\\n", stderr);',
+            "        return 127;",
+            "    }",
+            "    char *lastSlash = strrchr(executablePath, '/');",
+            "    if (lastSlash == NULL) {",
+            '        fputs("Unable to resolve Melix launcher directory.\\n", stderr);',
+            "        return 127;",
+            "    }",
+            "    *lastSlash = '\\0';",
+            "    char scriptPath[PATH_MAX];",
+            (
+                f'    int written = snprintf(scriptPath, sizeof(scriptPath), "%s/{script_name}", '
+                "executablePath);"
+            ),
+            "    if (written < 0 || written >= (int)sizeof(scriptPath)) {",
+            '        fputs("Melix launcher script path is too long.\\n", stderr);',
+            "        return 127;",
+            "    }",
+            "    char **scriptArgv = calloc((size_t)argc + 1, sizeof(char *));",
+            "    if (scriptArgv == NULL) {",
+            '        fputs("Unable to allocate Melix launcher argv.\\n", stderr);',
+            "        return 127;",
+            "    }",
+            "    scriptArgv[0] = scriptPath;",
+            "    for (int index = 1; index < argc; index += 1) {",
+            "        scriptArgv[index] = argv[index];",
+            "    }",
+            "    scriptArgv[argc] = NULL;",
+            "    execv(scriptPath, scriptArgv);",
+            '    perror("execv Melix launcher script");',
+            "    return 127;",
+            "}",
+            "",
+        ]
+    )
+
+
+def compile_native_launcher(source_path: Path, output_path: Path) -> None:
+    xcrun = shutil.which("xcrun")
+    if xcrun is None:
+        raise FileNotFoundError("Unable to find xcrun for compiling the native macOS app launcher.")
+    subprocess.run(
+        [
+            xcrun,
+            "clang",
+            "-Os",
+            str(source_path),
+            "-o",
+            str(output_path),
+        ],
+        check=True,
+    )
+
+
 def elapsed_seconds(started_at: float) -> float:
     return round(time.perf_counter() - started_at, 6)
 
@@ -305,6 +375,13 @@ def write_unsigned_macos_app_bundle(
     timings["copy_python_site_packages_seconds"] = elapsed_seconds(started_at)
 
     started_at = time.perf_counter()
+    bundled_resource_bundle_paths = _copy_swiftpm_resource_bundles(
+        executable.parent,
+        [layout.app_path, layout.resources_path],
+    )
+    timings["copy_swiftpm_resource_bundles_seconds"] = elapsed_seconds(started_at)
+
+    started_at = time.perf_counter()
     _copy_repo_subset(repo_root_path, layout.bundled_repo_root_path)
     timings["copy_repo_subset_seconds"] = elapsed_seconds(started_at)
 
@@ -340,7 +417,7 @@ def write_unsigned_macos_app_bundle(
             icon_file=layout.bundled_icon_path.name,
         )
     )
-    layout.launcher_path.write_text(
+    layout.launcher_script_path.write_text(
         render_launcher_script(
             app_name=app_name,
             bundle_repo_root=Path("repo"),
@@ -356,9 +433,22 @@ def write_unsigned_macos_app_bundle(
     timings["write_metadata_seconds"] = elapsed_seconds(started_at)
 
     started_at = time.perf_counter()
+    native_launcher_source_path = layout.macos_path / f"{app_name}Launcher.c"
+    native_launcher_source_path.write_text(
+        render_native_launcher_source(script_name=layout.launcher_script_path.name),
+        encoding="utf-8",
+    )
+    try:
+        compile_native_launcher(native_launcher_source_path, layout.launcher_path)
+    finally:
+        native_launcher_source_path.unlink(missing_ok=True)
+    timings["compile_launcher_seconds"] = elapsed_seconds(started_at)
+
+    started_at = time.perf_counter()
     os.chmod(layout.embedded_env_script_path, 0o755)
     for path in (
         layout.launcher_path,
+        layout.launcher_script_path,
         layout.bundled_app_binary_path,
         layout.bundled_cli_binary_path,
         layout.bundled_swift_worker_binary_path,
@@ -371,6 +461,7 @@ def write_unsigned_macos_app_bundle(
     return {
         "app_path": str(layout.app_path),
         "launcher_path": str(layout.launcher_path),
+        "launcher_script_path": str(layout.launcher_script_path),
         "resources_path": str(layout.resources_path),
         "bundled_binary_path": str(layout.bundled_app_binary_path),
         "bundled_cli_binary_path": str(layout.bundled_cli_binary_path),
@@ -379,6 +470,9 @@ def write_unsigned_macos_app_bundle(
         "bundled_site_packages_path": str(layout.bundled_site_packages_path),
         "bundled_repo_root_path": str(layout.bundled_repo_root_path),
         "bundled_icon_path": str(layout.bundled_icon_path),
+        "bundled_swiftpm_resource_bundle_paths": [
+            str(path) for path in bundled_resource_bundle_paths
+        ],
         "plist_path": str(layout.plist_path),
         "embedded_env_script_path": str(layout.embedded_env_script_path),
         "packaging_target_manifest_path": str(layout.packaging_target_manifest_path),
@@ -395,6 +489,35 @@ def write_unsigned_macos_app_bundle(
         "service_base_url": str(target_metadata["service_base_url"]),
         "timings": timings,
     }
+
+
+def _copy_swiftpm_resource_bundles(source_root: Path, target_roots: list[Path]) -> list[Path]:
+    copied_paths: list[Path] = []
+    if not source_root.is_dir():
+        return copied_paths
+
+    for source in sorted(source_root.glob("*.bundle")):
+        if not source.is_dir():
+            continue
+        for target_root in target_roots:
+            target = target_root / source.name
+            backup = target.with_name(f"{target.name}.melix-backup")
+            if backup.exists():
+                shutil.rmtree(backup)
+            if target.exists():
+                target.rename(backup)
+            try:
+                shutil.copytree(source, target, symlinks=True)
+            except Exception:
+                if target.exists():
+                    shutil.rmtree(target)
+                if backup.exists():
+                    backup.rename(target)
+                raise
+            if backup.exists():
+                shutil.rmtree(backup)
+            copied_paths.append(target)
+    return copied_paths
 
 
 def archive_macos_app_bundle(app_path: str | Path, archive_path: str | Path) -> Path:

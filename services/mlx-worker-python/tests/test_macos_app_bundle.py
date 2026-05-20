@@ -6,12 +6,16 @@ from pathlib import Path
 
 import pytest
 
+import worker.productization.macos_app_bundle as macos_app_bundle_module
+
 from worker.productization.macos_app_bundle import (
+    _copy_swiftpm_resource_bundles,
     _copy_packaged_script,
     archive_macos_app_bundle,
     build_macos_app_bundle_layout,
     render_info_plist,
     render_launcher_script,
+    render_native_launcher_source,
     render_portable_environment_script,
     resolve_python_runtime_root,
     resolve_site_packages_root,
@@ -26,6 +30,7 @@ def test_build_macos_app_bundle_layout_uses_standard_app_structure(tmp_path: Pat
     assert layout.macos_path == layout.contents_path / "MacOS"
     assert layout.resources_path == layout.contents_path / "Resources"
     assert layout.launcher_path == layout.macos_path / "Melix"
+    assert layout.launcher_script_path == layout.macos_path / "Melix.sh"
     assert layout.bundled_swift_worker_binary_path == layout.resources_path / "melix-text-worker-swift"
     assert layout.bundled_icon_path == layout.resources_path / "MelixAppIcon.icns"
 
@@ -122,6 +127,14 @@ def test_render_launcher_script_starts_bundled_workers_and_app(tmp_path: Path) -
     assert '"$RESOURCES_DIR/python-runtime/bin/python3" "$RESOURCES_DIR/repo/scripts/wait_for_worker_ready.py"' in script
     assert 'exec "$RESOURCES_DIR/melix-menubar" "$@"' in script
     assert "backend-mode deterministic" not in script
+
+
+def test_render_native_launcher_source_execs_packaged_launcher_script() -> None:
+    source = render_native_launcher_source(script_name="Melix.sh")
+
+    assert '#include <mach-o/dyld.h>' in source
+    assert '"%s/Melix.sh"' in source
+    assert "execv(scriptPath, scriptArgv)" in source
 
 
 def test_resolve_python_runtime_root_resolves_from_python_executable(tmp_path: Path) -> None:
@@ -230,6 +243,9 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
     for executable in (menubar, cli, swift_worker):
         executable.write_text("#!/usr/bin/env bash\necho melix\n", encoding="utf-8")
         executable.chmod(0o755)
+    swiftpm_resource_bundle = tmp_path / "MelixMacOSMenubar_AppMain.bundle"
+    swiftpm_resource_bundle.mkdir()
+    (swiftpm_resource_bundle / "melix-status-template.png").write_bytes(b"png")
 
     python_runtime = tmp_path / "python-runtime"
     (python_runtime / "bin").mkdir(parents=True)
@@ -271,8 +287,17 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
     ).exists() is False
     assert bundled_repo_root.joinpath("services/mlx-worker-python/fixtures/evaluation/top200_final.jsonl").exists() is False
     assert Path(manifest["bundled_icon_path"]).exists() is True
+    assert (app_path / "MelixMacOSMenubar_AppMain.bundle/melix-status-template.png").is_file()
+    assert (
+        app_path / "Contents/Resources/MelixMacOSMenubar_AppMain.bundle/melix-status-template.png"
+    ).is_file()
+    assert manifest["bundled_swiftpm_resource_bundle_paths"] == [
+        str(app_path / "MelixMacOSMenubar_AppMain.bundle"),
+        str(app_path / "Contents/Resources/MelixMacOSMenubar_AppMain.bundle"),
+    ]
     assert Path(manifest["packaging_target_manifest_path"]).exists() is True
-    launcher = Path(manifest["launcher_path"]).read_text(encoding="utf-8")
+    assert Path(manifest["launcher_path"]).is_file() is True
+    launcher = Path(manifest["launcher_script_path"]).read_text(encoding="utf-8")
     assert "worker.bootstrap" in launcher
     assert 'export MELIX_CLI="$RESOURCES_DIR/melix"' in launcher
     assert "melix-text-worker-swift" in launcher
@@ -307,13 +332,51 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
         "copy_icon_seconds",
         "copy_python_runtime_seconds",
         "copy_python_site_packages_seconds",
+        "copy_swiftpm_resource_bundles_seconds",
         "copy_repo_subset_seconds",
         "write_metadata_seconds",
+        "compile_launcher_seconds",
         "chmod_seconds",
         "write_total_seconds",
     ):
         assert isinstance(timings[key], float)
         assert timings[key] >= 0.0
+
+
+def test_copy_swiftpm_resource_bundles_restores_existing_bundle_on_copy_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_root = tmp_path / "source"
+    source_bundle = source_root / "MelixMacOSMenubar_AppMain.bundle"
+    source_bundle.mkdir(parents=True)
+    (source_bundle / "fresh.txt").write_text("new", encoding="utf-8")
+    target_root = tmp_path / "target"
+    target_bundle = target_root / source_bundle.name
+    target_bundle.mkdir(parents=True)
+    (target_bundle / "existing.txt").write_text("old", encoding="utf-8")
+
+    original_copytree = macos_app_bundle_module.shutil.copytree
+
+    def fail_copytree(source: Path, target: Path, **kwargs: object) -> None:
+        target.mkdir(parents=True)
+        (target / "partial.txt").write_text("partial", encoding="utf-8")
+        raise OSError(f"copy failed for {source}")
+
+    monkeypatch.setattr(macos_app_bundle_module.shutil, "copytree", fail_copytree)
+
+    with pytest.raises(OSError, match="copy failed"):
+        _copy_swiftpm_resource_bundles(source_root, [target_root])
+
+    assert (target_bundle / "existing.txt").read_text(encoding="utf-8") == "old"
+    assert (target_bundle / "partial.txt").exists() is False
+    assert (target_root / f"{target_bundle.name}.melix-backup").exists() is False
+
+    monkeypatch.setattr(macos_app_bundle_module.shutil, "copytree", original_copytree)
+    copied_paths = _copy_swiftpm_resource_bundles(source_root, [target_root])
+
+    assert copied_paths == [target_bundle]
+    assert (target_bundle / "fresh.txt").read_text(encoding="utf-8") == "new"
+    assert (target_bundle / "existing.txt").exists() is False
 
 
 def test_write_unsigned_macos_app_bundle_requires_an_icon_file(tmp_path: Path) -> None:

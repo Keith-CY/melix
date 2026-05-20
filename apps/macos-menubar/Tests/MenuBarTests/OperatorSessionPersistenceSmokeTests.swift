@@ -30,7 +30,7 @@ struct OperatorSessionPersistenceSmokeTests {
         let persistedPayload = try #require(
             JSONSerialization.jsonObject(with: persistedData) as? [String: Any]
         )
-        #expect(persistedPayload["selected_surface"] as? String == "tools")
+        #expect(persistedPayload["selected_surface"] as? String == "diagnostics")
         #expect(persistedPayload["selected_tool_section"] as? String == "diagnostics")
 
         var persistMetricValues: [String: Double] = [:]
