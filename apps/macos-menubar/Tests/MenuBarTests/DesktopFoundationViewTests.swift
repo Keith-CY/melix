@@ -67,6 +67,8 @@ struct DesktopFoundationViewTests {
 
         #expect(MelixDesignTokens.StrokeOpacity.hairline == MelixDesignTokens.SurfaceOpacity.card)
         #expect(MelixDesignTokens.StrokeOpacity.interactive == 0.08)
+        #expect(MelixDesignTokens.StrokeOpacity.input == 0.18)
+        #expect(MelixDesignTokens.StrokeOpacity.focusedInput == 0.72)
         #expect(MelixDesignTokens.AccentOpacity.medium == 0.32)
         #expect(MelixDesignTokens.AccentOpacity.weak == 0.12)
         #expect(MelixDesignTokens.AccentOpacity.selected == 0.12)
@@ -162,8 +164,9 @@ struct DesktopFoundationViewTests {
         #expect(DesktopCommandCenterVisuals.primaryModelTitle == "Primary Model")
         #expect(DesktopCommandCenterVisuals.repositoryDesignSystemPath == "docs/design-system/README.md")
         #expect(DesktopCommandCenterVisuals.appleLayoutGuidanceURL.contains("human-interface-guidelines/layout"))
-        #expect(DesktopCommandCenterVisuals.maxContentWidth == 1120)
-        #expect(DesktopCommandCenterVisuals.primaryColumnMinimumWidth > DesktopCommandCenterVisuals.secondaryColumnWidth)
+        #expect(DesktopCommandCenterVisuals.maxContentWidth == 1180)
+        #expect(DesktopCommandCenterVisuals.secondaryColumnWidth == 340)
+        #expect(DesktopCommandCenterVisuals.maxContentWidth > DesktopCommandCenterVisuals.secondaryColumnWidth * 2)
         #expect(DesktopCommandCenterVisuals.panelCornerRadius == MelixDesignTokens.Radius.xl)
         #expect(DesktopCommandCenterVisuals.statusSymbolName == "command.circle")
         #expect(DesktopCommandCenterVisuals.recoverySymbolName == "arrow.clockwise.circle")
@@ -731,6 +734,68 @@ struct DesktopFoundationViewTests {
         #expect(renderedTexts.contains("Apply Serving Defaults") == false)
         #expect(renderedTexts.contains("Temperature") == false)
         #expect(renderedTexts.contains("Top P") == false)
+    }
+
+    @Test("server empty states dispatch local and remote creation actions")
+    @MainActor
+    func serverEmptyStatesDispatchCreationActions() async throws {
+        let localViewModel = RuntimeViewModel(client: EmptyToolsSnapshotControlPlaneXPCClient())
+        await localViewModel.start()
+        localViewModel.selectSurface(.server)
+
+        let localView = hostView(
+            DesktopWorkspaceShellView(viewModel: localViewModel),
+            size: CGSize(width: 1280, height: 1200)
+        )
+        DesktopServerCreationActions.addLocalServer(viewModel: localViewModel)
+
+        #expect(localView.subviews.isEmpty == false)
+        #expect(localViewModel.isCreatingServerTarget)
+        #expect(localViewModel.selectedServerCreationKind == .localServer)
+        #expect(localViewModel.selectedSurface == .server)
+
+        let remoteViewModel = RuntimeViewModel(client: EmptyToolsSnapshotControlPlaneXPCClient())
+        await remoteViewModel.start()
+        remoteViewModel.selectSurface(.server)
+
+        let remoteView = hostView(
+            DesktopWorkspaceShellView(viewModel: remoteViewModel),
+            size: CGSize(width: 1280, height: 1200)
+        )
+        DesktopServerCreationActions.addRemoteServer(viewModel: remoteViewModel)
+
+        #expect(remoteView.subviews.isEmpty == false)
+        #expect(remoteViewModel.isCreatingServerTarget)
+        #expect(remoteViewModel.selectedServerCreationKind == .remoteServer)
+        #expect(remoteViewModel.selectedSurface == .server)
+    }
+
+    @Test("server creation editor renders local input fields with ready models")
+    @MainActor
+    func serverCreationEditorRendersLocalInputFieldsWithReadyModels() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.beginServerCreation(kind: .localServer)
+
+        let view = hostView(
+            DesktopWorkspaceShellView(viewModel: viewModel),
+            size: CGSize(width: 1280, height: 1200)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.isCreatingServerTarget)
+        #expect(viewModel.selectedServerCreationKind == .localServer)
+        #expect(viewModel.serverModelOptions.isEmpty == false)
+        #expect(renderedTexts.contains(where: { $0.contains(desktopTestReadyModelID) }))
+        #expect(renderedTexts.contains("127.0.0.1"))
+        #expect(renderedTexts.contains("12,436") || renderedTexts.contains("12436"))
     }
 
     @Test("command center view renders global operator summaries")
@@ -1592,8 +1657,8 @@ struct DesktopFoundationViewTests {
         #expect(shellSource.contains("Color.accentColor") == false)
         #expect(shellSource.contains("selectedServerCreationKind"))
         #expect(shellSource.contains("\"Session Name\""))
-        #expect(shellSource.contains("Button(\"Add Local Server\")"))
-        #expect(shellSource.contains("Button(\"Add Remote Server\")"))
+        #expect(shellSource.contains("Button(\"Add Local Server\", action:"))
+        #expect(shellSource.contains("Button(\"Add Remote Server\", action:"))
         #expect(shellSource.contains("MelixSectionCard(\"New Local Session\")"))
         #expect(shellSource.contains("\"Server Type\"") == false)
         #expect(shellSource.contains("Button(\"Create Local Server\")") == false)
@@ -6079,6 +6144,96 @@ struct DesktopFoundationViewTests {
 
     }
 
+    @Test("workspace diagnostics renders matrix duration budget input")
+    @MainActor
+    func workspaceDiagnosticsRendersMatrixDurationBudgetInput() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeAudioSetupSnapshot(
+            models: [
+                ModelCatalog.devTextModel(),
+                makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm),
+            ]
+        )
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.preferredDiagnosticsStage = .matrix
+        viewModel.selectedBenchmarkPresentationMode = .matrix
+        viewModel.selectedBenchmarkMatrixLoadBudgetMode = .durationSeconds
+        viewModel.benchMatrixDurationSeconds = "45"
+
+        let view = hostView(
+            DesktopDiagnosticsToolSectionView(
+                viewModel: viewModel,
+                foundation: viewModel.desktopFoundationState
+            ),
+            size: CGSize(width: 1280, height: 1800)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(DesktopDiagnosticsToolSectionView.initialStage(for: viewModel) == .matrix)
+        #expect(renderedTexts.contains("Matrix Configuration"))
+        #expect(renderedTexts.contains("Duration"))
+        #expect(renderedTexts.contains("45"))
+        #expect(viewModel.selectedBenchmarkMatrixLoadBudgetMode == .durationSeconds)
+        #expect(viewModel.benchMatrixDurationSeconds == "45")
+    }
+
+    @Test("workspace diagnostics renders Hugging Face evaluation dataset fields")
+    @MainActor
+    func workspaceDiagnosticsRendersHuggingFaceEvaluationDatasetFields() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = makeAudioSetupSnapshot(
+            models: [
+                ModelCatalog.devTextModel(),
+                makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm),
+            ]
+        )
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.diagnostics)
+        viewModel.preferredDiagnosticsStage = .evaluation
+        viewModel.evaluationDatasetSourceKind = .huggingFaceDataset
+        viewModel.evaluationHFDatasetPath = "HuggingFaceH4/ultrachat_200k"
+        viewModel.evaluationHFDatasetName = "train_sft"
+        viewModel.evaluationHFDatasetRevision = "main"
+        viewModel.evaluationHFDatasetSplit = "train"
+        viewModel.evaluationFieldSystemPath = "messages[0].content"
+        viewModel.evaluationFieldInputTextPath = "messages[-1].content"
+        viewModel.evaluationFieldTargetPath = "answer"
+        viewModel.evaluationFieldSampleIDPath = "id"
+        viewModel.evaluationResultKind = "json"
+        viewModel.evaluationExtractionMode = "json_path"
+        viewModel.evaluationThreshold = "0.75"
+        viewModel.evaluationOutputSchemaJSON = "{\"type\":\"object\"}"
+        viewModel.evaluationIgnoredPaths = "metadata.debug"
+
+        let view = hostView(
+            DesktopDiagnosticsToolSectionView(
+                viewModel: viewModel,
+                foundation: viewModel.desktopFoundationState
+            ),
+            size: CGSize(width: 1280, height: 2200)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(DesktopDiagnosticsToolSectionView.initialStage(for: viewModel) == .evaluation)
+        #expect(viewModel.evaluationDatasetSourceKind == .huggingFaceDataset)
+        #expect(renderedTexts.contains("HuggingFaceH4/ultrachat_200k"))
+        #expect(renderedTexts.contains("train_sft"))
+        #expect(renderedTexts.contains("messages[-1].content"))
+        #expect(renderedTexts.contains("json_path"))
+        #expect(renderedTexts.contains("0.75"))
+    }
+
     @Test("diagnostics capability refusals are visible before worker dispatch")
     @MainActor
     func diagnosticsCapabilityRefusalsAreVisibleBeforeWorkerDispatch() async throws {
@@ -6382,6 +6537,180 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.trainingHistory.isEmpty)
         #expect(viewModel.selectedModelInfo == nil)
         #expect(viewModel.lastModelOperation == nil)
+    }
+
+    @Test("workflow recipes surface renders compact inputs and variable rows")
+    @MainActor
+    func workflowRecipesSurfaceRendersCompactInputsAndVariableRows() async throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        await viewModel.start()
+        viewModel.updateWorkflowRecipeTaskFilter("training")
+        viewModel.updateWorkflowRecipeURIInspectDraft("hf://datasets/melix/train")
+        viewModel.updateWorkflowRecipeInitTaskDraft("train-lora")
+        viewModel.updateWorkflowRecipeSetKeyDraft("dataset_uri")
+        viewModel.updateWorkflowRecipeSetValueDraft("hf://datasets/melix/train")
+        viewModel.addWorkflowRecipeSetDraft()
+        viewModel.updateWorkflowRecipePlanOutputPathDraft("/tmp/melix-plan/pipeline.json")
+        viewModel.updateWorkflowRecipeApplyFromStepDraft("train")
+        viewModel.applyWorkflowRecipeCatalog(
+            RuntimeWorkflowRecipeCatalogState(
+                schemaVersion: "workflow.recipes.v1",
+                recipes: [
+                    RuntimeWorkflowRecipeSummaryState(
+                        id: "train-lora",
+                        version: "1.0",
+                        title: "Train LoRA",
+                        tasks: ["training"],
+                        digest: "sha256:recipe"
+                    ),
+                ],
+                metrics: []
+            )
+        )
+        let candidate = RuntimeWorkflowURICandidateState(
+            id: "candidate-1",
+            kind: "dataset",
+            sourceKind: "hugging_face",
+            taskKind: "training",
+            confidence: 0.95,
+            normalizedLocator: "hf://datasets/melix/train",
+            repoID: "melix/train",
+            revision: "main",
+            reasons: ["dataset card matched"],
+            warnings: ["requires network"],
+            recommendedNextAction: "Preview Recipe Init",
+            generatedCommandArguments: ["melix", "workflow", "init", "--task", "training"]
+        )
+        let inspection = RuntimeWorkflowURIInspectionState(
+            schemaVersion: "workflow.uri.inspect.v1",
+            originalURI: "hf://datasets/melix/train",
+            normalizedLocator: "hf://datasets/melix/train",
+            candidateCount: 1,
+            ambiguityCount: 0,
+            candidates: [candidate],
+            metrics: []
+        )
+        let detail = RuntimeWorkflowRecipeDetailState(
+            id: "train-lora",
+            schemaVersion: "workflow.recipe.v1",
+            version: "1.0",
+            title: "Train LoRA",
+            description: "Train an adapter from a dataset URI.",
+            tasks: ["training"],
+            digest: "sha256:recipe",
+            inputRows: [
+                RuntimeWorkflowRecipeInputRowState(
+                    name: "dataset_uri",
+                    valueType: "uri",
+                    required: true,
+                    defaultValueText: "",
+                    uriKind: "dataset"
+                ),
+            ],
+            preflightRows: [RuntimeWorkflowRecipeKeyValueRowState(name: "model", valueText: "available")],
+            pipelineSteps: [
+                RuntimeWorkflowRecipePipelineStepState(
+                    id: "train",
+                    command: "melix lora train",
+                    argumentSummaryText: "--dataset hf://datasets/melix/train"
+                ),
+            ],
+            outputRows: [RuntimeWorkflowRecipeKeyValueRowState(name: "adapter", valueText: "manifest")]
+        )
+        viewModel.applyWorkflowRecipeURIInspection(inspection)
+        viewModel.applyWorkflowRecipeInitPreview(
+            RuntimeWorkflowRecipeInitPreviewState(
+                recipe: detail,
+                source: "uri",
+                sourceURIDigest: "sha256:uri",
+                inspection: inspection,
+                provenanceRows: [RuntimeWorkflowRecipeKeyValueRowState(name: "source", valueText: "uri")]
+            )
+        )
+        viewModel.applyWorkflowRecipePlan(
+            RuntimeWorkflowRecipePlanState(
+                schemaVersion: "workflow.plan.v1",
+                recipeID: "train-lora",
+                recipeVersion: "1.0",
+                recipeDigest: "sha256:recipe",
+                pipelineSchemaVersion: "pipeline.v1",
+                pipelineJSONText: "{\"steps\":[\"train\"]}",
+                pipelineSteps: detail.pipelineSteps,
+                artifactRows: [RuntimeWorkflowRecipeArtifactRowState(kind: "plan", path: "/tmp/melix-plan/pipeline.json")],
+                metrics: [RuntimeWorkflowRecipeMetricState(name: "steps", valueText: "1")]
+            )
+        )
+        viewModel.applyWorkflowRecipeResult(
+            RuntimeWorkflowRecipeApplyResultState(
+                schemaVersion: "workflow.apply.v1",
+                name: "Train LoRA",
+                traceID: "trace-1",
+                status: "dry_run",
+                receiptDir: "/tmp/melix-recipe",
+                summaryPath: "/tmp/melix-recipe/summary.json",
+                pipelineHash: "sha256:pipeline",
+                inputsHash: "sha256:inputs",
+                recipeRows: [RuntimeWorkflowRecipeKeyValueRowState(name: "recipe", valueText: "train-lora")],
+                stepRows: [
+                    RuntimeWorkflowRecipeApplyStepRowState(
+                        id: "train",
+                        command: "melix lora train",
+                        status: "planned",
+                        receiptPath: "/tmp/melix-recipe/train.json",
+                        artifactPaths: ["/tmp/melix-recipe/adapter.json"],
+                        commandID: "lora.train",
+                        argsHash: "sha256:args"
+                    ),
+                ],
+                metrics: [RuntimeWorkflowRecipeMetricState(name: "duration_ms", valueText: "42")]
+            )
+        )
+
+        let view = hostView(
+            DesktopWorkflowRecipesToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1500, height: 2400)
+        )
+        let renderedTexts = renderedTextValues(in: view)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(renderedTexts.contains("training"))
+        #expect(renderedTexts.contains("hf://datasets/melix/train"))
+        #expect(renderedTexts.contains("train-lora"))
+        #expect(renderedTexts.contains("--set dataset_uri=hf://datasets/melix/train"))
+        #expect(renderedTexts.contains("/tmp/melix-plan/pipeline.json"))
+        #expect(renderedTexts.contains("{\"steps\":[\"train\"]}"))
+        #expect(renderedTexts.contains("trace-1"))
+        #expect(renderedTexts.contains("/tmp/melix-recipe"))
+    }
+
+    @Test("synthetic dataset column editor renders compact row and add action")
+    @MainActor
+    func syntheticDatasetColumnEditorRendersCompactRowAndAddAction() async throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        await viewModel.start()
+        viewModel.updateSyntheticDatasetIDDraft("melix-synthetic")
+        viewModel.updateSyntheticDatasetNameDraft("Melix Synthetic")
+        viewModel.updateSyntheticDatasetOutputDirDraft("/tmp/melix-synthetic")
+        viewModel.updateSyntheticDatasetProviderEndpointDraft("http://127.0.0.1:12436/v1")
+        viewModel.updateSyntheticDatasetModelDraft("melix-dev-text")
+        viewModel.updateSyntheticDatasetColumnNameDraft("prompt")
+        viewModel.updateSyntheticDatasetColumnTypeDraft("llm_text")
+        viewModel.updateSyntheticDatasetColumnPayloadDraft("{\"topic\":\"ui\"}")
+
+        let section = DesktopSyntheticDatasetToolSectionView(viewModel: viewModel)
+        let view = hostView(section, size: CGSize(width: 1500, height: 2200))
+        section.addColumnAction()
+
+        let updatedView = hostView(
+            DesktopSyntheticDatasetToolSectionView(viewModel: viewModel),
+            size: CGSize(width: 1500, height: 2200)
+        )
+        let renderedTexts = renderedTextValues(in: updatedView)
+
+        #expect(view.subviews.isEmpty == false)
+        #expect(updatedView.subviews.isEmpty == false)
+        #expect(viewModel.syntheticDatasetColumns.count == 1)
+        #expect(renderedTexts.contains(where: { $0.contains("prompt:llm_text:{\"topic\":\"ui\"}") }))
     }
 
     @Test("downloads section renders audio setup actions and dispatches first-use remediation buttons")
@@ -6691,6 +7020,37 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.downloadQueue.first?.statusText == "Stalled")
         #expect(viewModel.downloadQueue.first?.resumeReady == true)
         #expect(viewModel.desktopSignalStates.contains(where: { $0.title == "Download Recovery Available" }))
+    }
+
+    @Test("downloads ingest action strip dispatches model operations")
+    @MainActor
+    func downloadsIngestActionStripDispatchesModelOperations() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.downloads)
+
+        let section = DesktopDownloadsToolSectionView(viewModel: viewModel)
+        let view = hostView(section, size: CGSize(width: 1280, height: 1200))
+
+        section.quantizeModelAction()
+        section.convertModelAction()
+        section.downloadModelAction()
+        section.uploadArtifactAction()
+
+        let deadline = ContinuousClock.now + .seconds(2)
+        while await client.recordedModelOperationRequests.count < 4, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        let operations = await client.recordedModelOperationRequests.map(\.operation)
+        #expect(view.subviews.isEmpty == false)
+        #expect(operations.count >= 4)
+        #expect(operations.contains("quantize"))
+        #expect(operations.contains("convert"))
+        #expect(operations.contains("download"))
+        #expect(operations.contains("upload"))
     }
 
     @Test("dashboard settings logs bench and api tabs render from foundation state")
@@ -7604,6 +7964,32 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.chatSessions.isEmpty)
     }
 
+    @Test("chat empty state buttons dispatch new chat and server navigation")
+    @MainActor
+    func chatEmptyStateButtonsDispatchNewChatAndServerNavigation() async throws {
+        let client = EmptyToolsSnapshotControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        for session in viewModel.chatSessions {
+            viewModel.deleteChatSession(id: session.id)
+        }
+
+        let sidebar = DesktopChatSessionSidebar(viewModel: viewModel)
+        let initialView = hostView(sidebar)
+        sidebar.createChatSessionAction()
+
+        #expect(initialView.subviews.isEmpty == false)
+        #expect(viewModel.chatSessions.count == 1)
+        #expect(viewModel.selectedSurface == .chat)
+        #expect(viewModel.selectedChatSession?.statusText == "Choose Server")
+
+        let serverView = hostView(sidebar)
+        sidebar.openServerAction()
+
+        #expect(serverView.subviews.isEmpty == false)
+        #expect(viewModel.selectedSurface == .server)
+    }
+
     @Test("chat workspace uses compact layout metrics")
     @MainActor
     func chatWorkspaceUsesCompactLayoutMetrics() {
@@ -7725,6 +8111,33 @@ struct DesktopFoundationViewTests {
         #expect(mainSession.displayBranchTitle == nil)
         #expect(forkSession.displayBranchTitle == "Branch 2")
         #expect(source.contains("selectedChatSession?.displayBranchTitle"))
+    }
+
+    @Test("chat workspace renders selected branch badge")
+    @MainActor
+    func chatWorkspaceRendersSelectedBranchBadge() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [makeMenuBarModelSummary(modelID: desktopTestReadyModelID, state: .modelWarm)]
+        snapshot.runtimeSessions = [makeDesktopRuntimeSession()]
+        await client.configureSnapshot(snapshot)
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        viewModel.createChatSession()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.forkSelectedChatSession()
+
+        let branchTitle = try #require(viewModel.selectedChatSession?.displayBranchTitle)
+        let source = try String(
+            contentsOf: repositoryRootForDesktopFoundationTests()
+                .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
+            encoding: .utf8
+        )
+
+        #expect(branchTitle.hasPrefix("Branch "))
+        #expect(source.contains("DesktopChatSessionBranchBadgeView(branch: branch)"))
+        #expect(source.contains(".accessibilityLabel(branch)"))
     }
 
     @Test("chat session inspector labels snapshot capabilities without claiming route traces")
@@ -8420,6 +8833,25 @@ struct DesktopFoundationViewTests {
         #expect(view.subviews.isEmpty == false)
         #expect(viewModel.imageJobs.isEmpty)
         #expect(viewModel.selectedImageJob == nil)
+    }
+
+    @Test("image empty state buttons dispatch workspace and model navigation")
+    @MainActor
+    func imageEmptyStateButtonsDispatchWorkspaceAndModelNavigation() async throws {
+        let client = EmptyToolsSnapshotControlPlaneXPCClient()
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+
+        let sidebar = DesktopImageJobsSidebar(viewModel: viewModel)
+        let view = hostView(sidebar)
+
+        sidebar.openImageWorkspaceAction()
+        #expect(viewModel.selectedSurface == .image)
+
+        sidebar.chooseModelAction()
+        #expect(view.subviews.isEmpty == false)
+        #expect(viewModel.selectedSurface == .tools)
+        #expect(viewModel.selectedToolSection == .modelsLibrary)
     }
 
     @Test("image tab renders timed out image rows through the sidebar")
