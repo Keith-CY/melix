@@ -464,10 +464,10 @@ not a fair source for direct Melix optimization deltas.
   capacity `1`. The accepted eligibility rule is automatic only for Python VLM
   routes with `vision_family_id=gemma4-v1`, `melix.vlm.backend_id=mlx_vlm`,
   text-only messages, explicit greedy sampling (`temperature=0` and either
-  omitted `top_p` or `top_p=1`), and no structured output, tool parser, tool
-  call, tool-choice, or explicit reasoning constraint. Media and constrained
-  output requests must remain fallback-only unless explicitly opted in by later
-  capability work.
+  omitted `top_p` or `top_p=1`) with final worker `top_k=0`, and no structured
+  output, tool parser, tool call, tool-choice, or explicit reasoning constraint.
+  Media and constrained output requests must remain fallback-only unless
+  explicitly opted in by later capability work.
 - The first opt-in live probes showed an empty-stream regression caused by a
   missing fallback-reason variable in the text-only step path, then showed that
   model-level `generation_config.json` defaults could keep a

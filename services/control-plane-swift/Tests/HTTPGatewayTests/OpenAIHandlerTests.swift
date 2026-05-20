@@ -1376,39 +1376,7 @@ struct OpenAIHandlerTests {
 
     @Test("POST /v1/chat/completions auto-enables Gemma4 text-only VLM batch-generator admission")
     func postChatCompletionsAutoEnablesGemma4TextOnlyVLMBatchGeneratorAdmission() async throws {
-        var vlmModel = ModelCatalog.devVLMModel()
-        vlmModel.settings.ext["vision_family_id"] = "gemma4-v1"
-        vlmModel.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
-        vlmModel.settings.ext["melix.vlm.text_only_batch_generator"] = "false"
-        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), vlmModel])
-        let textClient = ScriptedWorkerClient(events: [])
-        let vlmClient = ScriptedWorkerClient(
-            events: [
-                makeCompletedEvent(
-                    requestID: "req-http-gemma4-vlm-auto-batch",
-                    seq: 1,
-                    finishReason: "stop",
-                    assistantText: "ready"
-                ),
-            ],
-            loadModelHandle: "melix-dev-vlm::python"
-        )
-        let workerRegistry = WorkerRegistry(
-            defaultTextClient: textClient,
-            pythonCompatibilityClient: vlmClient,
-            modelCatalog: catalog
-        )
-        let handler = OpenAIHandler(
-            modelCatalog: catalog,
-            requestCoordinator: RequestCoordinator(
-                workerRegistry: workerRegistry,
-                abortRegistry: AbortRegistry(),
-                modelCatalog: catalog
-            ),
-            workerRegistry: workerRegistry,
-            translator: ChatRequestTranslator(requestIDGenerator: { "req-http-gemma4-vlm-auto-batch" }),
-            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
-        )
+        let harness = makeGemma4VLMOpenAIHandler(requestID: "req-http-gemma4-vlm-auto-batch")
 
         let body = try #require(
             """
@@ -1423,7 +1391,7 @@ struct OpenAIHandlerTests {
             """.data(using: .utf8)
         )
 
-        let response = try await handler.handle(
+        let response = try await harness.handler.handle(
             HTTPRequest(
                 method: .post,
                 path: "/v1/chat/completions",
@@ -1431,49 +1399,19 @@ struct OpenAIHandlerTests {
                 body: body
             )
         )
-        let generateRequest = try #require(await vlmClient.lastGenerateRequest)
+        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
 
         #expect(response.statusCode == 200)
         #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == "true")
         #expect(generateRequest.sampling.temperature == 0)
         #expect(generateRequest.sampling.topP == 1)
         #expect(generateRequest.sampling.topK == 0)
-        #expect(await textClient.lastGenerateRequest == nil)
+        #expect(await harness.textClient.lastGenerateRequest == nil)
     }
 
     @Test("POST /v1/chat/completions keeps Gemma4 VLM batch-generator disabled for non-greedy requests")
     func postChatCompletionsKeepsGemma4VLMBatchGeneratorDisabledForNonGreedyRequests() async throws {
-        var vlmModel = ModelCatalog.devVLMModel()
-        vlmModel.settings.ext["vision_family_id"] = "gemma4-v1"
-        vlmModel.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
-        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), vlmModel])
-        let vlmClient = ScriptedWorkerClient(
-            events: [
-                makeCompletedEvent(
-                    requestID: "req-http-gemma4-vlm-non-greedy",
-                    seq: 1,
-                    finishReason: "stop",
-                    assistantText: "ready"
-                ),
-            ],
-            loadModelHandle: "melix-dev-vlm::python"
-        )
-        let workerRegistry = WorkerRegistry(
-            defaultTextClient: ScriptedWorkerClient(events: []),
-            pythonCompatibilityClient: vlmClient,
-            modelCatalog: catalog
-        )
-        let handler = OpenAIHandler(
-            modelCatalog: catalog,
-            requestCoordinator: RequestCoordinator(
-                workerRegistry: workerRegistry,
-                abortRegistry: AbortRegistry(),
-                modelCatalog: catalog
-            ),
-            workerRegistry: workerRegistry,
-            translator: ChatRequestTranslator(requestIDGenerator: { "req-http-gemma4-vlm-non-greedy" }),
-            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
-        )
+        let harness = makeGemma4VLMOpenAIHandler(requestID: "req-http-gemma4-vlm-non-greedy")
 
         let body = try #require(
             """
@@ -1488,7 +1426,7 @@ struct OpenAIHandlerTests {
             """.data(using: .utf8)
         )
 
-        let response = try await handler.handle(
+        let response = try await harness.handler.handle(
             HTTPRequest(
                 method: .post,
                 path: "/v1/chat/completions",
@@ -1496,7 +1434,7 @@ struct OpenAIHandlerTests {
                 body: body
             )
         )
-        let generateRequest = try #require(await vlmClient.lastGenerateRequest)
+        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
 
         #expect(response.statusCode == 200)
         #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == nil)
@@ -1504,37 +1442,7 @@ struct OpenAIHandlerTests {
 
     @Test("POST /v1/chat/completions auto-enables Gemma4 VLM batch-generator with explicit greedy top-p")
     func postChatCompletionsAutoEnablesGemma4VLMBatchGeneratorWithExplicitGreedyTopP() async throws {
-        var vlmModel = ModelCatalog.devVLMModel()
-        vlmModel.settings.ext["vision_family_id"] = "gemma4-v1"
-        vlmModel.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
-        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), vlmModel])
-        let vlmClient = ScriptedWorkerClient(
-            events: [
-                makeCompletedEvent(
-                    requestID: "req-http-gemma4-vlm-explicit-top-p",
-                    seq: 1,
-                    finishReason: "stop",
-                    assistantText: "ready"
-                ),
-            ],
-            loadModelHandle: "melix-dev-vlm::python"
-        )
-        let workerRegistry = WorkerRegistry(
-            defaultTextClient: ScriptedWorkerClient(events: []),
-            pythonCompatibilityClient: vlmClient,
-            modelCatalog: catalog
-        )
-        let handler = OpenAIHandler(
-            modelCatalog: catalog,
-            requestCoordinator: RequestCoordinator(
-                workerRegistry: workerRegistry,
-                abortRegistry: AbortRegistry(),
-                modelCatalog: catalog
-            ),
-            workerRegistry: workerRegistry,
-            translator: ChatRequestTranslator(requestIDGenerator: { "req-http-gemma4-vlm-explicit-top-p" }),
-            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
-        )
+        let harness = makeGemma4VLMOpenAIHandler(requestID: "req-http-gemma4-vlm-explicit-top-p")
 
         let body = try #require(
             """
@@ -1550,7 +1458,7 @@ struct OpenAIHandlerTests {
             """.data(using: .utf8)
         )
 
-        let response = try await handler.handle(
+        let response = try await harness.handler.handle(
             HTTPRequest(
                 method: .post,
                 path: "/v1/chat/completions",
@@ -1558,7 +1466,7 @@ struct OpenAIHandlerTests {
                 body: body
             )
         )
-        let generateRequest = try #require(await vlmClient.lastGenerateRequest)
+        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
 
         #expect(response.statusCode == 200)
         #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == "true")
@@ -1567,36 +1475,9 @@ struct OpenAIHandlerTests {
 
     @Test("POST /v1/chat/completions keeps Gemma4 VLM batch-generator disabled for structured outputs")
     func postChatCompletionsKeepsGemma4VLMBatchGeneratorDisabledForStructuredOutputs() async throws {
-        var vlmModel = ModelCatalog.devVLMModel()
-        vlmModel.settings.ext["vision_family_id"] = "gemma4-v1"
-        vlmModel.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
-        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), vlmModel])
-        let vlmClient = ScriptedWorkerClient(
-            events: [
-                makeCompletedEvent(
-                    requestID: "req-http-gemma4-vlm-structured",
-                    seq: 1,
-                    finishReason: "stop",
-                    assistantText: #"{"answer":"ready"}"#
-                ),
-            ],
-            loadModelHandle: "melix-dev-vlm::python"
-        )
-        let workerRegistry = WorkerRegistry(
-            defaultTextClient: ScriptedWorkerClient(events: []),
-            pythonCompatibilityClient: vlmClient,
-            modelCatalog: catalog
-        )
-        let handler = OpenAIHandler(
-            modelCatalog: catalog,
-            requestCoordinator: RequestCoordinator(
-                workerRegistry: workerRegistry,
-                abortRegistry: AbortRegistry(),
-                modelCatalog: catalog
-            ),
-            workerRegistry: workerRegistry,
-            translator: ChatRequestTranslator(requestIDGenerator: { "req-http-gemma4-vlm-structured" }),
-            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: "req-http-gemma4-vlm-structured",
+            assistantText: #"{"answer":"ready"}"#
         )
 
         let body = try #require(
@@ -1626,7 +1507,7 @@ struct OpenAIHandlerTests {
             """.data(using: .utf8)
         )
 
-        let response = try await handler.handle(
+        let response = try await harness.handler.handle(
             HTTPRequest(
                 method: .post,
                 path: "/v1/chat/completions",
@@ -1634,7 +1515,7 @@ struct OpenAIHandlerTests {
                 body: body
             )
         )
-        let generateRequest = try #require(await vlmClient.lastGenerateRequest)
+        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
 
         #expect(response.statusCode == 200)
         #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == nil)
@@ -1643,36 +1524,10 @@ struct OpenAIHandlerTests {
 
     @Test("POST /v1/chat/completions keeps Gemma4 VLM batch-generator disabled for OpenAI tools")
     func postChatCompletionsKeepsGemma4VLMBatchGeneratorDisabledForOpenAITools() async throws {
-        var vlmModel = ModelCatalog.devVLMModel()
-        vlmModel.settings.ext["vision_family_id"] = "gemma4-v1"
-        vlmModel.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
-        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), vlmModel])
-        let vlmClient = ScriptedWorkerClient(
-            events: [
-                makeCompletedEvent(
-                    requestID: "req-http-gemma4-vlm-tools",
-                    seq: 1,
-                    finishReason: "tool_calls",
-                    assistantText: ""
-                ),
-            ],
-            loadModelHandle: "melix-dev-vlm::python"
-        )
-        let workerRegistry = WorkerRegistry(
-            defaultTextClient: ScriptedWorkerClient(events: []),
-            pythonCompatibilityClient: vlmClient,
-            modelCatalog: catalog
-        )
-        let handler = OpenAIHandler(
-            modelCatalog: catalog,
-            requestCoordinator: RequestCoordinator(
-                workerRegistry: workerRegistry,
-                abortRegistry: AbortRegistry(),
-                modelCatalog: catalog
-            ),
-            workerRegistry: workerRegistry,
-            translator: ChatRequestTranslator(requestIDGenerator: { "req-http-gemma4-vlm-tools" }),
-            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: "req-http-gemma4-vlm-tools",
+            finishReason: "tool_calls",
+            assistantText: ""
         )
 
         let body = try #require(
@@ -1705,7 +1560,7 @@ struct OpenAIHandlerTests {
             """.data(using: .utf8)
         )
 
-        let response = try await handler.handle(
+        let response = try await harness.handler.handle(
             HTTPRequest(
                 method: .post,
                 path: "/v1/chat/completions",
@@ -1713,7 +1568,7 @@ struct OpenAIHandlerTests {
                 body: body
             )
         )
-        let generateRequest = try #require(await vlmClient.lastGenerateRequest)
+        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
 
         #expect(response.statusCode == 200)
         #expect(generateRequest.execution.hasToolConfig)
@@ -8631,6 +8486,49 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["http.reasoning_history_strip_count", default: 0] == 1)
         #expect(metrics.values["http.tool_call_history_strip_count", default: 0] == 1)
         #expect(metrics.values["http.shaping_ms", default: -1] >= 0)
+    }
+
+    private func makeGemma4VLMOpenAIHandler(
+        requestID: String,
+        finishReason: String = "stop",
+        assistantText: String = "ready",
+        configureModel: (inout Melix_Controlplane_V1_ModelSummary) -> Void = { _ in }
+    ) -> (handler: OpenAIHandler, textClient: ScriptedWorkerClient, vlmClient: ScriptedWorkerClient) {
+        var vlmModel = ModelCatalog.devVLMModel()
+        vlmModel.settings.ext["vision_family_id"] = "gemma4-v1"
+        vlmModel.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
+        vlmModel.settings.ext["melix.vlm.text_only_batch_generator"] = "false"
+        configureModel(&vlmModel)
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), vlmModel])
+        let textClient = ScriptedWorkerClient(events: [])
+        let vlmClient = ScriptedWorkerClient(
+            events: [
+                makeCompletedEvent(
+                    requestID: requestID,
+                    seq: 1,
+                    finishReason: finishReason,
+                    assistantText: assistantText
+                ),
+            ],
+            loadModelHandle: "melix-dev-vlm::python"
+        )
+        let workerRegistry = WorkerRegistry(
+            defaultTextClient: textClient,
+            pythonCompatibilityClient: vlmClient,
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: workerRegistry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: workerRegistry,
+            translator: ChatRequestTranslator(requestIDGenerator: { requestID }),
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
+        )
+        return (handler, textClient, vlmClient)
     }
 
     private func warmModel() -> Melix_Controlplane_V1_ModelSummary {

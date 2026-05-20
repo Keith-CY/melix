@@ -2083,9 +2083,12 @@ public struct OpenAIHandler: Sendable {
         else {
             return false
         }
-        guard let requestedTemperature = normalizedRequest.temperature,
-              abs(requestedTemperature) < 1e-9,
-              abs(Double(workerRequest.sampling.temperature)) < 1e-6
+        // SamplingConfig.temperature is Float32; compare the translated worker
+        // value with Float32-sized tolerance after request shaping.
+        // Gate final worker sampling so future top-k shaping cannot enter this path.
+        guard normalizedRequest.temperature != nil,
+              abs(Double(workerRequest.sampling.temperature)) < 1e-6,
+              workerRequest.sampling.topK == 0
         else {
             return false
         }
@@ -2102,9 +2105,7 @@ public struct OpenAIHandler: Sendable {
         guard normalizedRequest.topP == nil else {
             return false
         }
-        guard let requestedTemperature = normalizedRequest.temperature,
-              abs(requestedTemperature) < 1e-9
-        else {
+        guard normalizedRequest.temperature != nil else {
             return false
         }
         return abs(Double(workerRequest.sampling.temperature)) < 1e-6
