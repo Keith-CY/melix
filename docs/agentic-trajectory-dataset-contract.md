@@ -69,6 +69,10 @@ Current implementation anchors that future slices must reuse:
 - `scripts/agentic_lora_sft_smoke.py`
   - deterministic smoke path that runs the LoRA SFT pipeline against the
     checked-in agentic trace fixture without requiring a real MLX training run
+- `scripts/agentic_lora_eval_compare_smoke.py`
+  - deterministic evidence path that trains the smoke fixture, activates the
+    adapter-backed runtime target, and persists base-vs-activated-adapter eval
+    compare artifacts with paired sample evidence
 - `services/mlx-worker-python/worker/runtime/tool_registry.py`
   - defines the built-in tool registry receipt
 - `services/mlx-worker-python/worker/runtime/tool_observation.py`
