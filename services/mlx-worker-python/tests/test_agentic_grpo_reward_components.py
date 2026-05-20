@@ -225,6 +225,86 @@ def test_grpo_policy_updates_clamp_fatal_positive_advantage_metadata(
     assert adapter_config["advantage_clamped_candidate_count"] == 1
 
 
+def test_grpo_policy_updates_track_penalized_unselected_fatal_without_clamp(
+    tmp_path: Path,
+) -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={"training_mode": "grpo", "grpo_candidate_count": "2"},
+        dataset_format="prompt_candidate",
+        response_only_supported=False,
+        sample_count=1,
+    )
+    normalized_dataset_dir = tmp_path / "normalized"
+    normalized_dataset_dir.mkdir()
+    (normalized_dataset_dir / "train.jsonl").write_text(
+        json.dumps(
+            {
+                "prompt": "Pick the safe response.",
+                "candidates": [
+                    {
+                        "text": "High scalar answer with a fatal tool failure.",
+                        "score": 0.6,
+                        "fatal_stage": "tool_execution_failure",
+                    },
+                    {
+                        "text": "Lower scalar answer that is safe after penalties.",
+                        "score": 0.1,
+                    },
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-grpo-fatal-penalty-not-selected",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=normalized_dataset_dir,
+        config=config,
+        dataset_format="prompt_candidate",
+    )
+
+    result = mlx_lm_runner_module.MLXLMRunner().train(request)
+    trace_rows = [
+        json.loads(line)
+        for line in Path(result.metrics.policy_update_trace_path).read_text(encoding="utf-8").splitlines()
+    ]
+    row = trace_rows[0]
+    fatal_candidate = row["scored_candidates"][0]
+    selected_candidate = row["scored_candidates"][1]
+    adapter_config = json.loads(result.adapter_config_path.read_text(encoding="utf-8"))
+
+    assert row["selected_candidate_index"] == 1
+    assert row["fatal_state_mask"] is False
+    assert row["fatal_stage"] == ""
+    assert row["selected_reward"] == pytest.approx(0.1)
+    assert row["group_reward_mean"] == pytest.approx(-0.15)
+    assert row["group_fatal_candidate_count"] == 1
+    assert row["group_advantage_clamped_candidate_count"] == 0
+    assert fatal_candidate["reward_components"]["fatal_failure"] == pytest.approx(-1.0)
+    assert fatal_candidate["reward_components"]["total"] == pytest.approx(-0.4)
+    assert fatal_candidate["fatal_state_mask"] is True
+    assert fatal_candidate["fatal_state_mask_reason"] == "tool_execution_failure"
+    assert fatal_candidate["grpo_advantage_raw"] == pytest.approx(-0.25)
+    assert fatal_candidate["grpo_advantage_clamped"] == pytest.approx(-0.25)
+    assert fatal_candidate["grpo_advantage_clamp_applied"] is False
+    assert fatal_candidate["grpo_advantage_clamp_reason"] == ""
+    assert selected_candidate["fatal_state_mask"] is False
+    assert selected_candidate["grpo_advantage_raw"] == pytest.approx(0.25)
+    assert selected_candidate["grpo_advantage_clamped"] == pytest.approx(0.25)
+    assert result.metrics.fatal_candidate_count == 1
+    assert result.metrics.selected_fatal_candidate_count == 0
+    assert result.metrics.advantage_clamped_candidate_count == 0
+    assert result.metrics.reward_component_fatal_failure_mean == pytest.approx(-0.5)
+    assert adapter_config["fatal_candidate_count"] == 1
+    assert adapter_config["selected_fatal_candidate_count"] == 0
+    assert adapter_config["advantage_clamped_candidate_count"] == 0
+
+
 def test_lora_training_pipeline_records_grpo_reward_component_metrics(
     tmp_path: Path,
 ) -> None:
