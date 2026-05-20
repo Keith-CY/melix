@@ -214,6 +214,34 @@ def test_tool_registry_select_reuses_cached_name_index() -> None:
     assert selected.names() == ("visit", "image_crop")
 
 
+def test_tool_registry_select_looks_up_each_selected_name_once() -> None:
+    class CountingIndex(dict[str, ToolDescriptor]):
+        def __init__(self, values: dict[str, ToolDescriptor]) -> None:
+            super().__init__(values)
+            self.get_calls = 0
+            self.contains_calls = 0
+
+        def get(self, key: str, default: object = None) -> ToolDescriptor | object:
+            self.get_calls += 1
+            return super().get(key, default)
+
+        def __contains__(self, key: object) -> bool:
+            self.contains_calls += 1
+            return super().__contains__(key)
+
+    registry = ToolRegistry(built_in_tool_registry().tools)
+    index = CountingIndex(registry._tool_by_name)
+    assert "visit" in index
+    index.contains_calls = 0
+    object.__setattr__(registry, "_tool_by_name", index)
+
+    selected = registry.select(["visit", "image_crop", "visit"])
+
+    assert selected.names() == ("visit", "image_crop")
+    assert index.get_calls == 2
+    assert index.contains_calls == 0
+
+
 def test_tool_registry_select_reuses_cached_selected_registry() -> None:
     registry = ToolRegistry(built_in_tool_registry().tools)
 
