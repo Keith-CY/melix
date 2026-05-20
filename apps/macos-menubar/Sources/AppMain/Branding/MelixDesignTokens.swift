@@ -167,6 +167,11 @@ enum MelixDesignTokens {
         /// Slightly stronger hairline on interactive containers — composer
         /// boxes, tab strips. Spec permits 0.06–0.08 on these surfaces.
         static let interactive: Double = 0.08
+        /// Visible enough for dense forms where fields must not disappear into
+        /// surrounding card surfaces.
+        static let input: Double = 0.18
+        /// Focus ring for text entry and repeated operator configuration flows.
+        static let focusedInput: Double = 0.72
     }
 
     // MARK: - Status tints
@@ -234,6 +239,12 @@ enum MelixDesignTokens {
         static let xl: CGFloat = 20
         static let xxl: CGFloat = 24
         static let huge: CGFloat = 32
+    }
+
+    enum ControlMetrics {
+        /// Shared height for operator text fields and inline actions in dense
+        /// configuration rows.
+        static let operatorFieldHeight: CGFloat = 36
     }
 
     // MARK: - Typography
@@ -304,6 +315,33 @@ extension View {
     }
 }
 
+struct MelixOperatorTextFieldStyle: TextFieldStyle {
+    @FocusState private var isFocused: Bool
+
+    func _body(configuration: TextField<Self._Label>) -> some View {
+        configuration
+            .textFieldStyle(.plain)
+            .font(MelixDesignTokens.Typography.body)
+            .padding(.horizontal, MelixDesignTokens.Spacing.md)
+            .padding(.vertical, MelixDesignTokens.Spacing.sm)
+            .frame(minHeight: MelixDesignTokens.ControlMetrics.operatorFieldHeight)
+            .background(
+                RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.md, style: .continuous)
+                    .fill(MelixDesignTokens.Palette.backgroundSurface.color)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.md, style: .continuous)
+                    .stroke(
+                        isFocused
+                            ? MelixDesignTokens.accent.opacity(MelixDesignTokens.StrokeOpacity.focusedInput)
+                            : Color.primary.opacity(MelixDesignTokens.StrokeOpacity.input),
+                        lineWidth: isFocused ? 1.5 : 1
+                    )
+            )
+            .focused($isFocused)
+    }
+}
+
 /// Card container with a microhead section label. Replaces SwiftUI's
 /// default `GroupBox` for inspector/sidebar sections where the spec calls
 /// for the "Digital Broadsheet" header treatment.
@@ -325,5 +363,48 @@ struct MelixSectionCard<Content: View>: View {
         .padding(MelixDesignTokens.Spacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)
         .melixCard()
+    }
+}
+
+struct MelixActionableEmptyState<Actions: View>: View {
+    let title: String
+    let systemImage: String
+    let detail: String
+    @ViewBuilder let actions: () -> Actions
+
+    var body: some View {
+        VStack(spacing: MelixDesignTokens.Spacing.md) {
+            Image(systemName: systemImage)
+                .font(.system(size: 28, weight: .medium))
+                .foregroundStyle(MelixDesignTokens.accent)
+                .frame(width: 46, height: 46)
+                .background(
+                    MelixDesignTokens.accent.opacity(MelixDesignTokens.AccentOpacity.weak),
+                    in: RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.xl, style: .continuous)
+                )
+
+            VStack(spacing: MelixDesignTokens.Spacing.xs) {
+                Text(title)
+                    .font(MelixDesignTokens.Typography.headline)
+                Text(detail)
+                    .font(MelixDesignTokens.Typography.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(3)
+            }
+
+            actions()
+                .controlSize(.small)
+        }
+        .padding(MelixDesignTokens.Spacing.xl)
+        .frame(maxWidth: .infinity, minHeight: 180)
+        .background(
+            MelixDesignTokens.Palette.backgroundSurface.color,
+            in: RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.xl, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.xl, style: .continuous)
+                .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.hairline), lineWidth: 1)
+        )
     }
 }

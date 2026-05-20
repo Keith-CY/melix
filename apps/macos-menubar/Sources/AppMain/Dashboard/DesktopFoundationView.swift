@@ -520,14 +520,7 @@ private struct DesktopRegistryTextField: View {
 
     var body: some View {
         TextField(title, text: $text)
-            .textFieldStyle(.plain)
-            .font(.body)
-            .padding(.vertical, MelixDesignTokens.Spacing.sm)
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(Color.secondary.opacity(MelixDesignTokens.StrokeOpacity.interactive))
-                    .frame(height: 1)
-            }
+            .textFieldStyle(MelixOperatorTextFieldStyle())
     }
 }
 
@@ -537,14 +530,7 @@ private struct DesktopRegistrySecureField: View {
 
     var body: some View {
         SecureField(title, text: $text)
-            .textFieldStyle(.plain)
-            .font(.body)
-            .padding(.vertical, MelixDesignTokens.Spacing.sm)
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(Color.secondary.opacity(MelixDesignTokens.StrokeOpacity.interactive))
-                    .frame(height: 1)
-            }
+            .textFieldStyle(MelixOperatorTextFieldStyle())
     }
 }
 
@@ -583,9 +569,9 @@ struct DesktopModelRegistryEntriesView: View {
         ViewThatFits(in: .horizontal) {
             HStack(alignment: .top, spacing: MelixDesignTokens.Spacing.lg) {
                 registryList
-                    .frame(minWidth: 440)
+                    .frame(minWidth: 520)
                 modelCard
-                    .frame(minWidth: 320, maxWidth: 380)
+                    .frame(width: 360)
             }
 
             VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.lg) {
@@ -746,24 +732,14 @@ private struct DesktopRegistryEntryRowView: View {
     let toggleLoad: (() -> Void)?
 
     var body: some View {
-        HStack(alignment: .top, spacing: MelixDesignTokens.Spacing.lg) {
+        HStack(alignment: .top, spacing: MelixDesignTokens.Spacing.md) {
             VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
-                HStack(alignment: .firstTextBaseline, spacing: MelixDesignTokens.Spacing.sm) {
-                    Text(entry.title)
-                        .font(.callout.weight(.semibold))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    DesktopRegistryBadgeView(
-                        title: entry.sourceText,
-                        tint: DesktopRegistryVisuals.sourceColor(entry.sourceText)
-                    )
-                    if localModel?.runtimeCacheMissing == true {
-                        DesktopRegistryBadgeView(
-                            title: localModel?.runtimeCacheStatusText ?? "Cache Missing",
-                            tint: MelixDesignTokens.StatusColor.warning
-                        )
-                    }
-                }
+                DesktopRegistryTitleBadgeRow(
+                    title: entry.title,
+                    titleFont: .callout.weight(.semibold),
+                    badges: entryHeaderBadges,
+                    lineLimit: 1
+                )
 
                 if !entry.subtitleText.isEmpty {
                     Text(entry.subtitleText)
@@ -798,6 +774,7 @@ private struct DesktopRegistryEntryRowView: View {
                         .lineLimit(2)
                 }
             }
+            .layoutPriority(1)
 
             Spacer(minLength: MelixDesignTokens.Spacing.md)
 
@@ -834,6 +811,24 @@ private struct DesktopRegistryEntryRowView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .desktopRegistryRowBackground(isSelected)
     }
+
+    private var entryHeaderBadges: [DesktopRegistryBadgeItem] {
+        var badges = [
+            DesktopRegistryBadgeItem(
+                title: entry.sourceText,
+                tint: DesktopRegistryVisuals.sourceColor(entry.sourceText)
+            )
+        ]
+        if localModel?.runtimeCacheMissing == true {
+            badges.append(
+                DesktopRegistryBadgeItem(
+                    title: localModel?.runtimeCacheStatusText ?? "Cache Missing",
+                    tint: MelixDesignTokens.StatusColor.warning
+                )
+            )
+        }
+        return badges
+    }
 }
 
 private struct DesktopRegistryRowBackground: ViewModifier {
@@ -862,16 +857,17 @@ private struct DesktopHubModelCardContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.md) {
             VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
-                HStack(alignment: .firstTextBaseline, spacing: MelixDesignTokens.Spacing.sm) {
-                    Text(card.repoID)
-                        .font(.headline)
-                        .lineLimit(2)
-                        .truncationMode(.middle)
-                    DesktopRegistryBadgeView(
-                        title: card.runSuitabilityText,
-                        tint: DesktopRegistryVisuals.fitColor(card.runSuitabilityText)
-                    )
-                }
+                DesktopRegistryTitleBadgeRow(
+                    title: card.repoID,
+                    titleFont: .headline,
+                    badges: [
+                        DesktopRegistryBadgeItem(
+                            title: card.runSuitabilityText,
+                            tint: DesktopRegistryVisuals.fitColor(card.runSuitabilityText)
+                        ),
+                    ],
+                    lineLimit: 2
+                )
                 Text("\(card.author) • \(card.pipelineTag) • \(card.compatibilityText)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -917,16 +913,17 @@ struct DesktopRegistryEntryCardContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.md) {
             VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
-                HStack(alignment: .firstTextBaseline, spacing: MelixDesignTokens.Spacing.sm) {
-                    Text(entry.title)
-                        .font(.headline)
-                        .lineLimit(2)
-                        .truncationMode(.middle)
-                    DesktopRegistryBadgeView(
-                        title: entry.sourceText,
-                        tint: DesktopRegistryVisuals.sourceColor(entry.sourceText)
-                    )
-                }
+                DesktopRegistryTitleBadgeRow(
+                    title: entry.title,
+                    titleFont: .headline,
+                    badges: [
+                        DesktopRegistryBadgeItem(
+                            title: entry.sourceText,
+                            tint: DesktopRegistryVisuals.sourceColor(entry.sourceText)
+                        ),
+                    ],
+                    lineLimit: 2
+                )
                 if !entry.subtitleText.isEmpty {
                     Text(entry.subtitleText)
                         .font(.caption)
@@ -1173,6 +1170,48 @@ private struct DesktopRegistryBadgeView: View {
                 tint.opacity(MelixDesignTokens.AccentOpacity.weak),
                 in: Capsule()
             )
+    }
+}
+
+private struct DesktopRegistryBadgeItem: Identifiable {
+    let id = UUID()
+    let title: String
+    let tint: Color
+}
+
+private struct DesktopRegistryTitleBadgeRow: View {
+    let title: String
+    let titleFont: Font
+    let badges: [DesktopRegistryBadgeItem]
+    var lineLimit = 2
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: MelixDesignTokens.Spacing.sm) {
+                titleText
+                ForEach(badges) { badge in
+                    DesktopRegistryBadgeView(title: badge.title, tint: badge.tint)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: MelixDesignTokens.Spacing.xs) {
+                titleText
+                HStack(alignment: .center, spacing: MelixDesignTokens.Spacing.xs) {
+                    ForEach(badges) { badge in
+                        DesktopRegistryBadgeView(title: badge.title, tint: badge.tint)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var titleText: some View {
+        Text(title)
+            .font(titleFont)
+            .lineLimit(lineLimit)
+            .truncationMode(.middle)
+            .layoutPriority(1)
     }
 }
 
@@ -2069,7 +2108,7 @@ struct DesktopSettingsTabView: View {
                             set: { viewModel.updateRuntimeSettingDraft(key: $0, value: viewModel.runtimeSettingValueDraft) }
                         )
                     )
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(MelixOperatorTextFieldStyle())
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Setting value")
@@ -2082,7 +2121,7 @@ struct DesktopSettingsTabView: View {
                             set: { viewModel.updateRuntimeSettingDraft(key: viewModel.runtimeSettingKeyDraft, value: $0) }
                         )
                     )
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(MelixOperatorTextFieldStyle())
                 }
             }
             HStack(spacing: 8) {
@@ -2177,7 +2216,7 @@ struct DesktopSettingsTabView: View {
                         set: { viewModel.updateRuntimeDiscoveryAliasQuery($0) }
                     )
                 )
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(MelixOperatorTextFieldStyle())
             }
             DesktopSettingsOperationButton(title: "Lookup Alias", isEnabled: viewModel.runtimeDiscoveryAliasLookupCanRun) {
                 Task { await viewModel.lookupRuntimeDiscoveryModelAlias() }

@@ -88,17 +88,34 @@ enum DesktopImageWorkspaceMode: String, CaseIterable, Identifiable {
 struct DesktopImageJobsSidebar: View {
     let viewModel: RuntimeViewModel
 
+    func openImageWorkspaceAction() {
+        viewModel.selectSurface(.image)
+    }
+
+    func chooseModelAction() {
+        viewModel.selectSurface(.tools)
+        viewModel.selectToolSection(.modelsLibrary)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Image Jobs")
                 .font(.headline)
 
             if viewModel.imageJobs.isEmpty {
-                ContentUnavailableView(
-                    "No image jobs yet",
+                MelixActionableEmptyState(
+                    title: "No Image Jobs Yet",
                     systemImage: "photo.on.rectangle.angled",
-                    description: Text("Submit a generation or edit request to track image artifacts and progress.")
-                )
+                    detail: "Generate or edit an image to track prompts, artifacts, progress, and follow-up actions here."
+                ) {
+                    VStack(spacing: MelixDesignTokens.Spacing.sm) {
+                        Button("Open Image Workspace", action: openImageWorkspaceAction)
+                        .buttonStyle(.borderedProminent)
+
+                        Button("Choose Model", action: chooseModelAction)
+                        .buttonStyle(.bordered)
+                    }
+                }
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
@@ -174,36 +191,12 @@ struct DesktopImageWorkspace: View {
                 }
 
                 MelixSectionCard("Defaults") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Text("Source")
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text(viewModel.imageDefaultsSourceText)
-                        }
-                        HStack {
-                            Text("Effective models")
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text(effectiveModelSummary)
-                                .multilineTextAlignment(.trailing)
-                        }
-                        HStack {
-                            Text("Effective parameters")
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text(effectiveDefaultsSummary)
-                                .multilineTextAlignment(.trailing)
-                        }
-                        HStack {
-                            Text("Timeout policy")
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text(viewModel.imageTimeoutPolicyText)
-                                .multilineTextAlignment(.trailing)
-                        }
+                    VStack(alignment: .leading, spacing: 12) {
+                        imageDefaultRow("Source", value: viewModel.imageDefaultsSourceText)
+                        imageDefaultRow("Effective models", value: effectiveModelSummary)
+                        imageDefaultRow("Effective parameters", value: effectiveDefaultsSummary)
+                        imageDefaultRow("Timeout policy", value: viewModel.imageTimeoutPolicyText)
                     }
-                    .font(.caption)
                 }
 
                 MelixSectionCard(selectedMode.rawValue) {
@@ -236,7 +229,7 @@ struct DesktopImageWorkspace: View {
                                     set: { viewModel.imageSize = $0 }
                                 )
                             )
-                            .textFieldStyle(.roundedBorder)
+                            .textFieldStyle(MelixOperatorTextFieldStyle())
 
                             Stepper(
                                 "Variants \(viewModel.imageVariantCount)",
@@ -258,7 +251,7 @@ struct DesktopImageWorkspace: View {
                                             set: { viewModel.imageSteps = $0 }
                                         )
                                     )
-                                    .textFieldStyle(.roundedBorder)
+                                    .textFieldStyle(MelixOperatorTextFieldStyle())
 
                                     TextField(
                                         "Guidance",
@@ -267,7 +260,7 @@ struct DesktopImageWorkspace: View {
                                             set: { viewModel.imageGuidance = $0 }
                                         )
                                     )
-                                    .textFieldStyle(.roundedBorder)
+                                    .textFieldStyle(MelixOperatorTextFieldStyle())
 
                                     if selectedMode == .edit {
                                         TextField(
@@ -277,7 +270,7 @@ struct DesktopImageWorkspace: View {
                                                 set: { viewModel.imageStrength = $0 }
                                             )
                                         )
-                                        .textFieldStyle(.roundedBorder)
+                                        .textFieldStyle(MelixOperatorTextFieldStyle())
                                     }
                                 }
 
@@ -288,7 +281,7 @@ struct DesktopImageWorkspace: View {
                                         set: { viewModel.imageNegativePrompt = $0 }
                                     )
                                 )
-                                .textFieldStyle(.roundedBorder)
+                                .textFieldStyle(MelixOperatorTextFieldStyle())
 
                                 HStack {
                                     Button("Save Defaults", action: viewModel.applyImageDefaultsFromUI)
@@ -328,7 +321,7 @@ struct DesktopImageWorkspace: View {
                                     set: { viewModel.imageEditSourceURL = $0 }
                                 )
                             )
-                            .textFieldStyle(.roundedBorder)
+                            .textFieldStyle(MelixOperatorTextFieldStyle())
 
                             TextField(
                                 "Mask URI (optional)",
@@ -337,7 +330,7 @@ struct DesktopImageWorkspace: View {
                                     set: { viewModel.imageEditMaskURL = $0 }
                                 )
                             )
-                            .textFieldStyle(.roundedBorder)
+                            .textFieldStyle(MelixOperatorTextFieldStyle())
                         }
 
                         HStack {
@@ -463,6 +456,19 @@ struct DesktopImageWorkspace: View {
         guidance \(viewModel.effectiveImageGuidance) • strength \(viewModel.effectiveImageStrength)
         negative \(negativePrompt)
         """
+    }
+
+    private func imageDefaultRow(_ title: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(title)
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 12)
+            Text(value)
+                .font(.callout)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(2)
+        }
     }
 }
 
