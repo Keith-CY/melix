@@ -34,6 +34,10 @@ handoff:
   so MLX-LM's single contiguous `mask_prompt` boundary trains tool-call tokens
   and final-answer tokens without training user/system/tool-observation context.
 - Record response-only boundary metadata for each projected row.
+- Resolve SFT training modes that consume `agentic_tool_trace` packages to the
+  explicit `training_objective: agentic_sft` and
+  `dataset_contract: agentic_tool_trace` contract while keeping backend
+  execution on the supervised MLX-LM LoRA path.
 
 Out of scope:
 
@@ -56,7 +60,9 @@ Out of scope:
    receipts.
 5. Enable response-only masking for `agentic_tool_trace` by default after
    projecting each trainable assistant span into a separate chat row.
-6. Add focused tests for the formatter, snapshot artifacts, and LoRA pipeline
+6. Add config validation so explicit incompatible `training_objective`
+   overrides fail before training starts.
+7. Add focused tests for the formatter, snapshot artifacts, and LoRA pipeline
    handoff.
 
 ## Performance And Metrics
@@ -89,6 +95,11 @@ training data preparation path.
 - Each projected row ends with the one assistant span that should receive loss
   for that row, and records `response_only_boundary` metadata.
 - Agentic SFT defaults to `response_only=true` and `mask_prompt=true`.
+- Adapter receipts and runner configs identify the slice as
+  `training_objective: agentic_sft` with
+  `dataset_contract: agentic_tool_trace`.
+- Explicit incompatible `training_objective` overrides fail before backend
+  execution.
 - Original normalized traces are preserved in sibling JSONL evidence files.
 - LoRA training still reports `dataset_format: agentic_tool_trace` and records
   `trainer_dataset_format: chat_messages`.

@@ -272,11 +272,14 @@ def test_train_lora_records_agentic_trajectory_provenance_in_adapter_manifest(
     assert payload["trainer_dataset_format"] == "chat_messages"
     assert payload["trainer_dataset_sample_count"] == 2
     assert payload["trainer_dataset_validation_sample_count"] == 0
+    assert payload["training_objective"] == "agentic_sft"
+    assert payload["dataset_contract"] == "agentic_tool_trace"
     assert payload["response_only"] is True
     assert payload["mask_prompt"] is True
     assert runner.last_train_request is not None
     assert runner.last_train_request.dataset_format == "chat_messages"
-    assert runner.last_train_request.config.dataset_contract == "sft"
+    assert runner.last_train_request.config.training_objective == "agentic_sft"
+    assert runner.last_train_request.config.dataset_contract == "agentic_tool_trace"
     assert runner.last_train_request.config.response_only is True
     assert runner.last_train_request.config.mask_prompt is True
     assert runner.last_train_request.config.batch_size == 2
