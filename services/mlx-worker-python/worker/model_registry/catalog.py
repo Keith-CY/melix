@@ -73,7 +73,7 @@ class RegistrySnapshot:
     scanned_at_unix_ms: int
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _PlainLocalModelScan:
     model_dir: Path
     has_model_weight_files: bool
