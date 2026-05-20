@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 from collections.abc import Iterable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -359,15 +360,13 @@ class BenchmarkStore:
                 hydrated_rows.append(row)
                 continue
             hydrated_rows.append(
-                BenchmarkMatrixSummaryRow(
-                    **{
-                        **row.__dict__,
-                        "tool_call_count": tool_call_count,
-                        "tool_latency_ms": round(tool_latency_ms, 6),
-                        "observation_bytes": observation_bytes,
-                        "fatal_rate": round(fatal_count / max(count, 1), 6),
-                        "turn_count": turn_count,
-                    }
+                replace(
+                    row,
+                    tool_call_count=tool_call_count,
+                    tool_latency_ms=round(tool_latency_ms, 6),
+                    observation_bytes=observation_bytes,
+                    fatal_rate=round(fatal_count / max(count, 1), 6),
+                    turn_count=turn_count,
                 )
             )
         return tuple(hydrated_rows)
