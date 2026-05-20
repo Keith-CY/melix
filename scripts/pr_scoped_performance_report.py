@@ -25,14 +25,17 @@ def _load_results(results_dir: Path) -> list[dict[str, object]]:
     results: list[dict[str, object]] = []
     try:
         with os.scandir(results_dir) as entries:
-            result_paths = sorted(entry.path for entry in entries if entry.name.endswith(".json"))
+            result_paths = [entry.path for entry in entries if entry.name.endswith(".json")]
     except OSError:
         return []
+    result_paths.sort()
+    results_append = results.append
+    json_loads = json.loads
     for path in result_paths:
         with open(path, "rb") as result_file:
-            payload = json.loads(result_file.read())
+            payload = json_loads(result_file.read())
         if isinstance(payload, dict):
-            results.append(payload)
+            results_append(payload)
     return results
 
 
