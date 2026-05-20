@@ -614,12 +614,50 @@ def test_serving_benchmark_request_rows_preserve_tool_turn_and_final_answer_phas
         "observation_bytes": 42,
         "fatal_rate": 0.0,
         "turn_count": 2,
+        "compare_target_kind": "base",
+        "base_model_id": "melix-dev-text",
+        "adapter_manifest_path": "",
+        "adapter_set_hash": "",
+        "adapter_activation_mode": "",
         "created_at_unix_ms": 101,
     }
     assert final_answer["phase"] == "final_answer"
     assert final_answer["tool_call_id"] == ""
     assert final_answer["tool_call_count"] == 1
     assert final_answer["tokens_out"] == 16
+
+
+def test_serving_benchmark_request_rows_preserve_adapter_compare_identity() -> None:
+    row = build_serving_benchmark_request_row(
+        job_id="bench-adapter",
+        model_id="melix-dev-text-lora-deadbeef",
+        task_kind="text-generation",
+        source_repo="local",
+        suite="agentic_visit",
+        context_length=64,
+        generation_length=16,
+        batch_size=1,
+        repeat_index=0,
+        request_index=0,
+        phase="tool_turn",
+        phase_index=0,
+        status="completed",
+        tool_call_count=1,
+        tool_latency_ms=5.5,
+        compare_target_kind="adapter",
+        base_model_id="melix-dev-text",
+        adapter_manifest_path="/tmp/melix/train_lora.adapter.json",
+        adapter_set_hash="deadbeefcafebabe",
+        adapter_activation_mode="adapter_backed_runtime",
+    ).to_dict()
+
+    assert row["compare_target_kind"] == "adapter"
+    assert row["base_model_id"] == "melix-dev-text"
+    assert row["adapter_manifest_path"] == "/tmp/melix/train_lora.adapter.json"
+    assert row["adapter_set_hash"] == "deadbeefcafebabe"
+    assert row["adapter_activation_mode"] == "adapter_backed_runtime"
+    assert row["tool_call_count"] == 1
+    assert row["tool_latency_ms"] == 5.5
 
 
 def test_benchmark_matrix_tool_turn_summary_fields_aggregate_requests() -> None:

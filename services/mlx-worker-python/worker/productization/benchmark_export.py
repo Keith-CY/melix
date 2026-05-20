@@ -779,7 +779,13 @@ def _collect_benchmark_run(
         batch_rows.extend(_try_iter_jsonl_dict_rows(batch_path))
 
     if request_rows is not None and request_path is not None:
-        request_rows.extend(_try_iter_jsonl_dict_rows(request_path))
+        current_request_rows = list(_try_iter_jsonl_dict_rows(request_path))
+        request_rows.extend(current_request_rows)
+        if current_request_rows:
+            _annotate_benchmark_request_rows(
+                current_request_rows,
+                summary_rows=summary_rows,
+            )
 
     for result_path in result_paths:
         result_row = _try_load_json_object(result_path)
@@ -830,6 +836,96 @@ def _collect_benchmark_matrix_run(
 
     if requests_path is not None:
         request_rows.extend(_iter_jsonl_dict_rows(requests_path))
+
+
+def _annotate_benchmark_request_rows(
+    request_rows: list[dict[str, object]],
+    *,
+    summary_rows: list[dict[str, object]],
+) -> None:
+    if not request_rows or not summary_rows:
+        return
+    metadata_by_job_id = {
+        str(row.get("job_id", "")): _benchmark_compare_identity(row)
+        for row in summary_rows
+        if isinstance(row, dict) and row.get("job_id")
+    }
+    for row in request_rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("schema_version") != "melix.serving_benchmark_request_row.v1":
+            continue
+        metadata = metadata_by_job_id.get(str(row.get("job_id", "")))
+        if not metadata:
+            continue
+        metadata_is_adapter = metadata["compare_target_kind"] == "adapter"
+        for key, value in metadata.items():
+            if (
+                metadata_is_adapter
+                and key == "compare_target_kind"
+                and row.get(key) == "base"
+            ):
+                row[key] = value
+                continue
+            if (
+                metadata_is_adapter
+                and key == "base_model_id"
+                and row.get(key) == row.get("model_id")
+            ):
+                row[key] = value
+                continue
+            if row.get(key):
+                continue
+            row[key] = value
+
+
+def _benchmark_compare_identity(job_row: dict[str, object]) -> dict[str, str]:
+    parameters = job_row.get("parameters")
+    params = parameters if isinstance(parameters, dict) else {}
+    adapter_manifest_path = _metadata_value(
+        params,
+        "melix.adapter_manifest_path",
+        "adapter_manifest_path",
+        "runtime_adapter_manifest_path",
+    )
+    adapter_set_hash = _metadata_value(
+        params,
+        "melix.adapter_set_hash",
+        "adapter_set_hash",
+        "runtime_adapter_set_hash",
+    )
+    activation_mode = _metadata_value(
+        params,
+        "melix.activation_mode",
+        "adapter_activation_mode",
+        "activation_mode",
+    )
+    base_model_id = _metadata_value(
+        params,
+        "melix.derived_from_model_id",
+        "derived_from_model_id",
+        "base_model_id",
+    )
+    has_adapter_lineage = bool(adapter_manifest_path or activation_mode or base_model_id)
+    compare_target_kind = "adapter" if has_adapter_lineage else "base"
+    if not base_model_id:
+        base_model_id = str(job_row.get("model_id", ""))
+    return {
+        "compare_target_kind": compare_target_kind,
+        "base_model_id": base_model_id,
+        "adapter_manifest_path": adapter_manifest_path,
+        "adapter_set_hash": adapter_set_hash if has_adapter_lineage else "",
+        "adapter_activation_mode": activation_mode,
+    }
+
+
+def _metadata_value(payload: dict[object, object], *keys: str) -> str:
+    for key in keys:
+        raw_value = payload.get(key, "")
+        value = str(raw_value or "").strip()
+        if value:
+            return value
+    return ""
 
 
 def _iter_jsonl_dict_rows(path: Path) -> Iterator[dict[str, object]]:
@@ -975,6 +1071,11 @@ def _canonical_benchmark_request_columns() -> list[str]:
         "observation_bytes",
         "fatal_rate",
         "turn_count",
+        "compare_target_kind",
+        "base_model_id",
+        "adapter_manifest_path",
+        "adapter_set_hash",
+        "adapter_activation_mode",
         "created_at_unix_ms",
         *TRAJECTORY_PROVENANCE_CSV_FIELDS,
     ]

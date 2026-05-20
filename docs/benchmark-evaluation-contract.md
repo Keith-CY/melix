@@ -721,6 +721,11 @@ Each request-level phase row must include:
 - `observation_bytes`
 - `fatal_rate`
 - `turn_count`
+- `compare_target_kind`
+- `base_model_id`
+- `adapter_manifest_path`
+- `adapter_set_hash`
+- `adapter_activation_mode`
 - `created_at_unix_ms`
 
 `phase` is `tool_turn` for deterministic local tool execution and
@@ -729,6 +734,14 @@ emit only `final_answer`. For `tool_turn` rows, `tool_arguments_json` and
 `tool_observation_json` are compact JSON object strings derived from the shared
 agentic tool runtime. For `final_answer`, tool-specific fields default to empty
 strings while aggregate tool-turn fields may summarize the request.
+
+For base-vs-adapter benchmark comparison, request rows must make the comparison
+target identity explicit without requiring readers to inspect runtime state.
+`compare_target_kind` is `base` for ordinary model rows and `adapter` when the
+row was produced by an adapter-backed LoRA target. `base_model_id` identifies
+the source model used as the comparison baseline. Adapter rows must include the
+adapter package manifest path, adapter set hash, and activation mode when those
+values are available from benchmark job parameters.
 
 ### Compatibility Aliases
 

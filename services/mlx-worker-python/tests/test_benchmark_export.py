@@ -694,6 +694,136 @@ def test_build_benchmark_requests_csv_exports_phase_rows(tmp_path: Path) -> None
     assert rows[0]["duration_ms"] == "24.45"
 
 
+def test_collect_benchmark_artifacts_enriches_request_rows_with_adapter_identity(
+    tmp_path: Path,
+) -> None:
+    _write_bench_fixtures(tmp_path)
+    (tmp_path / "bench-summary.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.serving_benchmark_job.v1",
+                "job_id": "bench-1",
+                "model_id": "melix-dev-text-lora-deadbeef",
+                "task_kind": "text-generation",
+                "source_repo": "local",
+                "parameters": {
+                    "runtime_model_id": "melix-dev-text-lora-deadbeef",
+                    "runtime_model_handle": "melix-dev-text-lora-deadbeef::loaded",
+                    "melix.derived_from_model_id": "melix-dev-text",
+                    "melix.adapter_manifest_path": "/tmp/melix/train_lora.adapter.json",
+                    "melix.adapter_set_hash": "deadbeefcafebabe",
+                    "melix.activation_mode": "adapter_backed_runtime",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = collect_benchmark_artifacts(tmp_path)
+    row = result["benchmark_request_rows"][0]
+
+    assert row["compare_target_kind"] == "adapter"
+    assert row["base_model_id"] == "melix-dev-text"
+    assert row["adapter_manifest_path"] == "/tmp/melix/train_lora.adapter.json"
+    assert row["adapter_set_hash"] == "deadbeefcafebabe"
+    assert row["adapter_activation_mode"] == "adapter_backed_runtime"
+
+    csv_rows = list(csv.DictReader(io.StringIO(build_benchmark_requests_csv(result))))
+    assert csv_rows[0]["compare_target_kind"] == "adapter"
+    assert csv_rows[0]["adapter_set_hash"] == "deadbeefcafebabe"
+    assert csv_rows[0]["tool_call_count"] == ""
+
+
+def test_collect_benchmark_artifacts_overrides_default_base_identity_for_adapter_rows(
+    tmp_path: Path,
+) -> None:
+    _write_bench_fixtures(tmp_path)
+    (tmp_path / "bench-summary.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.serving_benchmark_job.v1",
+                "job_id": "bench-1",
+                "model_id": "melix-dev-text-lora-deadbeef",
+                "parameters": {
+                    "derived_from_model_id": "melix-dev-text",
+                    "adapter_set_hash": "deadbeefcafebabe",
+                    "activation_mode": "adapter_backed_runtime",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    request_path = tmp_path / "bench-request-rows.jsonl"
+    request_row = json.loads(request_path.read_text(encoding="utf-8"))
+    request_row["model_id"] = "melix-dev-text-lora-deadbeef"
+    request_row["compare_target_kind"] = "base"
+    request_row["base_model_id"] = "melix-dev-text-lora-deadbeef"
+    request_path.write_text(json.dumps(request_row) + "\n", encoding="utf-8")
+
+    result = collect_benchmark_artifacts(tmp_path)
+    row = result["benchmark_request_rows"][0]
+
+    assert row["compare_target_kind"] == "adapter"
+    assert row["base_model_id"] == "melix-dev-text"
+    assert row["adapter_set_hash"] == "deadbeefcafebabe"
+
+
+def test_collect_benchmark_artifacts_does_not_treat_family_hash_as_adapter_identity(
+    tmp_path: Path,
+) -> None:
+    _write_bench_fixtures(tmp_path)
+    summary_path = tmp_path / "bench-summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary["parameters"] = {"melix.adapter_set_hash": "text-family-llama"}
+    summary_path.write_text(json.dumps(summary) + "\n", encoding="utf-8")
+
+    result = collect_benchmark_artifacts(tmp_path)
+    row = result["benchmark_request_rows"][0]
+
+    assert row["compare_target_kind"] == "base"
+    assert row["base_model_id"] == "melix-dev-text"
+    assert row["adapter_set_hash"] == ""
+
+
+def test_collect_benchmark_artifacts_skips_request_row_annotation_without_metadata() -> None:
+    rows: list[dict[str, object]] = [
+        {
+            "schema_version": "melix.serving_benchmark_request_row.v1",
+            "job_id": "missing",
+            "model_id": "melix-dev-text",
+        },
+        {
+            "schema_version": "legacy.row",
+            "job_id": "bench-1",
+            "model_id": "melix-dev-text",
+        },
+    ]
+
+    benchmark_export_module._annotate_benchmark_request_rows(
+        rows,
+        summary_rows=[],
+    )
+    benchmark_export_module._annotate_benchmark_request_rows(
+        rows,
+        summary_rows=[{"job_id": "bench-1", "model_id": "melix-dev-text"}],
+    )
+
+    assert rows == [
+        {
+            "schema_version": "melix.serving_benchmark_request_row.v1",
+            "job_id": "missing",
+            "model_id": "melix-dev-text",
+        },
+        {
+            "schema_version": "legacy.row",
+            "job_id": "bench-1",
+            "model_id": "melix-dev-text",
+        },
+    ]
+
+
 def test_collect_benchmark_run_uses_single_directory_scan_without_path_is_file_probes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

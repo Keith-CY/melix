@@ -240,7 +240,70 @@ def test_persist_serving_benchmark_writes_request_phase_rows_and_exports(
     ]
     request_csv_rows = list(csv.DictReader(build_benchmark_requests_csv(export_bundle).splitlines()))
     assert request_csv_rows[0]["tool_call_id"] == "visit-1"
+    assert request_csv_rows[0]["compare_target_kind"] == "base"
+    assert request_csv_rows[0]["base_model_id"] == "melix-dev-text"
     assert request_csv_rows[1]["phase"] == "final_answer"
+
+
+def test_persist_serving_benchmark_request_rows_attach_adapter_identity(
+    tmp_path: Path,
+) -> None:
+    store = BenchmarkStore(telemetry_collector=fixture_telemetry_collector())
+    jobs_root = tmp_path / "bench"
+    job = build_serving_benchmark_job(
+        job_id="bench-adapter",
+        model_id="melix-dev-text-lora-deadbeef",
+        task_kind="text-generation",
+        source_repo="local",
+        suites=("agentic_visit",),
+        parameters={
+            "melix.derived_from_model_id": "melix-dev-text",
+            "melix.adapter_manifest_path": "/tmp/melix/train_lora.adapter.json",
+            "melix.adapter_set_hash": "deadbeefcafebabe",
+            "melix.activation_mode": "adapter_backed_runtime",
+        },
+        status="completed",
+        output_dir=str(jobs_root),
+    )
+    results = build_serving_benchmark_results(
+        job_id="bench-adapter",
+        metrics={"bench.agentic_visit.ttft_ms": 24.45},
+        units={"bench.agentic_visit.ttft_ms": "ms"},
+        report_path=str(jobs_root / "bench-report.md"),
+        report_markdown="# Melix Bench\n",
+    )
+    request_row = build_serving_benchmark_request_row(
+        job_id="bench-adapter",
+        model_id="melix-dev-text-lora-deadbeef",
+        task_kind="text-generation",
+        source_repo="local",
+        suite="agentic_visit",
+        context_length=64,
+        generation_length=16,
+        batch_size=1,
+        repeat_index=0,
+        request_index=0,
+        phase="tool_turn",
+        phase_index=0,
+        status="completed",
+        tool_call_count=1,
+        tool_latency_ms=5.5,
+        created_at_unix_ms=101,
+    )
+
+    persisted = store.persist_serving_benchmark(
+        jobs_root=jobs_root,
+        job=job,
+        results=results,
+        request_rows=(request_row,),
+    )
+
+    jsonl_row = json.loads(persisted["request_rows_jsonl"].read_text(encoding="utf-8").splitlines()[0])
+    assert jsonl_row["compare_target_kind"] == "adapter"
+    assert jsonl_row["base_model_id"] == "melix-dev-text"
+    assert jsonl_row["adapter_manifest_path"] == "/tmp/melix/train_lora.adapter.json"
+    assert jsonl_row["adapter_set_hash"] == "deadbeefcafebabe"
+    assert jsonl_row["adapter_activation_mode"] == "adapter_backed_runtime"
 
 
 def test_persist_serving_benchmark_derives_request_phase_rows_from_context_rows(
@@ -334,6 +397,8 @@ def test_persist_serving_benchmark_derives_request_phase_rows_from_context_rows(
     assert request_rows[0]["observation_bytes"] == 64
     assert request_rows[0]["tool_latency_ms"] == 5.5
     assert request_rows[0]["trajectory_dataset_id"] == "opensearch-vl.dev"
+    assert request_rows[0]["compare_target_kind"] == "base"
+    assert request_rows[0]["base_model_id"] == "melix-dev-text"
     assert request_rows[1]["phase_index"] == 1
     assert request_rows[1]["request_latency_ms"] == 42.8
     assert request_rows[1]["tokens_out"] == 16

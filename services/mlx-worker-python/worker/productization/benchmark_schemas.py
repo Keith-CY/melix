@@ -386,6 +386,11 @@ class ServingBenchmarkRequestRow:
     observation_bytes: int = 0
     fatal_rate: float = 0.0
     turn_count: int = 0
+    compare_target_kind: str = "base"
+    base_model_id: str = ""
+    adapter_manifest_path: str = ""
+    adapter_set_hash: str = ""
+    adapter_activation_mode: str = ""
     created_at_unix_ms: int = 0
     trajectory_provenance: dict[str, object] | None = None
 
@@ -432,6 +437,11 @@ class ServingBenchmarkRequestRow:
             "observation_bytes": self.observation_bytes,
             "fatal_rate": self.fatal_rate,
             "turn_count": self.turn_count,
+            "compare_target_kind": self.compare_target_kind,
+            "base_model_id": self.base_model_id,
+            "adapter_manifest_path": self.adapter_manifest_path,
+            "adapter_set_hash": self.adapter_set_hash,
+            "adapter_activation_mode": self.adapter_activation_mode,
             "created_at_unix_ms": self.created_at_unix_ms,
         }
         append_trajectory_provenance(payload, self.trajectory_provenance)
@@ -879,6 +889,11 @@ def build_serving_benchmark_request_row(
     observation_bytes: int = 0,
     fatal_rate: float = 0.0,
     turn_count: int = 0,
+    compare_target_kind: str = "base",
+    base_model_id: str = "",
+    adapter_manifest_path: str = "",
+    adapter_set_hash: str = "",
+    adapter_activation_mode: str = "",
     agentic_tool_metrics: dict[str, float] | None = None,
     created_at_unix_ms: int = 0,
     trajectory_provenance: dict[str, object] | None = None,
@@ -890,6 +905,14 @@ def build_serving_benchmark_request_row(
         observation_bytes=observation_bytes,
         fatal_rate=fatal_rate,
         turn_count=turn_count,
+    )
+    resolved_compare_target_kind = (
+        compare_target_kind
+        or ("adapter" if adapter_manifest_path or adapter_set_hash else "base")
+    )
+    resolved_base_model_id = (
+        base_model_id
+        or (model_id if resolved_compare_target_kind == "base" else "")
     )
     return ServingBenchmarkRequestRow(
         schema_version=_SERVING_BENCHMARK_REQUEST_ROW_SCHEMA_VERSION,
@@ -933,6 +956,11 @@ def build_serving_benchmark_request_row(
         observation_bytes=int(agentic_fields["observation_bytes"]),
         fatal_rate=float(agentic_fields["fatal_rate"]),
         turn_count=int(agentic_fields["turn_count"]),
+        compare_target_kind=resolved_compare_target_kind,
+        base_model_id=resolved_base_model_id,
+        adapter_manifest_path=adapter_manifest_path,
+        adapter_set_hash=adapter_set_hash,
+        adapter_activation_mode=adapter_activation_mode,
         created_at_unix_ms=created_at_unix_ms,
         trajectory_provenance=dict(trajectory_provenance or {}),
     )

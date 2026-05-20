@@ -13,6 +13,7 @@ from worker.productization.apple_silicon_telemetry import (
     NoOpAppleSiliconTelemetryCollector,
 )
 from worker.productization.benchmark_export import (
+    _benchmark_compare_identity,
     _canonical_benchmark_request_columns,
     _canonical_benchmark_matrix_request_columns,
     _canonical_benchmark_matrix_summary_columns,
@@ -171,6 +172,11 @@ class BenchmarkStore:
         request_rows_tuple = tuple(request_rows)
         if not request_rows_tuple:
             request_rows_tuple = self._request_rows_from_context_rows(context_rows_tuple)
+        if request_rows_tuple:
+            request_rows_tuple = self._attach_request_compare_identity(
+                job=job,
+                request_rows=request_rows_tuple,
+            )
         if request_rows_tuple:
             request_rows_jsonl_path = jobs_root / "bench-request-rows.jsonl"
             request_rows_csv_path = jobs_root / "bench-request-rows.csv"
@@ -342,6 +348,35 @@ class BenchmarkStore:
             )
             request_index += 1
         return tuple(rows)
+
+    @staticmethod
+    def _attach_request_compare_identity(
+        *,
+        job: ServingBenchmarkJob,
+        request_rows: tuple[ServingBenchmarkRequestRow, ...],
+    ) -> tuple[ServingBenchmarkRequestRow, ...]:
+        metadata = _benchmark_compare_identity(job.to_dict())
+        metadata_is_adapter = metadata["compare_target_kind"] == "adapter"
+        return tuple(
+            replace(
+                row,
+                compare_target_kind=(
+                    metadata["compare_target_kind"]
+                    if metadata_is_adapter and row.compare_target_kind == "base"
+                    else row.compare_target_kind or metadata["compare_target_kind"]
+                ),
+                base_model_id=(
+                    metadata["base_model_id"]
+                    if metadata_is_adapter and row.base_model_id == row.model_id
+                    else row.base_model_id or metadata["base_model_id"]
+                ),
+                adapter_manifest_path=row.adapter_manifest_path or metadata["adapter_manifest_path"],
+                adapter_set_hash=row.adapter_set_hash or metadata["adapter_set_hash"],
+                adapter_activation_mode=row.adapter_activation_mode or metadata["adapter_activation_mode"],
+            )
+            for row in request_rows
+            if isinstance(row, ServingBenchmarkRequestRow)
+        )
 
     def persist_benchmark_matrix(
         self,
