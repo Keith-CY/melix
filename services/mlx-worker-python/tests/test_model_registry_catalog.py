@@ -1028,6 +1028,7 @@ def test_registry_root_tree_records_plain_local_weight_presence_during_single_sc
     assert [(scan.model_dir, scan.has_model_weight_files, scan.has_generation_config) for scan in plain_scans] == [
         (config_dir.resolve(), True, False)
     ]
+    assert not hasattr(plain_scans[0], "__dict__")
 
 
 
