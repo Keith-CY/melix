@@ -85,6 +85,12 @@ class TrainingMetrics:
     reward_mean: float = 0.0
     reward_p50: float = 0.0
     reward_p95: float = 0.0
+    reward_component_final_answer_mean: float = 0.0
+    reward_component_tool_efficiency_mean: float = 0.0
+    reward_component_format_mean: float = 0.0
+    reward_component_fatal_failure_mean: float = 0.0
+    reward_component_total_mean: float = 0.0
+    fatal_trace_count: int = 0
     policy_update_count: int = 0
     selected_candidate_count: int = 0
     candidate_group_count: int = 0

@@ -201,7 +201,19 @@ keys are:
 - `format`
 - `query_quality`
 - `grounding`
+- `fatal_failure`
 - `total`
+
+Agentic GRPO/RL rollout slices consume a stable component subset:
+
+- `final_answer`: answer correctness or reward-model quality signal
+- `tool_efficiency`: tool budget and redundant-tool penalty signal
+- `format`: parser and response-format validity signal
+- `fatal_failure`: negative signal for a fatal stage
+- `total`: scalar aggregate used by the current policy update path
+
+Policy-update evidence must persist the component object that produced the
+scalar `total`, not only the total itself.
 
 `fatal_stage` records the first stage that invalidates later trajectory tokens
 or observations. Supported stage names are:

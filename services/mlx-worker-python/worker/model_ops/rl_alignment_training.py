@@ -23,6 +23,7 @@ from worker.trajectory_provenance import (
 class PolicyUpdateResult:
     trace_rows: list[dict[str, Any]]
     reward_values: list[float]
+    reward_component_summaries: list[dict[str, float]]
     group_margins: list[float]
     group_variances: list[float]
     selected_count: int
@@ -200,6 +201,9 @@ def train_alignment_rl_trace(
 
     duration_ms = (time.perf_counter() - started_at) * 1000.0
     reward_summary = _reward_summary(policy_updates.reward_values)
+    reward_component_summary = _reward_component_summary(
+        policy_updates.reward_component_summaries,
+    )
     return TrainingResult(
         weights_path=weights_path,
         adapter_config_path=adapter_config_path,
@@ -219,6 +223,16 @@ def train_alignment_rl_trace(
             reward_mean=reward_summary["reward_mean"],
             reward_p50=reward_summary["reward_p50"],
             reward_p95=reward_summary["reward_p95"],
+            reward_component_final_answer_mean=reward_component_summary["final_answer"],
+            reward_component_tool_efficiency_mean=reward_component_summary["tool_efficiency"],
+            reward_component_format_mean=reward_component_summary["format"],
+            reward_component_fatal_failure_mean=reward_component_summary["fatal_failure"],
+            reward_component_total_mean=reward_component_summary["total"],
+            fatal_trace_count=sum(
+                1
+                for row in policy_updates.trace_rows
+                if str(row.get("fatal_stage", "")).strip()
+            ),
             policy_update_count=len(policy_updates.trace_rows),
             selected_candidate_count=policy_updates.selected_count,
             candidate_group_count=len(policy_updates.group_margins),
@@ -322,6 +336,7 @@ def _grpo_policy_updates(
 
     trace_rows: list[dict[str, Any]] = []
     reward_values: list[float] = []
+    reward_component_summaries: list[dict[str, float]] = []
     group_margins: list[float] = []
     group_variances: list[float] = []
     for sample_index, sample in enumerate(samples):
@@ -337,6 +352,7 @@ def _grpo_policy_updates(
                 },
             )
         scored_candidates = []
+        tool_run = _agentic_tool_run_for_sample(sample)
         for candidate_index, candidate in enumerate(candidates[:candidate_count]):
             if not isinstance(candidate, dict):
                 raise ModelOperationError(
@@ -371,17 +387,28 @@ def _grpo_policy_updates(
                         "missing_field": "candidate.score",
                     },
                 )
+            candidate_components = _reward_components_for_candidate(
+                sample=sample,
+                candidate=candidate,
+                score=score,
+                tool_run=tool_run,
+                include_sample_fatal=True,
+            )
             scored_candidates.append(
                 {
                     "index": candidate_index,
                     "text": candidate_text,
                     "score": score,
+                    "reward_components": candidate_components,
                 }
             )
-        scores = [candidate["score"] for candidate in scored_candidates]
-        tool_run = _agentic_tool_run_for_sample(sample)
+        scores = [candidate["reward_components"]["total"] for candidate in scored_candidates]
         reward_values.extend(scores)
-        selected = max(scored_candidates, key=lambda candidate: candidate["score"])
+        selected = max(scored_candidates, key=lambda candidate: candidate["reward_components"]["total"])
+        selected_components = dict(selected["reward_components"])
+        reward_component_summaries.extend(
+            dict(candidate["reward_components"]) for candidate in scored_candidates
+        )
         group_margins.append(max(scores) - min(scores))
         group_mean = sum(scores) / len(scores)
         group_variances.append(sum((score - group_mean) ** 2 for score in scores) / len(scores))
@@ -395,7 +422,11 @@ def _grpo_policy_updates(
                 "selected_candidate_index": selected["index"],
                 "selected_candidate_text": selected["text"],
                 "selected_text": selected["text"],
-                "selected_reward": selected["score"],
+                "selected_reward": selected_components["total"],
+                "reward_components": selected_components,
+                "reward_total": selected_components["total"],
+                "fatal_stage": _fatal_stage_for_candidate(sample, candidates[selected["index"]]),
+                "fatal_penalty_applied": selected_components["fatal_failure"] < 0.0,
                 "group_reward_mean": group_mean,
                 "group_reward_margin": group_margins[-1],
                 "candidate_count": len(scored_candidates),
@@ -409,6 +440,7 @@ def _grpo_policy_updates(
     return PolicyUpdateResult(
         trace_rows=trace_rows,
         reward_values=reward_values,
+        reward_component_summaries=reward_component_summaries,
         group_margins=group_margins,
         group_variances=group_variances,
         selected_count=len(trace_rows),
@@ -449,6 +481,7 @@ def _grpo_runtime_policy_updates(
 
     trace_rows: list[dict[str, Any]] = []
     reward_values: list[float] = []
+    reward_component_summaries: list[dict[str, float]] = []
     group_margins: list[float] = []
     group_variances: list[float] = []
     generated_candidate_total = 0
@@ -486,18 +519,30 @@ def _grpo_runtime_policy_updates(
                 )
             else:
                 score = _seed_overlap_proxy_score(generated_text, seed_candidates)
+            reward_components = _reward_components_for_candidate(
+                sample=sample,
+                candidate={"text": generated_text},
+                score=score,
+                tool_run=tool_run,
+                include_sample_fatal=True,
+            )
             generated_candidates.append(
                 {
                     "index": candidate_index,
                     "text": generated_text,
                     "score": score,
+                    "reward_components": reward_components,
                     "generation_prompt": generation_prompt,
                     "source": "policy_runtime",
                 }
             )
-        scores = [candidate["score"] for candidate in generated_candidates]
+        scores = [candidate["reward_components"]["total"] for candidate in generated_candidates]
         reward_values.extend(scores)
-        selected = max(generated_candidates, key=lambda candidate: candidate["score"])
+        selected = max(generated_candidates, key=lambda candidate: candidate["reward_components"]["total"])
+        selected_components = dict(selected["reward_components"])
+        reward_component_summaries.extend(
+            dict(candidate["reward_components"]) for candidate in generated_candidates
+        )
         group_margins.append(max(scores) - min(scores))
         group_mean = sum(scores) / len(scores)
         group_variances.append(sum((score - group_mean) ** 2 for score in scores) / len(scores))
@@ -513,7 +558,11 @@ def _grpo_runtime_policy_updates(
                 "selected_candidate_index": selected["index"],
                 "selected_candidate_text": selected["text"],
                 "selected_text": selected["text"],
-                "selected_reward": selected["score"],
+                "selected_reward": selected_components["total"],
+                "reward_components": selected_components,
+                "reward_total": selected_components["total"],
+                "fatal_stage": _fatal_stage_for_candidate(sample, {"text": selected["text"]}),
+                "fatal_penalty_applied": selected_components["fatal_failure"] < 0.0,
                 "group_reward_mean": group_mean,
                 "group_reward_margin": group_margins[-1],
                 "candidate_count": len(generated_candidates),
@@ -527,6 +576,7 @@ def _grpo_runtime_policy_updates(
     return PolicyUpdateResult(
         trace_rows=trace_rows,
         reward_values=reward_values,
+        reward_component_summaries=reward_component_summaries,
         group_margins=group_margins,
         group_variances=group_variances,
         selected_count=len(trace_rows),
@@ -554,6 +604,7 @@ def _rlhf_policy_updates(
 
     trace_rows: list[dict[str, Any]] = []
     reward_values: list[float] = []
+    reward_component_summaries: list[dict[str, float]] = []
     for sample_index, sample in enumerate(samples):
         if candidate_scoring_mode == "dataset_score" and "reward_score" not in sample:
             raise ModelOperationError(
@@ -577,8 +628,16 @@ def _rlhf_policy_updates(
             )
         else:
             reward = float(sample["reward_score"])
-        reward_values.append(reward)
         tool_run = _agentic_tool_run_for_sample(sample)
+        reward_components = _reward_components_for_candidate(
+            sample=sample,
+            candidate={"text": response},
+            score=reward,
+            tool_run=tool_run,
+            include_sample_fatal=True,
+        )
+        reward_values.append(reward_components["total"])
+        reward_component_summaries.append(reward_components)
         row = {
             "sample_index": sample_index,
             "alignment_algorithm": "rlhf",
@@ -586,7 +645,11 @@ def _rlhf_policy_updates(
             "candidate_scoring_mode": candidate_scoring_mode,
             "prompt": prompt,
             "selected_response": response,
-            "selected_reward": reward,
+            "selected_reward": reward_components["total"],
+            "reward_components": reward_components,
+            "reward_total": reward_components["total"],
+            "fatal_stage": _fatal_stage_for_candidate(sample, {"text": response}),
+            "fatal_penalty_applied": reward_components["fatal_failure"] < 0.0,
         }
         _attach_agentic_tool_run(row, tool_run)
         if "reward_score" in sample and candidate_scoring_mode == "reward_model":
@@ -598,6 +661,7 @@ def _rlhf_policy_updates(
     return PolicyUpdateResult(
         trace_rows=trace_rows,
         reward_values=reward_values,
+        reward_component_summaries=reward_component_summaries,
         group_margins=[],
         group_variances=[],
         selected_count=len(trace_rows),
@@ -633,6 +697,126 @@ def _attach_agentic_tool_run(row: dict[str, Any], tool_run: Any | None) -> None:
     ]
     row["agentic_tool_metrics"] = dict(tool_run.metrics)
     row["turns"] = [dict(turn) for turn in tool_run.trace_turns]
+
+
+_REWARD_COMPONENT_KEYS = (
+    "final_answer",
+    "tool_efficiency",
+    "format",
+    "fatal_failure",
+    "total",
+)
+_FATAL_FAILURE_PENALTY = -1.0
+
+
+def _reward_components_for_candidate(
+    *,
+    sample: dict[str, Any],
+    candidate: dict[str, Any],
+    score: float,
+    tool_run: Any | None,
+    include_sample_fatal: bool,
+) -> dict[str, float]:
+    explicit_components = _explicit_reward_components(candidate)
+    if explicit_components:
+        components = dict(explicit_components)
+        if "total" not in components:
+            components["total"] = _component_total(components)
+    else:
+        sample_components = _explicit_reward_components(sample)
+        components = {
+            "final_answer": float(score),
+            "tool_efficiency": sample_components.get(
+                "tool_efficiency",
+                _tool_efficiency_component(sample=sample, tool_run=tool_run),
+            ),
+            "format": sample_components.get(
+                "format",
+                _format_component(sample=sample, candidate=candidate),
+            ),
+        }
+
+    fatal_stage = _fatal_stage_for_candidate(
+        sample,
+        candidate,
+        include_sample_fatal=include_sample_fatal,
+    )
+    components.setdefault("fatal_failure", _FATAL_FAILURE_PENALTY if fatal_stage else 0.0)
+    if "total" not in components or fatal_stage:
+        components["total"] = _component_total(components)
+    return _ordered_reward_components(components)
+
+
+def _explicit_reward_components(payload: dict[str, Any]) -> dict[str, float]:
+    reward = payload.get("reward")
+    if not isinstance(reward, dict):
+        reward = payload.get("reward_components")
+    if not isinstance(reward, dict):
+        return {}
+    components: dict[str, float] = {}
+    for key in _REWARD_COMPONENT_KEYS:
+        if key in reward:
+            components[key] = float(reward[key])
+    return components
+
+
+def _component_total(components: dict[str, float]) -> float:
+    return sum(
+        value
+        for key, value in components.items()
+        if key != "total"
+    )
+
+
+def _tool_efficiency_component(*, sample: dict[str, Any], tool_run: Any | None) -> float:
+    if "tool_efficiency" in sample:
+        return float(sample["tool_efficiency"])
+    reward = sample.get("reward")
+    if isinstance(reward, dict) and "tool_efficiency" in reward:
+        return float(reward["tool_efficiency"])
+    tool_budget = sample.get("tool_budget")
+    try:
+        budget = int(tool_budget)
+    except (TypeError, ValueError):
+        budget = 0
+    if budget <= 0:
+        return 0.0
+    call_count = 0
+    if tool_run is not None:
+        metrics = getattr(tool_run, "metrics", {})
+        if isinstance(metrics, dict):
+            call_count = int(metrics.get("agentic_tool.call_count", 0.0))
+    elif isinstance(sample.get("tool_calls"), list):
+        call_count = len(sample["tool_calls"])
+    if call_count <= budget:
+        return 0.0
+    return -float(call_count - budget)
+
+
+def _format_component(*, sample: dict[str, Any], candidate: dict[str, Any]) -> float:
+    for payload in (candidate, sample):
+        if "format_valid" in payload:
+            return 0.0 if bool(payload["format_valid"]) else -1.0
+        if "format_score" in payload:
+            return float(payload["format_score"])
+    return 0.0
+
+
+def _fatal_stage_for_candidate(
+    sample: dict[str, Any],
+    candidate: dict[str, Any],
+    *,
+    include_sample_fatal: bool = True,
+) -> str:
+    return str(
+        candidate.get("fatal_stage")
+        or (sample.get("fatal_stage") if include_sample_fatal else "")
+        or ""
+    ).strip()
+
+
+def _ordered_reward_components(components: dict[str, float]) -> dict[str, float]:
+    return {key: float(components.get(key, 0.0)) for key in _REWARD_COMPONENT_KEYS}
 
 
 def _resolve_reward_model_scorer(
@@ -884,6 +1068,18 @@ def _reward_summary(reward_values: list[float]) -> dict[str, float]:
         "reward_mean": sum(ordered) / len(ordered),
         "reward_p50": _percentile_value(ordered, 0.5),
         "reward_p95": _percentile_value(ordered, 0.95),
+    }
+
+
+def _reward_component_summary(
+    reward_component_summaries: list[dict[str, float]],
+) -> dict[str, float]:
+    if not reward_component_summaries:
+        return {key: 0.0 for key in _REWARD_COMPONENT_KEYS}
+    count = len(reward_component_summaries)
+    return {
+        key: sum(components.get(key, 0.0) for components in reward_component_summaries) / count
+        for key in _REWARD_COMPONENT_KEYS
     }
 
 
