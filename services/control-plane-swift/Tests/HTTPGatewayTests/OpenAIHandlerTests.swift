@@ -1446,6 +1446,7 @@ struct OpenAIHandlerTests {
             requestID: "req-http-gemma4-vlm-explicit-batch-non-greedy",
             configureModel: { model in
                 model.settings.ext["melix.vlm.text_only_batch_generator"] = "true"
+                model.settings.ext["melix.generation_config.top_p"] = "0.8"
             }
         )
 
@@ -1475,7 +1476,7 @@ struct OpenAIHandlerTests {
         #expect(response.statusCode == 200)
         #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == "true")
         #expect(abs(Double(generateRequest.sampling.temperature) - 0.7) < 1e-6)
-        #expect(generateRequest.sampling.topP != 1)
+        #expect(abs(Double(generateRequest.sampling.topP) - 0.8) < 1e-6)
         #expect(await harness.textClient.lastGenerateRequest == nil)
     }
 
