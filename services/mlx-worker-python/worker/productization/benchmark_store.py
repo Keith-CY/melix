@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import time
 from collections.abc import Iterable
 from dataclasses import replace
 from pathlib import Path
@@ -12,6 +13,7 @@ from worker.productization.apple_silicon_telemetry import (
     NoOpAppleSiliconTelemetryCollector,
 )
 from worker.productization.benchmark_export import (
+    _canonical_benchmark_request_columns,
     _canonical_benchmark_matrix_request_columns,
     _canonical_benchmark_matrix_summary_columns,
     _csv_value,
@@ -20,9 +22,12 @@ from worker.productization.benchmark_schemas import (
     BenchmarkMatrixJob,
     BenchmarkMatrixRequestRow,
     BenchmarkMatrixSummaryRow,
+    ServingBenchmarkRequestRow,
     ServingBenchmarkJob,
     ServingBenchmarkResult,
+    build_serving_benchmark_request_row,
 )
+from worker.trajectory_provenance import normalize_trajectory_provenance
 from worker.productization.probe_policy import ProbePolicy
 from worker.productization.run_evidence import (
     assert_valid_run_evidence_payload,
@@ -35,6 +40,69 @@ from worker.productization.run_records import (
     build_serving_benchmark_run_record,
     write_run_record,
 )
+
+
+def _is_serving_text_request_context(row: dict[str, object]) -> bool:
+    return (
+        row.get("schema_version") == "melix.serving_benchmark_context_row.v1"
+        and row.get("task_kind") == "text-generation"
+        and bool(row.get("job_id"))
+        and bool(row.get("model_id"))
+        and bool(row.get("suite"))
+    )
+
+
+def _dict_value(value: object) -> dict[str, object]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _object_tuple(value: object) -> tuple[object, ...]:
+    return tuple(value) if isinstance(value, (list, tuple)) else ()
+
+
+def _dict_float_mapping(value: object) -> dict[str, float]:
+    metrics: dict[str, float] = {}
+    for key, raw_value in _dict_value(value).items():
+        try:
+            metrics[str(key)] = float(raw_value or 0.0)
+        except (TypeError, ValueError):
+            continue
+    return metrics
+
+
+def _float_value(value: object) -> float:
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _int_value(value: object) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _request_row_common_fields(
+    row: dict[str, object],
+    *,
+    request_index: int,
+) -> dict[str, object]:
+    return {
+        "job_id": str(row.get("job_id", "")),
+        "model_id": str(row.get("model_id", "")),
+        "task_kind": str(row.get("task_kind", "")),
+        "source_repo": str(row.get("source_repo", "")),
+        "suite": str(row.get("suite", "")),
+        "context_length": _int_value(row.get("context_length", 0)),
+        "generation_length": _int_value(row.get("generation_length", 0)),
+        "batch_size": _int_value(row.get("batch_size", 0)),
+        "repeat_index": _int_value(row.get("repeat_index", 0)),
+        "request_index": request_index,
+        "dataset_materialize_ms": _float_value(row.get("dataset_materialize_ms", 0.0)),
+        "prompt_render_ms": _float_value(row.get("prompt_render_ms", 0.0)),
+    }
 
 
 class BenchmarkStore:
@@ -66,6 +134,7 @@ class BenchmarkStore:
         results: tuple[ServingBenchmarkResult, ...],
         context_rows: Iterable[dict[str, object]] = (),
         batch_rows: Iterable[dict[str, object]] = (),
+        request_rows: Iterable[ServingBenchmarkRequestRow] = (),
         telemetry_collection: Any | None = None,
         model_memory_summary: dict[str, object] | None = None,
     ) -> dict[str, Path]:
@@ -98,6 +167,21 @@ class BenchmarkStore:
             batch_rows_path = jobs_root / "bench-batch-rows.jsonl"
             self._write_jsonl(batch_rows_path, batch_rows_tuple)
             persisted["batch_rows_jsonl"] = batch_rows_path
+
+        request_rows_tuple = tuple(request_rows)
+        if not request_rows_tuple:
+            request_rows_tuple = self._request_rows_from_context_rows(context_rows_tuple)
+        if request_rows_tuple:
+            request_rows_jsonl_path = jobs_root / "bench-request-rows.jsonl"
+            request_rows_csv_path = jobs_root / "bench-request-rows.csv"
+            self._write_jsonl_and_csv(
+                jsonl_path=request_rows_jsonl_path,
+                csv_path=request_rows_csv_path,
+                rows=request_rows_tuple,
+                fieldnames=_canonical_benchmark_request_columns(),
+            )
+            persisted["request_rows_jsonl"] = request_rows_jsonl_path
+            persisted["request_rows_csv"] = request_rows_csv_path
 
         if telemetry_collection is None:
             telemetry_collection = self._telemetry_collector.collect_completed_run(
@@ -170,6 +254,95 @@ class BenchmarkStore:
                 continue
         return total
 
+    @staticmethod
+    def _request_rows_from_context_rows(
+        context_rows: tuple[dict[str, object], ...],
+    ) -> tuple[ServingBenchmarkRequestRow, ...]:
+        if not context_rows:
+            return ()
+        rows: list[ServingBenchmarkRequestRow] = []
+        request_index = 0
+        for context_row in context_rows:
+            if not isinstance(context_row, dict):
+                continue
+            if not _is_serving_text_request_context(context_row):
+                continue
+            metrics = _dict_float_mapping(context_row.get("agentic_tool_metrics"))
+            calls = _object_tuple(context_row.get("agentic_tool_calls"))
+            observations = _object_tuple(context_row.get("agentic_tool_observations"))
+            tool_latency_total_ms = _float_value(metrics.get("agentic_tool.latency_ms", 0.0))
+            call_count = sum(1 for call in calls if isinstance(call, dict))
+            per_tool_latency_ms = (
+                round(tool_latency_total_ms / max(call_count, 1), 6)
+                if call_count
+                else 0.0
+            )
+            created_at_unix_ms = int(time.time() * 1000)
+            phase_index = 0
+            for call_index, raw_call in enumerate(calls):
+                if not isinstance(raw_call, dict):
+                    continue
+                call = raw_call
+                raw_observation = observations[call_index] if call_index < len(observations) else {}
+                observation = raw_observation if isinstance(raw_observation, dict) else {}
+                payload = _dict_value(observation.get("payload"))
+                observation_metrics = _dict_value(observation.get("metrics"))
+                rows.append(
+                    build_serving_benchmark_request_row(
+                        **_request_row_common_fields(context_row, request_index=request_index),
+                        phase="tool_turn",
+                        phase_index=phase_index,
+                        status=str(observation.get("status", "completed") or "completed"),
+                        error_stage=str(payload.get("failure_stage", "")),
+                        duration_ms=per_tool_latency_ms,
+                        tool_call_id=str(call.get("id", "")),
+                        tool_name=str(call.get("name", "")),
+                        tool_arguments=_dict_value(call.get("arguments")),
+                        tool_observation=observation,
+                        tool_latency_ms=per_tool_latency_ms,
+                        agentic_tool_metrics=metrics,
+                        created_at_unix_ms=created_at_unix_ms + phase_index,
+                        observation_bytes=_int_value(
+                            observation_metrics.get("tool_observation.emitted_bytes", 0)
+                        ),
+                        trajectory_provenance=normalize_trajectory_provenance(context_row),
+                    )
+                )
+                phase_index += 1
+
+            rows.append(
+                build_serving_benchmark_request_row(
+                    **_request_row_common_fields(context_row, request_index=request_index),
+                    phase="final_answer",
+                    phase_index=phase_index,
+                    status=str(context_row.get("status", "completed") or "completed"),
+                    error_stage=str(context_row.get("error_stage", "")),
+                    duration_ms=_float_value(context_row.get("request_latency_ms", 0.0)),
+                    ttft_ms=_float_value(context_row.get("ttft_ms", 0.0)),
+                    request_latency_ms=_float_value(context_row.get("request_latency_ms", 0.0)),
+                    prefill_tokens_per_second=_float_value(
+                        context_row.get("prefill_tokens_per_second", 0.0)
+                    ),
+                    decode_tokens_per_second=_float_value(
+                        context_row.get("decode_tokens_per_second", 0.0)
+                    ),
+                    peak_memory_bytes=_float_value(context_row.get("peak_memory_bytes", 0.0)),
+                    warmup_ms=_float_value(context_row.get("warmup_ms", 0.0)),
+                    prefill_ms=_float_value(context_row.get("prefill_ms", 0.0)),
+                    decode_ms=_float_value(context_row.get("decode_ms", 0.0)),
+                    tokens_in=_int_value(context_row.get("tokens_in", 0)),
+                    tokens_out=_int_value(context_row.get("tokens_out", 0)),
+                    first_token_index=_int_value(context_row.get("first_token_index", 0)),
+                    cache_hit=bool(context_row.get("cache_hit", False)),
+                    runtime_kind=str(context_row.get("runtime_kind", "")),
+                    agentic_tool_metrics=metrics,
+                    created_at_unix_ms=created_at_unix_ms + phase_index,
+                    trajectory_provenance=normalize_trajectory_provenance(context_row),
+                )
+            )
+            request_index += 1
+        return tuple(rows)
+
     def persist_benchmark_matrix(
         self,
         *,
@@ -239,7 +412,9 @@ class BenchmarkStore:
         *,
         jsonl_path: Path,
         csv_path: Path,
-        rows: Iterable[BenchmarkMatrixSummaryRow | BenchmarkMatrixRequestRow],
+        rows: Iterable[
+            BenchmarkMatrixSummaryRow | BenchmarkMatrixRequestRow | ServingBenchmarkRequestRow
+        ],
         fieldnames: list[str],
     ) -> None:
         with (

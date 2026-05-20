@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 
@@ -7,13 +8,16 @@ import pytest
 
 from worker.productization.benchmark_export import (
     build_benchmark_context_csv,
+    build_benchmark_requests_csv,
     collect_benchmark_artifacts,
 )
+from worker.productization import benchmark_store as benchmark_store_module
 from worker.productization.benchmark_schemas import (
     build_benchmark_matrix_job,
     build_benchmark_matrix_request_row,
     build_benchmark_matrix_summary_row,
     build_serving_benchmark_job,
+    build_serving_benchmark_request_row,
     build_serving_benchmark_results,
 )
 from worker.productization.benchmark_store import BenchmarkStore
@@ -135,6 +139,298 @@ def test_persist_serving_benchmark_writes_expected_artifact_names_and_payloads(
         "telemetry_jsonl",
     }
     assert run_record["probes"][0]["phase"] == "run_record_write"
+
+
+def test_persist_serving_benchmark_writes_request_phase_rows_and_exports(
+    tmp_path: Path,
+) -> None:
+    store = BenchmarkStore(telemetry_collector=fixture_telemetry_collector())
+    jobs_root = tmp_path / "bench"
+    job = build_serving_benchmark_job(
+        job_id="bench-agentic",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="local",
+        suites=("agentic_visit",),
+        parameters={},
+        status="completed",
+        output_dir=str(jobs_root),
+    )
+    results = build_serving_benchmark_results(
+        job_id="bench-agentic",
+        metrics={"bench.agentic_visit.ttft_ms": 24.45},
+        units={"bench.agentic_visit.ttft_ms": "ms"},
+        report_path=str(jobs_root / "bench-report.md"),
+        report_markdown="# Melix Bench\n",
+    )
+    request_rows = (
+        build_serving_benchmark_request_row(
+            job_id="bench-agentic",
+            model_id="melix-dev-text",
+            task_kind="text-generation",
+            source_repo="local",
+            suite="agentic_visit",
+            context_length=64,
+            generation_length=16,
+            batch_size=1,
+            repeat_index=0,
+            request_index=0,
+            phase="tool_turn",
+            phase_index=0,
+            status="completed",
+            duration_ms=5.5,
+            tool_call_id="visit-1",
+            tool_name="visit",
+            tool_arguments={"url": "fixture://page"},
+            tool_observation={"status": "completed", "payload": {"text": "Visited."}},
+            agentic_tool_metrics={
+                "agentic_tool.call_count": 1.0,
+                "agentic_tool.latency_ms": 5.5,
+                "agentic_tool.observation_count": 1.0,
+                "agentic_tool.observation_emitted_bytes": 64.0,
+            },
+            created_at_unix_ms=101,
+        ),
+        build_serving_benchmark_request_row(
+            job_id="bench-agentic",
+            model_id="melix-dev-text",
+            task_kind="text-generation",
+            source_repo="local",
+            suite="agentic_visit",
+            context_length=64,
+            generation_length=16,
+            batch_size=1,
+            repeat_index=0,
+            request_index=0,
+            phase="final_answer",
+            phase_index=1,
+            status="completed",
+            duration_ms=42.8,
+            request_latency_ms=42.8,
+            tokens_out=16,
+            tool_call_count=1,
+            tool_latency_ms=5.5,
+            observation_bytes=64,
+            turn_count=2,
+            created_at_unix_ms=102,
+        ),
+    )
+
+    persisted = store.persist_serving_benchmark(
+        jobs_root=jobs_root,
+        job=job,
+        results=results,
+        request_rows=request_rows,
+    )
+
+    assert persisted["request_rows_jsonl"] == jobs_root / "bench-request-rows.jsonl"
+    assert persisted["request_rows_csv"] == jobs_root / "bench-request-rows.csv"
+    jsonl_rows = [
+        json.loads(line)
+        for line in persisted["request_rows_jsonl"].read_text(encoding="utf-8").splitlines()
+    ]
+    assert [row["phase"] for row in jsonl_rows] == ["tool_turn", "final_answer"]
+    assert jsonl_rows[0]["tool_name"] == "visit"
+    assert jsonl_rows[1]["tool_call_id"] == ""
+
+    export_bundle = collect_benchmark_artifacts(jobs_root)
+    assert [row["phase"] for row in export_bundle["benchmark_request_rows"]] == [
+        "tool_turn",
+        "final_answer",
+    ]
+    request_csv_rows = list(csv.DictReader(build_benchmark_requests_csv(export_bundle).splitlines()))
+    assert request_csv_rows[0]["tool_call_id"] == "visit-1"
+    assert request_csv_rows[1]["phase"] == "final_answer"
+
+
+def test_persist_serving_benchmark_derives_request_phase_rows_from_context_rows(
+    tmp_path: Path,
+) -> None:
+    store = BenchmarkStore(telemetry_collector=fixture_telemetry_collector())
+    jobs_root = tmp_path / "bench"
+    job = build_serving_benchmark_job(
+        job_id="bench-derived-agentic",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="local",
+        suites=("agentic_visit",),
+        parameters={},
+        status="completed",
+        output_dir=str(jobs_root),
+    )
+    results = build_serving_benchmark_results(
+        job_id="bench-derived-agentic",
+        metrics={"bench.agentic_visit.ttft_ms": 24.45},
+        units={"bench.agentic_visit.ttft_ms": "ms"},
+        report_path=str(jobs_root / "bench-report.md"),
+        report_markdown="# Melix Bench\n",
+    )
+    context_row = {
+        "schema_version": "melix.serving_benchmark_context_row.v1",
+        "job_id": "bench-derived-agentic",
+        "model_id": "melix-dev-text",
+        "task_kind": "text-generation",
+        "source_repo": "local",
+        "suite": "agentic_visit",
+        "context_length": 64,
+        "generation_length": 16,
+        "batch_size": 1,
+        "repeat_index": 0,
+        "prefill_tokens_per_second": 1400.0,
+        "decode_tokens_per_second": 58.2,
+        "ttft_ms": 12.3,
+        "request_latency_ms": 42.8,
+        "peak_memory_bytes": 4096,
+        "speedup_vs_batch_1": 1.0,
+        "cache_profile": "cold",
+        "reasoning_mode": "",
+        "structured_output_mode": "",
+        "dataset_materialize_ms": 2.0,
+        "prompt_render_ms": 3.0,
+        "warmup_ms": 4.0,
+        "prefill_ms": 5.0,
+        "decode_ms": 6.0,
+        "tokens_in": 32,
+        "tokens_out": 16,
+        "first_token_index": 1,
+        "cache_hit": True,
+        "runtime_kind": "text",
+        "agentic_tool_calls": [
+            {"id": "visit-1", "name": "visit", "arguments": {"url": "fixture://page"}}
+        ],
+        "agentic_tool_observations": [
+            {
+                "status": "completed",
+                "payload": {"text": "Visited."},
+                "metrics": {"tool_observation.emitted_bytes": 64},
+            }
+        ],
+        "agentic_tool_metrics": {
+            "agentic_tool.call_count": 1.0,
+            "agentic_tool.latency_ms": 5.5,
+            "agentic_tool.observation_count": 1.0,
+            "agentic_tool.observation_emitted_bytes": 64.0,
+        },
+        "trajectory_dataset_id": "opensearch-vl.dev",
+        "trajectory_trace_digest": "abc123",
+    }
+
+    persisted = store.persist_serving_benchmark(
+        jobs_root=jobs_root,
+        job=job,
+        results=results,
+        context_rows=(context_row,),
+    )
+
+    request_rows = [
+        json.loads(line)
+        for line in persisted["request_rows_jsonl"].read_text(encoding="utf-8").splitlines()
+    ]
+    assert [row["phase"] for row in request_rows] == ["tool_turn", "final_answer"]
+    assert request_rows[0]["phase_index"] == 0
+    assert request_rows[0]["tool_call_id"] == "visit-1"
+    assert request_rows[0]["tool_arguments_json"] == '{"url":"fixture://page"}'
+    assert request_rows[0]["tool_observation_json"]
+    assert request_rows[0]["observation_bytes"] == 64
+    assert request_rows[0]["tool_latency_ms"] == 5.5
+    assert request_rows[0]["trajectory_dataset_id"] == "opensearch-vl.dev"
+    assert request_rows[1]["phase_index"] == 1
+    assert request_rows[1]["request_latency_ms"] == 42.8
+    assert request_rows[1]["tokens_out"] == 16
+    assert request_rows[1]["tool_call_count"] == 1
+    assert persisted["request_rows_csv"] == jobs_root / "bench-request-rows.csv"
+
+
+def test_persist_serving_benchmark_request_row_derivation_skips_malformed_tool_turns(
+    tmp_path: Path,
+) -> None:
+    store = BenchmarkStore(telemetry_collector=fixture_telemetry_collector())
+    jobs_root = tmp_path / "bench"
+    job = build_serving_benchmark_job(
+        job_id="bench-malformed-agentic",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="local",
+        suites=("agentic_visit",),
+        parameters={},
+        status="completed",
+        output_dir=str(jobs_root),
+    )
+    results = build_serving_benchmark_results(
+        job_id="bench-malformed-agentic",
+        metrics={"bench.agentic_visit.ttft_ms": 24.45},
+        units={"bench.agentic_visit.ttft_ms": "ms"},
+        report_path=str(jobs_root / "bench-report.md"),
+        report_markdown="# Melix Bench\n",
+    )
+
+    persisted = store.persist_serving_benchmark(
+        jobs_root=jobs_root,
+        job=job,
+        results=results,
+        context_rows=(
+            {
+                "schema_version": "melix.serving_benchmark_context_row.v1",
+                "job_id": "bench-malformed-agentic",
+                "model_id": "melix-dev-text",
+                "task_kind": "text-generation",
+                "source_repo": "local",
+                "suite": "agentic_visit",
+                "context_length": 64,
+                "generation_length": 16,
+                "batch_size": 1,
+                "repeat_index": 0,
+                "ttft_ms": 1.0,
+                "request_latency_ms": 2.0,
+                "agentic_tool_calls": [
+                    "malformed-call",
+                    {"id": "visit-2", "name": "visit", "arguments": {"url": "fixture://page"}},
+                ],
+                "agentic_tool_observations": [
+                    {"status": "completed"},
+                    {
+                        "status": "completed",
+                        "metrics": {"tool_observation.emitted_bytes": "not-an-int"},
+                    },
+                ],
+                "agentic_tool_metrics": {"agentic_tool.latency_ms": 12.0},
+            },
+        ),
+    )
+
+    request_rows = [
+        json.loads(line)
+        for line in persisted["request_rows_jsonl"].read_text(encoding="utf-8").splitlines()
+    ]
+    assert [row["phase"] for row in request_rows] == ["tool_turn", "final_answer"]
+    assert request_rows[0]["phase_index"] == 0
+    assert request_rows[0]["tool_call_id"] == "visit-2"
+    assert request_rows[0]["observation_bytes"] == 0
+    assert request_rows[1]["phase_index"] == 1
+
+
+def test_serving_benchmark_request_row_derivation_ignores_invalid_context_values() -> None:
+    assert benchmark_store_module._dict_float_mapping({"bad": "not-a-float"}) == {}
+    assert benchmark_store_module._float_value("not-a-float") == 0.0
+    assert BenchmarkStore._request_rows_from_context_rows(
+        (
+            "malformed-context",
+            {
+                "schema_version": "melix.serving_benchmark_context_row.v1",
+                "job_id": "bench-invalid-values",
+                "model_id": "melix-dev-text",
+                "task_kind": "text-generation",
+                "source_repo": "local",
+                "suite": "agentic_visit",
+                "context_length": "not-an-int",
+                "generation_length": "also-not-an-int",
+                "batch_size": 1,
+                "repeat_index": 0,
+                "ttft_ms": "not-a-float",
+                "request_latency_ms": "not-a-float",
+            },
+        )
+    )[0].to_dict()["request_latency_ms"] == 0.0
 
 
 def test_persist_serving_benchmark_exports_trajectory_provenance_fields(

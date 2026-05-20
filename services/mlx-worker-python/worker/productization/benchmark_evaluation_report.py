@@ -28,6 +28,12 @@ _RUNTIME_PARAMETER_KEYS = (
     "runtime_source_repo",
 )
 _REQUEST_PROBE_KEYS = (
+    "duration_ms",
+    "ttft_ms",
+    "request_latency_ms",
+    "prefill_tokens_per_second",
+    "decode_tokens_per_second",
+    "peak_memory_bytes",
     "dataset_materialize_ms",
     "prompt_render_ms",
     "warmup_ms",
@@ -148,9 +154,11 @@ _METRIC_DIRECTION_BY_KEY = {
     "cache_hit_rate": "higher_is_better",
     "call_count_mean": "lower_is_better",
     "completed_count_mean": "lower_is_better",
+    "decode_tokens_per_second_mean": "higher_is_better",
     "decode_ms_mean": "lower_is_better",
     "dflash_enabled_rate": "higher_is_better",
     "dflash_rollback_count_sum": "lower_is_better",
+    "duration_ms_mean": "lower_is_better",
     "duration_seconds": "lower_is_better",
     "extracted_result_chars_mean": "neutral",
     "failed_count": "lower_is_better",
@@ -164,8 +172,11 @@ _METRIC_DIRECTION_BY_KEY = {
     "observation_bytes_sum": "lower_is_better",
     "observation_count_mean": "lower_is_better",
     "observation_emitted_bytes_mean": "lower_is_better",
+    "peak_memory_bytes_mean": "lower_is_better",
     "prefill_ms_mean": "lower_is_better",
+    "prefill_tokens_per_second_mean": "higher_is_better",
     "raw_response_chars_mean": "neutral",
+    "request_latency_ms_mean": "lower_is_better",
     "request_latency_mean_ms": "lower_is_better",
     "request_latency_p95_ms": "lower_is_better",
     "sample_render_ms_mean": "lower_is_better",
@@ -181,6 +192,7 @@ _METRIC_DIRECTION_BY_KEY = {
     "tool_call_count_sum": "lower_is_better",
     "tool_latency_ms": "lower_is_better",
     "tool_latency_ms_mean": "lower_is_better",
+    "ttft_ms_mean": "lower_is_better",
     "ttft_mean_ms": "lower_is_better",
     "ttft_ms": "lower_is_better",
     "ttft_p95_ms": "lower_is_better",
@@ -277,7 +289,7 @@ _CSV_EXPORT_NAMES = (
 
 _NumericAggregate = tuple[float, int]
 _ProbeAggregateKey = tuple[str, str]
-_BenchmarkLabelCacheKey = tuple[str, str, str, str, str, str]
+_BenchmarkLabelCacheKey = tuple[str, str, str, str, str, str, str]
 
 
 class ReportValidationError(ValueError):
@@ -1838,6 +1850,12 @@ def _collect_metrics(bundle: dict[str, object]) -> dict[str, object]:
         prefix="bench.batch",
         label_cache=label_cache,
     )
+    _collect_benchmark_probe_metrics(
+        metrics,
+        bundle.get("benchmark_request_rows", []),
+        prefix="bench.request",
+        label_cache=label_cache,
+    )
     for row in _dict_rows(bundle.get("benchmark_matrix_summary_rows", [])):
         label = _matrix_label(row, label_cache=label_cache)
         for key in _MATRIX_SUMMARY_METRIC_KEYS:
@@ -2284,6 +2302,7 @@ def _benchmark_probe_label(
         str(row.get("generation_length", 0)),
         str(row.get("batch_size", 0)),
         "",
+        str(row.get("phase", "")),
     )
     return _cached_benchmark_label(key, label_cache=label_cache)
 
@@ -2299,6 +2318,7 @@ def _matrix_label(
         str(row.get("generation_length", 0)),
         str(row.get("batch_size", 0)),
         str(row.get("concurrency_level", 0)),
+        "",
     )
     return _cached_benchmark_label(key, label_cache=label_cache)
 
@@ -2319,7 +2339,7 @@ def _cached_benchmark_label(
 
 
 def _build_benchmark_label(key: _BenchmarkLabelCacheKey) -> str:
-    kind, suite, context_length, generation_length, batch_size, concurrency_level = key
+    kind, suite, context_length, generation_length, batch_size, concurrency_level, phase = key
     parts = [
         suite.replace(" ", "_"),
         f"ctx{_label_part(context_length)}",
@@ -2328,6 +2348,8 @@ def _build_benchmark_label(key: _BenchmarkLabelCacheKey) -> str:
     ]
     if kind == "matrix":
         parts.append(f"c{_label_part(concurrency_level)}")
+    if phase:
+        parts.append(_label_part(phase))
     return ".".join(parts)
 
 
