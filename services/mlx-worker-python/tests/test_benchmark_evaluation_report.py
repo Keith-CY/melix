@@ -505,6 +505,76 @@ def test_report_builder_treats_cache_hit_rate_as_higher_is_better() -> None:
     assert row["status"] == "warning"
 
 
+def test_report_builder_collects_serving_benchmark_request_phase_rows() -> None:
+    baseline = {
+        "benchmark_request_rows": [
+            {
+                "suite": "agentic_visit",
+                "context_length": 64,
+                "generation_length": 16,
+                "batch_size": 1,
+                "phase": "tool_turn",
+                "phase_index": 0,
+                "tool_call_count": 1,
+                "tool_latency_ms": 5.0,
+                "observation_bytes": 64,
+                "fatal_rate": 0.0,
+                "turn_count": 2,
+            },
+            {
+                "suite": "agentic_visit",
+                "context_length": 64,
+                "generation_length": 16,
+                "batch_size": 1,
+                "phase": "final_answer",
+                "phase_index": 1,
+                "duration_ms": 40.0,
+                "request_latency_ms": 40.0,
+                "ttft_ms": 10.0,
+            }
+        ]
+    }
+    candidate = {
+        "benchmark_request_rows": [
+            {
+                "suite": "agentic_visit",
+                "context_length": 64,
+                "generation_length": 16,
+                "batch_size": 1,
+                "phase": "tool_turn",
+                "phase_index": 0,
+                "tool_call_count": 1,
+                "tool_latency_ms": 7.0,
+                "observation_bytes": 80,
+                "fatal_rate": 1.0,
+                "turn_count": 2,
+            },
+            {
+                "suite": "agentic_visit",
+                "context_length": 64,
+                "generation_length": 16,
+                "batch_size": 1,
+                "phase": "final_answer",
+                "phase_index": 1,
+                "duration_ms": 50.0,
+                "request_latency_ms": 50.0,
+                "ttft_ms": 12.0,
+            }
+        ]
+    }
+
+    report = build_benchmark_evaluation_report(baseline=baseline, candidate=candidate)
+
+    rows_by_metric = {row["metric"]: row for row in report["rows"]}
+    label = "bench.request.agentic_visit.ctx64.gen16.b1.tool_turn"
+    final_answer_label = "bench.request.agentic_visit.ctx64.gen16.b1.final_answer"
+
+    assert rows_by_metric[f"{label}.tool_latency_ms_mean"]["status"] == "warning"
+    assert rows_by_metric[f"{label}.fatal_rate_rate"]["direction"] == "lower_is_better"
+    assert rows_by_metric[f"{final_answer_label}.request_latency_ms_mean"]["status"] == "warning"
+    assert rows_by_metric[f"{final_answer_label}.ttft_ms_mean"]["direction"] == "lower_is_better"
+
+
 def test_collect_runtime_metadata_preserves_key_order_with_sparse_values() -> None:
     metrics: dict[str, object] = {}
 
@@ -951,7 +1021,7 @@ def test_collect_benchmark_probe_metrics_reuses_matrix_labels(monkeypatch: pytes
     def tracked_matrix_label(
         row: dict[str, object],
         *,
-        label_cache: dict[tuple[str, str, str, str, str, str], str] | None = None,
+        label_cache: dict[tuple[str, str, str, str, str, str, str], str] | None = None,
     ) -> str:
         nonlocal matrix_label_calls
         matrix_label_calls += 1
@@ -994,15 +1064,15 @@ def test_aggregate_probe_values_handles_empty_inputs() -> None:
 
 def test_benchmark_probe_label_cache_reuses_identical_shapes(monkeypatch: pytest.MonkeyPatch) -> None:
     original = benchmark_evaluation_report._build_benchmark_label
-    built_keys: list[tuple[str, str, str, str, str, str]] = []
+    built_keys: list[tuple[str, str, str, str, str, str, str]] = []
 
-    def tracked(key: tuple[str, str, str, str, str, str]) -> str:
+    def tracked(key: tuple[str, str, str, str, str, str, str]) -> str:
         built_keys.append(key)
         return original(key)
 
     monkeypatch.setattr(benchmark_evaluation_report, "_build_benchmark_label", tracked)
 
-    cache: dict[tuple[str, str, str, str, str, str], str] = {}
+    cache: dict[tuple[str, str, str, str, str, str, str], str] = {}
     context_row = {
         "suite": "smoke suite",
         "context_length": 128,
@@ -1040,13 +1110,13 @@ def test_benchmark_probe_label_cache_reuses_identical_shapes(monkeypatch: pytest
     )
 
     assert built_keys == [
-        ("bench", "smoke suite", "128", "32", "1", ""),
-        ("matrix", "smoke suite", "128", "32", "1", "2"),
+        ("bench", "smoke suite", "128", "32", "1", "", ""),
+        ("matrix", "smoke suite", "128", "32", "1", "2", ""),
     ]
 
 
 def test_benchmark_probe_label_cache_preserves_stringified_shape_boundaries() -> None:
-    cache: dict[tuple[str, str, str, str, str, str], str] = {}
+    cache: dict[tuple[str, str, str, str, str, str, str], str] = {}
 
     numeric_row = {
         "suite": "shape",
@@ -1647,6 +1717,12 @@ def test_metric_direction_fast_path_covers_report_probe_keys() -> None:
         "observation_bytes_sum": "lower_is_better",
         "fatal_rate_rate": "lower_is_better",
         "turn_count_sum": "lower_is_better",
+        "request_latency_ms_mean": "lower_is_better",
+        "ttft_ms_mean": "lower_is_better",
+        "duration_ms_mean": "lower_is_better",
+        "prefill_tokens_per_second_mean": "higher_is_better",
+        "decode_tokens_per_second_mean": "higher_is_better",
+        "peak_memory_bytes_mean": "lower_is_better",
         "call_count_mean": "lower_is_better",
         "observation_count_mean": "lower_is_better",
         "completed_count_mean": "lower_is_better",

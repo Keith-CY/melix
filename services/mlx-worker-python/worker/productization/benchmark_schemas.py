@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
+import json
 
 from worker.productization.evaluation_schemas import (
     EvaluationJob,
@@ -16,6 +17,7 @@ from worker.trajectory_provenance import append_trajectory_provenance
 
 _SERVING_BENCHMARK_JOB_SCHEMA_VERSION = "melix.serving_benchmark_job.v1"
 _SERVING_BENCHMARK_RESULT_SCHEMA_VERSION = "melix.serving_benchmark_result.v1"
+_SERVING_BENCHMARK_REQUEST_ROW_SCHEMA_VERSION = "melix.serving_benchmark_request_row.v1"
 _BENCHMARK_MATRIX_JOB_SCHEMA_VERSION = "melix.benchmark_matrix_job.v1"
 
 
@@ -25,6 +27,13 @@ _AGENTIC_TOOL_OBSERVATION_COUNT_KEY = "agentic_tool.observation_count"
 _AGENTIC_TOOL_OBSERVATION_BYTES_KEY = "agentic_tool.observation_emitted_bytes"
 _AGENTIC_TOOL_TIMEOUT_COUNT_KEY = "agentic_tool.timeout_count"
 _AGENTIC_TOOL_FAILED_COUNT_KEY = "agentic_tool.failed_count"
+
+
+_COMPACT_JSON_KWARGS = {
+    "ensure_ascii": False,
+    "separators": (",", ":"),
+    "sort_keys": True,
+}
 
 
 @dataclass(frozen=True)
@@ -330,6 +339,101 @@ class ServingBenchmarkBatchRow:
             observations=self.agentic_tool_observations,
             metrics=self.agentic_tool_metrics,
         )
+        append_trajectory_provenance(payload, self.trajectory_provenance)
+        return payload
+
+
+@dataclass(frozen=True)
+class ServingBenchmarkRequestRow:
+    schema_version: str
+    job_id: str
+    model_id: str
+    task_kind: str
+    source_repo: str
+    suite: str
+    context_length: int
+    generation_length: int
+    batch_size: int
+    repeat_index: int
+    request_index: int
+    phase: str
+    phase_index: int
+    status: str
+    error_code: str = ""
+    error_stage: str = ""
+    duration_ms: float = 0.0
+    ttft_ms: float = 0.0
+    request_latency_ms: float = 0.0
+    prefill_tokens_per_second: float = 0.0
+    decode_tokens_per_second: float = 0.0
+    peak_memory_bytes: float = 0.0
+    dataset_materialize_ms: float = 0.0
+    prompt_render_ms: float = 0.0
+    warmup_ms: float = 0.0
+    prefill_ms: float = 0.0
+    decode_ms: float = 0.0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    first_token_index: int = 0
+    cache_hit: bool = False
+    runtime_kind: str = ""
+    tool_call_id: str = ""
+    tool_name: str = ""
+    tool_arguments_json: str = ""
+    tool_observation_json: str = ""
+    tool_call_count: int = 0
+    tool_latency_ms: float = 0.0
+    observation_bytes: int = 0
+    fatal_rate: float = 0.0
+    turn_count: int = 0
+    created_at_unix_ms: int = 0
+    trajectory_provenance: dict[str, object] | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "schema_version": self.schema_version,
+            "job_id": self.job_id,
+            "model_id": self.model_id,
+            "task_kind": self.task_kind,
+            "source_repo": self.source_repo,
+            "suite": self.suite,
+            "context_length": self.context_length,
+            "generation_length": self.generation_length,
+            "batch_size": self.batch_size,
+            "repeat_index": self.repeat_index,
+            "request_index": self.request_index,
+            "phase": self.phase,
+            "phase_index": self.phase_index,
+            "status": self.status,
+            "error_code": self.error_code,
+            "error_stage": self.error_stage,
+            "duration_ms": self.duration_ms,
+            "ttft_ms": self.ttft_ms,
+            "request_latency_ms": self.request_latency_ms,
+            "prefill_tokens_per_second": self.prefill_tokens_per_second,
+            "decode_tokens_per_second": self.decode_tokens_per_second,
+            "peak_memory_bytes": self.peak_memory_bytes,
+            "dataset_materialize_ms": self.dataset_materialize_ms,
+            "prompt_render_ms": self.prompt_render_ms,
+            "warmup_ms": self.warmup_ms,
+            "prefill_ms": self.prefill_ms,
+            "decode_ms": self.decode_ms,
+            "tokens_in": self.tokens_in,
+            "tokens_out": self.tokens_out,
+            "first_token_index": self.first_token_index,
+            "cache_hit": self.cache_hit,
+            "runtime_kind": self.runtime_kind,
+            "tool_call_id": self.tool_call_id,
+            "tool_name": self.tool_name,
+            "tool_arguments_json": self.tool_arguments_json,
+            "tool_observation_json": self.tool_observation_json,
+            "tool_call_count": self.tool_call_count,
+            "tool_latency_ms": self.tool_latency_ms,
+            "observation_bytes": self.observation_bytes,
+            "fatal_rate": self.fatal_rate,
+            "turn_count": self.turn_count,
+            "created_at_unix_ms": self.created_at_unix_ms,
+        }
         append_trajectory_provenance(payload, self.trajectory_provenance)
         return payload
 
@@ -669,6 +773,12 @@ def _append_agentic_tool_evidence(
         payload["agentic_tool_metrics"] = dict(metrics)
 
 
+def _compact_json_text(payload: object) -> str:
+    if not isinstance(payload, dict) or not payload:
+        return ""
+    return json.dumps(payload, **_COMPACT_JSON_KWARGS)
+
+
 def _agentic_metric_float(metrics: dict[str, float] | None, key: str) -> float:
     if not metrics:
         return 0.0
@@ -725,6 +835,107 @@ def benchmark_matrix_tool_turn_summary_fields(
         "fatal_rate": round(fatal_count / max(len(rows), 1), 6),
         "turn_count": sum(row.turn_count for row in rows),
     }
+
+
+def build_serving_benchmark_request_row(
+    *,
+    job_id: str,
+    model_id: str,
+    task_kind: str,
+    source_repo: str,
+    suite: str,
+    context_length: int,
+    generation_length: int,
+    batch_size: int,
+    repeat_index: int,
+    request_index: int,
+    phase: str,
+    phase_index: int,
+    status: str,
+    error_code: str = "",
+    error_stage: str = "",
+    duration_ms: float = 0.0,
+    ttft_ms: float = 0.0,
+    request_latency_ms: float = 0.0,
+    prefill_tokens_per_second: float = 0.0,
+    decode_tokens_per_second: float = 0.0,
+    peak_memory_bytes: float = 0.0,
+    dataset_materialize_ms: float = 0.0,
+    prompt_render_ms: float = 0.0,
+    warmup_ms: float = 0.0,
+    prefill_ms: float = 0.0,
+    decode_ms: float = 0.0,
+    tokens_in: int = 0,
+    tokens_out: int = 0,
+    first_token_index: int = 0,
+    cache_hit: bool = False,
+    runtime_kind: str = "",
+    tool_call_id: str = "",
+    tool_name: str = "",
+    tool_arguments: dict[str, object] | None = None,
+    tool_observation: dict[str, object] | None = None,
+    tool_call_count: int = 0,
+    tool_latency_ms: float = 0.0,
+    observation_bytes: int = 0,
+    fatal_rate: float = 0.0,
+    turn_count: int = 0,
+    agentic_tool_metrics: dict[str, float] | None = None,
+    created_at_unix_ms: int = 0,
+    trajectory_provenance: dict[str, object] | None = None,
+) -> ServingBenchmarkRequestRow:
+    agentic_fields = _derived_agentic_benchmark_fields(
+        metrics=agentic_tool_metrics,
+        tool_call_count=tool_call_count,
+        tool_latency_ms=tool_latency_ms,
+        observation_bytes=observation_bytes,
+        fatal_rate=fatal_rate,
+        turn_count=turn_count,
+    )
+    return ServingBenchmarkRequestRow(
+        schema_version=_SERVING_BENCHMARK_REQUEST_ROW_SCHEMA_VERSION,
+        job_id=job_id,
+        model_id=model_id,
+        task_kind=task_kind,
+        source_repo=source_repo,
+        suite=suite,
+        context_length=context_length,
+        generation_length=generation_length,
+        batch_size=batch_size,
+        repeat_index=repeat_index,
+        request_index=request_index,
+        phase=phase,
+        phase_index=phase_index,
+        status=status,
+        error_code=error_code,
+        error_stage=error_stage,
+        duration_ms=duration_ms,
+        ttft_ms=ttft_ms,
+        request_latency_ms=request_latency_ms,
+        prefill_tokens_per_second=prefill_tokens_per_second,
+        decode_tokens_per_second=decode_tokens_per_second,
+        peak_memory_bytes=peak_memory_bytes,
+        dataset_materialize_ms=dataset_materialize_ms,
+        prompt_render_ms=prompt_render_ms,
+        warmup_ms=warmup_ms,
+        prefill_ms=prefill_ms,
+        decode_ms=decode_ms,
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        first_token_index=first_token_index,
+        cache_hit=cache_hit,
+        runtime_kind=runtime_kind,
+        tool_call_id=tool_call_id,
+        tool_name=tool_name,
+        tool_arguments_json=_compact_json_text(tool_arguments or {}),
+        tool_observation_json=_compact_json_text(tool_observation or {}),
+        tool_call_count=int(agentic_fields["tool_call_count"]),
+        tool_latency_ms=float(agentic_fields["tool_latency_ms"]),
+        observation_bytes=int(agentic_fields["observation_bytes"]),
+        fatal_rate=float(agentic_fields["fatal_rate"]),
+        turn_count=int(agentic_fields["turn_count"]),
+        created_at_unix_ms=created_at_unix_ms,
+        trajectory_provenance=dict(trajectory_provenance or {}),
+    )
 
 
 def build_benchmark_matrix_job(

@@ -575,6 +575,7 @@ Every completed `bench run` must persist:
 - one run summary
 - zero or more context-sweep rows
 - zero or more batch-sweep rows
+- zero or more request-level phase rows
 - task-aware summary metrics
 - exportable CSV rows
 
@@ -668,6 +669,66 @@ Each batch-sweep row must include:
 - `request_latency_ms`
 - `speedup_vs_batch_1`
 - `repeat_index`
+
+### Request-Level Phase Rows
+
+Each completed `bench run` may persist request-level phase rows in
+`bench-request-rows.jsonl` and `bench-request-rows.csv`. New text benchmark
+runners should emit at least one `final_answer` phase row per measured request.
+Agentic fixture-backed suites must additionally emit one `tool_turn` phase row
+per executed tool call before the final-answer row.
+
+Each request-level phase row must include:
+
+- `schema_version`
+- `job_id`
+- `model_id`
+- `task_kind`
+- `source_repo`
+- `suite`
+- `context_length`
+- `generation_length`
+- `batch_size`
+- `repeat_index`
+- `request_index`
+- `phase`
+- `phase_index`
+- `status`
+- `error_code`
+- `error_stage`
+- `duration_ms`
+- `ttft_ms`
+- `request_latency_ms`
+- `prefill_tokens_per_second`
+- `decode_tokens_per_second`
+- `peak_memory_bytes`
+- `dataset_materialize_ms`
+- `prompt_render_ms`
+- `warmup_ms`
+- `prefill_ms`
+- `decode_ms`
+- `tokens_in`
+- `tokens_out`
+- `first_token_index`
+- `cache_hit`
+- `runtime_kind`
+- `tool_call_id`
+- `tool_name`
+- `tool_arguments_json`
+- `tool_observation_json`
+- `tool_call_count`
+- `tool_latency_ms`
+- `observation_bytes`
+- `fatal_rate`
+- `turn_count`
+- `created_at_unix_ms`
+
+`phase` is `tool_turn` for deterministic local tool execution and
+`final_answer` for the model generation phase. Non-agentic benchmark requests
+emit only `final_answer`. For `tool_turn` rows, `tool_arguments_json` and
+`tool_observation_json` are compact JSON object strings derived from the shared
+agentic tool runtime. For `final_answer`, tool-specific fields default to empty
+strings while aggregate tool-turn fields may summarize the request.
 
 ### Compatibility Aliases
 

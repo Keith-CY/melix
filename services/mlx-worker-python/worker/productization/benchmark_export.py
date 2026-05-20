@@ -97,6 +97,7 @@ def collect_benchmark_artifacts(jobs_root: Path) -> dict[str, object]:
     summary_rows: list[dict[str, object]] = []
     context_rows: list[dict[str, object]] = []
     batch_rows: list[dict[str, object]] = []
+    request_rows: list[dict[str, object]] = []
     results: list[dict[str, object]] = []
     matrix_jobs: list[dict[str, object]] = []
     matrix_summary_rows: list[dict[str, object]] = []
@@ -108,6 +109,7 @@ def collect_benchmark_artifacts(jobs_root: Path) -> dict[str, object]:
         summary_rows=summary_rows,
         context_rows=context_rows,
         batch_rows=batch_rows,
+        request_rows=request_rows,
         results=results,
         run_evidence=run_evidence,
     )
@@ -129,6 +131,7 @@ def collect_benchmark_artifacts(jobs_root: Path) -> dict[str, object]:
             summary_rows=summary_rows,
             context_rows=context_rows,
             batch_rows=batch_rows,
+            request_rows=request_rows,
             results=results,
             run_evidence=run_evidence,
         )
@@ -147,6 +150,7 @@ def collect_benchmark_artifacts(jobs_root: Path) -> dict[str, object]:
         "benchmark_summary_rows": summary_rows,
         "benchmark_context_rows": context_rows,
         "benchmark_batch_rows": batch_rows,
+        "benchmark_request_rows": request_rows,
         "benchmark_results": results,
         "benchmark_matrix_jobs": matrix_jobs,
         "benchmark_matrix_summary_rows": matrix_summary_rows,
@@ -259,6 +263,7 @@ def _collect_shared_export_artifacts(
     summary_rows: list[dict[str, object]] = []
     context_rows: list[dict[str, object]] = []
     batch_rows: list[dict[str, object]] = []
+    request_rows: list[dict[str, object]] = []
     benchmark_results: list[dict[str, object]] = []
     matrix_jobs: list[dict[str, object]] = []
     matrix_summary_rows: list[dict[str, object]] = []
@@ -277,6 +282,7 @@ def _collect_shared_export_artifacts(
         summary_rows=summary_rows,
         context_rows=context_rows,
         batch_rows=batch_rows,
+        request_rows=request_rows,
         results=benchmark_results,
         run_evidence=run_evidence,
         scanned_entries=shared_scan,
@@ -344,6 +350,7 @@ def _collect_shared_export_artifacts(
             summary_rows=summary_rows,
             context_rows=context_rows,
             batch_rows=batch_rows,
+            request_rows=request_rows,
             results=benchmark_results,
             run_evidence=run_evidence,
             scanned_entries=run_scan,
@@ -366,6 +373,7 @@ def _collect_shared_export_artifacts(
         "benchmark_summary_rows": summary_rows,
         "benchmark_context_rows": context_rows,
         "benchmark_batch_rows": batch_rows,
+        "benchmark_request_rows": request_rows,
         "benchmark_results": benchmark_results,
         "benchmark_matrix_jobs": matrix_jobs,
         "benchmark_matrix_summary_rows": matrix_summary_rows,
@@ -515,6 +523,13 @@ def build_benchmark_batch_csv(bundle: dict[str, object]) -> str:
     return _rows_to_csv(
         (row for row in bundle.get("benchmark_batch_rows", []) if isinstance(row, dict)),
         _canonical_benchmark_row_columns(),
+    )
+
+
+def build_benchmark_requests_csv(bundle: dict[str, object]) -> str:
+    return _rows_to_csv(
+        (row for row in bundle.get("benchmark_request_rows", []) if isinstance(row, dict)),
+        _canonical_benchmark_request_columns(),
     )
 
 
@@ -729,6 +744,7 @@ def _collect_benchmark_run(
     context_rows: list[dict[str, object]],
     batch_rows: list[dict[str, object]],
     results: list[dict[str, object]],
+    request_rows: list[dict[str, object]] | None = None,
     run_evidence: list[dict[str, object]] | None = None,
     scanned_entries: _ScannedDirectoryEntries | None = None,
 ) -> None:
@@ -739,6 +755,7 @@ def _collect_benchmark_run(
     job_path = scan.file_path("bench-job.json")
     context_path = scan.file_path("bench-context-rows.jsonl")
     batch_path = scan.file_path("bench-batch-rows.jsonl")
+    request_path = scan.file_path("bench-request-rows.jsonl")
     result_paths = scan.matching_file_paths(prefix="bench-result-", suffix=".json")
     evidence_path = scan.file_path("run-evidence.json")
 
@@ -760,6 +777,9 @@ def _collect_benchmark_run(
 
     if batch_path is not None:
         batch_rows.extend(_try_iter_jsonl_dict_rows(batch_path))
+
+    if request_rows is not None and request_path is not None:
+        request_rows.extend(_try_iter_jsonl_dict_rows(request_path))
 
     for result_path in result_paths:
         result_row = _try_load_json_object(result_path)
@@ -908,6 +928,54 @@ def _canonical_benchmark_row_columns() -> list[str]:
         "observation_bytes",
         "fatal_rate",
         "turn_count",
+        *TRAJECTORY_PROVENANCE_CSV_FIELDS,
+    ]
+
+
+def _canonical_benchmark_request_columns() -> list[str]:
+    return [
+        "schema_version",
+        "job_id",
+        "model_id",
+        "task_kind",
+        "source_repo",
+        "suite",
+        "context_length",
+        "generation_length",
+        "batch_size",
+        "repeat_index",
+        "request_index",
+        "phase",
+        "phase_index",
+        "status",
+        "error_code",
+        "error_stage",
+        "duration_ms",
+        "ttft_ms",
+        "request_latency_ms",
+        "prefill_tokens_per_second",
+        "decode_tokens_per_second",
+        "peak_memory_bytes",
+        "dataset_materialize_ms",
+        "prompt_render_ms",
+        "warmup_ms",
+        "prefill_ms",
+        "decode_ms",
+        "tokens_in",
+        "tokens_out",
+        "first_token_index",
+        "cache_hit",
+        "runtime_kind",
+        "tool_call_id",
+        "tool_name",
+        "tool_arguments_json",
+        "tool_observation_json",
+        "tool_call_count",
+        "tool_latency_ms",
+        "observation_bytes",
+        "fatal_rate",
+        "turn_count",
+        "created_at_unix_ms",
         *TRAJECTORY_PROVENANCE_CSV_FIELDS,
     ]
 

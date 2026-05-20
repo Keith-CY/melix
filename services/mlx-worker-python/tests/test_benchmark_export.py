@@ -25,6 +25,7 @@ from worker.productization.benchmark_export import (
     build_comparison_table,
     build_benchmark_batch_csv,
     build_benchmark_context_csv,
+    build_benchmark_requests_csv,
     build_benchmark_matrix_requests_csv,
     build_benchmark_matrix_summary_csv,
     build_evaluation_compare_samples_csv,
@@ -198,6 +199,27 @@ def _write_bench_fixtures(root: Path) -> None:
             "structured_output_mode": "",
         }) + "\n"
     )
+    (root / "bench-request-rows.jsonl").write_text(
+        json.dumps({
+            "schema_version": "melix.serving_benchmark_request_row.v1",
+            "job_id": "bench-1",
+            "model_id": "melix-dev-text",
+            "task_kind": "text-generation",
+            "source_repo": "HuggingFaceH4/ultrachat_200k",
+            "suite": "smoke",
+            "context_length": 32,
+            "generation_length": 8,
+            "batch_size": 1,
+            "repeat_index": 0,
+            "request_index": 0,
+            "phase": "final_answer",
+            "phase_index": 0,
+            "status": "completed",
+            "duration_ms": 24.45,
+            "tokens_out": 8,
+            "created_at_unix_ms": 101,
+        }) + "\n"
+    )
     (root / "bench-result-smoke.json").write_text(
         json.dumps({
             "schema_version": "melix.serving_benchmark_result.v1",
@@ -282,6 +304,26 @@ def _write_bench_run_fixture(root: Path, *, job_id: str, model_id: str, ttft_ms:
             "cache_profile": "cold",
             "reasoning_mode": "",
             "structured_output_mode": "",
+        }) + "\n"
+    )
+    (run_root / "bench-request-rows.jsonl").write_text(
+        json.dumps({
+            "schema_version": "melix.serving_benchmark_request_row.v1",
+            "job_id": job_id,
+            "model_id": model_id,
+            "task_kind": "text-generation",
+            "source_repo": "HuggingFaceH4/ultrachat_200k",
+            "suite": "smoke",
+            "context_length": 32,
+            "generation_length": 8,
+            "batch_size": 1,
+            "repeat_index": 0,
+            "request_index": 0,
+            "phase": "final_answer",
+            "phase_index": 0,
+            "status": "completed",
+            "duration_ms": ttft_ms,
+            "created_at_unix_ms": 101,
         }) + "\n"
     )
     (run_root / "bench-result-smoke.json").write_text(
@@ -598,6 +640,8 @@ def test_collect_benchmark_artifacts_finds_persisted_bench_files(tmp_path: Path)
     assert len(result["benchmark_summary_rows"]) == 1
     assert len(result["benchmark_context_rows"]) == 1
     assert len(result["benchmark_batch_rows"]) == 1
+    assert len(result["benchmark_request_rows"]) == 1
+    assert result["benchmark_request_rows"][0]["phase"] == "final_answer"
     assert len(result["benchmark_results"]) == 1
     assert result["benchmark_results"][0]["suite"] == "smoke"
     assert result["run_evidence"][0]["run_id"] == "bench-1"
@@ -636,6 +680,18 @@ def test_collect_benchmark_artifacts_reads_per_run_history_from_runs_directory(
     assert [row["job_id"] for row in result["benchmark_results"]] == ["bench-1", "bench-2"]
     assert [row["job_id"] for row in result["benchmark_context_rows"]] == ["bench-1", "bench-2"]
     assert [row["job_id"] for row in result["benchmark_batch_rows"]] == ["bench-1", "bench-2"]
+    assert [row["job_id"] for row in result["benchmark_request_rows"]] == ["bench-1", "bench-2"]
+
+
+def test_build_benchmark_requests_csv_exports_phase_rows(tmp_path: Path) -> None:
+    _write_bench_fixtures(tmp_path)
+
+    result = collect_benchmark_artifacts(tmp_path)
+    rows = list(csv.DictReader(io.StringIO(build_benchmark_requests_csv(result))))
+
+    assert rows[0]["schema_version"] == "melix.serving_benchmark_request_row.v1"
+    assert rows[0]["phase"] == "final_answer"
+    assert rows[0]["duration_ms"] == "24.45"
 
 
 def test_collect_benchmark_run_uses_single_directory_scan_without_path_is_file_probes(
@@ -1054,6 +1110,12 @@ def test_collect_benchmark_artifacts_ignores_blank_and_non_object_jsonl_rows(tmp
             json.dumps("ignored"),
         ]) + "\n"
     )
+    (tmp_path / "bench-request-rows.jsonl").write_text(
+        "\n".join([
+            json.dumps({"job_id": "bench-1", "row_kind": "request"}),
+            json.dumps(False),
+        ]) + "\n"
+    )
     matrix_root = tmp_path / "matrix-runs" / "bench-matrix-1"
     matrix_root.mkdir(parents=True, exist_ok=True)
     (matrix_root / "bench-matrix-job.json").write_text(json.dumps({"job_id": "bench-matrix-1"}) + "\n")
@@ -1075,6 +1137,7 @@ def test_collect_benchmark_artifacts_ignores_blank_and_non_object_jsonl_rows(tmp
 
     assert result["benchmark_context_rows"] == [{"job_id": "bench-1", "row_kind": "context"}]
     assert result["benchmark_batch_rows"] == [{"job_id": "bench-1", "row_kind": "batch"}]
+    assert result["benchmark_request_rows"] == [{"job_id": "bench-1", "row_kind": "request"}]
     assert result["benchmark_matrix_summary_rows"] == [{"job_id": "bench-matrix-1", "row_kind": "summary"}]
     assert result["benchmark_matrix_request_rows"] == [{"job_id": "bench-matrix-1", "row_kind": "request"}]
 
