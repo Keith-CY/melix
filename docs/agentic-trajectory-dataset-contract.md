@@ -296,6 +296,16 @@ for trainer rows plus response-only/mask-prompt boundary counts. Adapter
 receipts keep `dataset_sample_count` as the source trace count and add
 `trainer_dataset_sample_count` for the expanded trainer rows.
 
+The normalized snapshot manifest also records `agentic_sft_token_metrics` for
+agentic SFT projections. The metric object uses the repository-owned
+`whitespace_v1` estimator and includes `source_trace_count`, `trace_tokens`,
+`tool_call_tokens`, `observation_tokens`, and `final_answer_tokens` across the
+train and validation traces. LoRA adapter receipts that consume the snapshot
+must copy this metric object and expose stable `training.agentic_sft.*` aliases
+for these token counts so downstream reports can tie adapter quality and
+training cost back to the source trace, tool-call, observation, and final-answer
+budget.
+
 LoRA SFT over `agentic_tool_trace` packages is a distinct supervised objective.
 The operator still selects an SFT `training_mode` such as `lora`, `qlora`, or
 `dora`, but the normalized worker config and adapter receipt must record
