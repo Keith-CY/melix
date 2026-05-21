@@ -13,7 +13,7 @@ This runbook is intentionally execution-focused. It explains:
 - how to run `bench matrix` sweeps
 - how to run `eval` jobs
 - how to use LoRA adapters with those workflows
-- how to run first-class `eval compare` jobs against activated derived models
+- how to run first-class `eval compare` jobs against registered derived models or adapter manifests
 
 ## Preconditions
 
@@ -51,8 +51,10 @@ Important target-selection rules:
 - `melix bench run` requires exactly one of `--model-id` or `--repo-id`
 - `melix bench matrix run` requires exactly one of `--model-id` or `--repo-id`
 - `melix eval run` requires exactly one of `--model-id` or `--repo-id`
-- `melix eval compare` requires exactly one base target (`--model-id` or `--repo-id`) plus at least one `--target-model-id`
-- benchmark, matrix, and evaluation do not accept an adapter path or adapter ID directly
+- `melix eval compare` requires exactly one base target (`--model-id` or `--repo-id`) plus at least
+  one compare target, either `--target-model-id` or `--target-adapter`
+- `melix bench run`, `melix bench matrix run`, and `melix eval run` do not accept an adapter path
+  or adapter ID directly
 
 ## Run A Standard Benchmark
 
@@ -490,12 +492,14 @@ Melix removes the product-owned derived model artifacts and prunes the removed m
 catalog snapshot. If you keep multiple adapters active in the catalog, remove each derived model
 explicitly when the session is complete.
 
-## Run Evaluation Compare Against Activated Derived Models
+## Run Evaluation Compare Against Derived Models Or Adapter Manifests
 
-Use `eval compare` when you want one base target and one or more activated derived models in the
-same evaluation job.
+Use `eval compare` when you want one base target and one or more derived targets in the same
+evaluation job. Use `--target-model-id` when the target already exists in the local catalog. Use
+`--target-adapter` when the target should be resolved from a `train_lora.adapter.json` package
+manifest for this compare job only.
 
-Example:
+Registered model target example:
 
 ```bash
 swift run melix eval compare \
@@ -511,10 +515,30 @@ swift run melix eval compare \
   --code-exec-policy sandboxed
 ```
 
+Adapter-manifest target example:
+
+```bash
+swift run melix eval compare \
+  --model-id mlx-community/Qwen3.5-0.8B-OptiQ-4bit \
+  --target-adapter /absolute/path/to/train_lora.adapter.json \
+  --suite mbpp \
+  --dataset-id mbpp.dev.v1 \
+  --sample-size 12 \
+  --batch-factor 2 \
+  --seed 9 \
+  --scoring-mode pass_at_1 \
+  --code-exec-policy sandboxed
+```
+
 Important compare rules:
 
-- `eval compare` still uses model IDs, not adapter paths
-- every `--target-model-id` must already exist in the local catalog
+- `--target-model-id` targets must already exist in the local catalog
+- `--target-adapter` targets must point to a `melix.lora_adapter_package.v1` manifest, usually
+  `train_lora.adapter.json`
+- each adapter manifest target is materialized as an ephemeral adapter-backed compare target and
+  unloaded after the compare job finishes
+- adapter manifest targets use the manifest's `source_model`, `weights_path`, and
+  `adapter_set_hash` fields to derive runtime target identity and lineage
 - compare results persist through the same evaluation export bundle as `eval run`, but compare exports use dedicated compare subcommands
 - compare sample exports preserve executable-code evidence for both the base and target responses when the suite executes code
 - human-readable compare output now includes `verdict`, observed delta, bootstrap CI, analytical CI,

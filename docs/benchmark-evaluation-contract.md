@@ -1025,6 +1025,19 @@ The canonical comparison extension fields are:
 
 - `compare_mode: base_vs_targets`
 - `compare_target_model_ids: string[]`
+- `compare_target_adapter_manifest_paths: string[]`
+
+`compare_target_model_ids` names registered catalog targets that are already
+loadable by the local runtime. `compare_target_adapter_manifest_paths` names
+LoRA adapter package manifests with schema `melix.lora_adapter_package.v1`.
+During local compare execution, Melix resolves each adapter manifest into an
+ephemeral adapter-backed target using the manifest's source model, weights path,
+and adapter set hash. Those ephemeral targets are unloaded after compare
+execution finishes.
+
+A comparison request is valid when it has exactly one base target, expressed
+through `model_id` or `hf_repo_id`, and at least one comparison target across
+`compare_target_model_ids` and `compare_target_adapter_manifest_paths`.
 
 Comparison runs must persist through the same shared history and export bundle as `eval run`.
 
@@ -1058,6 +1071,8 @@ The canonical normalized request shape is:
 - `profile_threshold: number`
 - `output_schema_json: string`
 - `ignored_paths: string[]`
+- `compare_target_model_ids: string[]`
+- `compare_target_adapter_manifest_paths: string[]`
 
 ### Current Control Semantics
 
