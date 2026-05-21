@@ -163,6 +163,14 @@ class _SourceQualityMetricAccumulator:
 
 
 @dataclass(frozen=True)
+class _SourceSelectionReportSummary:
+    path: str
+    row_count: int
+    accepted_row_count: int
+    rejected_row_count: int
+
+
+@dataclass(frozen=True)
 class _DataDesignerAPI:
     DataDesigner: type[Any]
     DataDesignerConfigBuilder: type[Any]
@@ -613,6 +621,13 @@ def _write_training_package(
     quality_metrics = _source_quality_metrics_manifest([*train_rows, *validation_rows], output_kind="training")
     if quality_metrics:
         manifest_payload["source_quality_metrics"] = quality_metrics
+    selection_summary = _write_source_selection_report(
+        package_path,
+        [*train_rows, *validation_rows],
+        output_kind="training",
+    )
+    if selection_summary is not None:
+        manifest_payload["source_selection_report"] = _source_selection_report_manifest(selection_summary)
     timing["melix_package_write_ms"] = _elapsed_ms(package_write_started)
     manifest_payload["timing"] = dict(timing)
     _rewrite_manifest(manifest_path, manifest_payload)
@@ -703,6 +718,13 @@ def _write_evaluation_package(
     )
     if quality_metrics:
         manifest_payload["source_quality_metrics"] = quality_metrics
+    selection_summary = _write_source_selection_report(
+        package_path,
+        serialized_rows,
+        output_kind="evaluation_final_result",
+    )
+    if selection_summary is not None:
+        manifest_payload["source_selection_report"] = _source_selection_report_manifest(selection_summary)
     timing["melix_package_write_ms"] = _elapsed_ms(package_write_started)
     manifest_payload["timing"] = dict(timing)
     _rewrite_manifest(manifest_path, manifest_payload)
@@ -1218,6 +1240,120 @@ def _ratio(numerator: int, denominator: int) -> float:
     if denominator <= 0:
         return 0.0
     return round(numerator / denominator, 6)
+
+
+def _write_source_selection_report(
+    package_path: Path,
+    rows: list[dict[str, Any]],
+    *,
+    output_kind: str,
+) -> _SourceSelectionReportSummary | None:
+    report_rows = _source_selection_report_rows(rows, output_kind=output_kind)
+    if not report_rows:
+        return None
+    report_path = package_path / "source_selection_report.jsonl"
+    _write_jsonl_rows(report_path, report_rows)
+    accepted_count = sum(1 for row in report_rows if row["status"] == "accepted")
+    rejected_count = len(report_rows) - accepted_count
+    return _SourceSelectionReportSummary(
+        path="source_selection_report.jsonl",
+        row_count=len(report_rows),
+        accepted_row_count=accepted_count,
+        rejected_row_count=rejected_count,
+    )
+
+
+def _source_selection_report_manifest(summary: _SourceSelectionReportSummary) -> dict[str, Any]:
+    return {
+        "schema_version": "melix.source_selection_report.v1",
+        "path": summary.path,
+        "row_count": summary.row_count,
+        "accepted_row_count": summary.accepted_row_count,
+        "rejected_row_count": summary.rejected_row_count,
+    }
+
+
+def _source_selection_report_rows(rows: list[dict[str, Any]], *, output_kind: str) -> list[dict[str, Any]]:
+    report_rows: list[dict[str, Any]] = []
+    for index, row in enumerate(rows, start=1):
+        metadata = row.get("source_construction")
+        if not isinstance(metadata, Mapping):
+            continue
+        report_rows.append(_source_selection_report_row(index, row, metadata, output_kind=output_kind))
+    return report_rows
+
+
+def _source_selection_report_row(
+    row_index: int,
+    row: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    *,
+    output_kind: str,
+) -> dict[str, Any]:
+    source_ids = _metadata_string_list(metadata, "source_ids")
+    required_tool_families = _metadata_string_list(metadata, "required_tool_families")
+    hop_count = metadata.get("hop_count", 0)
+    if not isinstance(hop_count, int):
+        hop_count = 0
+    evidence_chain = metadata.get("evidence_chain", [])
+    evidence_chain_count = len(evidence_chain) if isinstance(evidence_chain, list) else 0
+    ambiguity_flag = bool(str(metadata.get("ambiguity_notes", "")).strip())
+
+    reason_codes: list[str] = []
+    if not required_tool_families:
+        reason_codes.append("missing_required_tool")
+    if hop_count < 2:
+        reason_codes.append("insufficient_hop_depth")
+    if evidence_chain_count == 0:
+        reason_codes.append("missing_evidence_chain")
+    status = "rejected" if reason_codes else "accepted"
+    if ambiguity_flag:
+        reason_codes.append("answer_ambiguity_review")
+    if not reason_codes:
+        reason_codes.append("meets_source_quality_threshold")
+
+    return {
+        "schema_version": "melix.source_selection_report_row.v1",
+        "output_kind": output_kind,
+        "row_index": row_index,
+        "row_id": _source_selection_row_id(row, row_index),
+        "status": status,
+        "reason_codes": reason_codes,
+        "summary": _source_selection_summary(status, reason_codes),
+        "source_ids": source_ids,
+        "required_tool_families": required_tool_families,
+        "hop_count": hop_count,
+        "evidence_chain_count": evidence_chain_count,
+        "ambiguity_flag": ambiguity_flag,
+    }
+
+
+def _metadata_string_list(metadata: Mapping[str, Any], key: str) -> list[str]:
+    raw_values = metadata.get(key, [])
+    if not isinstance(raw_values, list):
+        return []
+    return [value for value in (str(raw).strip() for raw in raw_values) if value]
+
+
+def _source_selection_row_id(row: Mapping[str, Any], row_index: int) -> str:
+    for key in ("id", "sample_id"):
+        value = str(row.get(key, "")).strip()
+        if value:
+            return value
+    metadata = row.get("source_construction")
+    if isinstance(metadata, Mapping):
+        rewrite_id = str(metadata.get("rewrite_id", "")).strip()
+        if rewrite_id:
+            return rewrite_id
+    return f"row-{row_index}"
+
+
+def _source_selection_summary(status: str, reason_codes: list[str]) -> str:
+    if status == "accepted":
+        if reason_codes == ["meets_source_quality_threshold"]:
+            return "Accepted: declares required tools, multi-hop depth, and source evidence."
+        return "Accepted for quality threshold with review notes."
+    return "Rejected: " + ", ".join(reason_codes) + "."
 
 
 def _row_excluded_leakage_values(row: Mapping[str, Any], metadata: Mapping[str, Any]) -> list[tuple[str, str]]:

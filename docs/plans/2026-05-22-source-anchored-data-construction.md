@@ -287,6 +287,34 @@ than redefining the metric names.
 Selection reports should explain why each accepted sample was kept and why each
 rejected sample was rejected.
 
+Successful source-anchored package materialization must also write a
+package-local `source_selection_report.jsonl` when at least one row carries
+`source_construction` metadata. Each report row must be publishable with release
+evidence and must not include prompt, answer, observation, source text, or
+secret values.
+
+Report row fields:
+
+- `schema_version`
+- `row_index`
+- `row_id`
+- `status`
+- `reason_codes`
+- `summary`
+- `source_ids`
+- `required_tool_families`
+- `hop_count`
+- `evidence_chain_count`
+- `ambiguity_flag`
+
+The initial deterministic selection policy accepts rows that declare at least
+one required tool family, `hop_count >= 2`, and a non-empty `evidence_chain`.
+Rows missing one or more of those signals are reported as `rejected` with
+stable reason codes. Rows with `ambiguity_notes` keep the accepted or rejected
+status derived from the hard signals and add `answer_ambiguity_review` as a
+review reason. The package manifest records the relative report path plus
+accepted and rejected row counts.
+
 ## Performance And Measurement Points
 
 Construction must be measurable before implementation. The first implementation

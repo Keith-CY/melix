@@ -415,6 +415,29 @@ def test_create_training_package_preserves_source_construction_metadata(tmp_path
         "unique_source_id_count": 1,
         "unique_transformation_kind_count": 2,
     }
+    assert manifest["source_selection_report"] == {
+        "schema_version": "melix.source_selection_report.v1",
+        "path": "source_selection_report.jsonl",
+        "row_count": 1,
+        "accepted_row_count": 1,
+        "rejected_row_count": 0,
+    }
+    report_row = json.loads((tmp_path / "out" / "source_selection_report.jsonl").read_text(encoding="utf-8"))
+    assert report_row == {
+        "schema_version": "melix.source_selection_report_row.v1",
+        "output_kind": "training",
+        "row_index": 1,
+        "row_id": "rewrite-1",
+        "status": "accepted",
+        "reason_codes": ["answer_ambiguity_review"],
+        "summary": "Accepted for quality threshold with review notes.",
+        "source_ids": ["source-1"],
+        "required_tool_families": ["image_inspection"],
+        "hop_count": 2,
+        "evidence_chain_count": 1,
+        "ambiguity_flag": True,
+    }
+    assert "Crimson Beacon" not in json.dumps(report_row)
 
 
 def test_training_source_leakage_validation_summary_records_split_counts(tmp_path: Path) -> None:
@@ -637,6 +660,33 @@ def test_source_quality_metrics_summarize_evaluation_metadata(tmp_path: Path) ->
         "unique_source_id_count": 2,
         "unique_transformation_kind_count": 2,
     }
+    assert result.manifest_payload["source_selection_report"] == {
+        "schema_version": "melix.source_selection_report.v1",
+        "path": "source_selection_report.jsonl",
+        "row_count": 2,
+        "accepted_row_count": 1,
+        "rejected_row_count": 1,
+    }
+    report_rows = [
+        json.loads(line)
+        for line in (tmp_path / "eval" / "source_selection_report.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert report_rows[0]["row_id"] == "tool-rich"
+    assert report_rows[0]["status"] == "accepted"
+    assert report_rows[0]["reason_codes"] == ["answer_ambiguity_review"]
+    assert report_rows[0]["source_ids"] == ["source-1", "source-2"]
+    assert report_rows[1]["row_id"] == "source-only"
+    assert report_rows[1]["status"] == "rejected"
+    assert report_rows[1]["reason_codes"] == [
+        "missing_required_tool",
+        "insufficient_hop_depth",
+        "missing_evidence_chain",
+    ]
+    assert report_rows[1]["summary"] == (
+        "Rejected: missing_required_tool, insufficient_hop_depth, missing_evidence_chain."
+    )
+    assert "alpha" not in json.dumps(report_rows)
+    assert "beta" not in json.dumps(report_rows)
 
 
 def test_invalid_evaluation_source_construction_reports_row_index(tmp_path: Path) -> None:
@@ -1002,6 +1052,37 @@ def test_source_construction_validator_helpers_handle_noisy_metadata() -> None:
         ]
     ) == {"source-1": 3}
     assert synthetic_module._ratio(1, 0) == 0.0  # noqa: SLF001
+    assert synthetic_module._metadata_string_list(  # noqa: SLF001
+        {"source_ids": "bad"},
+        "source_ids",
+    ) == []
+    accepted_row = synthetic_module._source_selection_report_row(  # noqa: SLF001
+        7,
+        {},
+        {
+            "source_ids": ["source-1"],
+            "required_tool_families": ["search"],
+            "hop_count": "2",
+            "evidence_chain": [{"source_id": "source-1"}],
+        },
+        output_kind="training",
+    )
+    assert accepted_row["row_id"] == "row-7"
+    assert accepted_row["hop_count"] == 0
+    assert accepted_row["status"] == "rejected"
+    accepted_row = synthetic_module._source_selection_report_row(  # noqa: SLF001
+        8,
+        {},
+        {
+            "source_ids": ["source-1"],
+            "required_tool_families": ["search"],
+            "hop_count": 2,
+            "evidence_chain": [{"source_id": "source-1"}],
+        },
+        output_kind="training",
+    )
+    assert accepted_row["reason_codes"] == ["meets_source_quality_threshold"]
+    assert accepted_row["summary"] == "Accepted: declares required tools, multi-hop depth, and source evidence."
 
 
 @pytest.mark.parametrize(
