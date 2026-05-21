@@ -1129,7 +1129,7 @@ def _canonical_evaluation_sample_columns() -> list[str]:
 
 
 def _normalized_evaluation_sample_row(row: dict[str, object]) -> dict[str, object]:
-    parse_status = row.get("parse_status", "")
+    parse_status = row.get("parse_status", row.get("extraction_status", ""))
     typed_score = row.get("typed_score")
     if typed_score is None:
         typed_score = 1.0 if row.get("correct", False) else 0.0

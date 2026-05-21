@@ -2054,6 +2054,26 @@ def test_evaluation_samples_csv_builder_maps_sample_id_and_preserves_modalities(
     assert rows[0]["input_modalities"] == "text"
 
 
+def test_evaluation_samples_csv_builder_backfills_legacy_parse_status() -> None:
+    bundle: dict[str, object] = {
+        "evaluation_samples": [
+            {
+                "job_id": "eval-legacy",
+                "sample_id": "sample-legacy",
+                "predicted": "4",
+                "extraction_status": "parsed_legacy",
+            }
+        ]
+    }
+
+    rows = list(csv.DictReader(io.StringIO(build_evaluation_samples_csv(bundle))))
+
+    assert rows[0]["extracted_result"] == "4"
+    assert rows[0]["final_answer"] == "4"
+    assert rows[0]["extraction_status"] == "parsed_legacy"
+    assert rows[0]["parse_status"] == "parsed_legacy"
+
+
 def test_export_csv_builders_preserve_trajectory_provenance_columns() -> None:
     provenance = {
         "trajectory_dataset_id": "opensearch-vl.dev",
