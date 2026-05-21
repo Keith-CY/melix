@@ -1039,7 +1039,23 @@ A comparison request is valid when it has exactly one base target, expressed
 through `model_id` or `hf_repo_id`, and at least one comparison target across
 `compare_target_model_ids` and `compare_target_adapter_manifest_paths`.
 
-Comparison runs must persist through the same shared history and export bundle as `eval run`.
+Comparison runs must persist through the same shared history and export bundle
+as `eval run`. The persisted compare bundle must also expose one
+machine-readable release evidence view:
+
+- `dataset_lineage` records the materialized dataset root and normalized dataset
+  source fields used for the paired base and target samples.
+- `target_lineage` records each comparison target's materialization kind. For
+  adapter targets, it includes the adapter manifest path, adapter weights path,
+  adapter set hash, and source model id used to derive the ephemeral target.
+- `statistical_verdicts` records each target's verdict, effect threshold, delta
+  accuracy, statistical evidence, and release-gate summary.
+
+`evaluation-compare-job.json`, `evaluation-compare-summary.json`, and
+`run-record.json` must preserve enough of this lineage/verdict data for a
+release reviewer to verify which adapter was compared, which dataset slice was
+used, and why the statistical verdict was emitted without joining against
+process logs.
 
 ### Normalized Input Fields
 

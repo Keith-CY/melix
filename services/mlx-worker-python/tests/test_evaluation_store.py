@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from worker.productization.evaluation_schemas import (
+    EvaluationCompareDatasetLineage,
     EvaluationCompareTargetLineage,
     build_evaluation_compare_job_record,
     build_evaluation_compare_sample_record,
@@ -16,6 +17,7 @@ from worker.productization.evaluation_schemas import (
     build_evaluation_result_record,
     build_evaluation_sample_record,
 )
+from worker.productization import run_records
 from worker.productization.benchmark_export import (
     build_evaluation_samples_csv,
     build_evaluation_summary_csv,
@@ -852,6 +854,28 @@ def test_persist_compare_result_writes_expected_compare_artifact_names_and_paylo
         output_dir=str(run_root),
         created_at_unix_ms=101,
         updated_at_unix_ms=202,
+        dataset_lineage=EvaluationCompareDatasetLineage(
+            dataset_id="mmlu-dev",
+            suite_id="mmlu",
+            dataset_root=str(tmp_path / "datasets" / "mmlu-dev"),
+            source_kind="hf_dataset",
+            source_dataset_path="cais/mmlu",
+            source_split="validation",
+            sample_size=2,
+            seed=7,
+            few_shot=1,
+            scoring_mode="multiple_choice_accuracy",
+        ),
+        target_lineage=(
+            EvaluationCompareTargetLineage(
+                target_model_id="melix-dev-text-lora-a",
+                materialization_kind="ephemeral_adapter",
+                adapter_manifest_path="/tmp/melix-adapters/lora-a.adapter.json",
+                adapter_weights_path="/tmp/melix-adapters/lora-a/adapters.safetensors",
+                adapter_set_hash="loraahash12345678",
+                derived_from_model_id="melix-dev-text",
+            ),
+        ),
     )
     compare_summary = build_evaluation_compare_summary_record(
         job_id="eval-compare-1",
@@ -964,6 +988,13 @@ def test_persist_compare_result_writes_expected_compare_artifact_names_and_paylo
         summary_payload["target_summaries"][0]["release_gate_summary"]["both_intervals_same_side"]
         is True
     )
+    assert summary_payload["dataset_lineage"]["source_dataset_path"] == "cais/mmlu"
+    assert summary_payload["dataset_lineage"]["seed"] == 7
+    assert summary_payload["target_lineage"][0]["adapter_set_hash"] == "loraahash12345678"
+    assert summary_payload["statistical_verdicts"][0]["target_model_id"] == "melix-dev-text-lora-a"
+    assert summary_payload["statistical_verdicts"][0]["delta_accuracy"] == 0.5
+    assert summary_payload["statistical_verdicts"][0]["statistical_evidence"]["bootstrap"]["iterations"] == 400
+    assert summary_payload["statistical_verdicts"][0]["release_gate_summary"]["threshold_passed"] is True
     assert json.loads(persisted["samples_jsonl"].read_text(encoding="utf-8").strip()) == compare_sample.to_dict()
     assert persisted["summary_csv"].read_text(encoding="utf-8").startswith(
         "job_id,base_model_id,target_model_id,suite_id,dataset_id,sample_size,win_count,loss_count,tie_count,regression_count,base_accuracy,target_accuracy,delta_accuracy,effect_threshold,verdict,bootstrap_lower_bound,bootstrap_upper_bound,analytical_lower_bound,analytical_upper_bound,duration_seconds,created_at_unix_ms,target_adapter_manifest_path,target_adapter_set_hash\n"
@@ -978,8 +1009,15 @@ def test_persist_compare_result_writes_expected_compare_artifact_names_and_paylo
     assert run_record["schema_version"] == "melix.run_record.v1"
     assert run_record["run_kind"] == "evaluation_compare"
     assert run_record["target"]["base_model_id"] == "melix-dev-text"
+    assert run_record["target"]["target_lineage"][0]["adapter_manifest_path"] == "/tmp/melix-adapters/lora-a.adapter.json"
+    assert run_record["dataset"]["dataset_lineage"]["source_dataset_path"] == "cais/mmlu"
     assert run_record["evaluation"]["win_count"] == 1
     assert run_record["evaluation"]["verdicts"] == ["improvement"]
+    assert run_record["evaluation"]["statistical_verdicts"][0]["verdict"] == "improvement"
+    assert (
+        run_record["evaluation"]["statistical_verdicts"][0]["release_gate_summary"]["both_intervals_same_side"]
+        is True
+    )
     assert run_record["known_gaps"] == ["Apple Silicon telemetry artifact was not present for this run."]
     assert run_record["probes"][0]["phase"] == "run_record_write"
 
@@ -1176,6 +1214,9 @@ def test_compare_job_persists_adapter_target_lineage(tmp_path: Path) -> None:
     job_payload = json.loads(persisted["job"].read_text(encoding="utf-8"))
     assert "target_lineage" in job_payload
     assert len(job_payload["target_lineage"]) == 2
+    summary_payload = json.loads(persisted["summary_json"].read_text(encoding="utf-8"))
+    assert len(summary_payload["target_lineage"]) == 2
+    assert summary_payload["target_lineage"][1]["adapter_manifest_path"] == "/tmp/melix-adapters/demo.adapter.json"
     assert persisted["samples_jsonl"].read_text(encoding="utf-8") == ""
     registered, ephemeral = job_payload["target_lineage"]
     assert registered["materialization_kind"] == "registered"
@@ -1286,6 +1327,11 @@ def test_compare_summary_csv_carries_adapter_columns_per_target(tmp_path: Path) 
     assert header.endswith("target_adapter_manifest_path,target_adapter_set_hash")
     assert registered_row.endswith(",,")  # both adapter columns empty
     assert adapter_row.endswith(",/tmp/melix-adapters/bee.adapter.json,beefface12345678")
+
+
+def test_compare_artifact_payload_helpers_handle_mapping_and_unknown_values() -> None:
+    assert run_records.object_payload({"kind": "mapping"}) == {"kind": "mapping"}
+    assert run_records.object_payload(object()) == {}
 
 
 @pytest.mark.parametrize("probe_mode", ("off", "minimal", "definitely-not-a-mode", ""))

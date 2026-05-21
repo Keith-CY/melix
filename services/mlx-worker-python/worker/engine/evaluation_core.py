@@ -64,6 +64,7 @@ from worker.productization.event_extraction import (
     prompt_snapshot_payload,
 )
 from worker.productization.evaluation_schemas import (
+    EvaluationCompareDatasetLineage,
     EvaluationCompareJob,
     EvaluationCompareSample,
     EvaluationCompareSummary,
@@ -1389,15 +1390,42 @@ class EvaluationCore:
                     )
                 )
             compare_parameters.setdefault("sample_size", str(len(base_run.samples)))
+            base_job_parameters = getattr(base_run.job, "parameters", {})
+            if isinstance(base_job_parameters, dict):
+                for key in (
+                    "dataset_root",
+                    "source_kind",
+                    "source_path",
+                    "source_dataset_path",
+                    "source_dataset_name",
+                    "source_dataset_revision",
+                    "source_split",
+                    "few_shot",
+                    "seed",
+                    "scoring_mode",
+                ):
+                    if base_job_parameters.get(key) not in (None, ""):
+                        compare_parameters.setdefault(key, str(base_job_parameters[key]))
+            compare_dataset_id = str(getattr(base_run.job, "dataset_id", "") or dataset_id or "top200")
             compare_job = build_evaluation_compare_job_record(
                 job_id=job_id,
                 base_model_id=resolved_model_id,
                 target_model_ids=combined_target_ids,
+                dataset_lineage=self._compare_dataset_lineage(
+                    dataset_id=compare_dataset_id,
+                    suite_id=suite_id,
+                    dataset_root=Path(str(compare_parameters.get("dataset_root", "."))).resolve(),
+                    parameters=compare_parameters,
+                    sample_size=len(base_run.samples),
+                    seed=self._int_parameter_from_mapping(compare_parameters, "seed"),
+                    few_shot=self._int_parameter_from_mapping(compare_parameters, "few_shot"),
+                    scoring_mode=scoring_mode,
+                ),
                 target_lineage=tuple(target_lineage_entries),
                 task_kind=str(getattr(base_run.job, "task_kind", "event_extraction") or "event_extraction"),
                 source_repo=str(getattr(base_run.job, "source_repo", "") or ""),
                 suite_id=suite_id,
-                dataset_id=str(getattr(base_run.job, "dataset_id", "") or dataset_id or "top200"),
+                dataset_id=compare_dataset_id,
                 sample_size=len(base_run.samples),
                 scoring_mode=scoring_mode,
                 parameters=compare_parameters,
@@ -2170,6 +2198,16 @@ class EvaluationCore:
             job_id=job_id,
             base_model_id=resolved_model_id,
             target_model_ids=combined_target_ids,
+            dataset_lineage=self._compare_dataset_lineage(
+                dataset_id=dataset_id,
+                suite_id=suite_id,
+                dataset_root=dataset_root,
+                parameters=compare_job_parameters,
+                sample_size=len(base_samples),
+                seed=resolved_seed,
+                few_shot=len(few_shot_examples),
+                scoring_mode=resolved_scoring_mode,
+            ),
             target_lineage=tuple(target_lineage_entries),
             task_kind=compare_job_parameters.get("task_kind", resolved_task_kind),
             source_repo=compare_job_parameters.get("source_repo", ""),
@@ -3250,6 +3288,83 @@ class EvaluationCore:
         context = dict(raw_context) if isinstance(raw_context, dict) else {}
         context.setdefault("dataset_root", str(dataset_root))
         return context
+
+    @staticmethod
+    def _compare_dataset_lineage(
+        *,
+        dataset_id: str,
+        suite_id: str,
+        dataset_root: Path,
+        parameters: dict[str, str],
+        sample_size: int,
+        seed: int,
+        few_shot: int,
+        scoring_mode: str,
+    ) -> EvaluationCompareDatasetLineage:
+        return EvaluationCompareDatasetLineage(
+            dataset_id=dataset_id,
+            suite_id=suite_id,
+            dataset_root=str(Path(dataset_root).resolve()),
+            source_kind=EvaluationCore._first_parameter(
+                parameters,
+                "source_kind",
+                "evaluation_source_kind",
+            ),
+            source_path=EvaluationCore._first_parameter(
+                parameters,
+                "source_path",
+                "evaluation_source_path",
+                "event_source_jsonl",
+                "dataset_root",
+            ),
+            source_dataset_path=EvaluationCore._first_parameter(
+                parameters,
+                "source_dataset_path",
+                "hf_dataset_path",
+                "dataset_path",
+            ),
+            source_dataset_name=EvaluationCore._first_parameter(
+                parameters,
+                "source_dataset_name",
+                "hf_dataset_name",
+                "dataset_name",
+            ),
+            source_dataset_revision=EvaluationCore._first_parameter(
+                parameters,
+                "source_dataset_revision",
+                "hf_dataset_revision",
+                "dataset_revision",
+            ),
+            source_split=EvaluationCore._first_parameter(
+                parameters,
+                "source_split",
+                "hf_dataset_split",
+                "dataset_split",
+                "split",
+            ),
+            sample_size=sample_size,
+            seed=seed,
+            few_shot=few_shot,
+            scoring_mode=scoring_mode,
+        )
+
+    @staticmethod
+    def _first_parameter(parameters: dict[str, str], *keys: str) -> str:
+        for key in keys:
+            value = str(parameters.get(key, "") or "").strip()
+            if value:
+                return value
+        return ""
+
+    @staticmethod
+    def _int_parameter_from_mapping(parameters: dict[str, str], key: str) -> int:
+        value = str(parameters.get(key, "") or "").strip()
+        if not value:
+            return 0
+        try:
+            return int(value)
+        except ValueError:
+            return 0
 
     @staticmethod
     def _agentic_tool_metric_totals(samples: tuple[EvaluationSample, ...]) -> dict[str, float]:
