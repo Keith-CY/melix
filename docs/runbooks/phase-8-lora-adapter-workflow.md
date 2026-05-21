@@ -150,6 +150,12 @@ Use the following `ext` keys as the stable operator-facing inputs:
   "epochs": "1",
   "hf_valid_split": "test_sft",
   "derived_model_alias": "melix-qwen35-acceptance",
+  "release_compare_in_domain_suite_ids": "opensearch_vl_qa,opensearch_vl_grounding",
+  "release_compare_guard_suite_ids": "mmlu,gsm8k",
+  "release_compare_thresholds": "opensearch_vl_qa=0.05",
+  "release_compare_default_threshold": "0.01",
+  "release_compare_minimum_sample_counts": "opensearch_vl_qa=80",
+  "release_compare_default_minimum_sample_count": "40",
   "response_only": "true",
   "gradient_checkpointing": "false",
   "mask_prompt": "true",
@@ -222,6 +228,13 @@ Expected training behavior:
 - `cpt` requires `text_completion` datasets and records `training_objective=continual_pretraining`
 - this slice defines worker-owned mode and dataset contracts; DPO, ORPO, and CPT optimizer-loop breadth remains bounded by the active local runner implementation
 - if `hf_valid_split` is provided, the normalized dataset snapshot persists the explicit validation source
+- release compare policy fields are copied into `train_lora.adapter.json` under
+  `release_compare_bundle_policy` plus flat `release_compare_*` keys; use
+  in-domain suites for the adapter's target domain and guard suites for general
+  regression checks before publishing or promoting the adapter
+- release compare thresholds must be numeric and non-negative, while release
+  compare minimum sample counts must be positive integers; default values apply
+  to listed suites without an explicit per-suite entry
 - Melix expands compact target modules or preset groups into family-specific module paths
 - Gemma 4 VLM snapshots that expose `text_config.model_type == "gemma4_text"` are accepted through the
   component-scoped `text_backbone` LoRA surface; the source model remains a VLM entry, and adapter

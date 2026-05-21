@@ -17,6 +17,10 @@ from worker.model_ops.adapter_capabilities import (
 )
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.quantization_metadata import EXPLICIT_QUANTIZED_PROFILE_IDS
+from worker.model_ops.release_compare_policy import (
+    ReleaseCompareBundlePolicy,
+    resolve_release_compare_bundle_policy,
+)
 
 
 @dataclass(frozen=True)
@@ -84,6 +88,9 @@ class LoRATrainingConfig:
     preference_loss: str = ""
     dataset_contract: str = "sft"
     alignment: AlignmentTrainingConfig | None = None
+    release_compare_bundle_policy: ReleaseCompareBundlePolicy = field(
+        default_factory=ReleaseCompareBundlePolicy
+    )
 
 
 _DENSE_ATTENTION_TARGETS = ["q_proj", "k_proj", "v_proj", "o_proj"]
@@ -607,6 +614,21 @@ def normalize_training_config(
     steps_per_save = max(iters, 1)
     validation_split = ext.get("hf_valid_split", "").strip()
     validation_strategy = "hf_split" if validation_split and validation_sample_count > 0 else "none"
+    release_compare_bundle_policy = resolve_release_compare_bundle_policy(
+        ext,
+        float_value=lambda raw_value, default, minimum, field_name: _float_value(
+            raw_value,
+            default=default,
+            minimum=minimum,
+            field_name=field_name,
+        ),
+        int_value=lambda raw_value, default, minimum, field_name: _int_value(
+            raw_value,
+            default=default,
+            minimum=minimum,
+            field_name=field_name,
+        ),
+    )
 
     return LoRATrainingConfig(
         training_mode=training_mode,
@@ -660,6 +682,7 @@ def normalize_training_config(
         preference_loss=mode_contract["preference_loss"],
         dataset_contract=mode_contract["dataset_contract"],
         alignment=alignment,
+        release_compare_bundle_policy=release_compare_bundle_policy,
     )
 
 

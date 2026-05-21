@@ -288,6 +288,19 @@ class LoRATrainingPipeline:
             "peak_memory_gb": peak_memory_gb,
             "adapter_artifact_bytes": adapter_artifact_bytes,
             "target_repo": config.target_repo,
+            "release_compare_bundle_policy": config.release_compare_bundle_policy.as_manifest(),
+            "release_compare_in_domain_suite_ids": list(
+                config.release_compare_bundle_policy.in_domain_suite_ids
+            ),
+            "release_compare_guard_suite_ids": list(
+                config.release_compare_bundle_policy.guard_suite_ids
+            ),
+            "release_compare_thresholds": dict(
+                config.release_compare_bundle_policy.thresholds
+            ),
+            "release_compare_minimum_sample_counts": dict(
+                config.release_compare_bundle_policy.minimum_sample_counts
+            ),
             "created_at_unix_ms": persisted_at_unix_ms,
             "updated_at_unix_ms": persisted_at_unix_ms,
         }
