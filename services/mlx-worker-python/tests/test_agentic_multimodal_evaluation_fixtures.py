@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from worker.productization.agentic_multimodal_evaluation_contract import (
+    validate_agentic_multimodal_sample_fields,
+)
 from worker.runtime.agentic_tools import execute_agentic_tool_calls
 
 
@@ -74,6 +77,11 @@ def test_agentic_multimodal_fixture_samples_reference_local_assets_and_tools() -
         manifest, samples, package_root = _load_fixture_package(package_id)
 
         for sample in samples:
+            contract_errors = validate_agentic_multimodal_sample_fields(
+                sample,
+                manifest_allowed_tools=manifest["allowed_tools"],
+            )
+            assert contract_errors == []
             assert sample["id"].strip()
             assert sample["system"] == ""
             assert sample["question"] == sample["input"]["text"]
