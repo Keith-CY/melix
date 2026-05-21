@@ -181,11 +181,12 @@ def test_scope_report_selects_tool_registry_schema_bytes_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/tool_registry.py"],
     )
 
-    assert scope["selected_count"] == 3
+    assert scope["selected_count"] == 4
     assert _selected_probe_ids(scope) == [
         "tool-registry-schema-bytes-cache",
         "tool-registry-select-name-index-cache",
         "tool-registry-names-snapshot-cache",
+        "tool-registry-openai-tools-template-cache",
     ]
 
 
@@ -247,6 +248,23 @@ def test_tool_registry_names_probe_script_emits_metrics(
     assert metrics["registry_factory_elapsed_ms_mean"] >= 0.0
     assert metrics["names_calls_mean"] == 20.0
     assert metrics["same_names_object_calls_mean"] == 20.0
+
+
+def test_tool_registry_openai_tools_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_TOOL_REGISTRY_OPENAI_TOOLS_ITERATIONS", "20")
+    monkeypatch.setenv("MELIX_TOOL_REGISTRY_OPENAI_TOOLS_SAMPLES", "1")
+
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/tool_registry_openai_tools_probe.py"))
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["descriptor_as_openai_tool_calls_mean"] == 0.0
+    assert metrics["isolated_payload_calls_mean"] == 20.0
 
 
 def test_scope_report_selects_integration_swift_binary_resolution_probe() -> None:
@@ -2474,6 +2492,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "tool-registry-schema-bytes-cache",
         "tool-registry-select-name-index-cache",
         "tool-registry-names-snapshot-cache",
+        "tool-registry-openai-tools-template-cache",
     }
     registry_probe = None
     maintenance_probe = None

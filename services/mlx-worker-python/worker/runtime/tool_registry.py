@@ -17,6 +17,44 @@ def _copy_tool_config(template: common_pb2.ToolConfig) -> common_pb2.ToolConfig:
     config = _TOOL_CONFIG()
     config.CopyFrom(template)
     return config
+
+
+_OpenAIToolTemplate = tuple[
+    str,
+    str,
+    str,
+    str,
+    tuple[tuple[str, dict[str, Any]], ...],
+    list[str],
+]
+
+
+def _copy_openai_tool_template(template: _OpenAIToolTemplate) -> dict[str, Any]:
+    (
+        name,
+        description,
+        tool_kind,
+        observation_kind,
+        schema_properties,
+        required_arguments,
+    ) = template
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    name: schema.copy() for name, schema in schema_properties
+                },
+                "required": required_arguments.copy(),
+            },
+        },
+        "x-melix-tool-kind": tool_kind,
+        "x-melix-observation-kind": observation_kind,
+    }
 _TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _SELECTION_CACHE_MAX_SIZE = 32
 
@@ -181,6 +219,17 @@ class ToolRegistry:
         self._tool_names = tuple(tool.name for tool in self._tools)
         self._tool_names_list = list(self._tool_names)
         self._tool_by_name = {tool.name: tool for tool in self._tools}
+        self._openai_tool_templates: tuple[_OpenAIToolTemplate, ...] = tuple(
+            (
+                tool.name,
+                tool.description,
+                tool.tool_kind,
+                tool.observation_kind,
+                tool._cached_schema_properties,
+                tool._cached_required_arguments_list,
+            )
+            for tool in self._tools
+        )
         self._selection_cache: dict[tuple[str, ...], ToolRegistry] = {}
         self._worker_tool_config_bytes: bytes = b""
         self._metrics = ToolRegistryMetrics(
@@ -252,7 +301,7 @@ class ToolRegistry:
         return selection
 
     def as_openai_tools(self) -> list[dict[str, Any]]:
-        return [tool.as_openai_tool() for tool in self._tools]
+        return [_copy_openai_tool_template(tool) for tool in self._openai_tool_templates]
 
     def as_worker_tool_config(self) -> common_pb2.ToolConfig:
         if self._worker_tool_config_bytes:

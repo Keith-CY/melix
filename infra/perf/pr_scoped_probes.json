@@ -3942,5 +3942,42 @@
         "warn_pct": 0.0
       }
     ]
+  },
+  {
+    "id": "tool-registry-openai-tools-template-cache",
+    "name": "Tool registry OpenAI tools template cache",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/runtime/tool_registry.py",
+      "services/mlx-worker-python/tests/test_tool_registry.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/tool_registry_openai_tools_probe.py",
+      "infra/perf/pr_scoped_probes.json"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_tool_registry.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_tool_registry_schema_bytes_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_tool_registry_openai_tools_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_tool_registry.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_tool_registry_schema_bytes_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_tool_registry_openai_tools_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/tool_registry.py services/mlx-worker-python/tests/test_tool_registry.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/tool_registry_openai_tools_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 scripts/tool_registry_openai_tools_probe.py",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "descriptor_as_openai_tool_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "isolated_payload_calls_mean",
+        "unit": "calls",
+        "direction": "higher_is_better",
+        "warn_pct": 0.0
+      }
+    ]
   }
 ]
