@@ -865,6 +865,179 @@ def test_run_local_suite_persists_agentic_tool_evidence(tmp_path: Path) -> None:
     assert persisted_samples[0]["agentic_tool_registry"]["toolset_version"] == "melix.agentic_tools.builtin.v1"
 
 
+def test_run_local_suite_writes_agentic_judge_prompt_snapshot_and_audit(
+    tmp_path: Path,
+) -> None:
+    raw_tool_calls = [
+        {
+            "id": "crop-1",
+            "name": "image_crop",
+            "arguments": {"media_ref": "img-1", "region": "sign"},
+        }
+    ]
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="agentic-judge-dev",
+        suite_id="agentic_multihop_qa",
+        task_kind="image-text-to-text",
+        samples=(
+            {
+                "id": "agentic-judge-1",
+                "question": "What text is visible?",
+                "expected": "MELIX",
+                "media_refs": [{"id": "img-1", "kind": "image", "uri": "media/sign.ppm"}],
+                "evidence_ids": ["img-1#sign"],
+                "allowed_tools": ["image_crop"],
+                "tool_calls": raw_tool_calls,
+                "tool_fixture_context": {
+                    "crops": {"img-1#sign": {"text": "MELIX", "evidence_ids": ["img-1#sign"]}},
+                },
+            },
+        ),
+        manifest_extra={
+            "agentic_suite_family": "melix.agentic_multimodal_evaluation.dev.v1",
+            "allowed_tools": ["image_crop"],
+            "toolset_version": "melix.agentic_tools.builtin.v1",
+            "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        },
+    )
+    (dataset_root / "media").mkdir()
+    (dataset_root / "media" / "sign.ppm").write_text("P3\n1 1\n255\n0 0 0\n", encoding="utf-8")
+    backend = ScriptedEvaluationBackend(("Answer: MELIX",))
+    registry = FakeEvaluationRegistry(
+        runtime=MLXTextRuntime(backend=backend),
+        model_id="agentic-judge-model",
+        runtime_kind="vlm",
+    )
+    runner = EvaluationCore(jobs_root=tmp_path / "runs" / "agentic-judge", registry=registry)
+
+    run = runner.run_local_suite(
+        model_id="agentic-judge-model",
+        model_handle=registry.handle,
+        suite_id="agentic_multihop_qa",
+        dataset_root=dataset_root,
+        sample_size=1,
+        few_shot=0,
+        seed=7,
+        code_exec_policy="disabled",
+        parameters={"custom_note": "artifact-test"},
+    )
+
+    snapshot_path = Path(run.job.parameters["agentic_judge_prompt_snapshot"])
+    audit_path = Path(run.job.parameters["agentic_judge_audit"])
+    assert run.job.parameters["agentic_judge_prompt_version"] == "agentic-answer-equivalence.v1"
+    assert run.job.parameters["agentic_judge_prompt_hash"].startswith("sha256:")
+    assert run.persisted_paths["agentic_judge_prompt_snapshot"] == snapshot_path
+    assert run.persisted_paths["agentic_judge_audit"] == audit_path
+
+    snapshot_rows = [
+        json.loads(line)
+        for line in snapshot_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    audit_rows = [
+        json.loads(line)
+        for line in audit_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert len(snapshot_rows) == 1
+    assert len(audit_rows) == 1
+    snapshot = snapshot_rows[0]
+    audit = audit_rows[0]
+    assert snapshot["schema_version"] == "melix.agentic_judge_prompt_snapshot.v1"
+    assert snapshot["job_id"] == run.job.job_id
+    assert snapshot["suite_id"] == "agentic_multihop_qa"
+    assert snapshot["dataset_id"] == "agentic-judge-dev"
+    assert snapshot["sample_id"] == "agentic-judge-1"
+    assert snapshot["agentic_suite_family"] == "melix.agentic_multimodal_evaluation.dev.v1"
+    assert snapshot["judge_prompt_version"] == run.job.parameters["agentic_judge_prompt_version"]
+    assert snapshot["judge_prompt_hash"] == run.job.parameters["agentic_judge_prompt_hash"]
+    assert "answer equivalence" in snapshot["rubric"]
+    assert snapshot["allowed_tools"] == ["image_crop"]
+    assert snapshot["evidence_ids"] == ["img-1#sign"]
+    assert snapshot["media_refs"][0]["uri"] == "media/sign.ppm"
+    assert snapshot["tool_calls"] == raw_tool_calls
+    assert snapshot["agentic_tool_observation_count"] == 1
+    assert snapshot["messages"][0]["role"] == "system"
+    assert snapshot["messages"][1]["role"] == "user"
+    user_payload = json.loads(snapshot["messages"][1]["content"])
+    assert user_payload["question"] == "What text is visible?"
+    assert user_payload["expected_answer"] == "MELIX"
+    assert user_payload["final_answer"] == "MELIX"
+    assert user_payload["parse_status"] == "extracted"
+    assert user_payload["tool_observations"][0]["payload"]["text"] == "MELIX"
+
+    assert audit["schema_version"] == "melix.agentic_judge_audit.v1"
+    assert audit["judge_status"] == "pending"
+    assert audit["judge_source"] == "not_called"
+    assert audit["typed_score"] == 1.0
+    assert audit["scoring_mode"] == "normalized_exact_match"
+    assert audit["final_answer"] == "MELIX"
+    assert audit["parse_status"] == "extracted"
+    assert audit["failure_stage"] == ""
+    assert audit["validation_status"] == "validated"
+    assert audit["extraction_status"] == "extracted"
+    assert audit["tool_call_count"] == 1
+    assert audit["agentic_tool_observation_count"] == 1
+    assert audit["evidence_ids"] == ["img-1#sign"]
+
+    persisted_job = json.loads(run.persisted_paths["job"].read_text(encoding="utf-8"))
+    evidence = json.loads(run.persisted_paths["evidence"].read_text(encoding="utf-8"))
+    artifact_roles = {artifact["role"] for artifact in evidence["artifacts"]}
+    safe_artifact_payload = json.dumps(
+        {"snapshot": snapshot, "audit": audit},
+        ensure_ascii=False,
+    )
+    assert "api_key" not in safe_artifact_payload
+    assert "base_url" not in safe_artifact_payload
+    assert {"agentic_judge_prompt_snapshot", "agentic_judge_audit"}.issubset(artifact_roles)
+
+
+def test_run_local_suite_returns_agentic_judge_artifacts_without_jobs_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="agentic-judge-local-dev",
+        suite_id="agentic_multihop_qa",
+        samples=(
+            {
+                "id": "agentic-local-1",
+                "prompt": "What text is visible?",
+                "expected": "MELIX",
+                "tool_calls": [],
+            },
+        ),
+        manifest_extra={"agentic_suite_family": "melix.agentic_multimodal_evaluation.dev.v1"},
+    )
+    backend = ScriptedEvaluationBackend(("Answer: MELIX",))
+    registry = FakeEvaluationRegistry(runtime=MLXTextRuntime(backend=backend), model_id="agentic-local-model")
+    monkeypatch.chdir(tmp_path)
+    runner = EvaluationCore(registry=registry)
+
+    run = runner.run_local_suite(
+        model_id="agentic-local-model",
+        model_handle=registry.handle,
+        suite_id="agentic_multihop_qa",
+        dataset_root=dataset_root,
+        sample_size=1,
+        few_shot=0,
+        seed=7,
+        code_exec_policy="disabled",
+    )
+
+    assert run.persisted_paths["agentic_judge_prompt_snapshot"] == tmp_path / "agentic-judge-prompt-snapshots.jsonl"
+    assert run.persisted_paths["agentic_judge_audit"] == tmp_path / "agentic-judge-audit.jsonl"
+    snapshot = json.loads(run.persisted_paths["agentic_judge_prompt_snapshot"].read_text(encoding="utf-8").strip())
+    assert snapshot["allowed_tools"] == []
+    assert snapshot["evidence_ids"] == []
+    assert snapshot["media_refs"] == []
+    user_payload = json.loads(snapshot["messages"][1]["content"])
+    assert user_payload["question"] == "What text is visible?"
+
+
 def test_run_local_suite_injects_agentic_tool_trace_before_scoring(tmp_path: Path) -> None:
     dataset_root = _write_dataset_package(
         tmp_path=tmp_path,
@@ -3315,6 +3488,7 @@ def _write_dataset_package(
     output_schema: dict[str, object] | None = None,
     ignored_paths: tuple[str, ...] = (),
     samples: tuple[dict[str, object], ...],
+    manifest_extra: dict[str, object] | None = None,
 ) -> Path:
     dataset_root = tmp_path / "datasets" / dataset_id
     dataset_root.mkdir(parents=True)
@@ -3336,6 +3510,7 @@ def _write_dataset_package(
                 "threshold": threshold,
                 "output_schema": output_schema or {},
                 "ignored_paths": list(ignored_paths),
+                **dict(manifest_extra or {}),
             }
         )
         + "\n",

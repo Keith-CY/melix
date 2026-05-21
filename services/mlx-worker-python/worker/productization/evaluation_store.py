@@ -62,6 +62,7 @@ class EvaluationStore:
         samples: tuple[EvaluationSample, ...] = (),
         telemetry_collection: Any | None = None,
         model_memory_summary: dict[str, object] | None = None,
+        extra_artifact_paths: dict[str, Path] | None = None,
     ) -> dict[str, Path]:
         artifact_write_started_at_monotonic_ms = monotonic_ms()
         run_root = Path(job.output_dir) if job.output_dir else jobs_root
@@ -97,6 +98,8 @@ class EvaluationStore:
             "summary_json": summary_path,
             "summary_csv": summary_csv_path,
         }
+        if extra_artifact_paths:
+            persisted.update(extra_artifact_paths)
         if samples:
             jsonl_path = run_root / "evaluation-samples.jsonl"
             self._write_jsonl(jsonl_path, (sample.to_dict() for sample in samples))

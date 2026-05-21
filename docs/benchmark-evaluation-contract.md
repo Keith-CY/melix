@@ -1205,6 +1205,78 @@ those raw calls alongside executed `agentic_tool_observations`, the scored
 for report bundles and follow-up alignment analysis without reconstructing
 state from prompts or terminal logs.
 
+#### Agentic Evaluation Judge Audit Artifacts
+
+Agentic multimodal evaluation suites also write judge audit artifacts so later
+judge-backed scoring can replay the exact answer-equivalence boundary without
+depending on terminal output or hidden process state. A suite opts into this
+contract by setting `agentic_suite_family` in its evaluation dataset manifest.
+
+The initial artifact slice is audit-only. It does not call a remote judge,
+change scorer dispatch, change exact-match scores, or add production latency.
+Melix still computes `typed_score` with the configured final-result scorer, and
+the judge artifacts record the prompt and sample boundary that a later
+judge-backed scorer can consume.
+
+Each persisted agentic evaluation job must include these parameters:
+
+- `agentic_judge_prompt_snapshot`: path to
+  `agentic-judge-prompt-snapshots.jsonl`.
+- `agentic_judge_audit`: path to `agentic-judge-audit.jsonl`.
+- `agentic_judge_prompt_version`: stable prompt version string.
+- `agentic_judge_prompt_hash`: content hash for the judge system prompt.
+
+`agentic-judge-prompt-snapshots.jsonl` is one JSON object per selected sample.
+Each row must include:
+
+- `schema_version: melix.agentic_judge_prompt_snapshot.v1`
+- `job_id`, `suite_id`, `dataset_id`, and `sample_id`
+- `agentic_suite_family`
+- `judge_prompt_version`
+- `judge_prompt_hash`
+- `judge_role`
+- `rubric`
+- `messages`
+- `allowed_tools`
+- `evidence_ids`
+- `media_refs`
+- `tool_calls`
+- `agentic_tool_observation_count`
+
+`messages` must contain the judge system instruction and a user payload with the
+question, expected answer, model final answer, parse status, scoring mode,
+evidence ids, media refs, raw tool calls, and executed tool observations. It
+must not include API keys, remote base URLs, or provider credentials.
+
+`agentic-judge-audit.jsonl` is one JSON object per selected sample. Each row
+must include:
+
+- `schema_version: melix.agentic_judge_audit.v1`
+- `job_id`, `suite_id`, `dataset_id`, and `sample_id`
+- `agentic_suite_family`
+- `judge_prompt_version`
+- `judge_prompt_hash`
+- `judge_status`
+- `judge_source`
+- `typed_score`
+- `scoring_mode`
+- `final_answer`
+- `parse_status`
+- `failure_stage`
+- `validation_status`
+- `extraction_status`
+- `tool_call_count`
+- `agentic_tool_observation_count`
+- `evidence_ids`
+- `error_code`
+- `failure_reason`
+
+For the initial audit-only slice, `judge_status` is `pending` and
+`judge_source` is `not_called`; the row records the deterministic final-result
+score as the baseline exact-match outcome. Later judge-backed scoring may append
+or replace judge decision fields, but it must preserve the prompt version and
+hash link between audit rows and prompt snapshot rows.
+
 ### Evaluation Dataset Contract
 
 Melix evaluation executes only against repository-owned evaluation dataset packages.
