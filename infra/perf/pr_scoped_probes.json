@@ -636,7 +636,7 @@
     ],
     "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_benchmark_evaluation_report.py",
     "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_benchmark_evaluation_report.py && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage report -m services/mlx-worker-python/worker/productization/benchmark_evaluation_report.py services/mlx-worker-python/tests/test_benchmark_evaluation_report.py",
-    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python -c \"import json; from pathlib import Path; from worker.productization.pr_scoped_performance import _probe_benchmark_evaluation_report as probe; print(json.dumps(probe(Path.cwd()), sort_keys=True))\"",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 -c \"import json; from pathlib import Path; from worker.productization.pr_scoped_performance import _probe_benchmark_evaluation_report as probe; print(json.dumps(probe(Path.cwd()), sort_keys=True))\"",
     "probe_impl": "benchmark_evaluation_report",
     "coverage_replays_tests": true,
     "metrics": [

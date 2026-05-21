@@ -424,11 +424,14 @@ def build_benchmark_evaluation_report(
         *_agentic_adapter_delta_rows(side="baseline", bundle=baseline),
         *_agentic_adapter_delta_rows(side="candidate", bundle=candidate),
     ]
-    warning_count += sum(1 for row in agentic_adapter_deltas if row.get("status") == "warning")
-    missing_count += sum(1 for row in agentic_adapter_deltas if row.get("status") == "missing")
-    not_comparable_count += sum(
-        1 for row in agentic_adapter_deltas if row.get("status") == "not_comparable"
-    )
+    (
+        agentic_adapter_warning_count,
+        agentic_adapter_missing_count,
+        agentic_adapter_not_comparable_count,
+    ) = _status_counts(agentic_adapter_deltas)
+    warning_count += agentic_adapter_warning_count
+    missing_count += agentic_adapter_missing_count
+    not_comparable_count += agentic_adapter_not_comparable_count
     if warning_count:
         status = "warning"
     elif missing_count:
@@ -876,6 +879,21 @@ def _target_summaries(side: str, evidence_rows: list[dict[str, object]]) -> list
                 summary[field_name] = value if value is not None else ""
         summaries.append(summary)
     return summaries
+
+
+def _status_counts(rows: list[dict[str, object]]) -> tuple[int, int, int]:
+    warning_count = 0
+    missing_count = 0
+    not_comparable_count = 0
+    for row in rows:
+        row_status = row.get("status")
+        if row_status == "warning":
+            warning_count += 1
+        elif row_status == "missing":
+            missing_count += 1
+        elif row_status == "not_comparable":
+            not_comparable_count += 1
+    return warning_count, missing_count, not_comparable_count
 
 
 def _report_metric_row(row: dict[str, object]) -> dict[str, object]:
