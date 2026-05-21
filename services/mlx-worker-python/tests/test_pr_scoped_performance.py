@@ -635,6 +635,32 @@ def test_scope_report_selects_evaluation_probes() -> None:
     }
 
 
+def test_evaluation_probe_commands_cover_agentic_trajectory_execution() -> None:
+    trajectory_test = (
+        "services/mlx-worker-python/tests/test_evaluation_core.py::"
+        "test_run_local_suite_injects_agentic_tool_trace_before_scoring"
+    )
+    probe_ids = {
+        "evaluation-answer-normalization-fast-path",
+        "evaluation-compare-target-lookup-early-stop",
+        "evaluation-dialogue-diagnostics-top-k",
+        "evaluation-job-id-high-water-mark",
+        "evaluation-latency-percentile-vector-reuse",
+        "evaluation-sample-probe-aggregation",
+    }
+
+    probes = {
+        probe.probe_id: probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id in probe_ids
+    }
+
+    assert set(probes) == probe_ids
+    for probe in probes.values():
+        assert trajectory_test in probe.test_command
+        assert trajectory_test in probe.coverage_command
+
+
 def test_evaluation_answer_normalization_probe_command_emits_metrics() -> None:
     probe = next(
         probe
