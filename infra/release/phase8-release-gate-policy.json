@@ -231,7 +231,8 @@
       "bootstrap_seed": 9,
       "confidence_level": 0.95,
       "effect_threshold": 0.1,
-      "required_verdict": "improvement"
+      "required_verdict": "improvement",
+      "required_verdict_mode": "exact"
     }
   },
   "real_workload": {

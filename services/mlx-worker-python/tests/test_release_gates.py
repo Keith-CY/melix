@@ -1840,6 +1840,7 @@ def test_default_policy_includes_evaluation_section() -> None:
     assert "evaluation_compare" in DEFAULT_RELEASE_GATE_POLICY
     assert DEFAULT_RELEASE_GATE_POLICY["evaluation_compare"]["mmlu"]["effect_threshold"] == 0.1
     assert DEFAULT_RELEASE_GATE_POLICY["evaluation_compare"]["mmlu"]["required_verdict"] == "improvement"
+    assert DEFAULT_RELEASE_GATE_POLICY["evaluation_compare"]["mmlu"]["required_verdict_mode"] == "exact"
     assert "observability" in DEFAULT_RELEASE_GATE_POLICY
     assert DEFAULT_RELEASE_GATE_POLICY["observability"]["probe_policy.production_sampler_invocations"]["max"] == 0.0
 
@@ -1855,6 +1856,7 @@ def test_checked_in_release_gate_policy_includes_evaluation_thresholds() -> None
     assert policy["evaluation"]["eval.mmlu.typed_score_mean"]["min"] == 0.5
     assert "evaluation_compare" in policy
     assert policy["evaluation_compare"]["mmlu"]["bootstrap_iterations"] == 400
+    assert policy["evaluation_compare"]["mmlu"]["required_verdict_mode"] == "exact"
     assert "m9" in policy
     assert policy["m9"]["agent_export"]["integration.export_generation_ms"]["min"] == 0.0
     assert policy["m9"]["shared_access"]["gateway.auth_validation_failures"]["min"] == 1.0
@@ -1985,6 +1987,61 @@ def test_collect_evaluation_compare_evidence_prefers_custom_policy_suite_when_pr
     assert evidence["suite_id"] == "gsm8k"
     assert evidence["job_id"] == "eval-compare-gsm8k-artifact"
     assert evidence["target_model_id"] == "melix-dev-text-lora-gsm8k"
+
+
+def test_collect_evaluation_compare_evidence_returns_selected_suite_map_for_multi_suite_policy(
+    tmp_path: Path,
+) -> None:
+    _write_persisted_evaluation_compare_evidence(
+        tmp_path / "jobs",
+        job_id="eval-compare-mmlu-artifact",
+        suite_id="mmlu",
+        target_model_id="melix-dev-text-lora-mmlu",
+        verdict="improvement",
+    )
+    _write_persisted_evaluation_compare_evidence(
+        tmp_path / "jobs",
+        job_id="eval-compare-gsm8k-artifact",
+        suite_id="gsm8k",
+        target_model_id="melix-dev-text-lora-gsm8k",
+        verdict="inconclusive",
+    )
+
+    evidence = collect_evaluation_compare_evidence(
+        tmp_path / "jobs",
+        policy={
+            "mmlu": {"required_verdict": "improvement"},
+            "gsm8k": {"required_verdict_mode": "non_regression"},
+        },
+    )
+
+    assert evidence["selected_suite_ids"] == ("mmlu", "gsm8k")
+    assert evidence["missing_suites"] == []
+    assert evidence["suites"]["mmlu"]["target_model_id"] == "melix-dev-text-lora-mmlu"
+    assert evidence["suites"]["gsm8k"]["verdict"] == "inconclusive"
+
+
+def test_collect_evaluation_compare_evidence_marks_missing_selected_suites(
+    tmp_path: Path,
+) -> None:
+    _write_persisted_evaluation_compare_evidence(
+        tmp_path / "jobs",
+        job_id="eval-compare-mmlu-artifact",
+        suite_id="mmlu",
+        verdict="improvement",
+    )
+
+    evidence = collect_evaluation_compare_evidence(
+        tmp_path / "jobs",
+        policy={
+            "mmlu": {"required_verdict": "improvement"},
+            "gsm8k": {"required_verdict_mode": "non_regression"},
+        },
+    )
+
+    assert set(evidence["suites"].keys()) == {"mmlu"}
+    assert evidence["missing_suites"][0]["suite_id"] == "gsm8k"
+    assert "persisted evaluation_compare artifacts" in evidence["missing_suites"][0]["reason"]
 
 
 def test_collect_evaluation_compare_evidence_returns_all_target_summaries_for_latest_job(
@@ -2130,6 +2187,114 @@ def test_evaluate_evaluation_compare_evidence_checks_each_target_summary() -> No
     assert (
         "evaluation_compare.mmlu target_model_id=melix-dev-text-lora-b verdict=regression "
         "did not satisfy required verdict improvement"
+        in failures
+    )
+
+
+def test_evaluate_evaluation_compare_evidence_enforces_non_regression_mode() -> None:
+    policy = {"mmlu": {"required_verdict_mode": "non_regression"}}
+
+    improvement_failures = release_gates_module._evaluate_evaluation_compare_evidence(
+        _passing_evaluation_compare_evidence(verdict="improvement"),
+        policy,
+    )
+    inconclusive_failures = release_gates_module._evaluate_evaluation_compare_evidence(
+        _passing_evaluation_compare_evidence(verdict="inconclusive"),
+        policy,
+    )
+    regression_failures = release_gates_module._evaluate_evaluation_compare_evidence(
+        _passing_evaluation_compare_evidence(verdict="regression"),
+        policy,
+    )
+    missing_verdict_report = _passing_evaluation_compare_evidence()
+    missing_verdict_report["verdict"] = ""
+
+    missing_verdict_failures = release_gates_module._evaluate_evaluation_compare_evidence(
+        missing_verdict_report,
+        policy,
+    )
+
+    assert improvement_failures == []
+    assert inconclusive_failures == []
+    assert (
+        "evaluation_compare.mmlu verdict=regression did not satisfy required verdict mode non_regression"
+        in regression_failures
+    )
+    assert (
+        "evaluation_compare.mmlu verdict= did not satisfy required verdict mode non_regression"
+        in missing_verdict_failures
+    )
+
+
+def test_evaluate_evaluation_compare_evidence_checks_every_selected_suite() -> None:
+    report = {
+        "selected_suite_ids": ("mmlu", "gsm8k"),
+        "suites": {
+            "mmlu": _passing_evaluation_compare_evidence(verdict="improvement"),
+            "gsm8k": {
+                **_passing_evaluation_compare_evidence(verdict="inconclusive"),
+                "suite_id": "gsm8k",
+            },
+        },
+        "missing_suites": [],
+    }
+
+    failures = release_gates_module._evaluate_evaluation_compare_evidence(
+        report,
+        {
+            "mmlu": {"required_verdict": "improvement"},
+            "gsm8k": {"required_verdict_mode": "non_regression"},
+        },
+    )
+
+    assert failures == []
+
+
+def test_evaluate_evaluation_compare_evidence_fails_closed_for_missing_selected_suite() -> None:
+    report = {
+        "selected_suite_ids": ("mmlu", "gsm8k"),
+        "suites": {
+            "mmlu": _passing_evaluation_compare_evidence(verdict="improvement"),
+        },
+        "missing_suites": [
+            {
+                "suite_id": "gsm8k",
+                "artifact_status": "missing",
+            }
+        ],
+    }
+
+    failures = release_gates_module._evaluate_evaluation_compare_evidence(
+        report,
+        {
+            "mmlu": {"required_verdict": "improvement"},
+            "gsm8k": {"required_verdict_mode": "non_regression"},
+        },
+    )
+
+    assert "evaluation_compare.gsm8k evidence is missing for selected suite" in failures
+
+
+def test_evaluate_evaluation_compare_evidence_single_report_shape_still_checks_multi_suite_policy() -> None:
+    failures = release_gates_module._evaluate_evaluation_compare_evidence(
+        _passing_evaluation_compare_evidence(verdict="improvement"),
+        {
+            "mmlu": {"required_verdict": "improvement"},
+            "gsm8k": {"required_verdict_mode": "non_regression"},
+        },
+    )
+
+    assert "evaluation_compare.gsm8k evidence is missing for selected suite" in failures
+
+
+def test_evaluate_evaluation_compare_evidence_reports_unsupported_verdict_mode() -> None:
+    failures = release_gates_module._evaluate_evaluation_compare_evidence(
+        _passing_evaluation_compare_evidence(verdict="improvement"),
+        {"mmlu": {"required_verdict_mode": "stricter-than-exact"}},
+    )
+
+    assert (
+        "evaluation_compare.mmlu required_verdict_mode=stricter-than-exact is unsupported"
         in failures
     )
 

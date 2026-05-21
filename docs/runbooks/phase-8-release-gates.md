@@ -81,6 +81,15 @@ as `mmlu`. Each suite policy owns:
 - `bootstrap_seed`
 - `effect_threshold`
 - `required_verdict`
+- `required_verdict_mode`
+
+Each suite key under `evaluation_compare` is selected release evidence. The
+gate fails closed if any selected suite lacks persisted paired compare
+artifacts. `required_verdict_mode` defaults to `exact`, preserving the legacy
+behavior that compares `verdict` to `required_verdict`. Use
+`required_verdict_mode: non_regression` for guard suites where a statistical
+`regression` must block promotion while `improvement`, `inconclusive`, or
+tie-like neutral verdicts are acceptable.
 
 The compare release verdict is policy-backed and uses the same `CI + threshold` rule as runtime
 reporting:
@@ -142,9 +151,12 @@ uv run --project services/mlx-worker-python python scripts/m9_release_gate_smoke
 Use `--fixture-mode failing` to prove the gate fails closed on missing or regressed M9 evidence.
 
 When you inspect the emitted release-gate JSON, the top-level `evaluation_compare` section is the
-operator-facing summary for compare evidence. Verify:
+operator-facing summary for compare evidence. A single selected suite appears as one compare
+summary for backward compatibility. Multiple selected suites appear under `suites`, keyed by
+suite id. Verify:
 
-- `verdict` matches the policy-required verdict
+- every selected suite has evidence
+- `verdict` satisfies the suite's `required_verdict_mode`
 - `effect_threshold` is at least the checked-in policy value
 - both `bootstrap` and `analytical` intervals are present under `statistical_evidence`
 - `release_gate_summary` explains whether a compare was accepted or rejected
