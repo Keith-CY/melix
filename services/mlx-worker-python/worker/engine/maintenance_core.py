@@ -41,6 +41,7 @@ from worker.model_ops.upload_receipt_pipeline import UploadReceiptPipeline
 from worker.productization.benchmark_queue import BenchmarkQueueRecord, BenchmarkQueueStore
 from worker.productization.benchmark_suites import BenchmarkSuiteCatalog, ResolvedBenchmarkSuite
 from worker.productization.synthetic_dataset_generation import (
+    SourceConstructionMetadata,
     SyntheticColumnSpec,
     SyntheticDatasetRequest,
     SyntheticModelConfig,
@@ -329,6 +330,7 @@ def _synthetic_dataset_request_from_ext(
         random_seed=_optional_int_ext(ext, "random_seed"),
         data_designer_resume_mode=ext.get("resume", "").strip() or "never",
         disable_data_designer_telemetry=_boolean_ext(ext, "disable_datadesigner_telemetry", default=True),
+        source_construction=_synthetic_source_construction_from_ext(ext),
     )
 
 
@@ -458,6 +460,48 @@ def _json_string_list_ext(ext: dict[str, str], key: str) -> list[str]:
             details={"field": key},
         )
     return [str(item) for item in payload]
+
+
+def _synthetic_source_construction_from_ext(ext: dict[str, str]) -> SourceConstructionMetadata | None:
+    payload = _json_object_ext(ext, "source_construction_json", default={})
+    if not payload:
+        return None
+    return SourceConstructionMetadata(
+        construction_method=str(payload.get("construction_method", "")).strip(),
+        source_bundle_id=str(payload.get("source_bundle_id", "")).strip(),
+        source_bundle_revision=str(payload.get("source_bundle_revision", "")).strip(),
+        source_count=_json_int(payload, "source_count"),
+        transformation_kinds=_json_string_tuple(payload, "transformation_kinds"),
+        excluded_leakage_field_kinds=_json_string_tuple(payload, "excluded_leakage_field_kinds"),
+        split_policy=str(payload.get("split_policy", "")).strip(),
+    )
+
+
+def _json_string_tuple(payload: dict[str, Any], key: str) -> tuple[str, ...]:
+    value = payload.get(key, [])
+    if value in ("", None):
+        return ()
+    if not isinstance(value, list):
+        raise ModelOperationError(
+            code="invalid_synthetic_dataset_request",
+            message=f"source_construction_json.{key} must be a JSON array.",
+            details={"field": f"source_construction_json.{key}"},
+        )
+    return tuple(item for item in (str(raw).strip() for raw in value) if item)
+
+
+def _json_int(payload: dict[str, Any], key: str) -> int:
+    value = payload.get(key, 0)
+    if value in ("", None):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ModelOperationError(
+            code="invalid_synthetic_dataset_request",
+            message=f"source_construction_json.{key} must be an integer.",
+            details={"field": f"source_construction_json.{key}"},
+        ) from exc
 
 
 def _synthetic_headers_from_ext(ext: dict[str, str]) -> dict[str, str]:

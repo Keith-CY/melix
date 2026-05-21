@@ -146,16 +146,18 @@ The final materialized package remains a Melix package:
 - evaluation output uses `melix.evaluation_dataset_package.v2`
 - media and documents remain package-local assets referenced from sample rows
 
-The package manifest should later include a source-anchored construction summary.
-Sample rows may carry per-row construction metadata once the metadata slice is
-implemented. Until then, this plan is the governing contract for how those
-fields should be shaped.
+Generated packages may include a source-anchored construction summary in the
+package manifest and per-sample construction metadata in rows created by this
+pipeline. DataDesigner-backed generation accepts this metadata through the
+`source_construction` request contract and preserves per-row
+`source_construction` objects in generated training and final-result evaluation
+packages.
 
 ## Minimum Metadata Contract
 
-Follow-up implementation should add a `source_construction` object to generated
-package manifests and a per-sample construction object to rows that were created
-by this pipeline.
+Generated packages use a `source_construction` object for manifest-level
+construction metadata and a per-sample `source_construction` object for rows
+that were created by this pipeline.
 
 Manifest-level fields:
 
@@ -239,23 +241,24 @@ Success metrics:
 
 ## Verification Plan
 
-For this documentation slice:
+For the initial documentation slice:
 
 - `git diff --check`
 - PR evidence validation
 - metrics report: `N/A`, documentation-only contract slice
 
-For follow-up implementation slices:
+For this metadata implementation slice:
 
 - focused Python tests for manifest and sample metadata serialization
-- focused Python tests for leakage validator edge cases
 - changed-scope coverage for modified Python files
+
+For remaining implementation slices:
+
+- focused Python tests for leakage validator edge cases
 - a synthetic construction probe that records the measurement points above
 
 ## Follow-Up Issues
 
-- Add pipeline metadata for source ids, transformations, and excluded leakage
-  fields.
 - Add validators for prompt/example overlap, answer-in-observation leakage, and
   train/eval split collision.
 - Record leakage validation summaries in dataset manifests and evaluation

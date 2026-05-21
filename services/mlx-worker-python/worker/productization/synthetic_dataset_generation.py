@@ -83,6 +83,17 @@ class SyntheticSeedSource:
 
 
 @dataclass(frozen=True)
+class SourceConstructionMetadata:
+    construction_method: str
+    source_bundle_id: str
+    source_bundle_revision: str = ""
+    source_count: int = 0
+    transformation_kinds: tuple[str, ...] = ()
+    excluded_leakage_field_kinds: tuple[str, ...] = ()
+    split_policy: str = ""
+
+
+@dataclass(frozen=True)
 class SyntheticDatasetRequest:
     dataset_id: str
     dataset_name: str
@@ -100,6 +111,7 @@ class SyntheticDatasetRequest:
     random_seed: int | None = None
     data_designer_resume_mode: Literal["never", "if_possible", "always"] = "never"
     disable_data_designer_telemetry: bool = True
+    source_construction: SourceConstructionMetadata | None = None
 
 
 @dataclass(frozen=True)
@@ -344,6 +356,29 @@ def _validate_request(request: SyntheticDatasetRequest) -> None:
             message="preview_count must be greater than zero.",
             details={"preview_count": str(request.preview_count)},
         )
+    if request.source_construction is not None:
+        _validate_source_construction_metadata(request.source_construction)
+
+
+def _validate_source_construction_metadata(metadata: SourceConstructionMetadata) -> None:
+    if not metadata.construction_method.strip():
+        raise ModelOperationError(
+            code="invalid_synthetic_dataset_request",
+            message="source_construction.construction_method is required.",
+            details={"field": "source_construction.construction_method"},
+        )
+    if not metadata.source_bundle_id.strip():
+        raise ModelOperationError(
+            code="invalid_synthetic_dataset_request",
+            message="source_construction.source_bundle_id is required.",
+            details={"field": "source_construction.source_bundle_id"},
+        )
+    if metadata.source_count < 0:
+        raise ModelOperationError(
+            code="invalid_synthetic_dataset_request",
+            message="source_construction.source_count must be non-negative.",
+            details={"field": "source_construction.source_count"},
+        )
 
 
 def _load_data_designer_api() -> _DataDesignerAPI:
@@ -579,7 +614,7 @@ def _write_evaluation_package(
         target_path="target",
         sample_id_path="sample_id",
     )
-    _write_jsonl_rows(samples_path, _iter_serialized_samples(serialized_rows, field_mapping))
+    _write_jsonl_rows(samples_path, _iter_serialized_evaluation_rows(serialized_rows, field_mapping))
     manifest_payload = _base_manifest(
         request,
         rows=serialized_rows,
@@ -748,7 +783,7 @@ def _base_manifest(
     config_path: Path,
     timing: dict[str, float],
 ) -> dict[str, Any]:
-    return {
+    manifest = {
         "source_kind": "datadesigner",
         "operation": "generate_synthetic_dataset",
         "dataset_name": request.dataset_name,
@@ -784,17 +819,25 @@ def _base_manifest(
             "telemetry_disabled": request.disable_data_designer_telemetry,
         },
     }
+    if request.source_construction is not None:
+        manifest["source_construction"] = _source_construction_manifest(
+            request.source_construction,
+            sample_count=len(rows),
+        )
+    return manifest
 
 
 def _normalize_synthetic_training_row(row: dict[str, Any], output_format: str) -> dict[str, Any]:
     try:
-        return _normalize_sample(row, format_name=output_format, max_characters_per_sample=0)
+        normalized = _normalize_sample(row, format_name=output_format, max_characters_per_sample=0)
     except ModelOperationError as exc:
         raise ModelOperationError(
             code="invalid_synthetic_output_row",
             message=f"Synthetic DataDesigner row is invalid for {output_format} training output.",
             details={"format": output_format, **exc.details},
         ) from exc
+    _copy_row_source_construction(normalized, row)
+    return normalized
 
 
 def _parse_and_validate_evaluation_targets(
@@ -830,8 +873,170 @@ def _parse_and_validate_evaluation_targets(
                     message="Synthetic final-result text target must be non-empty.",
                     details={"row": str(index)},
                 )
+        _validate_row_source_construction(parsed_row, row_index=index)
         parsed_rows.append(parsed_row)
     return parsed_rows
+
+
+def _iter_serialized_evaluation_rows(
+    rows: list[dict[str, Any]],
+    field_mapping: EvaluationFieldMapping,
+) -> Iterator[dict[str, Any]]:
+    for row, serialized in zip(rows, _iter_serialized_samples(rows, field_mapping), strict=True):
+        _copy_row_source_construction(serialized, row)
+        yield serialized
+
+
+def _source_construction_manifest(
+    metadata: SourceConstructionMetadata,
+    *,
+    sample_count: int,
+) -> dict[str, Any]:
+    payload = {
+        "schema_version": "melix.source_construction.v1",
+        "construction_method": metadata.construction_method.strip(),
+        "source_bundle_id": metadata.source_bundle_id.strip(),
+        "source_bundle_revision": metadata.source_bundle_revision.strip(),
+        "source_count": int(metadata.source_count),
+        "sample_count": int(sample_count),
+        "transformation_kinds": _string_list(metadata.transformation_kinds),
+        "excluded_leakage_field_kinds": _string_list(metadata.excluded_leakage_field_kinds),
+        "split_policy": metadata.split_policy.strip(),
+    }
+    return _compact_dict(payload)
+
+
+def _copy_row_source_construction(target: dict[str, Any], source: Mapping[str, Any]) -> None:
+    if "source_construction" not in source:
+        return
+    target["source_construction"] = _validated_row_source_construction(
+        source["source_construction"],
+    )
+
+
+def _string_list(values: Iterable[Any]) -> list[str]:
+    return [item for item in (str(raw).strip() for raw in values) if item]
+
+
+_ROW_SOURCE_CONSTRUCTION_KEYS = (
+    "source_ids",
+    "source_asset_paths",
+    "image_ids",
+    "entity_ids",
+    "transformation_kinds",
+    "excluded_leakage_fields",
+    "required_tool_families",
+    "answer_aliases",
+    "evidence_chain",
+    "hop_count",
+    "rewrite_id",
+    "ambiguity_notes",
+)
+
+
+def _validate_row_source_construction(payload: dict[str, Any], *, row_index: int) -> None:
+    if "source_construction" not in payload:
+        return
+    payload["source_construction"] = _validated_row_source_construction(
+        payload["source_construction"],
+        row=row_index,
+    )
+
+
+def _validated_row_source_construction(value: Any, *, row: int | None = None) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        details = {} if row is None else {"row": str(row)}
+        raise ModelOperationError(
+            code="invalid_synthetic_source_construction",
+            message="Synthetic source_construction metadata must be a JSON object.",
+            details=details,
+        )
+    payload = {key: value[key] for key in _ROW_SOURCE_CONSTRUCTION_KEYS if key in value}
+    _require_string_list(payload, "source_ids", row=row)
+    for key in (
+        "source_asset_paths",
+        "image_ids",
+        "entity_ids",
+        "transformation_kinds",
+        "excluded_leakage_fields",
+        "required_tool_families",
+        "answer_aliases",
+    ):
+        _optional_string_list(payload, key, row=row)
+    if "evidence_chain" in payload and not isinstance(payload["evidence_chain"], list):
+        details = {"field": "evidence_chain"}
+        if row is not None:
+            details["row"] = str(row)
+        raise ModelOperationError(
+            code="invalid_synthetic_source_construction",
+            message="Synthetic source_construction evidence_chain must be an array.",
+            details=details,
+        )
+    if "hop_count" in payload:
+        try:
+            hop_count = int(payload["hop_count"])
+        except (TypeError, ValueError) as exc:
+            details = {"field": "hop_count"}
+            if row is not None:
+                details["row"] = str(row)
+            raise ModelOperationError(
+                code="invalid_synthetic_source_construction",
+                message="Synthetic source_construction hop_count must be an integer.",
+                details=details,
+            ) from exc
+        if hop_count < 0:
+            details = {"field": "hop_count"}
+            if row is not None:
+                details["row"] = str(row)
+            raise ModelOperationError(
+                code="invalid_synthetic_source_construction",
+                message="Synthetic source_construction hop_count must be non-negative.",
+                details=details,
+            )
+        payload["hop_count"] = hop_count
+    if "rewrite_id" in payload:
+        payload["rewrite_id"] = str(payload["rewrite_id"]).strip()
+    if "ambiguity_notes" in payload:
+        payload["ambiguity_notes"] = str(payload["ambiguity_notes"]).strip()
+    return _compact_dict(payload)
+
+
+def _require_string_list(payload: dict[str, Any], key: str, *, row: int | None) -> None:
+    if key not in payload:
+        details = {"field": key}
+        if row is not None:
+            details["row"] = str(row)
+        raise ModelOperationError(
+            code="invalid_synthetic_source_construction",
+            message=f"Synthetic source_construction {key} is required.",
+            details=details,
+        )
+    _optional_string_list(payload, key, row=row)
+    if not payload.get(key):
+        details = {"field": key}
+        if row is not None:
+            details["row"] = str(row)
+        raise ModelOperationError(
+            code="invalid_synthetic_source_construction",
+            message=f"Synthetic source_construction {key} must not be empty.",
+            details=details,
+        )
+
+
+def _optional_string_list(payload: dict[str, Any], key: str, *, row: int | None) -> None:
+    if key not in payload:
+        return
+    value = payload[key]
+    if not isinstance(value, list):
+        details = {"field": key}
+        if row is not None:
+            details["row"] = str(row)
+        raise ModelOperationError(
+            code="invalid_synthetic_source_construction",
+            message=f"Synthetic source_construction {key} must be an array.",
+            details=details,
+        )
+    payload[key] = [item for item in (str(raw).strip() for raw in value) if item]
 
 
 def _split_validation(
