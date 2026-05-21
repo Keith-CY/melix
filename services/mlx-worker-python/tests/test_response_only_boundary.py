@@ -380,17 +380,43 @@ def test_aggregate_response_only_boundaries_marks_truncated_labels() -> None:
     boundaries = [
         ResponseOnlyBoundary(assistant_offset=8, total_tokens=10),
         ResponseOnlyBoundary(assistant_offset=12, total_tokens=16),
+        ResponseOnlyBoundary(assistant_offset=20, total_tokens=18),
+        ResponseOnlyBoundary(assistant_offset=2, total_tokens=7),
     ]
 
     agg = aggregate_response_only_boundaries(boundaries, max_seq_length=8)
 
-    assert agg.sample_count == 2
-    assert agg.response_tokens_min == 2
-    assert agg.response_tokens_max == 4
-    assert agg.response_tokens_mean == pytest.approx(3)
+    assert agg.sample_count == 4
+    assert agg.boundary_min == 2
+    assert agg.boundary_max == 20
+    assert agg.response_tokens_min == 0
+    assert agg.response_tokens_max == 5
+    assert agg.response_tokens_mean == pytest.approx(2.75)
     assert agg.trainable_response_tokens_min == 0
-    assert agg.trainable_response_tokens_max == 0
-    assert agg.trainable_response_tokens_mean == 0
-    assert agg.trainable_response_token_count == 0
+    assert agg.trainable_response_tokens_max == 5
+    assert agg.trainable_response_tokens_mean == pytest.approx(1.25)
+    assert agg.trainable_response_token_count == 5
     assert agg.truncated_response_sample_count == 2
     assert agg.fully_truncated_response_sample_count == 2
+
+
+def test_aggregate_response_only_boundaries_without_limit_updates_running_bounds() -> None:
+    boundaries = [
+        ResponseOnlyBoundary(assistant_offset=8, total_tokens=10),
+        ResponseOnlyBoundary(assistant_offset=4, total_tokens=12),
+        ResponseOnlyBoundary(assistant_offset=16, total_tokens=18),
+        ResponseOnlyBoundary(assistant_offset=20, total_tokens=18),
+    ]
+
+    agg = aggregate_response_only_boundaries(boundaries, max_seq_length=None)
+
+    assert agg.sample_count == 4
+    assert agg.boundary_min == 4
+    assert agg.boundary_max == 20
+    assert agg.response_tokens_min == 0
+    assert agg.response_tokens_max == 8
+    assert agg.trainable_response_tokens_min == 0
+    assert agg.trainable_response_tokens_max == 8
+    assert agg.trainable_response_token_count == 12
+    assert agg.truncated_response_sample_count == 0
+    assert agg.fully_truncated_response_sample_count == 0

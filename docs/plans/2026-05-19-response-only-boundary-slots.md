@@ -15,7 +15,9 @@ per-instance `__dict__` allocation from the immutable boundary and aggregate
 records by using slotted dataclasses. The 2026-05-20 follow-up keeps the same
 registered probe and inlines response-token and truncation arithmetic inside the
 single-pass aggregate loop to avoid repeated property/method dispatch per
-boundary record.
+boundary record. The 2026-05-21 follow-up keeps the same public aggregate helper
+but splits the hot loop into truncating and non-truncating branches so the common
+LoRA `max_seq_length` probe avoids a per-boundary truncation-mode conditional.
 
 ## Registered probe
 
