@@ -490,17 +490,13 @@ def _extract_json_string_field_with_token(payload_bytes: bytes, key_token: bytes
 def _extract_json_string_field_at(payload_bytes: bytes, start: int | None) -> str | None:
     if start is None or payload_bytes[start] != ord('"'):
         return None
-    cursor = start + 1
-    value_start = cursor
-    payload_length = len(payload_bytes)
-    while cursor < payload_length:
-        char = payload_bytes[cursor]
-        if char == ord('"'):
-            return payload_bytes[value_start:cursor].decode("utf-8")
-        if char == ord("\\"):
-            return None
-        cursor += 1
-    return None
+    value_start = start + 1
+    value_end = payload_bytes.find(b'"', value_start)
+    if value_end < 0:
+        return None
+    if payload_bytes.find(b"\\", value_start, value_end) >= 0:
+        return None
+    return payload_bytes[value_start:value_end].decode("utf-8")
 
 
 def _extract_json_int_field(payload_bytes: bytes, key: str) -> int | None:
