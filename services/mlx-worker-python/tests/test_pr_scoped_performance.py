@@ -647,6 +647,22 @@ def test_evaluation_probe_commands_cover_agentic_trajectory_execution() -> None:
         ),
         (
             "services/mlx-worker-python/tests/test_evaluation_core.py::"
+            "test_agentic_judge_prompt_snapshot_rejects_hidden_gold_context"
+        ),
+        (
+            "services/mlx-worker-python/tests/test_evaluation_core.py::"
+            "test_agentic_judge_payload_no_leak_validator_rejects_forbidden_keys"
+        ),
+        (
+            "services/mlx-worker-python/tests/test_evaluation_core.py::"
+            "test_agentic_judge_payload_no_leak_validator_allows_explicit_answer_values"
+        ),
+        (
+            "services/mlx-worker-python/tests/test_evaluation_core.py::"
+            "test_agentic_judge_payload_no_leak_validator_rejects_extra_payload_fields"
+        ),
+        (
+            "services/mlx-worker-python/tests/test_evaluation_core.py::"
             "test_run_local_suite_returns_agentic_judge_artifacts_without_jobs_root"
         ),
         (
