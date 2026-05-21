@@ -352,6 +352,13 @@ Hugging Face datasets remain reusable source corpora, but not direct execution c
 future execution will still require materialization into a Melix evaluation package before `eval`
 or `compare` runs.
 
+Source-anchored multimodal and agentic datasets should follow
+`docs/plans/2026-05-22-source-anchored-data-construction.md` before they are used
+for LoRA training, evaluation, or compare gates. That plan defines how to select
+source images and entities, apply fuzzy rewrites, assemble multi-hop questions,
+and preserve enough construction metadata for later leakage validators and
+sample-quality selectors.
+
 See these planning documents for the target contract and milestone sequence:
 
 - `docs/superpowers/specs/2026-04-13-structured-output-evaluation-profile-design.md`

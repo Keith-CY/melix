@@ -449,6 +449,19 @@ Dataset references select the dataset source only. Existing field mapping,
 split, config, sample-size, and suite semantics still determine how rows become
 benchmark prompts or evaluation samples.
 
+## Source-Anchored Dataset Construction
+
+Source-anchored multimodal and agentic datasets must still materialize into
+Melix-owned training or evaluation packages before training, `eval`, or
+`compare` execution. The construction process is governed by
+`docs/plans/2026-05-22-source-anchored-data-construction.md`.
+
+That plan defines the required construction path for source inventory,
+image/entity selection, fuzzy rewrites, multi-hop question assembly, and package
+materialization. Later implementation slices should add machine-readable
+construction metadata and leakage validation summaries to the existing package
+contracts rather than creating a separate runtime dataset format.
+
 ## Benchmark Fixture Sources
 
 Benchmark suites may also materialize from repository-owned fixture packages
