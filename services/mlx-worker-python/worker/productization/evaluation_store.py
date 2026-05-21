@@ -26,8 +26,10 @@ from worker.productization.run_evidence import (
 )
 from worker.productization.run_records import (
     attach_run_record_write_probe,
+    build_evaluation_compare_statistical_verdict,
     build_evaluation_compare_run_record,
     build_evaluation_run_record,
+    object_payload,
     write_run_record,
 )
 
@@ -319,6 +321,7 @@ class EvaluationStore:
         job: EvaluationCompareJob,
         summaries: tuple[EvaluationCompareSummary, ...],
     ) -> dict[str, object]:
+        dataset_lineage = object_payload(getattr(job, "dataset_lineage", None))
         return {
             "schema_version": "melix.evaluation_compare_summary_bundle.v1",
             "job_id": job.job_id,
@@ -327,6 +330,11 @@ class EvaluationStore:
             "dataset_id": job.dataset_id,
             "sample_size": job.sample_size,
             "created_at_unix_ms": job.created_at_unix_ms,
+            "dataset_lineage": dataset_lineage,
+            "target_lineage": [entry.to_dict() for entry in job.target_lineage],
+            "statistical_verdicts": [
+                build_evaluation_compare_statistical_verdict(summary) for summary in summaries
+            ],
             "target_summaries": [summary.to_dict() for summary in summaries],
         }
 
@@ -513,4 +521,4 @@ class EvaluationStore:
     def _csv_field(value: str) -> str:
         if "," not in value and "\n" not in value and "\"" not in value:
             return value
-        return f"\"{value.replace('\"', '\"\"')}\""
+        return '"' + value.replace('"', '""') + '"'

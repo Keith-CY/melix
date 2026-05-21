@@ -1901,8 +1901,16 @@ def test_event_extraction_compare_uses_adapter_target_and_persists_compare_artif
     assert run.results[0].base_accuracy == 0.0
     assert run.results[0].target_accuracy == 1.0
     assert run.results[0].delta_accuracy == 1.0
+    assert run.job.dataset_lineage is not None
+    assert run.job.dataset_lineage.dataset_id == "local.event.v1"
+    assert run.job.dataset_lineage.source_path == str(source_jsonl.resolve())
+    assert run.job.dataset_lineage.scoring_mode == "event_extraction_weighted_f1"
     assert run.samples[0].target_typed_score == 1.0
     assert run.samples[0].base_typed_score == 0.0
+    summary_payload = json.loads(run.persisted_paths["summary_json"].read_text(encoding="utf-8"))
+    assert summary_payload["dataset_lineage"]["source_path"] == str(source_jsonl.resolve())
+    assert summary_payload["target_lineage"][0]["materialization_kind"] == "ephemeral_adapter"
+    assert summary_payload["statistical_verdicts"][0]["target_model_id"] == ephemeral_id
     compare_summary = Path(run.persisted_paths["summary_csv"]).read_text(encoding="utf-8")
     assert "evaluation-compare-summary" not in compare_summary
     assert ephemeral_id in compare_summary
@@ -2041,6 +2049,12 @@ def test_event_extraction_compare_logs_ephemeral_unload_failure(
     assert isinstance(run.job, EvaluationCompareJob)
     assert len(registry.unload_model_calls) == 1
     assert "Failed to unload ephemeral adapter compare target" in caplog.text
+
+
+def test_compare_lineage_helpers_handle_empty_and_invalid_parameters() -> None:
+    assert EvaluationCore._first_parameter({}, "missing") == ""
+    assert EvaluationCore._int_parameter_from_mapping({"seed": "11"}, "seed") == 11
+    assert EvaluationCore._int_parameter_from_mapping({"seed": "not-an-int"}, "seed") == 0
 
 
 def test_event_extraction_sample_records_normalize_invalid_event_fields_and_traces(
@@ -2589,6 +2603,11 @@ def test_run_local_suite_compares_base_against_target_models_and_persists_compar
     compare_results = {result.target_model_id: result for result in run.results}
     assert run.job.base_model_id == "melix-dev-text"
     assert run.job.target_model_ids == ("melix-dev-text-lora-a", "melix-dev-text-lora-b")
+    assert run.job.dataset_lineage is not None
+    assert run.job.dataset_lineage.dataset_id == "mmlu-dev"
+    assert run.job.dataset_lineage.dataset_root == str(dataset_root.resolve())
+    assert run.job.dataset_lineage.sample_size == 2
+    assert run.job.dataset_lineage.scoring_mode == "multiple_choice_accuracy"
     assert compare_results["melix-dev-text-lora-a"].win_count == 1
     assert compare_results["melix-dev-text-lora-a"].loss_count == 0
     assert compare_results["melix-dev-text-lora-a"].tie_count == 1
@@ -2629,7 +2648,35 @@ def test_run_local_suite_compares_base_against_target_models_and_persists_compar
     assert run.persisted_paths["report_markdown"] == jobs_root / "runs" / "eval-0001" / "evaluation-compare-report.md"
     summary_payload = json.loads(run.persisted_paths["summary_json"].read_text(encoding="utf-8"))
     assert summary_payload["job_id"] == "eval-0001"
+    assert summary_payload["dataset_lineage"]["dataset_root"] == str(dataset_root.resolve())
+    assert summary_payload["dataset_lineage"]["sample_size"] == 2
+    assert summary_payload["target_lineage"] == [
+        {
+            "target_model_id": "melix-dev-text-lora-a",
+            "materialization_kind": "registered",
+            "adapter_manifest_path": "",
+            "adapter_weights_path": "",
+            "adapter_set_hash": "",
+            "derived_from_model_id": "",
+        },
+        {
+            "target_model_id": "melix-dev-text-lora-b",
+            "materialization_kind": "registered",
+            "adapter_manifest_path": "",
+            "adapter_weights_path": "",
+            "adapter_set_hash": "",
+            "derived_from_model_id": "",
+        },
+    ]
+    assert [row["target_model_id"] for row in summary_payload["statistical_verdicts"]] == [
+        "melix-dev-text-lora-a",
+        "melix-dev-text-lora-b",
+    ]
     assert len(summary_payload["target_summaries"]) == 2
+    run_record = json.loads(run.persisted_paths["run_record"].read_text(encoding="utf-8"))
+    assert run_record["dataset"]["dataset_lineage"]["dataset_root"] == str(dataset_root.resolve())
+    assert run_record["target"]["target_lineage"][0]["target_model_id"] == "melix-dev-text-lora-a"
+    assert run_record["evaluation"]["statistical_verdicts"][0]["target_model_id"] == "melix-dev-text-lora-a"
     compare_samples = [
         json.loads(line)
         for line in run.persisted_paths["samples_jsonl"].read_text(encoding="utf-8").splitlines()

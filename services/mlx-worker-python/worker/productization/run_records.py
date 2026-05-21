@@ -181,6 +181,7 @@ def build_evaluation_compare_run_record(
         target={
             "base_model_id": str(getattr(job, "base_model_id", "")),
             "target_model_ids": list(getattr(job, "target_model_ids", ())),
+            "target_lineage": _target_lineage(job),
             "task_kind": str(getattr(job, "task_kind", "")),
             "source_repo": str(getattr(job, "source_repo", "")),
             "runtime_backend": str(parameters.get("runtime_kind", "")),
@@ -190,6 +191,7 @@ def build_evaluation_compare_run_record(
             "dataset_id": str(getattr(job, "dataset_id", "")),
             "sample_size": int(getattr(job, "sample_size", 0) or 0),
             "scoring_mode": str(getattr(job, "scoring_mode", "")),
+            "dataset_lineage": _dataset_lineage(job),
         },
         parameters=parameters,
         metrics=metrics,
@@ -202,6 +204,7 @@ def build_evaluation_compare_run_record(
             "tie_count": sum(int(getattr(summary, "tie_count", 0) or 0) for summary in summaries),
             "regression_count": sum(int(getattr(summary, "regression_count", 0) or 0) for summary in summaries),
             "verdicts": sorted({str(getattr(summary, "verdict", "")) for summary in summaries if str(getattr(summary, "verdict", ""))}),
+            "statistical_verdicts": build_evaluation_compare_statistical_verdicts(summaries),
         },
     )
 
@@ -466,6 +469,56 @@ def _evaluation_compare_metrics(summaries: tuple[Any, ...]) -> list[dict[str, ob
             payload["name"] = f"{target_model_id}.{payload['name']}"
             metrics.append(payload)
     return metrics
+
+
+def _dataset_lineage(job: Any) -> dict[str, object]:
+    return object_payload(getattr(job, "dataset_lineage", None))
+
+
+def _target_lineage(job: Any) -> list[dict[str, object]]:
+    lineage: list[dict[str, object]] = []
+    for entry in getattr(job, "target_lineage", ()):
+        payload = object_payload(entry)
+        if payload:
+            lineage.append(payload)
+    return lineage
+
+
+def build_evaluation_compare_statistical_verdicts(summaries: tuple[Any, ...]) -> list[dict[str, object]]:
+    verdicts: list[dict[str, object]] = []
+    for summary in summaries:
+        verdicts.append(build_evaluation_compare_statistical_verdict(summary))
+    return verdicts
+
+
+def build_evaluation_compare_statistical_verdict(summary: Any) -> dict[str, object]:
+    return {
+        "target_model_id": str(getattr(summary, "target_model_id", "")),
+        "verdict": str(getattr(summary, "verdict", "")),
+        "effect_threshold": float(getattr(summary, "effect_threshold", 0.0) or 0.0),
+        "delta_accuracy": float(getattr(summary, "delta_accuracy", 0.0) or 0.0),
+        "base_accuracy": float(getattr(summary, "base_accuracy", 0.0) or 0.0),
+        "target_accuracy": float(getattr(summary, "target_accuracy", 0.0) or 0.0),
+        "win_count": int(getattr(summary, "win_count", 0) or 0),
+        "loss_count": int(getattr(summary, "loss_count", 0) or 0),
+        "tie_count": int(getattr(summary, "tie_count", 0) or 0),
+        "regression_count": int(getattr(summary, "regression_count", 0) or 0),
+        "statistical_evidence": object_payload(getattr(summary, "statistical_evidence", {})),
+        "release_gate_summary": object_payload(getattr(summary, "release_gate_summary", {})),
+    }
+
+
+def object_payload(value: object) -> dict[str, object]:
+    if value is None:
+        return {}
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        payload = to_dict()
+        if isinstance(payload, Mapping):
+            return dict(payload)
+    if isinstance(value, Mapping):
+        return dict(value)
+    return {}
 
 
 def _metric_values(metrics: tuple[Any, ...]) -> list[dict[str, object]]:

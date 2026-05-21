@@ -290,6 +290,48 @@ class EvaluationCompareTargetLineage:
 
 
 @dataclass(frozen=True)
+class EvaluationCompareDatasetLineage:
+    """Dataset provenance for paired compare artifacts.
+
+    Compare release evidence needs one stable view of the dataset slice used by
+    the base and every target. The normalized source fields mirror the
+    evaluation request contract; empty strings are used when a legacy caller did
+    not provide the corresponding source detail.
+    """
+
+    dataset_id: str
+    suite_id: str
+    dataset_root: str = ""
+    source_kind: str = ""
+    source_path: str = ""
+    source_dataset_path: str = ""
+    source_dataset_name: str = ""
+    source_dataset_revision: str = ""
+    source_split: str = ""
+    sample_size: int = 0
+    seed: int = 0
+    few_shot: int = 0
+    scoring_mode: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "dataset_id": self.dataset_id,
+            "suite_id": self.suite_id,
+            "dataset_root": self.dataset_root,
+            "source_kind": self.source_kind,
+            "source_path": self.source_path,
+            "source_dataset_path": self.source_dataset_path,
+            "source_dataset_name": self.source_dataset_name,
+            "source_dataset_revision": self.source_dataset_revision,
+            "source_split": self.source_split,
+            "sample_size": self.sample_size,
+            "seed": self.seed,
+            "few_shot": self.few_shot,
+            "scoring_mode": self.scoring_mode,
+        }
+
+
+@dataclass(frozen=True)
 class EvaluationCompareJob:
     schema_version: str
     job_id: str
@@ -306,6 +348,7 @@ class EvaluationCompareJob:
     output_dir: str
     created_at_unix_ms: int
     updated_at_unix_ms: int
+    dataset_lineage: EvaluationCompareDatasetLineage | None = None
     # Module 2 — optional per-target lineage. Empty tuple for legacy jobs
     # that pre-date the adapter-native compare surface; ``to_dict``/``from_dict``
     # handle that as a clean default.
@@ -331,6 +374,8 @@ class EvaluationCompareJob:
             "updated_at_unix_ms": self.updated_at_unix_ms,
             "target_lineage": [entry.to_dict() for entry in self.target_lineage],
         }
+        if self.dataset_lineage is not None:
+            payload["dataset_lineage"] = self.dataset_lineage.to_dict()
         append_trajectory_provenance(payload, self.trajectory_provenance)
         return payload
 
@@ -733,6 +778,7 @@ def build_evaluation_compare_job_record(
     output_dir: str = "",
     created_at_unix_ms: int = 0,
     updated_at_unix_ms: int = 0,
+    dataset_lineage: EvaluationCompareDatasetLineage | None = None,
     target_lineage: tuple[EvaluationCompareTargetLineage, ...] = (),
     trajectory_provenance: dict[str, object] | None = None,
 ) -> EvaluationCompareJob:
@@ -752,6 +798,7 @@ def build_evaluation_compare_job_record(
         output_dir=output_dir,
         created_at_unix_ms=created_at_unix_ms,
         updated_at_unix_ms=updated_at_unix_ms,
+        dataset_lineage=dataset_lineage,
         target_lineage=tuple(target_lineage),
         trajectory_provenance=dict(trajectory_provenance or {}),
     )
