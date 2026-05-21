@@ -167,48 +167,78 @@ def aggregate_response_only_boundaries(
     truncated_response_sample_count = 0
     fully_truncated_response_sample_count = 0
     has_truncation_limit = max_seq_length is not None and max_seq_length > 0
-    effective_limit = max_seq_length if has_truncation_limit else 0
-    for entry in boundaries:
-        offset = entry.assistant_offset
-        total_tokens = entry.total_tokens
-        response_tokens = total_tokens - offset
-        if response_tokens < 0:
-            response_tokens = 0
-        if has_truncation_limit:
+    if has_truncation_limit:
+        effective_limit = max_seq_length
+        for entry in boundaries:
+            offset = entry.assistant_offset
+            total_tokens = entry.total_tokens
+            response_tokens = total_tokens - offset
+            if response_tokens < 0:
+                response_tokens = 0
             effective_total = total_tokens if total_tokens < effective_limit else effective_limit
-        else:
-            effective_total = total_tokens
-        trainable_response_tokens = effective_total - offset
-        if trainable_response_tokens < 0:
-            trainable_response_tokens = 0
-        if sample_count == 0:
-            boundary_min = offset
-            boundary_max = offset
-            response_tokens_min = response_tokens
-            response_tokens_max = response_tokens
-            trainable_response_tokens_min = trainable_response_tokens
-            trainable_response_tokens_max = trainable_response_tokens
-        else:
-            if offset < boundary_min:
+            trainable_response_tokens = effective_total - offset
+            if trainable_response_tokens < 0:
+                trainable_response_tokens = 0
+            if sample_count == 0:
                 boundary_min = offset
-            if offset > boundary_max:
                 boundary_max = offset
-            if response_tokens < response_tokens_min:
                 response_tokens_min = response_tokens
-            if response_tokens > response_tokens_max:
                 response_tokens_max = response_tokens
-            if trainable_response_tokens < trainable_response_tokens_min:
                 trainable_response_tokens_min = trainable_response_tokens
-            if trainable_response_tokens > trainable_response_tokens_max:
                 trainable_response_tokens_max = trainable_response_tokens
-        total_offset += offset
-        total_response_tokens += response_tokens
-        total_trainable_response_tokens += trainable_response_tokens
-        if trainable_response_tokens < response_tokens:
-            truncated_response_sample_count += 1
-        if response_tokens > 0 and trainable_response_tokens == 0:
-            fully_truncated_response_sample_count += 1
-        sample_count += 1
+            else:
+                if offset < boundary_min:
+                    boundary_min = offset
+                if offset > boundary_max:
+                    boundary_max = offset
+                if response_tokens < response_tokens_min:
+                    response_tokens_min = response_tokens
+                if response_tokens > response_tokens_max:
+                    response_tokens_max = response_tokens
+                if trainable_response_tokens < trainable_response_tokens_min:
+                    trainable_response_tokens_min = trainable_response_tokens
+                if trainable_response_tokens > trainable_response_tokens_max:
+                    trainable_response_tokens_max = trainable_response_tokens
+            total_offset += offset
+            total_response_tokens += response_tokens
+            total_trainable_response_tokens += trainable_response_tokens
+            if trainable_response_tokens < response_tokens:
+                truncated_response_sample_count += 1
+            if response_tokens > 0 and trainable_response_tokens == 0:
+                fully_truncated_response_sample_count += 1
+            sample_count += 1
+    else:
+        for entry in boundaries:
+            offset = entry.assistant_offset
+            total_tokens = entry.total_tokens
+            response_tokens = total_tokens - offset
+            if response_tokens < 0:
+                response_tokens = 0
+            trainable_response_tokens = response_tokens
+            if sample_count == 0:
+                boundary_min = offset
+                boundary_max = offset
+                response_tokens_min = response_tokens
+                response_tokens_max = response_tokens
+                trainable_response_tokens_min = trainable_response_tokens
+                trainable_response_tokens_max = trainable_response_tokens
+            else:
+                if offset < boundary_min:
+                    boundary_min = offset
+                if offset > boundary_max:
+                    boundary_max = offset
+                if response_tokens < response_tokens_min:
+                    response_tokens_min = response_tokens
+                if response_tokens > response_tokens_max:
+                    response_tokens_max = response_tokens
+                if trainable_response_tokens < trainable_response_tokens_min:
+                    trainable_response_tokens_min = trainable_response_tokens
+                if trainable_response_tokens > trainable_response_tokens_max:
+                    trainable_response_tokens_max = trainable_response_tokens
+            total_offset += offset
+            total_response_tokens += response_tokens
+            total_trainable_response_tokens += trainable_response_tokens
+            sample_count += 1
     if sample_count == 0:
         return ResponseOnlyBoundaryAggregate(
             sample_count=0,
