@@ -472,6 +472,13 @@ minimum raw-value length used for lexical leakage matching. It must not persist
 raw excluded field values, prompt text, observations, source spans, or other
 payload text that could reintroduce answer leakage into release artifacts.
 
+When source-quality metrics are available, package manifests must also include a
+`source_quality_metrics` object that reports tool necessity, multi-hop depth,
+evidence coverage, answer ambiguity, source diversity, and transformation
+diversity from sanitized `source_construction` metadata. These metrics are
+descriptive evidence only; sample accept/reject reports remain a separate
+selection artifact.
+
 ## Benchmark Fixture Sources
 
 Benchmark suites may also materialize from repository-owned fixture packages

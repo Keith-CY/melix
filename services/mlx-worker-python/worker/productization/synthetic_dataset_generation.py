@@ -148,6 +148,20 @@ class _SourceLeakageValidationSummary:
     shared_source_id_count: int | None = None
 
 
+@dataclass
+class _SourceQualityMetricAccumulator:
+    output_kind: str
+    source_row_count: int = 0
+    tool_required_row_count: int = 0
+    multi_hop_row_count: int = 0
+    hop_count_total: int = 0
+    max_hop_count: int = 0
+    evidence_chain_row_count: int = 0
+    ambiguous_row_count: int = 0
+    source_ids: set[str] = field(default_factory=set)
+    transformation_kinds: set[str] = field(default_factory=set)
+
+
 @dataclass(frozen=True)
 class _DataDesignerAPI:
     DataDesigner: type[Any]
@@ -596,6 +610,9 @@ def _write_training_package(
     )
     if leakage_summary.source_row_count:
         manifest_payload["source_leakage_validation"] = _source_leakage_validation_manifest(leakage_summary)
+    quality_metrics = _source_quality_metrics_manifest([*train_rows, *validation_rows], output_kind="training")
+    if quality_metrics:
+        manifest_payload["source_quality_metrics"] = quality_metrics
     timing["melix_package_write_ms"] = _elapsed_ms(package_write_started)
     manifest_payload["timing"] = dict(timing)
     _rewrite_manifest(manifest_path, manifest_payload)
@@ -680,6 +697,12 @@ def _write_evaluation_package(
     )
     if leakage_summary.source_row_count:
         manifest_payload["source_leakage_validation"] = _source_leakage_validation_manifest(leakage_summary)
+    quality_metrics = _source_quality_metrics_manifest(
+        serialized_rows,
+        output_kind="evaluation_final_result",
+    )
+    if quality_metrics:
+        manifest_payload["source_quality_metrics"] = quality_metrics
     timing["melix_package_write_ms"] = _elapsed_ms(package_write_started)
     manifest_payload["timing"] = dict(timing)
     _rewrite_manifest(manifest_path, manifest_payload)
@@ -1139,6 +1162,62 @@ def _source_leakage_validation_manifest(summary: _SourceLeakageValidationSummary
             }
         )
     return payload
+
+
+def _source_quality_metrics_manifest(rows: list[dict[str, Any]], *, output_kind: str) -> dict[str, Any] | None:
+    accumulator = _SourceQualityMetricAccumulator(output_kind=output_kind)
+    for row in rows:
+        metadata = row.get("source_construction")
+        if not isinstance(metadata, Mapping):
+            continue
+        accumulator.source_row_count += 1
+        source_ids = metadata.get("source_ids", [])
+        if isinstance(source_ids, list):
+            accumulator.source_ids.update(str(raw).strip() for raw in source_ids if str(raw).strip())
+        transformation_kinds = metadata.get("transformation_kinds", [])
+        if isinstance(transformation_kinds, list):
+            accumulator.transformation_kinds.update(
+                str(raw).strip() for raw in transformation_kinds if str(raw).strip()
+            )
+        required_tool_families = metadata.get("required_tool_families", [])
+        if isinstance(required_tool_families, list) and any(str(raw).strip() for raw in required_tool_families):
+            accumulator.tool_required_row_count += 1
+        hop_count = metadata.get("hop_count", 0)
+        if isinstance(hop_count, int):
+            accumulator.hop_count_total += hop_count
+            accumulator.max_hop_count = max(accumulator.max_hop_count, hop_count)
+            if hop_count >= 2:
+                accumulator.multi_hop_row_count += 1
+        evidence_chain = metadata.get("evidence_chain", [])
+        if isinstance(evidence_chain, list) and evidence_chain:
+            accumulator.evidence_chain_row_count += 1
+        if str(metadata.get("ambiguity_notes", "")).strip():
+            accumulator.ambiguous_row_count += 1
+    if accumulator.source_row_count == 0:
+        return None
+    source_row_count = accumulator.source_row_count
+    return {
+        "schema_version": "melix.source_quality_metrics.v1",
+        "output_kind": accumulator.output_kind,
+        "source_row_count": source_row_count,
+        "tool_required_row_count": accumulator.tool_required_row_count,
+        "tool_required_rate": _ratio(accumulator.tool_required_row_count, source_row_count),
+        "multi_hop_row_count": accumulator.multi_hop_row_count,
+        "max_hop_count": accumulator.max_hop_count,
+        "average_hop_count": _ratio(accumulator.hop_count_total, source_row_count),
+        "evidence_chain_row_count": accumulator.evidence_chain_row_count,
+        "evidence_coverage_rate": _ratio(accumulator.evidence_chain_row_count, source_row_count),
+        "ambiguous_row_count": accumulator.ambiguous_row_count,
+        "ambiguity_rate": _ratio(accumulator.ambiguous_row_count, source_row_count),
+        "unique_source_id_count": len(accumulator.source_ids),
+        "unique_transformation_kind_count": len(accumulator.transformation_kinds),
+    }
+
+
+def _ratio(numerator: int, denominator: int) -> float:
+    if denominator <= 0:
+        return 0.0
+    return round(numerator / denominator, 6)
 
 
 def _row_excluded_leakage_values(row: Mapping[str, Any], metadata: Mapping[str, Any]) -> list[tuple[str, str]]:

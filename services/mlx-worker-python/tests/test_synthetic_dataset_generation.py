@@ -399,6 +399,22 @@ def test_create_training_package_preserves_source_construction_metadata(tmp_path
         "shared_source_id_count": 0,
     }
     assert "Crimson Beacon" not in json.dumps(manifest["source_leakage_validation"])
+    assert manifest["source_quality_metrics"] == {
+        "schema_version": "melix.source_quality_metrics.v1",
+        "output_kind": "training",
+        "source_row_count": 1,
+        "tool_required_row_count": 1,
+        "tool_required_rate": 1.0,
+        "multi_hop_row_count": 1,
+        "max_hop_count": 2,
+        "average_hop_count": 2.0,
+        "evidence_chain_row_count": 1,
+        "evidence_coverage_rate": 1.0,
+        "ambiguous_row_count": 1,
+        "ambiguity_rate": 1.0,
+        "unique_source_id_count": 1,
+        "unique_transformation_kind_count": 2,
+    }
 
 
 def test_training_source_leakage_validation_summary_records_split_counts(tmp_path: Path) -> None:
@@ -430,6 +446,8 @@ def test_training_source_leakage_validation_summary_records_split_counts(tmp_pat
     assert summary["train_source_id_count"] == 3
     assert summary["validation_source_id_count"] == 1
     assert summary["shared_source_id_count"] == 0
+    assert result.manifest_payload["source_quality_metrics"]["source_row_count"] == 4
+    assert result.manifest_payload["source_quality_metrics"]["unique_source_id_count"] == 4
 
 
 def test_create_training_package_removes_stale_valid_jsonl_without_validation(tmp_path: Path) -> None:
@@ -562,6 +580,63 @@ def test_create_evaluation_package_preserves_sample_source_construction(tmp_path
         "minimum_value_length": 3,
     }
     assert "alpha" not in json.dumps(result.manifest_payload["source_leakage_validation"])
+
+
+def test_source_quality_metrics_summarize_evaluation_metadata(tmp_path: Path) -> None:
+    _fake_state.rows = [
+        {
+            "sample_id": "tool-rich",
+            "system": "",
+            "input": "Find the linked source fact.",
+            "target": {"label": "alpha"},
+            "source_construction": {
+                "source_ids": ["source-1", "source-2"],
+                "required_tool_families": ["image_inspection", "search"],
+                "transformation_kinds": ["paraphrase", "entity_alias"],
+                "evidence_chain": [{"source_id": "source-1"}, {"source_id": "source-2"}],
+                "hop_count": 3,
+                "ambiguity_notes": "accept alias",
+            },
+        },
+        {
+            "sample_id": "source-only",
+            "system": "",
+            "input": "Answer from the source.",
+            "target": {"label": "beta"},
+            "source_construction": {
+                "source_ids": ["source-2"],
+                "transformation_kinds": ["paraphrase"],
+                "hop_count": 1,
+            },
+        },
+    ]
+
+    result = generate_synthetic_dataset_package(
+        _request(
+            output_kind="evaluation_final_result",
+            output_format="json",
+            num_records=2,
+        ),
+        jobs_root=tmp_path / "jobs",
+        output_dir=tmp_path / "eval",
+    )
+
+    assert result.manifest_payload["source_quality_metrics"] == {
+        "schema_version": "melix.source_quality_metrics.v1",
+        "output_kind": "evaluation_final_result",
+        "source_row_count": 2,
+        "tool_required_row_count": 1,
+        "tool_required_rate": 0.5,
+        "multi_hop_row_count": 1,
+        "max_hop_count": 3,
+        "average_hop_count": 2.0,
+        "evidence_chain_row_count": 1,
+        "evidence_coverage_rate": 0.5,
+        "ambiguous_row_count": 1,
+        "ambiguity_rate": 0.5,
+        "unique_source_id_count": 2,
+        "unique_transformation_kind_count": 2,
+    }
 
 
 def test_invalid_evaluation_source_construction_reports_row_index(tmp_path: Path) -> None:
@@ -926,6 +1001,7 @@ def test_source_construction_validator_helpers_handle_noisy_metadata() -> None:
             {"source_construction": {"source_ids": ["source-1", ""]}},
         ]
     ) == {"source-1": 3}
+    assert synthetic_module._ratio(1, 0) == 0.0  # noqa: SLF001
 
 
 @pytest.mark.parametrize(

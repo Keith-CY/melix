@@ -255,6 +255,35 @@ The sample-selection slice should compute:
 - source diversity
 - transformation diversity
 
+Successful source-anchored package materialization must write a
+`source_quality_metrics` summary in the package `manifest.json` when at least
+one row carries `source_construction` metadata. The summary is descriptive
+evidence for downstream selection and release review; it does not accept or
+reject samples by itself.
+
+The summary fields are:
+
+- `schema_version`
+- `output_kind`
+- `source_row_count`
+- `tool_required_row_count`
+- `tool_required_rate`
+- `multi_hop_row_count`
+- `max_hop_count`
+- `average_hop_count`
+- `evidence_chain_row_count`
+- `evidence_coverage_rate`
+- `ambiguous_row_count`
+- `ambiguity_rate`
+- `unique_source_id_count`
+- `unique_transformation_kind_count`
+
+The metrics are computed from sanitized per-row `source_construction` metadata
+only. They must not persist raw prompts, observations, source text, answer
+values, or provider secrets. Selection reports that explain accepted and
+rejected samples are a follow-up slice and should consume this summary rather
+than redefining the metric names.
+
 Selection reports should explain why each accepted sample was kept and why each
 rejected sample was rejected.
 
