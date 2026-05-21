@@ -438,6 +438,8 @@ def read_hf_dataset_snapshot_rows(
     resolved_snapshot_path = Path(snapshot_path).expanduser().resolve()
     normalized_split = _normalized(split)
     rows: list[dict[str, Any]] = []
+    if limit is not None and limit <= 0:
+        return rows
     if limit == 1 and not normalized_split:
         selected_files = _iter_first_preview_dataset_file(resolved_snapshot_path)
     else:

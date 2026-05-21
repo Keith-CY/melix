@@ -41,6 +41,8 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="melix-dataset-preview-probe-") as temp_dir:
         snapshot_dir = _build_snapshot(Path(temp_dir), row_count=row_count)
         expected = [{"prompt": "prompt-0", "answer": "answer-0"}]
+        zero_limit_elapsed_samples: list[float] = []
+        zero_limit_peak_samples: list[float] = []
         for _ in range(sample_count):
             tracemalloc.start()
             started = time.perf_counter()
@@ -52,14 +54,28 @@ def main() -> int:
                 raise RuntimeError(f"unexpected preview rows: {rows!r}")
             elapsed_samples.append(elapsed_ms)
             peak_samples.append(float(peak_bytes))
+
+            tracemalloc.start()
+            started = time.perf_counter()
+            zero_limit_rows = read_hf_dataset_snapshot_rows(snapshot_dir, limit=0)
+            zero_limit_elapsed_ms = (time.perf_counter() - started) * 1000.0
+            _, zero_limit_peak_bytes = tracemalloc.get_traced_memory()
+            tracemalloc.stop()
+            if zero_limit_rows != []:  # pragma: no cover
+                raise RuntimeError(f"unexpected zero-limit rows: {zero_limit_rows!r}")
+            zero_limit_elapsed_samples.append(zero_limit_elapsed_ms)
+            zero_limit_peak_samples.append(float(zero_limit_peak_bytes))
     print(
         json.dumps(
             {
                 "elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
                 "elapsed_ms_min": round(min(elapsed_samples), 6),
                 "peak_bytes_mean": round(statistics.fmean(peak_samples), 3),
+                "zero_limit_elapsed_ms_mean": round(statistics.fmean(zero_limit_elapsed_samples), 6),
+                "zero_limit_peak_bytes_mean": round(statistics.fmean(zero_limit_peak_samples), 3),
                 "file_count": float(row_count),
                 "rows_returned": 1.0,
+                "zero_limit_rows_returned": 0.0,
                 "sample_count": float(sample_count),
             },
             sort_keys=True,

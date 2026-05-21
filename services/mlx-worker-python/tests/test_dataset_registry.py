@@ -5,6 +5,7 @@ import sys
 import types
 from dataclasses import FrozenInstanceError
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 
@@ -583,6 +584,24 @@ def test_dataset_catalog_row_reader_zero_limit_returns_empty(tmp_path: Path) -> 
     jsonl_path.write_text('{"prompt":"first"}\n', encoding="utf-8")
 
     assert catalog._read_rows_from_file(jsonl_path, limit=0) == []
+
+
+def test_dataset_catalog_snapshot_row_reader_zero_limit_skips_file_scan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    snapshot_dir.mkdir()
+    (snapshot_dir / "preview.jsonl").write_text('{"prompt":"first"}\n', encoding="utf-8")
+
+    def unexpected_scan(snapshot_path: Path, *, split: str) -> Iterator[Path]:
+        raise AssertionError(  # pragma: no cover
+            f"zero-limit preview should not scan files: {snapshot_path}, {split}"
+        )
+
+    monkeypatch.setattr(catalog, "_iter_selected_dataset_files", unexpected_scan)
+
+    assert read_hf_dataset_snapshot_rows(snapshot_dir, limit=0) == []
 
 
 def test_dataset_catalog_limited_unfiltered_read_stops_before_later_files(
