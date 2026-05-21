@@ -2681,6 +2681,7 @@ class EvaluationCore:
         agentic_tool_calls: tuple[dict[str, object], ...] = ()
         agentic_tool_observations: tuple[dict[str, object], ...] = ()
         agentic_tool_metrics: dict[str, float] = {}
+        agentic_tool_trace_turns: tuple[dict[str, object], ...] = ()
         raw_tool_calls = sample.get("tool_calls")
         if isinstance(raw_tool_calls, list) and raw_tool_calls:
             tool_run = execute_agentic_tool_calls(
@@ -2696,6 +2697,7 @@ class EvaluationCore:
                 dict(observation) for observation in tool_run.observations
             )
             agentic_tool_metrics = dict(tool_run.metrics)
+            agentic_tool_trace_turns = tuple(dict(turn) for turn in tool_run.trace_turns)
         code_language = ""
         code_entry_point = ""
         code_compile_status = ""
@@ -2722,6 +2724,7 @@ class EvaluationCore:
                     task_kind=task_kind,
                     hints_text=hints_text,
                     eval_prompt_system_prompt=eval_prompt_system_prompt,
+                    agentic_trace_turns=agentic_tool_trace_turns,
                 ),
                 expected=target,
                 result_kind=profile.result_kind,
@@ -3040,6 +3043,7 @@ class EvaluationCore:
         task_kind: str = "text-generation",
         hints_text: str = "",
         eval_prompt_system_prompt: str = "",
+        agentic_trace_turns: tuple[dict[str, object], ...] = (),
     ) -> list[common_pb2.ChatMessage]:
         if scoring_mode == "pass_at_1":
             instruction = "Return only executable Python code for the requested solution. Do not include explanations."
@@ -3096,7 +3100,51 @@ class EvaluationCore:
                 ),
             )
         )
+        messages.extend(EvaluationCore._agentic_trace_messages(agentic_trace_turns))
         return messages
+
+    @staticmethod
+    def _agentic_trace_messages(
+        trace_turns: tuple[dict[str, object], ...],
+    ) -> list[common_pb2.ChatMessage]:
+        messages: list[common_pb2.ChatMessage] = []
+        for turn in trace_turns:
+            raw_tool_call = turn.get("tool_call")
+            if isinstance(raw_tool_call, dict):
+                tool_call_text = EvaluationCore._compact_json_text(raw_tool_call)
+                messages.append(
+                    common_pb2.ChatMessage(
+                        role="assistant",
+                        parts=[
+                            common_pb2.MessagePart(
+                                text=f"Agentic tool call: {tool_call_text}"
+                            )
+                        ],
+                    )
+                )
+                continue
+            raw_observation = turn.get("observation")
+            if isinstance(raw_observation, dict):
+                observation_payload = {
+                    "observation": raw_observation,
+                    "tool_call_id": str(turn.get("tool_call_id", "")),
+                }
+                observation_text = EvaluationCore._compact_json_text(observation_payload)
+                messages.append(
+                    common_pb2.ChatMessage(
+                        role="user",
+                        parts=[
+                            common_pb2.MessagePart(
+                                text=f"Agentic tool observation: {observation_text}"
+                            )
+                        ],
+                    )
+                )
+        return messages
+
+    @staticmethod
+    def _compact_json_text(payload: dict[str, object]) -> str:
+        return json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
     @staticmethod
     def _message_parts(

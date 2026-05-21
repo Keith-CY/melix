@@ -323,10 +323,12 @@ class ScriptedComparisonRuntime:
     def __init__(self, responses: tuple[str, ...]) -> None:
         self._responses = list(responses)
         self.prompts: list[str] = []
+        self.rendered_roles: list[list[str]] = []
 
     def render_prompt(self, messages, loaded_model=None, execution_ext=None):
         _ = loaded_model
         _ = execution_ext
+        self.rendered_roles.append([str(message.role) for message in messages])
         prompt = "\n".join(part.text for message in messages for part in message.parts if part.text)
         self.prompts.append(prompt)
         return prompt
@@ -851,6 +853,60 @@ def test_run_local_suite_persists_agentic_tool_evidence(tmp_path: Path) -> None:
     assert metrics["eval.mmlu.agentic_tool.completed_count"] == 2.0
     assert persisted_samples[0]["agentic_tool_calls"][0]["name"] == "image_crop"
     assert persisted_samples[0]["agentic_tool_registry"]["toolset_version"] == "melix.agentic_tools.builtin.v1"
+
+
+def test_run_local_suite_injects_agentic_tool_trace_before_scoring(tmp_path: Path) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="agentic-trace-dev",
+        suite_id="mmlu",
+        samples=(
+            {
+                "id": "agentic-trace-1",
+                "prompt": "Which codename appears in the source?",
+                "expected": "MELIX",
+                "tool_calls": [
+                    {
+                        "id": "visit-source-1",
+                        "name": "visit",
+                        "arguments": {"url": "fixture://source/melix"},
+                    },
+                ],
+                "tool_fixture_context": {
+                    "pages": {
+                        "fixture://source/melix": {
+                            "title": "Local source",
+                            "text": "The source codename is MELIX.",
+                        },
+                    },
+                },
+            },
+        ),
+    )
+    runtime = ScriptedComparisonRuntime(("Answer: MELIX",))
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="agentic-trace-model")
+    runner = EvaluationCore(jobs_root=tmp_path / "runs" / "agentic-trace", registry=registry)
+
+    run = runner.run_local_suite(
+        model_id="agentic-trace-model",
+        model_handle=registry.handle,
+        suite_id="mmlu",
+        dataset_root=dataset_root,
+        sample_size=1,
+        few_shot=0,
+        seed=7,
+        scoring_mode="exact_match",
+        code_exec_policy="disabled",
+    )
+
+    rendered_prompt = runtime.prompts[0]
+    assert "Agentic tool call:" in rendered_prompt
+    assert '"id":"visit-source-1"' in rendered_prompt
+    assert "Agentic tool observation:" in rendered_prompt
+    assert '"status":"completed"' in rendered_prompt
+    assert "The source codename is MELIX." in rendered_prompt
+    assert runtime.rendered_roles[0][-3:] == ["user", "assistant", "user"]
+    assert run.samples[0].typed_score == 1.0
 
 
 @pytest.mark.parametrize(

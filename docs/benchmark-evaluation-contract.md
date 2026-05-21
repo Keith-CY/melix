@@ -1183,6 +1183,20 @@ claims are traceable, and that deterministic tool replay has a bounded tool
 surface. It does not add a new scorer, judge policy, or production execution
 probe.
 
+#### Agentic Evaluation Trajectory Execution
+
+When an evaluation sample provides `tool_calls`, `EvaluationCore` must replay
+those calls through the unified deterministic agentic tool runtime before live
+model inference. The replayed assistant tool-call turns and tool observation
+turns are appended to the sample's evaluation prompt before final generation, so
+the scored model answer is produced with the executed trajectory in context.
+
+The persisted sample evidence remains the authoritative execution record:
+`agentic_tool_registry`, `agentic_tool_calls`, `agentic_tool_observations`, and
+`agentic_tool_metrics`. Measurement points for this path are the existing
+`agentic_tool.*` metrics, including call count, completed/timeout/failed status
+counts, observation emitted bytes, observation count, and tool latency.
+
 ### Evaluation Dataset Contract
 
 Melix evaluation executes only against repository-owned evaluation dataset packages.
