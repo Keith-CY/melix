@@ -325,6 +325,7 @@ def test_create_training_package_preserves_source_construction_metadata(tmp_path
         {
             "prompt": "What color is the visible signal?",
             "completion": "red",
+            "answer": "Crimson Beacon",
             "source_construction": {
                 "source_ids": ["source-1"],
                 "source_asset_paths": ["media/signal.png"],
@@ -377,6 +378,58 @@ def test_create_training_package_preserves_source_construction_metadata(tmp_path
     assert sample["source_construction"]["hop_count"] == 2
     assert sample["source_construction"]["excluded_leakage_fields"] == ["answer"]
     assert "raw_answer" not in sample["source_construction"]
+    assert manifest["source_leakage_validation"] == {
+        "schema_version": "melix.source_leakage_validation.v1",
+        "status": "passed",
+        "output_kind": "training",
+        "validators": [
+            "prompt_example_overlap",
+            "answer_in_observation",
+            "train_eval_source_collision",
+        ],
+        "source_row_count": 1,
+        "excluded_field_reference_count": 1,
+        "checked_prompt_segment_count": 1,
+        "checked_observation_segment_count": 0,
+        "minimum_value_length": 3,
+        "train_row_count": 1,
+        "validation_row_count": 0,
+        "train_source_id_count": 1,
+        "validation_source_id_count": 0,
+        "shared_source_id_count": 0,
+    }
+    assert "Crimson Beacon" not in json.dumps(manifest["source_leakage_validation"])
+
+
+def test_training_source_leakage_validation_summary_records_split_counts(tmp_path: Path) -> None:
+    _fake_state.rows = [
+        {
+            "prompt": f"Question {index}",
+            "completion": f"Completion {index}",
+            "source_construction": {
+                "source_ids": [f"source-{index}"],
+            },
+        }
+        for index in range(1, 5)
+    ]
+
+    result = generate_synthetic_dataset_package(
+        _request(num_records=4, validation_ratio=0.25),
+        jobs_root=tmp_path / "jobs",
+        output_dir=tmp_path / "out",
+    )
+
+    summary = result.manifest_payload["source_leakage_validation"]
+    assert summary["status"] == "passed"
+    assert summary["source_row_count"] == 4
+    assert summary["excluded_field_reference_count"] == 0
+    assert summary["checked_prompt_segment_count"] == 0
+    assert summary["checked_observation_segment_count"] == 0
+    assert summary["train_row_count"] == 3
+    assert summary["validation_row_count"] == 1
+    assert summary["train_source_id_count"] == 3
+    assert summary["validation_source_id_count"] == 1
+    assert summary["shared_source_id_count"] == 0
 
 
 def test_create_training_package_removes_stale_valid_jsonl_without_validation(tmp_path: Path) -> None:
@@ -469,9 +522,9 @@ def test_create_evaluation_package_preserves_sample_source_construction(tmp_path
     _fake_state.rows = [
         {
             "sample_id": "one",
-            "system": "",
+            "system": "Follow the answer format.",
             "input": "Find the linked source fact.",
-            "target": {"label": "a"},
+            "target": {"label": "alpha"},
             "source_construction": {
                 "source_ids": ["source-1"],
                 "transformation_kinds": ["paraphrase"],
@@ -481,7 +534,7 @@ def test_create_evaluation_package_preserves_sample_source_construction(tmp_path
         },
     ]
 
-    generate_synthetic_dataset_package(
+    result = generate_synthetic_dataset_package(
         _request(
             output_kind="evaluation_final_result",
             output_format="json",
@@ -494,6 +547,21 @@ def test_create_evaluation_package_preserves_sample_source_construction(tmp_path
     sample = json.loads((tmp_path / "eval" / "samples.jsonl").read_text(encoding="utf-8"))
     assert sample["source_construction"]["source_ids"] == ["source-1"]
     assert sample["source_construction"]["excluded_leakage_fields"] == ["target.label"]
+    assert result.manifest_payload["source_leakage_validation"] == {
+        "schema_version": "melix.source_leakage_validation.v1",
+        "status": "passed",
+        "output_kind": "evaluation_final_result",
+        "validators": [
+            "prompt_example_overlap",
+            "answer_in_observation",
+        ],
+        "source_row_count": 1,
+        "excluded_field_reference_count": 1,
+        "checked_prompt_segment_count": 2,
+        "checked_observation_segment_count": 0,
+        "minimum_value_length": 3,
+    }
+    assert "alpha" not in json.dumps(result.manifest_payload["source_leakage_validation"])
 
 
 def test_invalid_evaluation_source_construction_reports_row_index(tmp_path: Path) -> None:

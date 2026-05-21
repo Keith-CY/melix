@@ -41,6 +41,10 @@ _SUPPORTED_EVALUATION_RESULT_KINDS = {"json", "text"}
 _SECRET_FIELD_MARKERS = ("api_key", "authorization", "token", "secret", "password")
 _TELEMETRY_ENV_VAR = "NEMO_TELEMETRY_ENABLED"
 _MIN_LEAKAGE_VALUE_LENGTH = 3
+_SOURCE_ROW_LEAKAGE_VALIDATORS = [
+    "prompt_example_overlap",
+    "answer_in_observation",
+]
 
 
 @dataclass(frozen=True)
@@ -128,6 +132,20 @@ class SyntheticDatasetPackageResult:
     validation_row_count: int
     output_kind: str
     preview_only: bool
+
+
+@dataclass
+class _SourceLeakageValidationSummary:
+    output_kind: str
+    source_row_count: int = 0
+    excluded_field_reference_count: int = 0
+    checked_prompt_segment_count: int = 0
+    checked_observation_segment_count: int = 0
+    train_row_count: int | None = None
+    validation_row_count: int | None = None
+    train_source_id_count: int | None = None
+    validation_source_id_count: int | None = None
+    shared_source_id_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -532,10 +550,14 @@ def _write_training_package(
     config_path: Path,
     timing: dict[str, float],
 ) -> SyntheticDatasetPackageResult:
-    _validate_source_anchored_rows(rows, output_kind="training")
+    leakage_summary = _validate_source_anchored_rows(rows, output_kind="training")
     normalized = [_normalize_synthetic_training_row(row, request.output_format) for row in rows]
     train_rows, validation_rows = _split_validation(normalized, request.validation_ratio)
-    _validate_source_split_collision(train_rows, validation_rows)
+    _validate_source_split_collision(
+        train_rows,
+        validation_rows,
+        summary=leakage_summary,
+    )
     package_write_started = time.perf_counter()
     samples_path = package_path / "samples.jsonl"
     valid_path = package_path / "valid.jsonl"
@@ -572,6 +594,8 @@ def _write_training_package(
             "response_only_supported": request.output_format in {"chat_messages", "prompt_completion"},
         }
     )
+    if leakage_summary.source_row_count:
+        manifest_payload["source_leakage_validation"] = _source_leakage_validation_manifest(leakage_summary)
     timing["melix_package_write_ms"] = _elapsed_ms(package_write_started)
     manifest_payload["timing"] = dict(timing)
     _rewrite_manifest(manifest_path, manifest_payload)
@@ -601,7 +625,7 @@ def _write_evaluation_package(
     timing: dict[str, float],
 ) -> SyntheticDatasetPackageResult:
     serialized_rows = _parse_and_validate_evaluation_targets(rows, result_kind=request.output_format)
-    _validate_source_anchored_rows(serialized_rows, output_kind="evaluation_final_result")
+    leakage_summary = _validate_source_anchored_rows(serialized_rows, output_kind="evaluation_final_result")
     package_write_started = time.perf_counter()
     manifest_path = package_path / "manifest.json"
     samples_path = package_path / "samples.jsonl"
@@ -654,6 +678,8 @@ def _write_evaluation_package(
             },
         }
     )
+    if leakage_summary.source_row_count:
+        manifest_payload["source_leakage_validation"] = _source_leakage_validation_manifest(leakage_summary)
     timing["melix_package_write_ms"] = _elapsed_ms(package_write_started)
     manifest_payload["timing"] = dict(timing)
     _rewrite_manifest(manifest_path, manifest_payload)
@@ -1043,15 +1069,23 @@ def _optional_string_list(payload: dict[str, Any], key: str, *, row: int | None)
     payload[key] = [item for item in (str(raw).strip() for raw in value) if item]
 
 
-def _validate_source_anchored_rows(rows: list[dict[str, Any]], *, output_kind: str) -> None:
+def _validate_source_anchored_rows(
+    rows: list[dict[str, Any]],
+    *,
+    output_kind: str,
+) -> _SourceLeakageValidationSummary:
+    summary = _SourceLeakageValidationSummary(output_kind=output_kind)
     for index, row in enumerate(rows, start=1):
         metadata = row.get("source_construction")
         if not isinstance(metadata, Mapping):
             continue
+        summary.source_row_count += 1
         excluded_values = _row_excluded_leakage_values(row, metadata)
+        summary.excluded_field_reference_count += len(excluded_values)
         if not excluded_values:
             continue
         prompt_segments = _source_prompt_overlap_segments(row, output_kind=output_kind)
+        summary.checked_prompt_segment_count += len(prompt_segments)
         prompt_match = _first_leakage_match(excluded_values, prompt_segments)
         if prompt_match is not None:
             raise ModelOperationError(
@@ -1064,6 +1098,7 @@ def _validate_source_anchored_rows(rows: list[dict[str, Any]], *, output_kind: s
                 },
             )
         observation_segments = _source_observation_segments(row)
+        summary.checked_observation_segment_count += len(observation_segments)
         observation_match = _first_leakage_match(excluded_values, observation_segments)
         if observation_match is not None:
             raise ModelOperationError(
@@ -1075,6 +1110,35 @@ def _validate_source_anchored_rows(rows: list[dict[str, Any]], *, output_kind: s
                     "field": observation_match[0],
                 },
             )
+    return summary
+
+
+def _source_leakage_validation_manifest(summary: _SourceLeakageValidationSummary) -> dict[str, Any]:
+    validators = list(_SOURCE_ROW_LEAKAGE_VALIDATORS)
+    if summary.train_row_count is not None:
+        validators.append("train_eval_source_collision")
+    payload: dict[str, Any] = {
+        "schema_version": "melix.source_leakage_validation.v1",
+        "status": "passed",
+        "output_kind": summary.output_kind,
+        "validators": validators,
+        "source_row_count": summary.source_row_count,
+        "excluded_field_reference_count": summary.excluded_field_reference_count,
+        "checked_prompt_segment_count": summary.checked_prompt_segment_count,
+        "checked_observation_segment_count": summary.checked_observation_segment_count,
+        "minimum_value_length": _MIN_LEAKAGE_VALUE_LENGTH,
+    }
+    if summary.train_row_count is not None:
+        payload.update(
+            {
+                "train_row_count": summary.train_row_count,
+                "validation_row_count": summary.validation_row_count or 0,
+                "train_source_id_count": summary.train_source_id_count or 0,
+                "validation_source_id_count": summary.validation_source_id_count or 0,
+                "shared_source_id_count": summary.shared_source_id_count or 0,
+            }
+        )
+    return payload
 
 
 def _row_excluded_leakage_values(row: Mapping[str, Any], metadata: Mapping[str, Any]) -> list[tuple[str, str]]:
@@ -1193,12 +1257,24 @@ def _first_leakage_match(
 def _validate_source_split_collision(
     train_rows: list[dict[str, Any]],
     validation_rows: list[dict[str, Any]],
+    *,
+    summary: _SourceLeakageValidationSummary | None = None,
 ) -> None:
-    if not train_rows or not validation_rows:
-        return
     train_source_ids = _source_ids_by_split(train_rows)
     validation_source_ids = _source_ids_by_split(validation_rows)
+    if summary is not None:
+        summary.train_row_count = len(train_rows)
+        summary.validation_row_count = len(validation_rows)
+        summary.train_source_id_count = len(train_source_ids)
+        summary.validation_source_id_count = len(validation_source_ids)
+        summary.shared_source_id_count = 0
+    if not train_rows or not validation_rows:
+        return
     shared_ids = sorted(set(train_source_ids) & set(validation_source_ids))
+    if summary is not None:
+        summary.train_source_id_count = len(train_source_ids)
+        summary.validation_source_id_count = len(validation_source_ids)
+        summary.shared_source_id_count = len(shared_ids)
     if not shared_ids:
         return
     source_id = shared_ids[0]
