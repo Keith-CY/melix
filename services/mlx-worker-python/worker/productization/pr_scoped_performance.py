@@ -86,7 +86,7 @@ def _summarize_command(command: str, *, max_length: int = 180) -> str:
     return summary
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class MetricDefinition:
     key: str
     unit: str
@@ -106,7 +106,7 @@ class MetricDefinition:
         return payload
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ProbeDefinition:
     probe_id: str
     name: str

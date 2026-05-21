@@ -199,6 +199,32 @@ def test_ocr_token_count_scans_whitespace_without_split_list() -> None:
         fallback_request.images[0].byte_length // 8,
     ) + max(1, fallback_request.images[1].byte_length // 8)
 
+    tiny_image_request = PreparedVisionRequest(
+        prompt_text="",
+        images=[request.images[0]],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=1,
+        preprocess_peak_memory_bytes=1,
+        prompt_hash_hex="p" * 64,
+        multimodal_hash_hex="m" * 64,
+    )
+    assert runtime.prompt_token_count(tiny_image_request) == 1
+
+    text_only_request = PreparedVisionRequest(
+        prompt_text="",
+        images=[],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=0,
+        preprocess_peak_memory_bytes=0,
+        prompt_hash_hex="p" * 64,
+        multimodal_hash_hex="m" * 64,
+    )
+    assert runtime.prompt_token_count(text_only_request) == 1
+
 
 class ByteLengthTrackingImage:
     def __init__(self, byte_length: int) -> None:
