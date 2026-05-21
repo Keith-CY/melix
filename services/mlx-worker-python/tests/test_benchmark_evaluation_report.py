@@ -25,6 +25,7 @@ from worker.productization.benchmark_evaluation_report import (
     _metric_direction,
     _metric_key_direction,
     _report_rows,
+    _status_counts,
     _update_numeric_aggregate,
     _update_probe_aggregate_pairs,
     _update_probe_aggregates_by_label,
@@ -195,6 +196,32 @@ def test_load_report_input_accepts_batch_run_summary_bundle(tmp_path: Path) -> N
     metrics = {row["metric"]: row for row in report["metrics"]}
     assert metrics["bench.smoke.tokens_per_second"]["status"] == "ok"
     assert metrics["eval.event_extraction.semantic_f1"]["status"] == "ok"
+
+
+def test_status_counts_reads_each_row_status_once() -> None:
+    class SingleReadStatusRow(dict[str, object]):
+        def __init__(self, status: str) -> None:
+            super().__init__(status=status)
+            self.status_reads = 0
+
+        def get(self, key: str, default: object = None) -> object:
+            if key == "status":
+                self.status_reads += 1
+                if self.status_reads > 1:
+                    raise AssertionError("status was read more than once")
+            return super().get(key, default)
+
+    rows = [
+        SingleReadStatusRow("warning"),
+        SingleReadStatusRow("missing"),
+        SingleReadStatusRow("not_comparable"),
+        SingleReadStatusRow("ok"),
+    ]
+
+    assert _status_counts(rows) == (1, 1, 1)
+    assert [row.status_reads for row in rows] == [1, 1, 1, 1]
+    with pytest.raises(AssertionError, match="status was read more than once"):
+        rows[0].get("status")
 
 
 def _run_evidence(
