@@ -1473,6 +1473,18 @@ def test_scope_report_selects_registry_cache_probe(tmp_path: Path) -> None:
         changed_files=["src/c.py", "src/a.py", "src/b.py", "other.py"],
     )
 
+    loaded_probes = load_probe_registry(registry_path)
+    assert not hasattr(loaded_probes[0], "__dict__")
+    assert not hasattr(loaded_probes[0].metrics[0], "__dict__")
+    assert loaded_probes[0].to_scope_dict()["metrics"] == [
+        {
+            "key": "elapsed_ms_mean",
+            "unit": "value",
+            "direction": "lower_is_better",
+            "warn_pct": 5.0,
+        }
+    ]
+
     assert sparse_scope["matched_probe_ids"] == ["alpha", "beta", "gamma"]
     assert [probe["id"] for probe in sparse_scope["selected_probes"]] == ["alpha", "beta", "gamma"]
     assert sparse_scope["selected_count"] == 3
