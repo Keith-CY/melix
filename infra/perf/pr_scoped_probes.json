@@ -3942,5 +3942,42 @@
         "warn_pct": 0.0
       }
     ]
+  },
+  {
+    "id": "tool-registry-openai-tools-template-cache",
+    "name": "Tool registry OpenAI tools template cache",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/runtime/tool_registry.py",
+      "services/mlx-worker-python/tests/test_tool_registry.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/tool_registry_openai_tools_probe.py",
+      "infra/perf/pr_scoped_probes.json"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_tool_registry.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_tool_registry_schema_bytes_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_tool_registry_openai_tools_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_tool_registry.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_tool_registry_schema_bytes_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_tool_registry_openai_tools_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/tool_registry.py services/mlx-worker-python/tests/test_tool_registry.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/tool_registry_openai_tools_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'if [ -f scripts/tool_registry_openai_tools_probe.py ]; then python3 scripts/tool_registry_openai_tools_probe.py; else python3 -c \"import base64; exec(base64.b64decode(\\\"IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwpmcm9tIF9fZnV0dXJlX18gaW1wb3J0IGFubm90YXRpb25zCgppbXBvcnQganNvbgppbXBvcnQgb3MKaW1wb3J0IHN0YXRpc3RpY3MKaW1wb3J0IHN5cwppbXBvcnQgdGltZQpmcm9tIHBhdGhsaWIgaW1wb3J0IFBhdGgKClJFUE9fUk9PVCA9IFBhdGguY3dkKCkKc3lzLnBhdGguaW5zZXJ0KDAsIHN0cihSRVBPX1JPT1QpKQpzeXMucGF0aC5pbnNlcnQoMCwgc3RyKFJFUE9fUk9PVCAvICJzZXJ2aWNlcy9tbHgtd29ya2VyLXB5dGhvbiIpKQoKZnJvbSB3b3JrZXIucnVudGltZSBpbXBvcnQgdG9vbF9yZWdpc3RyeSBhcyB0b29sX3JlZ2lzdHJ5X21vZHVsZSAgIyBub3FhOiBFNDAyCmZyb20gd29ya2VyLnJ1bnRpbWUudG9vbF9yZWdpc3RyeSBpbXBvcnQgQlVJTFRJTl9BR0VOVElDX1RPT0xfTkFNRVMsIGJ1aWx0X2luX3Rvb2xfcmVnaXN0cnkgICMgbm9xYTogRTQwMgoKCmRlZiBfbWVhc3VyZShpdGVyYXRpb25zOiBpbnQsIHNhbXBsZV9jb3VudDogaW50KSAtPiBkaWN0W3N0ciwgZmxvYXRdOgogICAgcmVnaXN0cnkgPSBidWlsdF9pbl90b29sX3JlZ2lzdHJ5KCkKICAgIGV4cGVjdGVkX25hbWVzID0gQlVJTFRJTl9BR0VOVElDX1RPT0xfTkFNRVMKICAgIGVsYXBzZWRfc2FtcGxlczogbGlzdFtmbG9hdF0gPSBbXQogICAgZGVzY3JpcHRvcl9jYWxsc19zYW1wbGVzOiBsaXN0W2Zsb2F0XSA9IFtdCiAgICBpc29sYXRlZF9wYXlsb2FkX3NhbXBsZXM6IGxpc3RbZmxvYXRdID0gW10KICAgIGNoZWNrc3VtID0gMAoKICAgIG9yaWdpbmFsX2FzX29wZW5haV90b29sID0gdG9vbF9yZWdpc3RyeV9tb2R1bGUuVG9vbERlc2NyaXB0b3IuYXNfb3BlbmFpX3Rvb2wKICAgIHRyeToKICAgICAgICBmb3IgXyBpbiByYW5nZShzYW1wbGVfY291bnQpOgogICAgICAgICAgICBjYWxsX2NvdW50ID0gMAoKICAgICAgICAgICAgZGVmIGNvdW50aW5nX2FzX29wZW5haV90b29sKHNlbGY6IHRvb2xfcmVnaXN0cnlfbW9kdWxlLlRvb2xEZXNjcmlwdG9yKSAtPiBkaWN0W3N0ciwgb2JqZWN0XToKICAgICAgICAgICAgICAgIG5vbmxvY2FsIGNhbGxfY291bnQKICAgICAgICAgICAgICAgIGNhbGxfY291bnQgKz0gMQogICAgICAgICAgICAgICAgcmV0dXJuIG9yaWdpbmFsX2FzX29wZW5haV90b29sKHNlbGYpCgogICAgICAgICAgICB0b29sX3JlZ2lzdHJ5X21vZHVsZS5Ub29sRGVzY3JpcHRvci5hc19vcGVuYWlfdG9vbCA9IGNvdW50aW5nX2FzX29wZW5haV90b29sCiAgICAgICAgICAgIGlzb2xhdGVkX3BheWxvYWRfY291bnQgPSAwCiAgICAgICAgICAgIHN0YXJ0ZWQgPSB0aW1lLnBlcmZfY291bnRlcigpCiAgICAgICAgICAgIGZvciBfaW5kZXggaW4gcmFuZ2UoaXRlcmF0aW9ucyk6CiAgICAgICAgICAgICAgICB0b29scyA9IHJlZ2lzdHJ5LmFzX29wZW5haV90b29scygpCiAgICAgICAgICAgICAgICBuYW1lcyA9IHR1cGxlKHRvb2xbImZ1bmN0aW9uIl1bIm5hbWUiXSBmb3IgdG9vbCBpbiB0b29scykKICAgICAgICAgICAgICAgIGlmIG5hbWVzICE9IGV4cGVjdGVkX25hbWVzOgogICAgICAgICAgICAgICAgICAgIHJhaXNlIFJ1bnRpbWVFcnJvcihmInVuZXhwZWN0ZWQgdG9vbCBuYW1lczoge25hbWVzIXJ9IikKICAgICAgICAgICAgICAgIHRvb2xzWzBdWyJmdW5jdGlvbiJdWyJwYXJhbWV0ZXJzIl1bInJlcXVpcmVkIl0uYXBwZW5kKCJtdXRhdGVkIikKICAgICAgICAgICAgICAgIGlmIHJlZ2lzdHJ5LmFzX29wZW5haV90b29scygpWzBdWyJmdW5jdGlvbiJdWyJwYXJhbWV0ZXJzIl1bInJlcXVpcmVkIl0gPT0gWwogICAgICAgICAgICAgICAgICAgICJtZWRpYV9yZWYiLAogICAgICAgICAgICAgICAgICAgICJyZWdpb24iLAogICAgICAgICAgICAgICAgXToKICAgICAgICAgICAgICAgICAgICBpc29sYXRlZF9wYXlsb2FkX2NvdW50ICs9IDEKICAgICAgICAgICAgICAgIGNoZWNrc3VtICs9IGxlbih0b29scykKICAgICAgICAgICAgZWxhcHNlZF9zYW1wbGVzLmFwcGVuZCgodGltZS5wZXJmX2NvdW50ZXIoKSAtIHN0YXJ0ZWQpICogMTAwMC4wKQogICAgICAgICAgICBkZXNjcmlwdG9yX2NhbGxzX3NhbXBsZXMuYXBwZW5kKGZsb2F0KGNhbGxfY291bnQpKQogICAgICAgICAgICBpc29sYXRlZF9wYXlsb2FkX3NhbXBsZXMuYXBwZW5kKGZsb2F0KGlzb2xhdGVkX3BheWxvYWRfY291bnQpKQogICAgZmluYWxseToKICAgICAgICB0b29sX3JlZ2lzdHJ5X21vZHVsZS5Ub29sRGVzY3JpcHRvci5hc19vcGVuYWlfdG9vbCA9IG9yaWdpbmFsX2FzX29wZW5haV90b29sCgogICAgcmV0dXJuIHsKICAgICAgICAiZWxhcHNlZF9tc19tZWFuIjogc3RhdGlzdGljcy5mbWVhbihlbGFwc2VkX3NhbXBsZXMpLAogICAgICAgICJkZXNjcmlwdG9yX2FzX29wZW5haV90b29sX2NhbGxzX21lYW4iOiBzdGF0aXN0aWNzLmZtZWFuKGRlc2NyaXB0b3JfY2FsbHNfc2FtcGxlcyksCiAgICAgICAgImlzb2xhdGVkX3BheWxvYWRfY2FsbHNfbWVhbiI6IHN0YXRpc3RpY3MuZm1lYW4oaXNvbGF0ZWRfcGF5bG9hZF9zYW1wbGVzKSwKICAgICAgICAiY2hlY2tzdW0iOiBmbG9hdChjaGVja3N1bSksCiAgICAgICAgIml0ZXJhdGlvbnMiOiBmbG9hdChpdGVyYXRpb25zKSwKICAgICAgICAic2FtcGxlX2NvdW50IjogZmxvYXQoc2FtcGxlX2NvdW50KSwKICAgIH0KCgpkZWYgbWFpbigpIC0+IGludDoKICAgIGl0ZXJhdGlvbnMgPSBpbnQob3MuZW52aXJvbi5nZXQoIk1FTElYX1RPT0xfUkVHSVNUUllfT1BFTkFJX1RPT0xTX0lURVJBVElPTlMiLCAiNTAwMDAiKSkKICAgIHNhbXBsZV9jb3VudCA9IGludChvcy5lbnZpcm9uLmdldCgiTUVMSVhfVE9PTF9SRUdJU1RSWV9PUEVOQUlfVE9PTFNfU0FNUExFUyIsICI1IikpCiAgICBwcmludChqc29uLmR1bXBzKF9tZWFzdXJlKGl0ZXJhdGlvbnMsIHNhbXBsZV9jb3VudCksIHNvcnRfa2V5cz1UcnVlKSkKICAgIHJldHVybiAwCgoKaWYgX19uYW1lX18gPT0gIl9fbWFpbl9fIjoKICAgIHJhaXNlIFN5c3RlbUV4aXQobWFpbigpKQo=\\\"))\"; fi'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "descriptor_as_openai_tool_calls_mean",
+        "unit": "calls",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "isolated_payload_calls_mean",
+        "unit": "calls",
+        "direction": "higher_is_better",
+        "warn_pct": 0.0
+      }
+    ]
   }
 ]
