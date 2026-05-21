@@ -70,6 +70,13 @@ def test_parse_changed_lines_handles_multiple_files_and_hunks() -> None:
     }
 
 
+def test_parse_hunk_new_start_uses_delimiters_for_counted_and_single_line_ranges() -> None:
+    assert changed_scope_coverage._parse_hunk_new_start("@@ -0,0 +3,2 @@") == 3
+    assert changed_scope_coverage._parse_hunk_new_start("@@ -10 +12 @@") == 12
+    assert changed_scope_coverage._parse_hunk_new_start("@@ -1 +not-a-number @@") is None
+    assert changed_scope_coverage._parse_hunk_new_start("@@ -1 @@") is None
+
+
 def test_changed_lines_by_path_uses_one_batched_git_diff(monkeypatch, tmp_path: Path) -> None:
     observed_commands: list[list[str]] = []
     diff_text = "\n".join(

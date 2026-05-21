@@ -33,18 +33,13 @@ def _parse_hunk_new_start(line: str) -> int | None:
     if new_range_index < 0:
         return None
     digit_index = new_range_index + 2
-    end_index = digit_index
-    line_length = len(line)
-    value = 0
-    while end_index < line_length:
-        digit = ord(line[end_index]) - 48
-        if digit < 0 or digit > 9:
-            break
-        value = value * 10 + digit
-        end_index += 1
-    if end_index == digit_index:
+    end_index = line.find(",", digit_index)
+    if end_index < 0:
+        end_index = line.find(" ", digit_index)
+    try:
+        return int(line[digit_index:end_index])
+    except ValueError:
         return None
-    return value
 
 
 def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
@@ -56,7 +51,11 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
     add_changed_line = None
     new_line: int | None = None
     for line in diff_text.split("\n"):
-        first_char = line[0] if line else ""
+        if not line:
+            if add_changed_line is not None and new_line is not None:
+                new_line += 1
+            continue
+        first_char = line[0]
         if first_char == "d" and line.startswith(header_prefix):
             separator_index = line.find(header_separator, header_prefix_len)
             add_changed_line = None
@@ -71,16 +70,13 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
                 new_line = None
                 continue
             digit_index = new_range_index + 2
-            end_index = digit_index
-            line_length = len(line)
-            value = 0
-            while end_index < line_length:
-                digit = ord(line[end_index]) - 48
-                if digit < 0 or digit > 9:
-                    break
-                value = value * 10 + digit
-                end_index += 1
-            new_line = value if end_index != digit_index else None
+            end_index = line.find(",", digit_index)
+            if end_index < 0:
+                end_index = line.find(" ", digit_index)
+            try:
+                new_line = int(line[digit_index:end_index])
+            except ValueError:
+                new_line = None
             continue
         if add_changed_line is None or new_line is None:
             continue
