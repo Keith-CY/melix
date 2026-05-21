@@ -464,6 +464,14 @@ manifests and sample rows. Later leakage-validation slices should consume that
 metadata and write validation summaries to the existing package contracts rather
 than creating a separate runtime dataset format.
 
+When source-anchored validation is applied, package manifests must include a
+`source_leakage_validation` object with a publishable summary of the checks that
+ran. The summary reports validator names, status, checked row and segment
+counts, split source-id counts when a training validation split exists, and the
+minimum raw-value length used for lexical leakage matching. It must not persist
+raw excluded field values, prompt text, observations, source spans, or other
+payload text that could reintroduce answer leakage into release artifacts.
+
 ## Benchmark Fixture Sources
 
 Benchmark suites may also materialize from repository-owned fixture packages

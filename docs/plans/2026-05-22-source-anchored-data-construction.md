@@ -213,6 +213,37 @@ checks fail. Follow-up slices should add machine-readable summaries in dataset
 manifests and evaluation artifacts before any release-facing claim uses the
 generated data.
 
+Successful source-anchored package materialization must write a
+`source_leakage_validation` summary in the package `manifest.json`. The summary
+must be machine-readable and safe to publish with release evidence. It must not
+include raw excluded field values, prompts, observations, source text spans, or
+secrets.
+
+The summary fields are:
+
+- `schema_version`
+- `status`
+- `output_kind`
+- `validators`
+- `source_row_count`
+- `excluded_field_reference_count`
+- `checked_prompt_segment_count`
+- `checked_observation_segment_count`
+- `minimum_value_length`
+
+Training packages with a validation split also record:
+
+- `train_row_count`
+- `validation_row_count`
+- `train_source_id_count`
+- `validation_source_id_count`
+- `shared_source_id_count`
+
+Evaluation final-result packages record the same summary under their existing
+evaluation package manifest contract. The sample rows keep their per-row
+`source_construction` metadata, but they do not duplicate package-level
+validation totals.
+
 ## Quality Metrics Planned From This Contract
 
 The sample-selection slice should compute:
