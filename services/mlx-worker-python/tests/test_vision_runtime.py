@@ -341,6 +341,16 @@ def test_vision_family_prompt_token_count_clamps_media_minimums() -> None:
     )
 
     assert family_config.prompt_token_count(request) == 2
+    assert not hasattr(family_config, "__dict__")
+
+
+def test_resolved_vision_family_config_uses_slots_for_hot_path_instances() -> None:
+    family_config = resolve_vision_family_config({"vision_family_id": "paligemma-v1"})
+    adapter = vision_family_adapters_module._VISION_FAMILY_ADAPTERS["paligemma-v1"]
+
+    assert not hasattr(family_config, "__dict__")
+    assert not hasattr(adapter, "__dict__")
+    assert not hasattr(adapter.descriptor, "__dict__")
 
 
 def test_generate_streams_vlm_response_from_file_image_uri(tmp_path: Path) -> None:
