@@ -102,14 +102,15 @@ def _verdict_group_sections(summaries: tuple[EvaluationCompareSummary, ...]) -> 
         "",
         "## Release Verdict Groups",
     ]
-    grouped_summary_ids: set[int] = set()
+    handled_verdicts = {
+        verdict for _group_id, _label, verdicts in _VERDICT_GROUPS for verdict in verdicts
+    }
     for _group_id, label, verdicts in _VERDICT_GROUPS:
         grouped = tuple(summary for summary in summaries if summary.verdict in verdicts)
-        grouped_summary_ids.update(id(summary) for summary in grouped)
         lines.extend(_verdict_group_section(label=label, summaries=grouped))
 
     other_summaries = tuple(
-        summary for summary in summaries if id(summary) not in grouped_summary_ids
+        summary for summary in summaries if summary.verdict not in handled_verdicts
     )
     if other_summaries:
         lines.extend(_verdict_group_section(label="Other Verdicts", summaries=other_summaries))
