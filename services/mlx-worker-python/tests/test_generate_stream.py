@@ -406,6 +406,17 @@ def test_generate_without_usage_skips_prompt_token_count_fallback() -> None:
     assert runtime.prompt_token_count_calls == 0
 
 
+def test_resolve_generate_stop_contract_uses_empty_tuple_key_without_stops() -> None:
+    loaded_model: dict[str, object] = {"model_id": "test"}
+    sampling = common_pb2.SamplingConfig(max_output_tokens=4)
+
+    contract = engine_core_module._resolve_generate_stop_contract(loaded_model, sampling, {})
+
+    cache = loaded_model[engine_core_module._ENGINE_STOP_CONTRACT_CACHE_FIELD]
+    assert isinstance(cache, dict)
+    assert cache[()] is contract
+
+
 def test_generate_reuses_stop_contract_for_empty_execution_ext(monkeypatch) -> None:
     runtime = UsageCountingRuntime(prompt_tokens=0)
     inference_service, model_handle = build_usage_counting_services(runtime)
