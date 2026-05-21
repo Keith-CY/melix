@@ -347,6 +347,30 @@ Melix now treats adapter-only export and merged-model export as separate distrib
 Use adapter export when you want a reusable LoRA package for downstream activation. Use merged export
 only when you intentionally want to distribute a fused derived model directory.
 
+### Required Compare Bundle Before Publishing Or Promotion
+
+Before publishing or promoting a LoRA adapter, inspect `train_lora.adapter.json` and confirm the
+adapter is backed by a release compare evidence bundle:
+
+1. `release_compare_bundle_policy.schema_version` is
+   `melix.lora_release_compare_bundle_policy.v1`.
+2. `release_compare_in_domain_suite_ids` names the target-domain suites that the adapter is
+   expected to improve.
+3. `release_compare_guard_suite_ids` names the regression-guard suites that must not degrade.
+4. `release_compare_thresholds` covers each required suite, either explicitly or through
+   `release_compare_default_threshold`.
+5. `release_compare_minimum_sample_counts` covers each required suite, either explicitly or
+   through `release_compare_default_minimum_sample_count`.
+6. Paired base-vs-adapter compare artifacts for those suites are attached to the release evidence
+   and identify the base model, adapter manifest path, dataset lineage, metric deltas, and verdicts.
+
+Do not treat a published or promoted adapter candidate as release-ready when the compare policy is
+empty for the target release, when paired compare artifacts are missing, or when the compare
+verdicts are not yet available. Exploratory local adapters may intentionally skip release gating,
+but their release evidence must record that the artifact is not promotion-ready. This runbook
+requirement remains operator-enforced until the later compare-execution and release-gate milestones
+make those checks automatic.
+
 Adapter publish request:
 
 ```json
