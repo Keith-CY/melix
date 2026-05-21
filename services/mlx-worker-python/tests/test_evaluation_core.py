@@ -1095,6 +1095,160 @@ def test_run_local_suite_writes_agentic_judge_prompt_snapshot_and_audit(
     assert {"agentic_judge_prompt_snapshot", "agentic_judge_audit"}.issubset(artifact_roles)
 
 
+def test_agentic_judge_prompt_snapshot_rejects_hidden_gold_context() -> None:
+    sample_record = build_evaluation_sample_record(
+        job_id="eval-1",
+        suite_id="agentic_multihop_qa",
+        dataset_id="agentic-judge-dev",
+        sample_id="agentic-judge-leak",
+        system="",
+        input_text="What text is visible?",
+        target="MELIX",
+        raw_response="Answer: MELIX",
+        extracted_result="MELIX",
+        typed_score=1.0,
+        time_s=0.1,
+        extraction_status="extracted",
+        validation_status="validated",
+        failure_reason="",
+        task_kind="image-text-to-text",
+        tool_calls=(
+            {
+                "id": "crop-1",
+                "name": "image_crop",
+                "arguments": {"media_ref": "img-1", "answer_key": "MELIX"},
+            },
+        ),
+        final_answer="MELIX",
+        parse_status="extracted",
+        agentic_tool_observations=(
+            {
+                "tool_call_id": "crop-1",
+                "status": "completed",
+                "payload": {"hidden_gold": "MELIX"},
+            },
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"agentic judge context contains forbidden field "
+        r"tool_calls\[0\]\.arguments\.answer_key",
+    ):
+        EvaluationCore._agentic_judge_prompt_snapshot_row(
+            job_id="eval-1",
+            suite_id="agentic_multihop_qa",
+            dataset_id="agentic-judge-dev",
+            agentic_suite_family="melix.agentic_multimodal_evaluation.dev.v1",
+            scoring_mode="normalized_exact_match",
+            sample={
+                "id": "agentic-judge-leak",
+                "question": "What text is visible?",
+                "expected": "MELIX",
+                "media_refs": [{"id": "img-1", "kind": "image", "uri": "media/sign.ppm"}],
+                "evidence_ids": ["img-1#sign"],
+                "allowed_tools": ["image_crop"],
+            },
+            sample_record=sample_record,
+        )
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_path"),
+    (
+        (
+            {"tool_calls": [{"arguments": {"provider_credentials": {"api_key": "sk-test"}}}]},
+            "tool_calls[0].arguments.provider_credentials",
+        ),
+        (
+            {"tool_calls": [{"arguments": {"remote_base_url": "https://judge.example/v1"}}]},
+            "tool_calls[0].arguments.remote_base_url",
+        ),
+        (
+            {"tool_observations": [{"payload": {"answer_rationale": "shortcut"}}]},
+            "tool_observations[0].payload.answer_rationale",
+        ),
+        (
+            {"media_refs": [{"base_url": "https://assets.example"}]},
+            "media_refs[0].base_url",
+        ),
+        (
+            {"tool_observations": [{"payload": {"leakage_terms": ["SECRET"]}}]},
+            "tool_observations[0].payload.leakage_terms",
+        ),
+    ),
+)
+def test_agentic_judge_payload_no_leak_validator_rejects_forbidden_keys(
+    payload: dict[str, object],
+    expected_path: str,
+) -> None:
+    user_payload: dict[str, object] = {
+        "question": "What text is visible?",
+        "expected_answer": "MELIX",
+        "final_answer": "MELIX",
+        "parse_status": "extracted",
+        "scoring_mode": "normalized_exact_match",
+        "evidence_ids": ["img-1#sign"],
+        "media_refs": [],
+        "tool_calls": [],
+        "tool_observations": [],
+    }
+    user_payload.update(payload)
+
+    with pytest.raises(ValueError) as exc_info:
+        EvaluationCore._validate_agentic_judge_user_payload(user_payload)
+    assert str(exc_info.value) == f"agentic judge context contains forbidden field {expected_path}"
+
+
+def test_agentic_judge_payload_no_leak_validator_allows_explicit_answer_values() -> None:
+    EvaluationCore._validate_agentic_judge_user_payload(
+        {
+            "question": "What text is visible?",
+            "expected_answer": "MELIX",
+            "final_answer": "MELIX",
+            "parse_status": "extracted",
+            "scoring_mode": "normalized_exact_match",
+            "evidence_ids": ["img-1#sign"],
+            "media_refs": [{"id": "img-1", "kind": "image", "uri": "media/sign.ppm"}],
+            "tool_calls": [
+                {
+                    "id": "crop-1",
+                    "name": "image_crop",
+                    "arguments": {"media_ref": "img-1", "region": "sign"},
+                },
+            ],
+            "tool_observations": [
+                {
+                    "tool_call_id": "crop-1",
+                    "status": "completed",
+                    "payload": {"text": "MELIX", "evidence_ids": ["img-1#sign"]},
+                },
+            ],
+        }
+    )
+
+
+def test_agentic_judge_payload_no_leak_validator_rejects_extra_payload_fields() -> None:
+    with pytest.raises(
+        ValueError,
+        match="agentic judge context contains unsupported user payload fields: hidden_gold",
+    ):
+        EvaluationCore._validate_agentic_judge_user_payload(
+            {
+                "question": "What text is visible?",
+                "expected_answer": "MELIX",
+                "final_answer": "MELIX",
+                "parse_status": "extracted",
+                "scoring_mode": "normalized_exact_match",
+                "evidence_ids": ["img-1#sign"],
+                "media_refs": [],
+                "tool_calls": [],
+                "tool_observations": [],
+                "hidden_gold": "MELIX",
+            }
+        )
+
+
 def test_run_local_suite_returns_agentic_judge_artifacts_without_jobs_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
