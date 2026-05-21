@@ -2136,8 +2136,9 @@ def _collect_prompt_completion_token_counts(
 
     for sample in samples:
         sample_count += 1
-        prompt_count = len(str(sample.get("prompt", "")).split())
-        completion_count = len(str(sample.get("completion", "")).split())
+        sample_get = sample.get
+        prompt_count = len(str(sample_get("prompt", "")).split())
+        completion_count = len(str(sample_get("completion", "")).split())
         total_count = prompt_count + completion_count
         prompt_token_sum += prompt_count
         completion_token_sum += completion_count
