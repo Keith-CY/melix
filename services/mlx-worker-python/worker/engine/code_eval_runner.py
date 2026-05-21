@@ -394,6 +394,9 @@ _JSON_PAYLOAD_WHITESPACE = b" \t\r\n"
 
 def _json_object_payload_bounds(payload_bytes: bytes) -> tuple[int, int] | None:
     payload_length = len(payload_bytes)
+    if payload_length >= 2 and payload_bytes[0] == ord("{") and payload_bytes[-1] == ord("}"):
+        return 0, payload_length - 1
+
     start = 0
     while start < payload_length and payload_bytes[start] in _JSON_PAYLOAD_WHITESPACE:
         start += 1
