@@ -68,12 +68,14 @@ class DeterministicOCRRuntime:
         images = prepared_request.images
         prompt_tokens = _whitespace_token_count(prepared_request.prompt_text)
         if len(images) == 1 and not prepared_request.videos:
-            return max(
-                1,
-                prompt_tokens + max(1, prepared_request.preprocess_input_bytes // 8),
-            )
+            input_tokens = prepared_request.preprocess_input_bytes // 8
+            if input_tokens < 1:
+                input_tokens = 1
+            return prompt_tokens + input_tokens
         image_tokens = sum(max(1, image.byte_length // 8) for image in images)
-        return max(1, prompt_tokens + image_tokens)
+        if image_tokens:
+            return prompt_tokens + image_tokens
+        return max(1, prompt_tokens)
 
     def generate_tokens(
         self,
