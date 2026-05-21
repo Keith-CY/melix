@@ -1197,6 +1197,14 @@ The persisted sample evidence remains the authoritative execution record:
 `agentic_tool.*` metrics, including call count, completed/timeout/failed status
 counts, observation emitted bytes, observation count, and tool latency.
 
+Each persisted evaluation sample row must also be self-contained for trajectory
+audit. When the source sample provides raw `tool_calls`, the row must preserve
+those raw calls alongside executed `agentic_tool_observations`, the scored
+`final_answer`, the `parse_status` that produced that answer, and the
+`failure_stage` classification. These fields make the sample JSONL sufficient
+for report bundles and follow-up alignment analysis without reconstructing
+state from prompts or terminal logs.
+
 ### Evaluation Dataset Contract
 
 Melix evaluation executes only against repository-owned evaluation dataset packages.
@@ -1440,11 +1448,13 @@ Each sample-level row must include:
 - `id`
 - `target`
 - `extracted_result`
+- `final_answer`
 - `input_text`
 - `raw_response`
 - `typed_score`
 - `time_s`
 - `extraction_status`
+- `parse_status`
 - `validation_status`
 - `failure_reason`
 - `input_modalities`
@@ -1516,11 +1526,13 @@ export, and compare workflows.
 - `id`
 - `target`
 - `extracted_result`
+- `final_answer`
 - `input_text`
 - `raw_response`
 - `typed_score`
 - `time_s`
 - `extraction_status`
+- `parse_status`
 - `validation_status`
 - `failure_reason`
 - `input_modalities`

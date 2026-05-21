@@ -166,10 +166,19 @@ def test_build_evaluation_sample_record_preserves_sample_payload() -> None:
         "raw_response_chars": 1,
         "extracted_result_chars": 1,
         "failure_stage": "",
+        "final_answer": "4",
+        "parse_status": "extracted",
     }
 
 
 def test_build_evaluation_sample_record_preserves_agentic_tool_evidence() -> None:
+    raw_tool_calls = (
+        {
+            "id": "call-1",
+            "name": "image_crop",
+            "arguments": {"media_ref": "img-1", "region": "sign"},
+        },
+    )
     sample = build_evaluation_sample_record(
         job_id="eval-1",
         suite_id="agentic",
@@ -185,6 +194,9 @@ def test_build_evaluation_sample_record_preserves_agentic_tool_evidence() -> Non
         extraction_status="extracted",
         validation_status="validated",
         failure_reason="",
+        tool_calls=raw_tool_calls,
+        final_answer="MELIX",
+        parse_status="parsed_answer_prefix",
         agentic_tool_registry={"toolset_version": "melix.agentic_tools.builtin.v1"},
         agentic_tool_calls=({"id": "call-1", "name": "image_crop", "arguments": {"media_ref": "img-1"}},),
         agentic_tool_observations=({"status": "completed", "payload": {"text": "MELIX"}},),
@@ -193,6 +205,9 @@ def test_build_evaluation_sample_record_preserves_agentic_tool_evidence() -> Non
 
     payload = sample.to_dict()
 
+    assert payload["tool_calls"] == [dict(raw_tool_calls[0])]
+    assert payload["final_answer"] == "MELIX"
+    assert payload["parse_status"] == "parsed_answer_prefix"
     assert payload["agentic_tool_registry"]["toolset_version"] == "melix.agentic_tools.builtin.v1"
     assert payload["agentic_tool_calls"][0]["name"] == "image_crop"
     assert payload["agentic_tool_observations"][0]["payload"]["text"] == "MELIX"
@@ -378,6 +393,8 @@ def test_build_evaluation_sample_record_preserves_multimodal_evidence_fields() -
         "raw_response_chars": 11,
         "extracted_result_chars": 3,
         "failure_stage": "",
+        "final_answer": "Cat",
+        "parse_status": "extracted",
     }
 
 

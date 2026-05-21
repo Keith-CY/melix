@@ -795,6 +795,18 @@ def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path:
 
 
 def test_run_local_suite_persists_agentic_tool_evidence(tmp_path: Path) -> None:
+    raw_tool_calls = [
+        {
+            "id": "crop-1",
+            "name": "image_crop",
+            "arguments": {"media_ref": "img-1", "region": "sign"},
+        },
+        {
+            "id": "compute-1",
+            "name": "local_compute",
+            "arguments": {"code": "2 + 2"},
+        },
+    ]
     dataset_root = _write_dataset_package(
         tmp_path=tmp_path,
         dataset_id="agentic-dev",
@@ -804,18 +816,7 @@ def test_run_local_suite_persists_agentic_tool_evidence(tmp_path: Path) -> None:
                 "id": "agentic-1",
                 "prompt": "What is visible?",
                 "expected": "MELIX",
-                "tool_calls": [
-                    {
-                        "id": "crop-1",
-                        "name": "image_crop",
-                        "arguments": {"media_ref": "img-1", "region": "sign"},
-                    },
-                    {
-                        "id": "compute-1",
-                        "name": "local_compute",
-                        "arguments": {"code": "2 + 2"},
-                    },
-                ],
+                "tool_calls": raw_tool_calls,
                 "tool_fixture_context": {
                     "crops": {"img-1#sign": {"text": "MELIX"}},
                 },
@@ -849,8 +850,17 @@ def test_run_local_suite_persists_agentic_tool_evidence(tmp_path: Path) -> None:
 
     assert run.samples[0].agentic_tool_metrics["agentic_tool.call_count"] == 2.0
     assert run.samples[0].agentic_tool_observations[0]["payload"]["text"] == "MELIX"
+    assert run.samples[0].tool_calls == tuple(dict(call) for call in raw_tool_calls)
+    assert run.samples[0].final_answer == "MELIX"
+    assert run.samples[0].parse_status == "parsed_answer_prefix"
+    assert run.samples[0].failure_stage == ""
     assert metrics["eval.mmlu.agentic_tool.call_count"] == 2.0
     assert metrics["eval.mmlu.agentic_tool.completed_count"] == 2.0
+    assert persisted_samples[0]["tool_calls"] == raw_tool_calls
+    assert persisted_samples[0]["agentic_tool_observations"][0]["tool_call_id"] == "crop-1"
+    assert persisted_samples[0]["final_answer"] == "MELIX"
+    assert persisted_samples[0]["parse_status"] == "parsed_answer_prefix"
+    assert persisted_samples[0]["failure_stage"] == ""
     assert persisted_samples[0]["agentic_tool_calls"][0]["name"] == "image_crop"
     assert persisted_samples[0]["agentic_tool_registry"]["toolset_version"] == "melix.agentic_tools.builtin.v1"
 

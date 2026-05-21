@@ -1996,6 +1996,8 @@ def test_evaluation_csv_builders_return_header_only_for_empty_bundle() -> None:
     assert samples_lines[0].startswith(
         "job_id,suite_id,id,task_kind,target,extracted_result,input_text,raw_response,typed_score,time_s,extraction_status,validation_status,failure_reason,input_modalities,media_references,code_language,code_entry_point,code_compile_status,code_runtime_status,code_timeout_status,code_test_status,code_tests_passed,code_tests_total,code_failure_detail,category_label,subject_label"
     )
+    assert "final_answer" in samples_lines[0].split(",")
+    assert "parse_status" in samples_lines[0].split(",")
     assert len(compare_summary_lines) == 1
     assert compare_summary_lines[0].startswith("job_id,base_model_id,target_model_id")
     assert len(compare_samples_lines) == 1
@@ -2043,11 +2045,33 @@ def test_evaluation_samples_csv_builder_maps_sample_id_and_preserves_modalities(
     assert rows[0]["task_kind"] == "text-generation"
     assert rows[0]["target"] == "identity"
     assert rows[0]["extracted_result"] == "def identity(x):\n    return x"
+    assert rows[0]["final_answer"] == "def identity(x):\n    return x"
     assert rows[0]["input_text"] == "Write identity(x) that returns x."
     assert rows[0]["typed_score"] == "1.0"
     assert rows[0]["extraction_status"] == "extracted"
+    assert rows[0]["parse_status"] == "parsed_code_block"
     assert rows[0]["validation_status"] == "validated"
     assert rows[0]["input_modalities"] == "text"
+
+
+def test_evaluation_samples_csv_builder_backfills_legacy_parse_status() -> None:
+    bundle: dict[str, object] = {
+        "evaluation_samples": [
+            {
+                "job_id": "eval-legacy",
+                "sample_id": "sample-legacy",
+                "predicted": "4",
+                "extraction_status": "parsed_legacy",
+            }
+        ]
+    }
+
+    rows = list(csv.DictReader(io.StringIO(build_evaluation_samples_csv(bundle))))
+
+    assert rows[0]["extracted_result"] == "4"
+    assert rows[0]["final_answer"] == "4"
+    assert rows[0]["extraction_status"] == "parsed_legacy"
+    assert rows[0]["parse_status"] == "parsed_legacy"
 
 
 def test_export_csv_builders_preserve_trajectory_provenance_columns() -> None:

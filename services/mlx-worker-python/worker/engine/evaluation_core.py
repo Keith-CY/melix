@@ -2683,7 +2683,11 @@ class EvaluationCore:
         agentic_tool_metrics: dict[str, float] = {}
         agentic_tool_trace_turns: tuple[dict[str, object], ...] = ()
         raw_tool_calls = sample.get("tool_calls")
+        persisted_tool_calls: tuple[dict[str, object], ...] = ()
         if isinstance(raw_tool_calls, list) and raw_tool_calls:
+            persisted_tool_calls = tuple(
+                dict(call) for call in raw_tool_calls if isinstance(call, dict)
+            )
             tool_run = execute_agentic_tool_calls(
                 raw_tool_calls,
                 fixture_context=EvaluationCore._sample_tool_fixture_context(
@@ -2768,6 +2772,9 @@ class EvaluationCore:
                 raw_response_chars=len(raw_response),
                 extracted_result_chars=0,
                 failure_stage="inference",
+                tool_calls=persisted_tool_calls,
+                final_answer="",
+                parse_status="unsupported_multimodal_offline",
                 agentic_tool_registry=agentic_tool_registry,
                 agentic_tool_calls=agentic_tool_calls,
                 agentic_tool_observations=agentic_tool_observations,
@@ -2778,6 +2785,7 @@ class EvaluationCore:
         typed_score = 0.0
         validation_status = "not_validated"
         failure_reason = ""
+        parse_status = ""
         extraction_ms = 0.0
         validation_ms = 0.0
         scoring_ms = 0.0
@@ -2904,6 +2912,9 @@ class EvaluationCore:
             raw_response_chars=len(raw_response),
             extracted_result_chars=len(extracted_result),
             failure_stage=failure_stage,
+            tool_calls=persisted_tool_calls,
+            final_answer=extracted_result,
+            parse_status=parse_status or extraction_status,
             agentic_tool_registry=agentic_tool_registry,
             agentic_tool_calls=agentic_tool_calls,
             agentic_tool_observations=agentic_tool_observations,

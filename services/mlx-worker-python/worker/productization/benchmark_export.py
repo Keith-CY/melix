@@ -1122,12 +1122,14 @@ def _canonical_evaluation_sample_columns() -> list[str]:
         "raw_response_chars",
         "extracted_result_chars",
         "failure_stage",
+        "final_answer",
+        "parse_status",
         *TRAJECTORY_PROVENANCE_CSV_FIELDS,
     ]
 
 
 def _normalized_evaluation_sample_row(row: dict[str, object]) -> dict[str, object]:
-    parse_status = row.get("parse_status", "")
+    parse_status = row.get("parse_status", row.get("extraction_status", ""))
     typed_score = row.get("typed_score")
     if typed_score is None:
         typed_score = 1.0 if row.get("correct", False) else 0.0
@@ -1172,6 +1174,8 @@ def _normalized_evaluation_sample_row(row: dict[str, object]) -> dict[str, objec
             len(str(row.get("extracted_result", row.get("predicted", "")))),
         ),
         "failure_stage": row.get("failure_stage", ""),
+        "final_answer": row.get("final_answer", row.get("extracted_result", row.get("predicted", ""))),
+        "parse_status": parse_status,
         **{
             field_name: row.get(field_name, "")
             for field_name in TRAJECTORY_PROVENANCE_CSV_FIELDS
