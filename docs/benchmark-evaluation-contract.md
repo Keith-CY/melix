@@ -1248,6 +1248,18 @@ question, expected answer, model final answer, parse status, scoring mode,
 evidence ids, media refs, raw tool calls, and executed tool observations. It
 must not include API keys, remote base URLs, or provider credentials.
 
+The judge user payload is the no-leak boundary for later judge-backed scoring.
+It may contain only these fields: `question`, `expected_answer`,
+`final_answer`, `parse_status`, `scoring_mode`, `evidence_ids`, `media_refs`,
+`tool_calls`, and `tool_observations`. The `expected_answer` field is the only
+gold-answer input allowed in judge context beyond the rubric. Sample-derived
+media refs, raw tool calls, and executed tool observations must be rejected
+before prompt snapshot persistence when any nested key names hidden gold,
+answer keys, reference solutions, provider credentials, API keys, tokens,
+passwords, or remote base URLs. Literal answer text remains allowed as a value
+inside `expected_answer`, `final_answer`, and executed observations because
+those fields are part of the explicit scoring boundary.
+
 `agentic-judge-audit.jsonl` is one JSON object per selected sample. Each row
 must include:
 

@@ -147,6 +147,54 @@ _AGENTIC_JUDGE_RUBRIC = (
     "semantically equivalent final answers when the executed tool observations "
     "support them; reject unsupported, contradictory, or incomplete answers."
 )
+_AGENTIC_JUDGE_USER_PAYLOAD_FIELDS = frozenset(
+    (
+        "question",
+        "expected_answer",
+        "final_answer",
+        "parse_status",
+        "scoring_mode",
+        "evidence_ids",
+        "media_refs",
+        "tool_calls",
+        "tool_observations",
+    )
+)
+_AGENTIC_JUDGE_FORBIDDEN_CONTEXT_KEYS = frozenset(
+    (
+        "accesstoken",
+        "answerkey",
+        "answerrationale",
+        "apikey",
+        "authorization",
+        "baseurl",
+        "bearertoken",
+        "credential",
+        "credentials",
+        "developerprompt",
+        "fewshotexamples",
+        "goldanswer",
+        "goldlabel",
+        "gradernotes",
+        "hiddengold",
+        "judgenotes",
+        "leakageterms",
+        "password",
+        "privatenotes",
+        "prompttemplate",
+        "providercredential",
+        "providercredentials",
+        "referenceanswer",
+        "referencesolution",
+        "remotebaseurl",
+        "scoringnotes",
+        "secret",
+        "secretkey",
+        "solution",
+        "systemprompt",
+        "token",
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -2306,6 +2354,7 @@ class EvaluationCore:
             "tool_calls": tool_calls,
             "tool_observations": tool_observations,
         }
+        EvaluationCore._validate_agentic_judge_user_payload(user_payload)
         return {
             "schema_version": _AGENTIC_JUDGE_PROMPT_SNAPSHOT_SCHEMA_VERSION,
             "job_id": job_id,
@@ -2366,6 +2415,40 @@ class EvaluationCore:
             "error_code": "",
             "failure_reason": sample_record.failure_reason,
         }
+
+    @staticmethod
+    def _validate_agentic_judge_user_payload(user_payload: dict[str, object]) -> None:
+        unsupported_fields = sorted(set(user_payload) - _AGENTIC_JUDGE_USER_PAYLOAD_FIELDS)
+        if unsupported_fields:
+            raise ValueError(
+                "agentic judge context contains unsupported user payload fields: "
+                + ", ".join(unsupported_fields)
+            )
+        for field_path, field_name in EvaluationCore._iter_json_field_paths(user_payload):
+            if EvaluationCore._agentic_judge_context_key_is_forbidden(field_name):
+                raise ValueError(f"agentic judge context contains forbidden field {field_path}")
+
+    @staticmethod
+    def _iter_json_field_paths(
+        value: object,
+        *,
+        prefix: str = "",
+    ) -> Iterable[tuple[str, str]]:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                key_text = str(key)
+                field_path = f"{prefix}.{key_text}" if prefix else key_text
+                yield field_path, key_text
+                yield from EvaluationCore._iter_json_field_paths(item, prefix=field_path)
+        elif isinstance(value, (list, tuple)):
+            for index, item in enumerate(value):
+                item_prefix = f"{prefix}[{index}]" if prefix else f"[{index}]"
+                yield from EvaluationCore._iter_json_field_paths(item, prefix=item_prefix)
+
+    @staticmethod
+    def _agentic_judge_context_key_is_forbidden(field_name: str) -> bool:
+        normalized = "".join(char for char in field_name.lower() if char.isalnum())
+        return normalized in _AGENTIC_JUDGE_FORBIDDEN_CONTEXT_KEYS
 
     @staticmethod
     def _agentic_sample_question(
