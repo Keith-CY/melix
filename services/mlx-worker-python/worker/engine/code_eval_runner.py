@@ -299,10 +299,11 @@ def _count_assert_nodes(
 def _count_nonblank_test_lines(test_code: str) -> int:
     count = 0
     in_line = False
+    is_space = str.isspace
     for char in test_code:
         if char in "\r\n":
             in_line = False
-        elif not in_line and not char.isspace():
+        elif not in_line and not is_space(char):
             count += 1
             in_line = True
     return count
