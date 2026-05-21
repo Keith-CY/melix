@@ -28,18 +28,23 @@ def _parse_diff_header_new_path(line: str) -> str | None:
     return line[separator_index + len(_DIFF_HEADER_SEPARATOR) :]
 
 
-def _parse_hunk_new_start(line: str) -> int | None:
-    new_range_index = line.find(" +")
-    if new_range_index < 0:
-        return None
-    digit_index = new_range_index + 2
+def _parse_hunk_new_start_from_digit(line: str, digit_index: int) -> int | None:
     end_index = line.find(",", digit_index)
     if end_index < 0:
         end_index = line.find(" ", digit_index)
+    if end_index < 0:
+        return None
     try:
         return int(line[digit_index:end_index])
     except ValueError:
         return None
+
+
+def _parse_hunk_new_start(line: str) -> int | None:
+    new_range_index = line.find(" +")
+    if new_range_index < 0:
+        return None
+    return _parse_hunk_new_start_from_digit(line, new_range_index + 2)
 
 
 def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
@@ -69,14 +74,7 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
             if new_range_index < 0:
                 new_line = None
                 continue
-            digit_index = new_range_index + 2
-            end_index = line.find(",", digit_index)
-            if end_index < 0:
-                end_index = line.find(" ", digit_index)
-            try:
-                new_line = int(line[digit_index:end_index])
-            except ValueError:
-                new_line = None
+            new_line = _parse_hunk_new_start_from_digit(line, new_range_index + 2)
             continue
         if add_changed_line is None or new_line is None:
             continue
