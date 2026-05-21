@@ -22,7 +22,7 @@ class MultimodalPreprocessError(ValueError):
     pass
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class PreparedImageInput:
     bytes_data: bytes
     source_kind: str
