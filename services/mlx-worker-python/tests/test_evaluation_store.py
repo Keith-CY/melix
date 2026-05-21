@@ -306,6 +306,61 @@ def test_persist_result_defaults_to_no_op_telemetry(tmp_path: Path) -> None:
     assert {probe["status"] for probe in telemetry_probes} == {"skipped"}
 
 
+def test_persist_result_includes_extra_artifact_paths_in_evidence(tmp_path: Path) -> None:
+    store = EvaluationStore(telemetry_collector=fixture_telemetry_collector())
+    jobs_root = tmp_path / "evaluation"
+    run_root = jobs_root / "runs" / "eval-extra-artifacts"
+    audit_path = run_root / "agentic-judge-audit.jsonl"
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_path.write_text(
+        '{"schema_version":"melix.agentic_judge_audit.v1"}\n',
+        encoding="utf-8",
+    )
+    job = build_evaluation_job_record(
+        job_id="eval-extra-artifacts",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="HuggingFaceH4/ultrachat_200k",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_size=0,
+        scoring_mode="deterministic_accuracy",
+        parameters={},
+        status="completed",
+        output_dir=str(run_root),
+        created_at_unix_ms=101,
+        updated_at_unix_ms=202,
+    )
+    result = build_evaluation_result_record(
+        job_id="eval-extra-artifacts",
+        suite_id="mmlu",
+        dataset_id="mmlu-dev",
+        sample_size=0,
+        primary_score_name="normalized_exact_match",
+        primary_score_value=0.0,
+        extraction_success_count=0,
+        validation_success_count=0,
+        scored_sample_count=0,
+        failure_count=0,
+        duration_seconds=0.0,
+        metrics={},
+        report_path=str(run_root / "evaluation-result.json"),
+        units={},
+    )
+
+    persisted = store.persist_result(
+        jobs_root=jobs_root,
+        job=job,
+        result=result,
+        extra_artifact_paths={"agentic_judge_audit": audit_path},
+    )
+
+    assert persisted["agentic_judge_audit"] == audit_path
+    evidence = json.loads(persisted["evidence"].read_text(encoding="utf-8"))
+    artifacts_by_role = {artifact["role"]: artifact for artifact in evidence["artifacts"]}
+    assert artifacts_by_role["agentic_judge_audit"]["path"] == "agentic-judge-audit.jsonl"
+
+
 def test_evaluation_store_evidence_policy_uses_full_collector() -> None:
     store = EvaluationStore(probe_policy=ProbePolicy(mode=ProbeMode.EVIDENCE))
 

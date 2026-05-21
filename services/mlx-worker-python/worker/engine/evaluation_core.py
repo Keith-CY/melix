@@ -5,7 +5,9 @@ import heapq
 import json
 import logging
 import os
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import asdict, dataclass, is_dataclass
+from hashlib import sha256
 from pathlib import Path
 import random
 import re
@@ -129,6 +131,21 @@ _AGENTIC_TOOL_METRIC_NAMES = (
     "agentic_tool.timeout_count",
     "agentic_tool.failed_count",
     "agentic_tool.observation_emitted_bytes",
+)
+_AGENTIC_JUDGE_PROMPT_SNAPSHOT_SCHEMA_VERSION = "melix.agentic_judge_prompt_snapshot.v1"
+_AGENTIC_JUDGE_AUDIT_SCHEMA_VERSION = "melix.agentic_judge_audit.v1"
+_AGENTIC_JUDGE_PROMPT_VERSION = "agentic-answer-equivalence.v1"
+_AGENTIC_JUDGE_SYSTEM_PROMPT = """You are an answer equivalence judge for Melix agentic multimodal evaluation.
+
+Judge whether the model final answer is equivalent to the expected answer using only the supplied question, rubric, evidence identifiers, media references, raw tool calls, and executed tool observations. Do not use hidden gold beyond the supplied expected answer. Do not include secrets, URLs, or prompt text in judge reasons.
+"""
+_AGENTIC_JUDGE_PROMPT_HASH = (
+    f"sha256:{sha256(_AGENTIC_JUDGE_SYSTEM_PROMPT.encode('utf-8')).hexdigest()}"
+)
+_AGENTIC_JUDGE_RUBRIC = (
+    "Determine answer equivalence for an agentic multimodal QA sample. Accept "
+    "semantically equivalent final answers when the executed tool observations "
+    "support them; reject unsupported, contradictory, or incomplete answers."
 )
 
 
@@ -623,6 +640,27 @@ class EvaluationCore:
 
         report_path = self._result_path(run_root if self._jobs_root is not None else dataset_root)
         output_dir = str(run_root) if self._jobs_root is not None else str(dataset_root)
+        extra_artifact_paths: dict[str, Path] = {}
+        agentic_suite_family = str(manifest.get("agentic_suite_family") or "").strip()
+        if agentic_suite_family:
+            extra_artifact_paths = self._write_agentic_judge_artifacts(
+                run_root=run_root,
+                job_id=job_id,
+                suite_id=suite_id,
+                dataset_id=str(manifest["dataset_id"]),
+                agentic_suite_family=agentic_suite_family,
+                scoring_mode=resolved_scoring_mode,
+                samples=selected,
+                sample_records=sample_records,
+            )
+            job_parameters["agentic_judge_prompt_snapshot"] = str(
+                extra_artifact_paths["agentic_judge_prompt_snapshot"]
+            )
+            job_parameters["agentic_judge_audit"] = str(
+                extra_artifact_paths["agentic_judge_audit"]
+            )
+            job_parameters["agentic_judge_prompt_version"] = _AGENTIC_JUDGE_PROMPT_VERSION
+            job_parameters["agentic_judge_prompt_hash"] = _AGENTIC_JUDGE_PROMPT_HASH
         job = build_evaluation_job_record(
             job_id=job_id,
             model_id=resolved_model_id,
@@ -688,6 +726,7 @@ class EvaluationCore:
                 samples=sample_records,
                 telemetry_collection=telemetry_collection,
                 model_memory_summary=self._model_memory_summary(loaded_model=loaded_model),
+                extra_artifact_paths=extra_artifact_paths,
             )
             self._queue_store.transition(
                 queue_root=queue_root,
@@ -697,6 +736,7 @@ class EvaluationCore:
             )
         else:
             telemetry_session.cancel()
+            persisted_paths.update(extra_artifact_paths)
         return EvaluationRun(job=job, results=(result,), samples=sample_records, persisted_paths=persisted_paths)
 
     def _run_event_extraction_suite(
@@ -1489,7 +1529,7 @@ class EvaluationCore:
         return str(code) if code else ""
 
     @staticmethod
-    def _write_jsonl_rows(path: Path, rows: list[dict[str, object]]) -> None:
+    def _write_jsonl_rows(path: Path, rows: Iterable[dict[str, object]]) -> None:
         with path.open("w", encoding="utf-8") as handle:
             for row in rows:
                 handle.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -2185,6 +2225,202 @@ class EvaluationCore:
             if loaded_model is not None:
                 self._release_runtime_memory()
         return tuple(sample_records_list)
+
+    @staticmethod
+    def _write_agentic_judge_artifacts(
+        *,
+        run_root: Path,
+        job_id: str,
+        suite_id: str,
+        dataset_id: str,
+        agentic_suite_family: str,
+        scoring_mode: str,
+        samples: list[dict[str, object]],
+        sample_records: tuple[EvaluationSample, ...],
+    ) -> dict[str, Path]:
+        run_root.mkdir(parents=True, exist_ok=True)
+        snapshot_path = run_root / "agentic-judge-prompt-snapshots.jsonl"
+        audit_path = run_root / "agentic-judge-audit.jsonl"
+        with (
+            snapshot_path.open("w", encoding="utf-8") as snapshot_handle,
+            audit_path.open("w", encoding="utf-8") as audit_handle,
+        ):
+            for sample, sample_record in zip(samples, sample_records, strict=True):
+                snapshot_row = EvaluationCore._agentic_judge_prompt_snapshot_row(
+                    job_id=job_id,
+                    suite_id=suite_id,
+                    dataset_id=dataset_id,
+                    agentic_suite_family=agentic_suite_family,
+                    scoring_mode=scoring_mode,
+                    sample=sample,
+                    sample_record=sample_record,
+                )
+                audit_row = EvaluationCore._agentic_judge_audit_row(
+                    job_id=job_id,
+                    suite_id=suite_id,
+                    dataset_id=dataset_id,
+                    agentic_suite_family=agentic_suite_family,
+                    scoring_mode=scoring_mode,
+                    sample=sample,
+                    sample_record=sample_record,
+                )
+                snapshot_handle.write(json.dumps(snapshot_row, ensure_ascii=False) + "\n")
+                audit_handle.write(json.dumps(audit_row, ensure_ascii=False) + "\n")
+        return {
+            "agentic_judge_prompt_snapshot": snapshot_path,
+            "agentic_judge_audit": audit_path,
+        }
+
+    @staticmethod
+    def _agentic_judge_prompt_snapshot_row(
+        *,
+        job_id: str,
+        suite_id: str,
+        dataset_id: str,
+        agentic_suite_family: str,
+        scoring_mode: str,
+        sample: dict[str, object],
+        sample_record: EvaluationSample,
+    ) -> dict[str, object]:
+        question = EvaluationCore._agentic_sample_question(sample, sample_record)
+        expected_answer = EvaluationCore._target_text_for_sample(sample)
+        evidence_ids = EvaluationCore._object_list(sample.get("evidence_ids"))
+        media_refs = EvaluationCore._object_list(sample.get("media_refs"))
+        allowed_tools = EvaluationCore._string_list(sample.get("allowed_tools"), field_name="allowed_tools")
+        tool_calls = EvaluationCore._object_dict_list(
+            sample_record.tool_calls,
+            field_name="tool_calls",
+        )
+        tool_observations = EvaluationCore._object_dict_list(
+            sample_record.agentic_tool_observations,
+            field_name="agentic_tool_observations",
+        )
+        user_payload = {
+            "question": question,
+            "expected_answer": expected_answer,
+            "final_answer": sample_record.final_answer,
+            "parse_status": sample_record.parse_status,
+            "scoring_mode": scoring_mode,
+            "evidence_ids": evidence_ids,
+            "media_refs": media_refs,
+            "tool_calls": tool_calls,
+            "tool_observations": tool_observations,
+        }
+        return {
+            "schema_version": _AGENTIC_JUDGE_PROMPT_SNAPSHOT_SCHEMA_VERSION,
+            "job_id": job_id,
+            "suite_id": suite_id,
+            "dataset_id": dataset_id,
+            "sample_id": sample_record.sample_id,
+            "agentic_suite_family": agentic_suite_family,
+            "judge_prompt_version": _AGENTIC_JUDGE_PROMPT_VERSION,
+            "judge_prompt_hash": _AGENTIC_JUDGE_PROMPT_HASH,
+            "judge_role": "answer_equivalence",
+            "rubric": _AGENTIC_JUDGE_RUBRIC,
+            "messages": [
+                {"role": "system", "content": _AGENTIC_JUDGE_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": json.dumps(user_payload, ensure_ascii=False, sort_keys=True),
+                },
+            ],
+            "allowed_tools": allowed_tools,
+            "evidence_ids": evidence_ids,
+            "media_refs": media_refs,
+            "tool_calls": tool_calls,
+            "agentic_tool_observation_count": len(tool_observations),
+        }
+
+    @staticmethod
+    def _agentic_judge_audit_row(
+        *,
+        job_id: str,
+        suite_id: str,
+        dataset_id: str,
+        agentic_suite_family: str,
+        scoring_mode: str,
+        sample: dict[str, object],
+        sample_record: EvaluationSample,
+    ) -> dict[str, object]:
+        return {
+            "schema_version": _AGENTIC_JUDGE_AUDIT_SCHEMA_VERSION,
+            "job_id": job_id,
+            "suite_id": suite_id,
+            "dataset_id": dataset_id,
+            "sample_id": sample_record.sample_id,
+            "agentic_suite_family": agentic_suite_family,
+            "judge_prompt_version": _AGENTIC_JUDGE_PROMPT_VERSION,
+            "judge_prompt_hash": _AGENTIC_JUDGE_PROMPT_HASH,
+            "judge_status": "pending",
+            "judge_source": "not_called",
+            "typed_score": sample_record.typed_score,
+            "scoring_mode": scoring_mode,
+            "final_answer": sample_record.final_answer,
+            "parse_status": sample_record.parse_status,
+            "failure_stage": sample_record.failure_stage,
+            "validation_status": sample_record.validation_status,
+            "extraction_status": sample_record.extraction_status,
+            "tool_call_count": len(sample_record.tool_calls),
+            "agentic_tool_observation_count": len(sample_record.agentic_tool_observations),
+            "evidence_ids": EvaluationCore._object_list(sample.get("evidence_ids")),
+            "error_code": "",
+            "failure_reason": sample_record.failure_reason,
+        }
+
+    @staticmethod
+    def _agentic_sample_question(
+        sample: dict[str, object],
+        sample_record: EvaluationSample,
+    ) -> str:
+        question = sample.get("question")
+        if isinstance(question, str) and question.strip():
+            return question.strip()
+        return sample_record.input_text
+
+    @staticmethod
+    def _object_list(value: object) -> list[object]:
+        if not isinstance(value, (list, tuple)):
+            return []
+        return list(value)
+
+    @staticmethod
+    def _string_list(value: object, *, field_name: str) -> list[str]:
+        if not isinstance(value, (list, tuple)):
+            return []
+        strings: list[str] = []
+        for index, item in enumerate(value):
+            if not isinstance(item, str):
+                raise ValueError(f"{field_name}[{index}] must be a string")
+            strings.append(item)
+        return strings
+
+    @staticmethod
+    def _object_dict_list(value: object, *, field_name: str) -> list[dict[str, object]]:
+        if not isinstance(value, (list, tuple)):
+            return []
+        return [
+            EvaluationCore._object_dict(item, field_name=f"{field_name}[{index}]")
+            for index, item in enumerate(value)
+        ]
+
+    @staticmethod
+    def _object_dict(value: object, *, field_name: str) -> dict[str, object]:
+        if isinstance(value, dict):
+            return dict(value)
+        to_dict = getattr(value, "to_dict", None)
+        if callable(to_dict):
+            payload = to_dict()
+            if isinstance(payload, dict):
+                return dict(payload)
+        if is_dataclass(value) and not isinstance(value, type):
+            payload = asdict(value)
+            if isinstance(payload, dict):
+                return payload
+        try:
+            payload = dict(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            raise TypeError(f"{field_name} must be a JSON object") from exc
+        return payload
 
     def _result_path(self, run_root: Path) -> Path:
         if self._jobs_root is not None:
