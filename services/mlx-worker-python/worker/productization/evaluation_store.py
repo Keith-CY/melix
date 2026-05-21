@@ -459,6 +459,8 @@ class EvaluationStore:
             "raw_response_chars",
             "extracted_result_chars",
             "failure_stage",
+            "final_answer",
+            "parse_status",
         ]
 
     @staticmethod
@@ -472,8 +474,8 @@ class EvaluationStore:
                 csv_field(sample.extracted_result),
                 csv_field(sample.input_text),
                 csv_field(sample.raw_response),
-                csv_field(str(sample.typed_score)),
-                csv_field(str(sample.time_s)),
+                str(sample.typed_score),
+                str(sample.time_s),
                 csv_field(sample.extraction_status),
                 csv_field(sample.validation_status),
                 csv_field(sample.failure_reason),
@@ -485,25 +487,26 @@ class EvaluationStore:
                 csv_field(sample.code_runtime_status),
                 csv_field(sample.code_timeout_status),
                 csv_field(sample.code_test_status),
-                csv_field(str(sample.code_tests_passed)),
-                csv_field(str(sample.code_tests_total)),
+                str(sample.code_tests_passed),
+                str(sample.code_tests_total),
                 csv_field(sample.code_failure_detail),
                 csv_field(sample.category_label),
                 csv_field(sample.subject_label),
-                csv_field(str(sample.sample_render_ms)),
-                csv_field(str(sample.inference_ms)),
-                csv_field(str(sample.extraction_ms)),
-                csv_field(str(sample.validation_ms)),
-                csv_field(str(sample.scoring_ms)),
-                csv_field(str(sample.raw_response_chars)),
-                csv_field(str(sample.extracted_result_chars)),
+                str(sample.sample_render_ms),
+                str(sample.inference_ms),
+                str(sample.extraction_ms),
+                str(sample.validation_ms),
+                str(sample.scoring_ms),
+                str(sample.raw_response_chars),
+                str(sample.extracted_result_chars),
                 csv_field(sample.failure_stage),
+                csv_field(sample.final_answer),
+                csv_field(sample.parse_status),
             ]
         )
 
     @staticmethod
     def _csv_field(value: str) -> str:
-        escaped = value.replace("\"", "\"\"")
-        if "," in escaped or "\n" in escaped or "\"" in escaped:
-            return f"\"{escaped}\""
-        return escaped
+        if "," not in value and "\n" not in value and "\"" not in value:
+            return value
+        return f"\"{value.replace('\"', '\"\"')}\""

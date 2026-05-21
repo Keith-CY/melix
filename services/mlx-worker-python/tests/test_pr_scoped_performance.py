@@ -636,9 +636,15 @@ def test_scope_report_selects_evaluation_probes() -> None:
 
 
 def test_evaluation_probe_commands_cover_agentic_trajectory_execution() -> None:
-    trajectory_test = (
-        "services/mlx-worker-python/tests/test_evaluation_core.py::"
-        "test_run_local_suite_injects_agentic_tool_trace_before_scoring"
+    trajectory_tests = (
+        (
+            "services/mlx-worker-python/tests/test_evaluation_core.py::"
+            "test_run_local_suite_persists_agentic_tool_evidence"
+        ),
+        (
+            "services/mlx-worker-python/tests/test_evaluation_core.py::"
+            "test_run_local_suite_injects_agentic_tool_trace_before_scoring"
+        ),
     )
     probe_ids = {
         "evaluation-answer-normalization-fast-path",
@@ -657,8 +663,9 @@ def test_evaluation_probe_commands_cover_agentic_trajectory_execution() -> None:
 
     assert set(probes) == probe_ids
     for probe in probes.values():
-        assert trajectory_test in probe.test_command
-        assert trajectory_test in probe.coverage_command
+        for trajectory_test in trajectory_tests:
+            assert trajectory_test in probe.test_command
+            assert trajectory_test in probe.coverage_command
 
 
 def test_evaluation_answer_normalization_probe_command_emits_metrics() -> None:

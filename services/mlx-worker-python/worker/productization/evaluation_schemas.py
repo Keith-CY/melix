@@ -190,6 +190,9 @@ class EvaluationSample:
     raw_response_chars: int = 0
     extracted_result_chars: int = 0
     failure_stage: str = ""
+    tool_calls: tuple[dict[str, object], ...] = ()
+    final_answer: str = ""
+    parse_status: str = ""
     agentic_tool_registry: dict[str, object] | None = None
     agentic_tool_calls: tuple[dict[str, object], ...] = ()
     agentic_tool_observations: tuple[dict[str, object], ...] = ()
@@ -233,7 +236,11 @@ class EvaluationSample:
             "raw_response_chars": self.raw_response_chars,
             "extracted_result_chars": self.extracted_result_chars,
             "failure_stage": self.failure_stage,
+            "final_answer": self.final_answer,
+            "parse_status": self.parse_status,
         }
+        if self.tool_calls:
+            payload["tool_calls"] = [dict(call) for call in self.tool_calls]
         if self.agentic_tool_registry:
             payload["agentic_tool_registry"] = dict(self.agentic_tool_registry)
         if self.agentic_tool_calls:
@@ -646,6 +653,9 @@ def build_evaluation_sample_record(
     raw_response_chars: int | None = None,
     extracted_result_chars: int | None = None,
     failure_stage: str = "",
+    tool_calls: tuple[dict[str, object], ...] = (),
+    final_answer: str | None = None,
+    parse_status: str | None = None,
     agentic_tool_registry: dict[str, object] | None = None,
     agentic_tool_calls: tuple[dict[str, object], ...] = (),
     agentic_tool_observations: tuple[dict[str, object], ...] = (),
@@ -696,6 +706,9 @@ def build_evaluation_sample_record(
             else extracted_result_chars
         ),
         failure_stage=failure_stage,
+        tool_calls=tuple(dict(call) for call in tool_calls),
+        final_answer=extracted_result if final_answer is None else final_answer,
+        parse_status=extraction_status if parse_status is None else parse_status,
         agentic_tool_registry=dict(agentic_tool_registry or {}),
         agentic_tool_calls=tuple(dict(call) for call in agentic_tool_calls),
         agentic_tool_observations=tuple(dict(observation) for observation in agentic_tool_observations),
