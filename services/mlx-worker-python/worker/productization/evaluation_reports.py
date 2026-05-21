@@ -2,6 +2,12 @@ from __future__ import annotations
 
 from worker.productization.evaluation_schemas import EvaluationCompareJob, EvaluationCompareSummary
 
+_VERDICT_GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("quality_improvements", "Quality Improvements", ("improvement",)),
+    ("regressions", "Regressions", ("regression",)),
+    ("inconclusive_results", "Inconclusive Results", ("inconclusive",)),
+)
+
 
 def build_evaluation_compare_report_markdown(
     *,
@@ -42,6 +48,10 @@ def build_evaluation_compare_report_markdown(
             )
             + " |"
         )
+    lines.extend(_verdict_group_sections(summaries))
+    for summary in summaries:
+        bootstrap_interval = summary.statistical_evidence.get("bootstrap", {})
+        analytical_interval = summary.statistical_evidence.get("analytical", {})
         lines.extend(
             [
                 "",
@@ -85,6 +95,63 @@ def build_evaluation_compare_report_markdown(
                 )
     lines.append("")
     return "\n".join(lines)
+
+
+def _verdict_group_sections(summaries: tuple[EvaluationCompareSummary, ...]) -> list[str]:
+    lines: list[str] = [
+        "",
+        "## Release Verdict Groups",
+    ]
+    handled_verdicts = {
+        verdict for _group_id, _label, verdicts in _VERDICT_GROUPS for verdict in verdicts
+    }
+    for _group_id, label, verdicts in _VERDICT_GROUPS:
+        grouped = tuple(summary for summary in summaries if summary.verdict in verdicts)
+        lines.extend(_verdict_group_section(label=label, summaries=grouped))
+
+    other_summaries = tuple(
+        summary for summary in summaries if summary.verdict not in handled_verdicts
+    )
+    if other_summaries:
+        lines.extend(_verdict_group_section(label="Other Verdicts", summaries=other_summaries))
+    return lines
+
+
+def _verdict_group_section(
+    *,
+    label: str,
+    summaries: tuple[EvaluationCompareSummary, ...],
+) -> list[str]:
+    lines = [
+        "",
+        f"### {label}",
+        "",
+        "| Target Model | Verdict | Delta Accuracy | Effect Threshold | Regressions | Bootstrap CI | Analytical CI |",
+        "| --- | --- | ---: | ---: | ---: | --- | --- |",
+    ]
+    if not summaries:
+        lines.append("| None |  |  |  |  |  |  |")
+        return lines
+
+    for summary in summaries:
+        bootstrap_interval = summary.statistical_evidence.get("bootstrap", {})
+        analytical_interval = summary.statistical_evidence.get("analytical", {})
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    summary.target_model_id,
+                    summary.verdict,
+                    _signed_ratio(summary.delta_accuracy),
+                    _ratio(summary.effect_threshold),
+                    str(summary.regression_count),
+                    _interval(bootstrap_interval),
+                    _interval(analytical_interval),
+                ]
+            )
+            + " |"
+        )
+    return lines
 
 
 def _ratio(value: float) -> str:
