@@ -479,6 +479,13 @@ diversity from sanitized `source_construction` metadata. These metrics are
 descriptive evidence only; sample accept/reject reports remain a separate
 selection artifact.
 
+When sample selection is reported, package manifests must include a
+`source_selection_report` object with the package-relative path to
+`source_selection_report.jsonl` and accepted/rejected row counts. The JSONL
+report explains each source-anchored row with stable reason codes and sanitized
+metadata only; it must not persist prompts, answers, observations, source text,
+or secrets.
+
 ## Benchmark Fixture Sources
 
 Benchmark suites may also materialize from repository-owned fixture packages
