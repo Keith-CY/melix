@@ -543,6 +543,8 @@ Important compare rules:
 - compare sample exports preserve executable-code evidence for both the base and target responses when the suite executes code
 - human-readable compare output now includes `verdict`, observed delta, bootstrap CI, analytical CI,
   and the configured effect threshold for each target model
+- human-readable compare output groups target summaries into quality improvements, regressions,
+  and inconclusive results before the per-target detail sections
 - `improvement` and `regression` are only emitted when delta clears the effect threshold and both
   interval families remain on the same side of zero; otherwise the result is `inconclusive`
 

@@ -1562,6 +1562,17 @@ Melix must classify comparison verdicts with the same `CI + threshold` rule ever
   interval families stay below zero
 - emit `inconclusive` otherwise
 
+Human-readable compare reports must separate target summaries into:
+
+- quality improvements
+- regressions
+- inconclusive results
+
+Each report group must include target model id, verdict, delta accuracy,
+effect threshold, regression count, and interval detail. Empty groups must be
+explicitly rendered so release reviewers can distinguish "no results in this
+group" from a missing report section.
+
 ### Category Breakdown
 
 When the suite supports category or subject scoring, the result must also include:
@@ -1891,6 +1902,7 @@ The evaluation surface must expose:
 - suite comparison table
 - sample preview
 - compare verdict, threshold, and confidence-interval detail when statistical evidence is present
+- compare report groups for quality improvements, regressions, and inconclusive results
 - summary CSV export
 - sample CSV export
 - sample JSONL export
