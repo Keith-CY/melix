@@ -709,14 +709,14 @@ def test_size_hint_bytes_uses_direct_card_model_size_without_regex(
     parser.assert_not_called()
 
 
-def test_size_hint_bytes_falls_back_for_labeled_direct_card_model_size(
+def test_size_hint_bytes_uses_direct_parser_for_labeled_card_model_size(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     parser = Mock(return_value=7 * MB)
     monkeypatch.setattr(hub_catalog_module, "_size_hint_from_text", parser)
 
     assert hub_catalog_module._size_hint_bytes({"cardData": {"model_size": "Model size: 7 MB"}}) == 7 * MB
-    parser.assert_called_once_with("Model size: 7 MB", allow_bare=True)
+    parser.assert_not_called()
 
 
 def test_size_hint_parsers_cover_units_and_invalid_values() -> None:
@@ -727,6 +727,10 @@ def test_size_hint_parsers_cover_units_and_invalid_values() -> None:
     assert hub_catalog_module._direct_size_hint_from_text("512 tb") == 0
     assert hub_catalog_module._direct_size_hint_from_text("not-a-number MB") == 0
     assert hub_catalog_module._direct_size_hint_from_text("model size 512 MB") == 0
+    assert hub_catalog_module._direct_card_size_hint_from_text("model size 512 MB") == 512 * MB
+    assert hub_catalog_module._direct_card_size_hint_from_text("Model size | 2 GB") == 2 * GB
+    assert hub_catalog_module._direct_card_size_hint_from_text("approx 512 MB") == 0
+    assert hub_catalog_module._direct_card_size_hint_from_text("Model size:") == 0
     assert hub_catalog_module._direct_size_hint_from_text("512 MB extra") == 0
 
     assert _size_hint_from_text("Model size: 512 kb", allow_bare=False) == 512 * KB

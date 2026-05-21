@@ -22,7 +22,7 @@ def _payload(index: int) -> tuple[dict[str, Any], int]:
     if mode == 0:
         return {"cardData": {}}, 0
     if mode == 1:
-        return {"cardData": {"model_size": f"{value} MB"}}, value * 1024 * 1024
+        return {"cardData": {"model_size": f"Model size: {value} MB"}}, value * 1024 * 1024
     if mode == 2:
         return {"cardData": {}, "readme": f"README\nMODEL SIZE | {value} kb\nother metadata"}, value * 1024
     if mode == 3:
