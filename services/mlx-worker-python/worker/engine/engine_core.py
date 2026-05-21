@@ -25,7 +25,7 @@ def _resolve_generate_stop_contract(
     if not isinstance(loaded_model, dict):
         return resolve_text_stop_contract(loaded_model, sampling, None)
 
-    cache_key = tuple(str(item) for item in sampling.stop)
+    cache_key = () if not sampling.stop else tuple(str(item) for item in sampling.stop)
     cache = loaded_model.get(_ENGINE_STOP_CONTRACT_CACHE_FIELD)
     if not isinstance(cache, dict):
         cache = {}
