@@ -2541,6 +2541,9 @@ def test_registered_probes_expose_focused_commands() -> None:
         assert probe.coverage_command
         assert probe.probe_command
         assert "uv run --project services/mlx-worker-python bash -lc" not in probe.probe_command
+        assert "then python scripts/" not in probe.probe_command
+        assert "else python - <<" not in probe.probe_command
+        assert "if false; then python scripts/" not in probe.probe_command
         assert probe.coverage_replays_tests is (probe.probe_id in replaying_probe_ids)
         if probe.probe_id == "model-registry-plain-local-manifest-stat-elision":
             registry_probe = probe
