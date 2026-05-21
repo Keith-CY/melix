@@ -579,7 +579,7 @@ def _size_hint_bytes(payload: dict[str, Any]) -> int:
     card_data = raw_card_data if isinstance(raw_card_data, dict) else {}
     direct_card_text = _string(card_data.get("model_size"))
     if direct_card_text:
-        direct_card_hint = _direct_size_hint_from_text(direct_card_text)
+        direct_card_hint = _direct_card_size_hint_from_text(direct_card_text)
         if direct_card_hint > 0:
             return direct_card_hint
         direct_card_hint = _size_hint_from_text(direct_card_text, allow_bare=True)
@@ -646,6 +646,30 @@ def _direct_size_hint_from_text(text: str) -> int:
         return int(float(value_text) * multiplier)
     except ValueError:
         return 0
+
+
+def _direct_card_size_hint_from_text(text: str) -> int:
+    hint = _direct_size_hint_from_text(text)
+    if hint > 0:
+        return hint
+    stripped_text = _strip_model_size_label(text)
+    if not stripped_text:
+        return 0
+    return _direct_size_hint_from_text(stripped_text)
+
+
+def _strip_model_size_label(text: str) -> str:
+    if len(text) < 10 or text[:10].lower() != "model size":
+        return ""
+    cursor = 10
+    text_length = len(text)
+    while cursor < text_length and text[cursor].isspace():
+        cursor += 1
+    if cursor < text_length and text[cursor] in {":", "|"}:
+        cursor += 1
+    while cursor < text_length and text[cursor].isspace():
+        cursor += 1
+    return text[cursor:]
 
 
 def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:
