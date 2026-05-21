@@ -40,6 +40,33 @@ def test_built_in_tool_registry_reuses_singleton_snapshot() -> None:
     assert registry.names() == BUILTIN_AGENTIC_TOOL_NAMES
 
 
+def test_tool_registry_openai_tools_reuses_cached_templates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = ToolRegistry(built_in_tool_registry().tools)
+    expected_tools = registry.as_openai_tools()
+
+    def fail_as_openai_tool(self: ToolDescriptor) -> dict[str, object]:  # pragma: no cover
+        raise AssertionError("as_openai_tools() should reuse cached templates")
+
+    monkeypatch.setattr(ToolDescriptor, "as_openai_tool", fail_as_openai_tool)
+
+    tools = registry.as_openai_tools()
+
+    assert tools == expected_tools
+    assert tools is not expected_tools
+    assert tools[0] is not expected_tools[0]
+    tools[0]["function"]["parameters"]["properties"]["media_ref"]["description"] = "mutated"
+    tools[0]["function"]["parameters"]["required"].append("mutated")
+    assert registry.as_openai_tools()[0]["function"]["parameters"]["properties"]["media_ref"][
+        "description"
+    ] == "Identifier or URI for the source image."
+    assert registry.as_openai_tools()[0]["function"]["parameters"]["required"] == [
+        "media_ref",
+        "region",
+    ]
+
+
 def test_built_in_tool_config_returns_isolated_template_copies() -> None:
     first_config = built_in_tool_config()
     first_config.tools.pop()
