@@ -5,7 +5,8 @@ import heapq
 import json
 import logging
 import os
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import asdict, dataclass, is_dataclass
 from hashlib import sha256
 from pathlib import Path
 import random
@@ -1528,7 +1529,7 @@ class EvaluationCore:
         return str(code) if code else ""
 
     @staticmethod
-    def _write_jsonl_rows(path: Path, rows: list[dict[str, object]]) -> None:
+    def _write_jsonl_rows(path: Path, rows: Iterable[dict[str, object]]) -> None:
         with path.open("w", encoding="utf-8") as handle:
             for row in rows:
                 handle.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -2240,11 +2241,12 @@ class EvaluationCore:
         run_root.mkdir(parents=True, exist_ok=True)
         snapshot_path = run_root / "agentic-judge-prompt-snapshots.jsonl"
         audit_path = run_root / "agentic-judge-audit.jsonl"
-        snapshot_rows: list[dict[str, object]] = []
-        audit_rows: list[dict[str, object]] = []
-        for sample, sample_record in zip(samples, sample_records, strict=True):
-            snapshot_rows.append(
-                EvaluationCore._agentic_judge_prompt_snapshot_row(
+        with (
+            snapshot_path.open("w", encoding="utf-8") as snapshot_handle,
+            audit_path.open("w", encoding="utf-8") as audit_handle,
+        ):
+            for sample, sample_record in zip(samples, sample_records, strict=True):
+                snapshot_row = EvaluationCore._agentic_judge_prompt_snapshot_row(
                     job_id=job_id,
                     suite_id=suite_id,
                     dataset_id=dataset_id,
@@ -2253,9 +2255,7 @@ class EvaluationCore:
                     sample=sample,
                     sample_record=sample_record,
                 )
-            )
-            audit_rows.append(
-                EvaluationCore._agentic_judge_audit_row(
+                audit_row = EvaluationCore._agentic_judge_audit_row(
                     job_id=job_id,
                     suite_id=suite_id,
                     dataset_id=dataset_id,
@@ -2264,9 +2264,8 @@ class EvaluationCore:
                     sample=sample,
                     sample_record=sample_record,
                 )
-            )
-        EvaluationCore._write_jsonl_rows(snapshot_path, snapshot_rows)
-        EvaluationCore._write_jsonl_rows(audit_path, audit_rows)
+                snapshot_handle.write(json.dumps(snapshot_row, ensure_ascii=False) + "\n")
+                audit_handle.write(json.dumps(audit_row, ensure_ascii=False) + "\n")
         return {
             "agentic_judge_prompt_snapshot": snapshot_path,
             "agentic_judge_audit": audit_path,
@@ -2287,16 +2286,21 @@ class EvaluationCore:
         expected_answer = EvaluationCore._target_text_for_sample(sample)
         evidence_ids = EvaluationCore._object_list(sample.get("evidence_ids"))
         media_refs = EvaluationCore._object_list(sample.get("media_refs"))
-        allowed_tools = EvaluationCore._string_list(sample.get("allowed_tools"))
-        tool_calls = [dict(call) for call in sample_record.tool_calls]
-        tool_observations = [dict(observation) for observation in sample_record.agentic_tool_observations]
+        allowed_tools = EvaluationCore._string_list(sample.get("allowed_tools"), field_name="allowed_tools")
+        tool_calls = EvaluationCore._object_dict_list(
+            sample_record.tool_calls,
+            field_name="tool_calls",
+        )
+        tool_observations = EvaluationCore._object_dict_list(
+            sample_record.agentic_tool_observations,
+            field_name="agentic_tool_observations",
+        )
         user_payload = {
             "question": question,
             "expected_answer": expected_answer,
             "final_answer": sample_record.final_answer,
             "parse_status": sample_record.parse_status,
             "scoring_mode": scoring_mode,
-            "typed_score": sample_record.typed_score,
             "evidence_ids": evidence_ids,
             "media_refs": media_refs,
             "tool_calls": tool_calls,
@@ -2375,15 +2379,48 @@ class EvaluationCore:
 
     @staticmethod
     def _object_list(value: object) -> list[object]:
-        if not isinstance(value, list):
+        if not isinstance(value, (list, tuple)):
             return []
         return list(value)
 
     @staticmethod
-    def _string_list(value: object) -> list[str]:
-        if not isinstance(value, list):
+    def _string_list(value: object, *, field_name: str) -> list[str]:
+        if not isinstance(value, (list, tuple)):
             return []
-        return [item for item in value if isinstance(item, str)]
+        strings: list[str] = []
+        for index, item in enumerate(value):
+            if not isinstance(item, str):
+                raise ValueError(f"{field_name}[{index}] must be a string")
+            strings.append(item)
+        return strings
+
+    @staticmethod
+    def _object_dict_list(value: object, *, field_name: str) -> list[dict[str, object]]:
+        if not isinstance(value, (list, tuple)):
+            return []
+        return [
+            EvaluationCore._object_dict(item, field_name=f"{field_name}[{index}]")
+            for index, item in enumerate(value)
+        ]
+
+    @staticmethod
+    def _object_dict(value: object, *, field_name: str) -> dict[str, object]:
+        if isinstance(value, dict):
+            return dict(value)
+        to_dict = getattr(value, "to_dict", None)
+        if callable(to_dict):
+            payload = to_dict()
+            if isinstance(payload, dict):
+                return dict(payload)
+        if is_dataclass(value) and not isinstance(value, type):
+            payload = asdict(value)
+            if isinstance(payload, dict):
+                return payload
+        try:
+            payload = dict(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            raise TypeError(f"{field_name} must be a JSON object") from exc
+        return payload
 
     def _result_path(self, run_root: Path) -> Path:
         if self._jobs_root is not None:

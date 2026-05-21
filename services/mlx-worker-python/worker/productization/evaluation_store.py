@@ -99,6 +99,7 @@ class EvaluationStore:
             "summary_csv": summary_csv_path,
         }
         if extra_artifact_paths:
+            # Include extension artifacts before evidence generation so their roles appear in run-evidence.
             persisted.update(extra_artifact_paths)
         if samples:
             jsonl_path = run_root / "evaluation-samples.jsonl"

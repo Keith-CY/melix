@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import builtins
+from dataclasses import dataclass
 import json
 from pathlib import Path
 import random
@@ -71,6 +72,20 @@ class ModelAwareComparisonBackend:
         model_id = str(loaded_model.get("model_id", ""))
         text = self._responses_by_model_id[model_id].pop(0)
         yield RuntimeTokenEvent(text=text, completion_tokens=max(1, len(text.split())))
+
+
+class DictBackedAgenticObject:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+
+    def to_dict(self) -> dict[str, object]:
+        return dict(self._payload)
+
+
+@dataclass(frozen=True)
+class DataclassAgenticObject:
+    id: str
+    status: str
 
 
 def test_evaluation_failure_stage_disables_score_threshold_when_zero() -> None:
@@ -966,6 +981,7 @@ def test_run_local_suite_writes_agentic_judge_prompt_snapshot_and_audit(
     assert user_payload["expected_answer"] == "MELIX"
     assert user_payload["final_answer"] == "MELIX"
     assert user_payload["parse_status"] == "extracted"
+    assert "typed_score" not in user_payload
     assert user_payload["tool_observations"][0]["payload"]["text"] == "MELIX"
 
     assert audit["schema_version"] == "melix.agentic_judge_audit.v1"
@@ -981,6 +997,91 @@ def test_run_local_suite_writes_agentic_judge_prompt_snapshot_and_audit(
     assert audit["tool_call_count"] == 1
     assert audit["agentic_tool_observation_count"] == 1
     assert audit["evidence_ids"] == ["img-1#sign"]
+
+    tuple_snapshot = EvaluationCore._agentic_judge_prompt_snapshot_row(
+        job_id=run.job.job_id,
+        suite_id="agentic_multihop_qa",
+        dataset_id="agentic-judge-dev",
+        agentic_suite_family="melix.agentic_multimodal_evaluation.dev.v1",
+        scoring_mode="normalized_exact_match",
+        sample={
+            "id": "agentic-judge-1",
+            "question": "What text is visible?",
+            "expected": "MELIX",
+            "media_refs": ({"id": "img-1", "uri": "media/sign.ppm"},),
+            "evidence_ids": ("img-1#sign",),
+            "allowed_tools": ("image_crop",),
+        },
+        sample_record=run.samples[0],
+    )
+    assert tuple_snapshot["allowed_tools"] == ["image_crop"]
+    assert tuple_snapshot["evidence_ids"] == ["img-1#sign"]
+    assert tuple_snapshot["media_refs"] == [{"id": "img-1", "uri": "media/sign.ppm"}]
+    assert EvaluationCore._object_dict_list(None, field_name="tool_calls") == []
+    assert EvaluationCore._object_dict_list(
+        (
+            DictBackedAgenticObject({"id": "call-to-dict"}),
+            DataclassAgenticObject(id="observation-dataclass", status="completed"),
+            (("id", "pair-iterable"),),
+        ),
+        field_name="tool_calls",
+    ) == [
+        {"id": "call-to-dict"},
+        {"id": "observation-dataclass", "status": "completed"},
+        {"id": "pair-iterable"},
+    ]
+    with pytest.raises(ValueError, match=r"allowed_tools\[0\] must be a string"):
+        EvaluationCore._agentic_judge_prompt_snapshot_row(
+            job_id=run.job.job_id,
+            suite_id="agentic_multihop_qa",
+            dataset_id="agentic-judge-dev",
+            agentic_suite_family="melix.agentic_multimodal_evaluation.dev.v1",
+            scoring_mode="normalized_exact_match",
+            sample={
+                "id": "agentic-judge-1",
+                "question": "What text is visible?",
+                "expected": "MELIX",
+                "allowed_tools": ({"name": "image_crop"},),
+            },
+            sample_record=run.samples[0],
+        )
+    with pytest.raises(TypeError, match=r"tool_calls\[0\] must be a JSON object"):
+        EvaluationCore._object_dict_list((object(),), field_name="tool_calls")
+
+    failed_sample_record = build_evaluation_sample_record(
+        job_id=run.job.job_id,
+        suite_id="agentic_multihop_qa",
+        dataset_id="agentic-judge-dev",
+        sample_id="agentic-judge-failed",
+        system="",
+        input_text="What text is visible?",
+        target="MELIX",
+        raw_response="",
+        extracted_result="",
+        typed_score=0.0,
+        time_s=0.1,
+        extraction_status="empty_response",
+        validation_status="not_validated",
+        failure_reason="empty_response",
+        task_kind="image-text-to-text",
+        failure_stage="extraction",
+        final_answer="",
+        parse_status="empty_response",
+    )
+    failed_audit = EvaluationCore._agentic_judge_audit_row(
+        job_id=run.job.job_id,
+        suite_id="agentic_multihop_qa",
+        dataset_id="agentic-judge-dev",
+        agentic_suite_family="melix.agentic_multimodal_evaluation.dev.v1",
+        scoring_mode="normalized_exact_match",
+        sample={"id": "agentic-judge-failed", "evidence_ids": ("img-1#sign",)},
+        sample_record=failed_sample_record,
+    )
+    assert failed_audit["typed_score"] == 0.0
+    assert failed_audit["parse_status"] == "empty_response"
+    assert failed_audit["failure_stage"] == "extraction"
+    assert failed_audit["failure_reason"] == "empty_response"
+    assert failed_audit["evidence_ids"] == ["img-1#sign"]
 
     persisted_job = json.loads(run.persisted_paths["job"].read_text(encoding="utf-8"))
     evidence = json.loads(run.persisted_paths["evidence"].read_text(encoding="utf-8"))
