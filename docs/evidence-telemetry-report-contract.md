@@ -479,12 +479,13 @@ Comparison and release-gate reports include:
 - `metric_deltas`
 - `probe_deltas`
 - `telemetry_deltas`
+- `agentic_adapter_deltas`
 - `regressions`
 - `improvements`
 - `unchanged`
 - `comparison_validity`
 
-Each delta includes:
+Each standard metric, probe, telemetry, and agentic adapter delta includes:
 
 - `metric`
 - `baseline`

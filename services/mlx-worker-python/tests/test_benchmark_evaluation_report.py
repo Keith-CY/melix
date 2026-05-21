@@ -9,6 +9,8 @@ import worker.productization.benchmark_evaluation_report as benchmark_evaluation
 from worker.productization.benchmark_evaluation_report import (
     _METRIC_DIRECTION_BY_KEY,
     _aggregate_probe_values,
+    _agentic_adapter_delta_rows,
+    _agentic_adapter_report_rows,
     _benchmark_probe_label,
     _build_metric_row,
     _collect_benchmark_probe_metrics,
@@ -103,6 +105,40 @@ def _bundle(*, ttft_ms: float, tokens_per_second: float, accuracy: float) -> dic
                 "duration_seconds": 10.0,
             }
         ],
+    }
+
+
+def _agentic_request_row(
+    *,
+    compare_target_kind: str,
+    tool_latency_ms: float,
+    observation_bytes: int,
+    adapter_manifest_path: str = "",
+    adapter_set_hash: str = "",
+    adapter_activation_mode: str = "",
+) -> dict[str, object]:
+    return {
+        "suite": "agentic_visit",
+        "context_length": 64,
+        "generation_length": 16,
+        "batch_size": 1,
+        "phase": "tool_turn",
+        "phase_index": 0,
+        "model_id": "melix-qwen-agentic-adapter"
+        if compare_target_kind == "adapter"
+        else "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+        "compare_target_kind": compare_target_kind,
+        "base_model_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+        "adapter_manifest_path": adapter_manifest_path,
+        "adapter_set_hash": adapter_set_hash,
+        "adapter_activation_mode": adapter_activation_mode,
+        "tool_call_count": 1,
+        "tool_latency_ms": tool_latency_ms,
+        "observation_bytes": observation_bytes,
+        "fatal_rate": 0.0,
+        "turn_count": 2,
+        "request_latency_ms": tool_latency_ms + 20.0,
+        "ttft_ms": tool_latency_ms + 2.0,
     }
 
 
@@ -573,6 +609,173 @@ def test_report_builder_collects_serving_benchmark_request_phase_rows() -> None:
     assert rows_by_metric[f"{label}.fatal_rate_rate"]["direction"] == "lower_is_better"
     assert rows_by_metric[f"{final_answer_label}.request_latency_ms_mean"]["status"] == "warning"
     assert rows_by_metric[f"{final_answer_label}.ttft_ms_mean"]["direction"] == "lower_is_better"
+
+
+def test_report_builder_renders_agentic_base_adapter_deltas(tmp_path: Path) -> None:
+    adapter_identity = {
+        "adapter_manifest_path": "/tmp/melix/adapters/search-adapter/manifest.json",
+        "adapter_set_hash": "sha256:agentic-search",
+        "adapter_activation_mode": "adapter_backed_runtime",
+    }
+    baseline = {
+        "benchmark_request_rows": [
+            _agentic_request_row(
+                compare_target_kind="base",
+                tool_latency_ms=10.0,
+                observation_bytes=80,
+            ),
+            _agentic_request_row(
+                compare_target_kind="adapter",
+                tool_latency_ms=12.0,
+                observation_bytes=88,
+                **adapter_identity,
+            ),
+        ]
+    }
+    candidate = {
+        "benchmark_request_rows": [
+            _agentic_request_row(
+                compare_target_kind="base",
+                tool_latency_ms=5.0,
+                observation_bytes=64,
+            ),
+            _agentic_request_row(
+                compare_target_kind="adapter",
+                tool_latency_ms=8.0,
+                observation_bytes=96,
+                **adapter_identity,
+            ),
+        ]
+    }
+
+    report = build_benchmark_evaluation_report(baseline=baseline, candidate=candidate)
+
+    deltas = report["comparison"]["agentic_adapter_deltas"]
+    assert {row["side"] for row in deltas} == {"baseline", "candidate"}
+    tool_latency_row = next(
+        row
+        for row in deltas
+        if row["side"] == "candidate" and row["metric_key"] == "tool_latency_ms_mean"
+    )
+    assert tool_latency_row == {
+        "side": "candidate",
+        "suite": "agentic_visit",
+        "context_length": 64,
+        "generation_length": 16,
+        "batch_size": 1,
+        "phase": "tool_turn",
+        "base_model_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+        "adapter_manifest_path": "/tmp/melix/adapters/search-adapter/manifest.json",
+        "adapter_set_hash": "sha256:agentic-search",
+        "adapter_activation_mode": "adapter_backed_runtime",
+        "metric": "agentic_adapter.agentic_visit.ctx64.gen16.b1.tool_turn.tool_latency_ms_mean",
+        "metric_key": "tool_latency_ms_mean",
+        "base": 5.0,
+        "adapter": 8.0,
+        "baseline": 5.0,
+        "current": 8.0,
+        "candidate": 8.0,
+        "delta": 3.0,
+        "delta_percent": 60.0,
+        "delta_pct": 60.0,
+        "direction": "lower_is_better",
+        "status": "warning",
+        "gate_policy": {
+            "direction": "lower_is_better",
+            "warning_threshold_pct": 5.0,
+            "required": True,
+        },
+        "result": "fail",
+    }
+
+    markdown = render_markdown_report(report)
+    terminal = render_terminal_report(report)
+    assert "## Agentic Adapter Deltas" in markdown
+    assert "| candidate | agentic_visit | ctx64/gen16/b1 | tool_turn |" in markdown
+    assert "tool_latency_ms_mean" in markdown
+    assert "Agentic Adapter Deltas" in terminal
+    assert "tool_latency_ms_mean" in terminal
+
+    outputs = write_report_outputs(report=report, output_dir=tmp_path / "report")
+    comparison_csv = outputs["comparison_deltas_csv"].read_text(encoding="utf-8")
+    assert "agentic_adapter" in comparison_csv
+    assert "candidate,agentic_visit,64,16,1,tool_turn" in comparison_csv
+    assert "tool_latency_ms_mean" in comparison_csv
+
+
+def test_report_builder_omits_unmatched_agentic_adapter_deltas() -> None:
+    report = build_benchmark_evaluation_report(
+        baseline={},
+        candidate={
+            "benchmark_request_rows": [
+                _agentic_request_row(
+                    compare_target_kind="adapter",
+                    tool_latency_ms=8.0,
+                    observation_bytes=96,
+                    adapter_manifest_path="/tmp/melix/adapters/search-adapter/manifest.json",
+                    adapter_set_hash="sha256:agentic-search",
+                    adapter_activation_mode="adapter_backed_runtime",
+                ),
+            ]
+        },
+    )
+
+    assert report["comparison"]["agentic_adapter_deltas"] == []
+    assert "Agentic Adapter Deltas" not in render_markdown_report(report)
+    assert "Agentic Adapter Deltas" not in render_terminal_report(report)
+
+
+def test_agentic_adapter_delta_rows_skip_invalid_and_partial_pairs() -> None:
+    adapter_identity = {
+        "adapter_manifest_path": "/tmp/melix/adapters/search-adapter/manifest.json",
+        "adapter_set_hash": "sha256:agentic-search",
+        "adapter_activation_mode": "adapter_backed_runtime",
+    }
+    rows = _agentic_adapter_delta_rows(
+        side="candidate",
+        bundle={
+            "benchmark_request_rows": [
+                {"compare_target_kind": "adapter", "phase": "", "base_model_id": "base"},
+                {"compare_target_kind": "ignored", "phase": "tool_turn", "base_model_id": "base"},
+                {
+                    "suite": "agentic_visit",
+                    "context_length": "dynamic",
+                    "generation_length": "short",
+                    "batch_size": "single",
+                    "phase": "tool_turn",
+                    "compare_target_kind": "base",
+                    "base_model_id": "base",
+                    "tool_latency_ms": 10.0,
+                },
+                {
+                    "suite": "agentic_visit",
+                    "context_length": "dynamic",
+                    "generation_length": "short",
+                    "batch_size": "single",
+                    "phase": "tool_turn",
+                    "compare_target_kind": "adapter",
+                    "base_model_id": "base",
+                    "observation_bytes": 40,
+                    **adapter_identity,
+                },
+                {
+                    "suite": "agentic_visit",
+                    "context_length": "dynamic",
+                    "generation_length": "short",
+                    "batch_size": "single",
+                    "phase": "tool_turn",
+                    "compare_target_kind": "adapter",
+                    "base_model_id": "base",
+                    "tool_latency_ms": 8.0,
+                    **adapter_identity,
+                },
+            ]
+        },
+    )
+
+    assert [row["metric_key"] for row in rows] == ["tool_latency_ms_mean"]
+    assert rows[0]["metric"] == "agentic_adapter.agentic_visit.ctxdynamic.genshort.bsingle.tool_turn.tool_latency_ms_mean"
+    assert _agentic_adapter_report_rows([]) == []
 
 
 def test_collect_runtime_metadata_preserves_key_order_with_sparse_values() -> None:

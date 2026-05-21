@@ -110,6 +110,15 @@ _MATRIX_SUMMARY_METRIC_KEYS = (
     "fatal_rate",
     "turn_count",
 )
+_AGENTIC_ADAPTER_DELTA_METRIC_KEYS = (
+    "tool_call_count",
+    "tool_latency_ms",
+    "observation_bytes",
+    "fatal_rate",
+    "turn_count",
+    "request_latency_ms",
+    "ttft_ms",
+)
 _EVALUATION_SUMMARY_METRIC_KEYS = ("failure_count", "duration_seconds")
 _EVALUATION_REPRODUCIBILITY_KEYS = (
     ("schema_sha256", "schema"),
@@ -290,6 +299,8 @@ _CSV_EXPORT_NAMES = (
 _NumericAggregate = tuple[float, int]
 _ProbeAggregateKey = tuple[str, str]
 _BenchmarkLabelCacheKey = tuple[str, str, str, str, str, str, str]
+_AgenticAdapterBaseKey = tuple[str, int | str, int | str, int | str, str, str]
+_AgenticAdapterIdentityKey = tuple[_AgenticAdapterBaseKey, str, str, str]
 
 
 class ReportValidationError(ValueError):
@@ -408,6 +419,16 @@ def build_benchmark_evaluation_report(
         elif row_status == "not_comparable":
             not_comparable_count += 1
     warning_count += len(reproducibility_warnings)
+    metric_rows = [_report_metric_row(row) for row in rows]
+    agentic_adapter_deltas = [
+        *_agentic_adapter_delta_rows(side="baseline", bundle=baseline),
+        *_agentic_adapter_delta_rows(side="candidate", bundle=candidate),
+    ]
+    warning_count += sum(1 for row in agentic_adapter_deltas if row.get("status") == "warning")
+    missing_count += sum(1 for row in agentic_adapter_deltas if row.get("status") == "missing")
+    not_comparable_count += sum(
+        1 for row in agentic_adapter_deltas if row.get("status") == "not_comparable"
+    )
     if warning_count:
         status = "warning"
     elif missing_count:
@@ -428,7 +449,6 @@ def build_benchmark_evaluation_report(
         *_target_summaries("baseline", baseline_evidence),
         *_target_summaries("candidate", candidate_evidence),
     ]
-    metric_rows = [_report_metric_row(row) for row in rows]
     probe_summary = {
         "baseline": summarize_run_evidence_probes(baseline_evidence),
         "candidate": summarize_run_evidence_probes(candidate_evidence),
@@ -457,6 +477,7 @@ def build_benchmark_evaluation_report(
         baseline_evidence=baseline_evidence,
         candidate_evidence=candidate_evidence,
         reproducibility_warnings=reproducibility_warnings,
+        agentic_adapter_deltas=agentic_adapter_deltas,
     )
     gate_result = _gate_result(
         metric_rows=metric_rows,
@@ -533,6 +554,52 @@ def render_terminal_report(report: dict[str, object]) -> str:
     ]
     for row in rendered_rows:
         lines.append("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
+    agentic_adapter_rows = _agentic_adapter_report_rows(report.get("comparison"))
+    if agentic_adapter_rows:
+        adapter_headers = [
+            "Side",
+            "Suite",
+            "Shape",
+            "Phase",
+            "Metric",
+            "Base",
+            "Adapter",
+            "Delta",
+            "Status",
+        ]
+        adapter_rendered_rows = [
+            [
+                str(row.get("side", "")),
+                str(row.get("suite", "")),
+                _agentic_adapter_shape_label(row),
+                str(row.get("phase", "")),
+                str(row.get("metric_key") or row.get("metric", "")),
+                _format_value(row.get("base", row.get("baseline"))),
+                _format_value(row.get("adapter", row.get("current"))),
+                _format_delta(row),
+                str(row.get("status", "")),
+            ]
+            for row in agentic_adapter_rows
+        ]
+        adapter_widths = [
+            max(len(header), *(len(row[index]) for row in adapter_rendered_rows))
+            for index, header in enumerate(adapter_headers)
+        ]
+        lines.extend(
+            [
+                "",
+                "Agentic Adapter Deltas",
+                "  ".join(
+                    header.ljust(adapter_widths[index])
+                    for index, header in enumerate(adapter_headers)
+                ),
+                "  ".join("-" * width for width in adapter_widths),
+            ]
+        )
+        for row in adapter_rendered_rows:
+            lines.append(
+                "  ".join(value.ljust(adapter_widths[index]) for index, value in enumerate(row))
+            )
     return "\n".join(lines) + "\n"
 
 
@@ -560,6 +627,7 @@ def render_markdown_report(report: dict[str, object]) -> str:
     lines.extend(_render_gate_summary_markdown(report.get("gate_result")))
     lines.extend(_render_telemetry_summary_markdown(report.get("telemetry_summary")))
     lines.extend(_render_model_memory_summary_markdown(report.get("model_memory_summary")))
+    lines.extend(_render_agentic_adapter_deltas_markdown(report.get("comparison")))
     lines.extend(
         [
             "## Result Metrics",
@@ -1051,12 +1119,14 @@ def _comparison_section(
     baseline_evidence: list[dict[str, object]],
     candidate_evidence: list[dict[str, object]],
     reproducibility_warnings: list[str],
+    agentic_adapter_deltas: list[dict[str, object]],
 ) -> dict[str, object]:
     metric_deltas = [_comparison_delta(row) for row in metric_rows]
     probe_deltas = [row for row in metric_deltas if str(row.get("metric") or "").startswith("probe.")]
     telemetry_deltas = [
         row for row in metric_deltas if str(row.get("metric") or "").startswith("telemetry.")
     ]
+    all_delta_rows = [*metric_deltas, *agentic_adapter_deltas]
     return {
         "baseline_report_id": _side_report_id("baseline", baseline_evidence),
         "current_report_id": _side_report_id("candidate", candidate_evidence),
@@ -1064,9 +1134,10 @@ def _comparison_section(
         "metric_deltas": metric_deltas,
         "probe_deltas": probe_deltas,
         "telemetry_deltas": telemetry_deltas,
-        "regressions": [row for row in metric_deltas if row.get("result") == "fail"],
-        "improvements": [row for row in metric_deltas if _is_improvement(row)],
-        "unchanged": [row for row in metric_deltas if _float_or_none(row.get("delta")) == 0.0],
+        "agentic_adapter_deltas": list(agentic_adapter_deltas),
+        "regressions": [row for row in all_delta_rows if row.get("result") == "fail"],
+        "improvements": [row for row in all_delta_rows if _is_improvement(row)],
+        "unchanged": [row for row in all_delta_rows if _float_or_none(row.get("delta")) == 0.0],
         "reproducibility_warnings": list(reproducibility_warnings),
         "comparison_validity": "valid" if baseline_evidence and candidate_evidence and not reproducibility_warnings else "partial",
     }
@@ -1083,6 +1154,167 @@ def _comparison_delta(row: dict[str, object]) -> dict[str, object]:
         "gate_policy": row.get("gate_policy"),
         "result": row.get("result"),
     }
+
+
+def _agentic_adapter_delta_rows(
+    *,
+    side: str,
+    bundle: dict[str, object],
+) -> list[dict[str, object]]:
+    base_aggregates: dict[_AgenticAdapterBaseKey, dict[str, _NumericAggregate]] = {}
+    adapter_aggregates: dict[
+        _AgenticAdapterIdentityKey,
+        dict[str, _NumericAggregate],
+    ] = {}
+    for row in _dict_rows(bundle.get("benchmark_request_rows", [])):
+        target_kind = str(row.get("compare_target_kind") or "").strip()
+        if target_kind not in {"base", "adapter"}:
+            continue
+        base_key = _agentic_adapter_base_key(row)
+        if base_key is None:
+            continue
+        target_aggregates: dict[str, _NumericAggregate]
+        if target_kind == "base":
+            target_aggregates = base_aggregates.setdefault(base_key, {})
+        else:
+            target_aggregates = adapter_aggregates.setdefault(
+                (
+                    base_key,
+                    str(row.get("adapter_manifest_path") or "").strip(),
+                    str(row.get("adapter_set_hash") or "").strip(),
+                    str(row.get("adapter_activation_mode") or "").strip(),
+                ),
+                {},
+            )
+        for metric_key in _AGENTIC_ADAPTER_DELTA_METRIC_KEYS:
+            value = _float_or_none(row.get(metric_key))
+            if value is not None:
+                target_aggregates[metric_key] = _update_numeric_aggregate(
+                    target_aggregates.get(metric_key),
+                    value,
+                )
+
+    rows: list[dict[str, object]] = []
+    for (base_key, adapter_manifest_path, adapter_set_hash, adapter_activation_mode), adapter_values in (
+        adapter_aggregates.items()
+    ):
+        base_values = base_aggregates.get(base_key)
+        if base_values is None:
+            continue
+        suite, context_length, generation_length, batch_size, phase, base_model_id = base_key
+        label = _agentic_adapter_delta_label(
+            suite=suite,
+            context_length=context_length,
+            generation_length=generation_length,
+            batch_size=batch_size,
+            phase=phase,
+        )
+        for metric_key in _AGENTIC_ADAPTER_DELTA_METRIC_KEYS:
+            base_aggregate = base_values.get(metric_key)
+            adapter_aggregate = adapter_values.get(metric_key)
+            if base_aggregate is None or adapter_aggregate is None:
+                continue
+            base_suffix, base_value = _finalize_numeric_aggregate(metric_key, base_aggregate)
+            adapter_suffix, adapter_value = _finalize_numeric_aggregate(metric_key, adapter_aggregate)
+            if base_suffix != adapter_suffix:
+                continue
+            finalized_key = f"{metric_key}_{base_suffix}"
+            metric_name = f"agentic_adapter.{label}.{finalized_key}"
+            report_row = _report_metric_row(
+                _build_metric_row(
+                    metric_name=metric_name,
+                    baseline=base_value,
+                    candidate=adapter_value,
+                )
+            )
+            rows.append(
+                {
+                    "side": side,
+                    "suite": suite,
+                    "context_length": context_length,
+                    "generation_length": generation_length,
+                    "batch_size": batch_size,
+                    "phase": phase,
+                    "base_model_id": base_model_id,
+                    "adapter_manifest_path": adapter_manifest_path,
+                    "adapter_set_hash": adapter_set_hash,
+                    "adapter_activation_mode": adapter_activation_mode,
+                    "metric": metric_name,
+                    "metric_key": finalized_key,
+                    "base": report_row.get("baseline"),
+                    "adapter": report_row.get("current"),
+                    **report_row,
+                }
+            )
+    return sorted(rows, key=_agentic_adapter_delta_sort_key)
+
+
+def _agentic_adapter_base_key(row: dict[str, object]) -> _AgenticAdapterBaseKey | None:
+    suite = str(row.get("suite", row.get("suite_id", "suite")) or "suite").strip() or "suite"
+    phase = str(row.get("phase") or "").strip()
+    base_model_id = str(
+        row.get("base_model_id") or row.get("model_id") or row.get("runtime_model_id") or ""
+    ).strip()
+    if not phase or not base_model_id:
+        return None
+    return (
+        suite,
+        _agentic_adapter_dimension(row.get("context_length")),
+        _agentic_adapter_dimension(row.get("generation_length")),
+        _agentic_adapter_dimension(row.get("batch_size")),
+        phase,
+        base_model_id,
+    )
+
+
+def _agentic_adapter_dimension(value: object) -> int | str:
+    int_value = _int_or_none(value)
+    if int_value is not None:
+        return int_value
+    return str(value or "").strip()
+
+
+def _agentic_adapter_delta_label(
+    *,
+    suite: str,
+    context_length: int | str,
+    generation_length: int | str,
+    batch_size: int | str,
+    phase: str,
+) -> str:
+    key = (
+        "bench",
+        suite,
+        str(context_length),
+        str(generation_length),
+        str(batch_size),
+        "",
+        phase,
+    )
+    return _build_benchmark_label(key)
+
+
+def _agentic_adapter_delta_sort_key(row: dict[str, object]) -> tuple[object, ...]:
+    return (
+        str(row.get("side") or ""),
+        str(row.get("suite") or ""),
+        _sort_dimension(row.get("context_length")),
+        _sort_dimension(row.get("generation_length")),
+        _sort_dimension(row.get("batch_size")),
+        str(row.get("phase") or ""),
+        str(row.get("base_model_id") or ""),
+        str(row.get("adapter_set_hash") or ""),
+        str(row.get("adapter_manifest_path") or ""),
+        str(row.get("adapter_activation_mode") or ""),
+        str(row.get("metric") or ""),
+    )
+
+
+def _sort_dimension(value: object) -> tuple[int, object]:
+    int_value = _int_or_none(value)
+    if int_value is not None:
+        return (0, int_value)
+    return (1, str(value or ""))
 
 
 def _comparison_dimensions(targets: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -1447,7 +1679,20 @@ def _write_report_csv_outputs(report: dict[str, object], csv_paths: dict[str, Pa
         _comparison_delta_csv_rows(report),
         (
             "kind",
+            "side",
+            "suite",
+            "context_length",
+            "generation_length",
+            "batch_size",
+            "phase",
+            "base_model_id",
+            "adapter_manifest_path",
+            "adapter_set_hash",
+            "adapter_activation_mode",
             "metric",
+            "metric_key",
+            "base",
+            "adapter",
             "baseline",
             "current",
             "delta",
@@ -1604,7 +1849,23 @@ def _comparison_delta_csv_rows(report: dict[str, object]) -> list[dict[str, obje
     ):
         for row in _dict_list(comparison.get(key)):
             rows.append({"kind": kind, **row})
+    for row in _dict_list(comparison.get("agentic_adapter_deltas")):
+        rows.append({"kind": "agentic_adapter", **row})
     return rows
+
+
+def _agentic_adapter_report_rows(comparison: object) -> list[dict[str, object]]:
+    if not isinstance(comparison, dict):
+        return []
+    return _dict_list(comparison.get("agentic_adapter_deltas"))
+
+
+def _agentic_adapter_shape_label(row: dict[str, object]) -> str:
+    return (
+        f"ctx{_label_part(row.get('context_length', ''))}/"
+        f"gen{_label_part(row.get('generation_length', ''))}/"
+        f"b{_label_part(row.get('batch_size', ''))}"
+    )
 
 
 def _render_run_summary_markdown(runs: object) -> list[str]:
@@ -1719,6 +1980,41 @@ def _render_model_memory_summary_markdown(model_memory_summary: object) -> list[
                     _markdown_cell(_format_value(row.get("runtime_stats_model_resident_bytes"))),
                     _markdown_cell(_format_value(row.get("load_rss_delta_bytes"))),
                     _markdown_cell(row.get("measurement_scope", "")),
+                ]
+            )
+            + " |"
+        )
+    lines.append("")
+    return lines
+
+
+def _render_agentic_adapter_deltas_markdown(comparison: object) -> list[str]:
+    rows = _agentic_adapter_report_rows(comparison)
+    if not rows:
+        return []
+    lines = [
+        "## Agentic Adapter Deltas",
+        "",
+        "| Side | Suite | Shape | Phase | Base Model | Adapter Hash | Mode | Metric | Base | Adapter | Delta | Status |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |",
+    ]
+    for row in rows:
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _markdown_cell(row.get("side", "")),
+                    _markdown_cell(row.get("suite", "")),
+                    _markdown_cell(_agentic_adapter_shape_label(row)),
+                    _markdown_cell(row.get("phase", "")),
+                    _markdown_cell(row.get("base_model_id", "")),
+                    _markdown_cell(row.get("adapter_set_hash", "")),
+                    _markdown_cell(row.get("adapter_activation_mode", "")),
+                    _markdown_cell(row.get("metric_key") or row.get("metric", "")),
+                    _markdown_cell(_format_value(row.get("base", row.get("baseline")))),
+                    _markdown_cell(_format_value(row.get("adapter", row.get("current")))),
+                    _markdown_cell(_format_delta(row)),
+                    _markdown_cell(row.get("status", "")),
                 ]
             )
             + " |"
