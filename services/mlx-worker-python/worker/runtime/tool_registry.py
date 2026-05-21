@@ -29,32 +29,6 @@ _OpenAIToolTemplate = tuple[
 ]
 
 
-def _copy_openai_tool_template(template: _OpenAIToolTemplate) -> dict[str, Any]:
-    (
-        name,
-        description,
-        tool_kind,
-        observation_kind,
-        schema_properties,
-        required_arguments,
-    ) = template
-    return {
-        "type": "function",
-        "function": {
-            "name": name,
-            "description": description,
-            "parameters": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    name: schema.copy() for name, schema in schema_properties
-                },
-                "required": required_arguments.copy(),
-            },
-        },
-        "x-melix-tool-kind": tool_kind,
-        "x-melix-observation-kind": observation_kind,
-    }
 _TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _SELECTION_CACHE_MAX_SIZE = 32
 
@@ -301,7 +275,36 @@ class ToolRegistry:
         return selection
 
     def as_openai_tools(self) -> list[dict[str, Any]]:
-        return [_copy_openai_tool_template(tool) for tool in self._openai_tool_templates]
+        tools: list[dict[str, Any]] = []
+        append_tool = tools.append
+        for (
+            name,
+            description,
+            tool_kind,
+            observation_kind,
+            schema_properties,
+            required_arguments,
+        ) in self._openai_tool_templates:
+            append_tool(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": description,
+                        "parameters": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                name: schema.copy() for name, schema in schema_properties
+                            },
+                            "required": required_arguments.copy(),
+                        },
+                    },
+                    "x-melix-tool-kind": tool_kind,
+                    "x-melix-observation-kind": observation_kind,
+                }
+            )
+        return tools
 
     def as_worker_tool_config(self) -> common_pb2.ToolConfig:
         if self._worker_tool_config_bytes:
