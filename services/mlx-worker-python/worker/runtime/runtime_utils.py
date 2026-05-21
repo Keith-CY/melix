@@ -91,11 +91,12 @@ def callable_kwarg_signature(callable_obj: Any) -> CallableKwargSignature:
 
 
 def callable_declares_kwarg(callable_obj: Any, keyword: str) -> bool:
-    return callable_kwarg_signature(callable_obj).declares(keyword)
+    return keyword in callable_kwarg_signature(callable_obj).keyword_accessible_params
 
 
 def callable_accepts_kwarg(callable_obj: Any, keyword: str) -> bool:
-    return callable_kwarg_signature(callable_obj).accepts(keyword)
+    signature = callable_kwarg_signature(callable_obj)
+    return keyword in signature.keyword_accessible_params or signature.accepts_var_keyword
 
 
 def first_declared_kwarg(callable_obj: Any, keywords: tuple[str, ...]) -> str:
