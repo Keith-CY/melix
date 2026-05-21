@@ -745,6 +745,30 @@ values are available from benchmark job parameters. Base rows must clear
 adapter-only fields during persistence and export collection so stale adapter
 metadata from older request rows cannot be interpreted as LoRA lineage.
 
+Reports derive base-vs-adapter agentic benchmark deltas from these request rows
+without requiring live runtime or registry state. For each export side, the
+report groups base rows by suite, context length, generation length, batch size,
+phase, and `base_model_id`, then matches adapter rows by the same group plus
+adapter manifest path, adapter set hash, and activation mode. Matched rows
+produce `comparison.agentic_adapter_deltas`; unmatched adapter or base-only rows
+are omitted rather than rendered as partial comparisons.
+
+Agentic adapter deltas cover:
+
+- `tool_call_count`
+- `tool_latency_ms`
+- `observation_bytes`
+- `fatal_rate`
+- `turn_count`
+- `request_latency_ms`
+- `ttft_ms`
+
+Each delta row must preserve side, suite, shape, phase, base model id, adapter
+identity, metric name, base value, adapter value, delta, delta percent,
+direction, gate policy, status, and result. Markdown, terminal, and
+`comparison_deltas.csv` report outputs must render the same structured rows with
+`kind=agentic_adapter` in the CSV.
+
 ### Compatibility Aliases
 
 For backward compatibility, persisted benchmark exports may continue to emit these aliases:
