@@ -1138,6 +1138,51 @@ do not change final-result scorer dispatch, judge policy, or production evaluati
 agentic-evaluation milestones may add richer trajectory capture, paired report artifacts, and
 judge-backed acceptance metrics on top of these repository-owned packages.
 
+#### Agentic Multimodal Sample Field Contract
+
+Agentic multimodal evaluation samples use
+`melix.agentic_multimodal_sample_fields.v1` as the stable field contract. The
+contract applies to repository-owned development fixtures and any later
+materialized package that opts into the same agentic suite family.
+
+Each sample row must define these required fields:
+
+- `question`: non-empty string shown to the model; it must match `input.text`.
+- `media_refs`: non-empty array of package-local media or document references.
+- `expected_answer`: non-empty string containing the normalized final answer; it must match `target`.
+- `evidence_ids`: non-empty array of stable evidence identifiers.
+- `allowed_tools`: non-empty array of tool names available to the sample.
+
+Each `media_refs` entry must be an object with:
+
+- `id`: stable sample-local media identifier.
+- `kind`: media class such as `image` or `document`.
+- `uri`: package-relative path resolved against the fixture package root.
+
+`media_refs[].uri` must not be absolute and must not use a network URL. The
+runtime may use `input.image_uri` or `input.document_uri` as a convenience for
+model input shaping, but `media_refs` is the authoritative package-local asset
+inventory for the sample.
+
+`evidence_ids` must reference evidence available from the sample itself or its
+deterministic tool fixture context. Valid sources include:
+
+- `media_refs[].id`
+- media fragments such as `<media_ref>#<region>` used by deterministic image tools
+- `id` fields inside `tool_fixture_context`
+- explicit `evidence_ids` arrays inside `tool_fixture_context`
+
+`allowed_tools` must be a subset of the package manifest's `allowed_tools`.
+Every `tool_calls[].name` value must be listed in sample-level
+`allowed_tools`; sample-level tools may be narrower than the package manifest
+to keep one sample's callable surface explicit.
+
+The sample field contract is intentionally separate from final-result scoring.
+It proves that the sample is self-describing, that all local media and evidence
+claims are traceable, and that deterministic tool replay has a bounded tool
+surface. It does not add a new scorer, judge policy, or production execution
+probe.
+
 ### Evaluation Dataset Contract
 
 Melix evaluation executes only against repository-owned evaluation dataset packages.
