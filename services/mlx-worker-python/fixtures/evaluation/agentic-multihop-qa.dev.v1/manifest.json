@@ -1,0 +1,28 @@
+{
+  "schema_version": "melix.evaluation_dataset_package.v2",
+  "dataset_id": "agentic-multihop-qa.dev.v1",
+  "suite_id": "agentic_multihop_qa",
+  "task_kind": "image-text-to-text",
+  "input_modalities": [
+    "text",
+    "image"
+  ],
+  "version": "2026-05-21",
+  "sample_count": 1,
+  "split": "validation",
+  "profile_type": "final_result",
+  "result_kind": "text",
+  "extraction_mode": "heuristic_final",
+  "scoring_mode": "normalized_exact_match",
+  "threshold": 1.0,
+  "output_schema": {},
+  "ignored_paths": [],
+  "agentic_suite_family": "melix.agentic_multimodal_evaluation.dev.v1",
+  "agentic_fixture_kind": "image_grounded_multi_hop_qa",
+  "toolset_version": "melix.agentic_tools.builtin.v1",
+  "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+  "allowed_tools": [
+    "image_crop",
+    "text_search"
+  ]
+}

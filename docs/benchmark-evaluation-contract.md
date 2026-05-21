@@ -1122,6 +1122,22 @@ The checked-in development fixtures for executable-code evaluation are:
 These packages live under `services/mlx-worker-python/fixtures/evaluation/` and are the canonical
 development-time execution datasets for Melix v1 code evaluation.
 
+The checked-in development fixtures for agentic multimodal evaluation are:
+
+- `agentic-multihop-qa.dev.v1`
+- `agentic-visual-retrieval-qa.dev.v1`
+- `agentic-document-lookup-qa.dev.v1`
+
+These packages also live under `services/mlx-worker-python/fixtures/evaluation/`. They are small
+repository-owned development packages that cover image-grounded multi-hop QA, visual retrieval QA,
+and document lookup QA. Each package keeps package-local media or document assets and deterministic
+`tool_calls` plus `tool_fixture_context` data that replay through the unified agentic tool runtime.
+
+The agentic multimodal fixtures are contract and regression fixtures, not benchmark scorecards. They
+do not change final-result scorer dispatch, judge policy, or production evaluation latency. Later
+agentic-evaluation milestones may add richer trajectory capture, paired report artifacts, and
+judge-backed acceptance metrics on top of these repository-owned packages.
+
 ### Evaluation Dataset Contract
 
 Melix evaluation executes only against repository-owned evaluation dataset packages.

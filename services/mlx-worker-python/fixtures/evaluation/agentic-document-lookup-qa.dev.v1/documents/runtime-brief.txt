@@ -1,0 +1,4 @@
+Melix Runtime Brief
+
+Swift control plane owns orchestration truth.
+Python worker owns execution truth.
