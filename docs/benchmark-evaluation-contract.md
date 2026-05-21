@@ -458,9 +458,11 @@ Melix-owned training or evaluation packages before training, `eval`, or
 
 That plan defines the required construction path for source inventory,
 image/entity selection, fuzzy rewrites, multi-hop question assembly, and package
-materialization. Later implementation slices should add machine-readable
-construction metadata and leakage validation summaries to the existing package
-contracts rather than creating a separate runtime dataset format.
+materialization. DataDesigner-backed generation may persist optional
+`source_construction` metadata in training and final-result evaluation package
+manifests and sample rows. Later leakage-validation slices should consume that
+metadata and write validation summaries to the existing package contracts rather
+than creating a separate runtime dataset format.
 
 ## Benchmark Fixture Sources
 

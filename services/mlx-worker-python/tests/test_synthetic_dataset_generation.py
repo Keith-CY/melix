@@ -12,6 +12,7 @@ import pytest
 from worker.model_ops.errors import ModelOperationError
 from worker.productization import synthetic_dataset_generation as synthetic_module
 from worker.productization.synthetic_dataset_generation import (
+    SourceConstructionMetadata,
     SyntheticColumnSpec,
     SyntheticDatasetRequest,
     SyntheticModelConfig,
@@ -319,6 +320,65 @@ def test_create_training_package_writes_melix_contract_and_redacts_secrets(
     assert synthetic_module.os.environ["NEMO_TELEMETRY_ENABLED"] == "true"
 
 
+def test_create_training_package_preserves_source_construction_metadata(tmp_path: Path) -> None:
+    _fake_state.rows = [
+        {
+            "prompt": "What color is the visible signal?",
+            "completion": "red",
+            "source_construction": {
+                "source_ids": ["source-1"],
+                "source_asset_paths": ["media/signal.png"],
+                "image_ids": ["image-1"],
+                "entity_ids": ["signal"],
+                "rewrite_id": "rewrite-1",
+                "transformation_kinds": ["paraphrase", "entity_alias"],
+                "excluded_leakage_fields": ["answer"],
+                "evidence_chain": [{"source_id": "source-1", "field": "caption"}],
+                "required_tool_families": ["image_inspection"],
+                "hop_count": "2",
+                "answer_aliases": ["red signal"],
+                "ambiguity_notes": "single visible signal",
+                "raw_answer": "red",
+            },
+        }
+    ]
+
+    result = generate_synthetic_dataset_package(
+        _request(
+            num_records=1,
+            source_construction=SourceConstructionMetadata(
+                construction_method="source_anchored_multihop",
+                source_bundle_id="bundle-1",
+                source_bundle_revision="rev-a",
+                source_count=1,
+                transformation_kinds=("paraphrase", "entity_alias"),
+                excluded_leakage_field_kinds=("answer",),
+                split_policy="source_id_holdout",
+            ),
+        ),
+        jobs_root=tmp_path / "jobs",
+        output_dir=tmp_path / "out",
+    )
+
+    manifest = result.manifest_payload
+    assert manifest["source_construction"] == {
+        "schema_version": "melix.source_construction.v1",
+        "construction_method": "source_anchored_multihop",
+        "source_bundle_id": "bundle-1",
+        "source_bundle_revision": "rev-a",
+        "source_count": 1,
+        "sample_count": 1,
+        "transformation_kinds": ["paraphrase", "entity_alias"],
+        "excluded_leakage_field_kinds": ["answer"],
+        "split_policy": "source_id_holdout",
+    }
+    sample = json.loads((tmp_path / "out" / "samples.jsonl").read_text(encoding="utf-8"))
+    assert sample["source_construction"]["source_ids"] == ["source-1"]
+    assert sample["source_construction"]["hop_count"] == 2
+    assert sample["source_construction"]["excluded_leakage_fields"] == ["answer"]
+    assert "raw_answer" not in sample["source_construction"]
+
+
 def test_create_training_package_removes_stale_valid_jsonl_without_validation(tmp_path: Path) -> None:
     (tmp_path / "out").mkdir()
     (tmp_path / "out" / "valid.jsonl").write_text("stale\n", encoding="utf-8")
@@ -403,6 +463,63 @@ def test_create_evaluation_final_result_package_validates_json_targets(tmp_path:
         '{"id": "two", "system": "", "input": {"text": "extract b"}, "target": {"label": "b"}}\n'
     )
     assert source_rows[1]["target"] == '{"label":"b"}'
+
+
+def test_create_evaluation_package_preserves_sample_source_construction(tmp_path: Path) -> None:
+    _fake_state.rows = [
+        {
+            "sample_id": "one",
+            "system": "",
+            "input": "Find the linked source fact.",
+            "target": {"label": "a"},
+            "source_construction": {
+                "source_ids": ["source-1"],
+                "transformation_kinds": ["paraphrase"],
+                "excluded_leakage_fields": ["target.label"],
+                "hop_count": 2,
+            },
+        },
+    ]
+
+    generate_synthetic_dataset_package(
+        _request(
+            output_kind="evaluation_final_result",
+            output_format="json",
+            num_records=1,
+        ),
+        jobs_root=tmp_path / "jobs",
+        output_dir=tmp_path / "eval",
+    )
+
+    sample = json.loads((tmp_path / "eval" / "samples.jsonl").read_text(encoding="utf-8"))
+    assert sample["source_construction"]["source_ids"] == ["source-1"]
+    assert sample["source_construction"]["excluded_leakage_fields"] == ["target.label"]
+
+
+def test_invalid_evaluation_source_construction_reports_row_index(tmp_path: Path) -> None:
+    _fake_state.rows = [
+        {
+            "sample_id": "one",
+            "system": "",
+            "input": "Find the linked source fact.",
+            "target": {"label": "a"},
+            "source_construction": {"source_ids": [" "]},
+        },
+    ]
+
+    with pytest.raises(ModelOperationError) as error:
+        generate_synthetic_dataset_package(
+            _request(
+                output_kind="evaluation_final_result",
+                output_format="json",
+                num_records=1,
+            ),
+            jobs_root=tmp_path / "jobs",
+            output_dir=tmp_path / "eval",
+        )
+
+    assert error.value.code == "invalid_synthetic_source_construction"
+    assert error.value.details == {"field": "source_ids", "row": "1"}
 
 
 def test_create_evaluation_text_package_and_resume_mode(tmp_path: Path) -> None:
@@ -512,6 +629,107 @@ def test_invalid_training_row_is_reported_as_synthetic_output_error(tmp_path: Pa
         )
 
     assert error.value.code == "invalid_synthetic_output_row"
+
+
+def test_invalid_source_construction_row_metadata_is_rejected(tmp_path: Path) -> None:
+    _fake_state.rows = [
+        {
+            "prompt": "p",
+            "completion": "c",
+            "source_construction": {"source_ids": "source-1"},
+        }
+    ]
+
+    with pytest.raises(ModelOperationError) as error:
+        generate_synthetic_dataset_package(
+            _request(num_records=1),
+            jobs_root=tmp_path / "jobs",
+            output_dir=tmp_path / "out",
+        )
+
+    assert error.value.code == "invalid_synthetic_source_construction"
+    assert error.value.details["field"] == "source_ids"
+
+
+@pytest.mark.parametrize(
+    ("metadata", "expected_field"),
+    [
+        (
+            SourceConstructionMetadata(
+                construction_method="",
+                source_bundle_id="bundle-1",
+            ),
+            "source_construction.construction_method",
+        ),
+        (
+            SourceConstructionMetadata(
+                construction_method="source_anchored_multihop",
+                source_bundle_id="",
+            ),
+            "source_construction.source_bundle_id",
+        ),
+        (
+            SourceConstructionMetadata(
+                construction_method="source_anchored_multihop",
+                source_bundle_id="bundle-1",
+                source_count=-1,
+            ),
+            "source_construction.source_count",
+        ),
+    ],
+)
+def test_invalid_source_construction_manifest_metadata_is_rejected(
+    tmp_path: Path,
+    metadata: SourceConstructionMetadata,
+    expected_field: str,
+) -> None:
+    with pytest.raises(ModelOperationError) as error:
+        generate_synthetic_dataset_package(
+            _request(num_records=1, source_construction=metadata),
+            jobs_root=tmp_path / "jobs",
+            output_dir=tmp_path / "out",
+        )
+
+    assert error.value.code == "invalid_synthetic_dataset_request"
+    assert error.value.details["field"] == expected_field
+
+
+@pytest.mark.parametrize(
+    ("source_construction", "expected_field"),
+    [
+        ("not-object", ""),
+        ({}, "source_ids"),
+        ({"source_ids": []}, "source_ids"),
+        ({"source_ids": [" ", ""]}, "source_ids"),
+        ({"source_ids": ["source-1"], "evidence_chain": "bad"}, "evidence_chain"),
+        ({"source_ids": ["source-1"], "hop_count": "two"}, "hop_count"),
+        ({"source_ids": ["source-1"], "hop_count": -1}, "hop_count"),
+        ({"source_ids": ["source-1"], "image_ids": "image-1"}, "image_ids"),
+    ],
+)
+def test_invalid_source_construction_metadata_shapes_are_rejected(
+    tmp_path: Path,
+    source_construction: Any,
+    expected_field: str,
+) -> None:
+    _fake_state.rows = [
+        {
+            "prompt": "p",
+            "completion": "c",
+            "source_construction": source_construction,
+        }
+    ]
+
+    with pytest.raises(ModelOperationError) as error:
+        generate_synthetic_dataset_package(
+            _request(num_records=1),
+            jobs_root=tmp_path / "jobs",
+            output_dir=tmp_path / "out",
+        )
+
+    assert error.value.code == "invalid_synthetic_source_construction"
+    if expected_field:
+        assert error.value.details["field"] == expected_field
 
 
 def test_missing_datadesigner_dependency_reports_optional_extra(

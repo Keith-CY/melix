@@ -951,6 +951,54 @@ def test_synthetic_dataset_request_uses_defaults_and_column_shortcuts(tmp_path: 
     assert request.columns[4].params == {}
 
 
+def test_synthetic_dataset_request_parses_source_construction_metadata() -> None:
+    request = maintenance_core_module._synthetic_dataset_request_from_ext(
+        _synthetic_dataset_base_ext(
+            source_construction_json=json.dumps(
+                {
+                    "construction_method": "source_anchored_multihop",
+                    "source_bundle_id": "bundle-1",
+                    "source_bundle_revision": "rev-a",
+                    "source_count": 3,
+                    "transformation_kinds": ["paraphrase", "entity_alias"],
+                    "excluded_leakage_field_kinds": ["answer"],
+                    "split_policy": "source_id_holdout",
+                }
+            )
+        ),
+        job_id="job-source-construction",
+    )
+
+    assert request.source_construction is not None
+    assert request.source_construction.construction_method == "source_anchored_multihop"
+    assert request.source_construction.source_bundle_id == "bundle-1"
+    assert request.source_construction.source_count == 3
+    assert request.source_construction.transformation_kinds == ("paraphrase", "entity_alias")
+    assert request.source_construction.excluded_leakage_field_kinds == ("answer",)
+
+
+def test_synthetic_dataset_request_accepts_empty_source_construction_lists() -> None:
+    request = maintenance_core_module._synthetic_dataset_request_from_ext(
+        _synthetic_dataset_base_ext(
+            source_construction_json=json.dumps(
+                {
+                    "construction_method": "source_anchored_multihop",
+                    "source_bundle_id": "bundle-1",
+                    "source_count": "",
+                    "transformation_kinds": "",
+                    "excluded_leakage_field_kinds": None,
+                }
+            )
+        ),
+        job_id="job-source-construction-empty",
+    )
+
+    assert request.source_construction is not None
+    assert request.source_construction.source_count == 0
+    assert request.source_construction.transformation_kinds == ()
+    assert request.source_construction.excluded_leakage_field_kinds == ()
+
+
 def test_synthetic_dataset_column_shortcuts_only_read_explicit_at_files(tmp_path: Path) -> None:
     prompt_file = tmp_path / "prompt.txt"
     prompt_file.write_text("file-backed prompt", encoding="utf-8")
@@ -987,6 +1035,14 @@ def test_synthetic_dataset_column_shortcuts_only_read_explicit_at_files(tmp_path
         ({"disable_datadesigner_telemetry": "maybe"}, "disable_datadesigner_telemetry must be a boolean"),
         ({"extra_body_json": "{"}, "extra_body_json must be valid JSON"),
         ({"extra_body_json": "[]"}, "extra_body_json must be a JSON object"),
+        (
+            {"source_construction_json": '{"source_count":"many"}'},
+            "source_construction_json.source_count must be an integer",
+        ),
+        (
+            {"source_construction_json": '{"transformation_kinds":"paraphrase"}'},
+            "source_construction_json.transformation_kinds must be a JSON array",
+        ),
         ({"headers_json": "{"}, "headers_json must be valid JSON"),
         ({"headers_json": "{}"}, "headers_json must be a JSON array"),
         ({"headers_json": json.dumps(["bad"])}, "Synthetic provider headers must use KEY=VALUE syntax"),
