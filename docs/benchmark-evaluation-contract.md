@@ -1057,6 +1057,25 @@ release reviewer to verify which adapter was compared, which dataset slice was
 used, and why the statistical verdict was emitted without joining against
 process logs.
 
+### Release Gate Verdict Policy
+
+Release-gate policies select compare suites through the keys under
+`evaluation_compare`. For every selected suite, the release gate must find
+persisted paired compare evidence and apply that suite's verdict policy.
+
+Supported verdict policies are:
+
+- `required_verdict_mode: exact` with `required_verdict`: the compare verdict
+  must equal the configured verdict. Target-domain LoRA suites use this mode to
+  require a statistically supported `improvement`.
+- `required_verdict_mode: non_regression`: the compare verdict must not be
+  `regression`. Guard suites use this mode to block statistically supported
+  regressions while accepting `improvement`, `inconclusive`, or tie-like neutral
+  verdicts.
+
+When `required_verdict_mode` is omitted, `exact` is the compatibility default
+whenever `required_verdict` is present.
+
 ### Normalized Input Fields
 
 The canonical normalized request shape is:

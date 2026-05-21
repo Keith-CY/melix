@@ -211,6 +211,7 @@ DEFAULT_RELEASE_GATE_POLICY: dict[str, Any] = {
             "bootstrap_iterations": 400,
             "bootstrap_seed": 9,
             "required_verdict": "improvement",
+            "required_verdict_mode": "exact",
         }
     },
     "real_workload": copy.deepcopy(DEFAULT_REAL_WORKLOAD_GATE_POLICY),
@@ -602,17 +603,43 @@ def collect_evaluation_compare_evidence(
     *,
     policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    suite_id = _preferred_evaluation_compare_suite_id(policy)
-    evidence, reason = _load_persisted_evaluation_compare_evidence(
-        jobs_root,
-        suite_id=suite_id,
-    )
-    if evidence is not None:
-        return evidence
+    suite_ids = _selected_evaluation_compare_suite_ids(policy)
+    if len(suite_ids) == 1:
+        suite_id = suite_ids[0]
+        evidence, reason = _load_persisted_evaluation_compare_evidence(
+            jobs_root,
+            suite_id=suite_id,
+        )
+        if evidence is not None:
+            return evidence
+        return {
+            "suite_id": suite_id,
+            "artifact_status": "missing",
+            "reason": reason,
+        }
+
+    selected_suites: dict[str, dict[str, Any]] = {}
+    missing_suites: list[dict[str, str]] = []
+    for suite_id in suite_ids:
+        evidence, reason = _load_persisted_evaluation_compare_evidence(
+            jobs_root,
+            suite_id=suite_id,
+        )
+        if evidence is None:
+            missing_suites.append(
+                {
+                    "suite_id": suite_id,
+                    "artifact_status": "missing",
+                    "reason": reason,
+                }
+            )
+        else:
+            selected_suites[suite_id] = evidence
+
     return {
-        "suite_id": suite_id,
-        "artifact_status": "missing",
-        "reason": reason,
+        "selected_suite_ids": suite_ids,
+        "suites": selected_suites,
+        "missing_suites": missing_suites,
     }
 
 
@@ -1217,6 +1244,31 @@ def _evaluate_evaluation_compare_evidence(
     report: dict[str, Any],
     policy: dict[str, Any],
 ) -> list[str]:
+    selected_suite_ids = _selected_evaluation_compare_suite_ids(policy)
+    suites = report.get("suites")
+    if isinstance(suites, dict):
+        return _evaluate_selected_evaluation_compare_suites(
+            suites,
+            policy,
+            selected_suite_ids=selected_suite_ids,
+        )
+    suite_id = str(report.get("suite_id", "")).strip()
+    if not suite_id:
+        return ["evaluation_compare.suite_id is missing"]
+    if len(selected_suite_ids) > 1:
+        return _evaluate_selected_evaluation_compare_suites(
+            {suite_id: report},
+            policy,
+            selected_suite_ids=selected_suite_ids,
+        )
+
+    return _evaluate_evaluation_compare_suite_payload(report, policy)
+
+
+def _evaluate_evaluation_compare_suite_payload(
+    report: dict[str, Any],
+    policy: dict[str, Any],
+) -> list[str]:
     suite_id = str(report.get("suite_id", "")).strip()
     if not suite_id:
         return ["evaluation_compare.suite_id is missing"]
@@ -1250,6 +1302,31 @@ def _evaluate_evaluation_compare_evidence(
     )
 
 
+def _evaluate_selected_evaluation_compare_suites(
+    suites: dict[Any, Any],
+    policy: dict[str, Any],
+    *,
+    selected_suite_ids: tuple[str, ...],
+) -> list[str]:
+    failures: list[str] = []
+    for suite_id in selected_suite_ids:
+        suite_report = suites.get(suite_id)
+        if not isinstance(suite_report, dict):
+            failures.append(
+                f"evaluation_compare.{suite_id} evidence is missing for selected suite"
+            )
+            continue
+        normalized_report = dict(suite_report)
+        normalized_report.setdefault("suite_id", suite_id)
+        failures.extend(
+            _evaluate_evaluation_compare_suite_payload(
+                normalized_report,
+                policy,
+            )
+        )
+    return failures
+
+
 def _evaluate_single_evaluation_compare_evidence(
     report: dict[str, Any],
     policy: dict[str, Any],
@@ -1272,11 +1349,16 @@ def _evaluate_single_evaluation_compare_evidence(
         return failures
 
     required_verdict = str(suite_policy.get("required_verdict", "")).strip()
+    verdict_mode = _evaluation_compare_verdict_mode(suite_policy)
     actual_verdict = str(report.get("verdict", "")).strip()
-    if required_verdict and actual_verdict != required_verdict:
-        failures.append(
-            f"{prefix} verdict={actual_verdict} did not satisfy required verdict {required_verdict}"
-        )
+    verdict_failure = _evaluation_compare_verdict_failure(
+        prefix=prefix,
+        actual_verdict=actual_verdict,
+        required_verdict=required_verdict,
+        verdict_mode=verdict_mode,
+    )
+    if verdict_failure:
+        failures.append(verdict_failure)
 
     effect_threshold = float(report.get("effect_threshold", 0.0) or 0.0)
     policy_threshold = float(suite_policy.get("effect_threshold", 0.0) or 0.0)
@@ -1315,6 +1397,41 @@ def _evaluate_single_evaluation_compare_evidence(
     return failures
 
 
+def _evaluation_compare_verdict_mode(suite_policy: dict[str, Any]) -> str:
+    raw_mode = str(suite_policy.get("required_verdict_mode", "")).strip()
+    if raw_mode:
+        normalized = raw_mode.replace("-", "_").lower()
+        if normalized in {"exact", "non_regression"}:
+            return normalized
+        return raw_mode
+    return "exact" if str(suite_policy.get("required_verdict", "")).strip() else ""
+
+
+def _evaluation_compare_verdict_failure(
+    *,
+    prefix: str,
+    actual_verdict: str,
+    required_verdict: str,
+    verdict_mode: str,
+) -> str:
+    if verdict_mode == "non_regression":
+        accepted_verdicts = {"improvement", "inconclusive", "tie"}
+        if actual_verdict in accepted_verdicts:
+            return ""
+        return (
+            f"{prefix} verdict={actual_verdict} did not satisfy required verdict mode "
+            "non_regression"
+        )
+    if verdict_mode not in {"", "exact"}:
+        return f"{prefix} required_verdict_mode={verdict_mode} is unsupported"
+    if required_verdict and actual_verdict != required_verdict:
+        return (
+            f"{prefix} verdict={actual_verdict} did not satisfy required verdict "
+            f"{required_verdict}"
+        )
+    return ""
+
+
 def _evaluation_compare_failure_prefix(
     report: dict[str, Any],
     *,
@@ -1330,23 +1447,28 @@ def _evaluation_compare_failure_prefix(
 
 
 def _preferred_evaluation_compare_suite_id(policy: dict[str, Any] | None) -> str:
+    suite_ids = _selected_evaluation_compare_suite_ids(policy)
+    if suite_ids:
+        return suite_ids[0]
+    return ""
+
+
+def _selected_evaluation_compare_suite_ids(policy: dict[str, Any] | None) -> tuple[str, ...]:
+    suite_ids: list[str] = []
     if isinstance(policy, dict):
-        custom_suite_ids = [
+        suite_ids = [
             str(suite_id)
             for suite_id, suite_policy in policy.items()
             if isinstance(suite_policy, dict)
         ]
-        if custom_suite_ids:
-            return custom_suite_ids[0]
-    default_policy = DEFAULT_RELEASE_GATE_POLICY.get("evaluation_compare", {})
-    default_suite_ids = [
-        str(suite_id)
-        for suite_id, suite_policy in default_policy.items()
-        if isinstance(suite_policy, dict)
-    ]
-    if default_suite_ids:
-        return default_suite_ids[0]
-    return ""
+    if not suite_ids:
+        default_policy = DEFAULT_RELEASE_GATE_POLICY.get("evaluation_compare", {})
+        suite_ids = [
+            str(suite_id)
+            for suite_id, suite_policy in default_policy.items()
+            if isinstance(suite_policy, dict)
+        ]
+    return tuple(suite_id for suite_id in suite_ids if suite_id)
 
 
 def _resolve_evaluation_compare_suite_policy(
