@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 
@@ -60,6 +61,28 @@ class _SparseProbeRow(dict[str, object]):
         if key in self._forbidden_keys:
             raise AssertionError(f"unexpected fixed-key scan for {key}")
         return super().get(key, default)
+
+
+def test_report_runtime_type_aliases_stay_python39_probe_compatible() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[3]
+        / "services/mlx-worker-python/worker/productization/benchmark_evaluation_report.py"
+    )
+    module_ast = ast.parse(module_path.read_text(encoding="utf-8"))
+    runtime_aliases = {
+        "_AgenticAdapterBaseKey",
+        "_AgenticAdapterIdentityKey",
+    }
+
+    for statement in module_ast.body:
+        if not isinstance(statement, ast.Assign):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id in runtime_aliases for target in statement.targets):
+            continue
+        assert not any(
+            isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr)
+            for node in ast.walk(statement.value)
+        )
 
 
 def _bundle(*, ttft_ms: float, tokens_per_second: float, accuracy: float) -> dict[str, object]:

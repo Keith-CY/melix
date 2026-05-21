@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from functools import lru_cache
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Union
 
 from worker.productization.run_evidence import summarize_run_evidence_probes
 
@@ -299,7 +299,7 @@ _CSV_EXPORT_NAMES = (
 _NumericAggregate = tuple[float, int]
 _ProbeAggregateKey = tuple[str, str]
 _BenchmarkLabelCacheKey = tuple[str, str, str, str, str, str, str]
-_AgenticAdapterBaseKey = tuple[str, int | str, int | str, int | str, str, str]
+_AgenticAdapterBaseKey = tuple[str, Union[int, str], Union[int, str], Union[int, str], str, str]
 _AgenticAdapterIdentityKey = tuple[_AgenticAdapterBaseKey, str, str, str]
 
 
