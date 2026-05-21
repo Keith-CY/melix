@@ -83,39 +83,47 @@ def build_category_breakdown(
     rows: tuple[dict[str, object], ...],
 ) -> dict[str, dict[str, object]]:
     category_totals: dict[str, list[int]] = {}
+    category_totals_get = category_totals.get
+    string_type = str
     for row in rows:
         try:
             raw_category_label = row["category_label"]
         except KeyError:
             continue
-        category_label = (
-            raw_category_label.strip()
-            if isinstance(raw_category_label, str)
-            else str(raw_category_label).strip()
-        )
+        if isinstance(raw_category_label, string_type):
+            category_label = raw_category_label.strip()
+        else:
+            category_label = string_type(raw_category_label).strip()
         if not category_label:
             continue
-        totals = category_totals.get(category_label)
+        totals = category_totals_get(category_label)
         if totals is None:
             totals = [0, 0, 0]
             category_totals[category_label] = totals
         totals[0] += 1
-        if row.get("base_correct", False):
-            totals[1] += 1
-        if row.get("target_correct", False):
-            totals[2] += 1
+        try:
+            if row["base_correct"]:
+                totals[1] += 1
+        except KeyError:
+            pass
+        try:
+            if row["target_correct"]:
+                totals[2] += 1
+        except KeyError:
+            pass
 
     breakdown: dict[str, dict[str, object]] = {}
+    rounded = _rounded
     for category_label, totals in sorted(category_totals.items()):
         sample_size, base_correct, target_correct = totals
         inverse_sample_size = 1.0 / sample_size
-        base_accuracy = _rounded(base_correct * inverse_sample_size)
-        target_accuracy = _rounded(target_correct * inverse_sample_size)
+        base_accuracy = rounded(base_correct * inverse_sample_size)
+        target_accuracy = rounded(target_correct * inverse_sample_size)
         breakdown[category_label] = {
             "sample_size": sample_size,
             "base_accuracy": base_accuracy,
             "target_accuracy": target_accuracy,
-            "delta_accuracy": _rounded(target_accuracy - base_accuracy),
+            "delta_accuracy": rounded(target_accuracy - base_accuracy),
         }
     return breakdown
 
