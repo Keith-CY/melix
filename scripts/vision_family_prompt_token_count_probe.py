@@ -18,7 +18,10 @@ from worker.runtime.multimodal_preprocessing import (  # noqa: E402
     PreparedVideoFramePolicy,
     PreparedVisionRequest,
 )
-from worker.runtime.vision_family_adapters import resolve_vision_family_config  # noqa: E402
+from worker.runtime.vision_family_adapters import (  # noqa: E402
+    _VISION_FAMILY_ADAPTERS,
+    resolve_vision_family_config,
+)
 
 
 class SplitTrackingPrompt(str):
@@ -73,6 +76,21 @@ def _expected_media_tokens(family_config) -> int:
     return image_tokens + video_tokens
 
 
+def _object_footprint_bytes(value: object) -> int:
+    instance_dict = getattr(value, "__dict__", None)
+    dict_bytes = 0 if instance_dict is None else sys.getsizeof(instance_dict)
+    return sys.getsizeof(value) + dict_bytes
+
+
+def _config_object_footprint_bytes(family_config: object) -> float:
+    adapter = _VISION_FAMILY_ADAPTERS["paligemma-v1"]
+    return float(
+        _object_footprint_bytes(family_config)
+        + _object_footprint_bytes(adapter)
+        + _object_footprint_bytes(adapter.descriptor)
+    )
+
+
 def main() -> None:
     family_config = resolve_vision_family_config({"vision_family_id": "paligemma-v1"})
     prompt = SplitTrackingPrompt(("alpha beta gamma delta\n" * 128).strip())
@@ -106,6 +124,7 @@ def main() -> None:
                 "elapsed_ms_mean": statistics.fmean(samples),
                 "split_calls_mean": statistics.fmean(split_call_samples),
                 "peak_bytes_mean": statistics.fmean(peak_samples),
+                "config_object_footprint_bytes": _config_object_footprint_bytes(family_config),
                 "token_count": float(token_count),
             },
             sort_keys=True,

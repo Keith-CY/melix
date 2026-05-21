@@ -7,7 +7,7 @@ from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, rebui
 from worker.runtime.token_counting import whitespace_token_count as _whitespace_token_count
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class VisionFamilyDescriptor:
     family_id: str
     prompt_profile_id: str
@@ -23,7 +23,7 @@ class VisionFamilyDescriptor:
     video_frame_token_cost: int
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ResolvedVisionFamilyConfig:
     family_id: str
     prompt_profile_id: str
@@ -102,7 +102,7 @@ class ResolvedVisionFamilyConfig:
         return total_tokens if total_tokens > 1 else 1
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class VisionFamilyAdapter:
     descriptor: VisionFamilyDescriptor
 
