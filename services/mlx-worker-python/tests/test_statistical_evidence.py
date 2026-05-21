@@ -323,16 +323,24 @@ def test_build_category_breakdown_aggregates_supported_categories_only() -> None
             {"category_label": "math", "base_correct": False, "target_correct": True},
             {"category_label": "math", "base_correct": True, "target_correct": True},
             {"category_label": "history", "base_correct": True, "target_correct": False},
+            {"category_label": "history"},
+            {"category_label": 7, "base_correct": False, "target_correct": True},
             {"category_label": "", "base_correct": True, "target_correct": True},
         )
     )
 
     assert breakdown == {
-        "history": {
+        "7": {
             "sample_size": 1,
-            "base_accuracy": 1.0,
+            "base_accuracy": 0.0,
+            "target_accuracy": 1.0,
+            "delta_accuracy": 1.0,
+        },
+        "history": {
+            "sample_size": 2,
+            "base_accuracy": 0.5,
             "target_accuracy": 0.0,
-            "delta_accuracy": -1.0,
+            "delta_accuracy": -0.5,
         },
         "math": {
             "sample_size": 2,
