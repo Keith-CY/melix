@@ -2362,8 +2362,11 @@ def test_dataset_registry_preview_limit_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["file_count"] == 4.0
     assert metrics["rows_returned"] == 1.0
+    assert metrics["zero_limit_rows_returned"] == 0.0
     assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["zero_limit_elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
+    assert metrics["zero_limit_peak_bytes_mean"] >= 0
 
 
 def test_release_gates_m9_failure_count_probe_script_emits_metrics(
