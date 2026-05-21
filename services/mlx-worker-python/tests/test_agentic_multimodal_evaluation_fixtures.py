@@ -106,7 +106,7 @@ def test_agentic_multimodal_fixture_samples_replay_with_deterministic_tools() ->
                 sample["tool_calls"],
                 fixture_context=sample["tool_fixture_context"],
             )
-            evidence = json.dumps(run.to_sample_evidence(), sort_keys=True)
+            observations_json = json.dumps(run.observations, sort_keys=True)
 
             assert run.registry_receipt["toolset_version"] == "melix.agentic_tools.builtin.v1"
             assert run.metrics["agentic_tool.call_count"] == float(len(sample["tool_calls"]))
@@ -114,7 +114,7 @@ def test_agentic_multimodal_fixture_samples_replay_with_deterministic_tools() ->
             assert run.metrics["agentic_tool.timeout_count"] == 0.0
             assert run.metrics["agentic_tool.completed_count"] == float(len(sample["tool_calls"]))
             for token in str(sample["expected_answer"]).split():
-                assert token in evidence, f"{package_id} replay evidence missing answer token {token!r}"
+                assert token in observations_json, f"{package_id} tool observations missing answer token {token!r}"
 
 
 def _load_fixture_package(package_id: str) -> tuple[dict[str, Any], list[dict[str, Any]], Path]:
