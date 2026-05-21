@@ -651,6 +651,215 @@ def test_invalid_source_construction_row_metadata_is_rejected(tmp_path: Path) ->
     assert error.value.details["field"] == "source_ids"
 
 
+def test_source_construction_prompt_overlap_is_rejected(tmp_path: Path) -> None:
+    _fake_state.rows = [
+        {
+            "prompt": "Name the object whose answer is Crimson Beacon.",
+            "completion": "Crimson Beacon",
+            "answer": "Crimson Beacon",
+            "source_construction": {
+                "source_ids": ["source-1"],
+                "excluded_leakage_fields": ["answer"],
+            },
+        }
+    ]
+
+    with pytest.raises(ModelOperationError) as error:
+        generate_synthetic_dataset_package(
+            _request(num_records=1),
+            jobs_root=tmp_path / "jobs",
+            output_dir=tmp_path / "out",
+        )
+
+    assert error.value.code == "synthetic_source_leakage_detected"
+    assert error.value.details == {
+        "row": "1",
+        "validator": "prompt_example_overlap",
+        "field": "answer",
+    }
+
+
+def test_source_construction_example_overlap_is_rejected(tmp_path: Path) -> None:
+    _fake_state.rows = [
+        {
+            "prompt": "Name the source entity.",
+            "completion": "Crimson Beacon",
+            "answer": "Crimson Beacon",
+            "examples": [{"input": "The answer is Crimson Beacon."}],
+            "source_construction": {
+                "source_ids": ["source-1"],
+                "excluded_leakage_fields": ["answer"],
+            },
+        }
+    ]
+
+    with pytest.raises(ModelOperationError) as error:
+        generate_synthetic_dataset_package(
+            _request(num_records=1),
+            jobs_root=tmp_path / "jobs",
+            output_dir=tmp_path / "out",
+        )
+
+    assert error.value.code == "synthetic_source_leakage_detected"
+    assert error.value.details["validator"] == "prompt_example_overlap"
+    assert error.value.details["field"] == "answer"
+
+
+def test_source_construction_observation_leakage_is_rejected(tmp_path: Path) -> None:
+    _fake_state.rows = [
+        {
+            "sample_id": "one",
+            "system": "",
+            "input": "Use the tool result to answer.",
+            "target": {"label": "Crimson Beacon"},
+            "answer": "Crimson Beacon",
+            "tool_observations": [{"text": "The hidden answer is Crimson Beacon."}],
+            "source_construction": {
+                "source_ids": ["source-1"],
+                "excluded_leakage_fields": ["answer"],
+            },
+        }
+    ]
+
+    with pytest.raises(ModelOperationError) as error:
+        generate_synthetic_dataset_package(
+            _request(
+                output_kind="evaluation_final_result",
+                output_format="json",
+                num_records=1,
+            ),
+            jobs_root=tmp_path / "jobs",
+            output_dir=tmp_path / "eval",
+        )
+
+    assert error.value.code == "synthetic_source_leakage_detected"
+    assert error.value.details == {
+        "row": "1",
+        "validator": "answer_in_observation",
+        "field": "answer",
+    }
+
+
+def test_source_construction_turn_observation_leakage_is_rejected(tmp_path: Path) -> None:
+    _fake_state.rows = [
+        {
+            "prompt": "Use the linked tool result.",
+            "completion": "Crimson Beacon",
+            "answer": "Crimson Beacon",
+            "turns": [{"observation": {"text": "The final answer is Crimson Beacon."}}],
+            "source_construction": {
+                "source_ids": ["source-1"],
+                "excluded_leakage_fields": ["answer"],
+            },
+        }
+    ]
+
+    with pytest.raises(ModelOperationError) as error:
+        generate_synthetic_dataset_package(
+            _request(num_records=1),
+            jobs_root=tmp_path / "jobs",
+            output_dir=tmp_path / "out",
+        )
+
+    assert error.value.code == "synthetic_source_leakage_detected"
+    assert error.value.details["validator"] == "answer_in_observation"
+    assert error.value.details["field"] == "answer"
+
+
+def test_source_construction_top_level_observation_leakage_is_rejected(tmp_path: Path) -> None:
+    _fake_state.rows = [
+        {
+            "prompt": "Use the linked tool result.",
+            "completion": "Crimson Beacon",
+            "answer": "Crimson Beacon",
+            "observation": {"text": "The final answer is Crimson Beacon."},
+            "source_construction": {
+                "source_ids": ["source-1"],
+                "excluded_leakage_fields": ["answer"],
+            },
+        }
+    ]
+
+    with pytest.raises(ModelOperationError) as error:
+        generate_synthetic_dataset_package(
+            _request(num_records=1),
+            jobs_root=tmp_path / "jobs",
+            output_dir=tmp_path / "out",
+        )
+
+    assert error.value.code == "synthetic_source_leakage_detected"
+    assert error.value.details["validator"] == "answer_in_observation"
+    assert error.value.details["field"] == "answer"
+
+
+def test_source_construction_train_eval_source_collision_is_rejected(tmp_path: Path) -> None:
+    _fake_state.rows = [
+        {
+            "prompt": "p1",
+            "completion": "c1",
+            "source_construction": {"source_ids": ["shared-source"]},
+        },
+        {
+            "prompt": "p2",
+            "completion": "c2",
+            "source_construction": {"source_ids": ["shared-source"]},
+        },
+    ]
+
+    with pytest.raises(ModelOperationError) as error:
+        generate_synthetic_dataset_package(
+            _request(num_records=2, validation_ratio=0.5),
+            jobs_root=tmp_path / "jobs",
+            output_dir=tmp_path / "out",
+        )
+
+    assert error.value.code == "synthetic_source_leakage_detected"
+    assert error.value.details["validator"] == "train_eval_source_collision"
+    assert error.value.details["source_id"] == "shared-source"
+
+
+def test_source_construction_validator_helpers_handle_noisy_metadata() -> None:
+    assert synthetic_module._row_excluded_leakage_values(  # noqa: SLF001
+        {"answer": "Crimson Beacon"},
+        {"excluded_leakage_fields": "answer"},
+    ) == []
+    assert synthetic_module._row_excluded_leakage_values(  # noqa: SLF001
+        {
+            "answer": 123,
+            "nested": {"values": ["ab", "Crimson Beacon"]},
+        },
+        {"excluded_leakage_fields": ["", "answer", "nested.values", "missing.path"]},
+    ) == [("answer", "123"), ("nested.values", "Crimson Beacon")]
+    assert synthetic_module._training_prompt_segments(  # noqa: SLF001
+        {
+            "system": "system field",
+            "prompt": "raw prompt",
+            "input": {"text": "input text"},
+        }
+    ) == ["system field", "raw prompt", "input text"]
+    assert synthetic_module._training_prompt_segments(  # noqa: SLF001
+        {
+            "messages": [
+                {"role": "assistant", "content": "ignored"},
+                "bad",
+                {"role": "system", "content": "system prompt"},
+                {"role": "user", "content": "user prompt"},
+            ]
+        }
+    ) == ["system prompt", "user prompt"]
+    assert synthetic_module._first_leakage_match(  # noqa: SLF001
+        [("answer", "Crimson Beacon")],
+        [],
+    ) is None
+    assert synthetic_module._source_ids_by_split(  # noqa: SLF001
+        [
+            {"source_construction": "bad"},
+            {"source_construction": {"source_ids": "bad"}},
+            {"source_construction": {"source_ids": ["source-1", ""]}},
+        ]
+    ) == {"source-1": 3}
+
+
 @pytest.mark.parametrize(
     ("metadata", "expected_field"),
     [

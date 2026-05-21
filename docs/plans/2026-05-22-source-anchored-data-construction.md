@@ -191,16 +191,27 @@ raw secrets, API keys, or live provider credentials.
 
 ## Leakage Controls Planned From This Contract
 
-The validator slice should consume the metadata above to check:
+The validator slice consumes the metadata above to check source-anchored rows
+before package materialization:
 
-- prompt or example overlap with excluded source fields
-- answer-in-observation leakage
-- train/eval source collision
+- prompt or example overlap with excluded source fields by resolving
+  `excluded_leakage_fields` against the generated row and scanning
+  prompt/example text that is visible before the target answer
+- answer-in-observation leakage by scanning tool observation payloads for the
+  same excluded raw values
+- train/eval source collision by comparing per-row `source_ids` across the
+  materialized training and validation splits
 - duplicate source ids across incompatible splits
 - exact or near-exact prompt duplication
 
-Validators should produce machine-readable summaries in dataset manifests and
-evaluation artifacts before any release-facing claim uses the generated data.
+The initial lexical leakage checks ignore excluded raw values shorter than
+three characters because single-character labels and very short aliases create
+high-noise substring matches in normal prompt text.
+
+The first validator implementation blocks invalid generated packages when these
+checks fail. Follow-up slices should add machine-readable summaries in dataset
+manifests and evaluation artifacts before any release-facing claim uses the
+generated data.
 
 ## Quality Metrics Planned From This Contract
 
@@ -259,8 +270,6 @@ For remaining implementation slices:
 
 ## Follow-Up Issues
 
-- Add validators for prompt/example overlap, answer-in-observation leakage, and
-  train/eval split collision.
 - Record leakage validation summaries in dataset manifests and evaluation
   artifacts.
 - Add quality metrics for tool necessity, multi-hop depth, evidence coverage,

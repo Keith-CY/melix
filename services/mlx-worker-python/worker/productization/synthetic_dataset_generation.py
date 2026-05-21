@@ -40,6 +40,7 @@ _SUPPORTED_TRAINING_FORMATS = {
 _SUPPORTED_EVALUATION_RESULT_KINDS = {"json", "text"}
 _SECRET_FIELD_MARKERS = ("api_key", "authorization", "token", "secret", "password")
 _TELEMETRY_ENV_VAR = "NEMO_TELEMETRY_ENABLED"
+_MIN_LEAKAGE_VALUE_LENGTH = 3
 
 
 @dataclass(frozen=True)
@@ -531,8 +532,10 @@ def _write_training_package(
     config_path: Path,
     timing: dict[str, float],
 ) -> SyntheticDatasetPackageResult:
+    _validate_source_anchored_rows(rows, output_kind="training")
     normalized = [_normalize_synthetic_training_row(row, request.output_format) for row in rows]
     train_rows, validation_rows = _split_validation(normalized, request.validation_ratio)
+    _validate_source_split_collision(train_rows, validation_rows)
     package_write_started = time.perf_counter()
     samples_path = package_path / "samples.jsonl"
     valid_path = package_path / "valid.jsonl"
@@ -598,6 +601,7 @@ def _write_evaluation_package(
     timing: dict[str, float],
 ) -> SyntheticDatasetPackageResult:
     serialized_rows = _parse_and_validate_evaluation_targets(rows, result_kind=request.output_format)
+    _validate_source_anchored_rows(serialized_rows, output_kind="evaluation_final_result")
     package_write_started = time.perf_counter()
     manifest_path = package_path / "manifest.json"
     samples_path = package_path / "samples.jsonl"
@@ -1037,6 +1041,193 @@ def _optional_string_list(payload: dict[str, Any], key: str, *, row: int | None)
             details=details,
         )
     payload[key] = [item for item in (str(raw).strip() for raw in value) if item]
+
+
+def _validate_source_anchored_rows(rows: list[dict[str, Any]], *, output_kind: str) -> None:
+    for index, row in enumerate(rows, start=1):
+        metadata = row.get("source_construction")
+        if not isinstance(metadata, Mapping):
+            continue
+        excluded_values = _row_excluded_leakage_values(row, metadata)
+        if not excluded_values:
+            continue
+        prompt_segments = _source_prompt_overlap_segments(row, output_kind=output_kind)
+        prompt_match = _first_leakage_match(excluded_values, prompt_segments)
+        if prompt_match is not None:
+            raise ModelOperationError(
+                code="synthetic_source_leakage_detected",
+                message="Synthetic source construction prompt or example text contains an excluded source field value.",
+                details={
+                    "row": str(index),
+                    "validator": "prompt_example_overlap",
+                    "field": prompt_match[0],
+                },
+            )
+        observation_segments = _source_observation_segments(row)
+        observation_match = _first_leakage_match(excluded_values, observation_segments)
+        if observation_match is not None:
+            raise ModelOperationError(
+                code="synthetic_source_leakage_detected",
+                message="Synthetic source construction tool observation contains an excluded source field value.",
+                details={
+                    "row": str(index),
+                    "validator": "answer_in_observation",
+                    "field": observation_match[0],
+                },
+            )
+
+
+def _row_excluded_leakage_values(row: Mapping[str, Any], metadata: Mapping[str, Any]) -> list[tuple[str, str]]:
+    fields = metadata.get("excluded_leakage_fields", [])
+    if not isinstance(fields, list):
+        return []
+    values: list[tuple[str, str]] = []
+    for raw_field in fields:
+        field = str(raw_field).strip()
+        if not field:
+            continue
+        resolved = _resolve_dotted_path(row, field)
+        for value in _flatten_string_values(resolved):
+            normalized = value.strip()
+            if len(normalized) >= _MIN_LEAKAGE_VALUE_LENGTH:
+                values.append((field, normalized))
+    return values
+
+
+def _resolve_dotted_path(payload: Mapping[str, Any], path: str) -> Any:
+    current: Any = payload
+    for part in path.split("."):
+        if isinstance(current, Mapping) and part in current:
+            current = current[part]
+            continue
+        return None
+    return current
+
+
+def _flatten_string_values(value: Any) -> Iterator[str]:
+    if value is None:
+        return
+    if isinstance(value, str):
+        yield value
+        return
+    if isinstance(value, Mapping):
+        for item in value.values():
+            yield from _flatten_string_values(item)
+        return
+    if isinstance(value, list):
+        for item in value:
+            yield from _flatten_string_values(item)
+        return
+    if isinstance(value, (bool, int, float)):
+        yield str(value)
+
+
+def _source_prompt_overlap_segments(row: Mapping[str, Any], *, output_kind: str) -> list[str]:
+    segments: list[str] = []
+    if output_kind == "training":
+        segments.extend(_training_prompt_segments(row))
+    elif output_kind == "evaluation_final_result":
+        segments.extend(_evaluation_prompt_segments(row))
+    for key in ("examples", "few_shot_examples", "demonstrations"):
+        if key in row:
+            segments.extend(_flatten_string_values(row[key]))
+    return [segment for segment in segments if segment]
+
+
+def _training_prompt_segments(row: Mapping[str, Any]) -> list[str]:
+    if "messages" in row and isinstance(row["messages"], list):
+        segments: list[str] = []
+        for message in row["messages"]:
+            if not isinstance(message, Mapping):
+                continue
+            if str(message.get("role", "")).strip() == "assistant":
+                continue
+            content = str(message.get("content", "")).strip()
+            if content:
+                segments.append(content)
+        return segments
+    segments = []
+    for key in ("system", "prompt", "text", "question", "instruction", "input"):
+        if key in row:
+            segments.extend(_flatten_string_values(row[key]))
+    return segments
+
+
+def _evaluation_prompt_segments(row: Mapping[str, Any]) -> list[str]:
+    segments: list[str] = []
+    if "system" in row:
+        segments.extend(_flatten_string_values(row["system"]))
+    if "input" in row:
+        segments.extend(_flatten_string_values(row["input"]))
+    return segments
+
+
+def _source_observation_segments(row: Mapping[str, Any]) -> list[str]:
+    segments: list[str] = []
+    for key in ("observation", "observations", "tool_observations", "agentic_tool_observations"):
+        if key in row:
+            segments.extend(_flatten_string_values(row[key]))
+    turns = row.get("turns")
+    if isinstance(turns, list):
+        for turn in turns:
+            if not isinstance(turn, Mapping):
+                continue
+            if "observation" in turn:
+                segments.extend(_flatten_string_values(turn["observation"]))
+    return [segment for segment in segments if segment]
+
+
+def _first_leakage_match(
+    excluded_values: Iterable[tuple[str, str]],
+    segments: Iterable[str],
+) -> tuple[str, str] | None:
+    searchable_text = "\n".join(segment.casefold() for segment in segments if segment)
+    if not searchable_text:
+        return None
+    for field, value in excluded_values:
+        if value.casefold() in searchable_text:
+            return field, value
+    return None
+
+
+def _validate_source_split_collision(
+    train_rows: list[dict[str, Any]],
+    validation_rows: list[dict[str, Any]],
+) -> None:
+    if not train_rows or not validation_rows:
+        return
+    train_source_ids = _source_ids_by_split(train_rows)
+    validation_source_ids = _source_ids_by_split(validation_rows)
+    shared_ids = sorted(set(train_source_ids) & set(validation_source_ids))
+    if not shared_ids:
+        return
+    source_id = shared_ids[0]
+    raise ModelOperationError(
+        code="synthetic_source_leakage_detected",
+        message="Synthetic source construction reuses a source id across training and validation splits.",
+        details={
+            "validator": "train_eval_source_collision",
+            "source_id": source_id,
+            "train_row": str(train_source_ids[source_id]),
+            "validation_row": str(validation_source_ids[source_id]),
+        },
+    )
+
+
+def _source_ids_by_split(rows: list[dict[str, Any]]) -> dict[str, int]:
+    source_ids: dict[str, int] = {}
+    for index, row in enumerate(rows, start=1):
+        metadata = row.get("source_construction")
+        if not isinstance(metadata, Mapping):
+            continue
+        raw_ids = metadata.get("source_ids", [])
+        if not isinstance(raw_ids, list):
+            continue
+        for raw_id in raw_ids:
+            source_id = str(raw_id).strip()
+            if source_id and source_id not in source_ids:
+                source_ids[source_id] = index
+    return source_ids
 
 
 def _split_validation(
