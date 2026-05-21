@@ -204,7 +204,6 @@ def _media_fragment_ids(media_ids: set[str], tool_calls: object) -> set[str]:
         media_ref = arguments.get("media_ref")
         region = arguments.get("region")
         if isinstance(media_ref, str) and media_ref.strip() in media_ids:
-            evidence_ids.add(media_ref.strip())
             if isinstance(region, str) and region.strip():
                 evidence_ids.add(f"{media_ref.strip()}#{region.strip()}")
     return evidence_ids
