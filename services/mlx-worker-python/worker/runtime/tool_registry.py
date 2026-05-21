@@ -205,7 +205,7 @@ class ToolRegistry:
             for tool in self._tools
         )
         self._selection_cache: dict[tuple[str, ...], ToolRegistry] = {}
-        self._worker_tool_config_bytes: bytes = b""
+        self._worker_tool_config_template: common_pb2.ToolConfig | None = None
         self._metrics = ToolRegistryMetrics(
             tool_count=len(self._tools),
             schema_bytes=sum(tool.schema_byte_count() for tool in self._tools),
@@ -307,8 +307,9 @@ class ToolRegistry:
         return tools
 
     def as_worker_tool_config(self) -> common_pb2.ToolConfig:
-        if self._worker_tool_config_bytes:
-            return _TOOL_CONFIG_FROM_BYTES(self._worker_tool_config_bytes)
+        template = self._worker_tool_config_template
+        if template is not None:
+            return _copy_tool_config(template)
         config = common_pb2.ToolConfig(
             tools=[tool.as_worker_tool_definition() for tool in self._tools],
             schema_format="openai-function",
@@ -317,8 +318,8 @@ class ToolRegistry:
             parser=self._parser,
             parser_contract_version=self._parser_contract_version,
         )
-        self._worker_tool_config_bytes = config.SerializeToString()
-        return config
+        self._worker_tool_config_template = config
+        return _copy_tool_config(config)
 
     def _validate(self) -> None:
         if not self._schema_version:

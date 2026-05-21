@@ -446,7 +446,7 @@ def test_built_in_tool_config_partial_selection_reuses_serialized_selection_cach
     assert built_in_tool_config(["image_crop", "local_compute"]).tools[0].name == "image_crop"
 
 
-def test_tool_registry_worker_tool_config_reuses_cached_serialized_snapshot(
+def test_tool_registry_worker_tool_config_reuses_cached_template_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     registry = built_in_tool_registry().select(["image_crop", "local_compute"])
@@ -454,16 +454,31 @@ def test_tool_registry_worker_tool_config_reuses_cached_serialized_snapshot(
 
     def fail_as_worker_tool_definition(self: ToolDescriptor) -> common_pb2.ToolDefinition:
         raise AssertionError(  # pragma: no cover
-            "as_worker_tool_config() should reuse cached serialized config"
+            "as_worker_tool_config() should reuse cached config template"
+        )
+
+    def fail_from_bytes(payload: bytes) -> common_pb2.ToolConfig:
+        raise AssertionError(  # pragma: no cover
+            "as_worker_tool_config() should copy the cached template without reparsing bytes"
         )
 
     monkeypatch.setattr(ToolDescriptor, "as_worker_tool_definition", fail_as_worker_tool_definition)
+    monkeypatch.setattr(tool_registry_module, "_TOOL_CONFIG_FROM_BYTES", fail_from_bytes)
 
     config = registry.as_worker_tool_config()
 
     assert config == expected_config
     assert config is not expected_config
     config.tools[0].name = "mutated"
+    assert registry.as_worker_tool_config().tools[0].name == "image_crop"
+
+
+def test_tool_registry_worker_tool_config_first_call_returns_isolated_copy() -> None:
+    registry = ToolRegistry(built_in_tool_registry().tools)
+
+    config = registry.as_worker_tool_config()
+    config.tools[0].name = "mutated"
+
     assert registry.as_worker_tool_config().tools[0].name == "image_crop"
 
 
