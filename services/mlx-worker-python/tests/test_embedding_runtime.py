@@ -110,6 +110,25 @@ def test_project_digest_preserves_legacy_projection_values() -> None:
         assert actual == expected
 
 
+def test_embed_duplicate_input_cache_returns_distinct_vector_lists() -> None:
+    backend = CountingEmbeddingBackend()
+    runtime = DeterministicEmbeddingRuntime(dimensions=4)
+    loaded_model = {
+        "dimensions": 4,
+        "embedding_backend": backend,
+        "embedding_family_adapter": CountingEmbeddingFamilyAdapter(),
+    }
+
+    first, second, third = runtime.embed_inputs(loaded_model, ["alpha", "alpha", "beta"])
+
+    assert backend.calls == [("alpha", 4), ("beta", 4)]
+    assert first == second == [1.0, 1.0, 1.0, 1.0]
+    assert first is not second
+    second[0] = 99.0
+    assert first == [1.0, 1.0, 1.0, 1.0]
+    assert third == [2.0, 2.0, 2.0, 2.0]
+
+
 def test_embed_returns_stable_vectors_for_loaded_embedding_models() -> None:
     _, runtime_service, inference_service = build_services()
     model_handle = load_model(runtime_service, WorkerModelCatalog.dev_embedding_model())

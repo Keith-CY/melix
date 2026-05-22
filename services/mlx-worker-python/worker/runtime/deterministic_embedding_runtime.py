@@ -41,6 +41,7 @@ class DeterministicEmbeddingRuntime:
         cache_get = vector_cache.get
         append_vector = vectors.append
         embed_text = family.embed_text
+        list_copy = list.copy
         for text in inputs:
             vector = cache_get(text)
             if vector is None:
@@ -48,5 +49,5 @@ class DeterministicEmbeddingRuntime:
                 vector_cache[text] = vector
                 append_vector(vector)
             else:
-                append_vector(vector.copy())
+                append_vector(list_copy(vector))
         return vectors
