@@ -18,23 +18,6 @@ _JSON_LOADS = json.loads
 _JSON_DECODE_ERROR = json.JSONDecodeError
 _PYTHON_CODE_BLOCK_TAG = "python"
 _PYTHON_CODE_BLOCK_TAG_LENGTH = len(_PYTHON_CODE_BLOCK_TAG)
-_PYTHON_CODE_BLOCK_TAG_VARIANTS = (
-    "Python",
-    "PYTHON",
-    "PyThOn",
-    "pYtHoN",
-    *(
-        variant
-        for variant in (
-            "".join(
-                upper if bitmask & (1 << offset) else lower
-                for offset, (lower, upper) in enumerate(zip("python", "PYTHON"))
-            )
-            for bitmask in range(1 << _PYTHON_CODE_BLOCK_TAG_LENGTH)
-        )
-        if variant not in {"python", "Python", "PYTHON", "PyThOn", "pYtHoN"}
-    ),
-)
 
 
 @dataclass(frozen=True)
@@ -84,7 +67,7 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
 def _code_block_content_start(text: str, start: int) -> int:
     if text.startswith(_PYTHON_CODE_BLOCK_TAG, start):
         start += _PYTHON_CODE_BLOCK_TAG_LENGTH
-    elif text.startswith(_PYTHON_CODE_BLOCK_TAG_VARIANTS, start):
+    elif text[start:start + _PYTHON_CODE_BLOCK_TAG_LENGTH].lower() == _PYTHON_CODE_BLOCK_TAG:
         start += _PYTHON_CODE_BLOCK_TAG_LENGTH
     while start < len(text) and text[start].isspace():
         start += 1
