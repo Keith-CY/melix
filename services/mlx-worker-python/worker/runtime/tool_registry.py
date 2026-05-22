@@ -175,6 +175,21 @@ class ToolRegistryMetrics:
 
 
 class ToolRegistry:
+    __slots__ = (
+        "_metrics",
+        "_openai_tool_templates",
+        "_parser",
+        "_parser_contract_version",
+        "_schema_version",
+        "_selection_cache",
+        "_tool_by_name",
+        "_tool_names",
+        "_tool_names_list",
+        "_tools",
+        "_toolset_version",
+        "_worker_tool_config_bytes",
+    )
+
     def __init__(
         self,
         tools: list[ToolDescriptor] | tuple[ToolDescriptor, ...],
@@ -275,37 +290,34 @@ class ToolRegistry:
         return selection
 
     def as_openai_tools(self) -> list[dict[str, Any]]:
-        tools: list[dict[str, Any]] = []
-        append_tool = tools.append
-        for (
-            name,
-            description,
-            tool_kind,
-            observation_kind,
-            schema_properties,
-            required_arguments,
-        ) in self._openai_tool_templates:
-            append_tool(
-                {
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "description": description,
-                        "parameters": {
-                            "type": "object",
-                            "additionalProperties": False,
-                            "properties": {
-                                name: schema.copy()
-                                for name, schema in schema_properties
-                            },
-                            "required": required_arguments.copy(),
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": description,
+                    "parameters": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            argument_name: schema.copy()
+                            for argument_name, schema in schema_properties
                         },
+                        "required": required_arguments.copy(),
                     },
-                    "x-melix-tool-kind": tool_kind,
-                    "x-melix-observation-kind": observation_kind,
-                }
-            )
-        return tools
+                },
+                "x-melix-tool-kind": tool_kind,
+                "x-melix-observation-kind": observation_kind,
+            }
+            for (
+                name,
+                description,
+                tool_kind,
+                observation_kind,
+                schema_properties,
+                required_arguments,
+            ) in self._openai_tool_templates
+        ]
 
     def as_worker_tool_config(self) -> common_pb2.ToolConfig:
         if self._worker_tool_config_bytes:
