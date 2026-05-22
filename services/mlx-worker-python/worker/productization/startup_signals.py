@@ -168,6 +168,7 @@ def _next_normalized_version_part(value: str, index: int) -> tuple[int, int, boo
         character_code = _ORD(value[index])
         index += 1
         if character_code == 43 or character_code == 45:
+            index = value_length
             break
         if character_code == 46:
             if part_has_chars:
