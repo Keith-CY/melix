@@ -1801,6 +1801,7 @@ from worker.registry import WorkerRegistry
 elapsed_samples = []
 scandir_samples = []
 sample_count = 0.0
+inner_iterations = 4
 
 for _ in range(3):
     with tempfile.TemporaryDirectory(prefix='melix-pr-perf-model-ops-bundle-') as temp_dir:
@@ -1811,6 +1812,7 @@ for _ in range(3):
         )
         original_scandir = os.scandir
         bundle_scandir_calls = [0]
+        event_count = 0
 
         def tracked_scandir(path):
             bundle_scandir_calls[0] += int(Path(path).name.endswith('.artifact'))
@@ -1819,34 +1821,36 @@ for _ in range(3):
         os.scandir = tracked_scandir
         try:
             started = time.perf_counter()
-            convert_events = list(
-                service.ConvertModel(
-                    maintenance_pb2.ConvertModelRequest(
-                        source_model='melix-dev-text',
-                        output_dir=str(temp_root / 'convert'),
-                        generate_manifest=True,
-                    ),
-                    context=None,
+            for iteration in range(inner_iterations):
+                convert_events = list(
+                    service.ConvertModel(
+                        maintenance_pb2.ConvertModelRequest(
+                            source_model='melix-dev-text',
+                            output_dir=str(temp_root / f'convert-{iteration}'),
+                            generate_manifest=True,
+                        ),
+                        context=None,
+                    )
                 )
-            )
-            quantize_events = list(
-                service.ConvertModel(
-                    maintenance_pb2.ConvertModelRequest(
-                        source_model='melix-dev-text',
-                        output_dir=str(temp_root / 'quantize'),
-                        weight_quant='q4',
-                        kv_quant='q8',
-                        generate_manifest=True,
-                        ext={'operation': 'quantize'},
-                    ),
-                    context=None,
+                quantize_events = list(
+                    service.ConvertModel(
+                        maintenance_pb2.ConvertModelRequest(
+                            source_model='melix-dev-text',
+                            output_dir=str(temp_root / f'quantize-{iteration}'),
+                            weight_quant='q4',
+                            kv_quant='q8',
+                            generate_manifest=True,
+                            ext={'operation': 'quantize'},
+                        ),
+                        context=None,
+                    )
                 )
-            )
+                event_count += len(convert_events) + len(quantize_events)
             elapsed_samples.append((time.perf_counter() - started) * 1000.0)
         finally:
             os.scandir = original_scandir
 
-        sample_count = float(len(convert_events) + len(quantize_events))
+        sample_count = float(event_count)
         scandir_samples.append(float(bundle_scandir_calls[0]))
 
 print(json.dumps({

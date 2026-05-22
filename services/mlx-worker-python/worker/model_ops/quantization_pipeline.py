@@ -1255,9 +1255,12 @@ def _qat_fake_quant_source_stats(source_files: list[Path], *, q_bits: int) -> di
     digest = hashlib.sha256()
     source_file_count = 0
     source_byte_count = 0
-    error_sum = 0.0
-    error_max = 0.0
-    error_by_byte = _qat_fake_quant_error_table(q_bits)
+    error_sum_units = 0
+    error_max_units = 0
+    # Keep the public float table warmed for callers/tests while the hot byte
+    # scan uses an integer translation table so per-byte aggregation runs in C.
+    _qat_fake_quant_error_table(q_bits)
+    error_byte_table = _qat_fake_quant_error_byte_table(q_bits)
     for source_file in source_files:
         source_file_count += 1
         with source_file.open("rb") as handle:
@@ -1267,11 +1270,11 @@ def _qat_fake_quant_source_stats(source_files: list[Path], *, q_bits: int) -> di
                     break
                 digest.update(chunk)
                 source_byte_count += len(chunk)
-                for value in chunk:
-                    error = error_by_byte[value]
-                    error_sum += error
-                    if error > error_max:
-                        error_max = error
+                translated_errors = chunk.translate(error_byte_table)
+                error_sum_units += sum(translated_errors)
+                chunk_error_max = max(translated_errors)
+                if chunk_error_max > error_max_units:
+                    error_max_units = chunk_error_max
     if source_byte_count <= 0:
         raise ModelOperationError(
             code="invalid_qat_source_artifact",
@@ -1282,9 +1285,14 @@ def _qat_fake_quant_source_stats(source_files: list[Path], *, q_bits: int) -> di
         "source_sha256": digest.hexdigest(),
         "source_file_count": source_file_count,
         "source_byte_count": source_byte_count,
-        "quant_error_proxy_mean": error_sum / source_byte_count,
-        "quant_error_proxy_max": error_max,
+        "quant_error_proxy_mean": (error_sum_units / 255.0) / source_byte_count,
+        "quant_error_proxy_max": error_max_units / 255.0,
     }
+
+
+@lru_cache(maxsize=None)
+def _qat_fake_quant_error_byte_table(q_bits: int) -> bytes:
+    return bytes(round(error * 255.0) for error in _qat_fake_quant_error_table(q_bits))
 
 
 @lru_cache(maxsize=None)
