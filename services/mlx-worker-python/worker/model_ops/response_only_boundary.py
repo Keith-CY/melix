@@ -17,6 +17,9 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Protocol, runtime_checkable
 
 
+_SET_FROZEN_ATTR = object.__setattr__
+
+
 @runtime_checkable
 class _ChatTemplateTokenizer(Protocol):
     """Minimal tokenizer surface we depend on.
@@ -40,12 +43,21 @@ class _ChatTemplateTokenizer(Protocol):
         ...
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class ResponseOnlyBoundary:
     """Per-sample response-only boundary record persisted in the manifest."""
 
     assistant_offset: int
     total_tokens: int
+
+    def __init__(
+        self,
+        assistant_offset: int,
+        total_tokens: int,
+        _set_attr: Any = _SET_FROZEN_ATTR,
+    ) -> None:
+        _set_attr(self, "assistant_offset", assistant_offset)
+        _set_attr(self, "total_tokens", total_tokens)
 
     @property
     def response_tokens(self) -> int:
