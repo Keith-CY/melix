@@ -175,8 +175,9 @@ def aggregate_response_only_boundaries(
             response_tokens = total_tokens - offset
             if response_tokens < 0:
                 response_tokens = 0
-            effective_total = total_tokens if total_tokens < effective_limit else effective_limit
-            trainable_response_tokens = effective_total - offset
+            if total_tokens > effective_limit:
+                total_tokens = effective_limit
+            trainable_response_tokens = total_tokens - offset
             if trainable_response_tokens < 0:
                 trainable_response_tokens = 0
             if sample_count == 0:
