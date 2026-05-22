@@ -10,10 +10,11 @@ path is covered by the registered PR-scoped probe `probe-policy-noop-overhead` i
 
 ## Change
 
-Keep `ProbePolicy.evidence()` and `ProbePolicy.debug()` behavior unchanged while
-using static dispatch for the cached singleton helpers. These helpers do not use a
-class object, so avoiding classmethod binding removes unnecessary descriptor work
-from the hot no-op policy overhead probe.
+Keep `ProbePolicy.from_value(...)`, `ProbePolicy.evidence()`, and
+`ProbePolicy.debug()` behavior unchanged while using static dispatch for cached
+singleton helper paths that do not use a class object. Avoiding classmethod
+binding removes unnecessary descriptor work from repeated mode parsing in the hot
+no-op policy overhead probe.
 
 ## Verification plan
 
