@@ -10,7 +10,10 @@ repo_root = Path.cwd()
 sys.path.insert(0, str(repo_root))
 sys.path.insert(0, str(repo_root / "services/mlx-worker-python"))
 
-from worker.runtime.deterministic_embedding_runtime import DeterministicEmbeddingRuntime
+from worker.runtime.deterministic_embedding_runtime import (
+    DeterministicEmbeddingRuntime,
+    _repeated_input_cycle_length,
+)
 from worker.runtime.embedding_backends import (
     DeterministicEmbeddingBackend,
     DeterministicEmbeddingFamilyAdapter,
@@ -54,7 +57,29 @@ class CountingEmbeddingFamilyAdapter(DeterministicEmbeddingFamilyAdapter):
         return backend.embed_text(text, dimensions)
 
 
+def assert_cycle_detection_contract() -> None:
+    no_repeat = [f"unique-{index}" for index in range(1024)]
+    uneven_repeat = (
+        ["repeat"]
+        + [f"uneven-{index}" for index in range(511)]
+        + ["repeat"]
+        + [f"tail-{index}" for index in range(512)]
+    )
+    mismatched_cycle = (
+        [f"cycle-{index}" for index in range(512)]
+        + ["cycle-0"]
+        + [f"mismatch-{index}" for index in range(511)]
+    )
+    valid_cycle = [f"cycle-{index}" for index in range(512)] * 2
+
+    assert _repeated_input_cycle_length(no_repeat) == 0
+    assert _repeated_input_cycle_length(uneven_repeat) == 0
+    assert _repeated_input_cycle_length(mismatched_cycle) == 0
+    assert _repeated_input_cycle_length(valid_cycle) == 512
+
+
 def run_probe() -> dict[str, float]:
+    assert_cycle_detection_contract()
     dimensions = 32
     unique_inputs = [f"document-{index % 160}-payload-{index % 13}" for index in range(512)]
     inputs = [unique_inputs[index % len(unique_inputs)] for index in range(8192)]
@@ -81,6 +106,7 @@ def run_probe() -> dict[str, float]:
 
     if len(vectors) != len(inputs):
         raise AssertionError(f"unexpected vector count: {len(vectors)} != {len(inputs)}")
+    assert vectors[0] is not vectors[len(unique_inputs)]
     return {
         "elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
         "embed_text_calls_mean": round(statistics.fmean(call_samples), 6),
