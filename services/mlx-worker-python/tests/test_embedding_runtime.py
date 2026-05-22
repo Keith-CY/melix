@@ -63,6 +63,20 @@ class CountingEmbeddingFamilyAdapter(DeterministicEmbeddingFamilyAdapter):
         return backend.embed_text(text, dimensions)
 
 
+class CopyTrackingVector(list[float]):
+    copy_calls = 0
+
+    def copy(self) -> list[float]:
+        type(self).copy_calls += 1
+        return list(self)
+
+
+class CopyTrackingEmbeddingBackend(CountingEmbeddingBackend):
+    def embed_text(self, text: str, dimensions: int) -> list[float]:
+        self.calls.append((text, dimensions))
+        return CopyTrackingVector([float(len(self.calls))] * dimensions)
+
+
 def build_services(model_catalog: WorkerModelCatalog | None = None):
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=PassiveTextBackend()),
@@ -127,6 +141,26 @@ def test_embed_duplicate_input_cache_returns_distinct_vector_lists() -> None:
     second[0] = 99.0
     assert first == [1.0, 1.0, 1.0, 1.0]
     assert third == [2.0, 2.0, 2.0, 2.0]
+
+
+def test_embed_duplicate_input_cache_uses_vector_copy_method() -> None:
+    CopyTrackingVector.copy_calls = 0
+    backend = CopyTrackingEmbeddingBackend()
+    runtime = DeterministicEmbeddingRuntime(dimensions=4)
+    loaded_model = {
+        "dimensions": 4,
+        "embedding_backend": backend,
+        "embedding_family_adapter": CountingEmbeddingFamilyAdapter(),
+    }
+
+    first, second, third = runtime.embed_inputs(loaded_model, ["alpha", "alpha", "alpha"])
+
+    assert backend.calls == [("alpha", 4)]
+    assert CopyTrackingVector.copy_calls == 2
+    assert first == second == third == [1.0, 1.0, 1.0, 1.0]
+    assert first is not second
+    assert first is not third
+    assert second is not third
 
 
 def test_embed_returns_stable_vectors_for_loaded_embedding_models() -> None:

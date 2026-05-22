@@ -8,9 +8,12 @@ This slice is limited to `DeterministicEmbeddingRuntime.embed_inputs(...)` in th
 
 The affected path is covered by the registered PR-scoped probe `deterministic-embedding-duplicate-input-cache` in `infra/perf/pr_scoped_probes.json`. That registry entry includes focused `test_command`, `coverage_command`, and `probe_command` fields and runs on Linux via `ubuntu-latest`.
 
-## Optimization
+## Outcome
 
-Bind `list.copy` once before the duplicate-input loop and call the bound function for cached vectors. This keeps defensive-copy behavior for repeated input rows while avoiding repeated method lookup on every duplicate vector in large embedding batches.
+Keep the duplicate-input cache on the vector object's `copy()` method. The attempted
+`list.copy(vector)` binding bypassed vector-specific copy methods and regressed the
+registered duplicate-input cache probe on Linux CI, so the hot path now preserves the
+original dispatch while retaining regression coverage for distinct duplicate outputs.
 
 ## Verification plan
 
