@@ -39,12 +39,24 @@ def test_callable_kwarg_signature_caches_structured_lookup(monkeypatch: pytest.M
     assert runtime_utils.callable_accepts_kwarg(sample, "top_p") is False
     assert runtime_utils.callable_declares_kwarg(sample, "top_p") is False
     capabilities = runtime_utils.callable_kwarg_signature(sample)
+    assert not hasattr(capabilities, "__dict__")
     assert capabilities.parameter_names == ("temperature",)
     assert capabilities.keyword_accessible_params == frozenset({"temperature"})
     assert capabilities.accepts_var_keyword is False
     assert signature_calls == 1
 
     runtime_utils.clear_callable_kwarg_signature_cache()
+
+
+def test_callable_cache_target_fast_paths_plain_functions() -> None:
+    def sample(*, temperature: float = 0.0) -> None:
+        _ = temperature
+
+    sample()
+    cache_target, skip_first_parameter = runtime_utils._callable_cache_target(sample)
+
+    assert cache_target is sample
+    assert skip_first_parameter is False
 
 
 def test_callable_accepts_kwarg_caches_bound_methods_by_underlying_function(

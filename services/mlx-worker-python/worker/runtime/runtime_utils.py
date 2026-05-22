@@ -7,13 +7,14 @@ import inspect
 import json
 import os
 from pathlib import Path
+from types import FunctionType
 from typing import Any
 
 
 _MODEL_WEIGHT_SUFFIXES = (".safetensors", ".npz", ".bin", ".gguf")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CallableKwargSignature:
     parameter_names: tuple[str, ...]
     keyword_accessible_params: frozenset[str]
@@ -61,6 +62,8 @@ def _callable_kwarg_signature_uncached(
 
 
 def _callable_cache_target(callable_obj: Any) -> tuple[Any, bool]:
+    if type(callable_obj) is FunctionType:
+        return callable_obj, False
     bound_function = getattr(callable_obj, "__func__", None)
     if bound_function is not None and getattr(callable_obj, "__self__", None) is not None:
         return bound_function, True
