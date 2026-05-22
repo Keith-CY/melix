@@ -23,6 +23,7 @@ CRASH_PATTERNS = (
     "abort trap",
 )
 _BYTE_WHITESPACE = bytes(value for value in range(256) if chr(value).isspace())
+_ORD = ord
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,7 +165,7 @@ def _next_normalized_version_part(value: str, index: int) -> tuple[int, int, boo
     value_length = len(value)
 
     while index < value_length:
-        character_code = ord(value[index])
+        character_code = _ORD(value[index])
         index += 1
         if character_code == 43 or character_code == 45:
             break
@@ -193,7 +194,7 @@ def _iter_normalized_version_parts(value: str) -> Iterator[int]:
     part_has_chars = False
 
     for character in cleaned[start_index:]:
-        character_code = ord(character)
+        character_code = _ORD(character)
         if character_code == 43 or character_code == 45:
             break
         if character_code == 46:
