@@ -17,7 +17,9 @@ The probe includes focused `test_command`, `coverage_command`, and `probe_comman
 
 ## Optimization
 
-Use direct ASCII character-code checks inside the normalized version parser for separators (`+`, `-`, `.`) and digit bounds (`0` through `9`). Melix product versions and update-channel versions are ASCII semantic-version strings, and the parser already treats non-prefix suffix text as a zero-valued suffix component.
+Use direct ASCII character-code checks inside the normalized version parser for separators (`+`, `-`, `.`) and digit bounds (`0` through `9`). Melix product versions and update-channel versions are ASCII semantic-version strings, and the parser treats non-prefix suffix text as build/prerelease metadata rather than ordering input.
+
+This follow-up slice also makes the streaming comparator skip the remainder of a version after the first `+` or `-` suffix marker. That keeps the streaming comparator aligned with `normalized_version_parts()` for left-hand build metadata and avoids scanning suffix tails that cannot affect update ordering.
 
 ## Validation Plan
 
