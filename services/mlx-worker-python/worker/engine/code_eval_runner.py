@@ -375,7 +375,10 @@ _CODE_EVAL_PAYLOAD_FIELD_TOKENS_SORTED_FRIENDLY = (
     ("tests_passed", _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_passed"], "int"),
     ("tests_total", _CODE_EVAL_PAYLOAD_KEY_TOKENS["tests_total"], "int"),
     ("timeout_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["timeout_status"], "string"),
+)
+_CODE_EVAL_PAYLOAD_FIELD_TOKENS_SORTED_WITH_COMPILE = (
     ("compile_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["compile_status"], "string"),
+    *_CODE_EVAL_PAYLOAD_FIELD_TOKENS_SORTED_FRIENDLY,
 )
 _CODE_EVAL_PAYLOAD_FIELD_TOKENS_RUNNER_FRIENDLY = (
     ("compile_status", _CODE_EVAL_PAYLOAD_KEY_TOKENS["compile_status"], "string"),
@@ -412,11 +415,17 @@ def _json_object_payload_bounds(payload_bytes: bytes) -> tuple[int, int] | None:
 
 
 def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object] | None:
-    if _json_object_payload_bounds(payload_bytes) is None:
+    bounds = _json_object_payload_bounds(payload_bytes)
+    if bounds is None:
         return None
 
-    if payload_bytes.startswith(_CODE_EVAL_PAYLOAD_RUNNER_PREFIX):
-        field_tokens = _CODE_EVAL_PAYLOAD_FIELD_TOKENS_RUNNER_FRIENDLY
+    if payload_bytes.startswith(_CODE_EVAL_PAYLOAD_RUNNER_PREFIX, bounds[0]):
+        failure_index = payload_bytes.find(_CODE_EVAL_PAYLOAD_KEY_TOKENS["failure_detail"])
+        runtime_index = payload_bytes.find(_CODE_EVAL_PAYLOAD_KEY_TOKENS["runtime_status"])
+        if 0 <= failure_index < runtime_index:
+            field_tokens = _CODE_EVAL_PAYLOAD_FIELD_TOKENS_SORTED_WITH_COMPILE
+        else:
+            field_tokens = _CODE_EVAL_PAYLOAD_FIELD_TOKENS_RUNNER_FRIENDLY
     else:
         field_tokens = _CODE_EVAL_PAYLOAD_FIELD_TOKENS_SORTED_FRIENDLY
 
@@ -428,8 +437,8 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
             key_token,
             start=search_start,
         )
-        if value_start is None and search_start:
-            value_start = _json_field_value_start_for_token(payload_bytes, key_token)
+        if value_start is None:
+            return None
         if value_kind == "string":
             value = _extract_json_string_field_at(payload_bytes, value_start)
             if value is not None:
