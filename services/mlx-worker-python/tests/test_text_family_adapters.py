@@ -6,6 +6,9 @@ from typing import Any
 import pytest
 
 from worker.runtime.text_family_adapters import (
+    ResolvedTextFamilyConfig,
+    TextFamilyDescriptor,
+    TextFamilyDetection,
     _inferred_expert_count,
     _split_csv,
     detect_text_family_identity,
@@ -30,6 +33,34 @@ class _CopyCountingConfig(Mapping[str, Any]):
     def keys(self):  # type: ignore[override]
         self.copy_attempts += 1
         return self._payload.keys()
+
+
+def test_text_family_dataclasses_are_slotted_for_repeated_resolution_memory() -> None:
+    resolved = resolve_text_family_config(
+        {"text_family_id": "qwen3moe"},
+        model_path="models/qwen3-moe-128e",
+        config_payload={"model_type": "qwen3_moe"},
+    )
+    detected = detect_text_family_identity(
+        model_path="models/qwen3-moe-128e",
+        config_payload={"model_type": "qwen3_moe"},
+    )
+
+    assert isinstance(resolved, ResolvedTextFamilyConfig)
+    assert isinstance(detected, TextFamilyDetection)
+    assert not hasattr(resolved, "__dict__")
+    assert not hasattr(detected, "__dict__")
+    assert not hasattr(
+        TextFamilyDescriptor(
+            family_id="probe",
+            default_architecture="probe",
+            preferred_route_kind=None,
+            supported_parsers=("text",),
+            attention_profile="gqa",
+            rope_profile="standard",
+        ),
+        "__dict__",
+    )
 
 
 def test_split_csv_short_circuits_empty_values_without_split() -> None:
