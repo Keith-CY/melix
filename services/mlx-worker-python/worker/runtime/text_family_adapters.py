@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TextFamilyDescriptor:
     family_id: str
     default_architecture: str
@@ -20,14 +20,14 @@ class TextFamilyDescriptor:
     tool_parser_xml_fallback: bool = False
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TextFamilyDetection:
     architecture: str
     family_id: str
     source: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ResolvedTextFamilyConfig:
     family_id: str
     architecture: str
