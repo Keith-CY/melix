@@ -2911,6 +2911,23 @@
         "warn_pct": 5.0
       },
       {
+        "key": "report_to_dict_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "report_to_dict_peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "report_to_dict_checksum",
+        "unit": "checksum",
+        "direction": "informational"
+      },
+      {
         "key": "report_has_dict_mean",
         "unit": "bool",
         "direction": "lower_is_better",

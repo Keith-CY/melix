@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import socket
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Mapping
 
@@ -48,7 +48,15 @@ class StartupFailureReport:
     log_excerpt: str
 
     def to_dict(self) -> dict[str, object]:
-        return asdict(self)
+        return {
+            "classification": self.classification,
+            "summary": self.summary,
+            "detail": self.detail,
+            "http_port": self.http_port,
+            "ready_probe_url": self.ready_probe_url,
+            "primary_log_path": self.primary_log_path,
+            "log_excerpt": self.log_excerpt,
+        }
 
 
 def read_product_version(repo_root: str | Path) -> str:
