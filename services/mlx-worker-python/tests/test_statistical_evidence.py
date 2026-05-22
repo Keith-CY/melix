@@ -295,6 +295,28 @@ def test_build_paired_statistical_evidence_reuses_constant_scan_between_interval
     assert evidence["analytical"]["upper_bound"] == 1.0
 
 
+def test_build_paired_statistical_evidence_skips_equality_scan_when_endpoints_differ(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        statistical_evidence_module,
+        "_all_values_equal",
+        lambda values: (_ for _ in ()).throw(
+            AssertionError(f"unexpected full equality scan for {len(values)} values")
+        ),
+    )
+
+    evidence = build_paired_statistical_evidence(
+        paired_outcomes=(1.0, 1.0, 0.0),
+        confidence_level=0.95,
+        bootstrap_iterations=16,
+        bootstrap_seed=17,
+    )
+
+    assert evidence["sample_size"] == 3
+    assert evidence["bootstrap"]["lower_bound"] < evidence["bootstrap"]["upper_bound"]
+
+
 def test_constant_outcome_detection_avoids_tail_slice_allocation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
