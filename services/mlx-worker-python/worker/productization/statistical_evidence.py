@@ -18,7 +18,7 @@ def build_paired_statistical_evidence(
     outcomes = _normalized_outcomes(paired_outcomes)
     sample_size = len(outcomes)
     mean_value = _mean(outcomes)
-    all_values_equal = bool(outcomes) and _all_values_equal(outcomes)
+    all_values_equal = _outcome_values_equal(outcomes)
     delta_accuracy = _rounded(mean_value)
     bootstrap_interval = _paired_bootstrap_interval(
         outcomes=outcomes,
@@ -184,6 +184,16 @@ def _paired_bootstrap_interval(
         iterations=int(bootstrap_iterations),
         seed=int(bootstrap_seed),
     )
+
+
+def _outcome_values_equal(values: tuple[float, ...]) -> bool:
+    if not values:
+        return False
+    if len(values) == 1:
+        return True
+    if values[0] != values[-1]:
+        return False
+    return _all_values_equal(values)
 
 
 def _all_values_equal(values: tuple[float, ...]) -> bool:
