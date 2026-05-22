@@ -255,19 +255,20 @@ def _count_assert_nodes(
     _stmt_container_types=(ast.stmt, ast.ExceptHandler, ast.match_case),
     _assert_type=ast.Assert,
     _isinstance=isinstance,
+    _type=type,
 ) -> int:
     count = 0
     stack: list[ast.AST] = []
     stack_append = stack.append
     for node in getattr(module, "body", ()):
-        if _isinstance(node, _assert_type):
+        if _type(node) is _assert_type:
             count += 1
         elif _isinstance(node, _stmt_container_types):
             stack_append(node)
     stack_pop = stack.pop
     while stack:
         node = stack_pop()
-        if _isinstance(node, _assert_type):
+        if _type(node) is _assert_type:
             count += 1
             continue
         for field_name in node._fields:
