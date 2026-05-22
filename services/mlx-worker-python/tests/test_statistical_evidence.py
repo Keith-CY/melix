@@ -17,6 +17,68 @@ from worker.productization.statistical_evidence import (
 )
 
 
+def test_build_paired_statistical_evidence_reuses_float_tuple_without_normalization_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_outcomes: list[tuple[float, ...]] = []
+    original_bootstrap_interval = statistical_evidence_module._paired_bootstrap_interval
+
+    def tracking_bootstrap_interval(**kwargs: object) -> dict[str, object]:
+        outcomes = kwargs["outcomes"]
+        assert isinstance(outcomes, tuple)
+        captured_outcomes.append(outcomes)  # type: ignore[arg-type]
+        return original_bootstrap_interval(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        statistical_evidence_module,
+        "_paired_bootstrap_interval",
+        tracking_bootstrap_interval,
+    )
+    outcomes = (1.0, 0.0, -1.0, 1.0)
+
+    evidence = build_paired_statistical_evidence(
+        paired_outcomes=outcomes,
+        confidence_level=0.95,
+        bootstrap_iterations=16,
+        bootstrap_seed=17,
+    )
+
+    assert captured_outcomes == [outcomes]
+    assert captured_outcomes[0] is outcomes
+    assert evidence["sample_size"] == 4
+
+
+def test_build_paired_statistical_evidence_still_normalizes_non_float_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_outcomes: list[tuple[float, ...]] = []
+    original_bootstrap_interval = statistical_evidence_module._paired_bootstrap_interval
+
+    def tracking_bootstrap_interval(**kwargs: object) -> dict[str, object]:
+        outcomes = kwargs["outcomes"]
+        assert isinstance(outcomes, tuple)
+        captured_outcomes.append(outcomes)  # type: ignore[arg-type]
+        return original_bootstrap_interval(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        statistical_evidence_module,
+        "_paired_bootstrap_interval",
+        tracking_bootstrap_interval,
+    )
+    outcomes = (1, True, 0.5)
+
+    evidence = build_paired_statistical_evidence(
+        paired_outcomes=outcomes,
+        confidence_level=0.95,
+        bootstrap_iterations=16,
+        bootstrap_seed=17,
+    )
+
+    assert captured_outcomes == [(1.0, 1.0, 0.5)]
+    assert captured_outcomes[0] is not outcomes
+    assert evidence["sample_size"] == 3
+
+
 def test_build_paired_statistical_evidence_reports_bootstrap_and_analytical_intervals() -> None:
     evidence = build_paired_statistical_evidence(
         paired_outcomes=(1, 1, 1, 0, 1, 1),
