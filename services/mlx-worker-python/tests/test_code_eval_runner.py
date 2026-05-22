@@ -911,6 +911,22 @@ def test_load_payload_file_fast_path_reuses_precomputed_key_tokens(monkeypatch: 
         "tests_total": 2,
         "timeout_status": "ok",
     }
+
+    whitespace_payload_path = _BytesOnlyPayloadPath(
+        b'  {"compile_status":"compiled","runtime_status":"ok",'
+        b'"timeout_status":"ok","test_status":"passed",'
+        b'"tests_passed":1,"tests_total":1,"failure_detail":""}\n'
+    )
+    assert code_eval_runner._load_payload_file(whitespace_payload_path) == {
+        "compile_status": "compiled",
+        "runtime_status": "ok",
+        "timeout_status": "ok",
+        "test_status": "passed",
+        "tests_passed": 1,
+        "tests_total": 1,
+        "failure_detail": "",
+    }
+
     with pytest.raises(AssertionError, match="known code-eval payload keys"):
         code_eval_runner._json_field_value_start(b'{"other":1}', "other")
 
