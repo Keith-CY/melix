@@ -46,3 +46,26 @@ Local Linux registered probe (`tool-registry-openai-tools-template-cache`,
 - delta: `-8.486369 ms` (`-1.82%`)
 - guard rails unchanged: `descriptor_as_openai_tool_calls_mean=0.0`,
   `isolated_payload_calls_mean=50000.0`, `checksum=1500000.0`
+
+## Follow-up slice: OpenAI copy method bindings
+
+This follow-up Python-only slice keeps the same registered probe and narrows the
+optimization to the remaining per-call copy overhead in `as_openai_tools()`. The
+emitted payload must stay freshly mutable, so the slice does not cache returned
+dictionaries or lists. Instead, it binds `dict.copy` and `list.copy` once before
+the list comprehension and calls those bound descriptors for each copied schema
+property and required-argument list. This preserves the previous isolation
+semantics while avoiding repeated method lookup in the hot path.
+
+Validation remains the same: focused tool-registry tests, changed-scope coverage,
+and the registered local Linux probe before opening the PR; PR-scoped
+performance CI remains the final merge gate.
+
+Local Linux registered probe (`tool-registry-openai-tools-template-cache`,
+`MELIX_TOOL_REGISTRY_OPENAI_TOOLS_ITERATIONS=50000`, default samples=5):
+
+- base (`origin/main`): `elapsed_ms_mean=452.945446`
+- head: `elapsed_ms_mean=442.232800`
+- delta: `-10.712646 ms` (`-2.36%`)
+- guard rails unchanged: `descriptor_as_openai_tool_calls_mean=0.0`,
+  `isolated_payload_calls_mean=50000.0`, `checksum=1500000.0`

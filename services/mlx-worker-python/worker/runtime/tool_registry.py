@@ -290,6 +290,8 @@ class ToolRegistry:
         return selection
 
     def as_openai_tools(self) -> list[dict[str, Any]]:
+        dict_copy = dict.copy
+        list_copy = list.copy
         return [
             {
                 "type": "function",
@@ -300,10 +302,10 @@ class ToolRegistry:
                         "type": "object",
                         "additionalProperties": False,
                         "properties": {
-                            argument_name: schema.copy()
+                            argument_name: dict_copy(schema)
                             for argument_name, schema in schema_properties
                         },
-                        "required": required_arguments.copy(),
+                        "required": list_copy(required_arguments),
                     },
                 },
                 "x-melix-tool-kind": tool_kind,
