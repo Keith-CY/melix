@@ -53,9 +53,8 @@ class ProbePolicy:
             return _PROBE_POLICY_BY_DEFAULT_MODE[default_mode]
         return ProbePolicy.from_value(raw_value, default_mode=default_mode)
 
-    @classmethod
+    @staticmethod
     def from_value(
-        cls,
         value: str | ProbeMode | None,
         *,
         default_mode: ProbeMode = ProbeMode.MINIMAL,
