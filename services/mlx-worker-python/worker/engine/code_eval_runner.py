@@ -69,7 +69,8 @@ def _code_block_content_start(text: str, start: int) -> int:
         start += _PYTHON_CODE_BLOCK_TAG_LENGTH
     elif text[start:start + _PYTHON_CODE_BLOCK_TAG_LENGTH].lower() == _PYTHON_CODE_BLOCK_TAG:
         start += _PYTHON_CODE_BLOCK_TAG_LENGTH
-    while start < len(text) and text[start].isspace():
+    text_length = len(text)
+    while start < text_length and text[start].isspace():
         start += 1
     return start
 
