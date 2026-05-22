@@ -161,10 +161,11 @@ def _paired_bootstrap_interval(
     sample_size = len(outcomes)
     inverse_sample_size = 1.0 / sample_size
     choices = sampler.choices
-    replicates: list[float] = []
-    append_replicate = replicates.append
-    for _ in range(bootstrap_iterations):
-        append_replicate(sum(choices(outcomes, k=sample_size)) * inverse_sample_size)
+    sum_values = sum
+    replicates = [
+        sum_values(choices(outcomes, k=sample_size)) * inverse_sample_size
+        for _ in range(bootstrap_iterations)
+    ]
 
     alpha = (1.0 - confidence_level) / 2.0
     replicates.sort()
@@ -279,13 +280,12 @@ def _ordered_percentile(ordered: list[float], percentile: float) -> float:
     if len(ordered) == 1:
         return ordered[0]
     position = bounded_percentile * (len(ordered) - 1)
-    lower_index = int(math.floor(position))
-    upper_index = int(math.ceil(position))
-    lower_value = ordered[lower_index]
-    upper_value = ordered[upper_index]
-    if lower_index == upper_index:
-        return lower_value
+    lower_index = int(position)
     fraction = position - lower_index
+    lower_value = ordered[lower_index]
+    if fraction == 0.0:
+        return lower_value
+    upper_value = ordered[lower_index + 1]
     return lower_value + (upper_value - lower_value) * fraction
 
 

@@ -317,6 +317,21 @@ def test_statistical_helper_edges_cover_percentiles_and_interval_sign_fallbacks(
     assert _interval_sign({"lower_bound": -0.2, "upper_bound": 0.3, "crosses_zero": False}) == 0
 
 
+def test_ordered_percentile_computes_indexes_without_math_floor_or_ceil(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_index_helper(_: float) -> int:
+        raise AssertionError(  # pragma: no cover - must stay uncalled on the fast path
+            "ordered percentile should derive integer bounds directly"
+        )
+
+    monkeypatch.setattr(statistical_evidence_module.math, "floor", fail_index_helper)
+    monkeypatch.setattr(statistical_evidence_module.math, "ceil", fail_index_helper)
+
+    assert _ordered_percentile([0.0, 10.0, 20.0, 30.0], 0.25) == 7.5
+    assert _ordered_percentile([0.0, 10.0, 20.0, 30.0], 1.0) == 30.0
+
+
 def test_build_category_breakdown_aggregates_supported_categories_only() -> None:
     breakdown = build_category_breakdown(
         rows=(
