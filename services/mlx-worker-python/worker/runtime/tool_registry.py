@@ -277,6 +277,7 @@ class ToolRegistry:
     def as_openai_tools(self) -> list[dict[str, Any]]:
         tools: list[dict[str, Any]] = []
         append_tool = tools.append
+        copy_schema = dict.copy
         for (
             name,
             description,
@@ -295,7 +296,7 @@ class ToolRegistry:
                             "type": "object",
                             "additionalProperties": False,
                             "properties": {
-                                name: schema.copy() for name, schema in schema_properties
+                                name: copy_schema(schema) for name, schema in schema_properties
                             },
                             "required": required_arguments.copy(),
                         },

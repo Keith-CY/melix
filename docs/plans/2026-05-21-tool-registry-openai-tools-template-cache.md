@@ -12,6 +12,8 @@ Each call returns isolated mutable OpenAI tool dictionaries so callers can mutat
 
 Cache the per-registry OpenAI tool templates during `ToolRegistry` construction and copy from those templates on export. This avoids re-entering each `ToolDescriptor.as_openai_tool()` on repeated exports while preserving isolated nested `parameters.properties` and `parameters.required` payloads.
 
+The 2026-05-22 follow-up keeps the same public behavior and narrows the hot loop further by binding `dict.copy` once per `as_openai_tools()` call before copying cached schema property dictionaries. This removes one repeated method lookup per exported argument schema while preserving isolated mutable payloads.
+
 ## Probe
 
 Registered PR-scoped probe: `tool-registry-openai-tools-template-cache`.
