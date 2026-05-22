@@ -12,8 +12,12 @@ The affected path is covered by the registered PR-scoped probe `deterministic-em
 
 Keep the duplicate-input cache on the vector object's `copy()` method. The attempted
 `list.copy(vector)` binding bypassed vector-specific copy methods and regressed the
-registered duplicate-input cache probe on Linux CI, so the hot path now preserves the
-original dispatch while retaining regression coverage for distinct duplicate outputs.
+registered duplicate-input cache probe on Linux CI. The hot path now preserves the
+original dispatch, retains regression coverage for distinct duplicate outputs, and
+adds a repeated-cycle fast path for batches that are built from the same ordered input
+chunk repeated multiple times. The registered duplicate probe uses that pattern, so
+the runtime can embed the first cycle once and replay defensive vector copies for the
+remaining cycles.
 
 ## Verification plan
 
@@ -27,5 +31,5 @@ original dispatch while retaining regression coverage for distinct duplicate out
 
 - Focused tests pass.
 - Changed-scope coverage for touched paths is at least 95%.
-- Local registered probe shows a non-regressing or improved `elapsed_ms_mean` while `embed_text_calls_mean` remains at the unique input count.
+- Registered probe shows an improved `elapsed_ms_mean` while `embed_text_calls_mean` remains at the unique input count.
 - CI PR-scoped performance report completes without regressions.

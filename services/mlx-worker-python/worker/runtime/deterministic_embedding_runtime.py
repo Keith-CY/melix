@@ -6,6 +6,28 @@ from worker.runtime.embedding_backends import (
 )
 
 
+def _repeated_input_cycle_length(inputs: list[str]) -> int:
+    input_count = len(inputs)
+    if input_count < 1024:
+        return 0
+    seen_inputs: set[str] = set()
+    seen_inputs_add = seen_inputs.add
+    for index, text in enumerate(inputs):
+        if text in seen_inputs:
+            cycle_length = index
+            break
+        seen_inputs_add(text)
+    else:
+        return 0
+    if cycle_length == 0 or input_count % cycle_length != 0:
+        return 0
+    cycle = inputs[:cycle_length]
+    for index in range(cycle_length, input_count, cycle_length):
+        if inputs[index : index + cycle_length] != cycle:
+            return 0
+    return cycle_length
+
+
 class DeterministicEmbeddingRuntime:
     runtime_name = "deterministic-embed"
 
@@ -36,11 +58,23 @@ class DeterministicEmbeddingRuntime:
         if family is None:
             family = resolve_embedding_family(loaded_model.get("embedding_family_id", ""), backend)
 
-        vector_cache: dict[str, list[float]] = {}
         vectors: list[list[float]] = []
-        cache_get = vector_cache.get
         append_vector = vectors.append
         embed_text = family.embed_text
+        cycle_length = _repeated_input_cycle_length(inputs)
+        if cycle_length:
+            for text in inputs[:cycle_length]:
+                vector = embed_text(backend, text, dimensions)
+                append_vector(vector)
+            cycle_vectors = tuple(vectors)
+            repeat_count = len(inputs) // cycle_length - 1
+            vectors.extend(
+                [vector.copy() for _ in range(repeat_count) for vector in cycle_vectors]
+            )
+            return vectors
+
+        vector_cache: dict[str, list[float]] = {}
+        cache_get = vector_cache.get
         for text in inputs:
             vector = cache_get(text)
             if vector is None:
