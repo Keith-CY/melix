@@ -317,6 +317,42 @@ def test_score_final_result_reuses_cached_parsed_json_payloads(monkeypatch: pyte
     evaluation_final_result_module._loads_json_payload.cache_clear()
 
 
+def test_score_final_result_reuses_cached_ignored_path_sets() -> None:
+    evaluation_final_result_module._ignored_paths_for_profile.cache_clear()
+    target = json.dumps(
+        {
+            "answer": "A",
+            "confidence": 0.9,
+            "metadata": {"evidence": ["gold"]},
+        }
+    )
+    extracted = json.dumps(
+        {
+            "answer": "A",
+            "confidence": 0.1,
+            "metadata": {"evidence": ["candidate"]},
+        }
+    )
+    profile = EvaluationProfileDefinition(
+        profile_type="final_result",
+        result_kind="json",
+        extraction_mode="strict_full_response",
+        scoring_mode="json_field_match",
+        threshold=1.0,
+        ignored_paths=("metadata",),
+    )
+
+    first = score_final_result(extracted_result=extracted, target=target, profile=profile)
+    second = score_final_result(extracted_result=extracted, target=target, profile=profile)
+
+    assert first == second == evaluation_final_result_module.ScoringOutcome(
+        typed_score=1.0,
+        validation_status="validated",
+    )
+    assert evaluation_final_result_module._ignored_paths_for_profile.cache_info().hits >= 1
+    evaluation_final_result_module._ignored_paths_for_profile.cache_clear()
+
+
 def test_score_final_result_rejects_invalid_json_shape_before_scoring() -> None:
     score = score_final_result(
         extracted_result=json.dumps([{"label": "A"}]),
