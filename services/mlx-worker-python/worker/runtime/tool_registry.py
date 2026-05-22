@@ -24,7 +24,7 @@ _OpenAIToolTemplate = tuple[
     str,
     str,
     str,
-    tuple[tuple[str, dict[str, Any]], ...],
+    tuple[tuple[str, str, str], ...],
     list[str],
 ]
 
@@ -199,7 +199,10 @@ class ToolRegistry:
                 tool.description,
                 tool.tool_kind,
                 tool.observation_kind,
-                tool._cached_schema_properties,
+                tuple(
+                    (name, schema["type"], schema["description"])
+                    for name, schema in tool._cached_schema_properties
+                ),
                 tool._cached_required_arguments_list,
             )
             for tool in self._tools
@@ -295,7 +298,8 @@ class ToolRegistry:
                             "type": "object",
                             "additionalProperties": False,
                             "properties": {
-                                name: schema.copy() for name, schema in schema_properties
+                                name: {"type": json_type, "description": description}
+                                for name, json_type, description in schema_properties
                             },
                             "required": required_arguments.copy(),
                         },
