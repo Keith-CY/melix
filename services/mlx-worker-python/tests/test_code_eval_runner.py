@@ -415,6 +415,23 @@ def test_count_assert_nodes_counts_nested_asserts() -> None:
     assert code_eval_runner._count_assert_nodes(module) == 9
 
 
+def test_count_assert_nodes_uses_exact_type_for_direct_asserts() -> None:
+    module = code_eval_runner.ast.parse(
+        "value = identity(0)\nassert identity(1) == 1\nassert identity(2) == 2",
+        filename="<tests>",
+        mode="exec",
+    )
+
+    def fail_assert_isinstance(node: object, class_or_tuple: object) -> bool:
+        if class_or_tuple is code_eval_runner.ast.Assert:  # pragma: no cover
+            raise AssertionError(
+                "direct assert counting should use exact type checks"
+            )
+        return isinstance(node, class_or_tuple)
+
+    assert code_eval_runner._count_assert_nodes(module, _isinstance=fail_assert_isinstance) == 2
+
+
 def test_count_assert_nodes_returns_zero_without_asserts() -> None:
     module = code_eval_runner.ast.parse(
         "value = identity(1)\nif enabled:\n    value += identity(2)",
