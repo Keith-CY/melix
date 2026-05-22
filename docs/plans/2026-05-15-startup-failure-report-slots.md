@@ -28,3 +28,17 @@ The change intentionally does not modify log-reading decisions, classification l
 Run the registered focused tests, changed-scope coverage, and registered probe locally on Linux before pushing. Compare the registered probe output against a pre-change baseline captured from `origin/main` in the same worktree.
 
 CI remains the merge gate for the registered PR-scoped performance report.
+
+## Follow-up Slice: Manual `to_dict()` Snapshot
+
+The next startup-report micro-slice keeps the same registered probe and narrows
+scope to `StartupFailureReport.to_dict()`. The previous implementation used
+`dataclasses.asdict()`, which recursively walks dataclass fields even though the
+report payload contains only scalar values. This slice replaces that generic
+walk with an explicit field dictionary while preserving the public keys and
+values.
+
+The registered probe now also reports `report_to_dict_elapsed_ms_mean`,
+`report_to_dict_peak_bytes_mean`, and an informational
+`report_to_dict_checksum` so the PR-scoped performance workflow measures the
+serialization hot path directly.
