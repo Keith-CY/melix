@@ -31,6 +31,7 @@ Register `statistical-evidence-bootstrap-single-sort` in the PR-scoped performan
 - Preserve bootstrap and analytical interval payload semantics.
 - Sort bootstrap replicates once per interval instead of once per percentile bound.
 - Preserve the existing per-bootstrap equal-weight-with-replacement sampling semantics while reducing duplicate percentile work and using `random.Random.choices(...)` for the inner draw loop.
+- Reuse an already-normalized all-`float` paired-outcome tuple instead of allocating a duplicate normalization tuple on the registered bootstrap probe path; continue converting `int`, `bool`, and mixed numeric inputs through `float(...)`.
 - Changed-scope automated coverage is at least 95%.
 - Local base-vs-head probe shows lower elapsed time and/or peak traced bytes while preserving valid interval guard ordering.
 - `git diff --check` passes.

@@ -15,7 +15,7 @@ def build_paired_statistical_evidence(
     bootstrap_iterations: int,
     bootstrap_seed: int,
 ) -> dict[str, object]:
-    outcomes = tuple(float(value) for value in paired_outcomes)
+    outcomes = _normalized_outcomes(paired_outcomes)
     sample_size = len(outcomes)
     mean_value = _mean(outcomes)
     all_values_equal = bool(outcomes) and _all_values_equal(outcomes)
@@ -126,6 +126,14 @@ def build_category_breakdown(
             "delta_accuracy": rounded(target_accuracy - base_accuracy),
         }
     return breakdown
+
+
+def _normalized_outcomes(values: tuple[int | float, ...]) -> tuple[float, ...]:
+    if not values:
+        return ()
+    if all(type(value) is float for value in values):
+        return values  # type: ignore[return-value]
+    return tuple(float(value) for value in values)
 
 
 def _paired_bootstrap_interval(
