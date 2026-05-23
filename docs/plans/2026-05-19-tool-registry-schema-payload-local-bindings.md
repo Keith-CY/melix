@@ -63,12 +63,31 @@ Expected effect:
 - leave registry selection, protobuf config serialization, and tool definitions
   unchanged.
 
+## Follow-up Slice: OpenAI Tool Copy Local Bindings
+
+The 2026-05-23 follow-up keeps the `ToolRegistry.as_openai_tools()` API and
+copy-on-return behavior unchanged, but binds `dict.copy` and `list.copy` once
+per call before cloning cached OpenAI tool schema templates. The returned tool
+payloads remain independently mutable, while the inner hot loop avoids repeated
+method-attribute lookups for every schema property and required-argument list.
+
+Expected effect:
+
+- reduce repeated OpenAI tool payload construction overhead measured by
+  `tool-registry-openai-tools-template-cache` `elapsed_ms_mean`;
+- preserve mutation isolation for returned `parameters.properties` dictionaries
+  and `parameters.required` lists;
+- leave registry selection, schema payload construction, and protobuf config
+  serialization unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.
 2. Run the registered changed-scope coverage command locally and require at
    least 95% coverage for touched scope.
 3. Run the registered probe command locally before and after the slice and
-   compare `schema_payload_elapsed_ms_mean` over repeated samples.
+   compare the relevant registered metric (`schema_payload_elapsed_ms_mean` for
+   schema-payload slices, or `elapsed_ms_mean` for the OpenAI tool payload slice)
+   over repeated samples.
 4. Push only if local evidence is neutral-to-improved and rely on the GitHub
    PR-scoped performance workflow as the merge gate.
