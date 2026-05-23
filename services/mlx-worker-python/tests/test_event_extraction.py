@@ -285,6 +285,7 @@ def test_string_similarity_reuses_normalized_text_and_bigram_counts() -> None:
     event_extraction_module._string_similarity.cache_clear()
     event_extraction_module._normalize_similarity_text.cache_clear()
     event_extraction_module._character_bigram_items.cache_clear()
+    event_extraction_module._character_bigram_stats.cache_clear()
 
     assert event_extraction_module._normalize_similarity_text(" Delivered-SUPPLY, CRATE! ") == "deliveredsupplycrate"
     first = event_extraction_module._string_similarity("Delivered supply crate", "delivered supply crates")
@@ -297,6 +298,7 @@ def test_string_similarity_reuses_normalized_text_and_bigram_counts() -> None:
     assert first > 0.9
     assert third > 0.9
     assert event_extraction_module._string_similarity.cache_info().hits >= 2
+    assert event_extraction_module._character_bigram_stats("aba") == ((("ab", 1), ("ba", 1)), 2)
     assert event_extraction_module._character_bigrams("aba") == {"ab": 1, "ba": 1}
 
 
