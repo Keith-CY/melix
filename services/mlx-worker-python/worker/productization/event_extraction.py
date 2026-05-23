@@ -2200,8 +2200,8 @@ def _is_group_actor_alias(value: str) -> bool:
 
 
 def _bigram_dice(left: str, right: str) -> float:
-    left_units = _character_bigram_items(left)
-    right_units = _character_bigram_items(right)
+    left_units, left_total = _character_bigram_stats(left)
+    right_units, right_total = _character_bigram_stats(right)
     if not left_units or not right_units:
         return 0.0
     overlap = 0
@@ -2211,10 +2211,7 @@ def _bigram_dice(left: str, right: str) -> float:
         overlap += matched
         if matched:
             remaining[unit] = remaining.get(unit, 0) - matched
-    return _safe_divide(
-        2.0 * overlap,
-        sum(count for _unit, count in left_units) + sum(count for _unit, count in right_units),
-    )
+    return _safe_divide(2.0 * overlap, left_total + right_total)
 
 
 def _character_bigrams(value: str) -> dict[str, int]:
@@ -2223,13 +2220,19 @@ def _character_bigrams(value: str) -> dict[str, int]:
 
 @lru_cache(maxsize=4096)
 def _character_bigram_items(value: str) -> tuple[tuple[str, int], ...]:
+    return _character_bigram_stats(value)[0]
+
+
+@lru_cache(maxsize=4096)
+def _character_bigram_stats(value: str) -> tuple[tuple[tuple[str, int], ...], int]:
     if len(value) <= 1:
-        return ((value, 1),) if value else ()
+        return (((value, 1),), 1) if value else ((), 0)
     counts: dict[str, int] = {}
-    for index in range(len(value) - 1):
+    total = len(value) - 1
+    for index in range(total):
         unit = value[index : index + 2]
         counts[unit] = counts.get(unit, 0) + 1
-    return tuple(counts.items())
+    return tuple(counts.items()), total
 
 
 def _accepted_event_matching_edges(
