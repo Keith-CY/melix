@@ -8,6 +8,7 @@ import pytest
 
 import worker.productization.startup_signals as startup_signals_module
 from worker.productization.startup_signals import (
+    StartupFailureReport,
     _read_last_nonempty_line,
     check_for_updates,
     classify_startup_failure,
@@ -248,6 +249,29 @@ def test_startup_failure_report_uses_slots_without_changing_dict_payload(tmp_pat
         "ready_probe_url": "http://127.0.0.1:11434/v1/models",
         "primary_log_path": str(control_plane_stderr),
         "log_excerpt": "fatal error: boot failed",
+    }
+
+
+def test_startup_failure_report_to_dict_uses_direct_field_snapshot() -> None:
+    report = StartupFailureReport(
+        classification="control_plane_crash",
+        summary="Control plane crashed before startup completed.",
+        detail="Inspect the control-plane logs for the crash cause.",
+        http_port=12436,
+        ready_probe_url="http://127.0.0.1:12436/v1/models",
+        primary_log_path="control-plane.stderr.log",
+        log_excerpt="fatal error: control plane crashed",
+    )
+
+    assert not hasattr(startup_signals_module, "asdict")
+    assert report.to_dict() == {
+        "classification": "control_plane_crash",
+        "summary": "Control plane crashed before startup completed.",
+        "detail": "Inspect the control-plane logs for the crash cause.",
+        "http_port": 12436,
+        "ready_probe_url": "http://127.0.0.1:12436/v1/models",
+        "primary_log_path": "control-plane.stderr.log",
+        "log_excerpt": "fatal error: control plane crashed",
     }
 
 

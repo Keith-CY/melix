@@ -83,6 +83,13 @@ def test_parser_mode_flags_are_computed_once_at_initialization() -> None:
     assert assembler._structural_open_tags is assembler._structural_open_tags_value
 
 
+def test_pipe_channel_name_lowercases_only_the_channel_token() -> None:
+    assert RequestStreamAssembler._pipe_channel_name(" thought metadata") == "thought"
+    assert RequestStreamAssembler._pipe_channel_name("FINAL\nvisible") == "final"
+    assert RequestStreamAssembler._pipe_channel_name("Analysis\tdebug") == "analysis"
+    assert RequestStreamAssembler._pipe_channel_name("\r\n") == ""
+
+
 def test_next_structural_tag_prefers_the_earliest_tool_tag() -> None:
     assembler = RequestStreamAssembler(
         request_id="req-tool-first",

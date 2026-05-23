@@ -6,18 +6,26 @@ import sys
 
 
 def iter_samples(value):
-    if isinstance(value, (float, int)):
+    if isinstance(value, float):
+        yield value
+        return
+    if isinstance(value, int):
         yield float(value)
         return
     flat_values = getattr(value, "flat", None)
     if flat_values is not None and not isinstance(value, (list, tuple)):
         for item in flat_values:
-            yield float(item)
+            if isinstance(item, float):
+                yield item
+            else:
+                yield float(item)
         return
     if hasattr(value, "tolist"):
         value = value.tolist()
     for item in value:
-        if isinstance(item, (float, int)):
+        if isinstance(item, float):
+            yield item
+        elif isinstance(item, int):
             yield float(item)
         elif (
             isinstance(item, (list, tuple))

@@ -1,8 +1,8 @@
-# Cron WAV PCM Recast Elision
+# Cron WAV PCM Float Fast Path
 
 ## Goal
 
-Reduce redundant per-sample work in the MLX audio WAV PCM streaming path by avoiding an extra `float(...)` conversion after `iter_samples(...)` has already normalized values to floats.
+Reduce redundant per-sample work in the MLX audio WAV PCM streaming path by preserving already-float sample values from `iter_samples(...)` instead of calling `float(...)` again for every float value in nested lists, tuples, and flat array-like segments.
 
 ## Touched files
 
@@ -20,7 +20,7 @@ Registered probe: `mlx-audio-wav-streaming-pcm`
 Local probe command:
 
 ```bash
-PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python python scripts/mlx_audio_wav_streaming_probe.py
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" uv run --project services/mlx-worker-python python3 scripts/mlx_audio_wav_streaming_probe.py
 ```
 
 The probe builds a synthetic nested audio payload, converts it to WAV bytes repeatedly, and reports elapsed time, peak traced bytes, sample count, and output size.
@@ -28,6 +28,6 @@ The probe builds a synthetic nested audio payload, converts it to WAV bytes repe
 ## Success metrics
 
 - Preserve WAV PCM output shape and clamping behavior.
-- Add a focused regression test proving `audio_to_pcm_chunks(...)` does not re-cast the already-normalized values yielded by `iter_samples(...)`.
+- Add a focused regression test proving `iter_samples(...)` does not re-cast already-float sample values in nested and flat array-like inputs.
 - Achieve at least 95% changed executable line coverage for the touched Python files.
 - Keep the registered `mlx-audio-wav-streaming-pcm` probe green locally and in PR-scoped performance CI.

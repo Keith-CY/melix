@@ -11,6 +11,8 @@ from packages.protocol.python.worker.v1 import common_pb2
 _TOOL_CONFIG = common_pb2.ToolConfig
 _TOOL_CONFIG_FROM_BYTES = _TOOL_CONFIG.FromString
 _COMPACT_SORTED_JSON_ENCODER = json.JSONEncoder(separators=(",", ":"), sort_keys=True)
+_COPY_DICT = dict.copy
+_COPY_LIST = list.copy
 
 
 def _copy_tool_config(template: common_pb2.ToolConfig) -> common_pb2.ToolConfig:
@@ -290,6 +292,8 @@ class ToolRegistry:
         return selection
 
     def as_openai_tools(self) -> list[dict[str, Any]]:
+        copy_dict = _COPY_DICT
+        copy_list = _COPY_LIST
         return [
             {
                 "type": "function",
@@ -300,10 +304,10 @@ class ToolRegistry:
                         "type": "object",
                         "additionalProperties": False,
                         "properties": {
-                            argument_name: schema.copy()
+                            argument_name: copy_dict(schema)
                             for argument_name, schema in schema_properties
                         },
-                        "required": required_arguments.copy(),
+                        "required": copy_list(required_arguments),
                     },
                 },
                 "x-melix-tool-kind": tool_kind,

@@ -119,6 +119,32 @@ def _measure_report_allocations(*, iterations: int) -> tuple[float, float, float
     )
 
 
+def _measure_report_to_dict(*, iterations: int) -> tuple[float, float, float]:
+    report = startup_signals.StartupFailureReport(
+        classification="control_plane_crash",
+        summary="Control plane crashed before startup completed.",
+        detail="Inspect the control-plane logs for the crash cause.",
+        http_port=12436,
+        ready_probe_url="http://127.0.0.1:12436/v1/models",
+        primary_log_path="control-plane.stderr.log",
+        log_excerpt="fatal error: control plane crashed",
+    )
+    elapsed_samples: list[float] = []
+    peak_samples: list[float] = []
+    checksum = 0
+    for _ in range(5):
+        tracemalloc.start()
+        started = time.perf_counter()
+        for _ in range(iterations):
+            payload = report.to_dict()
+            checksum += int(payload["http_port"]) + len(str(payload["log_excerpt"]))
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        peak_samples.append(float(peak))
+    return statistics.fmean(elapsed_samples), statistics.fmean(peak_samples), float(checksum)
+
+
 def main() -> int:
     iterations = 400
     samples = 5
@@ -187,6 +213,9 @@ def main() -> int:
         report_alloc_elapsed_mean, report_alloc_peak_mean, report_has_dict_mean = (
             _measure_report_allocations(iterations=iterations * 10)
         )
+        report_to_dict_elapsed_mean, report_to_dict_peak_mean, report_to_dict_checksum = (
+            _measure_report_to_dict(iterations=iterations * 100)
+        )
 
     print(
         json.dumps(
@@ -213,6 +242,9 @@ def main() -> int:
                 "report_alloc_elapsed_ms_mean": round(report_alloc_elapsed_mean, 6),
                 "report_alloc_peak_bytes_mean": round(report_alloc_peak_mean, 6),
                 "report_has_dict_mean": round(report_has_dict_mean, 6),
+                "report_to_dict_checksum": report_to_dict_checksum,
+                "report_to_dict_elapsed_ms_mean": round(report_to_dict_elapsed_mean, 6),
+                "report_to_dict_peak_bytes_mean": round(report_to_dict_peak_mean, 6),
                 "sample_count": float(samples),
                 "tail_scan_elapsed_ms_mean": round(tail_elapsed_mean, 6),
                 "tail_scan_peak_bytes_mean": round(tail_peak_mean, 6),

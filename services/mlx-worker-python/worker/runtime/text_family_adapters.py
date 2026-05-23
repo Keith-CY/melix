@@ -232,7 +232,7 @@ def resolve_text_family_config(
     config_payload: Mapping[str, Any] | None = None,
     default_route_kind: str = "swift_text",
 ) -> ResolvedTextFamilyConfig:
-    metadata = dict(metadata or {})
+    metadata = metadata or _EMPTY_CONFIG_PAYLOAD
     detection = detect_text_family_identity(
         model_path=model_path,
         config_payload=config_payload,
