@@ -1050,6 +1050,9 @@ def test_scope_report_selects_mlx_vlm_runtime_probe() -> None:
         "mlx-vlm-family-config-cache",
         "mlx-vlm-gemma4-weight-presence-single-pass",
     ]
+    coverage_commands = " ".join(str(probe["coverage_command"]) for probe in scope["selected_probes"])
+    assert "test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available" in coverage_commands
+    assert "test_mtp_drafter_acceptance_stats_ignore_unusable_accept_lens" in coverage_commands
 
 
 def test_scope_report_selects_deterministic_vlm_completion_probe() -> None:
@@ -2591,6 +2594,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     maintenance_probe = None
     integration_helper_probe = None
     video_preprocessing_probe = None
+    gemma4_weight_presence_probe = None
     worker_registry_probe = None
     swift_probe = None
     for probe in load_probe_registry(REGISTRY_PATH):
@@ -2611,6 +2615,8 @@ def test_registered_probes_expose_focused_commands() -> None:
             integration_helper_probe = probe
         if probe.probe_id == "video-preprocessing-uri-byte-length-reuse":
             video_preprocessing_probe = probe
+        if probe.probe_id == "mlx-vlm-gemma4-weight-presence-single-pass":
+            gemma4_weight_presence_probe = probe
         if probe.probe_id == "worker-registry-resident-bytes-accumulator":
             worker_registry_probe = probe
         if probe.probe_id == "swift-cli-json-envelope-encoding":
@@ -2664,6 +2670,13 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert video_preprocessing_metrics["byte_length_getattrs_per_call"].warn_abs == 0.0
     assert video_preprocessing_metrics["parse_calls_per_call"].warn_pct == 0.0
     assert video_preprocessing_metrics["parse_calls_per_call"].warn_abs == 0.0
+
+    assert gemma4_weight_presence_probe is not None
+    gemma4_weight_presence_metrics = {
+        metric.key: metric for metric in gemma4_weight_presence_probe.metrics
+    }
+    assert gemma4_weight_presence_metrics["peak_bytes_mean"].warn_pct == 5.0
+    assert gemma4_weight_presence_metrics["peak_bytes_mean"].warn_abs == 64.0
 
     assert swift_probe is not None
     assert "MelixCLIRunnerTests/(" in swift_probe.test_command
