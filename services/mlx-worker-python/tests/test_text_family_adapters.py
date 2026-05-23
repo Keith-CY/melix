@@ -290,6 +290,31 @@ def test_inferred_expert_count_preserves_config_before_family_default() -> None:
     assert _inferred_expert_count({}, default=128) == 128
 
 
+def test_resolve_text_family_config_reads_metadata_mapping_without_copying() -> None:
+    metadata = _CopyCountingConfig(
+        {
+            **{f"unused_{index}": str(index) for index in range(512)},
+            "text_family_id": "qwen3moe",
+            "melix.capability.route_kind": "python_text_compatibility",
+            "tool_parser_namespaces": "tools.text, tools.vision",
+        }
+    )
+
+    resolved = resolve_text_family_config(
+        metadata,  # type: ignore[arg-type]
+        model_path="models/qwen3-moe-128e",
+        config_payload={"model_type": "qwen3_moe"},
+        default_route_kind="swift_text",
+    )
+
+    assert resolved.family_id == "qwen3moe"
+    assert resolved.route_kind == "python_text_compatibility"
+    assert resolved.tool_parser_namespaces == ("tools.text", "tools.vision")
+    assert metadata.copy_attempts == 0
+    assert dict(metadata)["text_family_id"] == "qwen3moe"
+    assert metadata.copy_attempts == 1
+
+
 def test_resolve_text_family_config_reads_config_mapping_without_copying() -> None:
     config = _CopyCountingConfig(
         {
