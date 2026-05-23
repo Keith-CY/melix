@@ -42,6 +42,8 @@ _GEMMA4_PRESENCE_BOTH = (True, True)
 
 _TEXT_ONLY_BATCH_GENERATOR_EXT_KEY = "melix.vlm.text_only_batch_generator"
 _TEXT_ONLY_STEP_COOPERATIVE_EXT_KEY = "melix.vlm.text_only_step_cooperative"
+_TEXT_ONLY_BATCH_PREFILL_STEP_SIZE_ENV = "MELIX_VLM_TEXT_BATCH_PREFILL_STEP_SIZE"
+_TEXT_ONLY_BATCH_DEFAULT_PREFILL_STEP_SIZE = 512
 _TEXT_ONLY_BATCH_DONE = object()
 _GEMMA4_OPEN_MARKER = "<|channel>thought\n"
 _GEMMA4_OPEN_MARKER_BARE = "<|channel>"
@@ -185,6 +187,12 @@ class _TextOnlyBatchGeneratorStats:
     first_visible_ms_total: float = 0.0
     first_visible_token_index_total: int = 0
     first_empty_segment_count: int = 0
+    prefill_response_count: int = 0
+    prefill_step_count: int = 0
+    prefill_processed_token_count: int = 0
+    prefill_total_token_count: int = 0
+    prefill_completed_request_count: int = 0
+    prefill_step_size: int = _TEXT_ONLY_BATCH_DEFAULT_PREFILL_STEP_SIZE
 
     def snapshot(self) -> "_TextOnlyBatchGeneratorStats":
         return replace(self)
@@ -218,7 +226,30 @@ def _text_batch_generator_probe_kwargs(stats: _TextOnlyBatchGeneratorStats) -> d
         "text_batch_generator_first_visible_ms_total": stats.first_visible_ms_total,
         "text_batch_generator_first_visible_token_index_total": stats.first_visible_token_index_total,
         "text_batch_generator_first_empty_segment_count": stats.first_empty_segment_count,
+        "text_batch_generator_prefill_response_count": stats.prefill_response_count,
+        "text_batch_generator_prefill_step_count": stats.prefill_step_count,
+        "text_batch_generator_prefill_processed_token_count": stats.prefill_processed_token_count,
+        "text_batch_generator_prefill_total_token_count": stats.prefill_total_token_count,
+        "text_batch_generator_prefill_completed_request_count": stats.prefill_completed_request_count,
+        "text_batch_generator_prefill_step_size": stats.prefill_step_size,
     }
+
+
+def _text_only_batch_prefill_step_size(value: object | None = None) -> int:
+    raw_value = os.environ.get(_TEXT_ONLY_BATCH_PREFILL_STEP_SIZE_ENV) if value is None else value
+    if raw_value is None or str(raw_value).strip() == "":
+        return _TEXT_ONLY_BATCH_DEFAULT_PREFILL_STEP_SIZE
+    try:
+        parsed = int(str(raw_value).strip())
+    except ValueError:
+        logger.warning(
+            "Ignoring invalid %s=%r; using %d.",
+            _TEXT_ONLY_BATCH_PREFILL_STEP_SIZE_ENV,
+            raw_value,
+            _TEXT_ONLY_BATCH_DEFAULT_PREFILL_STEP_SIZE,
+        )
+        return _TEXT_ONLY_BATCH_DEFAULT_PREFILL_STEP_SIZE
+    return min(8192, max(1, parsed))
 
 
 class _TextOnlyBatchGeneratorScheduler:
@@ -231,6 +262,7 @@ class _TextOnlyBatchGeneratorScheduler:
         executor: MLXRuntimeExecutor | None = None,
         max_batch_size: int = 8,
         wait_ms: float = 2.0,
+        prefill_step_size: int | None = None,
     ) -> None:
         self._model = model
         self._processor = processor
@@ -238,10 +270,11 @@ class _TextOnlyBatchGeneratorScheduler:
         self._executor = executor
         self._max_batch_size = max(1, int(max_batch_size))
         self._wait_seconds = max(0.0, float(wait_ms) / 1000.0)
+        self._prefill_step_size = _text_only_batch_prefill_step_size(prefill_step_size)
         self._condition = Condition()
         self._pending: list[_TextOnlyBatchRequest] = []
         self._active_by_uid: dict[int, _TextOnlyBatchRequest] = {}
-        self._stats = _TextOnlyBatchGeneratorStats()
+        self._stats = _TextOnlyBatchGeneratorStats(prefill_step_size=self._prefill_step_size)
         self._closed = False
         self._thread = Thread(
             target=self._run,
@@ -299,7 +332,9 @@ class _TextOnlyBatchGeneratorScheduler:
                     self._run_on_executor(lambda: self._insert_pending(pending))
                     insert_elapsed_ms = (time.perf_counter() - insert_started_at) * 1000.0
                     step_started_at = time.perf_counter()
+                    self._run_on_executor(self._remove_cancelled_active_requests)
                     self._run_on_executor(self._step)
+                    self._run_on_executor(self._remove_cancelled_active_requests)
                     step_elapsed_ms = (time.perf_counter() - step_started_at) * 1000.0
                 except BaseException as exc:
                     self._fail_requests([request for request in pending if request.uid is None], exc)
@@ -343,9 +378,10 @@ class _TextOnlyBatchGeneratorScheduler:
         if not self._active_by_uid:
             return
         next_started_at = time.perf_counter()
-        _prompt_responses, generation_responses = self._batch_generator().next()
+        prompt_responses, generation_responses = self._batch_generator().next()
         self._stats.next_ms_total += (time.perf_counter() - next_started_at) * 1000.0
         self._stats.step_count += 1
+        self._record_prompt_responses(prompt_responses or ())
         self._stats.generated_response_count += len(generation_responses or ())
         if not generation_responses:
             return
@@ -360,6 +396,43 @@ class _TextOnlyBatchGeneratorScheduler:
             self._emit_response(request, response)
             self._stats.emit_ms_total += (time.perf_counter() - emit_started_at) * 1000.0
             if getattr(response, "finish_reason", None):
+                self._finish_request(request)
+
+    def _record_prompt_responses(self, responses: Iterable[Any]) -> None:
+        for response in responses:
+            self._stats.prefill_response_count += 1
+            self._stats.prefill_step_count += 1
+            progress = getattr(response, "progress", None)
+            if isinstance(progress, tuple | list) and len(progress) >= 2:
+                try:
+                    processed = int(progress[0])
+                    total = int(progress[1])
+                except (TypeError, ValueError):
+                    continue
+                self._stats.prefill_processed_token_count = max(
+                    self._stats.prefill_processed_token_count,
+                    max(0, processed),
+                )
+                self._stats.prefill_total_token_count = max(
+                    self._stats.prefill_total_token_count,
+                    max(0, total),
+                )
+                if total > 0 and processed >= total:
+                    self._stats.prefill_completed_request_count += 1
+
+    def _remove_cancelled_active_requests(self) -> None:
+        cancelled_uids = [
+            uid for uid, request in self._active_by_uid.items() if request.cancel_event.is_set()
+        ]
+        if not cancelled_uids:
+            return
+        generator = getattr(self._adapter, "_melix_batch_generator", None)
+        remove = getattr(generator, "remove", None)
+        if callable(remove):
+            remove(cancelled_uids)
+        for uid in cancelled_uids:
+            request = self._active_by_uid.get(uid)
+            if request is not None:
                 self._finish_request(request)
 
     def _emit_response(self, request: _TextOnlyBatchRequest, response: Any) -> None:
@@ -468,7 +541,7 @@ class _TextOnlyBatchGeneratorScheduler:
                 sampler=make_sampler(temp=0.0, top_p=1.0, top_k=0),
                 prefill_batch_size=1,
                 completion_batch_size=self._max_batch_size,
-                prefill_step_size=2048,
+                prefill_step_size=self._prefill_step_size,
             )
             self._adapter._melix_batch_generator = generator
         return generator
@@ -1105,6 +1178,7 @@ class MLXVLMRuntime:
         self._executor = executor
         self._last_probe = VisionProbeSnapshot(0.0, 0, 0, 0.0)
         self._last_fast_path_signature: tuple[str, ...] | None = None
+        self._loaded_models_with_schedulers: list[dict[str, Any]] = []
 
     @property
     def runtime_name(self) -> str:
@@ -1136,6 +1210,9 @@ class MLXVLMRuntime:
     def close_loaded_model(self, loaded_model) -> None:
         if not isinstance(loaded_model, dict):
             return
+        self._loaded_models_with_schedulers = [
+            candidate for candidate in self._loaded_models_with_schedulers if candidate is not loaded_model
+        ]
         scheduler = loaded_model.pop("_melix_text_only_batch_generator_scheduler", None)
         if isinstance(scheduler, _TextOnlyBatchGeneratorScheduler):
             scheduler.close()
@@ -1971,6 +2048,8 @@ class MLXVLMRuntime:
             wait_ms=2.0,
         )
         loaded_model[scheduler_key] = scheduler
+        if not any(candidate is loaded_model for candidate in self._loaded_models_with_schedulers):
+            self._loaded_models_with_schedulers.append(loaded_model)
         return scheduler
 
     def _run_on_executor(self, callback: Callable[[], Any]) -> Any:
@@ -2088,7 +2167,17 @@ class MLXVLMRuntime:
         return int(value)
 
     def last_probe_snapshot(self) -> VisionProbeSnapshot:
-        return self._last_probe
+        probe = self._last_probe
+        stats_kwargs: dict[str, float | int] = {}
+        for loaded_model in self._loaded_models_with_schedulers:
+            if not isinstance(loaded_model, dict):
+                continue
+            scheduler = loaded_model.get("_melix_text_only_batch_generator_scheduler")
+            if isinstance(scheduler, _TextOnlyBatchGeneratorScheduler):
+                stats_kwargs = _text_batch_generator_probe_kwargs(
+                    _text_batch_generator_stats_snapshot(scheduler)
+                )
+        return replace(probe, **stats_kwargs) if stats_kwargs else probe
 
     def _ensure_fast_path_probe(
         self,

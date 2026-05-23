@@ -203,7 +203,8 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
             model: model,
             messages: messages,
             prefillStepSize: prefillStepSize,
-            acceleration: appliedAcceleration
+            acceleration: appliedAcceleration,
+            shouldAbort: shouldAbort
         )
         return RuntimePrefillResult(
             context: TextPrefillContext(
@@ -463,7 +464,8 @@ private func makePreparedPromptContext(
     model: LoadedTextModel,
     messages: [Melix_Worker_V1_ChatMessage],
     prefillStepSize: UInt32,
-    acceleration: Melix_Worker_V1_AccelerationPolicy
+    acceleration: Melix_Worker_V1_AccelerationPolicy,
+    shouldAbort: @escaping @Sendable () -> Bool
 ) async throws -> PreparedPrefillContext {
     #if canImport(MLXLMCommon)
     guard let container = model.storage as? ModelContainer else {
@@ -472,6 +474,7 @@ private func makePreparedPromptContext(
         )
     }
 
+    try throwIfTextRuntimeCancellationRequested(shouldAbort)
     let chat = try convertChatMessages(messages)
     let userInput = UserInput(chat: chat)
     let effectiveWindowSize = acceleratedPrefillWindowSize(
@@ -480,7 +483,9 @@ private func makePreparedPromptContext(
         messages: messages
     )
     let preparedState = try await container.perform { context in
+        try throwIfTextRuntimeCancellationRequested(shouldAbort)
         let input = try await context.processor.prepare(input: userInput)
+        try throwIfTextRuntimeCancellationRequested(shouldAbort)
         var cache = context.model.newCache(parameters: nil)
         let startedAt = Date.timeIntervalSinceReferenceDate
         let prepared = try context.model.prepare(
@@ -488,11 +493,13 @@ private func makePreparedPromptContext(
             cache: cache,
             windowSize: effectiveWindowSize
         )
+        try throwIfTextRuntimeCancellationRequested(shouldAbort)
         let quantizeStartedAt = Date.timeIntervalSinceReferenceDate
         applyActiveKVQuantizationIfNeeded(
             cache: &cache,
             acceleration: acceleration
         )
+        try throwIfTextRuntimeCancellationRequested(shouldAbort)
         let prefillQuantizeMicros = elapsedMicros(since: quantizeStartedAt)
         let promptPrefillTime = Date.timeIntervalSinceReferenceDate - startedAt
         return PreparedDecodeState(
@@ -507,6 +514,7 @@ private func makePreparedPromptContext(
             )
         )
     }
+    try throwIfTextRuntimeCancellationRequested(shouldAbort)
     return PreparedPrefillContext(
         preparedInput: preparedState,
         promptTokens: preparedState.input.text.tokens.size,

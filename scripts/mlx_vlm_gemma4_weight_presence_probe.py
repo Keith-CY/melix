@@ -7,12 +7,13 @@ import time
 import tracemalloc
 from collections.abc import Iterable
 from pathlib import Path
+from types import SimpleNamespace
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 
-from worker.runtime.mlx_vlm_runtime import _gemma4_multimodal_weight_presence
+from worker.runtime.mlx_vlm_runtime import MLXVLMRuntime, _gemma4_multimodal_weight_presence
 
 WEIGHT_NAME_COUNT = 50000
 ITERATION_COUNT = 40
@@ -69,12 +70,27 @@ def run_probe() -> dict[str, float]:
         peak_samples.append(float(peak_bytes))
         visited_samples.append(float(visited))
         checksum += sample_checksum
+    runtime = MLXVLMRuntime()
+    loaded_model = {
+        "model": SimpleNamespace(),
+        "processor": SimpleNamespace(eos_token_id=1),
+    }
+    scheduler = runtime._text_only_batch_generator_scheduler(loaded_model)
+    scheduler._stats.prefill_response_count = 2
+    scheduler._stats.prefill_step_count = 2
+    probe = runtime.last_probe_snapshot()
+    runtime.close_loaded_model(loaded_model)
+    if runtime._loaded_models_with_schedulers:
+        raise SystemExit("scheduler model tracking was not cleared")
+
     return {
         "checksum": float(checksum),
         "elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
         "has_audio": float(has_audio),
         "has_vision": float(has_vision),
         "iteration_count": float(ITERATION_COUNT),
+        "live_prefill_response_count": float(probe.text_batch_generator_prefill_response_count),
+        "live_prefill_step_count": float(probe.text_batch_generator_prefill_step_count),
         "peak_bytes_mean": round(statistics.fmean(peak_samples), 6),
         "sample_count": float(SAMPLE_COUNT),
         "visited_names_mean": round(statistics.fmean(visited_samples), 6),
