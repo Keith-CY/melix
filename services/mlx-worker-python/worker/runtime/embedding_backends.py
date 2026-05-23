@@ -60,7 +60,8 @@ class DeterministicEmbeddingBackend:
         l2_norm = math.sqrt(squared_sum)
         if l2_norm == 0.0:
             return [0.0] * dimensions
-        normalized_base = [round(value / l2_norm, 6) for value in base_values]
+        inverse_l2_norm = 1.0 / l2_norm
+        normalized_base = [round(value * inverse_l2_norm, 6) for value in base_values]
         result = normalized_base * full_repeats
         if remainder:
             result.extend(normalized_base[:remainder])

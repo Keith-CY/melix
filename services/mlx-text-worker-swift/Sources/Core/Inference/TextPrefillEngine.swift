@@ -150,6 +150,14 @@ struct TextPrefillEngine: Sendable {
                 response.restorePlan = restorePlan
             }
             return response
+        } catch is TextRuntimeCancellationError {
+            metrics.increment("swift_text.rpc_error_count")
+            metrics.recordMilliseconds("swift_text.prefill_ms", value: elapsedMilliseconds(since: startedAt))
+
+            var response = Melix_Worker_V1_PrefillResponse()
+            response.ok = false
+            response.error = makePrefillErrorStatus(code: "cancelled", message: "Request was cancelled.")
+            return response
         } catch let error as WorkerRuntimeRegistryError where error == .unknownModelHandle {
             metrics.increment("swift_text.rpc_error_count")
             metrics.recordMilliseconds("swift_text.prefill_ms", value: elapsedMilliseconds(since: startedAt))

@@ -271,6 +271,10 @@ private struct OpenAIModelIdleSweepRequest: Sendable {
 private struct ResolvedOpenAITextRequest: Sendable {
     let translated: TranslatedChatRequest
     let idleSweepRequest: OpenAIModelIdleSweepRequest?
+
+    var responseModelID: String {
+        translated.responseModelID ?? translated.modelID
+    }
 }
 
 private struct MediaAdmissionFailure: Sendable {
@@ -971,6 +975,7 @@ public struct OpenAIHandler: Sendable {
                     translated: TranslatedChatRequest(
                         requestID: resolvedRequest.translated.requestID,
                         modelID: resolvedRequest.translated.modelID,
+                        responseModelID: resolvedRequest.translated.responseModelID,
                         workerRequest: workerRequest,
                         stream: resolvedRequest.translated.stream
                     ),
@@ -1981,6 +1986,12 @@ public struct OpenAIHandler: Sendable {
             endpoint: .textGeneration
         )
         let routed = normalized.replacingModel(resolved.modelID)
+        let originalModelID = routed.model
+        let executionModelID = await textExecutionModelID(
+            for: routed,
+            servedModelID: originalModelID
+        )
+        let executionRequest = routed.replacingModel(executionModelID)
         if await shouldRefreshRegistryBeforeTextRequest(modelID: routed.model) {
             await RegistrySnapshotSync.syncModelsIfAvailable(
                 modelCatalog: modelCatalog,
@@ -1995,13 +2006,13 @@ public struct OpenAIHandler: Sendable {
         ) {
             throw HTTPRequestHandlingError.gatewayResponse(validationFailure)
         }
-        let resolvedModel = await modelCatalog.model(id: routed.model)
+        let originalModel = await modelCatalog.model(id: originalModelID)
         let requestedServingDefaults = await gatewayServingDefaultsStore.requestedDefaults(
             serverSessionID: gatewayRuntimeBinding.activeServerSessionID
         )
         if let mediaAdmissionFailure = mediaAdmissionFailure(
             for: routed,
-            model: resolvedModel,
+            model: originalModel,
             requestedSpeculativeDecode: requestedServingDefaults.accelerationMode == .speculativeDecode
         ) {
             await recordMediaAdmissionFailure(mediaAdmissionFailure)
@@ -2011,7 +2022,7 @@ public struct OpenAIHandler: Sendable {
         let modelHandle: String
         do {
             modelHandle = try await OnDemandModelLoader.ensureTextModelReady(
-                modelID: routed.model,
+                modelID: executionModelID,
                 modelCatalog: modelCatalog,
                 workerRegistry: workerRegistry,
                 metricsStore: metricsStore
@@ -2027,57 +2038,70 @@ public struct OpenAIHandler: Sendable {
         } catch {
             throw HTTPRequestHandlingError.workerUnavailable
         }
-        let modelToolParser: ToolParserSelection? = if let resolvedModel {
-            ToolParserSelection(modelSettings: resolvedModel.settings)
+        let executionModel = await modelCatalog.model(id: executionModelID)
+        let modelToolParser: ToolParserSelection? = if let executionModel {
+            ToolParserSelection(modelSettings: executionModel.settings)
         } else {
             nil
         }
-        let modelChatTemplatePolicy: ModelChatTemplatePolicy? = if let resolvedModel {
-            try ModelChatTemplatePolicy(modelSettings: resolvedModel.settings)
+        let modelChatTemplatePolicy: ModelChatTemplatePolicy? = if let executionModel {
+            try ModelChatTemplatePolicy(modelSettings: executionModel.settings)
         } else {
             nil
         }
-        let modelOCRPolicy: OCRExecutionPolicy? = if let resolvedModel {
-            OCRExecutionPolicy(modelSettings: resolvedModel.settings)
+        let modelOCRPolicy: OCRExecutionPolicy? = if let executionModel {
+            OCRExecutionPolicy(modelSettings: executionModel.settings)
         } else {
             nil
         }
-        let modelSamplingPolicy: ModelSamplingPolicy? = if let resolvedModel {
-            ModelSamplingPolicy(modelSettings: resolvedModel.settings)
+        let modelSamplingPolicy: ModelSamplingPolicy? = if let executionModel {
+            ModelSamplingPolicy(modelSettings: executionModel.settings)
         } else {
             nil
         }
         let shapingStartedAt = Date()
         let translated = try translator.translate(
-            routed,
+            executionRequest,
             modelHandle: modelHandle,
             modelToolParser: modelToolParser,
             modelChatTemplatePolicy: modelChatTemplatePolicy,
             modelOCRPolicy: modelOCRPolicy,
             modelSamplingPolicy: modelSamplingPolicy,
-            gatewayServingDefaults: requestedServingDefaults.resolvingAccelerationCompatibility(for: resolvedModel),
+            gatewayServingDefaults: requestedServingDefaults.resolvingAccelerationCompatibility(for: executionModel),
             mcpToolCatalog: mcpToolCatalog
         )
         await recordShapingMetrics(for: translated, startedAt: shapingStartedAt)
-        var routedTranslated = requestWithVLMTextOnlyBatchingMetadata(
-            translated,
-            model: resolvedModel,
-            normalizedRequest: routed
+        let responseModelID = executionModelID == originalModelID ? nil : originalModelID
+        let responseTranslated = TranslatedChatRequest(
+            requestID: translated.requestID,
+            modelID: translated.modelID,
+            responseModelID: responseModelID,
+            workerRequest: translated.workerRequest,
+            stream: translated.stream
         )
+        var finalTranslated = if executionModelID == originalModelID {
+            requestWithVLMTextOnlyBatchingMetadata(
+                responseTranslated,
+                model: originalModel ?? executionModel,
+                normalizedRequest: routed
+            )
+        } else {
+            responseTranslated
+        }
         let mediaAdmissionFailure = mediaAdmissionFailure(
-            for: routedTranslated,
-            model: resolvedModel,
+            for: finalTranslated,
+            model: originalModel ?? executionModel,
             requestedSpeculativeDecode: requestedServingDefaults.accelerationMode == .speculativeDecode
         )
         if let mediaAdmissionFailure {
-            routedTranslated = translatedRequest(
-                routedTranslated,
+            finalTranslated = translatedRequest(
+                finalTranslated,
                 addingMediaAdmissionFailureReceipts: mediaAdmissionFailure
             )
             await recordMediaAdmissionFailure(mediaAdmissionFailure)
         }
         return ResolvedOpenAITextRequest(
-            translated: routedTranslated,
+            translated: finalTranslated,
             idleSweepRequest: resolved.idleSweepRequest
         )
     }
@@ -2306,6 +2330,7 @@ public struct OpenAIHandler: Sendable {
         return TranslatedChatRequest(
             requestID: translated.requestID,
             modelID: translated.modelID,
+            responseModelID: translated.responseModelID,
             workerRequest: workerRequest,
             stream: translated.stream
         )
@@ -2314,6 +2339,97 @@ public struct OpenAIHandler: Sendable {
     private func recordMediaAdmissionFailure(_ failure: MediaAdmissionFailure) async {
         await metricsStore.increment("http.media_admission_refusal_count")
         await metricsStore.increment("http.media_admission_refusal.\(failure.unsupportedReason)")
+    }
+
+    private func textExecutionModelID(
+        for normalizedRequest: NormalizedTextRequest,
+        servedModelID: String
+    ) async -> String {
+        guard
+            let model = await modelCatalog.model(id: servedModelID),
+            shouldRouteTextOnlyRequestToCompanion(
+                model: model,
+                normalizedRequest: normalizedRequest
+            )
+        else {
+            return servedModelID
+        }
+
+        let companionID = textCompanionModelID(for: servedModelID)
+        if await modelCatalog.model(id: companionID) == nil {
+            await modelCatalog.registerModel(
+                makeTextCompanionModel(from: model, companionID: companionID),
+                reason: "text_companion_registered"
+            )
+        }
+        return companionID
+    }
+
+    private func shouldRouteTextOnlyRequestToCompanion(
+        model: Melix_Controlplane_V1_ModelSummary,
+        normalizedRequest: NormalizedTextRequest
+    ) -> Bool {
+        guard modelRouteKind(for: model) == .pythonVLM else {
+            return false
+        }
+        guard !falseyModelMetadata(model.settings.ext["melix.vlm.text_companion.enabled"]) else {
+            return false
+        }
+        guard !normalizedRequestContainsNonTextMedia(normalizedRequest) else {
+            return false
+        }
+        guard normalizedIdentifier(model.settings.ext["vision_family_id"]) == "gemma4-v1" else {
+            return false
+        }
+        guard normalizedIdentifier(model.settings.ext["melix.vlm.backend_id"]) == "mlx_vlm" else {
+            return false
+        }
+        return true
+    }
+
+    private func textCompanionModelID(for modelID: String) -> String {
+        "\(modelID)#text"
+    }
+
+    private func makeTextCompanionModel(
+        from source: Melix_Controlplane_V1_ModelSummary,
+        companionID: String
+    ) -> Melix_Controlplane_V1_ModelSummary {
+        var companion = source
+        companion.modelID = companionID
+        companion.kind = "text"
+        companion.state = .modelDiscovered
+        companion.pinned = false
+        companion.inflightRequests = 0
+        companion.estimatedBytes = 0
+        companion.capabilityClass = .modelCapabilityText
+        companion.routeClass = .workerRouteSwiftText
+        companion.features = source.features.contains("chat") ? source.features : source.features + ["chat"]
+        companion.supportedModalities = ["text"]
+        companion.supportedTasks = ["generate"]
+        companion.settings.alias = source.settings.alias.isEmpty
+            ? "\(source.modelID) text"
+            : "\(source.settings.alias) text"
+        companion.settings.memoryPolicy = .memoryResidencyEvictable
+        companion.settings.defaultAccelerationMode = .baseline
+        companion.settings.accelerationProfileID = ""
+        companion.settings.ext["melix.companion.source_model_id"] = source.modelID
+        companion.settings.ext["melix.companion.role"] = "text_only"
+        companion.settings.ext["melix.capability.route_kind"] = WorkerRouteKind.swiftText.metadataIdentifier
+        companion.settings.ext["melix.capability.class"] = "text"
+        companion.settings.ext["melix.capability.supported_modalities"] = "text"
+        companion.settings.ext["melix.capability.supported_tasks"] = "generate"
+        companion.settings.ext["melix.capability.supported_parsers"] = "text"
+        companion.settings.ext["melix.acceleration.supported_modes"] = "baseline"
+        companion.settings.ext.removeValue(forKey: "melix.acceleration.target_capability")
+        companion.settings.ext.removeValue(forKey: "melix.acceleration.drafter_capability")
+        companion.settings.ext.removeValue(forKey: "melix.acceleration.valid_draft_model_ids")
+        companion.settings.ext.removeValue(forKey: "melix.speculative_head.configured")
+        companion.settings.ext.removeValue(forKey: "melix.speculative_head.configured_layers")
+        companion.settings.ext.removeValue(forKey: "melix.speculative_head.indexed_layers")
+        companion.settings.ext.removeValue(forKey: "melix.speculative_head.runtime_available")
+        companion.settings.ext.removeValue(forKey: "melix.speculative_head.artifact_available")
+        return companion
     }
 
     private func requestWithVLMTextOnlyBatchingMetadata(
@@ -2352,6 +2468,7 @@ public struct OpenAIHandler: Sendable {
         return TranslatedChatRequest(
             requestID: translated.requestID,
             modelID: translated.modelID,
+            responseModelID: translated.responseModelID,
             workerRequest: workerRequest,
             stream: translated.stream
         )
@@ -2409,6 +2526,15 @@ public struct OpenAIHandler: Sendable {
     private func truthyModelMetadata(_ value: String?) -> Bool {
         switch value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func falseyModelMetadata(_ value: String?) -> Bool {
+        switch value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "0", "false", "no", "off":
             return true
         default:
             return false
@@ -2522,6 +2648,7 @@ public struct OpenAIHandler: Sendable {
         let streamingTranslated = TranslatedChatRequest(
             requestID: translated.requestID,
             modelID: translated.modelID,
+            responseModelID: translated.responseModelID,
             workerRequest: workerRequest,
             stream: true
         )
@@ -2569,7 +2696,8 @@ public struct OpenAIHandler: Sendable {
             let payload = chatCompletionJSONPayload(
                 execution: execution,
                 aggregate: aggregate,
-                requestStartedAt: requestStartedAt
+                requestStartedAt: requestStartedAt,
+                responseModelID: resolvedRequest.responseModelID
             )
             return jsonResponse(statusCode: 200, payload: payload)
         } catch {
@@ -2629,13 +2757,14 @@ public struct OpenAIHandler: Sendable {
     private func chatCompletionJSONPayload(
         execution: CoordinatedChatExecution,
         aggregate: NonStreamChatCompletionAggregate,
-        requestStartedAt: Date
+        requestStartedAt: Date,
+        responseModelID: String
     ) -> [String: Any] {
         var payload: [String: Any] = [
             "id": execution.requestID,
             "object": "chat.completion",
             "created": Int(requestStartedAt.timeIntervalSince1970),
-            "model": execution.modelID,
+            "model": responseModelID,
             "choices": [
                 [
                     "index": 0,
@@ -2738,7 +2867,7 @@ public struct OpenAIHandler: Sendable {
         let stream = sseWriter.encode(
             stream: execution.stream,
             requestID: execution.requestID,
-            modelID: execution.modelID,
+            modelID: translated.responseModelID ?? execution.modelID,
             shape: shape,
             toolParser: ToolParserSelection(executionExt: translated.workerRequest.execution.ext),
             options: SSEStreamWriter.StreamOptions(

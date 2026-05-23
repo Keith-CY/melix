@@ -847,6 +847,7 @@ public enum BootstrapWorkerPreparation {
         if summary.settings.adaptiveThinking.budgetTokens > 0 {
             spec.ext["melix.adaptive_thinking.budget_tokens"] = String(summary.settings.adaptiveThinking.budgetTokens)
         }
+        applyContextOverride(from: summary, to: &spec)
         applySettingsOverride(from: summary, to: &spec)
         return spec
     }
@@ -984,6 +985,55 @@ public enum BootstrapWorkerPreparation {
         spec.settings.multimodalCacheBudgetBytes = summary.settings.multimodalCacheBudgetBytes
         spec.settings.loadTrustMode = ModelLoadTrustPolicyResolver.workerMode(from: summary.settings.loadTrustMode)
         spec.settings.ext.merge(summary.settings.ext) { _, new in new }
+    }
+
+    private static func applyContextOverride(
+        from summary: Melix_Controlplane_V1_ModelSummary,
+        to spec: inout Melix_Worker_V1_ModelSpec
+    ) {
+        let explicitContext = max(spec.maxContext, summary.maxContext)
+        guard let inferred = inferredMaxContext(fromModelPath: spec.modelPath) else {
+            spec.maxContext = explicitContext
+            return
+        }
+        spec.maxContext = max(explicitContext, inferred)
+    }
+
+    private static func inferredMaxContext(fromModelPath modelPath: String) -> UInt32? {
+        let trimmedPath = modelPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else {
+            return nil
+        }
+        let configURL = URL(fileURLWithPath: trimmedPath, isDirectory: true)
+            .appendingPathComponent("config.json")
+        guard let data = try? Data(contentsOf: configURL),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return uint32ConfigValue(root["max_position_embeddings"])
+            ?? nestedUInt32ConfigValue(root["text_config"], key: "max_position_embeddings")
+    }
+
+    private static func nestedUInt32ConfigValue(_ value: Any?, key: String) -> UInt32? {
+        guard let object = value as? [String: Any] else {
+            return nil
+        }
+        return uint32ConfigValue(object[key])
+    }
+
+    private static func uint32ConfigValue(_ value: Any?) -> UInt32? {
+        switch value {
+        case let number as NSNumber:
+            let intValue = number.uint64Value
+            guard intValue > 0, intValue <= UInt64(UInt32.max) else {
+                return nil
+            }
+            return UInt32(intValue)
+        case let string as String:
+            return UInt32(string.trimmingCharacters(in: .whitespacesAndNewlines))
+        default:
+            return nil
+        }
     }
 
     private static func workerMemoryPolicy(

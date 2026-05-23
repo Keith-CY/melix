@@ -1399,9 +1399,13 @@ struct OpenAIHandlerTests {
                 body: body
             )
         )
-        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
+        let payload = try await collectBody(response.body)
+        let generateRequest = try #require(
+            await harness.vlmClient.lastGenerateRequest,
+            Comment(rawValue: payload)
+        )
 
-        #expect(response.statusCode == 200)
+        #expect(response.statusCode == 200, Comment(rawValue: payload))
         #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == "true")
         #expect(generateRequest.sampling.temperature == 0)
         #expect(generateRequest.sampling.topP == 1)
@@ -2042,6 +2046,203 @@ struct OpenAIHandlerTests {
         #expect(error["media_count"] as? Int == 1)
         #expect(await harness.vlmClient.lastLoadModelRequest == nil)
         #expect(await harness.vlmClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions routes Gemma4 text-only VLM requests through a Swift text companion")
+    func postChatCompletionsRoutesGemma4TextOnlyVLMThroughSwiftTextCompanion() async throws {
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: "req-http-gemma4-vlm-text-companion",
+            textEvents: [
+                makeTokenEvent(requestID: "req-http-gemma4-vlm-text-companion", seq: 1, text: "swift"),
+                makeCompletedEvent(
+                    requestID: "req-http-gemma4-vlm-text-companion",
+                    seq: 2,
+                    finishReason: "stop",
+                    assistantText: "swift"
+                ),
+            ],
+            textLoadModelHandle: "melix-dev-vlm#text::swift",
+            configureModel: { model in
+                model.settings.ext["melix.vlm.execution_mode"] = "multimodal"
+                model.settings.ext["melix.vlm.text_only_batch_generator"] = "true"
+                model.settings.ext.removeValue(forKey: "melix.vlm.text_companion.enabled")
+                model.settings.ext["melix.model_path"] = "models/melix-dev-vlm"
+                model.settings.ext["melix.model_revision"] = "dev"
+                model.settings.ext["melix.tokenizer_hash"] = "tok-dev"
+            }
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "temperature": 0,
+              "messages": [
+                { "role": "user", "content": "Reply briefly." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("\"model\":\"melix-dev-vlm\""))
+        #expect(payload.contains("\"content\":\"swift\""))
+
+        let loadRequest = try #require(await harness.textClient.lastLoadModelRequest)
+        let generateRequest = try #require(await harness.textClient.lastGenerateRequest)
+        let companion = try #require(await harness.catalog.model(id: "melix-dev-vlm#text"))
+
+        #expect(loadRequest.model.modelID == "melix-dev-vlm#text")
+        #expect(loadRequest.model.modelKind == "text")
+        #expect(loadRequest.model.ext["melix.companion.source_model_id"] == "melix-dev-vlm")
+        #expect(generateRequest.execution.modelHandle == "melix-dev-vlm#text::swift")
+        #expect(generateRequest.execution.acceleration.mode == .baseline)
+        #expect(generateRequest.execution.acceleration.activeKvQuantProfile.isEmpty)
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == nil)
+        #expect(companion.routeClass == .workerRouteSwiftText)
+        #expect(companion.settings.ext["melix.capability.route_kind"] == "swift_text")
+        #expect(companion.settings.defaultAccelerationMode == .baseline)
+        #expect(companion.settings.ext["melix.acceleration.supported_modes"] == "baseline")
+        #expect(await harness.vlmClient.lastLoadModelRequest == nil)
+        #expect(await harness.vlmClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions gives Gemma4 text companions the nested text context limit")
+    func postChatCompletionsGivesGemma4TextCompanionsNestedTextContextLimit() async throws {
+        let modelDirectory = try makeModelConfigDirectory(
+            config: """
+            {
+              "model_type": "gemma4",
+              "text_config": {
+                "model_type": "gemma4_text",
+                "max_position_embeddings": 262144
+              }
+            }
+            """
+        )
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: "req-http-gemma4-vlm-text-companion-context",
+            textEvents: [
+                makeTokenEvent(requestID: "req-http-gemma4-vlm-text-companion-context", seq: 1, text: "swift"),
+                makeCompletedEvent(
+                    requestID: "req-http-gemma4-vlm-text-companion-context",
+                    seq: 2,
+                    finishReason: "stop",
+                    assistantText: "swift"
+                ),
+            ],
+            textLoadModelHandle: "melix-dev-vlm#text::swift",
+            configureModel: { model in
+                model.maxContext = 8_192
+                model.settings.ext["melix.vlm.execution_mode"] = "multimodal"
+                model.settings.ext["melix.vlm.text_only_batch_generator"] = "true"
+                model.settings.ext.removeValue(forKey: "melix.vlm.text_companion.enabled")
+                model.settings.ext["melix.model_path"] = modelDirectory.path
+                model.settings.ext["melix.model_revision"] = "dev"
+                model.settings.ext["melix.tokenizer_hash"] = "tok-dev"
+            }
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "temperature": 0,
+              "messages": [
+                { "role": "user", "content": "Reply briefly." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+
+        let loadRequest = try #require(await harness.textClient.lastLoadModelRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(loadRequest.model.modelID == "melix-dev-vlm#text")
+        #expect(loadRequest.model.maxContext == 262_144)
+    }
+
+    @Test("POST /v1/chat/completions keeps Gemma4 VLM media requests on the Python VLM route")
+    func postChatCompletionsKeepsGemma4VLMMediaRequestsOnPythonVLMRoute() async throws {
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: "req-http-gemma4-vlm-image-route",
+            configureModel: { model in
+                model.settings.ext["melix.vlm.execution_mode"] = "multimodal"
+            }
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "temperature": 0,
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "text", "text": "Describe the image." },
+                    {
+                      "type": "input_image",
+                      "input_image": {
+                        "data": "aW1hZ2UgZml4dHVyZQ==",
+                        "mime_type": "image/png"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+        #expect(response.statusCode == 200, Comment(rawValue: payload))
+        let loadRequest = try #require(
+            await harness.vlmClient.lastLoadModelRequest,
+            Comment(rawValue: payload)
+        )
+        let generateRequest = try #require(
+            await harness.vlmClient.lastGenerateRequest,
+            Comment(rawValue: payload)
+        )
+
+        #expect(loadRequest.model.modelKind == "vlm")
+        #expect(generateRequest.execution.modelHandle == "melix-dev-vlm::python")
+        #expect(generateRequest.execution.ext["melix.media_parts.count"] == "1")
+        #expect(generateRequest.messages[0].parts.count == 2)
+        #expect(generateRequest.messages[0].parts[1].imageBytes == Data("image fixture".utf8))
+        #expect(await harness.textClient.lastLoadModelRequest == nil)
+        #expect(await harness.textClient.lastGenerateRequest == nil)
+        #expect(await harness.catalog.model(id: "melix-dev-vlm#text") == nil)
     }
 
     @Test("POST /v1/chat/completions refuses speculative decode on media-bearing requests")
@@ -9422,15 +9623,26 @@ struct OpenAIHandlerTests {
         requestID: String,
         finishReason: String = "stop",
         assistantText: String = "ready",
+        textEvents: [Melix_Worker_V1_ExecuteEvent] = [],
+        textLoadModelHandle: String = "melix-dev-text::swift",
         configureModel: (inout Melix_Controlplane_V1_ModelSummary) -> Void = { _ in }
-    ) -> (handler: OpenAIHandler, textClient: ScriptedWorkerClient, vlmClient: ScriptedWorkerClient) {
+    ) -> (
+        handler: OpenAIHandler,
+        catalog: ModelCatalog,
+        textClient: ScriptedWorkerClient,
+        vlmClient: ScriptedWorkerClient
+    ) {
         var vlmModel = ModelCatalog.devVLMModel()
         vlmModel.settings.ext["vision_family_id"] = "gemma4-v1"
         vlmModel.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
         vlmModel.settings.ext["melix.vlm.text_only_batch_generator"] = "false"
+        vlmModel.settings.ext["melix.vlm.text_companion.enabled"] = "false"
         configureModel(&vlmModel)
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), vlmModel])
-        let textClient = ScriptedWorkerClient(events: [])
+        let textClient = ScriptedWorkerClient(
+            events: textEvents,
+            loadModelHandle: textLoadModelHandle
+        )
         let vlmClient = ScriptedWorkerClient(
             events: [
                 makeCompletedEvent(
@@ -9447,6 +9659,15 @@ struct OpenAIHandlerTests {
             pythonCompatibilityClient: vlmClient,
             modelCatalog: catalog
         )
+        let servingDefaultsStore = GatewayServingDefaultsStore(
+            storeURL: FileManager.default.temporaryDirectory.appendingPathComponent(
+                "melix-gemma4-vlm-serving-defaults-\(UUID().uuidString).json"
+            ),
+            defaults: [
+                "MELIX_GATEWAY_ACCELERATION_MODE": "baseline",
+                "MELIX_GATEWAY_ACCELERATION_PROFILE": "balanced",
+            ]
+        )
         let handler = OpenAIHandler(
             modelCatalog: catalog,
             requestCoordinator: RequestCoordinator(
@@ -9456,9 +9677,10 @@ struct OpenAIHandlerTests {
             ),
             workerRegistry: workerRegistry,
             translator: ChatRequestTranslator(requestIDGenerator: { requestID }),
-            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) }),
+            gatewayServingDefaultsStore: servingDefaultsStore
         )
-        return (handler, textClient, vlmClient)
+        return (handler, catalog, textClient, vlmClient)
     }
 
     private func warmModel() -> Melix_Controlplane_V1_ModelSummary {
@@ -9516,6 +9738,18 @@ private func makeRegistrySnapshotManifestJSON(
     ]
     let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
     return String(decoding: data, as: UTF8.self)
+}
+
+private func makeModelConfigDirectory(config: String) throws -> URL {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("melix-model-config-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try config.write(
+        to: root.appendingPathComponent("config.json"),
+        atomically: true,
+        encoding: .utf8
+    )
+    return root
 }
 
 private actor ScriptedWorkerUnloadGate {

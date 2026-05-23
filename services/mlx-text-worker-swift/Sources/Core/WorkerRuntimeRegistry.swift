@@ -376,6 +376,7 @@ actor WorkerRuntimeRegistry {
             messages: messages,
             acceleration: resolvedAcceleration
         )
+        try throwIfTextRuntimeCancellationRequested(shouldAbort)
 
         activeRequests += 1
         activePrefills += 1
@@ -391,7 +392,10 @@ actor WorkerRuntimeRegistry {
         if !effectiveExecution.cacheHints.restoreSnapshotID.isEmpty {
             let restored: BoundarySnapshotRecord
             do {
-                restored = try await restoreBoundarySnapshotRecord(snapshotID: effectiveExecution.cacheHints.restoreSnapshotID)
+                restored = try await restoreBoundarySnapshotRecord(
+                    snapshotID: effectiveExecution.cacheHints.restoreSnapshotID,
+                    shouldAbort: shouldAbort
+                )
             } catch {
                 // Operator asked for a restore, runtime could not reconstruct. Record
                 // the observability blind spot and rethrow the original error.
@@ -427,9 +431,12 @@ actor WorkerRuntimeRegistry {
                     acceleration: normalizedAccelerationPolicy(restored.acceleration),
                     shouldAbort: shouldAbort
                 )
+                try throwIfTextRuntimeCancellationRequested(shouldAbort)
 
                 let decodeHandle = "\(modelHandle)::decode::\(nextDecodeHandle)"
                 nextDecodeHandle += 1
+                let restoredPrefix = await cacheStore.lookupPrefix(for: restorePlan.blockTable.cacheKey)
+                try throwIfTextRuntimeCancellationRequested(shouldAbort)
                 prefillContexts[decodeHandle] = StoredPrefillContext(
                     decodeHandle: decodeHandle,
                     modelHandle: loaded.handle,
@@ -442,7 +449,7 @@ actor WorkerRuntimeRegistry {
                     blockTableID: restorePlan.blockTableID,
                     blockTable: restorePlan.blockTable,
                     restoredSnapshotID: restored.snapshot.snapshotID,
-                    prefix: await cacheStore.lookupPrefix(for: restorePlan.blockTable.cacheKey),
+                    prefix: restoredPrefix,
                     context: runtimePrefill.context
                 )
 
@@ -475,6 +482,7 @@ actor WorkerRuntimeRegistry {
             acceleration: resolvedAcceleration,
             shouldAbort: shouldAbort
         )
+        try throwIfTextRuntimeCancellationRequested(shouldAbort)
 
         var decodeHandle = ""
         var blockTableID = ""
@@ -488,8 +496,10 @@ actor WorkerRuntimeRegistry {
                 messages: messages,
                 promptTokens: result.promptTokens,
                 decodeHandle: decodeHandle,
-                activeKVQuantizationRatio: result.activeKVQuantizationRatio
+                activeKVQuantizationRatio: result.activeKVQuantizationRatio,
+                shouldAbort: shouldAbort
             )
+            try throwIfTextRuntimeCancellationRequested(shouldAbort)
             blockTableID = registration.blockTableID
             blockTable = registration.blockTable
             prefillContexts[decodeHandle] = StoredPrefillContext(
@@ -853,11 +863,14 @@ actor WorkerRuntimeRegistry {
     }
 
     private func restoreBoundarySnapshotRecord(
-        snapshotID: String
+        snapshotID: String,
+        shouldAbort: @escaping @Sendable () -> Bool = { false }
     ) async throws -> BoundarySnapshotRecord {
+        try throwIfTextRuntimeCancellationRequested(shouldAbort)
         guard let restored = await cacheStore.restoreBoundarySnapshot(snapshotID: snapshotID) else {
             throw WorkerRuntimeRegistryError.unknownSnapshotID
         }
+        try throwIfTextRuntimeCancellationRequested(shouldAbort)
 
         let restoredScopeID = if !restored.blockTable.scopeID.isEmpty {
             restored.blockTable.scopeID
@@ -888,11 +901,14 @@ actor WorkerRuntimeRegistry {
             prefillStepSize: 0,
             resumeHint: restored.resumeHint,
             acceleration: restored.acceleration,
-            shouldAbort: { false }
+            shouldAbort: shouldAbort
         )
+        try throwIfTextRuntimeCancellationRequested(shouldAbort)
 
         let decodeHandle = "\(loaded.handle)::decode::\(nextDecodeHandle)"
         nextDecodeHandle += 1
+        let restoredPrefix = await cacheStore.lookupPrefix(for: restored.blockTable.cacheKey)
+        try throwIfTextRuntimeCancellationRequested(shouldAbort)
         prefillContexts[decodeHandle] = StoredPrefillContext(
             decodeHandle: decodeHandle,
             modelHandle: loaded.handle,
@@ -905,7 +921,7 @@ actor WorkerRuntimeRegistry {
             blockTableID: restored.blockTableID,
             blockTable: restored.blockTable,
             restoredSnapshotID: restored.snapshot.snapshotID,
-            prefix: await cacheStore.lookupPrefix(for: restored.blockTable.cacheKey),
+            prefix: restoredPrefix,
             context: runtimePrefill.context
         )
 

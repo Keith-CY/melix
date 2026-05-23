@@ -53,6 +53,7 @@ _GENERATION_CONFIG_TOP_P_KEY = "melix.generation_config.top_p"
 _GENERATION_CONFIG_MAX_TOKENS_KEY = "melix.generation_config.max_tokens"
 _GENERATION_CONFIG_DO_SAMPLE_KEY = "melix.generation_config.do_sample"
 _REGISTRY_SCAN_PRUNED_DIR_NAMES = frozenset({"blobs", ".git", "__pycache__"})
+_HF_CACHE_PRUNED_SUBTREE_NAMES = frozenset({"snapshots", "refs"})
 
 
 @dataclass(frozen=True)
@@ -2084,7 +2085,7 @@ class WorkerModelCatalog:
             current = stack.pop()
             if current.name in _REGISTRY_SCAN_PRUNED_DIR_NAMES:
                 continue
-            if current.name in {"snapshots", "refs"} and _is_hf_cache_pruned_subtree(resolved_root, current):
+            if current.name in _HF_CACHE_PRUNED_SUBTREE_NAMES and _is_hf_cache_pruned_subtree(resolved_root, current):
                 continue
             try:
                 with os.scandir(os.fspath(current)) as entries:

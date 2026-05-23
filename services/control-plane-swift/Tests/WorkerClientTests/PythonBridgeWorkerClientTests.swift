@@ -1145,6 +1145,38 @@ struct PythonBridgeWorkerClientTests {
         #expect(spec.ext["melix.derived_from_model_id"] == "melix-dev-text")
     }
 
+    @Test("bootstrap worker preparation infers generic VLM context from nested text config")
+    func bootstrapWorkerPreparationInfersGenericVLMContextFromNestedTextConfig() throws {
+        let modelDirectory = try makeModelConfigDirectory(
+            config: """
+            {
+              "model_type": "gemma4",
+              "text_config": {
+                "model_type": "gemma4_text",
+                "max_position_embeddings": 131072
+              }
+            }
+            """
+        )
+
+        var summary = Melix_Controlplane_V1_ModelSummary()
+        summary.modelID = "mlx-community/gemma-4-31b-it-8bit"
+        summary.kind = "vlm"
+        summary.maxContext = 8_192
+        summary.settings.ext["melix.model_path"] = modelDirectory.path
+        summary.settings.ext["vision_family_id"] = "gemma4-v1"
+        summary.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
+        summary.settings.ext["melix.capability.route_kind"] = "python_vlm"
+        summary.settings.ext["melix.capability.class"] = "vlm"
+        summary.settings.ext["melix.capability.supported_modalities"] = "text,image"
+        summary.settings.ext["melix.capability.supported_tasks"] = "vlm,generate"
+
+        let spec = try #require(BootstrapWorkerPreparation.modelSpec(for: summary))
+
+        #expect(spec.modelKind == "vlm")
+        #expect(spec.maxContext == 131_072)
+    }
+
     @Test("bootstrap worker preparation preserves adapter-backed runtime metadata for activated derived models")
     func bootstrapWorkerPreparationPreservesAdapterBackedRuntimeMetadataForActivatedDerivedModels() throws {
         var summary = ModelCatalog.devTextModel()
@@ -2134,6 +2166,18 @@ private func bridgeErrorLine(code: String, message: String) -> String {
     ]
     let data = try! JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
     return String(decoding: data, as: UTF8.self)
+}
+
+private func makeModelConfigDirectory(config: String) throws -> URL {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("melix-model-config-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try config.write(
+        to: root.appendingPathComponent("config.json"),
+        atomically: true,
+        encoding: .utf8
+    )
+    return root
 }
 
 private func makeProcessBridgeFixtureRepo() throws -> URL {

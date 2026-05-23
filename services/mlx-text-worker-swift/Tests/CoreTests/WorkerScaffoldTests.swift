@@ -3338,6 +3338,85 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(statsAfter.stats.activePrefills, 0)
     }
 
+    func testPrefillAbortStopsBeforeRegisteringDecodeContext() async throws {
+        let services = makeServices(
+            environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
+            backend: FakeRuntimeBackend(prefillDelayNanos: 120_000_000)
+        )
+
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let prefillTask = Task {
+            try await withTestServerContextRPCCancellationHandle { handle in
+                var request = Melix_Worker_V1_PrefillRequest()
+                request.execution.id.requestID = "req-prefill-abort"
+                request.execution.modelHandle = loadResponse.modelHandle
+                request.returnDecodeHandle = true
+                request.messages = [makeUserMessage("abort slow prefill before context registration")]
+                return try await services.inference.prefill(
+                    request: request,
+                    context: ServerContext(
+                        descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                        remotePeer: "in-process:test",
+                        localPeer: "in-process:test",
+                        cancellation: handle
+                    )
+                )
+            }
+        }
+
+        try await Task.sleep(nanoseconds: 30_000_000)
+
+        let abortResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_AbortRequest()
+            request.requestID = "req-prefill-abort"
+            return try await services.inference.abort(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Abort.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let response = try await prefillTask.value
+        let contextCount = await services.registry.prefillContextCount()
+        let statsAfter = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.runtime.getRuntimeStats(
+                request: Melix_Worker_V1_GetRuntimeStatsRequest(),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.GetRuntimeStats.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        XCTAssertTrue(abortResponse.ok)
+        XCTAssertTrue(abortResponse.found)
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(response.error.code, "cancelled")
+        XCTAssertTrue(response.decodeHandle.isEmpty)
+        XCTAssertEqual(contextCount, 0)
+        XCTAssertEqual(statsAfter.stats.activePrefills, 0)
+        XCTAssertEqual(statsAfter.stats.activeRequests, 0)
+    }
+
     func testPrefillReturnsNotFoundForUnknownModelHandle() async throws {
         let services = makeServices()
 
@@ -7358,6 +7437,189 @@ final class WorkerScaffoldTests: XCTestCase {
         }
     }
 
+    #if canImport(MLXLLM)
+    func testSwiftTextRuntimeRegistryCreatesGemma4TextBackboneFromNestedVLMConfig() async throws {
+        try await withTemporaryDefaultMetallib {
+            let configURL = URL(
+                fileURLWithPath: FileManager.default.currentDirectoryPath,
+                isDirectory: true
+            ).appendingPathComponent("config.json")
+            let configJSON =
+                """
+                {
+                  "model_type": "gemma4",
+                  "text_config": {
+                    "model_type": "gemma4_text",
+                    "hidden_size": 32,
+                    "num_hidden_layers": 2,
+                    "intermediate_size": 64,
+                    "num_attention_heads": 2,
+                    "head_dim": 8,
+                    "global_head_dim": 16,
+                    "global_partial_rotary_factor": 0.25,
+                    "rms_norm_eps": 0.000001,
+                    "vocab_size": 64,
+                    "vocab_size_per_layer_input": 64,
+                    "num_key_value_heads": 1,
+                    "num_global_key_value_heads": 1,
+                    "num_kv_shared_layers": 0,
+                    "hidden_size_per_layer_input": 0,
+                    "sliding_window": 8,
+                    "sliding_window_pattern": 2,
+                    "max_position_embeddings": 128,
+                    "attention_k_eq_v": false,
+                    "final_logit_softcapping": 30.0,
+                    "use_double_wide_mlp": false,
+                    "enable_moe_block": false,
+                    "layer_types": ["sliding_attention", "full_attention"],
+                    "tie_word_embeddings": true
+                  }
+                }
+                """
+            try configJSON.data(using: .utf8)!.write(to: configURL)
+
+            let supportsGemma4 = await LLMTypeRegistry.shared.supportsModelType("gemma4")
+            let supportsGemma4Text = await LLMTypeRegistry.shared.supportsModelType("gemma4_text")
+            XCTAssertTrue(supportsGemma4)
+            XCTAssertTrue(supportsGemma4Text)
+
+            let model = try await LLMTypeRegistry.shared.createModel(
+                configuration: configURL,
+                modelType: "gemma4"
+            )
+
+            XCTAssertEqual(String(describing: type(of: model)), "Gemma4Model")
+        }
+    }
+
+    func testGemma4ProportionalRoPEKeepsDerivedFrequenciesOutOfLoadParameters() async throws {
+        try await withTemporaryDefaultMetallib {
+            let rope = initializeRopeLayer(
+                dims: 16,
+                base: 10_000,
+                traditional: false,
+                scalingConfig: [
+                    "rope_type": .string("proportional"),
+                    "factor": .int(8),
+                    "partial_rotary_factor": .float(0.5),
+                ],
+                maxPositionEmbeddings: 131_072
+            )
+
+            let parameterNames = rope.parameters().flattened().map(\.0)
+
+            XCTAssertFalse(parameterNames.contains("freqs"))
+            XCTAssertTrue(rope.items().keys.contains("_freqs"))
+        }
+    }
+
+    func testGemma4TextFullAttentionCacheUsesLongContextGrowthStep() async throws {
+        try await withTemporaryDefaultMetallib {
+            let configJSON =
+                """
+                {
+                  "model_type": "gemma4_text",
+                  "hidden_size": 32,
+                  "num_hidden_layers": 4,
+                  "intermediate_size": 64,
+                  "num_attention_heads": 2,
+                  "head_dim": 8,
+                  "global_head_dim": 16,
+                  "global_partial_rotary_factor": 0.25,
+                  "rms_norm_eps": 0.000001,
+                  "vocab_size": 64,
+                  "vocab_size_per_layer_input": 64,
+                  "num_key_value_heads": 1,
+                  "num_global_key_value_heads": 1,
+                  "num_kv_shared_layers": 1,
+                  "hidden_size_per_layer_input": 0,
+                  "sliding_window": 512,
+                  "sliding_window_pattern": 2,
+                  "max_position_embeddings": 131072,
+                  "attention_k_eq_v": false,
+                  "final_logit_softcapping": 30.0,
+                  "use_double_wide_mlp": false,
+                  "enable_moe_block": false,
+                  "layer_types": [
+                    "sliding_attention",
+                    "full_attention",
+                    "full_attention",
+                    "sliding_attention"
+                  ],
+                  "tie_word_embeddings": true
+                }
+                """
+            let config = try JSONDecoder().decode(
+                Gemma4TextConfiguration.self,
+                from: Data(configJSON.utf8)
+            )
+            let model = Gemma4TextModel(config)
+
+            let cache = model.newCache(parameters: nil)
+
+            XCTAssertEqual(cache.count, 3)
+            XCTAssertEqual(cache[0].maxSize, 512)
+            let firstFullCache = try XCTUnwrap(cache[1] as? KVCacheSimple)
+            let secondFullCache = try XCTUnwrap(cache[2] as? KVCacheSimple)
+            XCTAssertEqual(firstFullCache.step, 1024)
+            XCTAssertEqual(secondFullCache.step, 1024)
+        }
+    }
+
+    func testGemma4TextActiveKVDecodeUsesFusedAttentionWithoutMaterializingWhenKVSharingIsDisabled()
+        async throws
+    {
+        try await withTemporaryDefaultMetallib {
+            let configJSON =
+                """
+                {
+                  "model_type": "gemma4_text",
+                  "hidden_size": 32,
+                  "num_hidden_layers": 1,
+                  "intermediate_size": 64,
+                  "num_attention_heads": 2,
+                  "head_dim": 32,
+                  "global_head_dim": 32,
+                  "global_partial_rotary_factor": 1.0,
+                  "rms_norm_eps": 0.000001,
+                  "vocab_size": 64,
+                  "vocab_size_per_layer_input": 64,
+                  "num_key_value_heads": 1,
+                  "num_global_key_value_heads": 1,
+                  "num_kv_shared_layers": 0,
+                  "hidden_size_per_layer_input": 0,
+                  "sliding_window": 8,
+                  "sliding_window_pattern": 2,
+                  "max_position_embeddings": 128,
+                  "attention_k_eq_v": false,
+                  "final_logit_softcapping": 30.0,
+                  "use_double_wide_mlp": false,
+                  "enable_moe_block": false,
+                  "layer_types": ["full_attention"],
+                  "tie_word_embeddings": true
+                }
+                """
+            let config = try JSONDecoder().decode(
+                Gemma4TextConfiguration.self,
+                from: Data(configJSON.utf8)
+            )
+            let model = Gemma4TextModel(config)
+            var cache = model.newCache(parameters: nil)
+            let prompt = MLXArray([1, 2, 3], [1, 3])
+            _ = model(prompt, cache: cache)
+
+            maybeQuantizeKVCache(cache: &cache, kvBits: 4, kvGroupSize: 32)
+            let quantizedCache = try XCTUnwrap(cache.first as? QuantizedKVCacheProtocol)
+
+            _ = model(MLXArray([4], [1, 1]), cache: cache)
+
+            XCTAssertEqual(quantizedCache.fusedAttentionDispatchCount, 1)
+            XCTAssertEqual(quantizedCache.fusedAttentionCallCount, 1)
+            XCTAssertEqual(quantizedCache.quantizedCacheMaterializeCallCount, 0)
+        }
+    }
+    #endif
+
     func testQuantizedKVCacheRecordsUpdateAndMaterializeProbeTimings() async throws {
         try await withTemporaryDefaultMetallib {
             let sequenceLength = 2
@@ -8603,7 +8865,7 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(renderedSummary(from: abortedEvents)?.completionTokens, 0)
     }
 
-    func testDeterministicBackendPrefillCapturesPromptMetadataAndAbortBranch() async throws {
+    func testDeterministicBackendPrefillCapturesPromptMetadataAndThrowsWhenAborted() async throws {
         let backend = DeterministicTextBackend(tokenDelayNanos: 0)
         var spec = Melix_Worker_V1_ModelSpec()
         spec.modelID = "melix-dev-text"
@@ -8625,19 +8887,16 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(stored["resume_hint"], "deterministic-resume")
         XCTAssertEqual(stored["prefill_step_size"], "16")
 
-        let aborted = try await backend.prefill(
-            model: loaded,
-            messages: [makeUserMessage("hello deterministic swift", extraText: "again")],
-            prefillStepSize: 16,
-            resumeHint: "deterministic-resume",
-            acceleration: Melix_Worker_V1_AccelerationPolicy(),
-            shouldAbort: { true }
+        await XCTAssertThrowsErrorAsync(
+            try await backend.prefill(
+                model: loaded,
+                messages: [makeUserMessage("hello deterministic swift", extraText: "again")],
+                prefillStepSize: 16,
+                resumeHint: "deterministic-resume",
+                acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                shouldAbort: { true }
+            )
         )
-
-        let abortedStored = try XCTUnwrap(aborted.context.storage as? [String: String])
-        XCTAssertEqual(aborted.promptTokens, 4)
-        XCTAssertNil(abortedStored["prefill_step_size"])
-        XCTAssertEqual(abortedStored["resume_hint"], "deterministic-resume")
     }
 
     func testDeterministicBackendAcceleratedPrefillReportsGainAndHint() async throws {
@@ -9063,9 +9322,11 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
         if let prefillError {
             throw prefillError
         }
+        try throwIfTextRuntimeCancellationRequested(shouldAbort)
         if prefillDelayNanos > 0 {
             try? await Task.sleep(nanoseconds: prefillDelayNanos)
         }
+        try throwIfTextRuntimeCancellationRequested(shouldAbort)
 
         let promptTokens = max(1, messages.count)
         return RuntimePrefillResult(

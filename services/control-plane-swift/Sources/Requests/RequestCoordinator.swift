@@ -319,6 +319,7 @@ private enum CacheRouteClass: String, Sendable {
 }
 
 private let boundarySafePrefillChunkTargetTokens: UInt32 = 16
+private let textWorkerPrefillWindowTargetTokens: UInt32 = 512
 private let workerDispatchReadinessCacheTTLSeconds: TimeInterval = 5
 private let defaultActiveKVQuantProfile = "turboquant-q4"
 private let activeKVQuantProfiles: Set<String> = [
@@ -1434,7 +1435,7 @@ public actor RequestCoordinator {
     ) -> Bool {
         !request.execution.cacheHints.restoreSnapshotID.isEmpty
             || request.execution.cacheHints.saveBoundarySnapshot
-            || resolvedPrefillChunkTarget(for: request.messages) > 0
+            || resolvedPrefillProgressChunkTarget(for: request.messages) > 0
     }
 
     private func canUsePhaseAwareExecution(
@@ -1502,6 +1503,7 @@ public actor RequestCoordinator {
         return TranslatedChatRequest(
             requestID: translatedRequest.requestID,
             modelID: translatedRequest.modelID,
+            responseModelID: translatedRequest.responseModelID,
             workerRequest: workerRequest,
             stream: translatedRequest.stream
         )
@@ -1856,6 +1858,7 @@ public actor RequestCoordinator {
             request: TranslatedChatRequest(
                 requestID: translatedRequest.requestID,
                 modelID: translatedRequest.modelID,
+                responseModelID: translatedRequest.responseModelID,
                 workerRequest: workerRequest,
                 stream: translatedRequest.stream
             ),
@@ -2035,14 +2038,15 @@ public actor RequestCoordinator {
                     prefillEvent.seq = nextSeq
                     nextSeq += 1
                     continuation.yield(prefillEvent)
+                    let prefillProgressChunkTarget = resolvedPrefillProgressChunkTarget(for: request.messages)
                     let prefillChunkBoundaries = makeBoundarySafePrefillChunkBoundaries(
                         messages: request.messages,
-                        chunkTokenTarget: prefillRequest.prefillStepSize,
+                        chunkTokenTarget: prefillProgressChunkTarget,
                         restoredTokenCount: effectiveRestorePlan?.restoredTokenCount ?? 0
                     )
                     await self.recordPrefillChunkMetrics(
                         boundaries: prefillChunkBoundaries,
-                        chunkTokenTarget: prefillRequest.prefillStepSize
+                        chunkTokenTarget: prefillProgressChunkTarget
                     )
                     let observedPrefillBoundaries = prefillChunkBoundaries.isEmpty
                         ? [effectivePromptTokens]
@@ -2109,7 +2113,7 @@ public actor RequestCoordinator {
         prefill.execution = request.execution
         prefill.messages = request.messages
         prefill.returnDecodeHandle = true
-        prefill.prefillStepSize = resolvedPrefillChunkTarget(for: request.messages)
+        prefill.prefillStepSize = resolvedWorkerPrefillStepSize(for: request.messages)
         prefill.resumeHint = request.execution.cacheHints.restoreSnapshotID.isEmpty
             ? request.execution.id.parentRequestID
             : "snapshot-restore:\(request.execution.cacheHints.restoreSnapshotID)"
@@ -2932,7 +2936,16 @@ private func workerAccelerationMode(
     ModelCapabilityReceipts.workerAccelerationMode(from: controlPlaneMode)
 }
 
-private func resolvedPrefillChunkTarget(
+private func resolvedWorkerPrefillStepSize(
+    for messages: [Melix_Worker_V1_ChatMessage]
+) -> UInt32 {
+    if messagesContainVisionInput(messages) {
+        return resolvedPrefillProgressChunkTarget(for: messages)
+    }
+    return estimatedPromptTokens(for: messages) > 0 ? textWorkerPrefillWindowTargetTokens : 0
+}
+
+private func resolvedPrefillProgressChunkTarget(
     for messages: [Melix_Worker_V1_ChatMessage]
 ) -> UInt32 {
     let chunkBoundaries = makeBoundarySafePrefillChunkBoundaries(

@@ -59,6 +59,12 @@ class VisionProbeSnapshot:
     text_batch_generator_first_visible_ms_total: float = 0.0
     text_batch_generator_first_visible_token_index_total: int = 0
     text_batch_generator_first_empty_segment_count: int = 0
+    text_batch_generator_prefill_response_count: int = 0
+    text_batch_generator_prefill_step_count: int = 0
+    text_batch_generator_prefill_processed_token_count: int = 0
+    text_batch_generator_prefill_total_token_count: int = 0
+    text_batch_generator_prefill_completed_request_count: int = 0
+    text_batch_generator_prefill_step_size: int = 0
 
 
 @dataclass(frozen=True)

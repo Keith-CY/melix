@@ -53,6 +53,20 @@ struct RuntimePrefillResult: Sendable {
     let activeKVQuantizationRatio: Int
 }
 
+struct TextRuntimeCancellationError: LocalizedError, Equatable {
+    var errorDescription: String? {
+        "Request was cancelled."
+    }
+}
+
+func throwIfTextRuntimeCancellationRequested(
+    _ shouldAbort: @Sendable () -> Bool
+) throws {
+    if shouldAbort() || Task.isCancelled {
+        throw TextRuntimeCancellationError()
+    }
+}
+
 struct SparsePrefillPlan: Sendable {
     let acceptedSkipCount: Int
     let rejectedOpportunityCount: Int
