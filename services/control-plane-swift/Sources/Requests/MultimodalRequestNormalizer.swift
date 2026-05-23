@@ -422,6 +422,10 @@ public struct NormalizedMediaPartsSummary: Sendable, Codable, Equatable {
     public var count: Int {
         parts.count
     }
+
+    public var turnCount: Int {
+        Set(parts.map(\.turnIndex)).count
+    }
 }
 
 public struct MultimodalRequestNormalizer: Sendable {

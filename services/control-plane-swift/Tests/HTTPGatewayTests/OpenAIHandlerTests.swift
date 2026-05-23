@@ -5149,6 +5149,77 @@ struct OpenAIHandlerTests {
         #expect(imageTasks.contains("image_generate"))
     }
 
+    @Test("public model discovery and health diagnostics share effective media route receipts")
+    func publicModelDiscoveryAndHealthDiagnosticsShareEffectiveMediaRouteReceipts() async throws {
+        var fallbackModel = ModelCatalog.devVLMModel()
+        fallbackModel.modelID = "melix-vlm-text-fallback"
+        fallbackModel.routeClass = .workerRouteSwiftText
+        fallbackModel.settings.ext["melix.capability.route_kind"] = "swift_text"
+        let catalog = ModelCatalog(seedModels: [fallbackModel])
+        let registry = WorkerRegistry(
+            defaultTextClient: ScriptedWorkerClient(events: []),
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: registry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: registry
+        )
+
+        let modelsResponse = try await handler.handle(
+            HTTPRequest(method: .get, path: "/v1/models", headers: [:], body: Data())
+        )
+        let modelsPayload = try await jsonPayload(from: modelsResponse.body)
+        let modelRows = try #require(modelsPayload["data"] as? [[String: Any]])
+        let fallbackRow = try #require(modelRows.first { ($0["id"] as? String) == "melix-vlm-text-fallback" })
+        let metadata = try #require(fallbackRow["metadata"] as? [String: Any])
+
+        let capabilitiesResponse = try await handler.handle(
+            HTTPRequest(method: .get, path: "/api/capabilities", headers: [:], body: Data())
+        )
+        let capabilitiesPayload = try await jsonPayload(from: capabilitiesResponse.body)
+        let discoveryModels = try #require(capabilitiesPayload["models"] as? [[String: Any]])
+        let discoveryModel = try #require(
+            discoveryModels.first { ($0["model_id"] as? String) == "melix-vlm-text-fallback" }
+        )
+        let routeReceipt = try #require(discoveryModel["media_route_receipt"] as? [String: Any])
+
+        let healthResponse = try await handler.handle(
+            HTTPRequest(method: .get, path: "/v1/melix/health", headers: [:], body: Data())
+        )
+        let healthPayload = try await jsonPayload(from: healthResponse.body)
+        let healthModels = try #require(healthPayload["models"] as? [[String: Any]])
+        let healthModel = try #require(
+            healthModels.first { ($0["model_id"] as? String) == "melix-vlm-text-fallback" }
+        )
+        let healthReceipt = try #require(healthModel["media_route_receipt"] as? [String: Any])
+
+        #expect(modelsResponse.statusCode == 200)
+        #expect(metadata["melix.capability.supported_modalities"] as? String == "text")
+        #expect(metadata["melix.media.route"] as? String == "swift_text")
+        #expect(metadata["melix.media.unsupported_reason"] as? String == "text_only_runtime")
+        #expect(metadata["melix.media.parts_count"] as? String == "0")
+        #expect(metadata["melix.media.turn_count"] as? String == "0")
+
+        #expect(capabilitiesResponse.statusCode == 200)
+        #expect(discoveryModel["supported_modalities"] as? [String] == ["text"])
+        #expect(routeReceipt["media_route"] as? String == "swift_text")
+        #expect(routeReceipt["unsupported_reason"] as? String == "text_only_runtime")
+        #expect(routeReceipt["media_parts_count"] as? Int == 0)
+        #expect(routeReceipt["media_turn_count"] as? Int == 0)
+
+        #expect(healthResponse.statusCode == 200)
+        #expect((healthPayload["routes"] as? [String: Bool])?["python_vlm"] == false)
+        #expect((healthPayload["routes"] as? [String: Bool])?["python_ocr"] == false)
+        #expect(healthModel["supported_modalities"] as? [String] == ["text"])
+        #expect(healthReceipt["media_route"] as? String == routeReceipt["media_route"] as? String)
+        #expect(healthReceipt["unsupported_reason"] as? String == routeReceipt["unsupported_reason"] as? String)
+    }
+
     @Test("GET /v1/models syncs registry models and exposes structured registry identity metadata")
     func getModelsSyncsRegistryModelsAndExposesStructuredRegistryIdentityMetadata() async throws {
         let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())

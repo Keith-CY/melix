@@ -2206,6 +2206,7 @@ public struct ChatRequestTranslator: Sendable {
             return
         }
         execution.ext["melix.media_parts.count"] = String(summary.count)
+        execution.ext["melix.media_turn_count"] = String(summary.turnCount)
         for (index, part) in summary.parts.enumerated() {
             let prefix = "melix.media_parts.\(index)"
             execution.ext["\(prefix).kind"] = part.mediaKind

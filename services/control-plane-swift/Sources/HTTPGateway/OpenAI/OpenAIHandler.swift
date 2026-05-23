@@ -692,7 +692,10 @@ public struct OpenAIHandler: Sendable {
             status: status,
             routes: routes,
             modelsReady: readyCount,
-            modelsTotal: models.count
+            modelsTotal: models.count,
+            models: models
+                .filter(ModelCatalogPresentation.isUserVisible)
+                .map(HealthDiagnosticsModelResponse.init(model:))
         )
         await metricsStore.set(
             Date().timeIntervalSince(startedAt) * 1000,
@@ -3863,6 +3866,8 @@ public struct OpenAIHandler: Sendable {
             .pythonEmbedding,
             .pythonRerank,
             .pythonModelOperations,
+            .pythonOCR,
+            .pythonVLM,
             .pythonTranscription,
             .pythonSpeech,
             .pythonImage,
@@ -4393,12 +4398,33 @@ private struct HealthDiagnosticsResponse: Codable {
     let routes: [String: Bool]
     let modelsReady: Int
     let modelsTotal: Int
+    let models: [HealthDiagnosticsModelResponse]
 
     enum CodingKeys: String, CodingKey {
         case status
         case routes
         case modelsReady = "models_ready"
         case modelsTotal = "models_total"
+        case models
+    }
+}
+
+private struct HealthDiagnosticsModelResponse: Codable {
+    let modelID: String
+    let supportedModalities: [String]
+    let mediaRouteReceipt: ModelPublicMediaRouteReceipt
+
+    init(model: Melix_Controlplane_V1_ModelSummary) {
+        let receipt = ModelCatalogPresentation.publicMediaRouteReceipt(for: model)
+        self.modelID = model.modelID
+        self.supportedModalities = receipt.effectiveSupportedModalities
+        self.mediaRouteReceipt = receipt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case modelID = "model_id"
+        case supportedModalities = "supported_modalities"
+        case mediaRouteReceipt = "media_route_receipt"
     }
 }
 

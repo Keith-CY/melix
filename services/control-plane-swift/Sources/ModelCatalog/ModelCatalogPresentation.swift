@@ -1,6 +1,61 @@
 import Foundation
 import MelixControlPlaneProtocol
 
+public struct ModelPublicMediaRouteReceipt: Codable, Equatable, Sendable {
+    public let mediaRoute: String
+    public let declaredSupportedModalities: [String]
+    public let effectiveSupportedModalities: [String]
+    public let unsupportedReason: String
+    public let mediaPartsCount: Int
+    public let mediaTurnCount: Int
+    public let cacheHitCount: Int
+    public let cacheMissCount: Int
+
+    public init(
+        mediaRoute: String,
+        declaredSupportedModalities: [String],
+        effectiveSupportedModalities: [String],
+        unsupportedReason: String,
+        mediaPartsCount: Int = 0,
+        mediaTurnCount: Int = 0,
+        cacheHitCount: Int = 0,
+        cacheMissCount: Int = 0
+    ) {
+        self.mediaRoute = mediaRoute
+        self.declaredSupportedModalities = declaredSupportedModalities
+        self.effectiveSupportedModalities = effectiveSupportedModalities
+        self.unsupportedReason = unsupportedReason
+        self.mediaPartsCount = max(0, mediaPartsCount)
+        self.mediaTurnCount = max(0, mediaTurnCount)
+        self.cacheHitCount = max(0, cacheHitCount)
+        self.cacheMissCount = max(0, cacheMissCount)
+    }
+
+    public var payload: [String: Any] {
+        [
+            "media_route": mediaRoute,
+            "declared_supported_modalities": declaredSupportedModalities,
+            "effective_supported_modalities": effectiveSupportedModalities,
+            "unsupported_reason": unsupportedReason,
+            "media_parts_count": mediaPartsCount,
+            "media_turn_count": mediaTurnCount,
+            "cache_hit_count": cacheHitCount,
+            "cache_miss_count": cacheMissCount,
+        ]
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case mediaRoute = "media_route"
+        case declaredSupportedModalities = "declared_supported_modalities"
+        case effectiveSupportedModalities = "effective_supported_modalities"
+        case unsupportedReason = "unsupported_reason"
+        case mediaPartsCount = "media_parts_count"
+        case mediaTurnCount = "media_turn_count"
+        case cacheHitCount = "cache_hit_count"
+        case cacheMissCount = "cache_miss_count"
+    }
+}
+
 public enum ModelCatalogPresentation {
     public static func isUserVisible(_ model: Melix_Controlplane_V1_ModelSummary) -> Bool {
         let visibility = normalized(model.settings.ext["melix.visibility"])
@@ -50,9 +105,14 @@ public enum ModelCatalogPresentation {
             metadata["melix.capability.supported_tasks"] = supportedTasks
         }
 
-        let supportedModalities = joinedPublicList(model.supportedModalities)
+        let mediaRouteReceipt = publicMediaRouteReceipt(for: model)
+        let supportedModalities = joinedPublicList(mediaRouteReceipt.effectiveSupportedModalities)
         if !supportedModalities.isEmpty {
             metadata["melix.capability.supported_modalities"] = supportedModalities
+        }
+
+        for (key, value) in publicMediaRouteMetadata(mediaRouteReceipt) {
+            metadata[key] = value
         }
 
         for (key, value) in loadTrustPublicMetadata(for: model) {
@@ -64,6 +124,47 @@ public enum ModelCatalogPresentation {
         }
 
         return metadata.isEmpty ? nil : metadata
+    }
+
+    public static func publicMediaRouteReceipt(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> ModelPublicMediaRouteReceipt {
+        let route = publicRouteIdentifier(for: model)
+        let declaredModalities = normalizedPublicModalities(for: model)
+        let routeModalities = supportedModalities(forRoute: route)
+        let effectiveModalities = orderedIntersection(declaredModalities, routeModalities)
+        let fallbackModalities = effectiveModalities.isEmpty ? ["text"] : effectiveModalities
+        let unsupportedReason = declaredModalities.contains { routeModalities.contains($0) == false }
+            ? "text_only_runtime"
+            : "none"
+
+        return ModelPublicMediaRouteReceipt(
+            mediaRoute: route,
+            declaredSupportedModalities: declaredModalities,
+            effectiveSupportedModalities: fallbackModalities,
+            unsupportedReason: unsupportedReason
+        )
+    }
+
+    public static func publicMediaRoutePayload(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> [String: Any] {
+        publicMediaRouteReceipt(for: model).payload
+    }
+
+    public static func publicMediaRouteMetadata(
+        _ receipt: ModelPublicMediaRouteReceipt
+    ) -> [String: String] {
+        [
+            "melix.media.route": receipt.mediaRoute,
+            "melix.media.declared_supported_modalities": joinedPublicList(receipt.declaredSupportedModalities),
+            "melix.media.effective_supported_modalities": joinedPublicList(receipt.effectiveSupportedModalities),
+            "melix.media.unsupported_reason": receipt.unsupportedReason,
+            "melix.media.parts_count": String(receipt.mediaPartsCount),
+            "melix.media.turn_count": String(receipt.mediaTurnCount),
+            "melix.media.cache_hit_count": String(receipt.cacheHitCount),
+            "melix.media.cache_miss_count": String(receipt.cacheMissCount),
+        ]
     }
 
     public static func capabilityReceiptPublicMetadata(
@@ -180,6 +281,24 @@ public enum ModelCatalogPresentation {
         }
     }
 
+    public static func publicRouteIdentifier(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> String {
+        if let route = WorkerRouteKind(metadataIdentifier: model.settings.ext["melix.capability.route_kind"]) {
+            return route.metadataIdentifier
+        }
+        if let route = WorkerRouteKind(routeClass: model.routeClass) {
+            return route.metadataIdentifier
+        }
+        if let route = WorkerRouteKind(capabilityIdentifier: model.settings.ext["melix.capability.class"]) {
+            return route.metadataIdentifier
+        }
+        if let route = WorkerRouteKind(capabilityIdentifier: capabilityIdentifier(for: model)) {
+            return route.metadataIdentifier
+        }
+        return model.kind == "text" ? WorkerRouteKind.swiftText.metadataIdentifier : "unspecified"
+    }
+
     public static func publicRegistryMetadata(from metadata: [String: String]) -> [String: String] {
         metadata.reduce(into: [String: String]()) { partial, item in
             let (key, rawValue) = item
@@ -236,11 +355,60 @@ public enum ModelCatalogPresentation {
         }
     }
 
-    private static func joinedPublicList(_ values: [String]) -> String {
+    public static func joinedPublicList(_ values: [String]) -> String {
         values
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: ",")
+    }
+
+    private static func normalizedPublicModalities(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> [String] {
+        let explicit = parsedPublicList(model.settings.ext["melix.capability.supported_modalities"])
+        let source = explicit.isEmpty ? model.supportedModalities : explicit
+        let normalized = source
+            .map(normalized)
+            .filter { !$0.isEmpty }
+        return orderedUnique(normalized.isEmpty ? ["text"] : normalized)
+    }
+
+    private static func supportedModalities(forRoute route: String) -> [String] {
+        switch route {
+        case WorkerRouteKind.pythonOCR.metadataIdentifier:
+            return ["image"]
+        case WorkerRouteKind.pythonVLM.metadataIdentifier:
+            return ["text", "image", "video"]
+        case WorkerRouteKind.pythonTranscription.metadataIdentifier:
+            return ["audio"]
+        case WorkerRouteKind.pythonSpeech.metadataIdentifier:
+            return ["text", "audio"]
+        case WorkerRouteKind.pythonImage.metadataIdentifier:
+            return ["text", "image"]
+        default:
+            return ["text"]
+        }
+    }
+
+    private static func orderedIntersection(_ lhs: [String], _ rhs: [String]) -> [String] {
+        let rhsSet = Set(rhs)
+        return lhs.filter { rhsSet.contains($0) }
+    }
+
+    private static func orderedUnique(_ values: [String]) -> [String] {
+        var seen: Set<String> = []
+        var result: [String] = []
+        for value in values where seen.insert(value).inserted {
+            result.append(value)
+        }
+        return result
+    }
+
+    private static func parsedPublicList(_ value: String?) -> [String] {
+        value?
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty } ?? []
     }
 
     private static func shouldExposeModelPath(_ value: String) -> Bool {

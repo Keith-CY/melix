@@ -31,8 +31,37 @@ struct RuntimeDiscoveryStateTests {
         let capabilities = try #require(snapshot.payload(for: .capabilities))
         #expect(capabilities.models.first?.modelID == "mlx-community/Qwen3.5-9B-MLX-4bit")
         #expect(capabilities.models.first?.supportedTasksText == "text-generation, tools")
+        #expect(capabilities.models.first?.mediaRouteReceipt?.mediaRoute == "swift_text")
+        #expect(capabilities.models.first?.mediaRouteReceipt?.mediaPartsCount == 0)
+        #expect(capabilities.models.first?.mediaRouteReceipt?.mediaTurnCount == 0)
+        #expect(capabilities.models.first?.mediaRouteReceipt?.cacheHitCount == 0)
+        #expect(capabilities.models.first?.mediaRouteReceipt?.cacheMissCount == 0)
+        #expect(capabilities.models.first?.mediaRouteReceipt?.unsupportedReason == "none")
         #expect(capabilities.aliasDiscovery?.status == "suggested")
         #expect(capabilities.aliasDiscovery?.suggestionsText.contains("Qwen3.5-9B-MLX-4bit") == true)
+
+        let numericReceipt = try RuntimeDiscoveryPayloadDecoder.decodePayload(
+            endpoint: .capabilities,
+            Self.capabilitiesJSON
+                .replacingOccurrences(of: #""media_parts_count": 0"#, with: #""media_parts_count": -1"#)
+                .replacingOccurrences(of: #""media_turn_count": 0"#, with: #""media_turn_count": "2""#)
+                .replacingOccurrences(of: #""cache_hit_count": 0"#, with: #""cache_hit_count": true"#)
+                .replacingOccurrences(of: #""cache_miss_count": 0"#, with: #""cache_miss_count": {}"#)
+        )
+        let receipt = try #require(numericReceipt.models.first?.mediaRouteReceipt)
+        #expect(receipt.mediaPartsCount == 0)
+        #expect(receipt.mediaTurnCount == 2)
+        #expect(receipt.cacheHitCount == 1)
+        #expect(receipt.cacheMissCount == 0)
+
+        let legacyCapabilities = try RuntimeDiscoveryPayloadDecoder.decodePayload(
+            endpoint: .capabilities,
+            Self.capabilitiesJSON.replacingOccurrences(
+                of: #""media_route_receipt": {"#,
+                with: #""legacy_media_route_receipt": {"#
+            )
+        )
+        #expect(legacyCapabilities.models.first?.mediaRouteReceipt == nil)
 
         let instructions = try #require(snapshot.payload(for: .instructions))
         #expect(instructions.instructionAreas.first?.title == "Runtime settings")
@@ -225,6 +254,14 @@ struct RuntimeDiscoveryStateTests {
           "kind": "text",
           "supported_modalities": ["text"],
           "supported_tasks": ["text-generation", "tools"],
+          "media_route_receipt": {
+            "media_route": "swift_text",
+            "media_parts_count": 0,
+            "media_turn_count": 0,
+            "cache_hit_count": 0,
+            "cache_miss_count": 0,
+            "unsupported_reason": "none"
+          },
           "capability_receipt": {
             "tasks": {
               "text-generation": {

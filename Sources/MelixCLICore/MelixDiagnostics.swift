@@ -1,4 +1,6 @@
 import Foundation
+import MelixControlPlaneCore
+import MelixControlPlaneProtocol
 
 public enum MelixProbeMode: String, CaseIterable, Sendable {
     case off
@@ -346,6 +348,7 @@ public struct MelixDiagnosticsStore {
             MelixDiagnosticsRedaction.redactMapping([
                 "schema_version": "melix.diagnostics.capability_receipts.v1",
                 "command_id": commandID,
+                "media_route_receipt": Self.defaultMediaRouteReceipt(),
                 "artifacts": [],
                 "known_gaps": ["Run failed before a persisted run record was available."],
                 "probes": [],
@@ -487,6 +490,7 @@ public struct MelixDiagnosticsStore {
         let capabilityReceipts: [String: Any] = [
             "schema_version": "melix.diagnostics.capability_receipts.v1",
             "run_id": record.runID,
+            "media_route_receipt": Self.mediaRouteReceipt(for: record),
             "artifacts": record.artifacts,
             "known_gaps": record.knownGaps,
             "probes": record.payload["probes"] as? [[String: Any]] ?? [],
@@ -540,6 +544,7 @@ public struct MelixDiagnosticsStore {
             "bundle_id": record.runID,
             "created_at_unix_ms": currentUnixMilliseconds(),
             "diagnostics_consent_state": MelixSystemDiagnostics.diagnosticsConsentState,
+            "media_route_receipt": Self.mediaRouteReceipt(for: record),
             "probe_policy": Self.probePolicyPayload(environment: environment),
             "debug_artifact_policy": "explicit_cli_command",
             "debug_jsonl_enabled": MelixProbeMode.fromEnvironment(environment).debugArtifactsEnabled,
@@ -572,6 +577,36 @@ public struct MelixDiagnosticsStore {
             return url
         }
         throw MelixCLIError.runtime("No logs were found for \(record.runID). Checked: \(candidates.map(\.path).joined(separator: ", ")).")
+    }
+
+    private static func mediaRouteReceipt(for record: MelixRunRecord) -> [String: Any] {
+        let target = record.payload["target"] as? [String: Any] ?? [:]
+        let modelID = stringField(target, "model_id")
+        let taskKind = stringField(target, "task_kind").lowercased()
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = modelID.isEmpty ? "melix-dev-text" : modelID
+        model.kind = taskKind.contains("image") ? "image" : "text"
+        model.supportedModalities = taskKind.contains("image") ? ["text", "image"] : ["text"]
+        model.supportedTasks = taskKind.isEmpty ? ["generate"] : [taskKind]
+        if taskKind.contains("image") {
+            model.capabilityClass = .modelCapabilityImageGeneration
+            model.routeClass = .workerRoutePythonImage
+        } else {
+            model.capabilityClass = .modelCapabilityText
+            model.routeClass = .workerRouteSwiftText
+        }
+        return ModelCatalogPresentation.publicMediaRoutePayload(for: model)
+    }
+
+    private static func defaultMediaRouteReceipt() -> [String: Any] {
+        var model = Melix_Controlplane_V1_ModelSummary()
+        model.modelID = "melix-dev-text"
+        model.kind = "text"
+        model.capabilityClass = .modelCapabilityText
+        model.routeClass = .workerRouteSwiftText
+        model.supportedModalities = ["text"]
+        model.supportedTasks = ["generate"]
+        return ModelCatalogPresentation.publicMediaRoutePayload(for: model)
     }
 
     private func logCandidates(record: MelixRunRecord) -> [URL] {

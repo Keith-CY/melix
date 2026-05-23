@@ -101,12 +101,38 @@ public struct RuntimeDiscoveryConfigSettingState: Identifiable, Equatable, Senda
     }
 }
 
+public struct RuntimeDiscoveryMediaRouteReceiptState: Equatable, Sendable {
+    public let mediaRoute: String
+    public let mediaPartsCount: Int
+    public let mediaTurnCount: Int
+    public let cacheHitCount: Int
+    public let cacheMissCount: Int
+    public let unsupportedReason: String
+
+    public init(
+        mediaRoute: String,
+        mediaPartsCount: Int,
+        mediaTurnCount: Int,
+        cacheHitCount: Int,
+        cacheMissCount: Int,
+        unsupportedReason: String
+    ) {
+        self.mediaRoute = mediaRoute
+        self.mediaPartsCount = mediaPartsCount
+        self.mediaTurnCount = mediaTurnCount
+        self.cacheHitCount = cacheHitCount
+        self.cacheMissCount = cacheMissCount
+        self.unsupportedReason = unsupportedReason
+    }
+}
+
 public struct RuntimeDiscoveryModelState: Identifiable, Equatable, Sendable {
     public let id: String
     public let modelID: String
     public let kind: String
     public let supportedModalities: [String]
     public let supportedTasks: [String]
+    public let mediaRouteReceipt: RuntimeDiscoveryMediaRouteReceiptState?
     public let capabilityReceiptText: String
 
     public init(
@@ -114,6 +140,7 @@ public struct RuntimeDiscoveryModelState: Identifiable, Equatable, Sendable {
         kind: String,
         supportedModalities: [String],
         supportedTasks: [String],
+        mediaRouteReceipt: RuntimeDiscoveryMediaRouteReceiptState? = nil,
         capabilityReceiptText: String
     ) {
         self.id = modelID
@@ -121,6 +148,7 @@ public struct RuntimeDiscoveryModelState: Identifiable, Equatable, Sendable {
         self.kind = kind
         self.supportedModalities = supportedModalities
         self.supportedTasks = supportedTasks
+        self.mediaRouteReceipt = mediaRouteReceipt
         self.capabilityReceiptText = capabilityReceiptText
     }
 
@@ -385,9 +413,24 @@ public enum RuntimeDiscoveryPayloadDecoder {
                 kind: stringText(for: model["kind"]),
                 supportedModalities: stringArray(for: model["supported_modalities"]),
                 supportedTasks: stringArray(for: model["supported_tasks"]),
+                mediaRouteReceipt: mediaRouteReceipt(from: model["media_route_receipt"]),
                 capabilityReceiptText: displayText(for: model["capability_receipt"] ?? NSNull())
             )
         }
+    }
+
+    private static func mediaRouteReceipt(from value: Any?) -> RuntimeDiscoveryMediaRouteReceiptState? {
+        guard let object = value as? [String: Any] else {
+            return nil
+        }
+        return RuntimeDiscoveryMediaRouteReceiptState(
+            mediaRoute: stringText(for: object["media_route"]),
+            mediaPartsCount: nonNegativeInt(for: object["media_parts_count"]),
+            mediaTurnCount: nonNegativeInt(for: object["media_turn_count"]),
+            cacheHitCount: nonNegativeInt(for: object["cache_hit_count"]),
+            cacheMissCount: nonNegativeInt(for: object["cache_miss_count"]),
+            unsupportedReason: stringText(for: object["unsupported_reason"])
+        )
     }
 
     private static func aliasDiscovery(from value: Any?) -> RuntimeDiscoveryAliasState? {
@@ -429,6 +472,19 @@ public enum RuntimeDiscoveryPayloadDecoder {
             return string
         }
         return displayText(for: value)
+    }
+
+    private static func nonNegativeInt(for value: Any?) -> Int {
+        if let int = value as? Int {
+            return max(0, int)
+        }
+        if let number = value as? NSNumber {
+            return max(0, number.intValue)
+        }
+        if let string = value as? String, let int = Int(string) {
+            return max(0, int)
+        }
+        return 0
     }
 
     private static func displayText(for value: Any) -> String {

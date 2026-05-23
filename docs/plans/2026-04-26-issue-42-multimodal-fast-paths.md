@@ -297,6 +297,16 @@ Executable unit issues:
 
 ## Implementation Notes
 
+- Unit 1.3.1 surfaces a shared public media-route receipt through HTTP discovery,
+  `/api/capabilities`, `/v1/melix/health`, CLI discovery/model payloads,
+  diagnostics debug bundles, and the menu bar decoders. The receipt exposes the
+  effective route, declared and effective modalities, unsupported reason,
+  request media-part and media-turn counts, and cache hit/miss counters. Public
+  model metadata must use the effective modality list from this receipt instead
+  of raw catalog declarations when a model is served by a text-only fallback.
+- Unit 1.3.1 extends request normalization summary metadata with
+  `melix.media_turn_count` so route receipts can distinguish total media parts
+  from the number of user turns carrying media.
 - Unit 1.2.3 records serving-default override receipts with
   `melix.gateway_override_receipt.v1`. Launch-bound worker execution metadata and
   control-plane serving-default summaries expose suppressed override names,

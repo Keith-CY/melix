@@ -2809,6 +2809,14 @@ func makeDiagnosticsDebugBundleJSON(
       "redaction_schema_version": "melix.diagnostics.redaction.v1",
       "redacted_field_count": 3,
       "source_run_record_path": "/tmp/melix/jobs/\(bundleID)/run-record.json",
+      "media_route_receipt": {
+        "media_route": "swift_text",
+        "media_parts_count": 0,
+        "media_turn_count": 0,
+        "cache_hit_count": 0,
+        "cache_miss_count": 0,
+        "unsupported_reason": "none"
+      },
       "artifacts": {
         "command": "command.txt",
         "redacted_env": "redacted-env.json",
