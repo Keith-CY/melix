@@ -68,6 +68,49 @@ public struct WorkspacePreflightOptions: Equatable, Sendable {
     }
 }
 
+public struct DatasetPrepareIngestOptions: Equatable, Sendable {
+    public let workspaceProjectID: String
+    public let workspaceManifestPath: String
+    public let inputPath: String
+    public let outputDir: String
+    public let datasetPreparationID: String
+    public let receiptOutputPath: String
+    public let piiMask: Bool
+    public let exactDedup: Bool
+    public let fuzzyDedup: Bool
+    public let segmentation: Bool
+    public let segmentationStrategy: String
+    public let json: Bool
+
+    public init(
+        workspaceProjectID: String,
+        workspaceManifestPath: String,
+        inputPath: String,
+        outputDir: String,
+        datasetPreparationID: String,
+        receiptOutputPath: String = "",
+        piiMask: Bool = true,
+        exactDedup: Bool = true,
+        fuzzyDedup: Bool = true,
+        segmentation: Bool = true,
+        segmentationStrategy: String = "paragraph",
+        json: Bool = false
+    ) {
+        self.workspaceProjectID = workspaceProjectID
+        self.workspaceManifestPath = workspaceManifestPath
+        self.inputPath = inputPath
+        self.outputDir = outputDir
+        self.datasetPreparationID = datasetPreparationID
+        self.receiptOutputPath = receiptOutputPath
+        self.piiMask = piiMask
+        self.exactDedup = exactDedup
+        self.fuzzyDedup = fuzzyDedup
+        self.segmentation = segmentation
+        self.segmentationStrategy = segmentationStrategy
+        self.json = json
+    }
+}
+
 public struct CapabilitiesOptions: Equatable, Sendable {
     public let json: Bool
     public let modelQuery: String
@@ -2148,6 +2191,7 @@ public enum MelixCLICommand: Equatable, Sendable {
     case datasetList(DatasetListOptions)
     case datasetHubDownload(DatasetHubDownloadOptions)
     case datasetRemove(DatasetRemoveOptions)
+    case datasetPrepareIngest(DatasetPrepareIngestOptions)
     case datasetSynthetic(DatasetSyntheticOptions)
     case uriInspect(URIInspectOptions)
     case uriImport(URIImportOptions)
@@ -2398,6 +2442,7 @@ public enum MelixCLIParser {
       melix dataset list [--json]
       melix dataset hub download --repo-id HF_DATASET [--revision REV] [--hf-token TOKEN] [--json]
       melix dataset remove --repo-id HF_DATASET [--revision REV | --snapshot-id SHA] [--json]
+      melix dataset prepare ingest --workspace-project-id ID --workspace-manifest PATH --input PATH --output-dir PATH --dataset-preparation-id ID [--output PATH] [--pii-mask true|false] [--exact-dedup true|false] [--fuzzy-dedup true|false] [--segmentation true|false] [--segmentation-strategy STRATEGY] [--json]
       melix dataset synthetic preview --dataset-id ID --dataset-name NAME --num-records N --output-kind KIND --output-format FORMAT --output-dir PATH --provider-endpoint URL --model MODEL --column NAME:TYPE:JSON [--model-alias ALIAS] [--api-key TOKEN] [--header KEY=VALUE ...] [--json]
       melix dataset synthetic create --dataset-id ID --dataset-name NAME --num-records N --output-kind KIND --output-format FORMAT --output-dir PATH --provider-endpoint URL --model MODEL --column NAME:TYPE:JSON [--model-alias ALIAS] [--validation-ratio N] [--resume MODE] [--json]
       melix uri inspect URI [--json]
@@ -3091,11 +3136,51 @@ public enum MelixCLIParser {
                     json: values.flags.contains("--json")
                 )
             )
+        case "prepare":
+            return try parseDatasetPrepare(Array(arguments.dropFirst()))
         case "synthetic":
             return try parseDatasetSynthetic(Array(arguments.dropFirst()))
         default:
             throw MelixCLIError.usage(usageText)
         }
+    }
+
+    private static func parseDatasetPrepare(_ arguments: [String]) throws -> MelixCLICommand {
+        guard arguments.first == "ingest" else {
+            throw MelixCLIError.usage(usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        guard let workspaceProjectID = nonEmpty(values.single["--workspace-project-id"]) else {
+            throw MelixCLIError.missingRequired("--workspace-project-id is required for melix dataset prepare ingest.")
+        }
+        guard let workspaceManifestPath = nonEmpty(values.single["--workspace-manifest"]) else {
+            throw MelixCLIError.missingRequired("--workspace-manifest is required for melix dataset prepare ingest.")
+        }
+        guard let inputPath = nonEmpty(values.single["--input"]) else {
+            throw MelixCLIError.missingRequired("--input is required for melix dataset prepare ingest.")
+        }
+        guard let outputDir = nonEmpty(values.single["--output-dir"]) else {
+            throw MelixCLIError.missingRequired("--output-dir is required for melix dataset prepare ingest.")
+        }
+        guard let datasetPreparationID = nonEmpty(values.single["--dataset-preparation-id"]) else {
+            throw MelixCLIError.missingRequired("--dataset-preparation-id is required for melix dataset prepare ingest.")
+        }
+        return .datasetPrepareIngest(
+            .init(
+                workspaceProjectID: workspaceProjectID,
+                workspaceManifestPath: workspaceManifestPath,
+                inputPath: inputPath,
+                outputDir: outputDir,
+                datasetPreparationID: datasetPreparationID,
+                receiptOutputPath: values.single["--output"] ?? "",
+                piiMask: try parseRequiredBooleanValue(values.single["--pii-mask"], option: "--pii-mask", defaultValue: true),
+                exactDedup: try parseRequiredBooleanValue(values.single["--exact-dedup"], option: "--exact-dedup", defaultValue: true),
+                fuzzyDedup: try parseRequiredBooleanValue(values.single["--fuzzy-dedup"], option: "--fuzzy-dedup", defaultValue: true),
+                segmentation: try parseRequiredBooleanValue(values.single["--segmentation"], option: "--segmentation", defaultValue: true),
+                segmentationStrategy: values.single["--segmentation-strategy"] ?? "paragraph",
+                json: values.flags.contains("--json")
+            )
+        )
     }
 
     private static func parseDatasetSynthetic(_ arguments: [String]) throws -> MelixCLICommand {
@@ -5729,8 +5814,13 @@ public struct MelixCLIProcessExecutor: Sendable {
             throw MelixCLIError.runtime("The melix subprocess command is not configured.")
         }
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = Array(baseCommand.dropFirst()) + arguments
+        if executable.contains("/") {
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = Array(baseCommand.dropFirst()) + arguments
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = [executable] + Array(baseCommand.dropFirst()) + arguments
+        }
         process.environment = environment
         process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
 
@@ -5879,6 +5969,83 @@ public actor MelixCLIRunner {
     private static func workspacePreflightWorkingDirectory(environment: [String: String]) -> String {
         let explicit = environment["MELIX_REPO_ROOT"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return explicit.isEmpty ? FileManager.default.currentDirectoryPath : explicit
+    }
+
+    private func runDatasetPrepareIngest(_ options: DatasetPrepareIngestOptions) async throws -> String {
+        guard options.workspaceProjectID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            throw MelixCLIError.missingRequired("--workspace-project-id is required for melix dataset prepare ingest.")
+        }
+        let arguments = Self.datasetPrepareIngestScriptArguments(options)
+        let output: String
+        if let commandExecutor {
+            output = try await commandExecutor(arguments)
+        } else {
+            let uvExecutable = environment["MELIX_UV"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let executor = MelixCLIProcessExecutor(
+                baseCommand: [uvExecutable?.isEmpty == false ? uvExecutable! : "uv"],
+                environment: ProcessInfo.processInfo.environment.merging(environment) { _, new in new },
+                workingDirectory: Self.workspacePreflightWorkingDirectory(environment: environment)
+            )
+            let result = try await executor.runDetailed(arguments: arguments)
+            guard result.exitCode == 0 || result.exitCode == 1 else {
+                throw MelixCLIError.runtime(
+                    MelixCLIProcessFailureMessage.make(
+                        stdout: result.stdout,
+                        stderr: result.stderr,
+                        exitCode: result.exitCode
+                    )
+                )
+            }
+            output = result.stdout
+        }
+        return options.json ? output.trimmingCharacters(in: .whitespacesAndNewlines) : Self.renderDatasetIngestReceipt(output)
+    }
+
+    private static func datasetPrepareIngestScriptArguments(_ options: DatasetPrepareIngestOptions) -> [String] {
+        var arguments = [
+            "run",
+            "--project",
+            "services/mlx-worker-python",
+            "--extra",
+            "mlx",
+            "python",
+            "scripts/dataset_preparation_ingest.py",
+            "--workspace-project-id",
+            options.workspaceProjectID,
+            "--workspace-manifest",
+            options.workspaceManifestPath,
+            "--input",
+            options.inputPath,
+            "--output-dir",
+            options.outputDir,
+            "--dataset-preparation-id",
+            options.datasetPreparationID,
+        ]
+        appendOption("--output", value: options.receiptOutputPath, into: &arguments)
+        arguments.append(contentsOf: ["--pii-mask", options.piiMask ? "true" : "false"])
+        arguments.append(contentsOf: ["--exact-dedup", options.exactDedup ? "true" : "false"])
+        arguments.append(contentsOf: ["--fuzzy-dedup", options.fuzzyDedup ? "true" : "false"])
+        arguments.append(contentsOf: ["--segmentation", options.segmentation ? "true" : "false"])
+        appendOption("--segmentation-strategy", value: options.segmentationStrategy, into: &arguments)
+        return arguments
+    }
+
+    private static func renderDatasetIngestReceipt(_ output: String) -> String {
+        guard let payload = jsonObject(from: output) else {
+            return output.hasSuffix("\n") ? output : output + "\n"
+        }
+        let status = stringValue("status", from: payload)
+        let projectID = stringValue("workspace_project_id", from: payload)
+        let metrics = payload["metrics"] as? [String: Any] ?? [:]
+        let sourceFiles = metrics["source_file_count"] as? NSNumber
+        let segments = metrics["segment_count"] as? NSNumber
+        var lines = [
+            "Dataset ingest \(status.isEmpty ? "unknown" : status)\(projectID.isEmpty ? "" : " for \(projectID)")",
+        ]
+        if let sourceFiles, let segments {
+            lines.append("Sources: \(sourceFiles.intValue), segments: \(segments.intValue)")
+        }
+        return lines.joined(separator: "\n") + "\n"
     }
 
     private static func renderWorkspacePreflightReceipt(_ output: String) -> String {
@@ -7335,6 +7502,8 @@ public actor MelixCLIRunner {
                 snapshotID: options.snapshotID
             )
             return options.json ? result.manifestJson : renderDatasetRemoveResult(result)
+        case .datasetPrepareIngest(let options):
+            return try await runDatasetPrepareIngest(options)
         case .datasetSynthetic(let options):
             let result = try await generateSyntheticDataset(options: options)
             return options.json ? result.manifestJson : renderSyntheticDatasetResult(result)

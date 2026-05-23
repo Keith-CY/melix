@@ -8327,6 +8327,15 @@ struct MelixCLIRunnerTests {
         #expect(detailed.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == output)
     }
 
+    @Test("process executor resolves bare command names through PATH")
+    func processExecutorResolvesBareCommandNamesThroughPATH() async throws {
+        let executor = MelixCLIProcessExecutor(baseCommand: ["printf"])
+
+        let output = try await executor.run(arguments: ["melix-path-ok"])
+
+        #expect(output == "melix-path-ok")
+    }
+
     @Test("process executor surfaces subprocess failures and rejects empty commands")
     func processExecutorSurfacesFailuresAndMisconfiguration() async throws {
         let failingExecutor = MelixCLIProcessExecutor(
@@ -8592,6 +8601,100 @@ struct MelixCLIRunnerTests {
                 "/tmp/melix-workspace/workspace-manifest.json",
                 "--output",
                 "/tmp/melix-workspace/workspace-preflight-receipt.json",
+            ],
+        ])
+    }
+
+    @Test("dataset prepare ingest command shells out through the Python receipt builder")
+    func datasetPrepareIngestCommandShellsOutThroughPythonReceiptBuilder() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(
+            responses: [
+                """
+                {
+                  "schema_version": "melix.dataset_ingest_receipt.v1",
+                  "status": "ready",
+                  "workspace_project_id": "m-courtyard-demo",
+                  "dataset_preparation_id": "prep-1",
+                  "source_inventory": [
+                    {
+                      "source_id": "source-notes",
+                      "source_kind": "text",
+                      "record_count": 1
+                    }
+                  ],
+                  "quality_control_summary": {
+                    "source_file_count": 1,
+                    "segment_count": 1,
+                    "pii_mask_count": 1,
+                    "exact_dedup_count": 0,
+                    "fuzzy_dedup_count": 0,
+                    "fuzzy_dedup_ratio": 0
+                  },
+                  "metrics": {
+                    "source_file_count": 1,
+                    "segment_count": 1,
+                    "pii_mask_count": 1
+                  }
+                }
+                """,
+            ]
+        )
+        let runner = MelixCLIRunner(client: client, commandExecutor: executor.run)
+
+        let output = try await runner.run(
+            .datasetPrepareIngest(
+                .init(
+                    workspaceProjectID: "m-courtyard-demo",
+                    workspaceManifestPath: "/tmp/melix-workspace/workspace-manifest.json",
+                    inputPath: "/tmp/melix-workspace/raw",
+                    outputDir: "/tmp/melix-workspace/datasets/prep",
+                    datasetPreparationID: "prep-1",
+                    receiptOutputPath: "/tmp/melix-workspace/reports/dataset-ingest-receipt.json",
+                    piiMask: true,
+                    exactDedup: false,
+                    fuzzyDedup: true,
+                    segmentation: true,
+                    segmentationStrategy: "paragraph",
+                    json: true
+                )
+            )
+        )
+
+        let payload = try #require(parseJSONObject(output))
+        #expect(payload["schema_version"] as? String == "melix.dataset_ingest_receipt.v1")
+        let commands = await executor.commands
+        #expect(commands == [
+            [
+                "run",
+                "--project",
+                "services/mlx-worker-python",
+                "--extra",
+                "mlx",
+                "python",
+                "scripts/dataset_preparation_ingest.py",
+                "--workspace-project-id",
+                "m-courtyard-demo",
+                "--workspace-manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--input",
+                "/tmp/melix-workspace/raw",
+                "--output-dir",
+                "/tmp/melix-workspace/datasets/prep",
+                "--dataset-preparation-id",
+                "prep-1",
+                "--output",
+                "/tmp/melix-workspace/reports/dataset-ingest-receipt.json",
+                "--pii-mask",
+                "true",
+                "--exact-dedup",
+                "false",
+                "--fuzzy-dedup",
+                "true",
+                "--segmentation",
+                "true",
+                "--segmentation-strategy",
+                "paragraph",
             ],
         ])
     }

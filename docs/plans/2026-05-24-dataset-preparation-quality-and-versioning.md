@@ -216,13 +216,17 @@ shape is:
 
 ```bash
 melix dataset prepare ingest \
+  --workspace-project-id support-chat-workspace \
   --workspace-manifest path/to/workspace-manifest.json \
   --input path/to/raw-inputs \
-  --output path/to/cleaned-segments \
-  --pii-mask basic \
-  --exact-dedup \
-  --fuzzy-dedup local-simhash-v1 \
-  --segmentation paragraph \
+  --output-dir path/to/prepared-ingest \
+  --dataset-preparation-id support-chat-prep-v1 \
+  --output path/to/dataset-ingest-receipt.json \
+  --pii-mask true \
+  --exact-dedup true \
+  --fuzzy-dedup true \
+  --segmentation true \
+  --segmentation-strategy paragraph \
   --json
 ```
 
@@ -263,6 +267,15 @@ training, evaluation, export, or release evidence.
 - the ingest receipt records source counts, segment counts, mask counts, dedup
   counts, strategy labels, typed failures, and metrics;
 - CLI and Desktop decode the same receipt schema.
+
+The #1495 implementation slice adds `scripts/dataset_preparation_ingest.py`,
+`worker.productization.dataset_preparation.prepare_dataset_ingest(...)`,
+`melix dataset prepare ingest`, and a Desktop receipt decoder/runner method.
+The first slice supports UTF-8 local files, extracted `.pdf.txt` and
+`.docx.txt` fixtures, JSONL, JSON arrays, CSV, and TSV. It records typed
+unsupported-source and empty-source failures in `operator_failures` while
+keeping parse and policy-specific failure codes reserved for deeper parser and
+policy validation follow-ups.
 
 #1496 is complete when:
 

@@ -278,6 +278,16 @@ extension MelixCLIWorkflowRunning {
         }
     }
 
+    func prepareDatasetIngest(options: DatasetPrepareIngestOptions) async throws -> RuntimeDatasetIngestReceiptState {
+        let command = MelixCLICommand.datasetPrepareIngest(options)
+        let output = try await run(command)
+        do {
+            return try RuntimeDatasetIngestReceiptDecoder.decode(output)
+        } catch {
+            throw MelixCLIWorkflowError.invalidJSON(commandID: command.workflowCommandID, surface: surface, output: output)
+        }
+    }
+
     func preflightWorkspace(
         manifestPath: String,
         outputPath: String = ""

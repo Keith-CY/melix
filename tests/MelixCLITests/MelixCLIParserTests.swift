@@ -23,6 +23,7 @@ struct MelixCLIParserTests {
         #expect(MelixCLIParser.usageText.contains("melix capabilities --json [--model-query MODEL]"))
         #expect(MelixCLIParser.usageText.contains("melix config metadata --json"))
         #expect(MelixCLIParser.usageText.contains("melix workspace preflight --manifest PATH [--output PATH] [--json]"))
+        #expect(MelixCLIParser.usageText.contains("melix dataset prepare ingest --workspace-project-id ID --workspace-manifest PATH --input PATH --output-dir PATH --dataset-preparation-id ID"))
         #expect(MelixCLIParser.usageText.contains("melix uri inspect URI [--json]"))
         #expect(MelixCLIParser.usageText.contains("melix recipes plan RECIPE_ID"))
     }
@@ -50,6 +51,34 @@ struct MelixCLIParserTests {
                 "/tmp/melix-workspace/workspace-preflight-receipt.json",
                 "--json",
             ], "workspace.preflight"),
+            ([
+                "dataset",
+                "prepare",
+                "ingest",
+                "--workspace-project-id",
+                "m-courtyard-demo",
+                "--workspace-manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--input",
+                "/tmp/melix-workspace/raw",
+                "--output-dir",
+                "/tmp/melix-workspace/datasets/prep",
+                "--dataset-preparation-id",
+                "prep-1",
+                "--pii-mask",
+                "true",
+                "--exact-dedup",
+                "false",
+                "--fuzzy-dedup",
+                "true",
+                "--segmentation",
+                "true",
+                "--segmentation-strategy",
+                "paragraph",
+                "--output",
+                "/tmp/melix-workspace/reports/dataset-ingest-receipt.json",
+                "--json",
+            ], "dataset.prepare.ingest"),
             (["jobs", "list", "--json"], "jobs.list"),
             (["jobs", "show", "bench-1", "--from", "/tmp/runs", "--json"], "jobs.show"),
             (["jobs", "logs", "bench-1", "--follow", "--json"], "jobs.logs"),

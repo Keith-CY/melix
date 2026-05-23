@@ -76,6 +76,8 @@ public enum MelixCLICommandCodec {
             return "dataset.hub.download"
         case .datasetRemove:
             return "dataset.remove"
+        case .datasetPrepareIngest:
+            return "dataset.prepare.ingest"
         case .datasetSynthetic(let options):
             return "dataset.synthetic.\(options.mode)"
         case .uriInspect:
@@ -406,6 +408,20 @@ public enum MelixCLICommandCodec {
             appendOption("--repo-id", value: options.repoID, into: &arguments)
             appendOption("--revision", value: options.revision, into: &arguments)
             appendOption("--snapshot-id", value: options.snapshotID, into: &arguments)
+            json = options.json
+        case .datasetPrepareIngest(let options):
+            arguments = ["dataset", "prepare", "ingest"]
+            appendOption("--workspace-project-id", value: options.workspaceProjectID, into: &arguments)
+            appendOption("--workspace-manifest", value: options.workspaceManifestPath, into: &arguments)
+            appendOption("--input", value: options.inputPath, into: &arguments)
+            appendOption("--output-dir", value: options.outputDir, into: &arguments)
+            appendOption("--dataset-preparation-id", value: options.datasetPreparationID, into: &arguments)
+            appendOption("--output", value: options.receiptOutputPath, into: &arguments)
+            arguments.append(contentsOf: ["--pii-mask", options.piiMask ? "true" : "false"])
+            arguments.append(contentsOf: ["--exact-dedup", options.exactDedup ? "true" : "false"])
+            arguments.append(contentsOf: ["--fuzzy-dedup", options.fuzzyDedup ? "true" : "false"])
+            arguments.append(contentsOf: ["--segmentation", options.segmentation ? "true" : "false"])
+            appendOption("--segmentation-strategy", value: options.segmentationStrategy, into: &arguments)
             json = options.json
         case .datasetSynthetic(let options):
             arguments = ["dataset", "synthetic", options.mode]
