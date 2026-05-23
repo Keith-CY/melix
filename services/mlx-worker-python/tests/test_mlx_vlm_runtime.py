@@ -706,6 +706,159 @@ def test_mlx_vlm_runtime_text_only_step_flushes_buffer_before_stop_token(
     assert [event.text for event in events] == ["Hello!"]
     assert events[-1].raw_text == "Hello!"
     assert events[-1].completion_tokens == 2
+    assert mlx_vlm_runtime_module._text_only_batch_prefill_step_size(None) == 512
+    assert mlx_vlm_runtime_module._text_only_batch_prefill_step_size("") == 512
+    assert mlx_vlm_runtime_module._text_only_batch_prefill_step_size("invalid") == 512
+    assert mlx_vlm_runtime_module._text_only_batch_prefill_step_size("0") == 1
+    assert mlx_vlm_runtime_module._text_only_batch_prefill_step_size("9000") == 8192
+
+    class FakePromptResponse:
+        def __init__(self, progress: tuple[object, object] | list[object]) -> None:
+            self.uid = 7
+            self.progress = progress
+
+    class FakeGenerationResponse:
+        uid = 7
+        token = 11
+        finish_reason = "stop"
+
+    class FakeBatchGenerator:
+        def __init__(self, **kwargs) -> None:
+            self.prefill_step_size = kwargs["prefill_step_size"]
+            self.next_calls = 0
+            self.removed: list[list[int]] = []
+
+        def insert(self, requests, *, max_tokens, caches=None, all_tokens=None):
+            _ = requests
+            _ = max_tokens
+            _ = caches
+            _ = all_tokens
+            return [7]
+
+        def next(self):
+            self.next_calls += 1
+            if self.next_calls == 1:
+                return [
+                    FakePromptResponse(("bad", 3)),
+                    FakePromptResponse((-1, -2)),
+                    FakePromptResponse((2, 5)),
+                ], []
+            return [FakePromptResponse([5, 5])], [FakeGenerationResponse()]
+
+        def remove(self, uids):
+            self.removed.append(list(uids))
+
+    class FakeDetokenizer:
+        def __init__(self) -> None:
+            self.last_segment = ""
+
+        def add_token(self, token: int) -> None:
+            self.last_segment = f"tok-{token}"
+
+        def finalize(self) -> None:
+            self.last_segment = ""
+
+    fake_generate = ModuleType("mlx_lm.generate")
+    fake_generate.BatchGenerator = FakeBatchGenerator
+    fake_sample_utils = ModuleType("mlx_lm.sample_utils")
+    fake_sample_utils.make_sampler = lambda **_kwargs: object()
+    monkeypatch.setitem(sys.modules, "mlx_lm.generate", fake_generate)
+    monkeypatch.setitem(sys.modules, "mlx_lm.sample_utils", fake_sample_utils)
+
+    scheduler = _TextOnlyBatchGeneratorScheduler(
+        model=SimpleNamespace(),
+        adapter=SimpleNamespace(),
+        processor=SimpleNamespace(eos_token_id=1),
+        executor=None,
+        max_batch_size=1,
+        wait_ms=0.0,
+        prefill_step_size=256,
+    )
+    request = _TextOnlyBatchRequest(
+        loaded_model={},
+        input_ids=[1, 2, 3, 4, 5],
+        max_tokens=8,
+        detokenizer=FakeDetokenizer(),
+        stop_token_ids={1},
+        cancel_event=Event(),
+        prompt_tokens=5,
+    )
+
+    batch_events = list(scheduler.submit(request))
+    batch_generator = scheduler._adapter._melix_batch_generator
+    stats = scheduler.stats_snapshot()
+    scheduler.close()
+
+    assert batch_generator.prefill_step_size == 256
+    assert [event.text for event in batch_events] == ["tok-11"]
+    assert stats.step_count == 2
+    assert stats.prefill_response_count == 4
+    assert stats.prefill_step_count == 4
+    assert stats.prefill_processed_token_count == 5
+    assert stats.prefill_total_token_count == 5
+    assert stats.prefill_completed_request_count == 1
+
+    cancel_event = Event()
+    cancel_event.set()
+    cancelled_scheduler = _TextOnlyBatchGeneratorScheduler(
+        model=SimpleNamespace(),
+        adapter=SimpleNamespace(_melix_batch_generator=FakeBatchGenerator(prefill_step_size=512)),
+        processor=SimpleNamespace(eos_token_id=1),
+        executor=None,
+        max_batch_size=1,
+        wait_ms=0.0,
+    )
+    cancelled_request = _TextOnlyBatchRequest(
+        loaded_model={},
+        input_ids=[1, 2, 3],
+        max_tokens=8,
+        detokenizer=FakeDetokenizer(),
+        stop_token_ids={1},
+        cancel_event=cancel_event,
+        prompt_tokens=3,
+    )
+    cancelled_request.uid = 7
+    cancelled_scheduler._active_by_uid[7] = cancelled_request
+    cancelled_scheduler._stats.active_batch_size = 1
+
+    cancelled_scheduler._remove_cancelled_active_requests()
+    cancelled_stats = cancelled_scheduler.stats_snapshot()
+    done = cancelled_request.queue.get_nowait()
+    cancelled_batch_generator = cancelled_scheduler._adapter._melix_batch_generator
+    cancelled_scheduler.close()
+
+    assert cancelled_batch_generator.removed == [[7]]
+    assert done is _TEXT_ONLY_BATCH_DONE
+    assert cancelled_stats.completed_request_count == 1
+    assert cancelled_stats.active_batch_size == 0
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=lambda *args, **kwargs: (SimpleNamespace(), SimpleNamespace()),
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda *args, **kwargs: "",
+        )
+    )
+    loaded_model = {
+        "model": SimpleNamespace(),
+        "processor": SimpleNamespace(eos_token_id=1),
+    }
+    live_scheduler = runtime._text_only_batch_generator_scheduler(loaded_model)
+    live_scheduler._stats.prefill_response_count = 3
+    live_scheduler._stats.prefill_step_count = 3
+    live_scheduler._stats.prefill_processed_token_count = 1536
+    live_scheduler._stats.prefill_total_token_count = 4096
+    live_scheduler._stats.prefill_completed_request_count = 0
+    live_probe = runtime.last_probe_snapshot()
+    runtime.close_loaded_model(loaded_model)
+
+    assert live_probe.text_batch_generator_prefill_response_count == 3
+    assert live_probe.text_batch_generator_prefill_step_count == 3
+    assert live_probe.text_batch_generator_prefill_processed_token_count == 1536
+    assert live_probe.text_batch_generator_prefill_total_token_count == 4096
+    assert live_probe.text_batch_generator_prefill_completed_request_count == 0
+    assert live_probe.text_batch_generator_prefill_step_size == 512
+    assert runtime._loaded_models_with_schedulers == []
 
 
 def test_mlx_vlm_runtime_text_only_step_flushes_buffer_after_natural_end(

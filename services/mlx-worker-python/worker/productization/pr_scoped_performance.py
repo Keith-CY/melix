@@ -215,9 +215,8 @@ def load_probe_registry(path: str | Path) -> tuple[ProbeDefinition, ...]:
 
 
 def load_probe_registry_for_scope(path: str | Path) -> tuple[ProbeDefinition, ...]:
-    registry_path = Path(path)
-    cache_key = _probe_registry_cache_key(registry_path)
-    stat_result = registry_path.stat()
+    cache_key = _probe_registry_cache_key(path)
+    stat_result = os.stat(cache_key)
     return _load_probe_registry_for_scope_cached(
         cache_key,
         stat_result.st_mtime_ns,

@@ -13,6 +13,10 @@ import sys
 
 _DIFF_HEADER_PREFIX = "diff --git a/"
 _DIFF_HEADER_SEPARATOR = " b/"
+_ASCII_ZERO = ord("0")
+_ASCII_NINE = ord("9")
+_ASCII_COMMA = ord(",")
+_ASCII_SPACE = ord(" ")
 
 
 def _is_diff_file_marker(line: str) -> bool:
@@ -29,15 +33,18 @@ def _parse_diff_header_new_path(line: str) -> str | None:
 
 
 def _parse_hunk_new_start_from_digit(line: str, digit_index: int) -> int | None:
-    end_index = line.find(",", digit_index)
-    if end_index < 0:
-        end_index = line.find(" ", digit_index)
-    if end_index < 0:
+    value = 0
+    digit_seen = False
+    for index in range(digit_index, len(line)):
+        character_code = ord(line[index])
+        if _ASCII_ZERO <= character_code <= _ASCII_NINE:
+            value = value * 10 + (character_code - _ASCII_ZERO)
+            digit_seen = True
+            continue
+        if character_code == _ASCII_COMMA or character_code == _ASCII_SPACE:
+            return value if digit_seen else None
         return None
-    try:
-        return int(line[digit_index:end_index])
-    except ValueError:
-        return None
+    return None
 
 
 def _parse_hunk_new_start(line: str) -> int | None:

@@ -96,10 +96,32 @@ def _build_runtime() -> tuple[MLXVLMRuntime, _ResolveCounter]:
     return runtime, counter
 
 
+def _attach_scheduler_stats(runtime: MLXVLMRuntime, loaded_model: dict[str, object]) -> dict[str, float]:
+    scheduler = runtime._text_only_batch_generator_scheduler(loaded_model)
+    scheduler._stats.prefill_response_count = 3
+    scheduler._stats.prefill_step_count = 3
+    scheduler._stats.prefill_processed_token_count = 1536
+    scheduler._stats.prefill_total_token_count = 4096
+    scheduler._stats.prefill_completed_request_count = 0
+    probe = runtime.last_probe_snapshot()
+    runtime.close_loaded_model(loaded_model)
+    if runtime._loaded_models_with_schedulers:
+        raise SystemExit("scheduler model tracking was not cleared")
+    return {
+        "live_prefill_response_count": float(probe.text_batch_generator_prefill_response_count),
+        "live_prefill_step_count": float(probe.text_batch_generator_prefill_step_count),
+        "live_prefill_processed_token_count": float(probe.text_batch_generator_prefill_processed_token_count),
+        "live_prefill_total_token_count": float(probe.text_batch_generator_prefill_total_token_count),
+        "live_prefill_completed_request_count": float(probe.text_batch_generator_prefill_completed_request_count),
+        "live_prefill_step_size": float(probe.text_batch_generator_prefill_step_size),
+    }
+
+
 def main() -> int:
     elapsed_samples: list[float] = []
     resolve_samples: list[float] = []
     prompt_token_count = 0
+    scheduler_metrics: dict[str, float] = {}
     for _ in range(SAMPLE_COUNT):
         runtime, counter = _build_runtime()
         loaded_model = runtime.load_model(_model_spec())
@@ -111,18 +133,17 @@ def main() -> int:
         resolve_samples.append(float(counter.count))
         if prompt_token_count != 3:
             raise SystemExit("unexpected prompt token count")
-    print(
-        json.dumps(
-            {
-                "elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
-                "iteration_count": float(ITERATION_COUNT),
-                "prompt_token_count": float(prompt_token_count),
-                "resolve_calls_mean": round(statistics.fmean(resolve_samples), 6),
-                "sample_count": float(SAMPLE_COUNT),
-            },
-            sort_keys=True,
-        )
-    )
+        if not scheduler_metrics:
+            scheduler_metrics = _attach_scheduler_stats(runtime, loaded_model)
+    metrics = {
+        "elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
+        "iteration_count": float(ITERATION_COUNT),
+        "prompt_token_count": float(prompt_token_count),
+        "resolve_calls_mean": round(statistics.fmean(resolve_samples), 6),
+        "sample_count": float(SAMPLE_COUNT),
+    }
+    metrics.update(scheduler_metrics)
+    print(json.dumps(metrics, sort_keys=True))
     return 0
 
 

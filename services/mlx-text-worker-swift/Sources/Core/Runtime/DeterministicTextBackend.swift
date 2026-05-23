@@ -28,6 +28,7 @@ struct DeterministicTextBackend: TextRuntimeBackend {
         acceleration: Melix_Worker_V1_AccelerationPolicy,
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> RuntimePrefillResult {
+        try throwIfTextRuntimeCancellationRequested(shouldAbort)
         let prompt = deterministicPrompt(from: messages)
         let promptTokens = max(1, prompt.split(whereSeparator: \.isWhitespace).count)
         let appliedAcceleration = resolveDeterministicPrefillAcceleration(
@@ -64,18 +65,7 @@ struct DeterministicTextBackend: TextRuntimeBackend {
             try? await Task.sleep(nanoseconds: prefillDelay)
         }
 
-        if shouldAbort() {
-            return RuntimePrefillResult(
-                context: TextPrefillContext(
-                    storage: storage,
-                    promptTokens: promptTokens
-                ),
-                promptTokens: promptTokens,
-                appliedAcceleration: appliedAcceleration,
-                acceleratedPrefillGainPct: prefillGainPct,
-                activeKVQuantizationRatio: activeKVRatio
-            )
-        }
+        try throwIfTextRuntimeCancellationRequested(shouldAbort)
 
         storage["prefill_step_size"] = String(prefillStepSize)
         return RuntimePrefillResult(

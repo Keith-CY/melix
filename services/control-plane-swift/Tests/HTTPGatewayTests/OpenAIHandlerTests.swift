@@ -1616,6 +1616,193 @@ struct OpenAIHandlerTests {
         #expect(generateRequest.execution.ext["melix.tool_config.source"] == "openai_chat_tools")
     }
 
+    @Test("POST /v1/chat/completions routes Gemma4 text-only VLM requests through a Swift text companion")
+    func postChatCompletionsRoutesGemma4TextOnlyVLMThroughSwiftTextCompanion() async throws {
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: "req-http-gemma4-vlm-text-companion",
+            textEvents: [
+                makeTokenEvent(requestID: "req-http-gemma4-vlm-text-companion", seq: 1, text: "swift"),
+                makeCompletedEvent(
+                    requestID: "req-http-gemma4-vlm-text-companion",
+                    seq: 2,
+                    finishReason: "stop",
+                    assistantText: "swift"
+                ),
+            ],
+            textLoadModelHandle: "melix-dev-vlm#text::swift",
+            configureModel: { model in
+                model.settings.ext["melix.vlm.execution_mode"] = "multimodal"
+                model.settings.ext["melix.vlm.text_only_batch_generator"] = "true"
+                model.settings.ext.removeValue(forKey: "melix.vlm.text_companion.enabled")
+                model.settings.ext["melix.model_path"] = "models/melix-dev-vlm"
+                model.settings.ext["melix.model_revision"] = "dev"
+                model.settings.ext["melix.tokenizer_hash"] = "tok-dev"
+            }
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "temperature": 0,
+              "messages": [
+                { "role": "user", "content": "Reply briefly." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("\"model\":\"melix-dev-vlm\""))
+        #expect(payload.contains("\"content\":\"swift\""))
+
+        let loadRequest = try #require(await harness.textClient.lastLoadModelRequest)
+        let generateRequest = try #require(await harness.textClient.lastGenerateRequest)
+        let companion = try #require(await harness.catalog.model(id: "melix-dev-vlm#text"))
+
+        #expect(loadRequest.model.modelID == "melix-dev-vlm#text")
+        #expect(loadRequest.model.modelKind == "text")
+        #expect(loadRequest.model.ext["melix.companion.source_model_id"] == "melix-dev-vlm")
+        #expect(generateRequest.execution.modelHandle == "melix-dev-vlm#text::swift")
+        #expect(generateRequest.execution.acceleration.mode == .baseline)
+        #expect(generateRequest.execution.acceleration.activeKvQuantProfile.isEmpty)
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == nil)
+        #expect(companion.routeClass == .workerRouteSwiftText)
+        #expect(companion.settings.ext["melix.capability.route_kind"] == "swift_text")
+        #expect(companion.settings.defaultAccelerationMode == .baseline)
+        #expect(companion.settings.ext["melix.acceleration.supported_modes"] == "baseline")
+        #expect(await harness.vlmClient.lastLoadModelRequest == nil)
+        #expect(await harness.vlmClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions gives Gemma4 text companions the nested text context limit")
+    func postChatCompletionsGivesGemma4TextCompanionsNestedTextContextLimit() async throws {
+        let modelDirectory = try makeModelConfigDirectory(
+            config: """
+            {
+              "model_type": "gemma4",
+              "text_config": {
+                "model_type": "gemma4_text",
+                "max_position_embeddings": 262144
+              }
+            }
+            """
+        )
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: "req-http-gemma4-vlm-text-companion-context",
+            textEvents: [
+                makeTokenEvent(requestID: "req-http-gemma4-vlm-text-companion-context", seq: 1, text: "swift"),
+                makeCompletedEvent(
+                    requestID: "req-http-gemma4-vlm-text-companion-context",
+                    seq: 2,
+                    finishReason: "stop",
+                    assistantText: "swift"
+                ),
+            ],
+            textLoadModelHandle: "melix-dev-vlm#text::swift",
+            configureModel: { model in
+                model.maxContext = 8_192
+                model.settings.ext["melix.vlm.execution_mode"] = "multimodal"
+                model.settings.ext["melix.vlm.text_only_batch_generator"] = "true"
+                model.settings.ext.removeValue(forKey: "melix.vlm.text_companion.enabled")
+                model.settings.ext["melix.model_path"] = modelDirectory.path
+                model.settings.ext["melix.model_revision"] = "dev"
+                model.settings.ext["melix.tokenizer_hash"] = "tok-dev"
+            }
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "temperature": 0,
+              "messages": [
+                { "role": "user", "content": "Reply briefly." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+
+        let loadRequest = try #require(await harness.textClient.lastLoadModelRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(loadRequest.model.modelID == "melix-dev-vlm#text")
+        #expect(loadRequest.model.maxContext == 262_144)
+    }
+
+    @Test("POST /v1/chat/completions keeps Gemma4 VLM media requests on the Python VLM route")
+    func postChatCompletionsKeepsGemma4VLMMediaRequestsOnPythonVLMRoute() async throws {
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: "req-http-gemma4-vlm-image-route",
+            configureModel: { model in
+                model.settings.ext["melix.vlm.execution_mode"] = "multimodal"
+            }
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "temperature": 0,
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "text", "text": "Describe the image." },
+                    {
+                      "type": "input_image",
+                      "input_image": {
+                        "data": "aW1hZ2UgZml4dHVyZQ==",
+                        "mime_type": "image/png"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(generateRequest.execution.modelHandle == "melix-dev-vlm::python")
+        #expect(generateRequest.messages[0].parts.count == 2)
+        #expect(generateRequest.messages[0].parts[1].imageBytes == Data("image fixture".utf8))
+        #expect(await harness.textClient.lastLoadModelRequest == nil)
+        #expect(await harness.textClient.lastGenerateRequest == nil)
+        #expect(await harness.catalog.model(id: "melix-dev-vlm#text") == nil)
+    }
+
     @Test("model sparse-prefill policy is applied to generated worker requests")
     func modelSparsePrefillPolicyIsAppliedToGeneratedWorkerRequests() async throws {
         var model = warmModel()
@@ -2719,14 +2906,16 @@ struct OpenAIHandlerTests {
             )
         )
 
-        let request = try #require(await workerClient.lastGenerateRequest)
-        #expect(request.execution.id.sessionID == "session-recovery")
-        #expect(request.execution.id.branchID == "branch-main")
-        #expect(request.execution.id.parentRequestID == "req-parent")
-        #expect(request.execution.cacheHints.restoreSnapshotID == "snap-parent")
-        #expect(request.execution.cacheHints.saveBoundarySnapshot)
-        #expect(request.execution.cacheHints.persistL2)
-        #expect(request.execution.cacheHints.preferHotPrefix)
+        let prefilled = await workerClient.lastPrefillRequest
+        let generated = await workerClient.lastGenerateRequest
+        let execution = try #require(prefilled?.execution ?? generated?.execution)
+        #expect(execution.id.sessionID == "session-recovery")
+        #expect(execution.id.branchID == "branch-main")
+        #expect(execution.id.parentRequestID == "req-parent")
+        #expect(execution.cacheHints.restoreSnapshotID == "snap-parent")
+        #expect(execution.cacheHints.saveBoundarySnapshot)
+        #expect(execution.cacheHints.persistL2)
+        #expect(execution.cacheHints.preferHotPrefix)
     }
 
     @Test("POST /v1/responses translates into the shared text request model")
@@ -8506,21 +8695,24 @@ struct OpenAIHandlerTests {
             HTTPRequest(method: .post, path: "/v1/messages", headers: [:], body: body)
         )
         let payload = try await collectBody(response.body)
+        let prefilled = await workerClient.lastPrefillRequest
         let generated = await workerClient.lastGenerateRequest
+        let execution = try #require(prefilled?.execution ?? generated?.execution)
+        let messages = try #require(prefilled?.messages ?? generated?.messages)
         let metrics = await metricsStore.snapshot()
 
         #expect(response.statusCode == 200)
         #expect(payload.contains("event: message.completed"))
-        #expect(generated?.execution.id.workflowRunID == "wf-handler")
-        #expect(generated?.execution.id.workflowNodeID == "node-handler")
-        #expect(generated?.execution.scheduling.lane == "text.prefill.hot")
-        #expect(generated?.execution.scheduling.admissionPolicy == "workflow.tool_followup")
-        #expect(generated?.execution.cacheHints.cachePolicy == "session-hot")
-        #expect(generated?.messages.first?.parts.first?.text == "Visible prior answer.")
-        #expect(generated?.execution.ext["melix.preset_id"] == "deep_reasoning")
-        #expect(generated?.execution.ext["melix.workflow"] == "tool_followup")
-        #expect(generated?.execution.ext["melix.reasoning.history_strip_count"] == "1")
-        #expect(generated?.execution.ext["melix.tool_call_history_strip_count"] == "1")
+        #expect(execution.id.workflowRunID == "wf-handler")
+        #expect(execution.id.workflowNodeID == "node-handler")
+        #expect(execution.scheduling.lane == "text.prefill.hot")
+        #expect(execution.scheduling.admissionPolicy == "workflow.tool_followup")
+        #expect(execution.cacheHints.cachePolicy == "session-hot")
+        #expect(messages.first?.parts.first?.text == "Visible prior answer.")
+        #expect(execution.ext["melix.preset_id"] == "deep_reasoning")
+        #expect(execution.ext["melix.workflow"] == "tool_followup")
+        #expect(execution.ext["melix.reasoning.history_strip_count"] == "1")
+        #expect(execution.ext["melix.tool_call_history_strip_count"] == "1")
         #expect(metrics.values["http.preset_shaped_count", default: 0] == 1)
         #expect(metrics.values["http.workflow_shaped_count", default: 0] == 1)
         #expect(metrics.values["http.reasoning_history_strip_count", default: 0] == 1)
@@ -8532,15 +8724,26 @@ struct OpenAIHandlerTests {
         requestID: String,
         finishReason: String = "stop",
         assistantText: String = "ready",
+        textEvents: [Melix_Worker_V1_ExecuteEvent] = [],
+        textLoadModelHandle: String = "melix-dev-text::swift",
         configureModel: (inout Melix_Controlplane_V1_ModelSummary) -> Void = { _ in }
-    ) -> (handler: OpenAIHandler, textClient: ScriptedWorkerClient, vlmClient: ScriptedWorkerClient) {
+    ) -> (
+        handler: OpenAIHandler,
+        catalog: ModelCatalog,
+        textClient: ScriptedWorkerClient,
+        vlmClient: ScriptedWorkerClient
+    ) {
         var vlmModel = ModelCatalog.devVLMModel()
         vlmModel.settings.ext["vision_family_id"] = "gemma4-v1"
         vlmModel.settings.ext["melix.vlm.backend_id"] = "mlx_vlm"
         vlmModel.settings.ext["melix.vlm.text_only_batch_generator"] = "false"
+        vlmModel.settings.ext["melix.vlm.text_companion.enabled"] = "false"
         configureModel(&vlmModel)
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), vlmModel])
-        let textClient = ScriptedWorkerClient(events: [])
+        let textClient = ScriptedWorkerClient(
+            events: textEvents,
+            loadModelHandle: textLoadModelHandle
+        )
         let vlmClient = ScriptedWorkerClient(
             events: [
                 makeCompletedEvent(
@@ -8568,7 +8771,7 @@ struct OpenAIHandlerTests {
             translator: ChatRequestTranslator(requestIDGenerator: { requestID }),
             sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
         )
-        return (handler, textClient, vlmClient)
+        return (handler, catalog, textClient, vlmClient)
     }
 
     private func warmModel() -> Melix_Controlplane_V1_ModelSummary {
@@ -8628,6 +8831,18 @@ private func makeRegistrySnapshotManifestJSON(
     return String(decoding: data, as: UTF8.self)
 }
 
+private func makeModelConfigDirectory(config: String) throws -> URL {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("melix-model-config-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try config.write(
+        to: root.appendingPathComponent("config.json"),
+        atomically: true,
+        encoding: .utf8
+    )
+    return root
+}
+
 private actor ScriptedWorkerUnloadGate {
     private var released = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
@@ -8651,7 +8866,11 @@ private actor ScriptedWorkerUnloadGate {
     }
 }
 
-private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWorkerClientProtocol {
+private actor ScriptedWorkerClient:
+    WorkerRoutingClient,
+    PhaseAwareWorkerClientProtocol,
+    RuntimeIntrospectingWorkerClientProtocol
+{
     private let events: [Melix_Worker_V1_ExecuteEvent]
     private let streamFailure: Error?
     private let loadModelHandle: String
@@ -8666,6 +8885,8 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
     private let unloadGate: ScriptedWorkerUnloadGate?
     private(set) var lastGenerateRequest: Melix_Worker_V1_GenerateRequest?
     private(set) var lastLoadModelRequest: Melix_Worker_V1_LoadModelRequest?
+    private(set) var lastPrefillRequest: Melix_Worker_V1_PrefillRequest?
+    private(set) var lastDecodeRequest: Melix_Worker_V1_DecodeRequest?
     private(set) var unloadRequestCount = 0
     private(set) var unloadCompletedCount = 0
 
@@ -8728,6 +8949,32 @@ private actor ScriptedWorkerClient: WorkerRoutingClient, RuntimeIntrospectingWor
         response.modelHandle = loadModelHandle
         response.estimatedResidentBytes = loadModelEstimatedResidentBytes
         return response
+    }
+
+    func prefill(
+        request: Melix_Worker_V1_PrefillRequest
+    ) async throws -> Melix_Worker_V1_PrefillResponse {
+        lastPrefillRequest = request
+        var response = Melix_Worker_V1_PrefillResponse()
+        response.ok = true
+        response.decodeHandle = "decode-\(request.execution.id.requestID)"
+        response.promptTokens = UInt32(max(1, request.messages.map { $0.parts.map(\.text).joined().count }.reduce(0, +) / 4))
+        response.appliedAcceleration.mode = .baseline
+        return response
+    }
+
+    func decode(
+        request: Melix_Worker_V1_DecodeRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        lastDecodeRequest = request
+        let events = self.events
+        let streamFailure = self.streamFailure
+        return AsyncThrowingStream { continuation in
+            for event in events {
+                continuation.yield(event)
+            }
+            continuation.finish(throwing: streamFailure)
+        }
     }
 
     func unloadModel(
