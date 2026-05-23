@@ -2800,16 +2800,20 @@ def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
 
 
 @pytest.mark.parametrize(
-    "drafter",
+    ("drafter", "draft_block_size"),
     [
-        SimpleNamespace(model=SimpleNamespace()),
-        SimpleNamespace(model=SimpleNamespace(accept_lens=["not-int"])),
-        SimpleNamespace(model=SimpleNamespace(accept_lens=[])),
-        SimpleNamespace(model=SimpleNamespace(accept_lens=[-1])),
+        (SimpleNamespace(model=SimpleNamespace()), 6),
+        (SimpleNamespace(model=SimpleNamespace(accept_lens=["not-int"])), 6),
+        (SimpleNamespace(model=SimpleNamespace(accept_lens=[])), 6),
+        (SimpleNamespace(model=SimpleNamespace(accept_lens=[-1])), 6),
+        (SimpleNamespace(model=SimpleNamespace(accept_lens=[0])), 1),
     ],
 )
-def test_mtp_drafter_acceptance_stats_ignore_unusable_accept_lens(drafter: SimpleNamespace) -> None:
-    assert MLXVLMRuntime._mtp_drafter_acceptance_stats(drafter, 6) is None
+def test_mtp_drafter_acceptance_stats_ignore_unusable_accept_lens(
+    drafter: SimpleNamespace,
+    draft_block_size: int,
+) -> None:
+    assert MLXVLMRuntime._mtp_drafter_acceptance_stats(drafter, draft_block_size) is None
 
 
 def test_auto_mlx_vlm_backend_detects_installed_optional_mtp_api(
