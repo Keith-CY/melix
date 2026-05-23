@@ -279,6 +279,22 @@ enum OnDemandModelLoader {
         }
 
         let capabilityClass = normalizedIdentifier(model.settings.ext["melix.capability.class"])
+        let modalities = normalizedIdentifierSet(
+            model.supportedModalities,
+            fallback: model.settings.ext["melix.capability.supported_modalities"]
+        )
+        let tasks = normalizedIdentifierSet(
+            model.supportedTasks,
+            fallback: model.settings.ext["melix.capability.supported_tasks"]
+        )
+        let isOCR = modelKind == "ocr"
+            || capabilityClass == "ocr"
+            || model.capabilityClass == .modelCapabilityOcr
+        if isOCR {
+            return (modalities.isEmpty || modalities.contains("image"))
+                && (tasks.isEmpty || tasks.contains("ocr") || tasks.contains("generate"))
+        }
+
         // Model summaries can come from built-ins, registry scans, or workers; each path
         // may populate a different VLM identity field.
         let isVLM = modelKind == "vlm"
@@ -288,14 +304,6 @@ enum OnDemandModelLoader {
             return false
         }
 
-        let modalities = normalizedIdentifierSet(
-            model.supportedModalities,
-            fallback: model.settings.ext["melix.capability.supported_modalities"]
-        )
-        let tasks = normalizedIdentifierSet(
-            model.supportedTasks,
-            fallback: model.settings.ext["melix.capability.supported_tasks"]
-        )
         return modalities.contains("text") && tasks.contains("generate")
     }
 

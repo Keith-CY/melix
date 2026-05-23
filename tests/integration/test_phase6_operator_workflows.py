@@ -391,7 +391,7 @@ def test_multimodal_chat_accepts_local_and_rejects_private_remote_image_urls(tmp
             },
         )
         assert remote_status == 400
-        assert _json_error_code(remote_payload) == "invalid_argument"
+        assert _json_error_code(remote_payload) == "unsupported_media_payload"
         assert "External media URL host is not allowed" in json.dumps(remote_payload)
     finally:
         stack.stop()
@@ -765,7 +765,7 @@ def test_phase6_vision_evidence_report_is_machine_readable(tmp_path: Path) -> No
                 ),
                 "remote_image_refusal_success": (
                     remote_status == 400
-                    and _json_error_code(remote_payload) == "invalid_argument"
+                    and _json_error_code(remote_payload) == "unsupported_media_payload"
                     and "External media URL host is not allowed" in json.dumps(remote_payload)
                 ),
                 "multi_image_success": (

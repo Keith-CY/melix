@@ -273,6 +273,38 @@ private struct ResolvedOpenAITextRequest: Sendable {
     let idleSweepRequest: OpenAIModelIdleSweepRequest?
 }
 
+private struct MediaAdmissionFailure: Sendable {
+    let statusCode: Int
+    let code: String
+    let message: String
+    let unsupportedReason: String
+    let mediaCount: Int
+    let routeKind: String
+    let mediaKind: String?
+    let toolsDisabledReason: String?
+    let speculativeDisabledReason: String?
+
+    var payload: [String: Any] {
+        var error: [String: Any] = [
+            "code": code,
+            "message": message,
+            "unsupported_reason": unsupportedReason,
+            "media_count": mediaCount,
+            "route_kind": routeKind,
+        ]
+        if let mediaKind {
+            error["media_kind"] = mediaKind
+        }
+        if let toolsDisabledReason {
+            error["tools_disabled_reason"] = toolsDisabledReason
+        }
+        if let speculativeDisabledReason {
+            error["speculative_disabled_reason"] = speculativeDisabledReason
+        }
+        return ["error": error]
+    }
+}
+
 private struct ResolvedServedModel: Sendable {
     let modelID: String
     let idleSweepRequest: OpenAIModelIdleSweepRequest?
@@ -832,6 +864,9 @@ public struct OpenAIHandler: Sendable {
                 try translator.normalize(chatRequest)
             }
             let resolvedRequest = try await translatedRequest(normalized)
+            if let mediaAdmissionFailure = mediaAdmissionFailureResponse(resolvedRequest.translated) {
+                return mediaAdmissionFailure
+            }
             guard resolvedRequest.translated.stream else {
                 return try await nonStreamChatCompletionsResponse(
                     resolvedRequest: resolvedRequest,
@@ -845,7 +880,7 @@ public struct OpenAIHandler: Sendable {
                 idleSweepRequest: resolvedRequest.idleSweepRequest
             )
         } catch let error as MultimodalRequestNormalizationError {
-            return invalidArgumentResponse(message: error.operatorMessage)
+            return mediaNormalizationErrorResponse(error)
         } catch let error as StructuredOutputFormatError {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ToolParserConfigurationError {
@@ -941,6 +976,9 @@ public struct OpenAIHandler: Sendable {
                     ),
                     idleSweepRequest: resolvedRequest.idleSweepRequest
                 )
+            }
+            if let mediaAdmissionFailure = mediaAdmissionFailureResponse(resolvedRequest.translated) {
+                return mediaAdmissionFailure
             }
             return try await streamResponse(
                 translated: resolvedRequest.translated,
@@ -1957,6 +1995,19 @@ public struct OpenAIHandler: Sendable {
         ) {
             throw HTTPRequestHandlingError.gatewayResponse(validationFailure)
         }
+        let resolvedModel = await modelCatalog.model(id: routed.model)
+        let requestedServingDefaults = await gatewayServingDefaultsStore.requestedDefaults(
+            serverSessionID: gatewayRuntimeBinding.activeServerSessionID
+        )
+        if let mediaAdmissionFailure = mediaAdmissionFailure(
+            for: routed,
+            model: resolvedModel,
+            requestedSpeculativeDecode: requestedServingDefaults.accelerationMode == .speculativeDecode
+        ) {
+            await recordMediaAdmissionFailure(mediaAdmissionFailure)
+            throw HTTPRequestHandlingError.gatewayResponse(mediaAdmissionFailureResponse(mediaAdmissionFailure))
+        }
+
         let modelHandle: String
         do {
             modelHandle = try await OnDemandModelLoader.ensureTextModelReady(
@@ -1976,7 +2027,6 @@ public struct OpenAIHandler: Sendable {
         } catch {
             throw HTTPRequestHandlingError.workerUnavailable
         }
-        let resolvedModel = await modelCatalog.model(id: routed.model)
         let modelToolParser: ToolParserSelection? = if let resolvedModel {
             ToolParserSelection(modelSettings: resolvedModel.settings)
         } else {
@@ -2005,20 +2055,265 @@ public struct OpenAIHandler: Sendable {
             modelChatTemplatePolicy: modelChatTemplatePolicy,
             modelOCRPolicy: modelOCRPolicy,
             modelSamplingPolicy: modelSamplingPolicy,
-            gatewayServingDefaults: await gatewayServingDefaultsStore.requestedDefaults(
-                serverSessionID: gatewayRuntimeBinding.activeServerSessionID
-            ).resolvingAccelerationCompatibility(for: resolvedModel),
+            gatewayServingDefaults: requestedServingDefaults.resolvingAccelerationCompatibility(for: resolvedModel),
             mcpToolCatalog: mcpToolCatalog
         )
         await recordShapingMetrics(for: translated, startedAt: shapingStartedAt)
+        var routedTranslated = requestWithVLMTextOnlyBatchingMetadata(
+            translated,
+            model: resolvedModel,
+            normalizedRequest: routed
+        )
+        let mediaAdmissionFailure = mediaAdmissionFailure(
+            for: routedTranslated,
+            model: resolvedModel,
+            requestedSpeculativeDecode: requestedServingDefaults.accelerationMode == .speculativeDecode
+        )
+        if let mediaAdmissionFailure {
+            routedTranslated = translatedRequest(
+                routedTranslated,
+                addingMediaAdmissionFailureReceipts: mediaAdmissionFailure
+            )
+            await recordMediaAdmissionFailure(mediaAdmissionFailure)
+        }
         return ResolvedOpenAITextRequest(
-            translated: requestWithVLMTextOnlyBatchingMetadata(
-                translated,
-                model: resolvedModel,
-                normalizedRequest: routed
-            ),
+            translated: routedTranslated,
             idleSweepRequest: resolved.idleSweepRequest
         )
+    }
+
+    private func mediaAdmissionFailure(
+        for normalized: NormalizedTextRequest,
+        model: Melix_Controlplane_V1_ModelSummary?,
+        requestedSpeculativeDecode: Bool
+    ) -> MediaAdmissionFailure? {
+        let mediaCount = normalized.mediaPartsSummary.count
+        guard mediaCount > 0, let model else {
+            return nil
+        }
+
+        let routeKind = mediaServingRouteKind(for: model)
+        return mediaAdmissionFailure(
+            mediaCount: mediaCount,
+            mediaKinds: Set(normalized.mediaPartsSummary.parts.map { normalizedIdentifier($0.mediaKind) }),
+            model: model,
+            routeKind: routeKind,
+            toolsDisabledReason: mediaRequestUsesTools(normalized) ? "media_present" : nil,
+            speculativeDisabledReason: requestedSpeculativeDecode ? "media_present" : nil
+        )
+    }
+
+    private func mediaAdmissionFailure(
+        for translated: TranslatedChatRequest,
+        model: Melix_Controlplane_V1_ModelSummary?,
+        requestedSpeculativeDecode: Bool
+    ) -> MediaAdmissionFailure? {
+        let workerRequest = translated.workerRequest
+        let mediaCount = normalizedMediaPartCount(from: workerRequest.execution.ext)
+        guard mediaCount > 0 else {
+            return nil
+        }
+
+        return mediaAdmissionFailure(
+            mediaCount: mediaCount,
+            mediaKinds: normalizedMediaPartKinds(from: workerRequest.execution.ext),
+            model: model,
+            routeKind: model.map(mediaServingRouteKind(for:)) ?? nil,
+            toolsDisabledReason: mediaRequestUsesTools(workerRequest) ? "media_present" : nil,
+            speculativeDisabledReason: requestedSpeculativeDecode
+                || gatewayAccelerationMode(from: workerRequest.execution.ext) == .speculativeDecode
+                ? "media_present"
+                : nil
+        )
+    }
+
+    private func mediaAdmissionFailure(
+        mediaCount: Int,
+        mediaKinds: Set<String>,
+        model: Melix_Controlplane_V1_ModelSummary?,
+        routeKind: WorkerRouteKind?,
+        toolsDisabledReason: String?,
+        speculativeDisabledReason: String?
+    ) -> MediaAdmissionFailure? {
+        guard mediaCount > 0 else {
+            return nil
+        }
+
+        let routeKindIdentifier = routeKind?.metadataIdentifier ?? "unknown"
+        if !mediaServingRouteSupportsTextMedia(routeKind) {
+            return MediaAdmissionFailure(
+                statusCode: 400,
+                code: "unsupported_media_for_model",
+                message: "Media-bearing text requests require a multimodal runtime route.",
+                unsupportedReason: "text_only_runtime",
+                mediaCount: mediaCount,
+                routeKind: routeKindIdentifier,
+                mediaKind: mediaKinds.sorted().first,
+                toolsDisabledReason: toolsDisabledReason,
+                speculativeDisabledReason: speculativeDisabledReason
+            )
+        }
+
+        if let unsupportedMedia = unsupportedMedia(mediaKinds, for: model) {
+            return MediaAdmissionFailure(
+                statusCode: 400,
+                code: "unsupported_media_for_model",
+                message: "The selected model does not advertise support for this media kind.",
+                unsupportedReason: unsupportedMedia.reason,
+                mediaCount: mediaCount,
+                routeKind: routeKindIdentifier,
+                mediaKind: unsupportedMedia.kind,
+                toolsDisabledReason: toolsDisabledReason,
+                speculativeDisabledReason: speculativeDisabledReason
+            )
+        }
+
+        if let toolsDisabledReason {
+            return MediaAdmissionFailure(
+                statusCode: 400,
+                code: "unsupported_media_for_tools",
+                message: "OpenAI tools are disabled for media-bearing requests.",
+                unsupportedReason: "tools_disabled_for_media",
+                mediaCount: mediaCount,
+                routeKind: routeKindIdentifier,
+                mediaKind: mediaKinds.sorted().first,
+                toolsDisabledReason: toolsDisabledReason,
+                speculativeDisabledReason: speculativeDisabledReason
+            )
+        }
+
+        if let speculativeDisabledReason {
+            return MediaAdmissionFailure(
+                statusCode: 400,
+                code: "unsupported_media_for_speculative_decode",
+                message: "Speculative decode is disabled for media-bearing requests.",
+                unsupportedReason: "speculative_disabled_for_media",
+                mediaCount: mediaCount,
+                routeKind: routeKindIdentifier,
+                mediaKind: mediaKinds.sorted().first,
+                toolsDisabledReason: nil,
+                speculativeDisabledReason: speculativeDisabledReason
+            )
+        }
+
+        return nil
+    }
+
+    private func normalizedMediaPartCount(from executionExt: [String: String]) -> Int {
+        guard let rawCount = executionExt["melix.media_parts.count"] else {
+            return 0
+        }
+        return Int(rawCount.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+    }
+
+    private func normalizedMediaPartKinds(from executionExt: [String: String]) -> Set<String> {
+        let mediaCount = normalizedMediaPartCount(from: executionExt)
+        guard mediaCount > 0 else {
+            return []
+        }
+        var kinds: Set<String> = []
+        for index in 0..<mediaCount {
+            let kind = normalizedIdentifier(executionExt["melix.media_parts.\(index).kind"])
+            if !kind.isEmpty {
+                kinds.insert(kind)
+            }
+        }
+        return kinds
+    }
+
+    private func unsupportedMedia(
+        _ mediaKinds: Set<String>,
+        for model: Melix_Controlplane_V1_ModelSummary?
+    ) -> (kind: String, reason: String)? {
+        guard let model else {
+            return mediaKinds.sorted().first.map { ($0, "unknown_media_modalities") }
+        }
+        let supportedModalities = Set(normalizedIdentifierList(
+            model.supportedModalities,
+            fallback: model.settings.ext["melix.capability.supported_modalities"]
+        ))
+        guard !supportedModalities.isEmpty else {
+            return mediaKinds.sorted().first.map { ($0, "unknown_media_modalities") }
+        }
+        return mediaKinds
+            .sorted()
+            .first { !supportedModalities.contains($0) }
+            .map { ($0, "unsupported_media_modality") }
+    }
+
+    private func mediaRequestUsesTools(_ request: Melix_Worker_V1_GenerateRequest) -> Bool {
+        request.execution.hasToolConfig
+            || request.execution.ext["melix.tool_config.source"] != nil
+    }
+
+    private func mediaRequestUsesTools(_ request: NormalizedTextRequest) -> Bool {
+        !request.tools.isEmpty || request.toolChoice != nil
+    }
+
+    private func mediaServingRouteKind(for model: Melix_Controlplane_V1_ModelSummary) -> WorkerRouteKind? {
+        if let routeKind = modelRouteKind(for: model) {
+            return routeKind
+        }
+        if model.capabilityClass == .modelCapabilityVlm || normalizedIdentifier(model.kind) == "vlm" {
+            return .pythonVLM
+        }
+        if model.capabilityClass == .modelCapabilityOcr || normalizedIdentifier(model.kind) == "ocr" {
+            return .pythonOCR
+        }
+        return nil
+    }
+
+    private func mediaServingRouteSupportsTextMedia(_ routeKind: WorkerRouteKind?) -> Bool {
+        switch routeKind {
+        case .pythonOCR, .pythonVLM:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func gatewayAccelerationMode(
+        from executionExt: [String: String]
+    ) -> Melix_Worker_V1_AccelerationMode {
+        switch executionExt["melix.gateway.acceleration_mode"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() {
+        case "speculative_decode":
+            return .speculativeDecode
+        default:
+            return .baseline
+        }
+    }
+
+    private func translatedRequest(
+        _ translated: TranslatedChatRequest,
+        addingMediaAdmissionFailureReceipts failure: MediaAdmissionFailure
+    ) -> TranslatedChatRequest {
+        var workerRequest = translated.workerRequest
+        workerRequest.execution.ext["melix.media_admission.status"] = "refused"
+        workerRequest.execution.ext["melix.media_admission.unsupported_reason"] = failure.unsupportedReason
+        workerRequest.execution.ext["melix.media_admission.error_code"] = failure.code
+        workerRequest.execution.ext["melix.media_admission.route_kind"] = failure.routeKind
+        if let mediaKind = failure.mediaKind {
+            workerRequest.execution.ext["melix.media_admission.media_kind"] = mediaKind
+        }
+        if let toolsDisabledReason = failure.toolsDisabledReason {
+            workerRequest.execution.ext["melix.media_admission.tools_disabled_reason"] = toolsDisabledReason
+        }
+        if let speculativeDisabledReason = failure.speculativeDisabledReason {
+            workerRequest.execution.ext["melix.media_admission.speculative_disabled_reason"] = speculativeDisabledReason
+        }
+        return TranslatedChatRequest(
+            requestID: translated.requestID,
+            modelID: translated.modelID,
+            workerRequest: workerRequest,
+            stream: translated.stream
+        )
+    }
+
+    private func recordMediaAdmissionFailure(_ failure: MediaAdmissionFailure) async {
+        await metricsStore.increment("http.media_admission_refusal_count")
+        await metricsStore.increment("http.media_admission_refusal.\(failure.unsupportedReason)")
     }
 
     private func requestWithVLMTextOnlyBatchingMetadata(
@@ -2567,6 +2862,131 @@ public struct OpenAIHandler: Sendable {
             return workerErrorResponse(error)
         case .gatewayResponse(let response):
             return response
+        }
+    }
+
+    private func mediaAdmissionFailureResponse(
+        _ failure: MediaAdmissionFailure
+    ) -> HTTPResponse {
+        jsonResponse(statusCode: failure.statusCode, payload: failure.payload)
+    }
+
+    private func mediaAdmissionFailureResponse(
+        _ translated: TranslatedChatRequest
+    ) -> HTTPResponse? {
+        guard
+            translated.workerRequest.execution.ext["melix.media_admission.status"] == "refused",
+            let code = translated.workerRequest.execution.ext["melix.media_admission.error_code"]
+        else {
+            return nil
+        }
+
+        let unsupportedReason = translated.workerRequest.execution.ext[
+            "melix.media_admission.unsupported_reason"
+        ] ?? "unsupported_media"
+        let routeKind = translated.workerRequest.execution.ext[
+            "melix.media_admission.route_kind"
+        ] ?? "unknown"
+        let mediaCount = normalizedMediaPartCount(from: translated.workerRequest.execution.ext)
+        let failure = MediaAdmissionFailure(
+            statusCode: 400,
+            code: code,
+            message: mediaAdmissionFailureMessage(for: code, unsupportedReason: unsupportedReason),
+            unsupportedReason: unsupportedReason,
+            mediaCount: mediaCount,
+            routeKind: routeKind,
+            mediaKind: translated.workerRequest.execution.ext[
+                "melix.media_admission.media_kind"
+            ],
+            toolsDisabledReason: translated.workerRequest.execution.ext[
+                "melix.media_admission.tools_disabled_reason"
+            ],
+            speculativeDisabledReason: translated.workerRequest.execution.ext[
+                "melix.media_admission.speculative_disabled_reason"
+            ]
+        )
+        return jsonResponse(statusCode: failure.statusCode, payload: failure.payload)
+    }
+
+    private func mediaNormalizationErrorResponse(
+        _ error: MultimodalRequestNormalizationError
+    ) -> HTTPResponse {
+        let metadata = mediaNormalizationErrorMetadata(error)
+        var payload: [String: Any] = [
+            "code": "unsupported_media_payload",
+            "message": error.operatorMessage,
+            "unsupported_reason": metadata.unsupportedReason,
+        ]
+        if let mediaKind = metadata.mediaKind {
+            payload["media_kind"] = mediaKind
+        }
+        if let field = metadata.field {
+            payload["field"] = field
+        }
+        if let rejectedValue = metadata.rejectedValue {
+            payload["rejected_value"] = rejectedValue
+        }
+        return jsonResponse(statusCode: 400, payload: ["error": payload])
+    }
+
+    private func mediaNormalizationErrorMetadata(
+        _ error: MultimodalRequestNormalizationError
+    ) -> (
+        unsupportedReason: String,
+        mediaKind: String?,
+        field: String?,
+        rejectedValue: String?
+    ) {
+        switch error {
+        case let .missingValue(field):
+            return ("missing_media_value", mediaKind(from: field), field, nil)
+        case let .invalidBase64(kind):
+            return ("invalid_base64", kind, nil, nil)
+        case let .unsupportedPartType(kind):
+            return ("unsupported_part_type", nil, "type", kind)
+        case let .unsupportedURIScheme(kind, scheme):
+            return ("unsupported_uri_scheme", kind, nil, scheme)
+        case let .unsupportedMediaFormat(kind, format):
+            return ("unsupported_media_format", kind, nil, format)
+        case let .invalidPreprocessingBound(field, reason):
+            return ("invalid_preprocessing_bound", mediaKind(from: field), field, reason)
+        case .externalMediaURLBlocked:
+            return ("external_media_url_blocked", nil, nil, nil)
+        }
+    }
+
+    private func mediaKind(from field: String) -> String? {
+        let normalizedField = field.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalizedField.contains("image") {
+            return "image"
+        }
+        if normalizedField.contains("audio") {
+            return "audio"
+        }
+        if normalizedField.contains("video") {
+            return "video"
+        }
+        return nil
+    }
+
+    private func mediaAdmissionFailureMessage(for code: String, unsupportedReason: String) -> String {
+        switch unsupportedReason {
+        case "unsupported_media_modality":
+            return "The selected model does not advertise support for this media kind."
+        case "unknown_media_modalities":
+            return "The selected model does not advertise media modality support."
+        default:
+            break
+        }
+        switch code {
+        case "unsupported_media_for_model":
+            return "Media-bearing text requests require a multimodal runtime route."
+        case "unsupported_media_for_tools":
+            return "OpenAI tools are disabled for media-bearing requests."
+        case "unsupported_media_for_speculative_decode":
+            return "Speculative decode is disabled for media-bearing requests."
+        default:
+            return "The selected model cannot serve this media-bearing request."
         }
     }
 

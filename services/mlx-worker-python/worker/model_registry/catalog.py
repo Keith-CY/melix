@@ -88,6 +88,13 @@ class _TensorIndexEvidence:
     tensor_counts: Mapping[str, int]
 
 
+@dataclass(frozen=True, slots=True)
+class _ProjectorEvidence:
+    status: str
+    family_id: str
+    components_available: bool = True
+
+
 def _normalized(value: str | None) -> str:
     return (value or "").strip()
 
@@ -269,6 +276,20 @@ def _tensor_index_evidence(
     )
 
 
+def _weight_map_tensor_names(
+    model_dir: Path,
+    *,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+) -> tuple[str, ...]:
+    _, payload, warning_code = _load_tensor_index_payload(model_dir, json_cache=json_cache)
+    if warning_code:
+        return ()
+    weight_map = payload.get("weight_map")
+    if not isinstance(weight_map, Mapping):
+        return ()
+    return tuple(str(raw_name) for raw_name in weight_map)
+
+
 def _tensor_name_is_vision(name: str) -> bool:
     return name.startswith(("vision_tower.", "vision_model.", "embed_vision.", "visual.", "vision_encoder."))
 
@@ -289,6 +310,10 @@ def _tensor_name_is_projector(name: str) -> bool:
         or ".multimodal_projector." in lowered
         or ".mm_projector." in lowered
     )
+
+
+def _tensor_name_is_gemma4_vision_weight_remap(name: str) -> bool:
+    return name.startswith("embed_vision.proj.") or ".embed_vision.proj." in name.lower()
 
 
 def _tensor_name_is_draft(name: str) -> bool:
@@ -1002,6 +1027,7 @@ def _gemma4_component_lora_metadata(
     config_payload: Mapping[str, object] | None,
     json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
     tensor_evidence: _TensorIndexEvidence | None = None,
+    projector_components_available: bool = True,
 ) -> dict[str, str]:
     text_config = _gemma4_text_backbone_config(config_payload)
     if text_config is None:
@@ -1015,7 +1041,9 @@ def _gemma4_component_lora_metadata(
         tensor_evidence=tensor_evidence,
     )
     if has_vision_component:
-        components.extend(["vision_encoder", "multimodal_projector"])
+        components.append("vision_encoder")
+        if projector_components_available:
+            components.append("multimodal_projector")
     if tensor_evidence is not None and "audio" in tensor_evidence.modalities:
         components.append("audio_encoder")
 
@@ -1048,10 +1076,15 @@ def _gemma4_component_lora_metadata(
                 "melix.component.vision_encoder.model_type": vision_model_type or "gemma4_vision",
                 "melix.component.vision_encoder.lora_supported": "false",
                 "melix.component.vision_encoder.lora_support_contract": "separate_contract",
-                "melix.component.multimodal_projector.lora_supported": "false",
-                "melix.component.multimodal_projector.lora_support_contract": "separate_contract",
             }
         )
+        if projector_components_available:
+            ext.update(
+                {
+                    "melix.component.multimodal_projector.lora_supported": "false",
+                    "melix.component.multimodal_projector.lora_support_contract": "separate_contract",
+                }
+            )
     return ext
 
 
@@ -1105,6 +1138,294 @@ def _gemma4_mtp_assistant_metadata(
     }
 
 
+def _multimodal_load_receipt_metadata(
+    *,
+    model_dir: Path,
+    config_payload: Mapping[str, object],
+    metadata: Mapping[str, str],
+    family_id: str,
+    tensor_evidence: _TensorIndexEvidence,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+) -> dict[str, str]:
+    processor_metadata = _processor_receipt_metadata(model_dir, json_cache=json_cache)
+    aliases = _nested_config_aliases(config_payload)
+    placeholder_counts, image_token_budget = _media_placeholder_counts(
+        model_dir,
+        config_payload,
+        json_cache=json_cache,
+    )
+    projector_evidence = _projector_evidence(
+        model_dir=model_dir,
+        metadata=metadata,
+        family_id=family_id,
+        tensor_evidence=tensor_evidence,
+        json_cache=json_cache,
+    )
+    optional_heads = _optional_head_receipt_metadata(config_payload, tensor_evidence)
+
+    ext = {
+        **processor_metadata,
+        "melix.capability.media_placeholders.counts": _format_media_placeholder_counts(placeholder_counts),
+        "melix.capability.media_placeholders.image_token_budget": str(image_token_budget),
+        "melix.capability.nested_config.aliases": ",".join(
+            f"{component}:{alias}" for component, alias in aliases
+        ),
+        "melix.capability.projector.status": projector_evidence.status,
+        "melix.capability.projector.family_id": projector_evidence.family_id,
+        "melix.capability.vision_weight_remap.status": projector_evidence.status,
+        **optional_heads,
+    }
+    if projector_evidence.status == "matched":
+        ext["melix.capability.vision_weight_remap.status"] = "matched_projector"
+    if not projector_evidence.components_available:
+        ext["melix.capability.projector.components_available"] = "false"
+    return ext
+
+
+def _processor_receipt_metadata(
+    model_dir: Path,
+    *,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+) -> dict[str, str]:
+    processor_path, processor_payload = _first_json_sidecar(
+        model_dir,
+        ("processor_config.json", "preprocessor_config.json"),
+        json_cache=json_cache,
+    )
+    if processor_path is None:
+        return {
+            "melix.capability.processor.status": "missing",
+            "melix.capability.processor.source": "",
+            "melix.capability.processor.class": "",
+            "melix.capability.image_processor.class": "",
+        }
+
+    image_processor = processor_payload.get("image_processor")
+    image_processor_class = ""
+    if isinstance(image_processor, Mapping):
+        image_processor_class = _first_normalized_value(
+            image_processor,
+            ("image_processor_type", "processor_class", "image_processor_class"),
+        )
+    if not image_processor_class:
+        image_processor_class = _first_normalized_value(
+            processor_payload,
+            ("image_processor_type", "image_processor_class"),
+        )
+
+    return {
+        "melix.capability.processor.status": "present",
+        "melix.capability.processor.source": str(processor_path),
+        "melix.capability.processor.class": _first_normalized_value(
+            processor_payload,
+            ("processor_class", "feature_extractor_type"),
+        ),
+        "melix.capability.image_processor.class": image_processor_class,
+    }
+
+
+def _first_json_sidecar(
+    model_dir: Path,
+    filenames: tuple[str, ...],
+    *,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+) -> tuple[Path | None, dict[str, object]]:
+    for filename in filenames:
+        path = model_dir / filename
+        try:
+            stat_result = path.stat()
+        except OSError:
+            if json_cache is not None:
+                json_cache.pop(path, None)
+            continue
+        if not stat.S_ISREG(stat_result.st_mode):
+            if json_cache is not None:
+                json_cache.pop(path, None)
+            continue
+        return path, _load_json_dict_file(path, json_cache=json_cache)
+    return None, {}
+
+
+def _first_normalized_value(payload: Mapping[str, object], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, str):
+            normalized = _normalized(value)
+            if normalized:
+                return normalized
+    return ""
+
+
+def _nested_config_aliases(config_payload: Mapping[str, object]) -> tuple[tuple[str, str], ...]:
+    alias_groups = {
+        "text": ("text_config", "language_config", "llm_config"),
+        "vision": ("vision_config", "visual_config", "image_config"),
+        "audio": ("audio_config", "speech_config"),
+        "video": ("video_config",),
+        "projector": ("projector_config", "multi_modal_projector", "multimodal_projector", "mm_projector"),
+        "draft": ("draft_config", "draft_model", "dflash_config", "mtp_config"),
+    }
+    aliases: list[tuple[str, str]] = []
+    for component in ("audio", "draft", "projector", "text", "video", "vision"):
+        for alias in alias_groups[component]:
+            value = config_payload.get(alias)
+            if isinstance(value, Mapping) and len(value) > 0:
+                aliases.append((component, alias))
+                break
+    return tuple(sorted(aliases))
+
+
+def _media_placeholder_counts(
+    model_dir: Path,
+    config_payload: Mapping[str, object],
+    *,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+) -> tuple[dict[str, int], int]:
+    payloads = [config_payload]
+    for filename in ("processor_config.json", "preprocessor_config.json", "tokenizer_config.json"):
+        sidecar = _load_json_dict_file(model_dir / filename, json_cache=json_cache)
+        if sidecar:
+            payloads.append(sidecar)
+
+    counts = {"image": 0, "audio": 0, "video": 0}
+    image_token_budget = 0
+    for payload in payloads:
+        counts["image"] += _count_media_placeholder_keys(payload, ("image", "boi", "eoi"))
+        counts["audio"] += _count_media_placeholder_keys(payload, ("audio",))
+        counts["video"] += _count_media_placeholder_keys(payload, ("video",))
+        image_token_budget = max(image_token_budget, _positive_int_value(payload.get("num_image_tokens")))
+        image_processor = payload.get("image_processor")
+        if isinstance(image_processor, Mapping):
+            counts["image"] += _count_media_placeholder_keys(image_processor, ("image",))
+            image_token_budget = max(image_token_budget, _positive_int_value(image_processor.get("num_image_tokens")))
+        video_processor = payload.get("video_processor")
+        if isinstance(video_processor, Mapping):
+            counts["video"] += _count_media_placeholder_keys(video_processor, ("video",))
+    return counts, image_token_budget
+
+
+def _count_media_placeholder_keys(payload: Mapping[str, object], prefixes: tuple[str, ...]) -> int:
+    count = 0
+    for key, value in payload.items():
+        if value in (None, "", [], {}):
+            continue
+        normalized_key = str(key).lower()
+        if any(normalized_key.startswith(prefix) for prefix in prefixes) and (
+            normalized_key.endswith("_token")
+            or normalized_key.endswith("_token_id")
+            or normalized_key.endswith("_token_ids")
+        ):
+            count += 1
+    return count
+
+
+def _positive_int_value(value: object) -> int:
+    try:
+        candidate = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return candidate if candidate > 0 else 0
+
+
+def _format_media_placeholder_counts(counts: Mapping[str, int]) -> str:
+    return ",".join(f"{modality}:{int(counts.get(modality, 0))}" for modality in ("image", "audio", "video"))
+
+
+def _projector_evidence(
+    *,
+    model_dir: Path,
+    metadata: Mapping[str, str],
+    family_id: str,
+    tensor_evidence: _TensorIndexEvidence,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+) -> _ProjectorEvidence:
+    projector_family_id = _normalized(metadata.get("melix.projector.family_id", ""))
+    if projector_family_id and projector_family_id != family_id:
+        return _ProjectorEvidence(
+            status="cross_family_rejected",
+            family_id=projector_family_id,
+            components_available=False,
+        )
+    if "projector" in tensor_evidence.modalities:
+        return _ProjectorEvidence(status="matched", family_id=projector_family_id or family_id)
+    if "vision" not in tensor_evidence.modalities:
+        return _ProjectorEvidence(status="no_projector", family_id=projector_family_id)
+    if family_id == "gemma4-v1" and _has_gemma4_vision_weight_remap_tensor(
+        model_dir,
+        tensor_evidence=tensor_evidence,
+        json_cache=json_cache,
+    ):
+        return _ProjectorEvidence(status="gemma4_embed_vision_projection", family_id=projector_family_id or family_id)
+    if projector_family_id == family_id and _has_renamed_projector_tensor(
+        model_dir,
+        tensor_evidence=tensor_evidence,
+        json_cache=json_cache,
+    ):
+        return _ProjectorEvidence(status="renamed_metadata_matched", family_id=projector_family_id)
+    return _ProjectorEvidence(status="missing", family_id=projector_family_id, components_available=False)
+
+
+def _has_renamed_projector_tensor(
+    model_dir: Path,
+    *,
+    tensor_evidence: _TensorIndexEvidence,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+) -> bool:
+    if tensor_evidence.status != "ok":
+        return False
+    for name in _weight_map_tensor_names(model_dir, json_cache=json_cache):
+        if (
+            not _tensor_name_is_text(name)
+            and not _tensor_name_is_vision(name)
+            and not _tensor_name_is_audio(name)
+            and not _tensor_name_is_video(name)
+            and not _tensor_name_is_projector(name)
+            and not _tensor_name_is_draft(name)
+        ):
+            lowered = name.lower()
+            if "connector" in lowered or "projector" in lowered:
+                return True
+    return False
+
+
+def _has_gemma4_vision_weight_remap_tensor(
+    model_dir: Path,
+    *,
+    tensor_evidence: _TensorIndexEvidence,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+) -> bool:
+    if tensor_evidence.status != "ok":
+        return False
+    return any(
+        _tensor_name_is_gemma4_vision_weight_remap(name)
+        for name in _weight_map_tensor_names(model_dir, json_cache=json_cache)
+    )
+
+
+def _optional_head_receipt_metadata(
+    config_payload: Mapping[str, object],
+    tensor_evidence: _TensorIndexEvidence,
+) -> dict[str, str]:
+    components: list[str] = []
+    declared: list[str] = []
+    draft_model_type = _normalized(str(config_payload.get("draft_model_type", "")))
+    if draft_model_type or any(
+        _config_declares_component(config_payload, key)
+        for key in ("draft_config", "draft_model", "dflash_config", "mtp_config")
+    ):
+        declared.append("draft")
+    if "draft" in tensor_evidence.modalities:
+        components.append("draft")
+    load_attached = bool(components)
+    return {
+        "melix.capability.optional_heads.declared": ",".join(declared),
+        "melix.capability.optional_heads.draft_model_type": draft_model_type,
+        "melix.capability.optional_heads.load_attached": "true" if load_attached else "false",
+        "melix.capability.optional_heads.acceleration_enabled": "false",
+        "melix.capability.optional_heads.components": ",".join(components or declared),
+    }
+
+
 def _vlm_capability_metadata(
     *,
     model_path: str,
@@ -1143,7 +1464,24 @@ def _vlm_capability_metadata(
         ),
     }
     ext.update(_tensor_index_receipt_metadata(tensor_evidence, config_payload))
+    load_receipts = _multimodal_load_receipt_metadata(
+        model_dir=model_dir,
+        config_payload=config_payload,
+        metadata=metadata,
+        family_id=family_id,
+        tensor_evidence=tensor_evidence,
+        json_cache=json_cache,
+    )
+    ext.update(load_receipts)
     supported_modalities = _supported_vlm_modalities_from_tensor_index(tensor_evidence, config_payload)
+    projector_status = load_receipts.get("melix.capability.projector.status")
+    if projector_status in {"cross_family_rejected", "missing"}:
+        supported_modalities = ("text",)
+        ext["melix.capability.tensor_index.warning_code"] = (
+            "projector_cross_family" if projector_status == "cross_family_rejected" else "projector_missing"
+        )
+        ext["melix.capability.tensor_index.warning_modalities"] = "projector"
+        ext["melix.capability.tensor_index.warning_source"] = tensor_evidence.source_path
     if supported_modalities != ("text", "image"):
         ext[_CAPABILITY_SUPPORTED_MODALITIES_KEY] = ",".join(supported_modalities)
     execution_mode = (
@@ -1156,6 +1494,8 @@ def _vlm_capability_metadata(
         if family_id == "gemma4-v1"
         else ""
     )
+    if projector_status in {"cross_family_rejected", "missing"}:
+        execution_mode = "text_backed"
     if execution_mode:
         ext["melix.vlm.execution_mode"] = execution_mode
     ext.update(
@@ -1165,6 +1505,9 @@ def _vlm_capability_metadata(
             config_payload=config_payload,
             json_cache=json_cache,
             tensor_evidence=tensor_evidence,
+            projector_components_available=load_receipts.get(
+                "melix.capability.projector.components_available"
+            ) != "false",
         )
     )
     return ext

@@ -73,6 +73,11 @@ def _write_weight_index(variant_dir: Path, payload: dict[str, object]) -> None:
     (variant_dir / "model.safetensors.index.json").write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
 
+def _write_processor_config(variant_dir: Path, payload: dict[str, object]) -> None:
+    variant_dir.mkdir(parents=True, exist_ok=True)
+    (variant_dir / "processor_config.json").write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+
 def _write_weights(variant_dir: Path) -> None:
     variant_dir.mkdir(parents=True, exist_ok=True)
     (variant_dir / "model.safetensors").write_bytes(b"weights")
@@ -1115,6 +1120,17 @@ def test_registry_snapshot_reuses_plain_local_tree_scan_and_config_payload(
     test_registry_snapshot_falls_back_when_declared_vision_lacks_tensor_evidence(tensor_cases_root / "mismatch")
     test_registry_snapshot_malformed_tensor_index_falls_back_with_warning(tensor_cases_root / "malformed")
     _assert_tensor_index_defensive_branches(tensor_cases_root / "defensive", monkeypatch)
+    test_registry_snapshot_records_multimodal_processor_and_nested_config_receipts(
+        tensor_cases_root / "processor-receipts"
+    )
+    test_registry_snapshot_accepts_metadata_matched_renamed_projector_receipt(
+        tensor_cases_root / "renamed-projector"
+    )
+    test_registry_snapshot_rejects_cross_family_projector_receipt(tensor_cases_root / "cross-family")
+    test_registry_snapshot_rejects_missing_projector_receipt(tensor_cases_root / "missing-projector")
+    test_registry_snapshot_rejects_generic_adapter_as_renamed_projector(tensor_cases_root / "generic-adapter")
+    test_registry_snapshot_records_draft_model_type_optional_head_receipt(tensor_cases_root / "draft-model-type")
+    test_multimodal_receipt_helpers_handle_defensive_branches(tensor_cases_root / "receipt-defensive")
 
 
 
@@ -2678,6 +2694,350 @@ def test_registry_snapshot_keeps_multimodal_gemma4_manifest_in_multimodal_mode(t
     assert gemma4.ext["melix.lora.training_ready"] == "true"
 
 
+def test_registry_snapshot_records_multimodal_processor_and_nested_config_receipts(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "gemma-4-receipts" / "4bit"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/gemma-4-receipts/4bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": {"model_type": "gemma4_vision"},
+            "multi_modal_projector": {"model_type": "gemma4_projector"},
+            "draft_model": {"model_type": "gemma4_draft"},
+            "image_token_id": 258880,
+            "boi_token_id": 258881,
+            "eoi_token_id": 258882,
+            "audio_token_id": 258883,
+        },
+    )
+    _write_processor_config(
+        variant_dir,
+        {
+            "processor_class": "Gemma4Processor",
+            "image_processor": {
+                "image_processor_type": "Gemma4ImageProcessor",
+                "image_token": "<image>",
+                "num_image_tokens": 256,
+            },
+            "video_processor": {"video_token": "<video>"},
+        },
+    )
+    (variant_dir / "tokenizer_config.json").write_text(
+        json.dumps({"image_token": "<image>", "audio_token": "<audio>"}) + "\n",
+        encoding="utf-8",
+    )
+    _write_weight_index(
+        variant_dir,
+        {
+            "metadata": {"total_size": 1},
+            "weight_map": {
+                "model.embed_tokens.weight": "model.safetensors",
+                "vision_tower.blocks.0.attn.q_proj.weight": "model.safetensors",
+                "multi_modal_projector.linear.weight": "model.safetensors",
+                "draft_model.layers.0.weight": "model.safetensors",
+            },
+        },
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    gemma4 = discovered["mlx-community/gemma-4-receipts/4bit"]
+
+    assert gemma4.ext["melix.capability.processor.status"] == "present"
+    assert gemma4.ext["melix.capability.processor.source"].endswith("processor_config.json")
+    assert gemma4.ext["melix.capability.processor.class"] == "Gemma4Processor"
+    assert gemma4.ext["melix.capability.image_processor.class"] == "Gemma4ImageProcessor"
+    assert gemma4.ext["melix.capability.media_placeholders.counts"] == "image:5,audio:2,video:1"
+    assert gemma4.ext["melix.capability.media_placeholders.image_token_budget"] == "256"
+    assert gemma4.ext["melix.capability.nested_config.aliases"] == (
+        "draft:draft_model,projector:multi_modal_projector,text:text_config,vision:vision_config"
+    )
+    assert gemma4.ext["melix.capability.projector.status"] == "matched"
+    assert gemma4.ext["melix.capability.vision_weight_remap.status"] == "matched_projector"
+    assert gemma4.ext["melix.capability.optional_heads.load_attached"] == "true"
+    assert gemma4.ext["melix.capability.optional_heads.acceleration_enabled"] == "false"
+    assert gemma4.ext["melix.capability.optional_heads.components"] == "draft"
+
+
+def test_registry_snapshot_accepts_metadata_matched_renamed_projector_receipt(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "gemma-4-renamed-projector" / "4bit"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/gemma-4-renamed-projector/4bit",
+        model_kind="text",
+        ext={"melix.projector.family_id": "gemma4-v1"},
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": {"model_type": "gemma4_vision"},
+        },
+    )
+    _write_processor_config(variant_dir, {"processor_class": "Gemma4Processor"})
+    _write_weight_index(
+        variant_dir,
+        {
+            "metadata": {"total_size": 1},
+            "weight_map": {
+                "model.embed_tokens.weight": "model.safetensors",
+                "vision_tower.blocks.0.attn.q_proj.weight": "model.safetensors",
+                "connector.linear.weight": "model.safetensors",
+            },
+        },
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    gemma4 = discovered["mlx-community/gemma-4-renamed-projector/4bit"]
+
+    assert gemma4.ext["melix.capability.supported_modalities"] == "text,image"
+    assert gemma4.ext["melix.capability.projector.status"] == "renamed_metadata_matched"
+    assert gemma4.ext["melix.capability.projector.family_id"] == "gemma4-v1"
+    assert gemma4.ext["melix.capability.vision_weight_remap.status"] == "renamed_metadata_matched"
+    assert gemma4.ext["melix.capability.tensor_index.warning_code"] == ""
+    assert gemma4.ext.get("melix.vlm.execution_mode", "") != "text_backed"
+    assert gemma4.ext["melix.capability.optional_heads.load_attached"] == "false"
+    assert gemma4.ext["melix.capability.optional_heads.acceleration_enabled"] == "false"
+    assert gemma4.ext["melix.capability.optional_heads.components"] == ""
+
+
+def test_registry_snapshot_rejects_cross_family_projector_receipt(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "gemma-4-cross-family-projector" / "4bit"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/gemma-4-cross-family-projector/4bit",
+        model_kind="text",
+        ext={"melix.projector.family_id": "llava-v1"},
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": {"model_type": "gemma4_vision"},
+        },
+    )
+    _write_processor_config(variant_dir, {"processor_class": "Gemma4Processor"})
+    _write_weight_index(
+        variant_dir,
+        {
+            "metadata": {"total_size": 1},
+            "weight_map": {
+                "model.embed_tokens.weight": "model.safetensors",
+                "vision_tower.blocks.0.attn.q_proj.weight": "model.safetensors",
+                "multi_modal_projector.linear.weight": "model.safetensors",
+            },
+        },
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    gemma4 = discovered["mlx-community/gemma-4-cross-family-projector/4bit"]
+
+    assert gemma4.ext["melix.capability.supported_modalities"] == "text"
+    assert gemma4.ext["melix.vlm.execution_mode"] == "text_backed"
+    assert gemma4.ext["melix.capability.projector.status"] == "cross_family_rejected"
+    assert gemma4.ext["melix.capability.projector.family_id"] == "llava-v1"
+    assert gemma4.ext["melix.capability.vision_weight_remap.status"] == "cross_family_rejected"
+    assert gemma4.ext["melix.capability.tensor_index.warning_code"] == "projector_cross_family"
+    assert gemma4.ext["melix.capability.tensor_index.warning_modalities"] == "projector"
+    assert gemma4.ext["melix.capability.tensor_index.warning_source"].endswith("model.safetensors.index.json")
+    assert "multimodal_projector" not in gemma4.ext["melix.model.components"].split(",")
+
+
+def test_registry_snapshot_rejects_missing_projector_receipt(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "gemma-4-missing-projector" / "4bit"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/gemma-4-missing-projector/4bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": {"model_type": "gemma4_vision"},
+        },
+    )
+    _write_processor_config(variant_dir, {"processor_class": "Gemma4Processor"})
+    _write_weight_index(
+        variant_dir,
+        {
+            "metadata": {"total_size": 1},
+            "weight_map": {
+                "model.embed_tokens.weight": "model.safetensors",
+                "vision_tower.blocks.0.attn.q_proj.weight": "model.safetensors",
+            },
+        },
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    gemma4 = discovered["mlx-community/gemma-4-missing-projector/4bit"]
+
+    assert gemma4.ext["melix.capability.supported_modalities"] == "text"
+    assert gemma4.ext["melix.vlm.execution_mode"] == "text_backed"
+    assert gemma4.ext["melix.capability.projector.status"] == "missing"
+    assert gemma4.ext["melix.capability.projector.family_id"] == ""
+    assert gemma4.ext["melix.capability.vision_weight_remap.status"] == "missing"
+    assert gemma4.ext["melix.capability.tensor_index.warning_code"] == "projector_missing"
+    assert gemma4.ext["melix.capability.tensor_index.warning_modalities"] == "projector"
+    assert gemma4.ext["melix.capability.tensor_index.warning_source"].endswith("model.safetensors.index.json")
+    assert "multimodal_projector" not in gemma4.ext["melix.model.components"].split(",")
+
+
+def test_registry_snapshot_rejects_generic_adapter_as_renamed_projector(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "gemma-4-generic-adapter" / "4bit"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/gemma-4-generic-adapter/4bit",
+        model_kind="text",
+        ext={"melix.projector.family_id": "gemma4-v1"},
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": {"model_type": "gemma4_vision"},
+        },
+    )
+    _write_processor_config(variant_dir, {"processor_class": "Gemma4Processor"})
+    _write_weight_index(
+        variant_dir,
+        {
+            "metadata": {"total_size": 1},
+            "weight_map": {
+                "model.embed_tokens.weight": "model.safetensors",
+                "vision_tower.blocks.0.attn.q_proj.weight": "model.safetensors",
+                "some_adapter.weight": "model.safetensors",
+            },
+        },
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    gemma4 = discovered["mlx-community/gemma-4-generic-adapter/4bit"]
+
+    assert gemma4.ext["melix.capability.supported_modalities"] == "text"
+    assert gemma4.ext["melix.capability.projector.status"] == "missing"
+    assert gemma4.ext["melix.capability.tensor_index.warning_code"] == "projector_missing"
+
+
+def test_registry_snapshot_records_draft_model_type_optional_head_receipt(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "gemma-4-draft-type" / "4bit"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/gemma-4-draft-type/4bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": {"model_type": "gemma4_vision"},
+            "multi_modal_projector": {"model_type": "gemma4_projector"},
+            "draft_model_type": "gemma4_draft",
+        },
+    )
+    _write_processor_config(variant_dir, {"processor_class": "Gemma4Processor"})
+    _write_weight_index(
+        variant_dir,
+        {
+            "metadata": {"total_size": 1},
+            "weight_map": {
+                "model.embed_tokens.weight": "model.safetensors",
+                "vision_tower.blocks.0.attn.q_proj.weight": "model.safetensors",
+                "multi_modal_projector.linear.weight": "model.safetensors",
+            },
+        },
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    gemma4 = discovered["mlx-community/gemma-4-draft-type/4bit"]
+
+    assert gemma4.ext["melix.capability.optional_heads.declared"] == "draft"
+    assert gemma4.ext["melix.capability.optional_heads.draft_model_type"] == "gemma4_draft"
+    assert gemma4.ext["melix.capability.optional_heads.load_attached"] == "false"
+    assert gemma4.ext["melix.capability.optional_heads.acceleration_enabled"] == "false"
+    assert gemma4.ext["melix.capability.optional_heads.components"] == "draft"
+
+
+def test_multimodal_receipt_helpers_handle_defensive_branches(tmp_path: Path) -> None:
+    model_dir = tmp_path / "defensive"
+    model_dir.mkdir(parents=True)
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] = {}
+
+    _write_weight_index(model_dir, {"weight_map": ["not-a-mapping"]})
+    assert catalog_module._weight_map_tensor_names(model_dir, json_cache=json_cache) == ()
+    assert catalog_module._has_renamed_projector_tensor(
+        model_dir,
+        tensor_evidence=catalog_module._tensor_index_evidence(model_dir, json_cache=json_cache),
+        json_cache=json_cache,
+    ) is False
+
+    non_file_processor = model_dir / "processor_config.json"
+    non_file_processor.mkdir()
+    json_cache[non_file_processor] = (1, 2, {"stale": True})
+    processor_path, processor_payload = catalog_module._first_json_sidecar(
+        model_dir,
+        ("processor_config.json", "preprocessor_config.json"),
+        json_cache=json_cache,
+    )
+    assert processor_path is None
+    assert processor_payload == {}
+    assert non_file_processor not in json_cache
+
+    assert catalog_module._positive_int_value("not-an-int") == 0
+
+    _write_weight_index(
+        model_dir,
+        {
+            "weight_map": {
+                "vision_tower.blocks.0.weight": "model.safetensors",
+                "unclassified.weight": "model.safetensors",
+            }
+        },
+    )
+    assert catalog_module._has_renamed_projector_tensor(
+        model_dir,
+        tensor_evidence=catalog_module._tensor_index_evidence(model_dir, json_cache=json_cache),
+        json_cache=json_cache,
+    ) is False
+
+
 def test_gemma4_component_lora_metadata_requires_text_backbone_and_detects_processor_components(
     tmp_path: Path,
 ) -> None:
@@ -2803,6 +3163,7 @@ def test_registry_snapshot_uses_gemma4_weight_index_to_keep_multimodal_mode(tmp_
 
     assert gemma4.model_kind == "vlm"
     assert gemma4.ext["vision_family_id"] == "gemma4-v1"
+    assert gemma4.ext["melix.capability.vision_weight_remap.status"] == "gemma4_embed_vision_projection"
     assert gemma4.ext.get("melix.vlm.execution_mode", "") == ""
 
 
