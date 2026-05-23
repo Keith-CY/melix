@@ -25,7 +25,7 @@ jobs:
       matrix: ${{ steps.scope_outputs.outputs.matrix }}
     steps:
       - name: Checkout head
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
@@ -101,14 +101,14 @@ jobs:
         include: ${{ fromJSON(needs.scope.outputs.matrix) }}
     steps:
       - name: Checkout base
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           repository: ${{ github.event.pull_request.base.repo.full_name }}
           ref: ${{ github.event.pull_request.base.sha }}
           path: base
 
       - name: Checkout head
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
@@ -148,7 +148,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout head
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
