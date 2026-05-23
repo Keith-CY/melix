@@ -3000,20 +3000,28 @@ def test_build_scope_report_reuses_scope_cached_registry_without_double_stat(
         encoding="utf-8",
     )
     stat_calls = 0
-    original_stat = Path.stat
+    original_os_stat = os.stat
     cache = pr_scoped_performance_module._PROBE_REGISTRY_CACHE
     selected_cache = pr_scoped_performance_module._SCOPE_SELECTED_PROBES_WITH_COVERAGE_CACHE
     pr_scoped_performance_module._load_probe_registry_for_scope_cached.cache_clear()
     cache.clear()
     selected_cache.clear()
 
-    def tracked_stat(self: Path, *args: object, **kwargs: object) -> os.stat_result:
-        nonlocal stat_calls
-        if self == registry_path:
-            stat_calls += 1
-        return original_stat(self, *args, **kwargs)
+    def fail_path_stat(self: Path, *args: object, **kwargs: object) -> os.stat_result:  # pragma: no cover
+        raise AssertionError("scope registry loader should stat the cache-key string directly")
 
-    monkeypatch.setattr(Path, "stat", tracked_stat)
+    def tracked_os_stat(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        *args: object,
+        **kwargs: object,
+    ) -> os.stat_result:
+        nonlocal stat_calls
+        if os.fspath(path) == os.fspath(registry_path):
+            stat_calls += 1
+        return original_os_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", fail_path_stat)
+    monkeypatch.setattr(os, "stat", tracked_os_stat)
 
     try:
         first = build_scope_report(
