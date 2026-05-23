@@ -24,6 +24,9 @@ struct MelixCLIParserTests {
         #expect(MelixCLIParser.usageText.contains("melix config metadata --json"))
         #expect(MelixCLIParser.usageText.contains("melix workspace preflight --manifest PATH [--output PATH] [--json]"))
         #expect(MelixCLIParser.usageText.contains("melix dataset prepare ingest --workspace-project-id ID --workspace-manifest PATH --input PATH --output-dir PATH --dataset-preparation-id ID"))
+        #expect(MelixCLIParser.usageText.contains("melix dataset prepare version --workspace-manifest PATH --ingest-receipt PATH --output-root PATH --dataset-id ID"))
+        #expect(MelixCLIParser.usageText.contains("melix dataset prepare retry-failed --workspace-manifest PATH --dataset-version PATH --output-root PATH"))
+        #expect(MelixCLIParser.usageText.contains("melix dataset prepare list-versions --workspace-manifest PATH --output-root PATH --dataset-id ID"))
         #expect(MelixCLIParser.usageText.contains("melix uri inspect URI [--json]"))
         #expect(MelixCLIParser.usageText.contains("melix recipes plan RECIPE_ID"))
     }
@@ -79,6 +82,60 @@ struct MelixCLIParserTests {
                 "/tmp/melix-workspace/reports/dataset-ingest-receipt.json",
                 "--json",
             ], "dataset.prepare.ingest"),
+            ([
+                "dataset",
+                "prepare",
+                "version",
+                "--workspace-manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--ingest-receipt",
+                "/tmp/melix-workspace/prepared/dataset-ingest-receipt.json",
+                "--output-root",
+                "/tmp/melix-workspace/datasets",
+                "--dataset-id",
+                "support-chat",
+                "--version-id",
+                "support-chat-v1",
+                "--mode",
+                "chat",
+                "--generator-model",
+                "melix.local.dataset-versioner.v1",
+                "--output-kind",
+                "training",
+                "--output-format",
+                "prompt_completion",
+                "--validation-ratio",
+                "0.2",
+                "--fail-segment-id",
+                "segment-1",
+                "--json",
+            ], "dataset.prepare.version"),
+            ([
+                "dataset",
+                "prepare",
+                "retry-failed",
+                "--workspace-manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--dataset-version",
+                "/tmp/melix-workspace/datasets/support-chat/versions/v1/dataset-version.json",
+                "--output-root",
+                "/tmp/melix-workspace/datasets",
+                "--version-id",
+                "support-chat-v2",
+                "--json",
+            ], "dataset.prepare.retry-failed"),
+            ([
+                "dataset",
+                "prepare",
+                "list-versions",
+                "--workspace-manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--output-root",
+                "/tmp/melix-workspace/datasets",
+                "--dataset-id",
+                "support-chat",
+                "--json",
+            ], "dataset.prepare.list-versions"),
             (["jobs", "list", "--json"], "jobs.list"),
             (["jobs", "show", "bench-1", "--from", "/tmp/runs", "--json"], "jobs.show"),
             (["jobs", "logs", "bench-1", "--follow", "--json"], "jobs.logs"),
@@ -107,6 +164,30 @@ struct MelixCLIParserTests {
         #expect(throws: MelixCLIError.self) {
             _ = try MelixCLIParser.parse(["config", "unknown", "--json"])
         }
+
+        let versionCommand = try MelixCLIParser.parse([
+            "dataset",
+            "prepare",
+            "version",
+            "--workspace-manifest",
+            "/tmp/melix-workspace/workspace-manifest.json",
+            "--ingest-receipt",
+            "/tmp/melix-workspace/prepared/dataset-ingest-receipt.json",
+            "--output-root",
+            "/tmp/melix-workspace/datasets",
+            "--dataset-id",
+            "support-chat",
+            "--fail-segment-id",
+            "segment-1",
+            "--fail-segment-id",
+            "segment-2",
+            "--json",
+        ])
+        guard case .datasetPrepareVersion(let versionOptions) = versionCommand else {
+            Issue.record("Expected datasetPrepareVersion command")
+            return
+        }
+        #expect(versionOptions.failSegmentIDs == ["segment-1", "segment-2"])
     }
 
     @Test("rejects malformed runtime settings and discovery commands")

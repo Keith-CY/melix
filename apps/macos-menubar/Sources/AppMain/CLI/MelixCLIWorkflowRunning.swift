@@ -288,6 +288,36 @@ extension MelixCLIWorkflowRunning {
         }
     }
 
+    func prepareDatasetVersion(options: DatasetPrepareVersionOptions) async throws -> RuntimeDatasetVersionReceiptState {
+        let command = MelixCLICommand.datasetPrepareVersion(options)
+        let output = try await run(command)
+        do {
+            return try RuntimeDatasetVersionReceiptDecoder.decode(output)
+        } catch {
+            throw MelixCLIWorkflowError.invalidJSON(commandID: command.workflowCommandID, surface: surface, output: output)
+        }
+    }
+
+    func retryFailedDatasetVersion(options: DatasetPrepareRetryFailedOptions) async throws -> RuntimeDatasetRetryReceiptState {
+        let command = MelixCLICommand.datasetPrepareRetryFailed(options)
+        let output = try await run(command)
+        do {
+            return try RuntimeDatasetRetryReceiptDecoder.decode(output)
+        } catch {
+            throw MelixCLIWorkflowError.invalidJSON(commandID: command.workflowCommandID, surface: surface, output: output)
+        }
+    }
+
+    func listDatasetVersions(options: DatasetPrepareListVersionsOptions) async throws -> RuntimeDatasetVersionListState {
+        let command = MelixCLICommand.datasetPrepareListVersions(options)
+        let output = try await run(command)
+        do {
+            return try RuntimeDatasetVersionListDecoder.decode(output)
+        } catch {
+            throw MelixCLIWorkflowError.invalidJSON(commandID: command.workflowCommandID, surface: surface, output: output)
+        }
+    }
+
     func preflightWorkspace(
         manifestPath: String,
         outputPath: String = ""

@@ -78,6 +78,12 @@ public enum MelixCLICommandCodec {
             return "dataset.remove"
         case .datasetPrepareIngest:
             return "dataset.prepare.ingest"
+        case .datasetPrepareVersion:
+            return "dataset.prepare.version"
+        case .datasetPrepareRetryFailed:
+            return "dataset.prepare.retry-failed"
+        case .datasetPrepareListVersions:
+            return "dataset.prepare.list-versions"
         case .datasetSynthetic(let options):
             return "dataset.synthetic.\(options.mode)"
         case .uriInspect:
@@ -422,6 +428,36 @@ public enum MelixCLICommandCodec {
             arguments.append(contentsOf: ["--fuzzy-dedup", options.fuzzyDedup ? "true" : "false"])
             arguments.append(contentsOf: ["--segmentation", options.segmentation ? "true" : "false"])
             appendOption("--segmentation-strategy", value: options.segmentationStrategy, into: &arguments)
+            json = options.json
+        case .datasetPrepareVersion(let options):
+            arguments = ["dataset", "prepare", "version"]
+            appendOption("--workspace-manifest", value: options.workspaceManifestPath, into: &arguments)
+            appendOption("--ingest-receipt", value: options.ingestReceiptPath, into: &arguments)
+            appendOption("--output-root", value: options.outputRoot, into: &arguments)
+            appendOption("--dataset-id", value: options.datasetID, into: &arguments)
+            appendOption("--version-id", value: options.versionID, into: &arguments)
+            appendOption("--created-at", value: options.createdAt, into: &arguments)
+            appendOption("--mode", value: options.mode, into: &arguments)
+            appendOption("--generator-model", value: options.generatorModel, into: &arguments)
+            appendOption("--output-kind", value: options.outputKind, into: &arguments)
+            appendOption("--output-format", value: options.outputFormat, into: &arguments)
+            appendOption("--validation-ratio", value: options.validationRatio, into: &arguments)
+            appendMultiOption("--fail-segment-id", values: options.failSegmentIDs, into: &arguments)
+            json = options.json
+        case .datasetPrepareRetryFailed(let options):
+            arguments = ["dataset", "prepare", "retry-failed"]
+            appendOption("--workspace-manifest", value: options.workspaceManifestPath, into: &arguments)
+            appendOption("--dataset-version", value: options.datasetVersionPath, into: &arguments)
+            appendOption("--output-root", value: options.outputRoot, into: &arguments)
+            appendOption("--version-id", value: options.versionID, into: &arguments)
+            appendOption("--created-at", value: options.createdAt, into: &arguments)
+            appendOption("--generator-model", value: options.generatorModel, into: &arguments)
+            json = options.json
+        case .datasetPrepareListVersions(let options):
+            arguments = ["dataset", "prepare", "list-versions"]
+            appendOption("--workspace-manifest", value: options.workspaceManifestPath, into: &arguments)
+            appendOption("--output-root", value: options.outputRoot, into: &arguments)
+            appendOption("--dataset-id", value: options.datasetID, into: &arguments)
             json = options.json
         case .datasetSynthetic(let options):
             arguments = ["dataset", "synthetic", options.mode]

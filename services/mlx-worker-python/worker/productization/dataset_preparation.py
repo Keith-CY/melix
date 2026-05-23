@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import csv
+from datetime import datetime, timezone
 import hashlib
 import json
 import re
@@ -13,6 +14,10 @@ from typing import Any, Iterable
 DATASET_INGEST_RECEIPT_SCHEMA_VERSION = "melix.dataset_ingest_receipt.v1"
 DATASET_INGEST_RECEIPT_FILENAME = "dataset-ingest-receipt.json"
 DATASET_INGEST_SEGMENTS_FILENAME = "segments.jsonl"
+DATASET_VERSION_SCHEMA_VERSION = "melix.dataset_version.v1"
+DATASET_QUALITY_SUMMARY_SCHEMA_VERSION = "melix.dataset_quality_summary.v1"
+DATASET_RETRY_RECEIPT_SCHEMA_VERSION = "melix.dataset_retry_receipt.v1"
+DATASET_VERSION_LIST_SCHEMA_VERSION = "melix.dataset_version_list.v1"
 
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 _PHONE_RE = re.compile(r"\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b")
@@ -32,6 +37,32 @@ class DatasetIngestRequest:
     fuzzy_dedup: bool = True
     segmentation: bool = True
     segmentation_strategy: str = "paragraph"
+
+
+@dataclass(frozen=True)
+class DatasetVersionRequest:
+    workspace_manifest_path: Path | str
+    ingest_receipt_path: Path | str
+    output_root: Path | str
+    dataset_id: str
+    version_id: str = ""
+    created_at: str = ""
+    mode: str = "chat"
+    generator_model: str = "melix.local.dataset-versioner.v1"
+    output_kind: str = "training"
+    output_format: str = "prompt_completion"
+    validation_ratio: float = 0.0
+    fail_segment_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class DatasetRetryFailedRequest:
+    workspace_manifest_path: Path | str
+    dataset_version_path: Path | str
+    output_root: Path | str
+    version_id: str = ""
+    created_at: str = ""
+    generator_model: str = ""
 
 
 def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
@@ -142,6 +173,256 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
     }
     receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return receipt
+
+
+def prepare_dataset_version(request: DatasetVersionRequest) -> dict[str, Any]:
+    started = time.perf_counter()
+    ingest_receipt_path = Path(request.ingest_receipt_path).expanduser()
+    ingest_receipt = _read_json(ingest_receipt_path)
+    segment_artifacts = ingest_receipt.get("segment_artifacts", {})
+    if not isinstance(segment_artifacts, dict) or not segment_artifacts.get("segments_path"):
+        raise ValueError("DATASET_VERSION_SOURCE_RECEIPT_MISSING: ingest receipt has no segments_path")
+    segments_path = Path(str(segment_artifacts["segments_path"])).expanduser()
+    segments = _read_jsonl(segments_path)
+    version_id = request.version_id or _default_version_id(request.dataset_id)
+    version_dir = _dataset_version_dir(request.output_root, request.dataset_id, version_id)
+    if version_dir.exists():
+        raise ValueError(f"DATASET_VERSION_OUTPUT_EXISTS: {version_dir}")
+    version_dir.mkdir(parents=True, exist_ok=False)
+
+    fail_segment_ids = set(request.fail_segment_ids)
+    successful_segments = [segment for segment in segments if segment.get("segment_id") not in fail_segment_ids]
+    failed_segments = [segment for segment in segments if segment.get("segment_id") in fail_segment_ids]
+    sample_rows = [
+        _sample_row(segment, request.output_format, request.generator_model)
+        for segment in successful_segments
+    ]
+    train_rows, validation_rows = _split_dataset_version_validation(
+        sample_rows,
+        request.validation_ratio,
+    )
+    failed_rows = [_failed_segment_row(segment) for segment in failed_segments]
+
+    samples_path = version_dir / "samples.jsonl"
+    valid_path = version_dir / "valid.jsonl"
+    failed_segments_path = version_dir / "failed-segments.jsonl"
+    manifest_path = version_dir / "manifest.json"
+    quality_summary_path = version_dir / "quality-summary.json"
+    dataset_version_path = version_dir / "dataset-version.json"
+    copied_receipt_path = version_dir / DATASET_INGEST_RECEIPT_FILENAME
+    _write_jsonl(samples_path, train_rows)
+    _write_jsonl(valid_path, validation_rows)
+    _write_jsonl(failed_segments_path, failed_rows)
+    _write_json(manifest_path, _training_package_manifest(
+        request=request,
+        version_id=version_id,
+        samples_path=samples_path,
+        valid_path=valid_path,
+        quality_summary_path=quality_summary_path,
+        train_rows=train_rows,
+        validation_rows=validation_rows,
+    ))
+    _write_json(copied_receipt_path, ingest_receipt)
+
+    quality_started = time.perf_counter()
+    quality_summary = _quality_summary(
+        request=request,
+        ingest_receipt=ingest_receipt,
+        version_id=version_id,
+        train_rows=train_rows,
+        validation_rows=validation_rows,
+        failed_count=len(failed_rows),
+        latency_ms=(time.perf_counter() - quality_started) * 1000.0,
+    )
+    _write_json(quality_summary_path, quality_summary)
+
+    elapsed_ms = (time.perf_counter() - started) * 1000.0
+    version = _dataset_version_payload(
+        request=request,
+        ingest_receipt=ingest_receipt,
+        version_id=version_id,
+        created_at=request.created_at or _utc_now(),
+        version_dir=version_dir,
+        dataset_version_path=dataset_version_path,
+        manifest_path=manifest_path,
+        samples_path=samples_path,
+        valid_path=valid_path,
+        failed_segments_path=failed_segments_path,
+        quality_summary_path=quality_summary_path,
+        train_rows=train_rows,
+        validation_rows=validation_rows,
+        failed_rows=failed_rows,
+        successful_segments=successful_segments,
+        metrics={
+            "dataset_version_write_latency_ms": elapsed_ms,
+            "quality_scoring_latency_ms": quality_summary["metrics"]["quality_scoring_latency_ms"],
+            "generated_sample_count": len(sample_rows),
+            "failed_sample_count": len(failed_rows),
+        },
+    )
+    _write_json(dataset_version_path, version)
+    return version
+
+
+def retry_failed_dataset_version(request: DatasetRetryFailedRequest) -> dict[str, Any]:
+    started = time.perf_counter()
+    base_version_path = Path(request.dataset_version_path).expanduser()
+    base_version = _read_json(base_version_path)
+    base_failed_path = Path(str(base_version.get("failed_segments_path", ""))).expanduser()
+    if not base_failed_path.exists():
+        raise ValueError(f"DATASET_VERSION_FAILED_SEGMENTS_MISSING: {base_failed_path}")
+    failed_rows = _read_jsonl(base_failed_path)
+    version_id = request.version_id or _default_version_id(str(base_version["dataset_id"]))
+    version_dir = _dataset_version_dir(request.output_root, str(base_version["dataset_id"]), version_id)
+    if version_dir.exists():
+        raise ValueError(f"DATASET_VERSION_OUTPUT_EXISTS: {version_dir}")
+    version_dir.mkdir(parents=True, exist_ok=False)
+
+    base_train_rows = _read_jsonl(Path(str(base_version.get("samples_path", ""))).expanduser())
+    base_validation_rows = _read_jsonl(Path(str(base_version.get("validation_samples_path", ""))).expanduser())
+    retry_segments = [row["segment"] for row in failed_rows if isinstance(row.get("segment"), dict)]
+    retry_rows = [
+        _sample_row(
+            segment,
+            str(base_version.get("output_format", "prompt_completion")),
+            request.generator_model or str(base_version.get("generator_model", "")),
+        )
+        for segment in retry_segments
+    ]
+    all_train_rows = [*base_train_rows, *base_validation_rows, *retry_rows]
+    new_failed_rows: list[dict[str, Any]] = []
+
+    samples_path = version_dir / "samples.jsonl"
+    valid_path = version_dir / "valid.jsonl"
+    failed_segments_path = version_dir / "failed-segments.jsonl"
+    manifest_path = version_dir / "manifest.json"
+    quality_summary_path = version_dir / "quality-summary.json"
+    dataset_version_path = version_dir / "dataset-version.json"
+    retry_receipt_path = version_dir / "dataset-retry-receipt.json"
+    _write_jsonl(samples_path, all_train_rows)
+    _write_jsonl(valid_path, [])
+    _write_jsonl(failed_segments_path, new_failed_rows)
+
+    ingest_receipt = _read_json(Path(str(base_version.get("source_receipt_path", ""))).expanduser())
+    copied_receipt_path = version_dir / DATASET_INGEST_RECEIPT_FILENAME
+    _write_json(copied_receipt_path, ingest_receipt)
+    version_request = DatasetVersionRequest(
+        workspace_manifest_path=request.workspace_manifest_path,
+        ingest_receipt_path=Path(str(base_version.get("source_receipt_path", ""))).expanduser(),
+        output_root=request.output_root,
+        dataset_id=str(base_version["dataset_id"]),
+        version_id=version_id,
+        created_at=request.created_at,
+        mode=str(base_version.get("mode", "chat")),
+        generator_model=request.generator_model or str(base_version.get("generator_model", "")),
+        output_kind=str(base_version.get("output_kind", "training")),
+        output_format=str(base_version.get("output_format", "prompt_completion")),
+        validation_ratio=0.0,
+    )
+    _write_json(manifest_path, _training_package_manifest(
+        request=version_request,
+        version_id=version_id,
+        samples_path=samples_path,
+        valid_path=valid_path,
+        quality_summary_path=quality_summary_path,
+        train_rows=all_train_rows,
+        validation_rows=[],
+    ))
+    quality_started = time.perf_counter()
+    quality_summary = _quality_summary(
+        request=version_request,
+        ingest_receipt=ingest_receipt,
+        version_id=version_id,
+        train_rows=all_train_rows,
+        validation_rows=[],
+        failed_count=0,
+        latency_ms=(time.perf_counter() - quality_started) * 1000.0,
+    )
+    _write_json(quality_summary_path, quality_summary)
+    retry_receipt = {
+        "schema_version": DATASET_RETRY_RECEIPT_SCHEMA_VERSION,
+        "base_version_id": base_version["version_id"],
+        "retry_version_id": version_id,
+        "input_failed_segment_count": len(failed_rows),
+        "retry_success_count": len(retry_rows),
+        "retry_failed_count": len(new_failed_rows),
+        "reused_successful_sample_count": len(base_train_rows) + len(base_validation_rows),
+        "rewritten_successful_sample_count": 0,
+        "failed_retry_success_rate": len(retry_rows) / len(failed_rows) if failed_rows else 1.0,
+        "dataset_version_path": str(dataset_version_path),
+        "metrics": {
+            "failed_retry_latency_ms": (time.perf_counter() - started) * 1000.0,
+            "failed_retry_success_rate": len(retry_rows) / len(failed_rows) if failed_rows else 1.0,
+        },
+    }
+    _write_json(retry_receipt_path, retry_receipt)
+    version = _dataset_version_payload(
+        request=version_request,
+        ingest_receipt=ingest_receipt,
+        version_id=version_id,
+        created_at=request.created_at or _utc_now(),
+        version_dir=version_dir,
+        dataset_version_path=dataset_version_path,
+        manifest_path=manifest_path,
+        samples_path=samples_path,
+        valid_path=valid_path,
+        failed_segments_path=failed_segments_path,
+        quality_summary_path=quality_summary_path,
+        train_rows=all_train_rows,
+        validation_rows=[],
+        failed_rows=[],
+        successful_segments=retry_segments,
+        metrics={
+            "dataset_version_write_latency_ms": retry_receipt["metrics"]["failed_retry_latency_ms"],
+            "quality_scoring_latency_ms": quality_summary["metrics"]["quality_scoring_latency_ms"],
+            "generated_sample_count": len(retry_rows),
+            "failed_sample_count": 0,
+            "failed_retry_success_rate": retry_receipt["failed_retry_success_rate"],
+        },
+    )
+    version["successful_segment_ids"] = [
+        *list(base_version.get("successful_segment_ids", [])),
+        *[str(segment.get("segment_id", "")) for segment in retry_segments],
+    ]
+    _write_json(dataset_version_path, version)
+    return retry_receipt
+
+
+def list_dataset_versions(
+    *,
+    workspace_manifest_path: Path | str,
+    output_root: Path | str,
+    dataset_id: str,
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    versions_root = Path(output_root).expanduser() / dataset_id / "versions"
+    versions: list[dict[str, Any]] = []
+    for manifest_path in sorted(versions_root.glob("*/dataset-version.json")):
+        version = _read_json(manifest_path)
+        versions.append(
+            {
+                "dataset_id": version.get("dataset_id", ""),
+                "version_id": version.get("version_id", ""),
+                "created_at": version.get("created_at", ""),
+                "status": version.get("status", ""),
+                "train_count": version.get("train_count", 0),
+                "validation_count": version.get("validation_count", 0),
+                "failed_count": version.get("failed_count", 0),
+                "quality_summary_path": version.get("quality_summary_path", ""),
+                "dataset_version_path": str(manifest_path),
+            }
+        )
+    versions.sort(key=lambda item: (str(item["created_at"]), str(item["version_id"])))
+    return {
+        "schema_version": DATASET_VERSION_LIST_SCHEMA_VERSION,
+        "workspace_manifest_path": str(Path(workspace_manifest_path)),
+        "dataset_id": dataset_id,
+        "versions": versions,
+        "metrics": {
+            "dataset_version_listing_latency_ms": (time.perf_counter() - started) * 1000.0,
+            "dataset_version_count": len(versions),
+        },
+    }
 
 
 def _iter_source_records(
@@ -370,3 +651,248 @@ def _write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> None:
     with path.open("w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+def _dataset_version_dir(output_root: Path | str, dataset_id: str, version_id: str) -> Path:
+    return Path(output_root).expanduser() / _safe_component(dataset_id) / "versions" / _safe_component(version_id)
+
+
+def _safe_component(value: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-")
+    if not normalized:
+        raise ValueError("DATASET_VERSION_MANIFEST_INVALID: path component is empty")
+    return normalized
+
+
+def _default_version_id(dataset_id: str) -> str:
+    return f"{_safe_component(dataset_id)}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _sample_row(segment: dict[str, Any], output_format: str, generator_model: str) -> dict[str, Any]:
+    text = _normalize_text(str(segment.get("text", "")))
+    segment_id = str(segment.get("segment_id", ""))
+    row = {
+        "sample_id": f"sample-{segment_id}",
+        "source_segment_id": segment_id,
+        "source_id": str(segment.get("source_id", "")),
+        "source_uri": str(segment.get("source_uri", "")),
+        "generator_model": generator_model,
+        "metadata": {
+            "source_kind": str(segment.get("source_kind", "")),
+            "generation_policy_id": "melix.dataset_version.local.v1",
+        },
+    }
+    if output_format == "chat_messages":
+        row["messages"] = [
+            {"role": "user", "content": f"Create a training answer from segment {segment_id}."},
+            {"role": "assistant", "content": text},
+        ]
+    else:
+        row["prompt"] = f"Create a training answer from segment {segment_id}."
+        row["completion"] = text
+    return row
+
+
+def _failed_segment_row(segment: dict[str, Any]) -> dict[str, Any]:
+    segment_id = str(segment.get("segment_id", ""))
+    return {
+        "id": f"dataset-version-generation-failed-{_safe_component(segment_id)}",
+        "code": "DATASET_VERSION_GENERATION_FAILED",
+        "segment_id": segment_id,
+        "detail": "The segment was selected for deterministic failed-generation retry coverage.",
+        "recovery_hint": "Run melix dataset prepare retry-failed to regenerate only failed segments.",
+        "segment": segment,
+    }
+
+
+def _split_dataset_version_validation(
+    rows: list[dict[str, Any]],
+    validation_ratio: float,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if validation_ratio <= 0 or len(rows) < 2:
+        return list(rows), []
+    validation_count = int(round(len(rows) * validation_ratio))
+    validation_count = min(max(validation_count, 1), len(rows) - 1)
+    validation_segment_ids = {
+        row["source_segment_id"]
+        for row in sorted(rows, key=lambda item: hashlib.sha256(str(item["source_segment_id"]).encode("utf-8")).hexdigest())[:validation_count]
+    }
+    train_rows: list[dict[str, Any]] = []
+    validation_rows: list[dict[str, Any]] = []
+    for row in rows:
+        if row["source_segment_id"] in validation_segment_ids:
+            validation_rows.append(row)
+        else:
+            train_rows.append(row)
+    return train_rows, validation_rows
+
+
+def _training_package_manifest(
+    *,
+    request: DatasetVersionRequest,
+    version_id: str,
+    samples_path: Path,
+    valid_path: Path,
+    quality_summary_path: Path,
+    train_rows: list[dict[str, Any]],
+    validation_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "schema_version": "melix.training_dataset_package.v1",
+        "dataset_id": request.dataset_id,
+        "format": request.output_format,
+        "sample_count": len(train_rows),
+        "validation_sample_count": len(validation_rows),
+        "version": version_id,
+        "build_ready": True,
+        "preview_only": False,
+        "validation_strategy": "deterministic_hash_ratio" if validation_rows else "none",
+        "validation_ratio": request.validation_ratio,
+        "response_only_supported": request.output_format in {"chat_messages", "prompt_completion"},
+        "samples_path": str(samples_path),
+        "validation_samples_path": str(valid_path),
+        "quality_summary_path": str(quality_summary_path),
+    }
+
+
+def _quality_summary(
+    *,
+    request: DatasetVersionRequest,
+    ingest_receipt: dict[str, Any],
+    version_id: str,
+    train_rows: list[dict[str, Any]],
+    validation_rows: list[dict[str, Any]],
+    failed_count: int,
+    latency_ms: float,
+) -> dict[str, Any]:
+    success_count = len(train_rows) + len(validation_rows)
+    total_count = success_count + failed_count
+    success_rate = success_count / total_count if total_count else 0.0
+    score = round(success_rate, 6)
+    lengths = [_sample_output_length(row) for row in [*train_rows, *validation_rows]]
+    quality_controls = ingest_receipt.get("quality_control_summary", {})
+    source_record_count = float(quality_controls.get("source_record_count", 0) or 0)
+    exact_dedup_count = float(quality_controls.get("exact_dedup_count", 0) or 0)
+    fuzzy_dedup_count = float(quality_controls.get("fuzzy_dedup_count", 0) or 0)
+    blocking_reasons = ["failed_generation"] if failed_count else []
+    return {
+        "schema_version": DATASET_QUALITY_SUMMARY_SCHEMA_VERSION,
+        "dataset_id": request.dataset_id,
+        "version_id": version_id,
+        "score": score,
+        "grade": _quality_grade(score),
+        "success_rate": success_rate,
+        "failed_count": failed_count,
+        "train_count": len(train_rows),
+        "validation_count": len(validation_rows),
+        "pii_mask_count": int(quality_controls.get("pii_mask_count", 0) or 0),
+        "dedup_ratio": (exact_dedup_count + fuzzy_dedup_count) / source_record_count if source_record_count else 0,
+        "mean_output_length": sum(lengths) / len(lengths) if lengths else 0,
+        "p95_output_length": _p95(lengths),
+        "policy_id": "melix.dataset_quality.local.v1",
+        "review_notes": [],
+        "blocking_reasons": blocking_reasons,
+        "metrics": {
+            "quality_scoring_latency_ms": latency_ms,
+            "generated_sample_count": success_count,
+            "failed_sample_count": failed_count,
+        },
+    }
+
+
+def _quality_grade(score: float) -> str:
+    if score >= 0.95:
+        return "A"
+    if score >= 0.85:
+        return "B"
+    if score >= 0.60:
+        return "C"
+    if score > 0:
+        return "D"
+    return "F"
+
+
+def _sample_output_length(row: dict[str, Any]) -> int:
+    if "completion" in row:
+        return len(str(row["completion"]))
+    messages = row.get("messages", [])
+    if isinstance(messages, list):
+        return sum(len(str(item.get("content", ""))) for item in messages if isinstance(item, dict))
+    return 0
+
+
+def _p95(values: list[int]) -> int:
+    if not values:
+        return 0
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, int(round((len(ordered) - 1) * 0.95)))
+    return ordered[index]
+
+
+def _dataset_version_payload(
+    *,
+    request: DatasetVersionRequest,
+    ingest_receipt: dict[str, Any],
+    version_id: str,
+    created_at: str,
+    version_dir: Path,
+    dataset_version_path: Path,
+    manifest_path: Path,
+    samples_path: Path,
+    valid_path: Path,
+    failed_segments_path: Path,
+    quality_summary_path: Path,
+    train_rows: list[dict[str, Any]],
+    validation_rows: list[dict[str, Any]],
+    failed_rows: list[dict[str, Any]],
+    successful_segments: list[dict[str, Any]],
+    metrics: dict[str, float | int],
+) -> dict[str, Any]:
+    quality_controls = ingest_receipt.get("quality_control_summary", {})
+    return {
+        "schema_version": DATASET_VERSION_SCHEMA_VERSION,
+        "status": "ready",
+        "dataset_id": request.dataset_id,
+        "version_id": version_id,
+        "created_at": created_at,
+        "workspace_project_id": str(ingest_receipt.get("workspace_project_id", "")),
+        "workspace_manifest_path": str(Path(request.workspace_manifest_path)),
+        "source_receipt_path": str(Path(request.ingest_receipt_path)),
+        "source_file_count": int(quality_controls.get("source_file_count", 0) or 0),
+        "source_inventory": list(ingest_receipt.get("source_inventory", [])),
+        "source_record_count": int(quality_controls.get("source_record_count", 0) or 0),
+        "segment_count": int(quality_controls.get("segment_count", len(successful_segments) + len(failed_rows)) or 0),
+        "mode": request.mode,
+        "generator_model": request.generator_model,
+        "output_kind": request.output_kind,
+        "output_format": request.output_format,
+        "train_count": len(train_rows),
+        "validation_count": len(validation_rows),
+        "failed_count": len(failed_rows),
+        "successful_segment_ids": [str(segment.get("segment_id", "")) for segment in successful_segments],
+        "failed_segment_ids": [str(row.get("segment_id", "")) for row in failed_rows],
+        "version_root_path": str(version_dir),
+        "dataset_version_path": str(dataset_version_path),
+        "quality_summary_path": str(quality_summary_path),
+        "package_manifest_path": str(manifest_path),
+        "samples_path": str(samples_path),
+        "validation_samples_path": str(valid_path),
+        "failed_segments_path": str(failed_segments_path),
+        "metrics": metrics,
+    }

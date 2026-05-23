@@ -147,6 +147,7 @@ The dataset version schema is `melix.dataset_version.v1` and must include:
 - `workspace_manifest_path`
 - `source_receipt_path`
 - `source_file_count`
+- `source_inventory`
 - `source_record_count`
 - `segment_count`
 - `mode`
@@ -235,9 +236,13 @@ melix dataset prepare version \
   --workspace-manifest path/to/workspace-manifest.json \
   --ingest-receipt path/to/ingest-receipt.json \
   --dataset-id support-chat \
+  --output-root path/to/datasets \
+  --version-id support-chat-v1 \
   --mode chat \
+  --generator-model melix.local.dataset-versioner.v1 \
   --output-kind training \
   --output-format chat_messages \
+  --validation-ratio 0.2 \
   --json
 ```
 
@@ -245,6 +250,17 @@ melix dataset prepare version \
 melix dataset prepare retry-failed \
   --workspace-manifest path/to/workspace-manifest.json \
   --dataset-version path/to/dataset-version.json \
+  --output-root path/to/datasets \
+  --version-id support-chat-v2 \
+  --generator-model melix.local.dataset-versioner.v1 \
+  --json
+```
+
+```bash
+melix dataset prepare list-versions \
+  --workspace-manifest path/to/workspace-manifest.json \
+  --dataset-id support-chat \
+  --output-root path/to/datasets \
   --json
 ```
 
@@ -276,6 +292,27 @@ The first slice supports UTF-8 local files, extracted `.pdf.txt` and
 unsupported-source and empty-source failures in `operator_failures` while
 keeping parse and policy-specific failure codes reserved for deeper parser and
 policy validation follow-ups.
+
+The #1496 implementation slice adds an offline deterministic dataset versioner
+on top of the #1495 ingest receipt. `prepare_dataset_version(...)` reads
+`segments.jsonl`, writes `datasets/<dataset-id>/versions/<version-id>/`, and
+materializes `dataset-version.json`, `manifest.json`, `samples.jsonl`,
+`valid.jsonl`, `failed-segments.jsonl`, `quality-summary.json`, and a local
+copy of `ingest-receipt.json`. First-slice generation is local and
+schema-backed: every successful segment becomes a deterministic
+`prompt_completion` or `chat_messages` training row, while explicit
+`fail_segment_ids` provide a reproducible failure path for tests and operator
+retry. `retry_failed_dataset_version(...)` reads the base version manifest and
+failed-segment file, copies successful sample rows unchanged into a new version,
+regenerates only failed segment ids, and writes `dataset-retry-receipt.json`
+with `rewritten_successful_sample_count` fixed at `0`. `list_dataset_versions(...)`
+reads version manifests from the dataset root, sorts by `created_at` and
+`version_id`, and records listing latency. The matching operator surface adds
+`melix dataset prepare version`, `retry-failed`, and `list-versions`, plus
+Desktop decoders for dataset version, retry receipt, and quality summary states.
+Report evidence consumes the same schema-backed paths by rendering
+`dataset_version_path`, `dataset_quality_summary_path`, and
+`dataset_ingest_receipt_path` artifact rows when they appear in run evidence.
 
 #1496 is complete when:
 

@@ -8699,6 +8699,182 @@ struct MelixCLIRunnerTests {
         ])
     }
 
+    @Test("dataset prepare version commands shell out through the Python version builder")
+    func datasetPrepareVersionCommandsShellOutThroughPythonVersionBuilder() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(
+            responses: [
+                """
+                {
+                  "schema_version": "melix.dataset_version.v1",
+                  "status": "ready",
+                  "dataset_id": "support-chat",
+                  "version_id": "support-chat-v1",
+                  "train_count": 2,
+                  "validation_count": 1,
+                  "failed_count": 1
+                }
+                """,
+                """
+                {
+                  "schema_version": "melix.dataset_retry_receipt.v1",
+                  "base_version_id": "support-chat-v1",
+                  "retry_version_id": "support-chat-v2",
+                  "input_failed_segment_count": 1,
+                  "retry_success_count": 1,
+                  "retry_failed_count": 0,
+                  "reused_successful_sample_count": 3,
+                  "rewritten_successful_sample_count": 0,
+                  "failed_retry_success_rate": 1.0
+                }
+                """,
+                """
+                {
+                  "schema_version": "melix.dataset_version_list.v1",
+                  "dataset_id": "support-chat",
+                  "versions": [
+                    {
+                      "version_id": "support-chat-v1",
+                      "created_at": "2026-05-24T01:00:00Z"
+                    },
+                    {
+                      "version_id": "support-chat-v2",
+                      "created_at": "2026-05-24T02:00:00Z"
+                    }
+                  ],
+                  "metrics": {
+                    "dataset_version_listing_latency_ms": 0.25,
+                    "dataset_version_count": 2
+                  }
+                }
+                """,
+            ]
+        )
+        let runner = MelixCLIRunner(client: client, commandExecutor: executor.run)
+
+        let versionOutput = try await runner.run(
+            .datasetPrepareVersion(
+                .init(
+                    workspaceManifestPath: "/tmp/melix-workspace/workspace-manifest.json",
+                    ingestReceiptPath: "/tmp/melix-workspace/prepared/dataset-ingest-receipt.json",
+                    outputRoot: "/tmp/melix-workspace/datasets",
+                    datasetID: "support-chat",
+                    versionID: "support-chat-v1",
+                    createdAt: "2026-05-24T01:00:00Z",
+                    mode: "chat",
+                    generatorModel: "melix.local.dataset-versioner.v1",
+                    outputKind: "training",
+                    outputFormat: "prompt_completion",
+                    validationRatio: "0.2",
+                    failSegmentIDs: ["segment-1"],
+                    json: true
+                )
+            )
+        )
+        let retryOutput = try await runner.run(
+            .datasetPrepareRetryFailed(
+                .init(
+                    workspaceManifestPath: "/tmp/melix-workspace/workspace-manifest.json",
+                    datasetVersionPath: "/tmp/melix-workspace/datasets/support-chat/versions/support-chat-v1/dataset-version.json",
+                    outputRoot: "/tmp/melix-workspace/datasets",
+                    versionID: "support-chat-v2",
+                    createdAt: "2026-05-24T02:00:00Z",
+                    generatorModel: "melix.local.dataset-versioner.v1",
+                    json: true
+                )
+            )
+        )
+        let listOutput = try await runner.run(
+            .datasetPrepareListVersions(
+                .init(
+                    workspaceManifestPath: "/tmp/melix-workspace/workspace-manifest.json",
+                    outputRoot: "/tmp/melix-workspace/datasets",
+                    datasetID: "support-chat",
+                    json: true
+                )
+            )
+        )
+
+        #expect(try #require(parseJSONObject(versionOutput))["schema_version"] as? String == "melix.dataset_version.v1")
+        #expect(try #require(parseJSONObject(retryOutput))["schema_version"] as? String == "melix.dataset_retry_receipt.v1")
+        #expect(try #require(parseJSONObject(listOutput))["schema_version"] as? String == "melix.dataset_version_list.v1")
+        let commands = await executor.commands
+        #expect(commands == [
+            [
+                "run",
+                "--project",
+                "services/mlx-worker-python",
+                "--extra",
+                "mlx",
+                "python",
+                "scripts/dataset_preparation_version.py",
+                "version",
+                "--workspace-manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--ingest-receipt",
+                "/tmp/melix-workspace/prepared/dataset-ingest-receipt.json",
+                "--output-root",
+                "/tmp/melix-workspace/datasets",
+                "--dataset-id",
+                "support-chat",
+                "--version-id",
+                "support-chat-v1",
+                "--created-at",
+                "2026-05-24T01:00:00Z",
+                "--mode",
+                "chat",
+                "--generator-model",
+                "melix.local.dataset-versioner.v1",
+                "--output-kind",
+                "training",
+                "--output-format",
+                "prompt_completion",
+                "--validation-ratio",
+                "0.2",
+                "--fail-segment-id",
+                "segment-1",
+            ],
+            [
+                "run",
+                "--project",
+                "services/mlx-worker-python",
+                "--extra",
+                "mlx",
+                "python",
+                "scripts/dataset_preparation_version.py",
+                "retry-failed",
+                "--workspace-manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--dataset-version",
+                "/tmp/melix-workspace/datasets/support-chat/versions/support-chat-v1/dataset-version.json",
+                "--output-root",
+                "/tmp/melix-workspace/datasets",
+                "--version-id",
+                "support-chat-v2",
+                "--created-at",
+                "2026-05-24T02:00:00Z",
+                "--generator-model",
+                "melix.local.dataset-versioner.v1",
+            ],
+            [
+                "run",
+                "--project",
+                "services/mlx-worker-python",
+                "--extra",
+                "mlx",
+                "python",
+                "scripts/dataset_preparation_version.py",
+                "list-versions",
+                "--workspace-manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--output-root",
+                "/tmp/melix-workspace/datasets",
+                "--dataset-id",
+                "support-chat",
+            ],
+        ])
+    }
+
     @Test("workspace preflight rejects an empty manifest path before dispatch")
     func workspacePreflightRejectsEmptyManifestPathBeforeDispatch() async throws {
         let client = StubControlPlaneXPCClient()
