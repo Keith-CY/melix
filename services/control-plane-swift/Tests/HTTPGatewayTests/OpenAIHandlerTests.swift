@@ -1810,6 +1810,8 @@ struct OpenAIHandlerTests {
         model.settings.accelerationProfileID = "structured-user"
         model.settings.ext["melix.acceleration.supported_modes"] = "baseline,sparse_prefill"
         model.settings.ext["melix.acceleration.target_capability"] = "sparse_prefill"
+        model.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-sparse-prefill-v1"
+        model.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
         let catalog = ModelCatalog(seedModels: [model])
         let workerClient = ScriptedWorkerClient(events: [
             makeCompletedEvent(requestID: "req-sparse-prefill", seq: 1, finishReason: "stop", assistantText: "done"),

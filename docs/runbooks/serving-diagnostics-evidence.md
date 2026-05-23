@@ -79,6 +79,26 @@ available:
 - `acceleration_profile_id`
 - `melix.gateway.acceleration_profile`
 
+Profile proof and admission receipts should also appear in effective config and
+diagnostics surfaces when profile admission was evaluated:
+
+- `requested_profile`
+- `effective_profile`
+- `profile_mode`
+- `proof_matrix_id`
+- `verification_status`
+- `profile_admission_status`
+- `fallback_reason`
+- `recovery_hint`
+
+The default `balanced` profile is a baseline serving policy and does not require
+a proof row. Optimized or non-baseline profiles require a passing proof row
+before Melix admits the profile for serving. If the proof row is missing or did
+not pass, diagnostics should report `profile_admission_status` as
+`experimental_unverified` or `refused`, keep the effective profile at a safe
+baseline when a fallback is used, and include a recovery hint that points the
+operator to a passing proof matrix row.
+
 ## Bundle Layout
 
 Serving diagnostics bundles are written under:
@@ -170,6 +190,14 @@ metadata into execution ext fields:
 - `melix.acceleration.unsupported_reason`
 - `melix.acceleration.state`
 - `melix.acceleration.recovery_hint`
+- `melix.acceleration.profile.requested_profile`
+- `melix.acceleration.profile.effective_profile`
+- `melix.acceleration.profile.profile_mode`
+- `melix.acceleration.profile.proof_matrix_id`
+- `melix.acceleration.profile.verification_status`
+- `melix.acceleration.profile.profile_admission_status`
+- `melix.acceleration.profile.fallback_reason`
+- `melix.acceleration.profile.recovery_hint`
 
 ## Lightweight Status Diagnostics
 

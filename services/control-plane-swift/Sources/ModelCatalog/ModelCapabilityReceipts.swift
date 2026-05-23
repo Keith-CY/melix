@@ -5,9 +5,25 @@ import MelixWorkerProtocol
 public struct AccelerationReceiptValidation: Sendable, Equatable {
     public let ok: Bool
     public let receipt: Melix_Controlplane_V1_AccelerationCapabilityReceipt
+    public let profileReceipt: ServingProfileAdmissionReceipt
     public let unsupportedReason: Melix_Controlplane_V1_UnsupportedCapabilityReason
     public let message: String
     public let recoveryHint: String
+}
+
+public struct ServingProfileAdmissionReceipt: Sendable, Equatable {
+    public let requestedProfile: String
+    public let effectiveProfile: String
+    public let profileMode: String
+    public let proofMatrixID: String
+    public let verificationStatus: String
+    public let profileAdmissionStatus: String
+    public let fallbackReason: String
+    public let recoveryHint: String
+
+    public var isAdmitted: Bool {
+        profileAdmissionStatus == "admitted"
+    }
 }
 
 public enum ModelCapabilityReceipts {
@@ -122,12 +138,18 @@ public enum ModelCapabilityReceipts {
     public static func validateAcceleration(
         model: Melix_Controlplane_V1_ModelSummary,
         requestedMode: Melix_Controlplane_V1_AccelerationMode,
-        draftModelID: String
+        draftModelID: String,
+        requestedProfileID: String? = nil
     ) -> AccelerationReceiptValidation {
         let receipt = accelerationReceipt(
             for: model,
             requestedMode: requestedMode,
             draftModelID: draftModelID
+        )
+        let profileReceipt = profileAdmissionReceipt(
+            for: model,
+            requestedMode: requestedMode,
+            requestedProfileID: requestedProfileID
         )
         guard receipt.state == .capabilitySupported else {
             let reason = receipt.unsupportedReason == .unspecified
@@ -136,16 +158,91 @@ public enum ModelCapabilityReceipts {
             return AccelerationReceiptValidation(
                 ok: false,
                 receipt: receipt,
+                profileReceipt: profileReceipt,
                 unsupportedReason: reason,
                 message: refusalMessage(reason: reason, receipt: receipt, draftModelID: draftModelID),
                 recoveryHint: receipt.recoveryHint
             )
         }
+        guard profileReceipt.isAdmitted else {
+            return AccelerationReceiptValidation(
+                ok: false,
+                receipt: receipt,
+                profileReceipt: profileReceipt,
+                unsupportedReason: .unsupportedReasonExperimentalUnverified,
+                message: "Serving profile \(profileReceipt.requestedProfile) requires a passing proof matrix row before optimized admission.",
+                recoveryHint: profileReceipt.recoveryHint
+            )
+        }
         return AccelerationReceiptValidation(
             ok: true,
             receipt: receipt,
+            profileReceipt: profileReceipt,
             unsupportedReason: .unsupportedReasonNone,
             message: "",
+            recoveryHint: ""
+        )
+    }
+
+    public static func profileAdmissionReceipt(
+        for model: Melix_Controlplane_V1_ModelSummary,
+        requestedMode: Melix_Controlplane_V1_AccelerationMode,
+        requestedProfileID: String? = nil
+    ) -> ServingProfileAdmissionReceipt {
+        let normalizedProfileID = ServingAccelerationProfiles.normalizeProfileID(requestedProfileID)
+            ?? ServingAccelerationProfiles.normalizeProfileID(model.settings.accelerationProfileID)
+            ?? ServingAccelerationProfiles.defaultProfileID
+        let profile = ServingAccelerationProfiles.profile(id: normalizedProfileID)
+        let ext = model.settings.ext
+        let requestedMode = normalizedAccelerationMode(requestedMode)
+        let profileMode = ext["melix.acceleration.profile.profile_mode"]?.nilIfEmpty
+            ?? (requestedMode == .baseline && profile.accelerationMode == .baseline ? "default" : "optimized")
+        let proofMatrixID = ext["melix.acceleration.profile.proof_matrix_id"]?.nilIfEmpty ?? ""
+        let explicitVerificationStatus = ext["melix.acceleration.profile.verification_status"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+            .nilIfEmpty
+        let requiresProof = profileMode != "default" || requestedMode != .baseline || profile.accelerationMode != .baseline
+
+        guard requiresProof else {
+            return ServingProfileAdmissionReceipt(
+                requestedProfile: normalizedProfileID,
+                effectiveProfile: normalizedProfileID,
+                profileMode: profileMode,
+                proofMatrixID: proofMatrixID,
+                verificationStatus: "not_required",
+                profileAdmissionStatus: "admitted",
+                fallbackReason: "",
+                recoveryHint: ""
+            )
+        }
+
+        let verificationStatus = explicitVerificationStatus ?? (proofMatrixID.isEmpty ? "missing" : "failed")
+        guard !proofMatrixID.isEmpty, verificationStatus == "passed" else {
+            let fallbackReason = verificationStatus == "missing"
+                ? "experimental_unverified"
+                : "verification_failed"
+            return ServingProfileAdmissionReceipt(
+                requestedProfile: normalizedProfileID,
+                effectiveProfile: ServingAccelerationProfiles.defaultProfileID,
+                profileMode: profileMode,
+                proofMatrixID: proofMatrixID,
+                verificationStatus: verificationStatus,
+                profileAdmissionStatus: verificationStatus == "missing" ? "experimental_unverified" : "refused",
+                fallbackReason: fallbackReason,
+                recoveryHint: "Attach a passing proof matrix row before enabling this profile."
+            )
+        }
+
+        return ServingProfileAdmissionReceipt(
+            requestedProfile: normalizedProfileID,
+            effectiveProfile: normalizedProfileID,
+            profileMode: profileMode,
+            proofMatrixID: proofMatrixID,
+            verificationStatus: "passed",
+            profileAdmissionStatus: "admitted",
+            fallbackReason: "",
             recoveryHint: ""
         )
     }
@@ -162,7 +259,8 @@ public enum ModelCapabilityReceipts {
     }
 
     public static func accelerationAuditMetadata(
-        _ receipt: Melix_Controlplane_V1_AccelerationCapabilityReceipt
+        _ receipt: Melix_Controlplane_V1_AccelerationCapabilityReceipt,
+        profileReceipt: ServingProfileAdmissionReceipt? = nil
     ) -> [String: String] {
         var metadata = [
             "melix.capability.receipt_schema": schemaVersion,
@@ -180,7 +278,25 @@ public enum ModelCapabilityReceipts {
         if !receipt.recoveryHint.isEmpty {
             metadata["melix.acceleration.recovery_hint"] = receipt.recoveryHint
         }
+        if let profileReceipt {
+            metadata.merge(profileAdmissionAuditMetadata(profileReceipt), uniquingKeysWith: { _, newValue in newValue })
+        }
         return metadata
+    }
+
+    public static func profileAdmissionAuditMetadata(
+        _ receipt: ServingProfileAdmissionReceipt
+    ) -> [String: String] {
+        [
+            "melix.acceleration.profile.requested_profile": receipt.requestedProfile,
+            "melix.acceleration.profile.effective_profile": receipt.effectiveProfile,
+            "melix.acceleration.profile.profile_mode": receipt.profileMode,
+            "melix.acceleration.profile.proof_matrix_id": receipt.proofMatrixID,
+            "melix.acceleration.profile.verification_status": receipt.verificationStatus,
+            "melix.acceleration.profile.profile_admission_status": receipt.profileAdmissionStatus,
+            "melix.acceleration.profile.fallback_reason": receipt.fallbackReason,
+            "melix.acceleration.profile.recovery_hint": receipt.recoveryHint,
+        ]
     }
 
     public static func unsupportedReasonIdentifier(

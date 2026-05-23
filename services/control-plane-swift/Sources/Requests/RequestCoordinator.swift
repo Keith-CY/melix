@@ -1831,26 +1831,19 @@ public actor RequestCoordinator {
         let requestedMode = ModelCapabilityReceipts.controlPlaneAccelerationMode(
             from: workerRequest.execution.acceleration.mode
         )
-        let receipt: Melix_Controlplane_V1_AccelerationCapabilityReceipt
-        let accelerationRefusal: AccelerationReceiptValidation?
-        if requestedMode == .baseline || requestedMode == .unspecified {
-            receipt = ModelCapabilityReceipts.accelerationReceipt(
-                for: model,
-                requestedMode: requestedMode,
-                draftModelID: workerRequest.execution.acceleration.draftModelID
-            )
-            accelerationRefusal = nil
-        } else {
-            let validation = ModelCapabilityReceipts.validateAcceleration(
-                model: model,
-                requestedMode: requestedMode,
-                draftModelID: workerRequest.execution.acceleration.draftModelID
-            )
-            receipt = validation.receipt
-            accelerationRefusal = validation.ok ? nil : validation
-        }
+        let validation = ModelCapabilityReceipts.validateAcceleration(
+            model: model,
+            requestedMode: requestedMode,
+            draftModelID: workerRequest.execution.acceleration.draftModelID,
+            requestedProfileID: workerRequest.execution.acceleration.profileID
+        )
+        let receipt = validation.receipt
+        let accelerationRefusal: AccelerationReceiptValidation? = validation.ok ? nil : validation
         workerRequest.execution.ext.merge(
-            ModelCapabilityReceipts.accelerationAuditMetadata(receipt),
+            ModelCapabilityReceipts.accelerationAuditMetadata(
+                receipt,
+                profileReceipt: validation.profileReceipt
+            ),
             uniquingKeysWith: { _, receiptValue in receiptValue }
         )
 
