@@ -4,7 +4,12 @@ from worker.productization.probe_policy_overhead import (
     NoOpProbeRecorder,
     measure_no_op_probe_policy_overhead,
 )
-from worker.productization.probe_policy import ProbeMode, ProbePolicy, probe_policy_from_env
+from worker.productization.probe_policy import (
+    ProbeMode,
+    ProbePolicy,
+    _probe_policy_from_uncached_string,
+    probe_policy_from_env,
+)
 
 
 class _EmptyEnvMapping(dict[str, str]):
@@ -79,6 +84,18 @@ def test_probe_policy_empty_env_uses_production_default() -> None:
     assert policy.source_value == ""
     assert policy.fallback_applied is False
     assert policy.telemetry_enabled is False
+
+
+def test_probe_policy_reuses_normalized_string_cache_for_invalid_values() -> None:
+    _probe_policy_from_uncached_string.cache_clear()
+    invalid_policy = ProbePolicy.from_value("Definitely-Not-Valid")
+
+    assert invalid_policy.mode is ProbeMode.MINIMAL
+    assert invalid_policy.source_value == "definitely-not-valid"
+    assert invalid_policy.fallback_applied is True
+    assert ProbePolicy.from_value("Definitely-Not-Valid") is invalid_policy
+    assert _probe_policy_from_uncached_string.cache_info().hits == 1
+    assert ProbePolicy.from_value("   ") is ProbePolicy.from_value("")
 
 
 def test_probe_policy_empty_values_reuse_default_policy_cache() -> None:
