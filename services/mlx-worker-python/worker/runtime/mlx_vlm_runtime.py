@@ -4,6 +4,7 @@ from copy import copy
 from dataclasses import dataclass, field, replace
 import hashlib
 import importlib.util
+import inspect
 import logging
 import os
 from queue import Queue
@@ -821,6 +822,46 @@ def _gemma4_loaded_execution_mode(model: Any, processor: Any) -> str:
     return "text_backed"
 
 
+def _callable_accepts_positional_arg_count(callable_obj: Any, arg_count: int) -> bool:
+    try:
+        signature = inspect.signature(callable_obj)
+    except (TypeError, ValueError):
+        return True
+
+    positional_capacity = 0
+    for parameter in signature.parameters.values():
+        if parameter.kind == inspect.Parameter.VAR_POSITIONAL:
+            return True
+        if parameter.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            positional_capacity += 1
+    return positional_capacity >= arg_count
+
+
+def _load_tokenizer_with_supported_hints(load_tokenizer_fn: Any, model_path: Path) -> Any:
+    kwargs: dict[str, Any] = {}
+    if _callable_accepts_kwarg(load_tokenizer_fn, "return_tokenizer"):
+        kwargs["return_tokenizer"] = True
+    return load_tokenizer_fn(model_path, **kwargs)
+
+
+def _load_processor_with_supported_hints(
+    load_processor_fn: Any,
+    model_path: Path,
+    *,
+    eos_token_ids: Any,
+) -> Any:
+    args: tuple[Any, ...] = (model_path, True)
+    if not _callable_accepts_positional_arg_count(load_processor_fn, 2):
+        args = (model_path,)
+    kwargs: dict[str, Any] = {}
+    if _callable_accepts_kwarg(load_processor_fn, "eos_token_ids"):
+        kwargs["eos_token_ids"] = eos_token_ids
+    return load_processor_fn(*args, **kwargs)
+
+
 def _patch_gemma4_scaled_linear_quantization() -> None:
     import mlx.nn as nn
     import mlx_vlm.models.gemma4.language as gemma4_language
@@ -1062,10 +1103,7 @@ class AutoMLXVLMBackend:
                 weights=weights,
             )
             processor = _CallableTokenizerProcessor(
-                load_tokenizer(
-                    model_path,
-                    return_tokenizer=True,
-                )
+                _load_tokenizer_with_supported_hints(load_tokenizer, model_path)
             )
             return model, processor, "text_backed"
 
@@ -1119,9 +1157,9 @@ class AutoMLXVLMBackend:
         ]
         model.load_weights(filtered_weights)
 
-        processor = load_processor(
+        processor = _load_processor_with_supported_hints(
+            load_processor,
             model_path,
-            True,
             eos_token_ids=getattr(model.config, "eos_token_id", None),
         )
         execution_mode = "text_backed"

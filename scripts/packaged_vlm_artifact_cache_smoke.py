@@ -7,6 +7,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -18,6 +19,7 @@ from worker.model_registry.catalog import WorkerModelCatalog
 from worker.productization.packaged_vlm_cache import (
     build_packaged_vlm_cache_receipt,
     packaged_vlm_artifact_specs,
+    packaged_vlm_processor_modality_counts,
 )
 from worker.registry import WorkerRegistry
 
@@ -43,6 +45,10 @@ def _run_download(service: WorkerMaintenanceService, *, source_model: str, outpu
         ext={"operation": "download", **ext},
     )
     return list(service.ConvertModel(request, context=None))
+
+
+def _media_token_expansion(*, image_bytes: bytes) -> int:
+    return max(1, len(image_bytes) // 8)
 
 
 def main() -> int:
@@ -108,11 +114,18 @@ def main() -> int:
         )
         model_manifest = _events_manifest(model_events)
         projector_manifest = _events_manifest(projector_events)
+        audit_image_bytes = b"packaged-vlm-audit-image" * 32
+        processor_modality_counts = packaged_vlm_processor_modality_counts(
+            processor=SimpleNamespace(image_processor=object()),
+            prompt_modality_counts={"text": 1, "image": 1},
+        )
         receipt = build_packaged_vlm_cache_receipt(
             cache_dir=cache_dir,
             model_manifest=model_manifest,
             projector_manifest=projector_manifest,
             cancelled_manifest=cancelled_manifest,
+            processor_modality_counts=processor_modality_counts,
+            media_token_expansion=_media_token_expansion(image_bytes=audit_image_bytes),
         )
 
         checks = {
@@ -128,6 +141,10 @@ def main() -> int:
             "projector_detected": projector_events[-1].HasField("completed")
             and Path(str(projector_manifest["output_path"])).read_bytes() == projector_payload,
             "local_route_verified": receipt["local_route_verified"] == 1.0,
+            "packaged_media_route_verified": receipt["packaged_media_route"] == "bundled_mlx_vlm"
+            and receipt["unsupported_reason"] == "none"
+            and receipt["media_token_expansion"] > 0
+            and receipt["processor_modality_counts"].get("image") == 1,
             "receipt_fields": all(
                 receipt.get(key)
                 for key in (
@@ -135,6 +152,9 @@ def main() -> int:
                     "companion_projector_path",
                     "cache_layout",
                     "cache_restore_status",
+                    "processor_modality_counts",
+                    "packaged_media_route",
+                    "unsupported_reason",
                     "receipt_path",
                 )
             ),

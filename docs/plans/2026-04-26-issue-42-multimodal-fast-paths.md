@@ -317,6 +317,12 @@ Executable unit issues:
   `MultimodalRequestNormalizationError.unsupportedPartType` so HTTP ingress
   returns `unsupported_media_payload` with `unsupported_reason=
   unsupported_part_type` before model load or worker dispatch.
+- Unit 1.3.3 extends the packaged VLM route receipt with
+  `processor_modality_counts`, `media_token_expansion`,
+  `packaged_media_route`, and `unsupported_reason`. The deterministic packaged
+  cache smoke now audits a text+image prompt against the bundled MLX VLM route,
+  records non-zero media-token expansion, and keeps Gemma4 processor/tokenizer
+  load fixtures compatible when optional upstream hint parameters disappear.
 - Unit 1.2.3 records serving-default override receipts with
   `melix.gateway_override_receipt.v1`. Launch-bound worker execution metadata and
   control-plane serving-default summaries expose suppressed override names,
