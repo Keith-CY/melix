@@ -701,6 +701,42 @@ def test_search_models_uses_text_config_string_values_and_gqa_heads_for_kv_cache
     assert any(str(expected_kv_bytes) in reason for reason in model.local_fit_reasons)
 
 
+def test_search_models_resolves_text_config_once_for_kv_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = [
+        {
+            "id": "mlx-community/single-config-parse-4bit",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["mlx", "4-bit"],
+            "library_name": "mlx",
+            "usedStorage": 256 * MB,
+            "config": {
+                "hidden_size": 1024,
+                "num_attention_heads": 16,
+                "num_key_value_heads": 4,
+                "num_hidden_layers": 2,
+                "max_position_embeddings": 1024,
+                "torch_dtype": "bfloat16",
+            },
+            "siblings": [{"rfilename": "model.safetensors", "size": 256 * MB}],
+            "cardData": {},
+        }
+    ]
+    text_config = Mock(wraps=hub_catalog_module._text_config)
+    monkeypatch.setattr(hub_catalog_module, "_text_config", text_config)
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="single-config-parse", page_size=10, cursor="", mlx_only=True)
+
+    assert page.items[0].local_fit_status == "good"
+    text_config.assert_called_once_with(payload[0])
+
+
 def test_search_models_skips_kv_cache_estimate_for_incompatible_records(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -503,11 +503,13 @@ def _local_fit_evidence(
             "recommended_action": "inspect_metadata",
         }
 
-    kv_cache_bytes = _estimated_kv_cache_bytes(payload)
+    config = _text_config(payload)
+    kv_cache_bytes = _estimated_kv_cache_bytes(config)
     if kv_cache_bytes > 0:
         estimated_resident_bytes += kv_cache_bytes
+        context_tokens = _context_token_count_from_config(config)
         reasons.append(
-            f"Estimated KV cache bytes for {_context_token_count(payload)} context tokens: {kv_cache_bytes}."
+            f"Estimated KV cache bytes for {context_tokens} context tokens: {kv_cache_bytes}."
         )
 
     memory_budget_bytes = int(max(local_memory_gb, 0.0) * (1024 ** 3) * MEMORY_COMFORT_BUDGET_FACTOR)
@@ -734,8 +736,7 @@ def _estimated_resident_bytes(
     return math.ceil(base_size * RESIDENT_MEMORY_OVERHEAD_FACTOR)
 
 
-def _estimated_kv_cache_bytes(payload: dict[str, Any]) -> int:
-    config = _text_config(payload)
+def _estimated_kv_cache_bytes(config: dict[str, Any]) -> int:
     context_tokens = _context_token_count_from_config(config)
     layers = _positive_config_int(config, "num_hidden_layers", "n_layer", "num_layers")
     attention_heads = _positive_config_int(config, "num_attention_heads", "n_head", "n_heads")
@@ -760,10 +761,6 @@ def _text_config(payload: dict[str, Any]) -> dict[str, Any]:
     merged = dict(config)
     merged.update(text_config)
     return merged
-
-
-def _context_token_count(payload: dict[str, Any]) -> int:
-    return _context_token_count_from_config(_text_config(payload))
 
 
 def _context_token_count_from_config(config: dict[str, Any]) -> int:
