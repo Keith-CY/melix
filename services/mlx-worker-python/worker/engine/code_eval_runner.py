@@ -850,8 +850,11 @@ def _runner_script() -> str:
                 pass
 
 
-        def _load_config(config_path: Path) -> dict[str, object]:
-            payload = json.loads(config_path.read_bytes())
+        def _load_config(
+            config_path: Path,
+            _json_loads=json.loads,
+        ) -> dict[str, object]:
+            payload = _json_loads(config_path.read_bytes())
             if not isinstance(payload, dict):
                 raise TypeError("runner config must be a JSON object")
             return payload

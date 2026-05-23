@@ -3404,6 +3404,8 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     assert evaluation_store_metrics["sample_count"] == 10000.0
     assert evaluation_store_metrics["csv_line_count"] == 10001.0
     assert scope_matcher_metrics["build_scope_report_ms_mean"] > 0
+    assert scope_matcher_metrics["command_summary_ms_mean"] > 0
+    assert scope_matcher_metrics["command_summary_iterations"] == 20000.0
     assert scope_matcher_metrics["changed_file_count"] == float(len(_build_large_scope_probe_changed_files()))
     assert scope_matcher_metrics["selected_probe_count_mean"] == float(
         len(SCOPE_MATCHER_SELECTED_PROBE_IDS)
@@ -3823,6 +3825,8 @@ def test_dispatch_probe_impl_supports_pr_scoped_scope_matcher_probe() -> None:
     metrics = _dispatch_probe_impl(probe=probe, repo_root=REPO_ROOT)
 
     assert metrics["build_scope_report_ms_mean"] > 0
+    assert metrics["command_summary_ms_mean"] > 0
+    assert metrics["command_summary_iterations"] == 20000.0
     assert metrics["changed_file_count"] == float(len(_build_large_scope_probe_changed_files()))
     assert metrics["selected_probe_count_mean"] == float(
         len(SCOPE_MATCHER_SELECTED_PROBE_IDS)
@@ -4247,6 +4251,7 @@ def test_command_and_verification_helpers_cover_skip_and_failure_paths(
 
 def test_command_summary_keeps_ci_heartbeats_compact() -> None:
     assert _summarize_command("python3 - <<'PY'\nprint('x')\nPY") == "python3 - <<'PY' ..."
+    assert _summarize_command(" \n  python3 - <<'PY'  \nprint('x')") == "python3 - <<'PY' ..."
     assert _summarize_command(" \n ") == "<empty command>"
 
     long_summary = _summarize_command("python3 -c " + "x" * 300, max_length=80)
