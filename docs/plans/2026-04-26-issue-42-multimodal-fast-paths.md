@@ -317,6 +317,10 @@ Executable unit issues:
   `MultimodalRequestNormalizationError.unsupportedPartType` so HTTP ingress
   returns `unsupported_media_payload` with `unsupported_reason=
   unsupported_part_type` before model load or worker dispatch.
+- Unit 1.3.2 keeps media-bearing OpenAI chat requests fail-closed when the
+  selected model is absent from the catalog; admission returns
+  `unsupported_media_for_model` with route kind `unknown` before lazy loading or
+  worker dispatch.
 - Unit 1.3.3 extends the packaged VLM route receipt with
   `processor_modality_counts`, `media_token_expansion`,
   `packaged_media_route`, and `unsupported_reason`. The deterministic packaged
@@ -328,6 +332,10 @@ Executable unit issues:
   control-plane serving-default summaries expose suppressed override names,
   batch/speculative disabled reasons, route policies, effective route decisions,
   and cache-override omission reasons.
+- Unit 1.2.3 summary receipts derive `effective_multimodal_route` from the
+  active session default model metadata when route policy is not `off`, so VLM
+  and OCR defaults report their Python multimodal routes instead of the Swift
+  text fallback.
 - Unit 1.2.3 treats incompatible saved batch settings as effective launch
   config, not raw requested config. `max_concurrent_requests`,
   `prefill_batch_size`, and `completion_batch_size` are suppressed when their

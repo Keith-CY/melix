@@ -529,6 +529,42 @@ struct GatewayServingDefaultsStoreTests {
         #expect(session.suppressedOverrides.split(separator: ",").contains("speculative_decode"))
     }
 
+    @Test("summary projects default model multimodal route into override receipts")
+    func summaryProjectsDefaultModelMultimodalRouteIntoOverrideReceipts() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-serving-defaults-multimodal-route-receipts-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let store = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:]
+        )
+
+        var command = Melix_Controlplane_V1_ApplyServingDefaults()
+        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.temperature = 0.4
+        command.topP = 0.9
+        command.maxTokens = 256
+        command.streamIntervalTokens = 2
+        command.maxConcurrentRequests = 4
+        command.concurrentProcessingEnabled = true
+        command.prefillBatchSize = 2
+        command.completionBatchSize = 2
+        try await store.apply(command: command)
+
+        let vlmModel = ModelCatalog.devVLMModel()
+        let summary = await store.summary(
+            serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
+            defaultModelIDs: [ServerSessionRuntimeStore.defaultServerSessionID: vlmModel.modelID],
+            modelSettingsByModelID: [vlmModel.modelID: vlmModel.settings]
+        )
+        let session = try #require(summary.sessions.first)
+
+        #expect(session.multimodalRoutePolicy == "auto")
+        #expect(session.effectiveMultimodalRoute == "python_vlm")
+    }
+
     @Test("summary loads legacy serving default records without route policies")
     func summaryLoadsLegacyServingDefaultRecordsWithoutRoutePolicies() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory

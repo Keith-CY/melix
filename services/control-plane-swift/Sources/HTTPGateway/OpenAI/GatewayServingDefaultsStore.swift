@@ -659,6 +659,10 @@ public actor GatewayServingDefaultsStore {
                 modelSettings: modelSettings,
                 speculativeRoutePolicy: requestedSpeculativeRoutePolicy
             )
+            let effectiveMultimodalRoute = Self.effectiveMultimodalRoute(
+                for: modelSettings,
+                routePolicy: requestedMultimodalRoutePolicy
+            )
             let overrideReceiptExt = Self.overrideReceiptExt(
                 requestedMaxConcurrentRequests: requestedMaxConcurrentRequests,
                 requestedPrefillBatchSize: requestedPrefillBatchSize,
@@ -669,6 +673,7 @@ public actor GatewayServingDefaultsStore {
                 requestedAccelerationMode: requestedAccelerationMode,
                 effectiveAccelerationMode: effectiveSpeculativeDefaults.accelerationMode,
                 multimodalRoutePolicy: requestedMultimodalRoutePolicy,
+                effectiveMultimodalRoute: effectiveMultimodalRoute,
                 speculativeRoutePolicy: requestedSpeculativeRoutePolicy
             )
 
@@ -982,6 +987,25 @@ public actor GatewayServingDefaultsStore {
         )
     }
 
+    private static func effectiveMultimodalRoute(
+        for modelSettings: Melix_Controlplane_V1_ModelSettings?,
+        routePolicy: String
+    ) -> String {
+        if normalizedRoutePolicy(routePolicy) == "off" {
+            return "off"
+        }
+        guard let modelSettings else {
+            return WorkerRouteKind.swiftText.metadataIdentifier
+        }
+        if let routeKind = WorkerRouteKind(metadataIdentifier: modelSettings.ext["melix.capability.route_kind"]) {
+            return routeKind.metadataIdentifier
+        }
+        if let routeKind = WorkerRouteKind(capabilityIdentifier: modelSettings.ext["melix.capability.class"]) {
+            return routeKind.metadataIdentifier
+        }
+        return WorkerRouteKind.swiftText.metadataIdentifier
+    }
+
     private static func overrideReceiptExt(
         requestedMaxConcurrentRequests: UInt32,
         requestedPrefillBatchSize: UInt32,
@@ -992,6 +1016,7 @@ public actor GatewayServingDefaultsStore {
         requestedAccelerationMode: Melix_Controlplane_V1_AccelerationMode,
         effectiveAccelerationMode: Melix_Controlplane_V1_AccelerationMode,
         multimodalRoutePolicy: String,
+        effectiveMultimodalRoute: String,
         speculativeRoutePolicy: String
     ) -> [String: String] {
         var suppressedOverrides: [String] = []
@@ -1012,15 +1037,14 @@ public actor GatewayServingDefaultsStore {
         let normalizedRequestedAccelerationMode = normalizeRequestedAccelerationMode(requestedAccelerationMode)
         let normalizedMultimodalRoutePolicy = normalizedRoutePolicy(multimodalRoutePolicy)
         let normalizedSpeculativeRoutePolicy = normalizedRoutePolicy(speculativeRoutePolicy)
+        let normalizedEffectiveMultimodalRoute = normalizedRoutePolicy(effectiveMultimodalRoute)
         let normalizedEffectiveAccelerationMode = normalizedSpeculativeRoutePolicy == "off"
             ? Melix_Controlplane_V1_AccelerationMode.baseline
             : normalizeRequestedAccelerationMode(effectiveAccelerationMode)
         var receiptExt: [String: String] = [
             "melix.gateway.override_receipt_schema": "melix.gateway_override_receipt.v1",
             "melix.gateway.multimodal_route_policy": normalizedMultimodalRoutePolicy,
-            "melix.gateway.effective_multimodal_route": normalizedMultimodalRoutePolicy == "off"
-                ? "off"
-                : WorkerRouteKind.swiftText.metadataIdentifier,
+            "melix.gateway.effective_multimodal_route": normalizedEffectiveMultimodalRoute,
             "melix.gateway.speculative_route_policy": normalizedSpeculativeRoutePolicy,
             "melix.gateway.effective_speculative_mode": accelerationModeIdentifier(normalizedEffectiveAccelerationMode),
             "melix.gateway.batch.disabled_reason": batchOverrideSuppressed ? "incompatible_batch_size" : "none",

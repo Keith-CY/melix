@@ -1678,6 +1678,66 @@ struct OpenAIHandlerTests {
         #expect(await metricsStore.value(forKey: "http.media_admission_refusal.text_only_runtime") == 1)
     }
 
+    @Test("POST /v1/chat/completions rejects media for unknown models before lazy loading")
+    func postChatCompletionsRejectsMediaForUnknownModelsBeforeLazyLoading() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let metricsStore = MetricsStore()
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(requestID: "req-http-unknown-model-media", seq: 1, finishReason: "stop", assistantText: "done"),
+        ])
+        let workerRegistry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: workerRegistry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: workerRegistry,
+            metricsStore: metricsStore,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-http-unknown-model-media" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-unknown-vlm",
+              "stream": true,
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "text", "text": "Describe this." },
+                    { "type": "image_url", "image_url": { "data": "aW1hZ2U=" } }
+                  ]
+                }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+
+        #expect(response.statusCode == 400)
+        #expect(error["code"] as? String == "unsupported_media_for_model")
+        #expect(error["unsupported_reason"] as? String == "text_only_runtime")
+        #expect(error["media_count"] as? Int == 1)
+        #expect(error["route_kind"] as? String == "unknown")
+        #expect(await workerClient.lastLoadModelRequest == nil)
+        #expect(await workerClient.lastGenerateRequest == nil)
+        #expect(await metricsStore.value(forKey: "http.media_admission_refusal_count") == 1)
+        #expect(await metricsStore.value(forKey: "http.media_admission_refusal.text_only_runtime") == 1)
+    }
+
     @Test("POST /v1/chat/completions returns typed media errors for invalid base64")
     func postChatCompletionsReturnsTypedMediaErrorsForInvalidBase64() async throws {
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])

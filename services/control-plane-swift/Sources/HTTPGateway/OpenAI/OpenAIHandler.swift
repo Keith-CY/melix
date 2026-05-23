@@ -2115,11 +2115,11 @@ public struct OpenAIHandler: Sendable {
         requestedSpeculativeDecode: Bool
     ) -> MediaAdmissionFailure? {
         let mediaCount = normalized.mediaPartsSummary.count
-        guard mediaCount > 0, let model else {
+        guard mediaCount > 0 else {
             return nil
         }
 
-        let routeKind = mediaServingRouteKind(for: model)
+        let routeKind = model.map(mediaServingRouteKind(for:)) ?? nil
         return mediaAdmissionFailure(
             mediaCount: mediaCount,
             mediaKinds: Set(normalized.mediaPartsSummary.parts.map { normalizedIdentifier($0.mediaKind) }),
