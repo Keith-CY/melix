@@ -1807,7 +1807,8 @@
         "key": "peak_bytes_mean",
         "unit": "bytes",
         "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "warn_pct": 5.0,
+        "warn_abs": 64.0
       },
       {
         "key": "visited_names_mean",
