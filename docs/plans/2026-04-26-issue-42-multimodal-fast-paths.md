@@ -295,6 +295,25 @@ Executable unit issues:
 | Unit 4.3.2: Apple Silicon speculative smoke probes | #1437 | #1472 |
 | Unit 4.3.3: Promotion release/PR gates | #1437 | #1473 |
 
+## Implementation Notes
+
+- Unit 1.2.3 records serving-default override receipts with
+  `melix.gateway_override_receipt.v1`. Launch-bound worker execution metadata and
+  control-plane serving-default summaries expose suppressed override names,
+  batch/speculative disabled reasons, route policies, effective route decisions,
+  and cache-override omission reasons.
+- Unit 1.2.3 treats incompatible saved batch settings as effective launch
+  config, not raw requested config. `max_concurrent_requests`,
+  `prefill_batch_size`, and `completion_batch_size` are suppressed when their
+  requested values cannot produce a compatible batch capacity.
+- Unit 1.2.3 route policy values are `auto`, `off`, and `force`.
+  `multimodal_route_policy=force` fails closed until a native multimodal route
+  exists for the active request path. Unsupported
+  `speculative_route_policy=force` requests fail closed with
+  `disabled_reason=unsupported_route`. `speculative_route_policy=off`
+  preserves stale speculative operator input but launches with baseline
+  speculative mode and `operator_disabled` receipt metadata.
+
 ## Verification Policy
 
 Per milestone:

@@ -296,6 +296,8 @@ message ApplyServingDefaults {
   string draft_model_id = 11;
   uint32 num_draft_tokens = 12;
   string acceleration_profile = 13;
+  string multimodal_route_policy = 14;
+  string speculative_route_policy = 15;
 }
 
 message ListModels {}
@@ -1269,6 +1271,16 @@ message ServingDefaultsSessionSummary {
   string requested_acceleration_profile = 28;
   string effective_acceleration_profile = 29;
   string acceleration_profile_intent = 30;
+  string override_receipt_schema = 31;
+  string suppressed_overrides = 32;
+  string batch_disabled_reason = 33;
+  string speculative_disabled_reason = 34;
+  string multimodal_route_policy = 35;
+  string effective_multimodal_route = 36;
+  string speculative_route_policy = 37;
+  string effective_speculative_mode = 38;
+  string cache_quantization_disabled_reason = 39;
+  string paged_cache_disabled_reason = 40;
 }
 
 message ServingDefaultsSummary {

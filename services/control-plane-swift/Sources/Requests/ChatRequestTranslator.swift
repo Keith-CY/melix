@@ -2153,6 +2153,12 @@ public struct ChatRequestTranslator: Sendable {
         if !shapedRequest.draftModelID.isEmpty {
             generateRequest.execution.ext["melix.gateway.draft_model_id"] = shapedRequest.draftModelID
         }
+        if let gatewayServingDefaults {
+            generateRequest.execution.ext.merge(
+                gatewayServingDefaults.overrideReceiptExt,
+                uniquingKeysWith: { _, receiptValue in receiptValue }
+            )
+        }
         generateRequest.messages = shapedRequest.messages.map { message in
             var chatMessage = Melix_Worker_V1_ChatMessage()
             chatMessage.role = message.role

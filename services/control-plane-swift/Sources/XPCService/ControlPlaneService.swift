@@ -1769,7 +1769,10 @@ public actor ControlPlaneService {
             )
             return okResponse(for: request, server: reply)
         } catch let error as ServingDefaultsValidationError {
-            return errorResponse(for: request, code: error.code, message: error.message)
+            return errorResponse(
+                for: request,
+                error: servingDefaultsErrorStatus(for: error, command: command)
+            )
         } catch {
             await metricsStore.increment("gateway.serving_defaults_persist_failures")
             return errorResponse(
@@ -1809,9 +1812,22 @@ public actor ControlPlaneService {
     private func validateServingDefaults(
         command: Melix_Controlplane_V1_ApplyServingDefaults
     ) async throws {
+        let multimodalRoutePolicy = normalizedServingDefaultsRoutePolicy(command.multimodalRoutePolicy)
+        let speculativeRoutePolicy = normalizedServingDefaultsRoutePolicy(command.speculativeRoutePolicy)
+        guard isKnownServingDefaultsRoutePolicy(multimodalRoutePolicy),
+              isKnownServingDefaultsRoutePolicy(speculativeRoutePolicy)
+        else {
+            throw ServingDefaultsValidationError.invalidRoutePolicy
+        }
+        if multimodalRoutePolicy == "force" {
+            throw ServingDefaultsValidationError.unsupportedMultimodalRoutePolicy
+        }
         let accelerationMode = normalizedServingDefaultsAccelerationMode(command.accelerationMode)
         guard accelerationMode == .baseline || accelerationMode == .speculativeDecode else {
             throw ServingDefaultsValidationError.invalidAccelerationMode
+        }
+        if speculativeRoutePolicy == "off" {
+            return
         }
         guard accelerationMode == .speculativeDecode else {
             return
@@ -1845,6 +1861,30 @@ public actor ControlPlaneService {
         guard let draftModel = await modelCatalog.model(id: draftModelID), modelSupportsSpeculativeDefaults(draftModel) else {
             throw ServingDefaultsValidationError.speculativeDraftModelUnsupported
         }
+    }
+
+    private func servingDefaultsErrorStatus(
+        for error: ServingDefaultsValidationError,
+        command: Melix_Controlplane_V1_ApplyServingDefaults
+    ) -> Melix_Controlplane_V1_ErrorStatus {
+        var status = Melix_Controlplane_V1_ErrorStatus()
+        status.code = error.code
+        status.message = error.message
+        switch error {
+        case .unsupportedMultimodalRoutePolicy:
+            status.details["disabled_reason"] = "unsupported_route"
+            status.details["route_policy"] = normalizedServingDefaultsRoutePolicy(command.multimodalRoutePolicy)
+        case .speculativeBackendUnsupported,
+             .speculativeServedModelUnsupported,
+             .speculativeDraftModelUnsupported:
+            if normalizedServingDefaultsRoutePolicy(command.speculativeRoutePolicy) == "force" {
+                status.details["disabled_reason"] = "unsupported_route"
+                status.details["route_policy"] = "force"
+            }
+        default:
+            break
+        }
+        return status
     }
 
     private func handleStartServer(
@@ -3983,6 +4023,20 @@ public actor ControlPlaneService {
             return .baseline
         default:
             return mode
+        }
+    }
+
+    private func normalizedServingDefaultsRoutePolicy(_ rawValue: String) -> String {
+        let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.isEmpty ? "auto" : normalized
+    }
+
+    private func isKnownServingDefaultsRoutePolicy(_ normalizedValue: String) -> Bool {
+        switch normalizedValue {
+        case "auto", "off", "force":
+            return true
+        default:
+            return false
         }
     }
 

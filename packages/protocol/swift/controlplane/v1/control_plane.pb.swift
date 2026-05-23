@@ -3099,6 +3099,10 @@ public nonisolated struct Melix_Controlplane_V1_ApplyServingDefaults: Sendable {
 
   public var accelerationProfile: String = String()
 
+  public var multimodalRoutePolicy: String = String()
+
+  public var speculativeRoutePolicy: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -5698,6 +5702,56 @@ public nonisolated struct Melix_Controlplane_V1_ServingDefaultsSessionSummary: @
   public var accelerationProfileIntent: String {
     get {_storage._accelerationProfileIntent}
     set {_uniqueStorage()._accelerationProfileIntent = newValue}
+  }
+
+  public var overrideReceiptSchema: String {
+    get {_storage._overrideReceiptSchema}
+    set {_uniqueStorage()._overrideReceiptSchema = newValue}
+  }
+
+  public var suppressedOverrides: String {
+    get {_storage._suppressedOverrides}
+    set {_uniqueStorage()._suppressedOverrides = newValue}
+  }
+
+  public var batchDisabledReason: String {
+    get {_storage._batchDisabledReason}
+    set {_uniqueStorage()._batchDisabledReason = newValue}
+  }
+
+  public var speculativeDisabledReason: String {
+    get {_storage._speculativeDisabledReason}
+    set {_uniqueStorage()._speculativeDisabledReason = newValue}
+  }
+
+  public var multimodalRoutePolicy: String {
+    get {_storage._multimodalRoutePolicy}
+    set {_uniqueStorage()._multimodalRoutePolicy = newValue}
+  }
+
+  public var effectiveMultimodalRoute: String {
+    get {_storage._effectiveMultimodalRoute}
+    set {_uniqueStorage()._effectiveMultimodalRoute = newValue}
+  }
+
+  public var speculativeRoutePolicy: String {
+    get {_storage._speculativeRoutePolicy}
+    set {_uniqueStorage()._speculativeRoutePolicy = newValue}
+  }
+
+  public var effectiveSpeculativeMode: String {
+    get {_storage._effectiveSpeculativeMode}
+    set {_uniqueStorage()._effectiveSpeculativeMode = newValue}
+  }
+
+  public var cacheQuantizationDisabledReason: String {
+    get {_storage._cacheQuantizationDisabledReason}
+    set {_uniqueStorage()._cacheQuantizationDisabledReason = newValue}
+  }
+
+  public var pagedCacheDisabledReason: String {
+    get {_storage._pagedCacheDisabledReason}
+    set {_uniqueStorage()._pagedCacheDisabledReason = newValue}
   }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -10413,7 +10467,7 @@ nonisolated extension Melix_Controlplane_V1_ApplyGatewayConfig: SwiftProtobuf.Me
 
 nonisolated extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ApplyServingDefaults"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{1}temperature\0\u{3}top_p\0\u{3}max_tokens\0\u{3}stream_interval_tokens\0\u{3}max_concurrent_requests\0\u{3}concurrent_processing_enabled\0\u{3}prefill_batch_size\0\u{3}completion_batch_size\0\u{3}acceleration_mode\0\u{3}draft_model_id\0\u{3}num_draft_tokens\0\u{3}acceleration_profile\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{1}temperature\0\u{3}top_p\0\u{3}max_tokens\0\u{3}stream_interval_tokens\0\u{3}max_concurrent_requests\0\u{3}concurrent_processing_enabled\0\u{3}prefill_batch_size\0\u{3}completion_batch_size\0\u{3}acceleration_mode\0\u{3}draft_model_id\0\u{3}num_draft_tokens\0\u{3}acceleration_profile\0\u{3}multimodal_route_policy\0\u{3}speculative_route_policy\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -10434,6 +10488,8 @@ nonisolated extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.
       case 11: try { try decoder.decodeSingularStringField(value: &self.draftModelID) }()
       case 12: try { try decoder.decodeSingularUInt32Field(value: &self.numDraftTokens) }()
       case 13: try { try decoder.decodeSingularStringField(value: &self.accelerationProfile) }()
+      case 14: try { try decoder.decodeSingularStringField(value: &self.multimodalRoutePolicy) }()
+      case 15: try { try decoder.decodeSingularStringField(value: &self.speculativeRoutePolicy) }()
       default: break
       }
     }
@@ -10479,6 +10535,12 @@ nonisolated extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.
     if !self.accelerationProfile.isEmpty {
       try visitor.visitSingularStringField(value: self.accelerationProfile, fieldNumber: 13)
     }
+    if !self.multimodalRoutePolicy.isEmpty {
+      try visitor.visitSingularStringField(value: self.multimodalRoutePolicy, fieldNumber: 14)
+    }
+    if !self.speculativeRoutePolicy.isEmpty {
+      try visitor.visitSingularStringField(value: self.speculativeRoutePolicy, fieldNumber: 15)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -10496,6 +10558,8 @@ nonisolated extension Melix_Controlplane_V1_ApplyServingDefaults: SwiftProtobuf.
     if lhs.draftModelID != rhs.draftModelID {return false}
     if lhs.numDraftTokens != rhs.numDraftTokens {return false}
     if lhs.accelerationProfile != rhs.accelerationProfile {return false}
+    if lhs.multimodalRoutePolicy != rhs.multimodalRoutePolicy {return false}
+    if lhs.speculativeRoutePolicy != rhs.speculativeRoutePolicy {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -15743,7 +15807,7 @@ nonisolated extension Melix_Controlplane_V1_GatewayConfigSummary: SwiftProtobuf.
 
 nonisolated extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ServingDefaultsSessionSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}default_model_id\0\u{3}requested_temperature\0\u{3}requested_top_p\0\u{3}requested_max_tokens\0\u{3}requested_stream_interval_tokens\0\u{3}requested_max_concurrent_requests\0\u{3}effective_temperature\0\u{3}effective_top_p\0\u{3}effective_max_tokens\0\u{3}effective_stream_interval_tokens\0\u{3}effective_max_concurrent_requests\0\u{1}source\0\u{3}model_override_applied\0\u{3}updated_at_unix_ms\0\u{3}requested_concurrent_processing_enabled\0\u{3}requested_prefill_batch_size\0\u{3}requested_completion_batch_size\0\u{3}effective_concurrent_processing_enabled\0\u{3}effective_prefill_batch_size\0\u{3}effective_completion_batch_size\0\u{3}requested_acceleration_mode\0\u{3}requested_draft_model_id\0\u{3}requested_num_draft_tokens\0\u{3}effective_acceleration_mode\0\u{3}effective_draft_model_id\0\u{3}effective_num_draft_tokens\0\u{3}requested_acceleration_profile\0\u{3}effective_acceleration_profile\0\u{3}acceleration_profile_intent\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}default_model_id\0\u{3}requested_temperature\0\u{3}requested_top_p\0\u{3}requested_max_tokens\0\u{3}requested_stream_interval_tokens\0\u{3}requested_max_concurrent_requests\0\u{3}effective_temperature\0\u{3}effective_top_p\0\u{3}effective_max_tokens\0\u{3}effective_stream_interval_tokens\0\u{3}effective_max_concurrent_requests\0\u{1}source\0\u{3}model_override_applied\0\u{3}updated_at_unix_ms\0\u{3}requested_concurrent_processing_enabled\0\u{3}requested_prefill_batch_size\0\u{3}requested_completion_batch_size\0\u{3}effective_concurrent_processing_enabled\0\u{3}effective_prefill_batch_size\0\u{3}effective_completion_batch_size\0\u{3}requested_acceleration_mode\0\u{3}requested_draft_model_id\0\u{3}requested_num_draft_tokens\0\u{3}effective_acceleration_mode\0\u{3}effective_draft_model_id\0\u{3}effective_num_draft_tokens\0\u{3}requested_acceleration_profile\0\u{3}effective_acceleration_profile\0\u{3}acceleration_profile_intent\0\u{3}override_receipt_schema\0\u{3}suppressed_overrides\0\u{3}batch_disabled_reason\0\u{3}speculative_disabled_reason\0\u{3}multimodal_route_policy\0\u{3}effective_multimodal_route\0\u{3}speculative_route_policy\0\u{3}effective_speculative_mode\0\u{3}cache_quantization_disabled_reason\0\u{3}paged_cache_disabled_reason\0")
 
   fileprivate class _StorageClass {
     var _serverSessionID: String = String()
@@ -15776,6 +15840,16 @@ nonisolated extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: Swift
     var _requestedAccelerationProfile: String = String()
     var _effectiveAccelerationProfile: String = String()
     var _accelerationProfileIntent: String = String()
+    var _overrideReceiptSchema: String = String()
+    var _suppressedOverrides: String = String()
+    var _batchDisabledReason: String = String()
+    var _speculativeDisabledReason: String = String()
+    var _multimodalRoutePolicy: String = String()
+    var _effectiveMultimodalRoute: String = String()
+    var _speculativeRoutePolicy: String = String()
+    var _effectiveSpeculativeMode: String = String()
+    var _cacheQuantizationDisabledReason: String = String()
+    var _pagedCacheDisabledReason: String = String()
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -15816,6 +15890,16 @@ nonisolated extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: Swift
       _requestedAccelerationProfile = source._requestedAccelerationProfile
       _effectiveAccelerationProfile = source._effectiveAccelerationProfile
       _accelerationProfileIntent = source._accelerationProfileIntent
+      _overrideReceiptSchema = source._overrideReceiptSchema
+      _suppressedOverrides = source._suppressedOverrides
+      _batchDisabledReason = source._batchDisabledReason
+      _speculativeDisabledReason = source._speculativeDisabledReason
+      _multimodalRoutePolicy = source._multimodalRoutePolicy
+      _effectiveMultimodalRoute = source._effectiveMultimodalRoute
+      _speculativeRoutePolicy = source._speculativeRoutePolicy
+      _effectiveSpeculativeMode = source._effectiveSpeculativeMode
+      _cacheQuantizationDisabledReason = source._cacheQuantizationDisabledReason
+      _pagedCacheDisabledReason = source._pagedCacheDisabledReason
     }
   }
 
@@ -15864,6 +15948,16 @@ nonisolated extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: Swift
         case 28: try { try decoder.decodeSingularStringField(value: &_storage._requestedAccelerationProfile) }()
         case 29: try { try decoder.decodeSingularStringField(value: &_storage._effectiveAccelerationProfile) }()
         case 30: try { try decoder.decodeSingularStringField(value: &_storage._accelerationProfileIntent) }()
+        case 31: try { try decoder.decodeSingularStringField(value: &_storage._overrideReceiptSchema) }()
+        case 32: try { try decoder.decodeSingularStringField(value: &_storage._suppressedOverrides) }()
+        case 33: try { try decoder.decodeSingularStringField(value: &_storage._batchDisabledReason) }()
+        case 34: try { try decoder.decodeSingularStringField(value: &_storage._speculativeDisabledReason) }()
+        case 35: try { try decoder.decodeSingularStringField(value: &_storage._multimodalRoutePolicy) }()
+        case 36: try { try decoder.decodeSingularStringField(value: &_storage._effectiveMultimodalRoute) }()
+        case 37: try { try decoder.decodeSingularStringField(value: &_storage._speculativeRoutePolicy) }()
+        case 38: try { try decoder.decodeSingularStringField(value: &_storage._effectiveSpeculativeMode) }()
+        case 39: try { try decoder.decodeSingularStringField(value: &_storage._cacheQuantizationDisabledReason) }()
+        case 40: try { try decoder.decodeSingularStringField(value: &_storage._pagedCacheDisabledReason) }()
         default: break
         }
       }
@@ -15962,6 +16056,36 @@ nonisolated extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: Swift
       if !_storage._accelerationProfileIntent.isEmpty {
         try visitor.visitSingularStringField(value: _storage._accelerationProfileIntent, fieldNumber: 30)
       }
+      if !_storage._overrideReceiptSchema.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._overrideReceiptSchema, fieldNumber: 31)
+      }
+      if !_storage._suppressedOverrides.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._suppressedOverrides, fieldNumber: 32)
+      }
+      if !_storage._batchDisabledReason.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._batchDisabledReason, fieldNumber: 33)
+      }
+      if !_storage._speculativeDisabledReason.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._speculativeDisabledReason, fieldNumber: 34)
+      }
+      if !_storage._multimodalRoutePolicy.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._multimodalRoutePolicy, fieldNumber: 35)
+      }
+      if !_storage._effectiveMultimodalRoute.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._effectiveMultimodalRoute, fieldNumber: 36)
+      }
+      if !_storage._speculativeRoutePolicy.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._speculativeRoutePolicy, fieldNumber: 37)
+      }
+      if !_storage._effectiveSpeculativeMode.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._effectiveSpeculativeMode, fieldNumber: 38)
+      }
+      if !_storage._cacheQuantizationDisabledReason.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._cacheQuantizationDisabledReason, fieldNumber: 39)
+      }
+      if !_storage._pagedCacheDisabledReason.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._pagedCacheDisabledReason, fieldNumber: 40)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -16001,6 +16125,16 @@ nonisolated extension Melix_Controlplane_V1_ServingDefaultsSessionSummary: Swift
         if _storage._requestedAccelerationProfile != rhs_storage._requestedAccelerationProfile {return false}
         if _storage._effectiveAccelerationProfile != rhs_storage._effectiveAccelerationProfile {return false}
         if _storage._accelerationProfileIntent != rhs_storage._accelerationProfileIntent {return false}
+        if _storage._overrideReceiptSchema != rhs_storage._overrideReceiptSchema {return false}
+        if _storage._suppressedOverrides != rhs_storage._suppressedOverrides {return false}
+        if _storage._batchDisabledReason != rhs_storage._batchDisabledReason {return false}
+        if _storage._speculativeDisabledReason != rhs_storage._speculativeDisabledReason {return false}
+        if _storage._multimodalRoutePolicy != rhs_storage._multimodalRoutePolicy {return false}
+        if _storage._effectiveMultimodalRoute != rhs_storage._effectiveMultimodalRoute {return false}
+        if _storage._speculativeRoutePolicy != rhs_storage._speculativeRoutePolicy {return false}
+        if _storage._effectiveSpeculativeMode != rhs_storage._effectiveSpeculativeMode {return false}
+        if _storage._cacheQuantizationDisabledReason != rhs_storage._cacheQuantizationDisabledReason {return false}
+        if _storage._pagedCacheDisabledReason != rhs_storage._pagedCacheDisabledReason {return false}
         return true
       }
       if !storagesAreEqual {return false}

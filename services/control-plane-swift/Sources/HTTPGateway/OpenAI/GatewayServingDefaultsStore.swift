@@ -12,6 +12,8 @@ public enum ServingDefaultsValidationError: Error, Equatable, Sendable {
     case invalidCompletionBatchSize
     case invalidAccelerationProfile
     case invalidAccelerationMode
+    case invalidRoutePolicy
+    case unsupportedMultimodalRoutePolicy
     case missingDraftModelID
     case invalidNumDraftTokens
     case speculativeServedModelUnsupported
@@ -40,6 +42,10 @@ public enum ServingDefaultsValidationError: Error, Equatable, Sendable {
             return "invalid_acceleration_profile"
         case .invalidAccelerationMode:
             return "invalid_acceleration_mode"
+        case .invalidRoutePolicy:
+            return "invalid_route_policy"
+        case .unsupportedMultimodalRoutePolicy:
+            return "unsupported_multimodal_route_policy"
         case .missingDraftModelID:
             return "missing_draft_model_id"
         case .invalidNumDraftTokens:
@@ -75,6 +81,10 @@ public enum ServingDefaultsValidationError: Error, Equatable, Sendable {
             return "Serving defaults only support acceleration profiles: \(ServingAccelerationProfiles.allowedProfileList)."
         case .invalidAccelerationMode:
             return "Serving defaults only support baseline or speculative decode acceleration."
+        case .invalidRoutePolicy:
+            return "Serving defaults route policies only support auto, off, or force."
+        case .unsupportedMultimodalRoutePolicy:
+            return "Forced multimodal routing is disabled because the active route is not a native multimodal route."
         case .missingDraftModelID:
             return "Speculative serving defaults require a draft model identifier."
         case .invalidNumDraftTokens:
@@ -102,6 +112,9 @@ public struct GatewayServingDefaultsPolicy: Sendable, Equatable {
     public let draftModelID: String?
     public let numDraftTokens: UInt32?
     public let accelerationProfile: String?
+    public let multimodalRoutePolicy: String
+    public let speculativeRoutePolicy: String
+    public let overrideReceiptExt: [String: String]
 
     public init(
         temperature: Double?,
@@ -115,7 +128,10 @@ public struct GatewayServingDefaultsPolicy: Sendable, Equatable {
         accelerationMode: Melix_Controlplane_V1_AccelerationMode? = nil,
         draftModelID: String? = nil,
         numDraftTokens: UInt32? = nil,
-        accelerationProfile: String? = nil
+        accelerationProfile: String? = nil,
+        multimodalRoutePolicy: String = "auto",
+        speculativeRoutePolicy: String = "auto",
+        overrideReceiptExt: [String: String] = [:]
     ) {
         self.temperature = temperature
         self.topP = topP
@@ -129,40 +145,204 @@ public struct GatewayServingDefaultsPolicy: Sendable, Equatable {
         self.draftModelID = draftModelID
         self.numDraftTokens = numDraftTokens
         self.accelerationProfile = accelerationProfile
+        self.multimodalRoutePolicy = Self.normalizedRoutePolicy(multimodalRoutePolicy)
+        self.speculativeRoutePolicy = Self.normalizedRoutePolicy(speculativeRoutePolicy)
+        self.overrideReceiptExt = overrideReceiptExt
     }
 
     public func resolvingAccelerationCompatibility(
         for model: Melix_Controlplane_V1_ModelSummary?
     ) -> GatewayServingDefaultsPolicy {
-        guard accelerationMode == .speculativeDecode else {
-            return self
-        }
-        guard
-            let model,
-            Self.modelSupportsSpeculativeDefaults(model)
-        else {
-            return GatewayServingDefaultsPolicy(
+        let effectiveBatchingDefaults = Self.effectiveBatchingDefaults(
+            concurrentProcessingEnabled: concurrentProcessingEnabled ?? true,
+            maxConcurrentRequests: maxConcurrentRequests ?? 4,
+            prefillBatchSize: prefillBatchSize ?? 2,
+            completionBatchSize: completionBatchSize ?? 2
+        )
+        var effectivePolicy = GatewayServingDefaultsPolicy(
+            temperature: temperature,
+            topP: topP,
+            maxTokens: maxTokens,
+            streamIntervalTokens: streamIntervalTokens,
+            maxConcurrentRequests: effectiveBatchingDefaults.maxConcurrentRequests,
+            concurrentProcessingEnabled: effectiveBatchingDefaults.concurrentProcessingEnabled,
+            prefillBatchSize: effectiveBatchingDefaults.prefillBatchSize,
+            completionBatchSize: effectiveBatchingDefaults.completionBatchSize,
+            accelerationMode: accelerationMode,
+            draftModelID: draftModelID,
+            numDraftTokens: numDraftTokens,
+            accelerationProfile: accelerationProfile,
+            multimodalRoutePolicy: multimodalRoutePolicy,
+            speculativeRoutePolicy: speculativeRoutePolicy
+        )
+        var suppressedOverrides = Self.suppressedBatchingOverrides(
+            requestedMaxConcurrentRequests: maxConcurrentRequests,
+            requestedPrefillBatchSize: prefillBatchSize,
+            requestedCompletionBatchSize: completionBatchSize,
+            effectiveMaxConcurrentRequests: effectiveBatchingDefaults.maxConcurrentRequests,
+            effectivePrefillBatchSize: effectiveBatchingDefaults.prefillBatchSize,
+            effectiveCompletionBatchSize: effectiveBatchingDefaults.completionBatchSize
+        )
+        var receiptExt: [String: String] = [
+            "melix.gateway.override_receipt_schema": "melix.gateway_override_receipt.v1",
+            "melix.gateway.multimodal_route_policy": multimodalRoutePolicy,
+            "melix.gateway.effective_multimodal_route": Self.effectiveMultimodalRoute(
+                for: model,
+                routePolicy: multimodalRoutePolicy
+            ),
+            "melix.gateway.speculative_route_policy": speculativeRoutePolicy,
+            "melix.gateway.effective_speculative_mode": Self.accelerationModeIdentifier(
+                effectivePolicy.accelerationMode ?? .baseline
+            ),
+            "melix.gateway.cache_quantization.disabled_reason": "not_configurable",
+            "melix.gateway.paged_cache.disabled_reason": "not_configurable",
+        ]
+
+        if accelerationMode == .speculativeDecode,
+           (speculativeRoutePolicy == "off" || !Self.modelSupportsSpeculativeDefaults(model)) {
+            effectivePolicy = GatewayServingDefaultsPolicy(
                 temperature: temperature,
                 topP: topP,
                 maxTokens: maxTokens,
                 streamIntervalTokens: streamIntervalTokens,
-                maxConcurrentRequests: maxConcurrentRequests,
-                concurrentProcessingEnabled: concurrentProcessingEnabled,
-                prefillBatchSize: prefillBatchSize,
-                completionBatchSize: completionBatchSize,
+                maxConcurrentRequests: effectiveBatchingDefaults.maxConcurrentRequests,
+                concurrentProcessingEnabled: effectiveBatchingDefaults.concurrentProcessingEnabled,
+                prefillBatchSize: effectiveBatchingDefaults.prefillBatchSize,
+                completionBatchSize: effectiveBatchingDefaults.completionBatchSize,
                 accelerationMode: .baseline,
                 draftModelID: "",
                 numDraftTokens: 0,
-                accelerationProfile: accelerationProfile
+                accelerationProfile: accelerationProfile,
+                multimodalRoutePolicy: multimodalRoutePolicy,
+                speculativeRoutePolicy: speculativeRoutePolicy
             )
+            suppressedOverrides.append("speculative_decode")
+            receiptExt["melix.gateway.effective_speculative_mode"] = "baseline"
+            receiptExt["melix.gateway.speculative.disabled_reason"] = speculativeRoutePolicy == "off"
+                ? "operator_disabled"
+                : "unsupported_route"
         }
-        return self
+        if !suppressedOverrides.isEmpty {
+            receiptExt["melix.gateway.suppressed_overrides"] = suppressedOverrides.joined(separator: ",")
+        }
+        receiptExt["melix.gateway.batch.disabled_reason"] = suppressedOverrides.contains { $0.hasSuffix("batch_size") || $0 == "max_concurrent_requests" }
+            ? "incompatible_batch_size"
+            : "none"
+
+        return GatewayServingDefaultsPolicy(
+            temperature: effectivePolicy.temperature,
+            topP: effectivePolicy.topP,
+            maxTokens: effectivePolicy.maxTokens,
+            streamIntervalTokens: effectivePolicy.streamIntervalTokens,
+            maxConcurrentRequests: effectivePolicy.maxConcurrentRequests,
+            concurrentProcessingEnabled: effectivePolicy.concurrentProcessingEnabled,
+            prefillBatchSize: effectivePolicy.prefillBatchSize,
+            completionBatchSize: effectivePolicy.completionBatchSize,
+            accelerationMode: effectivePolicy.accelerationMode,
+            draftModelID: effectivePolicy.draftModelID,
+            numDraftTokens: effectivePolicy.numDraftTokens,
+            accelerationProfile: effectivePolicy.accelerationProfile,
+            multimodalRoutePolicy: effectivePolicy.multimodalRoutePolicy,
+            speculativeRoutePolicy: effectivePolicy.speculativeRoutePolicy,
+            overrideReceiptExt: receiptExt
+        )
     }
 
     private static func modelSupportsSpeculativeDefaults(
-        _ model: Melix_Controlplane_V1_ModelSummary
+        _ model: Melix_Controlplane_V1_ModelSummary?
     ) -> Bool {
-        model.capabilityClass == .modelCapabilityText && model.routeClass == .workerRouteSwiftText
+        guard let model else {
+            return false
+        }
+        return model.capabilityClass == .modelCapabilityText && model.routeClass == .workerRouteSwiftText
+    }
+
+    private static func effectiveBatchingDefaults(
+        concurrentProcessingEnabled: Bool,
+        maxConcurrentRequests: UInt32,
+        prefillBatchSize: UInt32,
+        completionBatchSize: UInt32
+    ) -> (
+        concurrentProcessingEnabled: Bool,
+        maxConcurrentRequests: UInt32,
+        prefillBatchSize: UInt32,
+        completionBatchSize: UInt32
+    ) {
+        guard concurrentProcessingEnabled else {
+            return (false, 1, 1, 1)
+        }
+        let effectiveBatchCapacity = min(
+            max(maxConcurrentRequests, 1),
+            max(prefillBatchSize, 1),
+            max(completionBatchSize, 1)
+        )
+        guard effectiveBatchCapacity > 1 else {
+            return (false, 1, 1, 1)
+        }
+        return (true, effectiveBatchCapacity, effectiveBatchCapacity, effectiveBatchCapacity)
+    }
+
+    private static func suppressedBatchingOverrides(
+        requestedMaxConcurrentRequests: UInt32?,
+        requestedPrefillBatchSize: UInt32?,
+        requestedCompletionBatchSize: UInt32?,
+        effectiveMaxConcurrentRequests: UInt32,
+        effectivePrefillBatchSize: UInt32,
+        effectiveCompletionBatchSize: UInt32
+    ) -> [String] {
+        var suppressed: [String] = []
+        if let requestedMaxConcurrentRequests,
+           requestedMaxConcurrentRequests != effectiveMaxConcurrentRequests {
+            suppressed.append("max_concurrent_requests")
+        }
+        if let requestedPrefillBatchSize,
+           requestedPrefillBatchSize != effectivePrefillBatchSize {
+            suppressed.append("prefill_batch_size")
+        }
+        if let requestedCompletionBatchSize,
+           requestedCompletionBatchSize != effectiveCompletionBatchSize {
+            suppressed.append("completion_batch_size")
+        }
+        return suppressed
+    }
+
+    private static func effectiveMultimodalRoute(
+        for model: Melix_Controlplane_V1_ModelSummary?,
+        routePolicy: String
+    ) -> String {
+        if routePolicy == "off" {
+            return "off"
+        }
+        guard let model else {
+            return "swift_text"
+        }
+        if let routeKind = WorkerRouteKind(routeClass: model.routeClass) {
+            return routeKind.metadataIdentifier
+        }
+        switch model.capabilityClass {
+        case .modelCapabilityVlm:
+            return WorkerRouteKind.pythonVLM.metadataIdentifier
+        case .modelCapabilityOcr:
+            return WorkerRouteKind.pythonOCR.metadataIdentifier
+        default:
+            return WorkerRouteKind.swiftText.metadataIdentifier
+        }
+    }
+
+    private static func accelerationModeIdentifier(
+        _ mode: Melix_Controlplane_V1_AccelerationMode
+    ) -> String {
+        switch mode {
+        case .speculativeDecode:
+            return "speculative_decode"
+        default:
+            return "baseline"
+        }
+    }
+
+    private static func normalizedRoutePolicy(_ rawValue: String) -> String {
+        let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.isEmpty ? "auto" : normalized
     }
 }
 
@@ -179,6 +359,8 @@ private struct GatewayServingDefaultsResolvedDefaults: Equatable, Sendable {
     let draftModelID: String
     let numDraftTokens: UInt32
     let accelerationProfile: String
+    let multimodalRoutePolicy: String
+    let speculativeRoutePolicy: String
     let source: Melix_Controlplane_V1_ServingDefaultsSource
 }
 
@@ -196,6 +378,8 @@ private struct PersistedServingDefaultsRecord: Codable, Equatable, Sendable {
     let draftModelID: String
     let numDraftTokens: UInt32
     let accelerationProfile: String
+    let multimodalRoutePolicy: String
+    let speculativeRoutePolicy: String
     let sourceRawValue: Int
     let updatedAtUnixMS: Int64
 
@@ -213,8 +397,77 @@ private struct PersistedServingDefaultsRecord: Codable, Equatable, Sendable {
         case draftModelID = "draft_model_id"
         case numDraftTokens = "num_draft_tokens"
         case accelerationProfile = "acceleration_profile"
+        case multimodalRoutePolicy = "multimodal_route_policy"
+        case speculativeRoutePolicy = "speculative_route_policy"
         case sourceRawValue = "source"
         case updatedAtUnixMS = "updated_at_unix_ms"
+    }
+
+    init(
+        serverSessionID: String,
+        temperature: Double,
+        topP: Double,
+        maxTokens: UInt32,
+        streamIntervalTokens: UInt32,
+        maxConcurrentRequests: UInt32,
+        concurrentProcessingEnabled: Bool,
+        prefillBatchSize: UInt32,
+        completionBatchSize: UInt32,
+        accelerationModeRawValue: Int,
+        draftModelID: String,
+        numDraftTokens: UInt32,
+        accelerationProfile: String,
+        multimodalRoutePolicy: String,
+        speculativeRoutePolicy: String,
+        sourceRawValue: Int,
+        updatedAtUnixMS: Int64
+    ) {
+        self.serverSessionID = serverSessionID
+        self.temperature = temperature
+        self.topP = topP
+        self.maxTokens = maxTokens
+        self.streamIntervalTokens = streamIntervalTokens
+        self.maxConcurrentRequests = maxConcurrentRequests
+        self.concurrentProcessingEnabled = concurrentProcessingEnabled
+        self.prefillBatchSize = prefillBatchSize
+        self.completionBatchSize = completionBatchSize
+        self.accelerationModeRawValue = accelerationModeRawValue
+        self.draftModelID = draftModelID
+        self.numDraftTokens = numDraftTokens
+        self.accelerationProfile = accelerationProfile
+        self.multimodalRoutePolicy = multimodalRoutePolicy
+        self.speculativeRoutePolicy = speculativeRoutePolicy
+        self.sourceRawValue = sourceRawValue
+        self.updatedAtUnixMS = updatedAtUnixMS
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            serverSessionID: try container.decode(String.self, forKey: .serverSessionID),
+            temperature: try container.decode(Double.self, forKey: .temperature),
+            topP: try container.decode(Double.self, forKey: .topP),
+            maxTokens: try container.decode(UInt32.self, forKey: .maxTokens),
+            streamIntervalTokens: try container.decode(UInt32.self, forKey: .streamIntervalTokens),
+            maxConcurrentRequests: try container.decode(UInt32.self, forKey: .maxConcurrentRequests),
+            concurrentProcessingEnabled: try container.decode(Bool.self, forKey: .concurrentProcessingEnabled),
+            prefillBatchSize: try container.decode(UInt32.self, forKey: .prefillBatchSize),
+            completionBatchSize: try container.decode(UInt32.self, forKey: .completionBatchSize),
+            accelerationModeRawValue: try container.decode(Int.self, forKey: .accelerationModeRawValue),
+            draftModelID: try container.decode(String.self, forKey: .draftModelID),
+            numDraftTokens: try container.decode(UInt32.self, forKey: .numDraftTokens),
+            accelerationProfile: try container.decode(String.self, forKey: .accelerationProfile),
+            multimodalRoutePolicy: try container.decodeIfPresent(
+                String.self,
+                forKey: .multimodalRoutePolicy
+            ) ?? "auto",
+            speculativeRoutePolicy: try container.decodeIfPresent(
+                String.self,
+                forKey: .speculativeRoutePolicy
+            ) ?? "auto",
+            sourceRawValue: try container.decode(Int.self, forKey: .sourceRawValue),
+            updatedAtUnixMS: try container.decode(Int64.self, forKey: .updatedAtUnixMS)
+        )
     }
 
     var accelerationMode: Melix_Controlplane_V1_AccelerationMode {
@@ -289,7 +542,9 @@ public actor GatewayServingDefaultsStore {
             accelerationMode: record?.accelerationMode ?? defaults.accelerationMode,
             draftModelID: record?.draftModelID ?? defaults.draftModelID,
             numDraftTokens: record?.numDraftTokens ?? defaults.numDraftTokens,
-            accelerationProfile: record?.accelerationProfile ?? defaults.accelerationProfile
+            accelerationProfile: record?.accelerationProfile ?? defaults.accelerationProfile,
+            multimodalRoutePolicy: record?.multimodalRoutePolicy ?? defaults.multimodalRoutePolicy,
+            speculativeRoutePolicy: record?.speculativeRoutePolicy ?? defaults.speculativeRoutePolicy
         )
     }
 
@@ -328,6 +583,13 @@ public actor GatewayServingDefaultsStore {
         guard Self.isKnownProfileID(command.accelerationProfile) else {
             throw ServingDefaultsValidationError.invalidAccelerationProfile
         }
+        let multimodalRoutePolicy = Self.normalizedRoutePolicy(command.multimodalRoutePolicy)
+        let speculativeRoutePolicy = Self.normalizedRoutePolicy(command.speculativeRoutePolicy)
+        guard Self.isKnownRoutePolicy(multimodalRoutePolicy),
+              Self.isKnownRoutePolicy(speculativeRoutePolicy)
+        else {
+            throw ServingDefaultsValidationError.invalidRoutePolicy
+        }
 
         let record = PersistedServingDefaultsRecord(
             serverSessionID: serverSessionID,
@@ -343,6 +605,8 @@ public actor GatewayServingDefaultsStore {
             draftModelID: Self.trimmed(command.draftModelID),
             numDraftTokens: command.numDraftTokens,
             accelerationProfile: Self.normalizedProfileID(command.accelerationProfile),
+            multimodalRoutePolicy: multimodalRoutePolicy,
+            speculativeRoutePolicy: speculativeRoutePolicy,
             sourceRawValue: Melix_Controlplane_V1_ServingDefaultsSource.operatorOverride.rawValue,
             updatedAtUnixMS: nowUnixMS()
         )
@@ -376,6 +640,8 @@ public actor GatewayServingDefaultsStore {
             let requestedDraftModelID = record?.draftModelID ?? defaults.draftModelID
             let requestedNumDraftTokens = record?.numDraftTokens ?? defaults.numDraftTokens
             let requestedAccelerationProfile = record?.accelerationProfile ?? defaults.accelerationProfile
+            let requestedMultimodalRoutePolicy = record?.multimodalRoutePolicy ?? defaults.multimodalRoutePolicy
+            let requestedSpeculativeRoutePolicy = record?.speculativeRoutePolicy ?? defaults.speculativeRoutePolicy
             let defaultModelID = Self.trimmed(defaultModelIDs[serverSessionID] ?? "")
             let modelSamplingPolicy = modelSettingsByModelID[defaultModelID].flatMap(ModelSamplingPolicy.init)
             let modelSettings = modelSettingsByModelID[defaultModelID]
@@ -390,7 +656,20 @@ public actor GatewayServingDefaultsStore {
                 requestedAccelerationMode: requestedAccelerationMode,
                 requestedDraftModelID: requestedDraftModelID,
                 requestedNumDraftTokens: requestedNumDraftTokens,
-                modelSettings: modelSettings
+                modelSettings: modelSettings,
+                speculativeRoutePolicy: requestedSpeculativeRoutePolicy
+            )
+            let overrideReceiptExt = Self.overrideReceiptExt(
+                requestedMaxConcurrentRequests: requestedMaxConcurrentRequests,
+                requestedPrefillBatchSize: requestedPrefillBatchSize,
+                requestedCompletionBatchSize: requestedCompletionBatchSize,
+                effectiveMaxConcurrentRequests: effectiveBatchingDefaults.maxConcurrentRequests,
+                effectivePrefillBatchSize: effectiveBatchingDefaults.prefillBatchSize,
+                effectiveCompletionBatchSize: effectiveBatchingDefaults.completionBatchSize,
+                requestedAccelerationMode: requestedAccelerationMode,
+                effectiveAccelerationMode: effectiveSpeculativeDefaults.accelerationMode,
+                multimodalRoutePolicy: requestedMultimodalRoutePolicy,
+                speculativeRoutePolicy: requestedSpeculativeRoutePolicy
             )
 
             var session = Melix_Controlplane_V1_ServingDefaultsSessionSummary()
@@ -423,6 +702,36 @@ public actor GatewayServingDefaultsStore {
             session.accelerationProfileIntent = ServingAccelerationProfiles
                 .profile(id: effectiveSpeculativeDefaults.accelerationProfile)
                 .intent
+            session.overrideReceiptSchema = overrideReceiptExt[
+                "melix.gateway.override_receipt_schema"
+            ] ?? ""
+            session.suppressedOverrides = overrideReceiptExt[
+                "melix.gateway.suppressed_overrides"
+            ] ?? ""
+            session.batchDisabledReason = overrideReceiptExt[
+                "melix.gateway.batch.disabled_reason"
+            ] ?? "none"
+            session.speculativeDisabledReason = overrideReceiptExt[
+                "melix.gateway.speculative.disabled_reason"
+            ] ?? ""
+            session.multimodalRoutePolicy = overrideReceiptExt[
+                "melix.gateway.multimodal_route_policy"
+            ] ?? "auto"
+            session.effectiveMultimodalRoute = overrideReceiptExt[
+                "melix.gateway.effective_multimodal_route"
+            ] ?? "swift_text"
+            session.speculativeRoutePolicy = overrideReceiptExt[
+                "melix.gateway.speculative_route_policy"
+            ] ?? "auto"
+            session.effectiveSpeculativeMode = overrideReceiptExt[
+                "melix.gateway.effective_speculative_mode"
+            ] ?? "baseline"
+            session.cacheQuantizationDisabledReason = overrideReceiptExt[
+                "melix.gateway.cache_quantization.disabled_reason"
+            ] ?? "not_configurable"
+            session.pagedCacheDisabledReason = overrideReceiptExt[
+                "melix.gateway.paged_cache.disabled_reason"
+            ] ?? "not_configurable"
             session.source = record?.source ?? defaults.source
             session.modelOverrideApplied = modelSamplingPolicy != nil || effectiveSpeculativeDefaults.modelOverrideApplied
             session.updatedAtUnixMs = record?.updatedAtUnixMS ?? 0
@@ -522,6 +831,12 @@ public actor GatewayServingDefaultsStore {
             environment["MELIX_GATEWAY_NUM_DRAFT_TOKENS"],
             fallback: profileDefaults.numDraftTokens
         )
+        let multimodalRoutePolicy = normalizedRoutePolicy(
+            environment["MELIX_GATEWAY_MULTIMODAL_ROUTE_POLICY"] ?? "auto"
+        )
+        let speculativeRoutePolicy = normalizedRoutePolicy(
+            environment["MELIX_GATEWAY_SPECULATIVE_ROUTE_POLICY"] ?? "auto"
+        )
 
         let usesEnvironmentDefaults =
             environment["MELIX_GATEWAY_DEFAULT_TEMPERATURE"] != nil
@@ -537,6 +852,8 @@ public actor GatewayServingDefaultsStore {
             || environment["MELIX_GATEWAY_DRAFT_MODEL_ID"] != nil
             || environment["MELIX_GATEWAY_NUM_DRAFT_TOKENS"] != nil
             || environment["MELIX_GATEWAY_ACCELERATION_PROFILE"] != nil
+            || environment["MELIX_GATEWAY_MULTIMODAL_ROUTE_POLICY"] != nil
+            || environment["MELIX_GATEWAY_SPECULATIVE_ROUTE_POLICY"] != nil
 
         return GatewayServingDefaultsResolvedDefaults(
             temperature: temperature,
@@ -551,6 +868,8 @@ public actor GatewayServingDefaultsStore {
             draftModelID: draftModelID,
             numDraftTokens: numDraftTokens,
             accelerationProfile: accelerationProfile,
+            multimodalRoutePolicy: isKnownRoutePolicy(multimodalRoutePolicy) ? multimodalRoutePolicy : "auto",
+            speculativeRoutePolicy: isKnownRoutePolicy(speculativeRoutePolicy) ? speculativeRoutePolicy : "auto",
             source: usesEnvironmentDefaults ? .environmentDefaults : .builtInDefaults
         )
     }
@@ -663,12 +982,72 @@ public actor GatewayServingDefaultsStore {
         )
     }
 
+    private static func overrideReceiptExt(
+        requestedMaxConcurrentRequests: UInt32,
+        requestedPrefillBatchSize: UInt32,
+        requestedCompletionBatchSize: UInt32,
+        effectiveMaxConcurrentRequests: UInt32,
+        effectivePrefillBatchSize: UInt32,
+        effectiveCompletionBatchSize: UInt32,
+        requestedAccelerationMode: Melix_Controlplane_V1_AccelerationMode,
+        effectiveAccelerationMode: Melix_Controlplane_V1_AccelerationMode,
+        multimodalRoutePolicy: String,
+        speculativeRoutePolicy: String
+    ) -> [String: String] {
+        var suppressedOverrides: [String] = []
+        var batchOverrideSuppressed = false
+        if requestedMaxConcurrentRequests != effectiveMaxConcurrentRequests {
+            suppressedOverrides.append("max_concurrent_requests")
+            batchOverrideSuppressed = true
+        }
+        if requestedPrefillBatchSize != effectivePrefillBatchSize {
+            suppressedOverrides.append("prefill_batch_size")
+            batchOverrideSuppressed = true
+        }
+        if requestedCompletionBatchSize != effectiveCompletionBatchSize {
+            suppressedOverrides.append("completion_batch_size")
+            batchOverrideSuppressed = true
+        }
+
+        let normalizedRequestedAccelerationMode = normalizeRequestedAccelerationMode(requestedAccelerationMode)
+        let normalizedMultimodalRoutePolicy = normalizedRoutePolicy(multimodalRoutePolicy)
+        let normalizedSpeculativeRoutePolicy = normalizedRoutePolicy(speculativeRoutePolicy)
+        let normalizedEffectiveAccelerationMode = normalizedSpeculativeRoutePolicy == "off"
+            ? Melix_Controlplane_V1_AccelerationMode.baseline
+            : normalizeRequestedAccelerationMode(effectiveAccelerationMode)
+        var receiptExt: [String: String] = [
+            "melix.gateway.override_receipt_schema": "melix.gateway_override_receipt.v1",
+            "melix.gateway.multimodal_route_policy": normalizedMultimodalRoutePolicy,
+            "melix.gateway.effective_multimodal_route": normalizedMultimodalRoutePolicy == "off"
+                ? "off"
+                : WorkerRouteKind.swiftText.metadataIdentifier,
+            "melix.gateway.speculative_route_policy": normalizedSpeculativeRoutePolicy,
+            "melix.gateway.effective_speculative_mode": accelerationModeIdentifier(normalizedEffectiveAccelerationMode),
+            "melix.gateway.batch.disabled_reason": batchOverrideSuppressed ? "incompatible_batch_size" : "none",
+            "melix.gateway.cache_quantization.disabled_reason": "not_configurable",
+            "melix.gateway.paged_cache.disabled_reason": "not_configurable",
+        ]
+
+        if normalizedRequestedAccelerationMode == .speculativeDecode,
+           normalizedEffectiveAccelerationMode != .speculativeDecode {
+            suppressedOverrides.append("speculative_decode")
+            receiptExt["melix.gateway.speculative.disabled_reason"] = normalizedSpeculativeRoutePolicy == "off"
+                ? "operator_disabled"
+                : "unsupported_route"
+        }
+        if !suppressedOverrides.isEmpty {
+            receiptExt["melix.gateway.suppressed_overrides"] = suppressedOverrides.joined(separator: ",")
+        }
+        return receiptExt
+    }
+
     private static func effectiveSpeculativeDefaults(
         requestedAccelerationProfile: String,
         requestedAccelerationMode: Melix_Controlplane_V1_AccelerationMode,
         requestedDraftModelID: String,
         requestedNumDraftTokens: UInt32,
-        modelSettings: Melix_Controlplane_V1_ModelSettings?
+        modelSettings: Melix_Controlplane_V1_ModelSettings?,
+        speculativeRoutePolicy: String = "auto"
     ) -> (
         accelerationMode: Melix_Controlplane_V1_AccelerationMode,
         draftModelID: String,
@@ -686,7 +1065,9 @@ public actor GatewayServingDefaultsStore {
         let modelProfile = normalizedProfileID(modelProfileRawValue)
         let hasModelProfileOverride = ServingAccelerationProfiles.normalizeProfileID(modelProfileRawValue) != nil
         let effectiveProfile = hasModelProfileOverride ? modelProfile : requestedProfile
-        let effectiveAccelerationMode = hasModelAccelerationOverride
+        let effectiveAccelerationMode = normalizedRoutePolicy(speculativeRoutePolicy) == "off"
+            ? Melix_Controlplane_V1_AccelerationMode.baseline
+            : hasModelAccelerationOverride
             ? modelAccelerationMode
             : normalizedRequestedMode
         guard effectiveAccelerationMode == .speculativeDecode else {
@@ -707,6 +1088,31 @@ public actor GatewayServingDefaultsStore {
             (hasModelAccelerationOverride && modelAccelerationMode != normalizedRequestedMode)
                 || (hasModelProfileOverride && modelProfile != requestedProfile)
         )
+    }
+
+    private static func accelerationModeIdentifier(
+        _ mode: Melix_Controlplane_V1_AccelerationMode
+    ) -> String {
+        switch mode {
+        case .speculativeDecode:
+            return "speculative_decode"
+        default:
+            return "baseline"
+        }
+    }
+
+    private static func normalizedRoutePolicy(_ rawValue: String) -> String {
+        let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.isEmpty ? "auto" : normalized
+    }
+
+    private static func isKnownRoutePolicy(_ rawValue: String) -> Bool {
+        switch normalizedRoutePolicy(rawValue) {
+        case "auto", "off", "force":
+            return true
+        default:
+            return false
+        }
     }
 
     private static func trimmed(_ value: String) -> String {

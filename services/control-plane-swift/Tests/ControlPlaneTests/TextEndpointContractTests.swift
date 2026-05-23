@@ -2274,6 +2274,91 @@ struct TextEndpointContractTests {
         #expect(translated.workerRequest.execution.ext["melix.gateway.num_draft_tokens"] == "6")
     }
 
+    @Test("chat translation emits effective gateway override receipts before dispatch")
+    func chatTranslationEmitsEffectiveGatewayOverrideReceiptsBeforeDispatch() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-chat-serving-receipts" })
+        let normalized = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-text",
+                messages: [.init(role: "user", content: "Hello")],
+                sessionID: "session-serving-receipts"
+            )
+        )
+        let gatewayServingDefaults = GatewayServingDefaultsPolicy(
+            temperature: 0.35,
+            topP: 0.92,
+            maxTokens: 384,
+            streamIntervalTokens: 4,
+            maxConcurrentRequests: 6,
+            concurrentProcessingEnabled: true,
+            prefillBatchSize: 3,
+            completionBatchSize: 2,
+            accelerationMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft",
+            numDraftTokens: 6,
+            accelerationProfile: "throughput"
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-text::swift",
+            gatewayServingDefaults: gatewayServingDefaults.resolvingAccelerationCompatibility(for: nil)
+        )
+        let ext = translated.workerRequest.execution.ext
+
+        #expect(ext["melix.gateway.override_receipt_schema"] == "melix.gateway_override_receipt.v1")
+        #expect(ext["melix.gateway.max_concurrent_requests"] == "2")
+        #expect(ext["melix.gateway.prefill_batch_size"] == "2")
+        #expect(ext["melix.gateway.completion_batch_size"] == "2")
+        #expect(ext["melix.gateway.effective_multimodal_route"] == "swift_text")
+        #expect(ext["melix.gateway.speculative_route_policy"] == "auto")
+        #expect(ext["melix.gateway.effective_speculative_mode"] == "baseline")
+        #expect(ext["melix.gateway.speculative.disabled_reason"] == "unsupported_route")
+        #expect(ext["melix.gateway.suppressed_overrides"] == "max_concurrent_requests,prefill_batch_size,speculative_decode")
+        #expect(ext["melix.gateway.cache_quantization.disabled_reason"] == "not_configurable")
+        #expect(ext["melix.gateway.paged_cache.disabled_reason"] == "not_configurable")
+    }
+
+    @Test("chat translation emits disabled route policy receipts before dispatch")
+    func chatTranslationEmitsDisabledRoutePolicyReceiptsBeforeDispatch() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-chat-serving-off-routes" })
+        let normalized = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-text",
+                messages: [.init(role: "user", content: "Hello")],
+                sessionID: "session-serving-off-routes"
+            )
+        )
+        let gatewayServingDefaults = GatewayServingDefaultsPolicy(
+            temperature: 0.35,
+            topP: 0.92,
+            maxTokens: 384,
+            streamIntervalTokens: 4,
+            maxConcurrentRequests: 2,
+            concurrentProcessingEnabled: true,
+            prefillBatchSize: 2,
+            completionBatchSize: 2,
+            accelerationMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft",
+            numDraftTokens: 6,
+            accelerationProfile: "throughput",
+            multimodalRoutePolicy: "off",
+            speculativeRoutePolicy: "off"
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-text::swift",
+            gatewayServingDefaults: gatewayServingDefaults.resolvingAccelerationCompatibility(for: nil)
+        )
+        let ext = translated.workerRequest.execution.ext
+
+        #expect(ext["melix.gateway.multimodal_route_policy"] == "off")
+        #expect(ext["melix.gateway.effective_multimodal_route"] == "off")
+        #expect(ext["melix.gateway.speculative_route_policy"] == "off")
+        #expect(ext["melix.gateway.effective_speculative_mode"] == "baseline")
+        #expect(ext["melix.gateway.speculative.disabled_reason"] == "operator_disabled")
+        #expect(ext["melix.gateway.suppressed_overrides"] == "speculative_decode")
+    }
+
     @Test("model generation config overrides gateway serving defaults while admission metadata stays gateway-owned")
     func modelGenerationConfigOverridesGatewayServingDefaultsWhileAdmissionMetadataStaysGatewayOwned() throws {
         let translator = ChatRequestTranslator(requestIDGenerator: { "req-chat-serving-merge" })

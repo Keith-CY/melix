@@ -4429,10 +4429,16 @@ struct OpenAIHandlerTests {
         #expect(request.sampling.topP == 0.91)
         #expect(request.sampling.maxOutputTokens == 448)
         #expect(request.execution.ext["melix.stream.interval_tokens"] == "4")
-        #expect(request.execution.ext["melix.gateway.max_concurrent_requests"] == "6")
+        #expect(request.execution.ext["melix.gateway.max_concurrent_requests"] == "2")
+        #expect(request.execution.ext["melix.gateway.max_concurrent_sequences"] == "2")
         #expect(request.execution.ext["melix.gateway.concurrent_processing"] == "true")
-        #expect(request.execution.ext["melix.gateway.prefill_batch_size"] == "3")
+        #expect(request.execution.ext["melix.gateway.prefill_batch_size"] == "2")
         #expect(request.execution.ext["melix.gateway.completion_batch_size"] == "2")
+        #expect(request.execution.ext["melix.gateway.override_receipt_schema"] == "melix.gateway_override_receipt.v1")
+        #expect(request.execution.ext["melix.gateway.suppressed_overrides"] == "max_concurrent_requests,prefill_batch_size")
+        #expect(request.execution.ext["melix.gateway.batch.disabled_reason"] == "incompatible_batch_size")
+        #expect(request.execution.ext["melix.gateway.cache_quantization.disabled_reason"] == "not_configurable")
+        #expect(request.execution.ext["melix.gateway.paged_cache.disabled_reason"] == "not_configurable")
     }
 
     @Test("responses requests preserve harmony metadata while keeping standard stream frames")
