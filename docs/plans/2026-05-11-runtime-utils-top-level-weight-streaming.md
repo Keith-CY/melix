@@ -32,3 +32,16 @@ selection, and the probe script smoke test.
 - Behavior remains unchanged for indexed bundles, flat bundles, missing paths, and stat/list errors.
 - `_top_level_weight_file_bytes()` streams `Path.iterdir()` entries instead of materializing a tuple.
 - Local registered probe shows lower peak allocation and no worse resident-byte guard rails.
+
+## 2026-05-23 suffix prefilter slice
+
+The follow-up Python slice keeps the same registered probe and narrows only the
+model-weight filename classification hot path. `_is_model_weight_filename(...)`
+now rejects names whose final character cannot match any supported model-weight
+suffix before running tuple `endswith(...)`, `islower()`, or lowercase fallback
+work. This preserves existing case-sensitive and case-insensitive suffix behavior
+while avoiding extra string checks for common non-weight files in flat bundles.
+
+Validation remains the focused runtime-utils pytest selection, changed-scope
+coverage for `runtime_utils.py`, `test_runtime_utils.py`, and the registered probe
+script, plus the local and CI `runtime-utils-top-level-weight-streaming` probe.

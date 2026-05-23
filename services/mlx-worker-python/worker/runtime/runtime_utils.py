@@ -12,6 +12,7 @@ from typing import Any
 
 
 _MODEL_WEIGHT_SUFFIXES = (".safetensors", ".npz", ".bin", ".gguf")
+_MODEL_WEIGHT_SUFFIX_LAST_CHARS = frozenset("sSzZnNfF")
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +182,8 @@ def _top_level_weight_file_bytes(model_dir: Path) -> int:
 
 
 def _is_model_weight_filename(name: str) -> bool:
+    if not name or name[-1] not in _MODEL_WEIGHT_SUFFIX_LAST_CHARS:
+        return False
     if name.endswith(_MODEL_WEIGHT_SUFFIXES):
         return name not in _MODEL_WEIGHT_SUFFIXES
     if name.islower():
