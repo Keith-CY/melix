@@ -1011,6 +1011,11 @@ def test_evaluate_section_metrics_counts_failure_types_without_suffix_scan() -> 
         {"above_max": {"max": 1.0}},
         prefix="m9.mcp.",
     ) == ["m9.mcp.above_max=2.00 exceeded maximum 1.00"]
+    assert release_gates_module._evaluate_section_metrics(
+        {"42": 0.0},
+        {42: {"min": 1.0}},
+        prefix="m9.mcp.",
+    ) == ["m9.mcp.42=0.00 fell below minimum 1.00"]
 
 
 def test_metric_value_prefers_flat_keys_and_preserves_nested_lookup() -> None:

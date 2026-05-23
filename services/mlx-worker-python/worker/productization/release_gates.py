@@ -1961,7 +1961,8 @@ def _evaluate_section_metrics_with_counts(
     missing = _MISSING
     metric_value = _metric_value
     for name, rule in rules.items():
-        value = metric_value(values, str(name))
+        metric_name = name if isinstance(name, str) else str(name)
+        value = metric_value(values, metric_name)
         if value is missing:
             failures_append(f"{prefix}{name} is missing")
             missing_count += 1
