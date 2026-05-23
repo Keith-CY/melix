@@ -1733,6 +1733,67 @@ struct OpenAIHandlerTests {
         #expect(await workerClient.lastGenerateRequest == nil)
     }
 
+    @Test("POST /v1/chat/completions returns typed media errors for unsupported part types")
+    func postChatCompletionsReturnsTypedMediaErrorsForUnsupportedPartTypes() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(requestID: "req-http-unsupported-media", seq: 1, finishReason: "stop", assistantText: "done"),
+        ])
+        let workerRegistry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: workerRegistry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: workerRegistry,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-http-unsupported-media" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": false,
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "text", "text": "Read the attachment." },
+                    {
+                      "type": "input_document",
+                      "input_document": {
+                        "data": "ZG9j"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+
+        #expect(response.statusCode == 400)
+        #expect(error["code"] as? String == "unsupported_media_payload")
+        #expect(error["unsupported_reason"] as? String == "unsupported_part_type")
+        #expect(error["field"] as? String == "type")
+        #expect(error["rejected_value"] as? String == "input_document")
+        #expect(await workerClient.lastLoadModelRequest == nil)
+        #expect(await workerClient.lastGenerateRequest == nil)
+    }
+
     @Test("POST /v1/chat/completions rejects media kinds outside model modalities")
     func postChatCompletionsRejectsMediaKindsOutsideModelModalities() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory

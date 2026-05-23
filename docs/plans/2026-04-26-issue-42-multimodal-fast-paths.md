@@ -307,6 +307,16 @@ Executable unit issues:
 - Unit 1.3.1 extends request normalization summary metadata with
   `melix.media_turn_count` so route receipts can distinguish total media parts
   from the number of user turns carrying media.
+- Unit 1.3.2 adds an executable OpenAI chat normalization matrix for
+  text+audio, text+image, image+audio, video+text, and empty-media payloads.
+  The matrix proves server-compatible request bodies preserve ordered worker
+  message parts, shared media-part summaries, and `melix.media_turn_count`.
+  `melix chat run` still sends text-only `ControlPlaneChatRequest.Message`
+  values, so there is no direct CLI media payload to compare in this unit.
+- Unit 1.3.2 maps unsupported OpenAI multimodal `content[].type` values into
+  `MultimodalRequestNormalizationError.unsupportedPartType` so HTTP ingress
+  returns `unsupported_media_payload` with `unsupported_reason=
+  unsupported_part_type` before model load or worker dispatch.
 - Unit 1.2.3 records serving-default override receipts with
   `melix.gateway_override_receipt.v1`. Launch-bound worker execution metadata and
   control-plane serving-default summaries expose suppressed override names,

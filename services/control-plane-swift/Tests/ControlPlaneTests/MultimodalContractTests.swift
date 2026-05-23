@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import MelixControlPlaneCore
+import MelixWorkerProtocol
 
 struct MultimodalContractTests {
     @Test("multimodal message contracts decode image-uri and audio-inline payload shapes")
@@ -365,6 +366,194 @@ struct MultimodalContractTests {
         #expect(localVideo.format == "mov")
         #expect(localVideo.stableDigest?.count == 64)
         #expect(localVideo.stableDigest != remoteImage.stableDigest)
+    }
+
+    @Test("mixed-media normalization matrix covers paired request bodies and empty media")
+    func mixedMediaNormalizationMatrixCoversPairedRequestBodiesAndEmptyMedia() throws {
+        let decoder = JSONDecoder()
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-mixed-media-matrix" })
+        let cases: [(
+            name: String,
+            content: String,
+            expectedPartKinds: [String],
+            expectedMediaKinds: [String],
+            expectedText: String
+        )] = [
+            (
+                "text+audio",
+                """
+                [
+                  { "type": "text", "text": "Summarize the audio." },
+                  {
+                    "type": "input_audio",
+                    "input_audio": {
+                      "data": "YXVkaW8=",
+                      "format": "wav",
+                      "filename": "sample.wav"
+                    }
+                  }
+                ]
+                """,
+                ["text", "audio"],
+                ["audio"],
+                "Summarize the audio."
+            ),
+            (
+                "text+image",
+                """
+                [
+                  { "type": "input_text", "text": "Describe the image." },
+                  {
+                    "type": "input_image",
+                    "input_image": {
+                      "data": "aW1hZ2U=",
+                      "mime_type": "image/png",
+                      "format": "png",
+                      "filename": "sample.png"
+                    }
+                  }
+                ]
+                """,
+                ["text", "image"],
+                ["image"],
+                "Describe the image."
+            ),
+            (
+                "image+audio",
+                """
+                [
+                  {
+                    "type": "input_image",
+                    "input_image": {
+                      "data": "aW1hZ2U=",
+                      "mime_type": "image/png",
+                      "format": "png",
+                      "filename": "sample.png"
+                    }
+                  },
+                  {
+                    "type": "input_audio",
+                    "input_audio": {
+                      "data": "YXVkaW8=",
+                      "format": "wav",
+                      "filename": "sample.wav"
+                    }
+                  }
+                ]
+                """,
+                ["image", "audio"],
+                ["image", "audio"],
+                ""
+            ),
+            (
+                "video+text",
+                """
+                [
+                  {
+                    "type": "input_video",
+                    "input_video": {
+                      "data": "dmlkZW8=",
+                      "format": "mp4",
+                      "filename": "sample.mp4",
+                      "duration_ms": 1200,
+                      "frame_budget": 8
+                    }
+                  },
+                  { "type": "text", "text": "Explain the video." }
+                ]
+                """,
+                ["video", "text"],
+                ["video"],
+                "Explain the video."
+            ),
+        ]
+
+        for testCase in cases {
+            let request = try decoder.decode(
+                OpenAIChatCompletionsRequest.self,
+                from: Data(
+                    """
+                    {
+                      "model": "melix-dev-vlm",
+                      "stream": false,
+                      "messages": [
+                        {
+                          "role": "user",
+                          "content": \(testCase.content)
+                        }
+                      ]
+                    }
+                    """.utf8
+                )
+            )
+
+            let normalized = try translator.normalizeMultimodalChat(request)
+            let translated = try translator.translate(normalized, modelHandle: "melix-dev-vlm::python")
+            let message = try #require(normalized.messages.first)
+            let workerMessage = try #require(translated.workerRequest.messages.first)
+
+            #expect(message.content == testCase.expectedText, "case \(testCase.name)")
+            #expect(message.parts.map(Self.mediaKindIdentifier) == testCase.expectedPartKinds, "case \(testCase.name)")
+            #expect(workerMessage.parts.map(Self.mediaKindIdentifier) == testCase.expectedPartKinds, "case \(testCase.name)")
+            #expect(
+                normalized.mediaPartsSummary.parts.map(\.mediaKind) == testCase.expectedMediaKinds,
+                "case \(testCase.name)"
+            )
+            #expect(
+                translated.workerRequest.execution.ext["melix.media_parts.count"]
+                    == String(testCase.expectedMediaKinds.count),
+                "case \(testCase.name)"
+            )
+            #expect(translated.workerRequest.execution.ext["melix.media_turn_count"] == "1", "case \(testCase.name)")
+            #expect(
+                translated.workerRequest.execution.ext["melix.worker_content.contract"]
+                    == "ordered_message_parts",
+                "case \(testCase.name)"
+            )
+        }
+
+        let emptyAudioRequest = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-vlm",
+                  "stream": false,
+                  "messages": [
+                    {
+                      "role": "user",
+                      "content": [
+                        { "type": "input_audio", "input_audio": {} }
+                      ]
+                    }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        #expect(throws: MultimodalRequestNormalizationError.missingValue("input_audio.data or input_audio.url")) {
+            _ = try translator.normalizeMultimodalChat(emptyAudioRequest)
+        }
+    }
+
+    @Test("unsupported multimodal part types decode to typed normalization errors")
+    func unsupportedMultimodalPartTypesDecodeToTypedNormalizationErrors() {
+        #expect(throws: MultimodalRequestNormalizationError.unsupportedPartType("input_document")) {
+            _ = try JSONDecoder().decode(
+                OpenAIMultimodalContentPart.self,
+                from: Data(
+                    """
+                    {
+                      "type": "input_document",
+                      "input_document": {
+                        "data": "ZG9j"
+                      }
+                    }
+                    """.utf8
+                )
+            )
+        }
     }
 
     @Test("multimodal request normalizer accepts image-only payloads")
@@ -853,6 +1042,23 @@ struct MultimodalContractTests {
                     inputVideo: OpenAIMultimodalVideoReference(format: "mp4")
                 )
             )
+        }
+    }
+
+    private static func mediaKindIdentifier(_ part: Melix_Worker_V1_MessagePart) -> String {
+        switch part.media.mediaType {
+        case .text:
+            return "text"
+        case .image:
+            return "image"
+        case .audio:
+            return "audio"
+        case .video:
+            return "video"
+        case .unspecified:
+            return "unspecified"
+        case .UNRECOGNIZED(let value):
+            return "unrecognized:\(value)"
         }
     }
 }

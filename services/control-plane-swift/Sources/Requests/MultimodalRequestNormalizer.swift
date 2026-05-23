@@ -151,6 +151,20 @@ public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
         case inputImage = "input_image"
         case inputAudio = "input_audio"
         case inputVideo = "input_video"
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            let rawValue = try container.decode(String.self)
+            guard let type = Self(rawValue: rawValue) else {
+                throw MultimodalRequestNormalizationError.unsupportedPartType(rawValue)
+            }
+            self = type
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            try container.encode(rawValue)
+        }
     }
 
     public let type: PartType
