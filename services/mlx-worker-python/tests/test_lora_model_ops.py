@@ -101,6 +101,8 @@ def test_reward_summary_reuses_candidate_group_minmax(
                 {"score": 0.4},
                 {"score": 0.1},
                 {"score": 0.9},
+                {"ignored": True},
+                "invalid-candidate",
             ],
         },
         {
