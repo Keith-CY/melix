@@ -65,7 +65,7 @@ class ProbePolicy:
             policy = _PROBE_POLICY_BY_VALUE_GET(value)
             if policy is not None:
                 return policy
-            raw_value = value.strip().lower()
+            return _probe_policy_from_uncached_string(value, default_mode)
         elif isinstance(value, ProbeMode):
             return _PROBE_POLICY_BY_MODE[value]
         elif isinstance(value, str):
@@ -103,6 +103,17 @@ _PROBE_POLICY_BY_DEFAULT_MODE: dict[ProbeMode, ProbePolicy] = {
 }
 _EVIDENCE_PROBE_POLICY = _PROBE_POLICY_BY_MODE[ProbeMode.EVIDENCE]
 _DEBUG_PROBE_POLICY = _PROBE_POLICY_BY_MODE[ProbeMode.DEBUG]
+
+
+@lru_cache(maxsize=64)
+def _probe_policy_from_uncached_string(value: str, default_mode: ProbeMode) -> ProbePolicy:
+    raw_value = value.strip().lower()
+    if not raw_value:
+        return _PROBE_POLICY_BY_DEFAULT_MODE[default_mode]
+    policy = _PROBE_POLICY_BY_VALUE_GET(raw_value)
+    if policy is not None:
+        return policy
+    return _invalid_probe_policy(raw_value, default_mode)
 
 
 @lru_cache(maxsize=64)
