@@ -92,6 +92,67 @@ The report includes:
 The checked-in fixture at
 `services/mlx-worker-python/fixtures/workspace/m-courtyard-smoke.dev.v1/workspace-manifest.json`
 is the development-time contract example for the U1.1.1 slice.
+It validates the schema contract, but it does not materialize every referenced
+workspace root under the fixture directory.
+
+## Workspace Preflight Receipt
+
+Workspace preflight is the U1.1.2 runtime validation layer on top of the
+manifest schema validator. It does not change the protobuf schema and does not
+modify existing workspaces. The Python entry point is
+`worker.productization.workspace_manifest.preflight_workspace`; the CLI wrapper
+is `scripts/workspace_manifest_preflight.py`.
+
+Preflight returns stable JSON with:
+
+- `schema_version`: `melix.workspace_preflight_receipt.v1`
+- `status`: `ready` or `blocked`
+- `workspace_manifest_schema_version`
+- `project_id`
+- `manifest_path`
+- `checks`
+- `metrics`
+
+Each check is designed for CLI, Desktop, and report consumers to explain the
+failure without reading raw logs. A check contains:
+
+- `code`
+- `status`
+- `title`
+- `detail`
+- `recovery_hint`
+- `items`
+
+The U1.1.2 check codes are:
+
+| Code | Meaning |
+|---|---|
+| `WORKSPACE_SCHEMA_CURRENT` | The manifest schema version is current. |
+| `WORKSPACE_SCHEMA_STALE` | The manifest schema version is not supported by this Melix build. |
+| `WORKSPACE_ROOT_EXISTS` | All path-backed artifact roots exist on disk. |
+| `WORKSPACE_ROOT_MISSING` | A path-backed artifact root is missing. |
+| `WORKSPACE_ARTIFACT_ROOTS_KNOWN` | All artifacts reference declared roots. |
+| `WORKSPACE_ARTIFACT_ROOT_UNKNOWN` | An artifact references an undeclared root id. |
+| `WORKSPACE_PATHS_SAFE` | Manifest root and artifact paths are safe relative paths. |
+| `WORKSPACE_PATH_UNSAFE` | A manifest root or artifact path is absolute, escapes via `..`, uses backslashes, uses a Windows drive or UNC path, or otherwise violates safe relative path rules. |
+| `WORKSPACE_ARTIFACTS_MANAGED` | Files under the Melix workspace root are represented by manifest artifacts. |
+| `WORKSPACE_UNMANAGED_ARTIFACT` | A file under the Melix workspace root is not represented by manifest artifacts. |
+| `WORKSPACE_MIGRATION_VALIDATED` | The workspace does not require migration. |
+| `WORKSPACE_MIGRATION_REQUIRED` | The workspace needs an explicit future migration path; preflight will not mutate it. |
+| `WORKSPACE_MANIFEST_INVALID` | Schema validation failed for errors outside the typed preflight categories. |
+
+Preflight ignores `workspace-manifest.json` and the selected receipt output path
+when scanning for unmanaged workspace files.
+
+## Migration Validation
+
+Existing workspaces whose manifest schema version differs from
+`melix.workspace_manifest.v1` have an explicit non-migration path in U1.1.2:
+preflight returns `WORKSPACE_SCHEMA_STALE` and
+`WORKSPACE_MIGRATION_REQUIRED`, sets `status` to `blocked`, and includes a
+recovery hint to open the workspace with a compatible Melix build or run a
+future explicit migration command. The preflight command never edits the
+manifest or workspace artifacts.
 
 ## Metrics
 
@@ -106,3 +167,27 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" \
 It records manifest validation latency, fixture count, schema error count, and
 manifest byte size. Later preflight and migration work must add runtime checks
 without changing this schema contract unless a new schema version is introduced.
+
+The preflight receipt probe is:
+
+```bash
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" \
+  uv run --project services/mlx-worker-python \
+  python scripts/workspace_manifest_preflight.py \
+    --manifest services/mlx-worker-python/fixtures/workspace/m-courtyard-smoke.dev.v1/workspace-manifest.json \
+    --output .runtime/workspace-preflight-receipt.json
+```
+
+It records:
+
+- `preflight_latency_ms`
+- `missing_root_count`
+- `stale_schema_count`
+- `unsafe_path_count`
+- `unmanaged_artifact_count`
+- `migration_validation_latency_ms`
+
+Running preflight directly against the checked-in schema fixture returns
+`blocked` until the referenced artifact roots and files are materialized in a
+real workspace directory. That blocked receipt is still machine-readable and can
+be attached to reports.

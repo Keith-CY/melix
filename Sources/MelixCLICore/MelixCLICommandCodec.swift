@@ -22,6 +22,8 @@ public enum MelixCLICommandCodec {
             return "schema"
         case .configMetadata:
             return "config.metadata"
+        case .workspacePreflight:
+            return "workspace.preflight"
         case .doctor:
             return "doctor"
         case .system:
@@ -276,6 +278,11 @@ public enum MelixCLICommandCodec {
             json = options.json
         case .configMetadata(let options):
             arguments = ["config", "metadata"]
+            json = options.json
+        case .workspacePreflight(let options):
+            arguments = ["workspace", "preflight"]
+            appendOption("--manifest", value: options.manifestPath, into: &arguments)
+            appendOption("--output", value: options.outputPath, into: &arguments)
             json = options.json
         case .doctor(let options):
             arguments = ["doctor"]

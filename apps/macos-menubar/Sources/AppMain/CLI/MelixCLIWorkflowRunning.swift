@@ -278,6 +278,21 @@ extension MelixCLIWorkflowRunning {
         }
     }
 
+    func preflightWorkspace(
+        manifestPath: String,
+        outputPath: String = ""
+    ) async throws -> RuntimeWorkspacePreflightReceiptState {
+        let command = MelixCLICommand.workspacePreflight(
+            .init(manifestPath: manifestPath, outputPath: outputPath, json: true)
+        )
+        let output = try await run(command)
+        do {
+            return try RuntimeWorkspacePreflightReceiptDecoder.decode(output)
+        } catch {
+            throw MelixCLIWorkflowError.invalidJSON(commandID: command.workflowCommandID, surface: surface, output: output)
+        }
+    }
+
     func listWorkflowRecipes(task: String) async throws -> RuntimeWorkflowRecipeCatalogState {
         let command = MelixCLICommand.recipesList(.init(task: task, json: true))
         let output = try await run(command)

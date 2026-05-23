@@ -8529,6 +8529,173 @@ struct MelixCLIRunnerTests {
         #expect(result.outputPath.isEmpty)
     }
 
+    @Test("workspace preflight command shells out through the Python receipt builder")
+    func workspacePreflightCommandShellsOutThroughPythonReceiptBuilder() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(
+            responses: [
+                """
+                {
+                  "schema_version": "melix.workspace_preflight_receipt.v1",
+                  "status": "blocked",
+                  "project_id": "demo",
+                  "manifest_path": "workspace-manifest.json",
+                  "workspace_manifest_schema_version": "melix.workspace_manifest.v1",
+                  "checks": [
+                    {
+                      "code": "WORKSPACE_ROOT_MISSING",
+                      "status": "error",
+                      "title": "Required workspace roots are missing.",
+                      "detail": "Create the missing root directories or restore the workspace artifact before running this workspace.",
+                      "recovery_hint": "Create the missing root paths, or regenerate the workspace manifest after moving the workspace.",
+                      "items": [
+                        {
+                          "root_id": "runs",
+                          "path": "/tmp/melix-workspace/runs"
+                        }
+                      ]
+                    }
+                  ],
+                  "metrics": {
+                    "missing_root_count": 1,
+                    "preflight_latency_ms": 2.5
+                  }
+                }
+                """,
+            ]
+        )
+        let runner = MelixCLIRunner(client: client, commandExecutor: executor.run)
+
+        let output = try await runner.run(
+            .workspacePreflight(
+                .init(
+                    manifestPath: "/tmp/melix-workspace/workspace-manifest.json",
+                    outputPath: "/tmp/melix-workspace/workspace-preflight-receipt.json",
+                    json: true
+                )
+            )
+        )
+
+        let payload = try #require(parseJSONObject(output))
+        #expect(payload["status"] as? String == "blocked")
+        let commands = await executor.commands
+        #expect(commands == [
+            [
+                "run",
+                "--project",
+                "services/mlx-worker-python",
+                "--extra",
+                "mlx",
+                "python",
+                "scripts/workspace_manifest_preflight.py",
+                "--manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--output",
+                "/tmp/melix-workspace/workspace-preflight-receipt.json",
+            ],
+        ])
+    }
+
+    @Test("workspace preflight rejects an empty manifest path before dispatch")
+    func workspacePreflightRejectsEmptyManifestPathBeforeDispatch() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(responses: [])
+        let runner = MelixCLIRunner(client: client, commandExecutor: executor.run)
+
+        do {
+            _ = try await runner.run(.workspacePreflight(.init(manifestPath: "  ", json: true)))
+            Issue.record("Expected workspace preflight to reject an empty manifest path.")
+        } catch let error as MelixCLIError {
+            #expect(error == .missingRequired("--manifest is required for melix workspace preflight."))
+        }
+
+        #expect(await executor.commands.isEmpty)
+    }
+
+    @Test("workspace preflight preserves undecodable readable subprocess output")
+    func workspacePreflightPreservesUndecodableReadableSubprocessOutput() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(responses: ["plain preflight output"])
+        let runner = MelixCLIRunner(client: client, commandExecutor: executor.run)
+
+        let output = try await runner.run(
+            .workspacePreflight(.init(manifestPath: "/tmp/workspace-manifest.json"))
+        )
+
+        #expect(output == "plain preflight output\n")
+    }
+
+    @Test("workspace preflight live subprocess renders blocking receipt")
+    func workspacePreflightLiveSubprocessRendersBlockingReceipt() async throws {
+        let workspaceRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: workspaceRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workspaceRoot) }
+
+        let manifestPath = workspaceRoot.appendingPathComponent("workspace-manifest.json")
+        try writeWorkspaceManifestForPreflightTest(to: manifestPath)
+        try FileManager.default.createDirectory(
+            at: workspaceRoot.appendingPathComponent("raw", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try "dialogue".write(
+            to: workspaceRoot.appendingPathComponent("raw/dialogues.jsonl"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let repoRoot = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        #expect(FileManager.default.fileExists(
+            atPath: repoRoot.appendingPathComponent("scripts/workspace_manifest_preflight.py").path
+        ))
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: [
+                "MELIX_REPO_ROOT": repoRoot.path,
+                "MELIX_UV": try requireExecutablePathForTest("uv"),
+            ]
+        )
+
+        let output = try await runner.run(.workspacePreflight(.init(manifestPath: manifestPath.path)))
+
+        #expect(output.contains("Workspace preflight blocked for swift-preflight"))
+        #expect(output.contains("- WORKSPACE_ROOT_MISSING: Workspace artifact root is missing"))
+        #expect(output.contains("One or more manifest artifact roots do not exist on disk."))
+    }
+
+    @Test("workspace preflight live subprocess reports unexpected process failures")
+    func workspacePreflightLiveSubprocessReportsUnexpectedProcessFailures() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let fakeUV = root.appendingPathComponent("fake-uv")
+        try """
+        #!/bin/sh
+        printf 'partial receipt\\n'
+        printf 'fatal preflight\\n' >&2
+        exit 2
+        """.write(to: fakeUV, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fakeUV.path)
+
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: [
+                "MELIX_REPO_ROOT": FileManager.default.currentDirectoryPath,
+                "MELIX_UV": fakeUV.path,
+            ]
+        )
+
+        do {
+            _ = try await runner.run(.workspacePreflight(.init(manifestPath: "/tmp/workspace-manifest.json", json: true)))
+            Issue.record("Expected workspace preflight to report an unexpected subprocess failure.")
+        } catch let error as MelixCLIError {
+            let message = error.localizedDescription
+            #expect(message.contains("fatal preflight"))
+        }
+    }
+
     @Test("subprocess-backed eval compare supports repo ids and decodes nested result payloads")
     func subprocessBackedEvaluationCompareSupportsRepoTargetsAndNestedResults() async throws {
         let client = StubControlPlaneXPCClient()
@@ -12383,6 +12550,180 @@ private func parseJSONObject(_ text: String) -> [String: Any]? {
 private func writeJSONObjectForTest(_ object: [String: Any], to url: URL) throws {
     let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
     try data.write(to: url)
+}
+
+private func requireExecutablePathForTest(_ executableName: String) throws -> String {
+    let searchPaths = (ProcessInfo.processInfo.environment["PATH"] ?? "")
+        .split(separator: ":")
+        .map(String.init)
+    for searchPath in searchPaths {
+        let candidate = URL(fileURLWithPath: searchPath).appendingPathComponent(executableName).path
+        if FileManager.default.isExecutableFile(atPath: candidate) {
+            return candidate
+        }
+    }
+    throw MelixCLIError.runtime("Required test executable '\(executableName)' was not found in PATH.")
+}
+
+private func writeWorkspaceManifestForPreflightTest(to url: URL) throws {
+    try writeJSONObjectForTest(
+        [
+            "schema_version": "melix.workspace_manifest.v1",
+            "project": [
+                "project_id": "swift-preflight",
+                "display_name": "Swift Preflight Workspace",
+                "owner": "melix-local",
+                "created_at": "2026-05-24T00:00:00Z",
+                "updated_at": "2026-05-24T00:00:00Z",
+            ],
+            "artifact_roots": [
+                [
+                    "root_id": "workspace",
+                    "kind": "ARTIFACT_ROOT_KIND_WORKSPACE",
+                    "path": ".",
+                    "uri": "melix-workspace://swift-preflight",
+                    "melix_owned": true,
+                    "redaction_scope": "relative_path_only",
+                ],
+                [
+                    "root_id": "jobs",
+                    "kind": "ARTIFACT_ROOT_KIND_JOBS",
+                    "path": "jobs",
+                    "uri": "melix-workspace://swift-preflight/jobs",
+                    "melix_owned": true,
+                    "redaction_scope": "relative_path_only",
+                ],
+            ],
+            "artifacts": [
+                [
+                    "artifact_id": "raw-dialogues",
+                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_RAW_INPUTS",
+                    "root_id": "workspace",
+                    "relative_path": "raw/dialogues.jsonl",
+                    "media_type": "application/jsonl",
+                    "provenance_ref_ids": ["operator-import"],
+                ],
+                [
+                    "artifact_id": "cleaned-dialogues",
+                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_CLEANED_DATA",
+                    "root_id": "workspace",
+                    "relative_path": "cleaned/dialogues.clean.jsonl",
+                    "media_type": "application/jsonl",
+                    "provenance_ref_ids": ["operator-import"],
+                ],
+                [
+                    "artifact_id": "dataset-v1",
+                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_DATASET_VERSION",
+                    "root_id": "workspace",
+                    "relative_path": "dataset/20260524T000000Z/manifest.json",
+                    "schema_version": "melix.training_dataset_package.v1",
+                    "media_type": "application/json",
+                    "provenance_ref_ids": ["operator-import", "dataset-generation-v1"],
+                ],
+                [
+                    "artifact_id": "adapter-v1",
+                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_ADAPTER",
+                    "root_id": "jobs",
+                    "relative_path": "train_lora/model-ops-0001/train_lora.adapter.json",
+                    "schema_version": "melix.lora_adapter_package.v1",
+                    "media_type": "application/json",
+                    "provenance_ref_ids": ["dataset-generation-v1", "lora-train-v1"],
+                ],
+                [
+                    "artifact_id": "training-log",
+                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_LOG",
+                    "root_id": "jobs",
+                    "relative_path": "train_lora/model-ops-0001/run.log",
+                    "media_type": "text/plain",
+                    "provenance_ref_ids": ["lora-train-v1"],
+                ],
+                [
+                    "artifact_id": "adapter-export",
+                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_EXPORT",
+                    "root_id": "workspace",
+                    "relative_path": "exports/adapter-v1/export-manifest.json",
+                    "media_type": "application/json",
+                    "provenance_ref_ids": ["lora-train-v1"],
+                ],
+                [
+                    "artifact_id": "evaluation-report",
+                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_REPORT",
+                    "root_id": "workspace",
+                    "relative_path": "reports/evaluation-summary.json",
+                    "media_type": "application/json",
+                    "provenance_ref_ids": ["eval-compare-v1"],
+                ],
+                [
+                    "artifact_id": "release-evidence",
+                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_EVIDENCE_BUNDLE",
+                    "root_id": "workspace",
+                    "relative_path": "evidence/release-compare.bundle.json",
+                    "schema_version": "melix.run_evidence_bundle.v1",
+                    "media_type": "application/json",
+                    "provenance_ref_ids": ["eval-compare-v1"],
+                ],
+            ],
+            "provenance": [
+                [
+                    "provenance_ref_id": "operator-import",
+                    "kind": "operator_import",
+                    "uri": "melix-workspace://swift-preflight/raw/dialogues.jsonl",
+                    "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                    "created_by": "operator",
+                    "created_at": "2026-05-24T00:00:00Z",
+                ],
+                [
+                    "provenance_ref_id": "dataset-generation-v1",
+                    "kind": "dataset_generation",
+                    "uri": "melix-job://dataset-generation/jobs-0001",
+                    "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+                    "created_by": "melix",
+                    "created_at": "2026-05-24T00:05:00Z",
+                ],
+                [
+                    "provenance_ref_id": "lora-train-v1",
+                    "kind": "lora_training",
+                    "uri": "melix-job://train_lora/model-ops-0001",
+                    "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+                    "created_by": "melix",
+                    "created_at": "2026-05-24T00:10:00Z",
+                ],
+                [
+                    "provenance_ref_id": "eval-compare-v1",
+                    "kind": "evaluation_compare",
+                    "uri": "melix-job://evaluation/eval-compare-0001",
+                    "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+                    "created_by": "melix",
+                    "created_at": "2026-05-24T00:20:00Z",
+                ],
+            ],
+            "redaction_policy": [
+                "policy_id": "workspace-local-redacted-v1",
+                "mode": "REDACTION_MODE_LOCAL_PATHS_AND_SECRETS",
+                "description": "Keep workspace artifact paths relative and redact operator identity, absolute paths, credentials, prompts, responses, and dataset rows from exported summaries.",
+                "redact_absolute_paths": true,
+                "redact_operator_identity": true,
+                "rules": [
+                    [
+                        "rule_id": "relative-artifact-paths",
+                        "field_selector": "artifacts.relative_path",
+                        "action": "REDACTION_ACTION_KEEP_RELATIVE",
+                    ],
+                    [
+                        "rule_id": "operator-identity",
+                        "field_selector": "project.owner",
+                        "action": "REDACTION_ACTION_HASH",
+                    ],
+                    [
+                        "rule_id": "secrets",
+                        "field_selector": "provenance.ext.credentials",
+                        "action": "REDACTION_ACTION_DROP",
+                    ],
+                ],
+            ] as [String: Any],
+        ],
+        to: url
+    )
 }
 
 private func parseJSONArray(_ text: String) -> [Any]? {

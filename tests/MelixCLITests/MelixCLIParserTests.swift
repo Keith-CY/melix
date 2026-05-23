@@ -22,6 +22,7 @@ struct MelixCLIParserTests {
         #expect(MelixCLIParser.usageText.contains("melix info --json"))
         #expect(MelixCLIParser.usageText.contains("melix capabilities --json [--model-query MODEL]"))
         #expect(MelixCLIParser.usageText.contains("melix config metadata --json"))
+        #expect(MelixCLIParser.usageText.contains("melix workspace preflight --manifest PATH [--output PATH] [--json]"))
         #expect(MelixCLIParser.usageText.contains("melix uri inspect URI [--json]"))
         #expect(MelixCLIParser.usageText.contains("melix recipes plan RECIPE_ID"))
     }
@@ -40,6 +41,15 @@ struct MelixCLIParserTests {
             (["instructions", "--json"], "instructions"),
             (["schema", "--json"], "schema"),
             (["config", "metadata", "--json"], "config.metadata"),
+            ([
+                "workspace",
+                "preflight",
+                "--manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--output",
+                "/tmp/melix-workspace/workspace-preflight-receipt.json",
+                "--json",
+            ], "workspace.preflight"),
             (["jobs", "list", "--json"], "jobs.list"),
             (["jobs", "show", "bench-1", "--from", "/tmp/runs", "--json"], "jobs.show"),
             (["jobs", "logs", "bench-1", "--follow", "--json"], "jobs.logs"),
@@ -101,6 +111,12 @@ struct MelixCLIParserTests {
         }
         #expect(throws: MelixCLIError.usage("melix config metadata requires --json.")) {
             _ = try MelixCLIParser.parse(["config", "metadata"])
+        }
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            _ = try MelixCLIParser.parse(["workspace", "unknown"])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--manifest is required for melix workspace preflight.")) {
+            _ = try MelixCLIParser.parse(["workspace", "preflight", "--json"])
         }
         #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
             _ = try MelixCLIParser.parse(["jobs"])
@@ -1030,6 +1046,7 @@ struct MelixCLIParserTests {
             .remoteServerTest(.init(remoteServerID: "custom", remoteModelID: "remote-model", json: true)),
             .chatRun(.init(modelID: "model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)),
             .chatRun(.init(remoteServerID: "custom", remoteModelID: "remote-model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)),
+            .workspacePreflight(.init(manifestPath: "/tmp/workspace/workspace-manifest.json", outputPath: "/tmp/workspace/workspace-preflight-receipt.json", json: true)),
             .loraRun(.init(training: .init(modelID: "model-8bit", datasetSourceKind: "hf_dataset", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "auto", parameters: ["derived_model_alias": "derived", "response_only": "true"], preflightFitCheck: true, allowMemoryRisk: true), evaluation: .init(modelID: "model-8bit", suites: ["event_extraction"], datasetID: "top200", sampleSize: 4, parameters: ["dataset_root": "evaluation"], json: false), outputDir: "/tmp/lora-run", json: true)),
             .loraTrain(.init(modelID: "model", datasetSourceKind: "huggingface", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "qlora", parameters: ["derived_model_alias": "derived", "response_only": "true"], json: true)),
             .alignmentTrain(.init(modelID: "model", datasetURI: "/tmp/preference.jsonl", adapterName: "aligned", algorithm: "dpo", json: true)),

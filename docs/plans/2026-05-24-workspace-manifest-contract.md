@@ -21,3 +21,47 @@ The authoritative interface is a new `workspace/v1/workspace_manifest.proto` sch
 ## Metrics
 
 The scoped metrics report for this schema-only slice is the manifest validation report. It records `manifest_validation_latency_ms`, `fixture_count`, `schema_error_count`, and `manifest_byte_size` for the checked-in fixture.
+
+## U1.1.2 Workspace Preflight Slice
+
+Issue #1493 builds on the v1 manifest validator without changing the protobuf
+schema. The implementation adds a Python preflight receipt that dataset
+preparation, training admission, CLI, Desktop, and reports can consume before
+launching later workflow steps.
+
+### Goal
+
+Return typed operator-facing preflight results for existing workspace manifests:
+missing roots, stale manifest schema versions, unmanaged artifacts, unsafe
+paths, and manifest artifact references that cannot be resolved to known roots.
+
+### Non-Goals
+
+- Do not implement dataset ingest, training queue admission, or export cleanup.
+- Do not mutate workspace manifests as part of migration validation.
+- Do not introduce a new protobuf schema unless the JSON receipt proves
+  insufficient for follow-on consumers.
+
+### Receipt Contract
+
+The preflight receipt uses schema version
+`melix.workspace_preflight_receipt.v1` and stable JSON keys:
+
+- `status`: `ready` when all blocking checks pass, otherwise `blocked`.
+- `checks`: one entry per typed check, each with `code`, `status`, `title`,
+  `detail`, `recovery_hint`, and `items`.
+- `metrics`: `preflight_latency_ms`, `missing_root_count`,
+  `stale_schema_count`, `unsafe_path_count`, `unmanaged_artifact_count`, and
+  `migration_validation_latency_ms`.
+
+The CLI script writes this receipt to stdout and, when requested, to an output
+path that can be attached to report bundles. Operators must be able to explain a
+blocked result from the receipt fields alone without raw logs.
+
+### Migration Validation
+
+Existing workspaces with a manifest schema version other than
+`melix.workspace_manifest.v1` are not migrated automatically. Preflight returns
+`WORKSPACE_SCHEMA_STALE` with a recovery hint that instructs the operator to
+open the workspace with a compatible Melix build or run a future explicit
+migration command. This is the safe non-migration path for U1.1.2.

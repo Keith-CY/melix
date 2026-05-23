@@ -52,6 +52,22 @@ public struct DiscoveryJSONOptions: Equatable, Sendable {
     }
 }
 
+public struct WorkspacePreflightOptions: Equatable, Sendable {
+    public let manifestPath: String
+    public let outputPath: String
+    public let json: Bool
+
+    public init(
+        manifestPath: String,
+        outputPath: String = "",
+        json: Bool = false
+    ) {
+        self.manifestPath = manifestPath
+        self.outputPath = outputPath
+        self.json = json
+    }
+}
+
 public struct CapabilitiesOptions: Equatable, Sendable {
     public let json: Bool
     public let modelQuery: String
@@ -2105,6 +2121,7 @@ public enum MelixCLICommand: Equatable, Sendable {
     case instructions(DiscoveryJSONOptions)
     case schema(DiscoveryJSONOptions)
     case configMetadata(DiscoveryJSONOptions)
+    case workspacePreflight(WorkspacePreflightOptions)
     case doctor(DoctorOptions)
     case system(SystemOptions)
     case monitor(MonitorOptions)
@@ -2281,6 +2298,8 @@ public enum MelixCLIParser {
             return try parseSchema(tail)
         case "config":
             return try parseConfig(tail)
+        case "workspace":
+            return try parseWorkspace(tail)
         case "doctor":
             return try parseDoctor(tail)
         case "system":
@@ -2345,6 +2364,7 @@ public enum MelixCLIParser {
       melix instructions --json
       melix schema --json
       melix config metadata --json
+      melix workspace preflight --manifest PATH [--output PATH] [--json]
       melix doctor [--json]
       melix system --json
       melix monitor [--from PATH] [--json]
@@ -2621,6 +2641,24 @@ public enum MelixCLIParser {
             throw MelixCLIError.usage("melix config metadata requires --json.")
         }
         return .configMetadata(.init(json: true))
+    }
+
+    private static func parseWorkspace(_ arguments: [String]) throws -> MelixCLICommand {
+        guard arguments.first == "preflight" else {
+            throw MelixCLIError.usage(Self.usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        let manifestPath = values.single["--manifest"] ?? ""
+        guard manifestPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            throw MelixCLIError.missingRequired("--manifest is required for melix workspace preflight.")
+        }
+        return .workspacePreflight(
+            .init(
+                manifestPath: manifestPath,
+                outputPath: values.single["--output"] ?? "",
+                json: values.flags.contains("--json")
+            )
+        )
     }
 
     private static func parseDoctor(_ arguments: [String]) throws -> MelixCLICommand {
@@ -5791,6 +5829,84 @@ public actor MelixCLIRunner {
         try await client.modelInfo(modelID: modelID)
     }
 
+    private func runWorkspacePreflight(_ options: WorkspacePreflightOptions) async throws -> String {
+        let manifestPath = options.manifestPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard manifestPath.isEmpty == false else {
+            throw MelixCLIError.missingRequired("--manifest is required for melix workspace preflight.")
+        }
+        let arguments = Self.workspacePreflightScriptArguments(options)
+        let output: String
+        if let commandExecutor {
+            output = try await commandExecutor(arguments)
+        } else {
+            let uvExecutable = environment["MELIX_UV"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let executor = MelixCLIProcessExecutor(
+                baseCommand: [uvExecutable?.isEmpty == false ? uvExecutable! : "uv"],
+                environment: ProcessInfo.processInfo.environment.merging(environment) { _, new in new },
+                workingDirectory: Self.workspacePreflightWorkingDirectory(environment: environment)
+            )
+            let result = try await executor.runDetailed(arguments: arguments)
+            guard result.exitCode == 0 || result.exitCode == 1 else {
+                throw MelixCLIError.runtime(
+                    MelixCLIProcessFailureMessage.make(
+                        stdout: result.stdout,
+                        stderr: result.stderr,
+                        exitCode: result.exitCode
+                    )
+                )
+            }
+            output = result.stdout
+        }
+        return options.json ? output.trimmingCharacters(in: .whitespacesAndNewlines) : Self.renderWorkspacePreflightReceipt(output)
+    }
+
+    private static func workspacePreflightScriptArguments(_ options: WorkspacePreflightOptions) -> [String] {
+        var arguments = [
+            "run",
+            "--project",
+            "services/mlx-worker-python",
+            "--extra",
+            "mlx",
+            "python",
+            "scripts/workspace_manifest_preflight.py",
+            "--manifest",
+            options.manifestPath,
+        ]
+        appendOption("--output", value: options.outputPath, into: &arguments)
+        return arguments
+    }
+
+    private static func workspacePreflightWorkingDirectory(environment: [String: String]) -> String {
+        let explicit = environment["MELIX_REPO_ROOT"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return explicit.isEmpty ? FileManager.default.currentDirectoryPath : explicit
+    }
+
+    private static func renderWorkspacePreflightReceipt(_ output: String) -> String {
+        guard let payload = jsonObject(from: output) else {
+            return output.hasSuffix("\n") ? output : output + "\n"
+        }
+        let status = stringValue("status", from: payload)
+        let projectID = stringValue("project_id", from: payload)
+        let checks = payload["checks"] as? [[String: Any]] ?? []
+        let blocking = checks.filter { check in
+            let checkStatus = (check["status"] as? String ?? "").lowercased()
+            return checkStatus == "error" || checkStatus == "blocked"
+        }
+        var lines = [
+            "Workspace preflight \(status.isEmpty ? "unknown" : status)\(projectID.isEmpty ? "" : " for \(projectID)")",
+        ]
+        for check in blocking {
+            let code = check["code"] as? String ?? "WORKSPACE_PREFLIGHT_CHECK"
+            let title = check["title"] as? String ?? code
+            let detail = check["detail"] as? String ?? ""
+            lines.append("- \(code): \(title)")
+            if detail.isEmpty == false {
+                lines.append("  \(detail)")
+            }
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
     public func loadModel(
         modelID: String,
         memoryBudgetBytes: UInt64 = 0
@@ -6936,6 +7052,8 @@ public actor MelixCLIRunner {
         case .configMetadata:
             let payload = MelixRuntimeDiscoveryBuilder(environment: environment).configMetadataPayload()
             return try prettyJSON(payload)
+        case .workspacePreflight(let options):
+            return try await runWorkspacePreflight(options)
         case .uriInspect(let options):
             return try runURIInspect(options)
         case .uriImport(let options):

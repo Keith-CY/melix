@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
 import sys
@@ -7,6 +8,7 @@ import sys
 import pytest
 
 from packages.protocol.python.workspace.v1 import workspace_manifest_pb2
+from worker.productization import workspace_manifest as workspace_manifest_module
 from worker.productization.workspace_manifest import (
     REQUIRED_WORKSPACE_ARTIFACT_TYPES,
     validate_workspace_manifest_file,
@@ -225,6 +227,184 @@ def test_metrics_cli_writes_machine_readable_output(tmp_path: Path) -> None:
     assert payload["schema_error_count"] == 0
 
 
+def test_workspace_preflight_ready_receipt_is_machine_readable(tmp_path: Path) -> None:
+    manifest_path = _write_materialized_workspace(tmp_path)
+
+    receipt = workspace_manifest_module.preflight_workspace(manifest_path)
+
+    assert receipt["schema_version"] == "melix.workspace_preflight_receipt.v1"
+    assert receipt["status"] == "ready"
+    assert receipt["workspace_manifest_schema_version"] == "melix.workspace_manifest.v1"
+    assert {check["code"] for check in receipt["checks"]} >= {
+        "WORKSPACE_ROOT_EXISTS",
+        "WORKSPACE_SCHEMA_CURRENT",
+        "WORKSPACE_PATHS_SAFE",
+        "WORKSPACE_ARTIFACTS_MANAGED",
+        "WORKSPACE_MIGRATION_VALIDATED",
+    }
+    assert receipt["metrics"]["missing_root_count"] == 0
+    assert receipt["metrics"]["stale_schema_count"] == 0
+    assert receipt["metrics"]["unsafe_path_count"] == 0
+    assert receipt["metrics"]["unmanaged_artifact_count"] == 0
+    assert receipt["metrics"]["preflight_latency_ms"] >= 0
+    assert receipt["metrics"]["migration_validation_latency_ms"] >= 0
+
+
+def test_workspace_preflight_receipt_contract_has_stable_json_shape(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_materialized_workspace(tmp_path, skip_roots={"jobs"})
+
+    receipt = workspace_manifest_module.preflight_workspace(manifest_path)
+
+    assert set(receipt) == {
+        "schema_version",
+        "status",
+        "workspace_manifest_schema_version",
+        "project_id",
+        "manifest_path",
+        "checks",
+        "metrics",
+    }
+    assert set(receipt["metrics"]) == {
+        "preflight_latency_ms",
+        "missing_root_count",
+        "stale_schema_count",
+        "unsafe_path_count",
+        "unmanaged_artifact_count",
+        "migration_validation_latency_ms",
+    }
+    for check in receipt["checks"]:
+        assert set(check) == {
+            "code",
+            "status",
+            "title",
+            "detail",
+            "recovery_hint",
+            "items",
+        }
+        assert check["code"]
+        assert check["status"] in {"ready", "blocked"}
+        assert check["title"]
+        assert check["detail"]
+        assert check["recovery_hint"]
+        assert isinstance(check["items"], list)
+
+
+def test_workspace_preflight_classifies_missing_root_with_operator_recovery(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_materialized_workspace(tmp_path, skip_roots={"jobs"})
+
+    receipt = workspace_manifest_module.preflight_workspace(manifest_path)
+
+    check = _receipt_check(receipt, "WORKSPACE_ROOT_MISSING")
+    assert receipt["status"] == "blocked"
+    assert check["status"] == "blocked"
+    assert check["title"] == "Workspace artifact root is missing"
+    assert "Create or restore the missing root" in check["recovery_hint"]
+    assert check["items"] == [{"root_id": "jobs", "path": "jobs"}]
+    assert receipt["metrics"]["missing_root_count"] == 1
+
+
+def test_workspace_preflight_classifies_stale_schema_as_non_migration_path(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_materialized_workspace(
+        tmp_path,
+        lambda manifest: manifest.__setitem__(
+            "schema_version",
+            "melix.workspace_manifest.v0",
+        ),
+    )
+
+    receipt = workspace_manifest_module.preflight_workspace(manifest_path)
+
+    check = _receipt_check(receipt, "WORKSPACE_SCHEMA_STALE")
+    migration_check = _receipt_check(receipt, "WORKSPACE_MIGRATION_REQUIRED")
+    assert receipt["status"] == "blocked"
+    assert check["status"] == "blocked"
+    assert "melix.workspace_manifest.v0" in check["detail"]
+    assert "does not migrate workspaces automatically" in migration_check["detail"]
+    assert "compatible Melix build" in migration_check["recovery_hint"]
+    assert receipt["metrics"]["stale_schema_count"] == 1
+
+
+def test_workspace_preflight_classifies_unmanaged_artifacts(tmp_path: Path) -> None:
+    manifest_path = _write_materialized_workspace(tmp_path)
+    (manifest_path.parent / "scratch.txt").write_text("not in manifest", encoding="utf-8")
+
+    receipt = workspace_manifest_module.preflight_workspace(manifest_path)
+
+    check = _receipt_check(receipt, "WORKSPACE_UNMANAGED_ARTIFACT")
+    assert receipt["status"] == "blocked"
+    assert check["status"] == "blocked"
+    assert check["items"] == [{"path": "scratch.txt"}]
+    assert "Add the artifact to workspace-manifest.json" in check["recovery_hint"]
+    assert receipt["metrics"]["unmanaged_artifact_count"] == 1
+
+
+def test_workspace_preflight_ignores_manifest_and_receipt_output(
+    tmp_path: Path,
+) -> None:
+    manifest_path = _write_materialized_workspace(tmp_path)
+    receipt_path = manifest_path.parent / "workspace-preflight-receipt.json"
+    receipt_path.write_text("{}", encoding="utf-8")
+
+    receipt = workspace_manifest_module.preflight_workspace(
+        manifest_path,
+        receipt_output_path=receipt_path,
+    )
+
+    assert receipt["status"] == "ready"
+    assert receipt["metrics"]["unmanaged_artifact_count"] == 0
+
+
+def test_workspace_preflight_classifies_unsafe_paths_and_unknown_root_refs(
+    tmp_path: Path,
+) -> None:
+    def mutate(manifest: dict[str, object]) -> None:
+        root = manifest["artifact_roots"][0]
+        artifact = manifest["artifacts"][0]
+        assert isinstance(root, dict)
+        assert isinstance(artifact, dict)
+        root["path"] = "../outside"
+        artifact["root_id"] = "missing-root"
+        artifact["relative_path"] = "../secret.jsonl"
+
+    manifest_path = _write_manifest(tmp_path, mutate)
+
+    receipt = workspace_manifest_module.preflight_workspace(manifest_path)
+
+    unsafe_check = _receipt_check(receipt, "WORKSPACE_PATH_UNSAFE")
+    unknown_root_check = _receipt_check(receipt, "WORKSPACE_ARTIFACT_ROOT_UNKNOWN")
+    assert receipt["status"] == "blocked"
+    assert unsafe_check["status"] == "blocked"
+    assert unknown_root_check["status"] == "blocked"
+    assert receipt["metrics"]["unsafe_path_count"] >= 2
+    assert unknown_root_check["items"] == [
+        {"artifact_id": "raw-dialogues", "root_id": "missing-root"}
+    ]
+
+
+def test_workspace_preflight_cli_writes_stable_json_receipt(tmp_path: Path) -> None:
+    manifest_path = _write_materialized_workspace(tmp_path, skip_roots={"jobs"})
+    output_path = tmp_path / "reports/workspace-preflight-receipt.json"
+    preflight_cli = importlib.import_module("workspace_manifest_preflight")
+
+    exit_code = preflight_cli.main(
+        ["--manifest", str(manifest_path), "--output", str(output_path)]
+    )
+
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code == 1
+    assert payload["schema_version"] == "melix.workspace_preflight_receipt.v1"
+    assert payload["status"] == "blocked"
+    assert payload["checks"][0]["code"]
+    assert payload["checks"][0]["recovery_hint"]
+    assert payload["metrics"]["missing_root_count"] == 1
+
+
 def test_workspace_manifest_rejects_missing_top_level_required_fields(tmp_path: Path) -> None:
     def mutate(manifest: dict[str, object]) -> None:
         manifest["project"] = {}
@@ -302,3 +482,41 @@ def _write_manifest(tmp_path: Path, mutate: object) -> Path:
     manifest_path = tmp_path / "workspace-manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     return manifest_path
+
+
+def _write_materialized_workspace(
+    tmp_path: Path,
+    mutate: object | None = None,
+    *,
+    skip_roots: set[str] | None = None,
+) -> Path:
+    manifest = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    if mutate is not None:
+        mutate(manifest)
+    manifest_path = tmp_path / "workspace-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    skip_roots = skip_roots or set()
+    root_paths = {
+        root["root_id"]: root["path"]
+        for root in manifest["artifact_roots"]
+        if root.get("path") and root["root_id"] not in skip_roots
+    }
+    for root_path in root_paths.values():
+        (tmp_path / root_path).mkdir(parents=True, exist_ok=True)
+    for artifact in manifest["artifacts"]:
+        root_path = root_paths.get(artifact["root_id"])
+        if root_path is None:
+            continue
+        artifact_path = tmp_path / root_path / artifact["relative_path"]
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_text(artifact["artifact_id"], encoding="utf-8")
+
+    return manifest_path
+
+
+def _receipt_check(receipt: dict[str, object], code: str) -> dict[str, object]:
+    for check in receipt["checks"]:
+        if check["code"] == code:
+            return check
+    raise AssertionError(f"receipt missing check {code}: {receipt['checks']}")
