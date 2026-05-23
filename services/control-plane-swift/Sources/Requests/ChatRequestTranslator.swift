@@ -304,17 +304,21 @@ public struct AssistantPrefillSelection: Sendable, Equatable {
 public struct TranslatedChatRequest: Sendable {
     public let requestID: String
     public let modelID: String
+    public let responseModelID: String?
     public let workerRequest: Melix_Worker_V1_GenerateRequest
     public let stream: Bool
 
     public init(
         requestID: String,
         modelID: String,
+        responseModelID: String? = nil,
         workerRequest: Melix_Worker_V1_GenerateRequest,
         stream: Bool
     ) {
         self.requestID = requestID
         self.modelID = modelID
+        let trimmedResponseModelID = responseModelID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.responseModelID = trimmedResponseModelID?.isEmpty == false ? trimmedResponseModelID : nil
         self.workerRequest = workerRequest
         self.stream = stream
     }

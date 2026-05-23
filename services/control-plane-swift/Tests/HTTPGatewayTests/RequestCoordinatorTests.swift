@@ -2326,7 +2326,7 @@ struct RequestCoordinatorTests {
         defer { consumer.cancel() }
 
         let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
-        #expect(prefillRequest.prefillStepSize == 16)
+        #expect(prefillRequest.prefillStepSize == 512)
 
         _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
         let prefillProgress = try #require(await waitForProgress(

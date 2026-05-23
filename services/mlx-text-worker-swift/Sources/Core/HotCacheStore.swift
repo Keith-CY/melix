@@ -117,8 +117,10 @@ actor HotCacheStore {
         messages: [Melix_Worker_V1_ChatMessage],
         promptTokens: Int,
         decodeHandle: String,
-        activeKVQuantizationRatio: Int
+        activeKVQuantizationRatio: Int,
+        shouldAbort: @escaping @Sendable () -> Bool = { false }
     ) async throws -> HotCacheRegistration {
+        try throwIfTextRuntimeCancellationRequested(shouldAbort)
         let resolvedScope = resolveScope(execution.scope, fallback: model)
         let renderedPrompt = try renderPrompt(from: messages)
         let resolvedKey = resolveCacheKey(
@@ -126,10 +128,12 @@ actor HotCacheStore {
             scope: resolvedScope,
             prompt: renderedPrompt
         )
+        try throwIfTextRuntimeCancellationRequested(shouldAbort)
         let keyID = cacheKeyIdentifier(resolvedKey)
         totalLookups += 1
 
         if let existingID = prefixIDByKey[keyID], var existing = prefixesByID[existingID] {
+            try throwIfTextRuntimeCancellationRequested(shouldAbort)
             totalHits += 1
             totalExactHits += 1
             totalReusedBlocks += UInt64(existing.blockIDs.count)
@@ -148,6 +152,7 @@ actor HotCacheStore {
 
         if execution.cacheHints.allowL2 || execution.cacheHints.persistL2,
            let restored = await diskStore.restorePrefix(cacheKey: resolvedKey) {
+            try throwIfTextRuntimeCancellationRequested(shouldAbort)
             var restoredPrefix = restored.prefix
             restoredPrefix.tier = "l1"
             if shouldPinPrefix(restoredPrefix.prefixID, hints: execution.cacheHints) {
@@ -192,6 +197,7 @@ actor HotCacheStore {
             preferredBlockSize: execution.cacheHints.preferredBlockSize,
             initialCacheBlocks: initialCacheBlocks
         ))
+        try throwIfTextRuntimeCancellationRequested(shouldAbort)
 
         var prefix = Melix_Worker_V1_PrefixRef()
         prefix.prefixID = prefixID
@@ -223,12 +229,14 @@ actor HotCacheStore {
                 for: blockTable,
                 activeKVQuantizationRatio: activeKVQuantizationRatio
             )
+            try throwIfTextRuntimeCancellationRequested(shouldAbort)
             await diskStore.persistPrefix(
                 prefix: prefix,
                 blockTableID: blockTableID,
                 blockTable: blockTable,
                 quantizedBytes: l2QuantizedBytes
             )
+            try throwIfTextRuntimeCancellationRequested(shouldAbort)
         }
         return HotCacheRegistration(
             prefix: prefix,

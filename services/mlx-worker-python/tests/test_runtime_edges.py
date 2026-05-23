@@ -168,9 +168,11 @@ def build_registry(
     backend=None,
     process_memory_budget_bytes: int = 0,
     memory_headroom_bytes: int = 0,
+    mlx_vlm_runtime=None,
 ) -> WorkerRegistry:
     return WorkerRegistry(
         runtime=MLXTextRuntime(backend=backend or FakeBackend()),
+        mlx_vlm_runtime=mlx_vlm_runtime,
         model_catalog=WorkerModelCatalog(),
         process_memory_budget_bytes=process_memory_budget_bytes,
         memory_headroom_bytes=memory_headroom_bytes,
@@ -682,34 +684,84 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
 
 
 def test_runtime_stats_request_counters_stay_consistent_without_request_scan() -> None:
-    registry = build_registry()
+    live_vlm_probe_calls = 0
+
+    class LiveMLXVLMRuntime:
+        runtime_name = "mlx-vlm"
+
+        def estimate_resident_bytes(self, model_spec):
+            _ = model_spec
+            return 4096
+
+        def last_probe_snapshot(self):
+            nonlocal live_vlm_probe_calls
+            live_vlm_probe_calls += 1
+            if live_vlm_probe_calls > 1:
+                raise RuntimeError("synthetic live probe failure")
+            return SimpleNamespace(
+                preprocess_latency_ms=0.0,
+                preprocess_input_bytes=0,
+                preprocess_peak_memory_bytes=0,
+                first_token_latency_ms=0.0,
+                multimodal_decode_mode="text_only_batch_generator",
+                multimodal_fallback_reason="not_reported",
+                multimodal_decode_sync_mode="executor_batch_generator",
+                text_batch_generator_submitted_request_count=1,
+                text_batch_generator_completed_request_count=0,
+                text_batch_generator_step_count=7,
+                text_batch_generator_generated_token_count=0,
+                text_batch_generator_peak_active_batch_size=1,
+                text_batch_generator_queue_wait_ms_total=0.0,
+                text_batch_generator_insert_ms_total=0.0,
+                text_batch_generator_executor_step_ms_total=0.0,
+                text_batch_generator_next_ms_total=0.0,
+                text_batch_generator_emit_ms_total=0.0,
+                text_batch_generator_active_batch_size=1,
+                text_batch_generator_generated_response_count=0,
+                text_batch_generator_failed_request_count=0,
+                text_batch_generator_prepare_ms_total=0.0,
+                text_batch_generator_first_response_ms_total=0.0,
+                text_batch_generator_first_visible_ms_total=0.0,
+                text_batch_generator_first_visible_token_index_total=0,
+                text_batch_generator_first_empty_segment_count=0,
+            )
+
+    live_vlm_runtime = LiveMLXVLMRuntime()
+    registry = build_registry(mlx_vlm_runtime=live_vlm_runtime)
+    assert live_vlm_runtime.estimate_resident_bytes(WorkerModelCatalog.dev_vlm_model()) == 4096
 
     registry.start_request("req-reused", runtime_kind="ocr")
     registry.set_request_phase("req-reused", "prefill")
     registry.start_request("req-reused", runtime_kind="text")
     registry.set_request_phase("req-reused", "decode")
     registry.start_request("req-image", runtime_kind="image")
+    registry.start_request("req-vlm", runtime_kind="vlm")
 
     stats = registry.runtime_stats()
-    assert stats.active_requests == 2
+    assert stats.active_requests == 3
     assert stats.active_prefills == 0
     assert stats.active_decodes == 1
-    assert stats.active_multimodal_requests == 1
+    assert stats.active_multimodal_requests == 2
+    assert stats.text_batch_generator_step_count == 7
+    assert live_vlm_probe_calls == 1
 
     registry.finish_request("req-reused")
     registry.finish_request("missing")
     stats = registry.runtime_stats()
-    assert stats.active_requests == 1
+    assert stats.active_requests == 2
     assert stats.active_prefills == 0
     assert stats.active_decodes == 0
-    assert stats.active_multimodal_requests == 1
+    assert stats.active_multimodal_requests == 2
+    assert live_vlm_probe_calls == 2
 
     registry.finish_request("req-image")
+    registry.finish_request("req-vlm")
     stats = registry.runtime_stats()
     assert stats.active_requests == 0
     assert stats.active_prefills == 0
     assert stats.active_decodes == 0
     assert stats.active_multimodal_requests == 0
+    assert live_vlm_probe_calls == 2
 
 
 def test_audio_runtime_selection_uses_backend_metadata_and_rejects_missing_backend_configuration() -> None:

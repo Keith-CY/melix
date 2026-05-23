@@ -141,6 +141,7 @@ class WorkerRegistry:
         self._active_prefill_count = 0
         self._active_decode_count = 0
         self._active_multimodal_request_count = 0
+        self._active_vlm_request_count = 0
         self._draining = False
         self._last_probe_kind = ""
         self._last_preprocess_latency_ms = 0.0
@@ -542,50 +543,72 @@ class WorkerRegistry:
         state.cancel_event.set()
         return True
 
+    def _refresh_live_vlm_probe_if_active(self, active_vlm_requests: int) -> None:
+        if active_vlm_requests <= 0 or not hasattr(self.mlx_vlm_runtime, "last_probe_snapshot"):
+            return
+        try:
+            probe = self.mlx_vlm_runtime.last_probe_snapshot()
+        except Exception:
+            return
+        self.record_vision_probe("vlm", probe)
+
     def runtime_stats(self) -> runtime_pb2.RuntimeStats:
         cache_stats = self.cache_stats_response().stats
-        with self._lock:
-            active_requests = self._active_request_count
-            active_prefills = self._active_prefill_count
-            active_decodes = self._active_decode_count
-            active_multimodal_requests = self._active_multimodal_request_count
-            model_resident_bytes = self._loaded_model_resident_bytes
-            cache_resident_bytes = cache_stats.l1_bytes + cache_stats.l2_bytes
-            kv_cache_bytes = 0
-            peak_allocation_bytes = 0
-            memory_headroom_bytes = self._memory_headroom_bytes
-            resident_bytes = model_resident_bytes + cache_resident_bytes + kv_cache_bytes
-            last_probe_kind = self._last_probe_kind
-            last_preprocess_latency_ms = self._last_preprocess_latency_ms
-            last_preprocess_input_bytes = self._last_preprocess_input_bytes
-            last_preprocess_peak_memory_bytes = self._last_preprocess_peak_memory_bytes
-            last_first_token_latency_ms = self._last_first_token_latency_ms
-            last_transcription_latency_ms = self._last_transcription_latency_ms
-            last_speech_latency_ms = self._last_speech_latency_ms
-            last_audio_duration_seconds = self._last_audio_duration_seconds
-            last_audio_chunk_count = self._last_audio_chunk_count
-            last_audio_output_bytes = self._last_audio_output_bytes
-            last_speech_streaming_enabled = self._last_speech_streaming_enabled
-            last_speech_streaming_interval_ms = self._last_speech_streaming_interval_ms
-            last_speech_first_audio_latency_ms = self._last_speech_first_audio_latency_ms
-            multimodal_decode_probe = self._multimodal_decode_probe_locked() if self._has_multimodal_decode_probe else None
-            last_audio_model_load_latency_ms = self._last_audio_model_load_latency_ms
-            last_audio_backend_unavailable_count = self._last_audio_backend_unavailable_count
-            last_voice_fallback_count = self._last_voice_fallback_count
-            last_language_fallback_count = self._last_language_fallback_count
-            last_video_effective_frame_count = self._last_video_effective_frame_count
-            last_video_requested_frame_budget = self._last_video_requested_frame_budget
-            last_video_window_ms = self._last_video_window_ms
-            last_temp_media_artifact_count = self._last_temp_media_artifact_count
-            last_temp_media_artifact_bytes = self._last_temp_media_artifact_bytes
-            last_temp_media_cleanup_latency_ms = self._last_temp_media_cleanup_latency_ms
-            last_temp_media_cleanup_failure_count = self._last_temp_media_cleanup_failure_count
-            last_image_job_latency_ms = self._last_image_job_latency_ms
-            last_image_artifact_publish_ms = self._last_image_artifact_publish_ms
-            last_image_output_bytes = self._last_image_output_bytes
-            last_image_peak_memory_bytes = self._last_image_peak_memory_bytes
-            last_model_load_trust_policy_resolution_ms = self._last_model_load_trust_policy_resolution_ms
-            model_load_trust_blocked_count = self._model_load_trust_blocked_count
+        refreshed_live_vlm_probe = False
+        while True:
+            with self._lock:
+                active_vlm_requests = self._active_vlm_request_count
+                active_requests = self._active_request_count
+                active_prefills = self._active_prefill_count
+                active_decodes = self._active_decode_count
+                active_multimodal_requests = self._active_multimodal_request_count
+                model_resident_bytes = self._loaded_model_resident_bytes
+                cache_resident_bytes = cache_stats.l1_bytes + cache_stats.l2_bytes
+                kv_cache_bytes = 0
+                peak_allocation_bytes = 0
+                memory_headroom_bytes = self._memory_headroom_bytes
+                resident_bytes = model_resident_bytes + cache_resident_bytes + kv_cache_bytes
+                last_probe_kind = self._last_probe_kind
+                last_preprocess_latency_ms = self._last_preprocess_latency_ms
+                last_preprocess_input_bytes = self._last_preprocess_input_bytes
+                last_preprocess_peak_memory_bytes = self._last_preprocess_peak_memory_bytes
+                last_first_token_latency_ms = self._last_first_token_latency_ms
+                last_transcription_latency_ms = self._last_transcription_latency_ms
+                last_speech_latency_ms = self._last_speech_latency_ms
+                last_audio_duration_seconds = self._last_audio_duration_seconds
+                last_audio_chunk_count = self._last_audio_chunk_count
+                last_audio_output_bytes = self._last_audio_output_bytes
+                last_speech_streaming_enabled = self._last_speech_streaming_enabled
+                last_speech_streaming_interval_ms = self._last_speech_streaming_interval_ms
+                last_speech_first_audio_latency_ms = self._last_speech_first_audio_latency_ms
+                multimodal_decode_probe = (
+                    self._multimodal_decode_probe_locked() if self._has_multimodal_decode_probe else None
+                )
+                last_audio_model_load_latency_ms = self._last_audio_model_load_latency_ms
+                last_audio_backend_unavailable_count = self._last_audio_backend_unavailable_count
+                last_voice_fallback_count = self._last_voice_fallback_count
+                last_language_fallback_count = self._last_language_fallback_count
+                last_video_effective_frame_count = self._last_video_effective_frame_count
+                last_video_requested_frame_budget = self._last_video_requested_frame_budget
+                last_video_window_ms = self._last_video_window_ms
+                last_temp_media_artifact_count = self._last_temp_media_artifact_count
+                last_temp_media_artifact_bytes = self._last_temp_media_artifact_bytes
+                last_temp_media_cleanup_latency_ms = self._last_temp_media_cleanup_latency_ms
+                last_temp_media_cleanup_failure_count = self._last_temp_media_cleanup_failure_count
+                last_image_job_latency_ms = self._last_image_job_latency_ms
+                last_image_artifact_publish_ms = self._last_image_artifact_publish_ms
+                last_image_output_bytes = self._last_image_output_bytes
+                last_image_peak_memory_bytes = self._last_image_peak_memory_bytes
+                last_model_load_trust_policy_resolution_ms = self._last_model_load_trust_policy_resolution_ms
+                model_load_trust_blocked_count = self._model_load_trust_blocked_count
+            if (
+                active_vlm_requests <= 0
+                or refreshed_live_vlm_probe
+                or not hasattr(self.mlx_vlm_runtime, "last_probe_snapshot")
+            ):
+                break
+            self._refresh_live_vlm_probe_if_active(active_vlm_requests)
+            refreshed_live_vlm_probe = True
         mlx_executor_snapshot = self._mlx_executor.snapshot()
         stats = runtime_pb2.RuntimeStats(
             worker_state="draining" if self._draining else "idle",
@@ -655,6 +678,8 @@ class WorkerRegistry:
             self._active_decode_count += 1
         if self._is_multimodal_request_kind(state.runtime_kind):
             self._active_multimodal_request_count += 1
+        if state.runtime_kind == "vlm":
+            self._active_vlm_request_count += 1
 
     def _remove_request_from_counters(self, state: RequestState) -> None:
         self._active_request_count = max(0, self._active_request_count - 1)
@@ -664,6 +689,8 @@ class WorkerRegistry:
             self._active_decode_count = max(0, self._active_decode_count - 1)
         if self._is_multimodal_request_kind(state.runtime_kind):
             self._active_multimodal_request_count = max(0, self._active_multimodal_request_count - 1)
+        if state.runtime_kind == "vlm":
+            self._active_vlm_request_count = max(0, self._active_vlm_request_count - 1)
 
     def cache_stats_response(self) -> cache_pb2.GetCacheStatsResponse:
         response = cache_pb2.GetCacheStatsResponse()
