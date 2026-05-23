@@ -164,6 +164,23 @@ def test_prepare_video_input_reuses_uri_byte_length_for_metadata_and_identity_ha
     assert len(prepared.sha256_hex) == 64
 
 
+def test_prepare_video_input_prefers_explicit_filename_for_uri_format() -> None:
+    part = common_pb2.MessagePart(
+        video_uri="https://example.com/media/download",
+        media=common_pb2.MediaMetadata(
+            media_type=common_pb2.MEDIA_TYPE_VIDEO,
+            source_kind=common_pb2.MEDIA_SOURCE_URI,
+            filename="clip.webm",
+        ),
+    )
+
+    prepared = prepare_video_input(part)
+
+    assert prepared.format == "webm"
+    assert prepared.filename == "clip.webm"
+
+
+
 def test_prepare_video_input_reuses_parsed_uri_when_filename_is_absent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -175,7 +192,13 @@ def test_prepare_video_input_reuses_parsed_uri_when_filename_is_absent(
         parse_calls += 1
         return original_parse(reference)
 
+    def fail_filename_lookup(reference: str) -> str:  # pragma: no cover - regression only
+        raise AssertionError(
+            f"prepare_video_input should reuse parsed path metadata: {reference}"
+        )
+
     monkeypatch.setattr(video_preprocessing, "_parse_video_reference", counting_parse)
+    monkeypatch.setattr(video_preprocessing, "_filename_from_reference", fail_filename_lookup)
     part = common_pb2.MessagePart(
         video_uri="https://example.com/media/demo.mov",
         media=common_pb2.MediaMetadata(
