@@ -98,6 +98,90 @@ struct MultimodalContractTests {
         #expect(part.media.byteLength == 5)
     }
 
+    @Test("multimodal request normalizer accepts compatible media aliases")
+    func compatibleMediaAliasesNormalizeToCanonicalWorkerParts() throws {
+        let decoder = JSONDecoder()
+        let parts = try decoder.decode(
+            [OpenAIMultimodalContentPart].self,
+            from: Data(
+                """
+                [
+                  {
+                    "type": "image",
+                    "image": {
+                      "data": "aGVsbG8=",
+                      "mime_type": "image/png",
+                      "format": "png",
+                      "filename": "alias.png"
+                    }
+                  },
+                  {
+                    "type": "audio_url",
+                    "audio_url": "file:///tmp/alias.wav",
+                    "format": "wav",
+                    "mime_type": "audio/wav"
+                  },
+                  {
+                    "type": "video_url",
+                    "video_url": "https://example.com/alias.mp4",
+                    "mime_type": "video/mp4",
+                    "frame_budget": 4
+                  }
+                ]
+                """.utf8
+            )
+        )
+
+        let normalized = try parts.map { try MultimodalRequestNormalizer().normalize($0) }
+
+        #expect(normalized[0].imageBytes == Data("hello".utf8))
+        #expect(normalized[0].media.mediaType == .image)
+        #expect(normalized[0].media.sourceKind == .mediaSourceInlineBytes)
+        #expect(normalized[0].media.filename == "alias.png")
+        #expect(normalized[1].audioUri == "file:///tmp/alias.wav")
+        #expect(normalized[1].media.mediaType == .audio)
+        #expect(normalized[1].media.sourceKind == .mediaSourceUri)
+        #expect(normalized[2].videoUri == "https://example.com/alias.mp4")
+        #expect(normalized[2].media.mediaType == .video)
+        #expect(normalized[2].media.format == "mp4")
+        #expect(normalized[2].media.frameBudget == 4)
+    }
+
+    @Test("multimodal request normalizer accepts canonical audio and video aliases")
+    func canonicalAudioAndVideoAliasesNormalizeToCanonicalWorkerParts() throws {
+        let decoder = JSONDecoder()
+        let parts = try decoder.decode(
+            [OpenAIMultimodalContentPart].self,
+            from: Data(
+                """
+                [
+                  {
+                    "type": "audio",
+                    "audio": "file:///tmp/canonical.wav",
+                    "format": "wav",
+                    "mime_type": "audio/wav"
+                  },
+                  {
+                    "type": "video",
+                    "video": "file:///tmp/canonical.mp4",
+                    "format": "mp4",
+                    "mime_type": "video/mp4"
+                  }
+                ]
+                """.utf8
+            )
+        )
+
+        let normalized = try parts.map { try MultimodalRequestNormalizer().normalize($0) }
+
+        #expect(normalized[0].audioUri == "file:///tmp/canonical.wav")
+        #expect(normalized[0].media.mediaType == .audio)
+        #expect(normalized[0].media.format == "wav")
+        #expect(normalized[1].videoUri == "file:///tmp/canonical.mp4")
+        #expect(normalized[1].media.mediaType == .video)
+        #expect(normalized[1].media.format == "mp4")
+    }
+
     @Test("multimodal request normalizer accepts input-image urls for local and remote ingress")
     func inputImageURLsNormalizeToImageURIs() throws {
         let normalizer = MultimodalRequestNormalizer()
@@ -697,6 +781,7 @@ struct MultimodalContractTests {
     @Test("multimodal request normalizer rejects missing content values")
     func missingContentValuesAreRejected() {
         let normalizer = MultimodalRequestNormalizer()
+        let decoder = JSONDecoder()
 
         #expect(throws: MultimodalRequestNormalizationError.missingValue("text")) {
             _ = try normalizer.normalize(OpenAIMultimodalContentPart(type: .text))
@@ -739,6 +824,26 @@ struct MultimodalContractTests {
                 OpenAIMultimodalContentPart(
                     type: .inputVideo,
                     inputVideo: OpenAIMultimodalVideoReference(format: "mp4")
+                )
+            )
+        }
+        #expect(throws: MultimodalRequestNormalizationError.missingValue("image")) {
+            _ = try decoder.decode(
+                OpenAIMultimodalContentPart.self,
+                from: Data(
+                    """
+                    { "type": "image" }
+                    """.utf8
+                )
+            )
+        }
+        #expect(throws: MultimodalRequestNormalizationError.missingValue("audio")) {
+            _ = try decoder.decode(
+                OpenAIMultimodalContentPart.self,
+                from: Data(
+                    """
+                    { "type": "audio" }
+                    """.utf8
                 )
             )
         }

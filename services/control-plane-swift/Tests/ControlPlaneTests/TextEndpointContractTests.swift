@@ -1272,6 +1272,43 @@ struct TextEndpointContractTests {
         #expect(message.parts[1].media.filename == "fixture.png")
     }
 
+    @Test("chat request contracts preserve media admission diagnostics")
+    func chatRequestContractsPreserveMediaAdmissionDiagnostics() throws {
+        let decoder = JSONDecoder()
+        let translator = ChatRequestTranslator()
+
+        let request = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-vlm",
+                  "stream": true,
+                  "messages": [
+                    {
+                      "role": "user",
+                      "content": [
+                        { "type": "text", "text": "Describe this blocked media." },
+                        {
+                          "type": "image_url",
+                          "image_url": "https://127.0.0.1/fixture.png",
+                          "mime_type": "image/png"
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        #expect(throws: MultimodalRequestNormalizationError.externalMediaURLBlocked(
+            "External media URL host is not allowed: 127.0.0.1."
+        )) {
+            _ = try translator.normalizeMultimodalChat(request)
+        }
+    }
+
     @Test("ocr model policies shape multimodal requests with default sampling and stop sequences")
     func ocrModelPoliciesShapeMultimodalRequestsWithDefaultSamplingAndStopSequences() throws {
         let decoder = JSONDecoder()
@@ -1875,6 +1912,30 @@ struct TextEndpointContractTests {
         #expect(translated.workerRequest.messages.count == 2)
         #expect(translated.workerRequest.messages[0].role == "system")
         #expect(translated.workerRequest.messages[1].role == "user")
+    }
+
+    @Test("normalized requests expose audio media types before translation")
+    func normalizedRequestsExposeAudioMediaTypesBeforeTranslation() throws {
+        var audioPart = Melix_Worker_V1_MessagePart()
+        audioPart.text = "audio"
+        audioPart.media.mediaType = .audio
+        audioPart.audioBytes = Data("hello".utf8)
+        let normalized = NormalizedTextRequest(
+            endpoint: .chatCompletions,
+            model: "melix-dev-transcribe",
+            messages: [.init(role: "user", parts: [audioPart])],
+            stream: true,
+            temperature: nil,
+            topP: nil,
+            maxTokens: nil,
+            sessionID: nil,
+            branchID: nil,
+            parentRequestID: nil,
+            restoreSnapshotID: nil,
+            saveBoundarySnapshot: nil
+        )
+
+        #expect(normalized.mediaTypes == ["audio"])
     }
 
     @Test("chat translation wrapper applies request defaults and session-aware cache hints")

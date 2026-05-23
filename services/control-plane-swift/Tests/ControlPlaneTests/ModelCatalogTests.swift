@@ -517,7 +517,7 @@ struct ModelCatalogTests {
 
         #expect(model.routeClass == .workerRoutePythonVlm)
         #expect(model.capabilityClass == .modelCapabilityVlm)
-        #expect(model.supportedModalities == ["text", "image"])
+        #expect(model.supportedModalities == ["text", "image", "video"])
         #expect(model.supportedTasks == ["vlm", "generate"])
         #expect(model.settings.ext["vision_family_id"] == "llava-v1")
         #expect(model.settings.ext["melix.adapter_set_hash"] == "vision-family-llava-v1")
