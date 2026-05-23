@@ -1230,8 +1230,22 @@ def test_scope_report_selects_deterministic_embedding_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/deterministic_embedding_runtime.py"],
     )
 
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert scope["selected_count"] == 2
+    assert probe_ids == {
+        "deterministic-embedding-duplicate-input-cache",
+        "embedding-core-inputs-view",
+    }
+
+
+def test_scope_report_selects_embedding_core_inputs_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/engine/embedding_core.py"],
+    )
+
     assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "deterministic-embedding-duplicate-input-cache"
+    assert scope["selected_probes"][0]["id"] == "embedding-core-inputs-view"
 
 
 def test_scope_report_selects_benchmark_export_probe() -> None:
@@ -2046,6 +2060,30 @@ def test_deterministic_embedding_duplicate_probe_script_emits_metrics(
     assert metrics["checksum"] > 0
 
 
+def test_embedding_core_inputs_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_EMBEDDING_CORE_INPUTS_ITERATIONS", "2")
+    monkeypatch.setenv("MELIX_EMBEDDING_CORE_INPUTS_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_EMBEDDING_CORE_INPUTS_COUNT", "8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/embedding_core_inputs_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["input_count"] == 8.0
+    assert metrics["iterations"] == 2.0
+    assert metrics["runtime_input_is_list"] == 0.0
+    assert metrics["runtime_input_is_view"] == 1.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
 def test_stream_assembler_parser_mode_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -2547,6 +2585,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "evaluation-compare-target-lookup-early-stop",
         "evaluation-store-samples-csv-streaming",
         "engine-generate-usage-token-elision",
+        "embedding-core-inputs-view",
         "job-registry-derived-model-single-pass",
         "job-registry-restore-sort-elision",
         "lora-experiment-run-dir-name-scan",
