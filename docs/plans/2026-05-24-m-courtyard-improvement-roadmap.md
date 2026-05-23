@@ -1,9 +1,5 @@
 # M-Courtyard-Informed Melix Improvement Roadmap
 
-## Title
-
-M-Courtyard-informed Melix improvement roadmap
-
 ## Goal
 
 Turn the M-Courtyard reference scan into a concrete Melix improvement backlog
@@ -74,7 +70,7 @@ Issue numbers were filled after the GitHub issues were created.
 | P2.2 | [#1501](https://github.com/Keith-CY/melix/issues/1501) | Plan | M2 |
 | U2.2.1 | [#1502](https://github.com/Keith-CY/melix/issues/1502) | Unit | P2.2 |
 | U2.2.2 | [#1503](https://github.com/Keith-CY/melix/issues/1503) | Unit | P2.2 |
-| M3 | [#1504](https://github.com/Keith-CY/melix/issues/1504) | Milestone | None |
+| M3 | [#1504](https://github.com/Keith-CY/melix/issues/1504) | Milestone | M2 adapter provenance manifest |
 | P3.1 | [#1505](https://github.com/Keith-CY/melix/issues/1505) | Plan | M3 |
 | U3.1.1 | [#1506](https://github.com/Keith-CY/melix/issues/1506) | Unit | P3.1 |
 | U3.1.2 | [#1507](https://github.com/Keith-CY/melix/issues/1507) | Unit | P3.1 |
@@ -113,10 +109,11 @@ Melix-owned project identity.
 
 ##### Unit U1.1.1: Define Workspace Manifest and Artifact Paths
 
-Build the schema and docs for a `workspace-manifest.json` that records project
-identity, artifact roots, artifact types, provenance references, schema
-version, and redaction policy. The unit is complete when a fixture manifest can
-be validated and linked from current LoRA and evaluation docs.
+Build the schema in `packages/protocol/schema` and docs for a
+`workspace-manifest.json` that records project identity, artifact roots,
+artifact types, provenance references, schema version, and redaction policy.
+The unit is complete when a fixture manifest can be validated and linked from
+current LoRA and evaluation docs.
 
 ##### Unit U1.1.2: Add Workspace Preflight and Migration Validation
 
@@ -175,7 +172,7 @@ with no worker launch.
 Persist queued and running training jobs with project identity, model,
 dataset version, resource class, cancellation state, and recovery policy. The
 unit is complete when a queued run can be restored after app restart and no two
-exclusive local training jobs can run concurrently.
+training jobs can run concurrently on the local hardware.
 
 #### Plan P2.2: Training Monitor and Adapter History
 
@@ -216,10 +213,11 @@ artifacts, Ollama, GGUF, and MLX-compatible local runtimes.
 
 ##### Unit U3.1.1: Define Export Target Manifest for Melix, Ollama, GGUF, and MLX
 
-Define the schema, runbook, and fixtures for export target manifests that
-record target type, source adapter, base model, quantization, generated files,
-runtime requirements, and verification policy. The unit is complete when all
-export targets can be represented without target-specific side channels.
+Define the schema in `packages/protocol/schema`, runbook, and fixtures for
+export target manifests that record target type, source adapter, base model,
+quantization, generated files, runtime requirements, and verification policy.
+The unit is complete when all export targets can be represented without
+target-specific side channels.
 
 ##### Unit U3.1.2: Implement Export Artifact Layout and Retention Policy
 
