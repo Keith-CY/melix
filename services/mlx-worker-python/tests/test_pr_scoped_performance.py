@@ -1039,6 +1039,16 @@ def test_scope_report_selects_mlx_audio_local_uri_probe() -> None:
     assert "mlx-audio-local-uri-zero-copy-preprocess" in _selected_probe_ids(scope)
 
 
+def test_scope_report_selects_macos_app_resource_bundle_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/macos_app_bundle.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert scope["selected_probes"][0]["id"] == "macos-app-resource-bundle-scandir"
+
+
 def test_scope_report_selects_mlx_vlm_runtime_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -2551,6 +2561,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "multimodal-fast-path-signature-top-level-key-cache",
         "multimodal-preprocessing-local-uri-parse-elision",
         "multimodal-preprocessing-image-uri-single-parse",
+        "macos-app-resource-bundle-scandir",
         "package-macos-resolve-fallback-scandir",
         "pr-scoped-performance-scope-json-read-bytes",
         "pr-scoped-performance-scope-matcher",
