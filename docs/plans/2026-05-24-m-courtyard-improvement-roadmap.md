@@ -162,7 +162,8 @@ adapter manifest write latency, and loss-series row count.
 
 Add explicit trainability checks and a durable admission path for local
 training so unsupported runs fail early and queued runs survive navigation or
-process restart.
+process restart. The execution plan is
+[`2026-05-24-training-parameter-safety-and-queueing.md`](2026-05-24-training-parameter-safety-and-queueing.md).
 
 ##### Unit U2.1.1: Add Trainability Guardrails for Unsupported Configurations
 
