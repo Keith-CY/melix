@@ -71,6 +71,47 @@ for default and unsupported requests.
 
 ## Verification Results
 
+- Current dependency state as of 2026-05-23:
+  `services/mlx-worker-python/pyproject.toml` requires `mlx-vlm>=0.5.0,<0.6`
+  and `uv.lock` resolves `mlx-vlm 0.5.0`. The main Gemma 4 MTP execution path
+  is already present on `origin/main` from the earlier Gemma 4 MTP slice; the
+  2026-05-23 follow-up does not reimplement routing. It only closes the
+  generate-step observability gap by copying upstream drafter `accept_lens`
+  statistics into the existing runtime speculative fields.
+- Current OMLX validation used `/Users/chenyu/Documents/github/omlx` at
+  `2f2f5087a9c9a6ef71fa165da4a299bd19d4d5b4` with `omlx=0.3.9`, `mlx=0.31.2`,
+  `mlx-lm=0.31.3`, and `mlx-vlm=0.5.0`.
+- Current local cache state before the online drafter probe had the E4B target
+  cached but no E4B assistant drafter. The online drafter probe downloaded and
+  loaded `mlx-community/gemma-4-E4B-it-assistant-bf16` as an MTP drafter with
+  `model_type=gemma4_assistant`; the cached assistant directory is about
+  `182M`.
+- Current OMLX baseline-vs-MTP comparison used target
+  `unsloth/gemma-4-E4B-it-MLX-8bit`, drafter
+  `mlx-community/gemma-4-E4B-it-assistant-bf16`, port `18062`, greedy sampling,
+  `max_tokens=96`, and three repeats. Runtime evidence lives under
+  `.runtime/gemma4-assistant-omlx-validation/evidence/omlx/`.
+- OMLX MTP server logs prove the full route: settings loaded, the drafter
+  loaded as `kind=mtp`, the scheduler and engine attached the drafter, and each
+  request emitted `vlm_mtp decode started` plus `vlm_mtp stats`.
+- OMLX warm baseline results averaged `1.192051s` total duration,
+  `0.057557s` content TTFT, `80.53` conservative decode tok/s, and `84.53`
+  usage tok/s.
+- OMLX warm MTP results averaged `1.011354s` total duration, `0.054818s`
+  content TTFT, `94.93` conservative decode tok/s, and `100.37` usage tok/s.
+  This is a `15.16%` warm-duration reduction, `17.88%` conservative tok/s lift,
+  and `18.73%` usage tok/s lift versus baseline.
+- OMLX MTP acceptance evidence was stable across all three requests:
+  `rounds=40`, `accepted=56/200 (28.0%)`, `tokens_per_round=2.40`,
+  `emitted=96`, and `block_size=6`.
+- The current Melix follow-up mirrors that OMLX acceptance accounting for the
+  `generate_step` path by reading drafter `accept_lens` after generation and
+  publishing `speculative_acceptance_rate`, `speculative_rollback_rate`,
+  `speculative_accepted_tokens`, and `speculative_rejected_tokens` on the final
+  `RuntimeTokenEvent` when upstream exposes the data.
+
+Historical implementation-slice verification:
+
 - Focused runtime, engine, and catalog pytest:
   `153 passed, 2 warnings`.
 - Full Python worker regression:
@@ -80,10 +121,9 @@ for default and unsupported requests.
 - Diff hygiene:
   `git diff --check` passed.
 - Local runtime capability probe:
-  locked `mlx-vlm` is `0.4.4`; `mlx_vlm.generate` exists, but
-  `batch_generate` and `mlx_vlm.speculative` are not available in this
-  environment. The MTP path is therefore covered with runtime detection and
-  fake upstream hooks until the upstream API is present locally.
+  the original implementation slice was first validated in an environment where
+  the repository lock still resolved `mlx-vlm 0.4.4`; the current repository
+  lock now resolves `mlx-vlm 0.5.0`.
 - Local live model smoke, offline from the Hugging Face cache:
   `unsloth/gemma-4-E4B-it-MLX-8bit` loaded through `MLXVLMRuntime` and
   `AutoMLXVLMBackend` with `runtime_name=mlx-vlm`, `mlx=0.31.2`,

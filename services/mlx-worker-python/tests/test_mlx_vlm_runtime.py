@@ -2693,8 +2693,19 @@ def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
         _ = revision
         return SimpleNamespace(config=SimpleNamespace(model_type="gemma4")), FakeProcessor()
 
+    drafter = SimpleNamespace(
+        draft_model_id="draft-model",
+        kind="mtp",
+        model=SimpleNamespace(
+            accept_lens=[2, 1],
+            config=SimpleNamespace(block_size=6),
+        ),
+    )
+
     def fake_load_drafter(model_id: str, *, kind: str = "mtp"):
-        return {"draft_model_id": model_id, "kind": kind}
+        _ = model_id
+        _ = kind
+        return drafter
 
     def fake_generate_step(
         input_ids,
@@ -2769,6 +2780,10 @@ def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
     assert events[-1].speculative_fallback_count == 0
     assert events[-1].speculative_num_draft_tokens == 6
     assert events[-1].speculative_draft_model_configured is True
+    assert events[-1].speculative_acceptance_rate == 0.3
+    assert events[-1].speculative_rollback_rate == 0.7
+    assert events[-1].speculative_accepted_tokens == 3
+    assert events[-1].speculative_rejected_tokens == 7
     assert generate_step_calls == [
         {
             "input_ids_shape": (1, 3),
@@ -2776,12 +2791,25 @@ def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
             "pixel_values": None,
             "mask_shape": (1, 3),
             "max_tokens": 16,
-            "draft_model": {"draft_model_id": "draft-model", "kind": "mtp"},
+            "draft_model": drafter,
             "draft_kind": "mtp",
             "draft_block_size": 6,
             "prefill_step_size": None,
         }
     ]
+
+
+@pytest.mark.parametrize(
+    "drafter",
+    [
+        SimpleNamespace(model=SimpleNamespace()),
+        SimpleNamespace(model=SimpleNamespace(accept_lens=["not-int"])),
+        SimpleNamespace(model=SimpleNamespace(accept_lens=[])),
+        SimpleNamespace(model=SimpleNamespace(accept_lens=[-1])),
+    ],
+)
+def test_mtp_drafter_acceptance_stats_ignore_unusable_accept_lens(drafter: SimpleNamespace) -> None:
+    assert MLXVLMRuntime._mtp_drafter_acceptance_stats(drafter, 6) is None
 
 
 def test_auto_mlx_vlm_backend_detects_installed_optional_mtp_api(

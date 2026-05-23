@@ -1627,6 +1627,7 @@ class MLXVLMRuntime:
             cache_hit=False,
         )
         generation_time = max(0.0, finished_at - (first_token_at or finished_at))
+        acceptance_stats = self._mtp_drafter_acceptance_stats(drafter, draft_block_size)
         yield RuntimeTokenEvent(
             text=text,
             prompt_tokens=prompt_tokens,
@@ -1635,6 +1636,18 @@ class MLXVLMRuntime:
             generation_tps=(completion_tokens / generation_time) if generation_time > 0 else 0.0,
             peak_memory=_mlx_peak_memory_gb(mx),
             finish_reason="stop",
+            speculative_acceptance_rate=(
+                acceptance_stats["acceptance_rate"] if acceptance_stats is not None else None
+            ),
+            speculative_rollback_rate=(
+                acceptance_stats["rollback_rate"] if acceptance_stats is not None else None
+            ),
+            speculative_accepted_tokens=(
+                acceptance_stats["accepted_tokens"] if acceptance_stats is not None else None
+            ),
+            speculative_rejected_tokens=(
+                acceptance_stats["rejected_tokens"] if acceptance_stats is not None else None
+            ),
             speculative_fallback_count=0,
             speculative_num_draft_tokens=draft_block_size,
             speculative_draft_model_configured=True,
@@ -2086,6 +2099,33 @@ class MLXVLMRuntime:
         if value is None:
             return None
         return int(value)
+
+    @staticmethod
+    def _mtp_drafter_acceptance_stats(drafter: Any, draft_block_size: int) -> dict[str, float | int] | None:
+        drafter_model = getattr(drafter, "model", drafter)
+        accept_lens = getattr(drafter_model, "accept_lens", None)
+        if not accept_lens:
+            return None
+        try:
+            lens = [int(value) for value in accept_lens]
+        except (TypeError, ValueError):
+            return None
+        rounds = len(lens)
+        if rounds == 0:
+            return None
+        accepted_tokens = sum(lens)
+        if accepted_tokens < 0:
+            return None
+        max_per_round = max(1, int(draft_block_size or 0) - 1)
+        attempted_tokens = rounds * max_per_round
+        rejected_tokens = max(0, attempted_tokens - accepted_tokens)
+        acceptance_rate = accepted_tokens / attempted_tokens
+        return {
+            "acceptance_rate": acceptance_rate,
+            "rollback_rate": rejected_tokens / attempted_tokens,
+            "accepted_tokens": accepted_tokens,
+            "rejected_tokens": rejected_tokens,
+        }
 
     def last_probe_snapshot(self) -> VisionProbeSnapshot:
         return self._last_probe

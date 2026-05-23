@@ -1050,6 +1050,9 @@ def test_scope_report_selects_mlx_vlm_runtime_probe() -> None:
         "mlx-vlm-family-config-cache",
         "mlx-vlm-gemma4-weight-presence-single-pass",
     ]
+    coverage_commands = " ".join(str(probe["coverage_command"]) for probe in scope["selected_probes"])
+    assert "test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available" in coverage_commands
+    assert "test_mtp_drafter_acceptance_stats_ignore_unusable_accept_lens" in coverage_commands
 
 
 def test_scope_report_selects_deterministic_vlm_completion_probe() -> None:
