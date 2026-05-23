@@ -46,6 +46,11 @@ def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:
         is RequestStreamAssembler._TOOL_PARSER_STRUCTURAL_OPEN_TAGS
     )
     assert tool_enabled._structural_tag_prefixes is tool_enabled._structural_tag_prefixes
+    assert (
+        tool_enabled._partial_structural_tag_suffixes_value
+        is RequestStreamAssembler._TOOL_PARSER_PARTIAL_SUFFIXES
+    )
+    assert "<|channel>tho" in tool_enabled._partial_structural_tag_suffixes_value
     assert tool_enabled._structural_tag_prefixes_reversed == (
         tuple(reversed(pipe_channel_prefixes))
         + tuple(reversed(pipe_tool_prefixes))
@@ -60,6 +65,12 @@ def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:
     assert tool_enabled._structural_tag_prefixes is tool_enabled._structural_tag_prefixes
     assert tool_disabled._structural_tag_prefixes is tool_disabled._structural_tag_prefixes
     assert tool_disabled._structural_tag_prefixes is RequestStreamAssembler._REASONING_PREFIXES
+    assert (
+        tool_disabled._partial_structural_tag_suffixes_value
+        is RequestStreamAssembler._REASONING_PARTIAL_SUFFIXES
+    )
+    assert "<|channel>tho" in tool_disabled._partial_structural_tag_suffixes_value
+    assert "<tool" not in tool_disabled._partial_structural_tag_suffixes_value
     assert tool_disabled._structural_open_tags is RequestStreamAssembler._REASONING_OPEN_TAGS
     assert (
         tool_disabled._structural_tag_prefixes_reversed

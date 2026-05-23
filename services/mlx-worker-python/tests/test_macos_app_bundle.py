@@ -403,6 +403,39 @@ def test_copy_swiftpm_resource_bundles_restores_existing_bundle_on_copy_failure(
     assert (target_bundle / "existing.txt").exists() is False
 
 
+def test_copy_swiftpm_resource_bundles_uses_scandir_without_path_glob(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    first_bundle = source_root / "A.bundle"
+    second_bundle = source_root / "B.bundle"
+    first_bundle.mkdir()
+    second_bundle.mkdir()
+    (first_bundle / "first.txt").write_text("first", encoding="utf-8")
+    (second_bundle / "second.txt").write_text("second", encoding="utf-8")
+    (source_root / "C.bundle").write_text("not a directory", encoding="utf-8")
+    (source_root / "ignored.txt").write_text("ignored", encoding="utf-8")
+    target_root = tmp_path / "target"
+    target_root.mkdir()
+
+    def fail_glob(self: Path, pattern: str):  # pragma: no cover - regression guard
+        raise AssertionError("_copy_swiftpm_resource_bundles() should not allocate Path.glob() results")
+
+    monkeypatch.setattr(Path, "glob", fail_glob)
+
+    copied_paths = _copy_swiftpm_resource_bundles(source_root, [target_root])
+
+    assert copied_paths == [target_root / "A.bundle", target_root / "B.bundle"]
+    assert (target_root / "A.bundle/first.txt").read_text(encoding="utf-8") == "first"
+    assert (target_root / "B.bundle/second.txt").read_text(encoding="utf-8") == "second"
+    assert (target_root / "C.bundle").exists() is False
+
+
+def test_copy_swiftpm_resource_bundles_returns_empty_when_source_missing(tmp_path: Path) -> None:
+    assert _copy_swiftpm_resource_bundles(tmp_path / "missing", [tmp_path / "target"]) == []
+
+
 def test_write_unsigned_macos_app_bundle_requires_an_icon_file(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     (repo_root / "services/mlx-worker-python/worker").mkdir(parents=True)

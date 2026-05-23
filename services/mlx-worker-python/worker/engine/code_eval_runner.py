@@ -416,8 +416,11 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
 
     payload: dict[str, object] = {}
     search_start = 0
+    field_value_start = _json_field_value_start_for_token
+    extract_string = _extract_json_string_field_at
+    extract_int_and_end = _extract_json_int_field_value_and_end
     for key, key_token, value_kind in field_tokens:
-        value_start = _json_field_value_start_for_token(
+        value_start = field_value_start(
             payload_bytes,
             key_token,
             start=search_start,
@@ -425,13 +428,13 @@ def _extract_code_eval_payload_fields(payload_bytes: bytes) -> dict[str, object]
         if value_start is None:
             return None
         if value_kind == "string":
-            value = _extract_json_string_field_at(payload_bytes, value_start)
+            value = extract_string(payload_bytes, value_start)
             if value is not None:
                 payload[key] = value
                 search_start = value_start + len(value) + 1
             continue
 
-        int_result = _extract_json_int_field_value_and_end(payload_bytes, value_start)
+        int_result = extract_int_and_end(payload_bytes, value_start)
         if int_result is None:
             return None
         value, value_end = int_result
