@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -38,6 +39,8 @@ class DownloadPipelineResult:
 class _DownloadManifestContext:
     state_path: Path
     base_payload: dict[str, Any]
+    pending_artifact_integrity: dict[str, Any] | None
+    passed_artifact_integrity: dict[str, Any] | None
 
 
 @dataclass(frozen=True)
@@ -87,6 +90,8 @@ class DownloadPipeline:
         stall_after_bytes = max(0, self._int(ext.get("test_stall_after_bytes"), default=0))
         stall_elapsed_ms = max(0, self._int(ext.get("test_stall_elapsed_ms"), default=0))
         stall_timeout_ms = max(1, self._int(ext.get("stall_timeout_ms"), default=30_000))
+        request_deadline_ms = max(0, self._int(ext.get("test_request_deadline_ms"), default=0))
+        slow_in_progress_ms = max(0, self._int(ext.get("test_slow_in_progress_ms"), default=0))
 
         retry_count = 0
         stall_detection_count = 0
@@ -100,6 +105,7 @@ class DownloadPipeline:
             partial_path=partial_path,
             state_path=state_path,
             selected_mirror=selected_mirror,
+            ext=ext,
         )
         snapshots: list[DownloadSnapshot] = [
             self._snapshot(
@@ -135,11 +141,16 @@ class DownloadPipeline:
                             partial_file.write(chunk)
                             partial_file.flush()
                             downloaded_bytes += len(chunk)
+                            deadline_progressing = (
+                                request_deadline_ms > 0
+                                and slow_in_progress_ms > request_deadline_ms
+                                and downloaded_bytes < total_bytes
+                            )
                             snapshots.append(
                                 self._snapshot(
                                     manifest_context=manifest_context,
-                                    status="running",
-                                    terminal_state="running",
+                                    status="in_progress" if deadline_progressing else "running",
+                                    terminal_state="in_progress" if deadline_progressing else "running",
                                     stage="download",
                                     pct=0.0 if total_bytes == 0 else downloaded_bytes / total_bytes,
                                     downloaded_bytes=downloaded_bytes,
@@ -423,6 +434,7 @@ class DownloadPipeline:
         revision: str,
         total_bytes: int,
     ) -> str:
+        ext = dict(request.ext)
         public_ext = self._public_ext(request.ext)
         config_payload = self._load_model_config_payload(runtime_model_path)
         draft_metadata = dflash_draft_metadata(config_payload)
@@ -430,6 +442,14 @@ class DownloadPipeline:
             "schema_version": "melix.download_job.v1",
             "job_id": job_id,
             "operation": "download",
+            "operation_id": self._operation_id(request=request, ext=ext),
+            "target_scope": self._target_scope(request=request, ext=ext),
+            "operation_kind": self._operation_kind(ext),
+            "attempts": 1,
+            "timeout_ms": max(0, self._int(ext.get("test_request_deadline_ms") or ext.get("timeout_ms"), default=0)),
+            "retry_after_ms": max(0, self._int(ext.get("retry_after_ms") or ext.get("test_request_deadline_ms"), default=0)),
+            "last_error": "",
+            "artifact_integrity": self._artifact_integrity_receipt(ext=public_ext, status="passed"),
             "model_id": repo_id,
             "managed_model_path": str(output_path),
             "source_model": request.source_model,
@@ -558,13 +578,27 @@ class DownloadPipeline:
         partial_path: Path,
         state_path: Path,
         selected_mirror: str,
+        ext: dict[str, str],
     ) -> _DownloadManifestContext:
+        public_ext = self._public_ext(request.ext)
+        receipt_enabled = self.uses_operation_receipt(ext)
+        receipt_payload: dict[str, Any] = {}
+        if receipt_enabled:
+            receipt_payload = {
+                "operation_id": self._operation_id(request=request, ext=ext),
+                "target_scope": self._target_scope(request=request, ext=ext),
+                "operation_kind": self._operation_kind(ext),
+                "timeout_ms": max(0, self._int(ext.get("test_request_deadline_ms") or ext.get("timeout_ms"), default=0)),
+                "retry_after_ms": max(0, self._int(ext.get("retry_after_ms") or ext.get("test_request_deadline_ms"), default=0)),
+                "last_error": "",
+            }
         return _DownloadManifestContext(
             state_path=state_path,
             base_payload={
                 "schema_version": "melix.download_job.v1",
                 "job_id": job_id,
                 "operation": "download",
+                **receipt_payload,
                 "source_model": request.source_model,
                 "output_dir": str(output_dir),
                 "source_path": request.ext.get("source_path", ""),
@@ -572,8 +606,18 @@ class DownloadPipeline:
                 "partial_path": str(partial_path),
                 "state_path": str(state_path),
                 "selected_mirror": selected_mirror,
-                "ext": self._public_ext(request.ext),
+                "ext": public_ext,
             },
+            pending_artifact_integrity=(
+                self._artifact_integrity_receipt(ext=public_ext, status="pending")
+                if receipt_enabled
+                else None
+            ),
+            passed_artifact_integrity=(
+                self._artifact_integrity_receipt(ext=public_ext, status="passed")
+                if receipt_enabled
+                else None
+            ),
         )
 
     @staticmethod
@@ -593,6 +637,14 @@ class DownloadPipeline:
         stall_reason: str,
     ) -> dict[str, Any]:
         payload = dict(manifest_context.base_payload)
+        receipt_update: dict[str, Any] = {}
+        if manifest_context.pending_artifact_integrity is not None:
+            receipt_update["attempts"] = retry_count + 1
+            receipt_update["artifact_integrity"] = (
+                manifest_context.passed_artifact_integrity
+                if terminal_state == "completed"
+                else manifest_context.pending_artifact_integrity
+            )
         payload.update(
             {
             "status": status,
@@ -606,6 +658,7 @@ class DownloadPipeline:
             "retry_count": retry_count,
             "stall_detection_count": stall_detection_count,
             "stall_reason": stall_reason,
+            **receipt_update,
             "metrics": {
                 "download.resume_success_rate": 1.0 if resume_used and terminal_state == "completed" else 0.0,
                 "download.retry_count": retry_count,
@@ -618,7 +671,7 @@ class DownloadPipeline:
     @staticmethod
     def _write_manifest_json(state_path: Path, payload: dict[str, Any]) -> str:
         DownloadPipeline._write_json_atomically(state_path, payload)
-        return json.dumps(payload, sort_keys=True)
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
     @staticmethod
     def _terminal_manifest_json(manifest_payload: dict[str, Any], *, status: str) -> str:
@@ -626,11 +679,109 @@ class DownloadPipeline:
         payload["status"] = status
         if status == "failed":
             payload["terminal_state"] = "failed"
+            payload["last_error"] = payload.get("stall_reason") or "download_failed"
+            payload["artifact_integrity"] = DownloadPipeline._artifact_integrity_receipt(
+                ext=payload.get("ext", {}),
+                status="failed",
+                failure_reason=str(payload["last_error"]),
+            )
         elif status == "stalled":
             payload["terminal_state"] = "stalled"
+            payload["last_error"] = payload.get("stall_reason") or "download_stalled"
+            payload["artifact_integrity"] = DownloadPipeline._artifact_integrity_receipt(
+                ext=payload.get("ext", {}),
+                status="failed",
+                failure_reason=str(payload["last_error"]),
+            )
         elif status == "cancelled":
             payload["terminal_state"] = "cancelled"
+            payload["last_error"] = "download_cancelled"
+            payload["artifact_integrity"] = DownloadPipeline._artifact_integrity_receipt(
+                ext=payload.get("ext", {}),
+                status="failed",
+                failure_reason="download_cancelled",
+            )
         return DownloadPipeline._write_manifest_json(Path(str(payload["state_path"])), payload)
+
+    @classmethod
+    def operation_identity(cls, request: maintenance_pb2.ConvertModelRequest) -> tuple[str, str, str]:
+        ext = dict(request.ext)
+        operation_kind = cls._operation_kind(ext)
+        target_scope = cls._target_scope(request=request, ext=ext)
+        operation_id = cls._operation_id(request=request, ext=ext)
+        return operation_id, target_scope, operation_kind
+
+    @staticmethod
+    def _operation_kind(ext: dict[str, str]) -> str:
+        return ext.get("melix.operation_kind", "").strip() or "managed_model_install"
+
+    @classmethod
+    def _operation_id(
+        cls,
+        *,
+        request: maintenance_pb2.ConvertModelRequest,
+        ext: dict[str, str],
+    ) -> str:
+        explicit = ext.get("melix.operation_id", "").strip()
+        if explicit:
+            return explicit
+        operation_kind = cls._operation_kind(ext)
+        target_scope = cls._target_scope(request=request, ext=ext)
+        digest = hashlib.sha256(f"{operation_kind}\0{target_scope}".encode("utf-8")).hexdigest()[:16]
+        return f"{operation_kind}:{digest}"
+
+    @staticmethod
+    def _target_scope(
+        *,
+        request: maintenance_pb2.ConvertModelRequest,
+        ext: dict[str, str],
+    ) -> str:
+        explicit = ext.get("melix.target_scope", "").strip()
+        if explicit:
+            return explicit
+        repo_id = ext.get("melix.hf_repo_id", "").strip() or request.source_model.strip()
+        revision = ext.get("melix.hf_revision", "").strip() or "main"
+        if repo_id:
+            return f"hub:{repo_id}@{revision}"
+        source_path = ext.get("source_path", "").strip()
+        if source_path:
+            return f"local:{Path(source_path).expanduser().resolve()}"
+        return request.source_model.strip() or "download"
+
+    @staticmethod
+    def uses_operation_receipt(ext: dict[str, str]) -> bool:
+        return (
+            ext.get("melix.managed_import", "").strip().lower() in {"1", "true", "yes", "on"}
+            or ext.get("melix.operation_id", "").strip() != ""
+            or ext.get("melix.operation_kind", "").strip() != ""
+            or ext.get("melix.target_scope", "").strip() != ""
+            or ext.get("melix.artifact_digest", "").strip() != ""
+            or ext.get("artifact_digest", "").strip() != ""
+            or ext.get("sha256", "").strip() != ""
+            or ext.get("test_request_deadline_ms", "").strip() != ""
+        )
+
+    @staticmethod
+    def _artifact_integrity_receipt(
+        *,
+        ext: dict[str, Any],
+        status: str,
+        failure_reason: str = "",
+    ) -> dict[str, Any]:
+        digest = str(
+            ext.get("melix.artifact_digest")
+            or ext.get("artifact_digest")
+            or ext.get("sha256")
+            or ""
+        )
+        return {
+            "verification_mode": str(ext.get("melix.verification_mode") or "receipt_fixture"),
+            "policy_present": bool(digest or status != "failed"),
+            "digest": digest,
+            "checked_at": str(ext.get("melix.integrity_checked_at") or "not_recorded"),
+            "failure_reason": failure_reason,
+            "status": status,
+        }
 
     @staticmethod
     def _write_json_atomically(path: Path, payload: dict[str, Any]) -> None:
@@ -646,7 +797,7 @@ class DownloadPipeline:
         temp_path = Path(temp_file.name)
         try:
             with temp_file:
-                json.dump(payload, temp_file, sort_keys=True)
+                json.dump(payload, temp_file, sort_keys=True, separators=(",", ":"))
             os.replace(os.fspath(temp_path), os.fspath(path))
         finally:
             temp_path.unlink(missing_ok=True)
