@@ -921,6 +921,31 @@ def test_audio_to_wav_bytes_does_not_materialize_flat_sample_list(monkeypatch: p
     assert decoded == [16383, 32767, -32767]
 
 
+def test_iter_samples_preserves_already_float_samples_without_recast() -> None:
+    from worker.runtime.wav_helpers import iter_samples
+
+    class NormalizedFloat(float):
+        def __float__(self):  # pragma: no cover - covered only by regression failure
+            raise AssertionError("iter_samples should not re-cast float sample values")
+
+    class FlatAudio:
+        @property
+        def flat(self):
+            return iter((NormalizedFloat(0.5), NormalizedFloat(-0.25)))
+
+    nested_samples = list(
+        iter_samples(
+            [
+                NormalizedFloat(0.125),
+                (NormalizedFloat(0.25), FlatAudio()),
+            ]
+        )
+    )
+
+    assert nested_samples == [0.125, 0.25, 0.5, -0.25]
+    assert all(isinstance(sample, NormalizedFloat) for sample in nested_samples)
+
+
 def test_audio_to_wav_bytes_writes_little_endian_chunks_on_big_endian_hosts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
