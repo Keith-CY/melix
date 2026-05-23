@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from unittest.mock import Mock
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
@@ -625,6 +626,116 @@ def test_search_models_marks_large_mlx_model_as_heavy_not_blocked() -> None:
     assert model.recommended_action == "review_risk"
     assert model.estimated_resident_bytes > int(64 * 1024 * 1024 * 1024 * 0.60)
     assert any("memory comfort budget" in reason for reason in model.local_fit_reasons)
+
+
+def test_search_models_includes_kv_cache_in_local_fit_for_long_context_configs() -> None:
+    payload = [
+        {
+            "id": "mlx-community/long-context-4bit",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["mlx", "4-bit"],
+            "library_name": "mlx",
+            "usedStorage": 512 * MB,
+            "config": {
+                "hidden_size": 4096,
+                "num_attention_heads": 32,
+                "num_key_value_heads": 32,
+                "num_hidden_layers": 64,
+                "max_position_embeddings": 131_072,
+                "torch_dtype": "bfloat16",
+            },
+            "siblings": [{"rfilename": "model.safetensors", "size": 512 * MB}],
+            "cardData": {},
+        }
+    ]
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="long-context", page_size=10, cursor="", mlx_only=True)
+
+    model = page.items[0]
+    expected_kv_bytes = 131_072 * 64 * 32 * 128 * 2 * 2
+    assert model.local_fit_status == "heavy"
+    assert model.recommended_action == "review_risk"
+    assert model.estimated_resident_bytes >= expected_kv_bytes
+    assert any("Estimated KV cache bytes" in reason for reason in model.local_fit_reasons)
+
+
+def test_search_models_uses_text_config_string_values_and_gqa_heads_for_kv_cache() -> None:
+    payload = [
+        {
+            "id": "mlx-community/gqa-string-config-4bit",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["mlx", "4-bit"],
+            "library_name": "mlx",
+            "usedStorage": 256 * MB,
+            "config": {
+                "max_position_embeddings": 2048,
+                "text_config": {
+                    "hidden_size": "4096",
+                    "num_attention_heads": "32",
+                    "num_key_value_heads": "8",
+                    "num_hidden_layers": "4",
+                    "torch_dtype": "float32",
+                },
+            },
+            "siblings": [{"rfilename": "model.safetensors", "size": 256 * MB}],
+            "cardData": {},
+        }
+    ]
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="gqa-string-config", page_size=10, cursor="", mlx_only=True)
+
+    model = page.items[0]
+    expected_kv_bytes = 2048 * 4 * 8 * 128 * 4 * 2
+    expected_weight_bytes = math.ceil((256 * MB) * hub_catalog_module.RESIDENT_MEMORY_OVERHEAD_FACTOR)
+    assert model.estimated_resident_bytes == expected_weight_bytes + expected_kv_bytes
+    assert any(str(expected_kv_bytes) in reason for reason in model.local_fit_reasons)
+
+
+def test_search_models_skips_kv_cache_estimate_for_incompatible_records(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = [
+        {
+            "id": "plain-community/plain-transformer",
+            "author": "plain-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["transformers", "4-bit"],
+            "library_name": "transformers",
+            "safetensors": {"total": 2_000_000_000},
+            "config": {
+                "hidden_size": 4096,
+                "num_attention_heads": 32,
+                "num_key_value_heads": 32,
+                "num_hidden_layers": 64,
+                "max_position_embeddings": 131_072,
+            },
+            "siblings": [{"rfilename": "config.json"}],
+            "cardData": {},
+        }
+    ]
+    estimate_kv_cache = Mock(return_value=123)
+    monkeypatch.setattr(hub_catalog_module, "_estimated_kv_cache_bytes", estimate_kv_cache)
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="plain-transformer", page_size=10, cursor="", mlx_only=False)
+
+    model = page.items[0]
+    assert model.local_fit_status == "blocked"
+    assert model.estimated_resident_bytes > 0
+    estimate_kv_cache.assert_not_called()
 
 
 def test_size_hint_from_empty_text_skips_regex_search(monkeypatch: pytest.MonkeyPatch) -> None:
