@@ -110,6 +110,16 @@ class RequestStreamAssembler:
         "<|channel>"[:index] for index in range(1, len("<|channel>"))
     )
     _REASONING_PREFIXES = _THINK_PREFIXES + _PIPE_CHANNEL_PREFIXES
+    _REASONING_PARTIAL_SUFFIXES = frozenset(
+        _THINK_PREFIXES + _PIPE_CHANNEL_PREFIXES + _PIPE_REASONING_PREFIXES
+    )
+    _TOOL_PARSER_PARTIAL_SUFFIXES = frozenset(
+        _THINK_PREFIXES
+        + _PIPE_CHANNEL_PREFIXES
+        + _PIPE_REASONING_PREFIXES
+        + _TOOL_PREFIXES
+        + _PIPE_TOOL_PREFIXES
+    )
     _THINK_PREFIXES_REVERSED = tuple(reversed(_THINK_PREFIXES))
     _PIPE_REASONING_PREFIXES_REVERSED = tuple(reversed(_PIPE_REASONING_PREFIXES))
     _REASONING_PREFIXES_REVERSED = tuple(reversed(_REASONING_PREFIXES))
@@ -163,6 +173,7 @@ class RequestStreamAssembler:
             self._is_json_structured_output_value and not self._tool_parsing_enabled_value
         )
         self._structural_tag_prefixes_value = self._REASONING_PREFIXES
+        self._partial_structural_tag_suffixes_value = self._REASONING_PARTIAL_SUFFIXES
         self._structural_tag_prefixes_reversed_value = self._REASONING_PREFIXES_REVERSED
         self._structural_open_tags_value = self._REASONING_OPEN_TAGS
         if self._tool_parsing_enabled_value:
@@ -171,6 +182,7 @@ class RequestStreamAssembler:
             self._structural_tag_prefixes_value = (
                 self._REASONING_PREFIXES + self._TOOL_PREFIXES + self._PIPE_TOOL_PREFIXES
             )
+            self._partial_structural_tag_suffixes_value = self._TOOL_PARSER_PARTIAL_SUFFIXES
             self._structural_tag_prefixes_reversed_value = (
                 self._PIPE_CHANNEL_PREFIXES_REVERSED
                 + self._PIPE_TOOL_PREFIXES_REVERSED
@@ -620,32 +632,7 @@ class RequestStreamAssembler:
             return ""
 
         suffix = self._buffer[marker_index:]
-        suffix_len = len(suffix)
-        if self._tool_parsing_enabled_value:
-            if (
-                0 < suffix_len < len(self._TOOL_OPEN)
-                and self._TOOL_OPEN.startswith(suffix)
-            ):
-                return suffix
-            if (
-                0 < suffix_len < len(self._PIPE_TOOL_OPEN)
-                and self._PIPE_TOOL_OPEN.startswith(suffix)
-            ):
-                return suffix
-        if (
-            0 < suffix_len < len(self._THINK_OPEN)
-            and self._THINK_OPEN.startswith(suffix)
-        ):
-            return suffix
-        if (
-            0 < suffix_len < len(self._PIPE_CHANNEL_OPEN)
-            and self._PIPE_CHANNEL_OPEN.startswith(suffix)
-        ):
-            return suffix
-        if (
-            0 < suffix_len < len(self._PIPE_REASONING_OPEN)
-            and self._PIPE_REASONING_OPEN.startswith(suffix)
-        ):
+        if suffix in self._partial_structural_tag_suffixes_value:
             return suffix
         return ""
 
