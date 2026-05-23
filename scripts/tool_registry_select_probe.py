@@ -32,6 +32,10 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     full_list_self_samples: list[float] = []
     full_config_template_elapsed_samples: list[float] = []
     full_config_template_samples: list[float] = []
+    raw_partial_config_elapsed_samples: list[float] = []
+    raw_partial_config_template_samples: list[float] = []
+    raw_partial_selection = [" visit ", "image_crop", "visit"]
+    built_in_tool_config(raw_partial_selection)
     checksum = 0
 
     for _ in range(sample_count):
@@ -60,6 +64,17 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         )
         full_config_template_samples.append(float(full_config_template_count))
 
+        raw_partial_config_template_count = 0
+        raw_partial_config_started = time.perf_counter()
+        for _index in range(full_config_iterations):
+            config = built_in_tool_config(raw_partial_selection)
+            raw_partial_config_template_count += 1
+            checksum += len(config.tools)
+        raw_partial_config_elapsed_samples.append(
+            (time.perf_counter() - raw_partial_config_started) * 1000.0
+        )
+        raw_partial_config_template_samples.append(float(raw_partial_config_template_count))
+
     return {
         "elapsed_ms_mean": statistics.fmean(elapsed_samples),
         "select_calls_mean": float(iterations),
@@ -68,6 +83,12 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
             full_config_template_elapsed_samples
         ),
         "full_config_template_hits_mean": statistics.fmean(full_config_template_samples),
+        "raw_partial_config_template_elapsed_ms_mean": statistics.fmean(
+            raw_partial_config_elapsed_samples
+        ),
+        "raw_partial_config_template_hits_mean": statistics.fmean(
+            raw_partial_config_template_samples
+        ),
         "checksum": float(checksum),
         "iterations": float(iterations),
         "sample_count": float(sample_count),

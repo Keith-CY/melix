@@ -281,12 +281,9 @@ class ToolRegistry:
             parser=self._parser,
             parser_contract_version=self._parser_contract_version,
         )
-        cache_raw_tuple = isinstance(names, tuple) and names != requested_names
-        if len(self._selection_cache) >= _SELECTION_CACHE_MAX_SIZE - int(cache_raw_tuple):
+        if len(self._selection_cache) >= _SELECTION_CACHE_MAX_SIZE:
             self._selection_cache.clear()
         self._selection_cache[requested_names] = selection
-        if cache_raw_tuple:
-            self._selection_cache[names] = selection
         return selection
 
     def as_openai_tools(self) -> list[dict[str, Any]]:
@@ -353,6 +350,18 @@ def built_in_tool_registry() -> ToolRegistry:
     return _BUILTIN_TOOL_CONFIG_REGISTRY
 
 
+def _normalized_tool_selection_names(names: tuple[str, ...]) -> tuple[str, ...]:
+    requested_names_list: list[str] = []
+    seen_names: set[str] = set()
+    for name in names:
+        normalized_name = name.strip()
+        if not normalized_name or normalized_name in seen_names:
+            continue
+        seen_names.add(normalized_name)
+        requested_names_list.append(normalized_name)
+    return tuple(requested_names_list)
+
+
 def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> common_pb2.ToolConfig:
     if names is None:
         return _copy_tool_config(_BUILTIN_TOOL_CONFIG_TEMPLATE)
@@ -368,9 +377,20 @@ def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> co
     cached_config = _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES.get(requested_names)
     if cached_config is not None:
         return _copy_tool_config(cached_config)
-    registry = _BUILTIN_TOOL_CONFIG_REGISTRY.select(requested_names)
+    normalized_requested_names = _normalized_tool_selection_names(requested_names)
+    if normalized_requested_names != requested_names:
+        cached_config = _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES.get(normalized_requested_names)
+        if cached_config is not None:
+            _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES[requested_names] = cached_config
+            return _copy_tool_config(cached_config)
+    else:
+        normalized_requested_names = requested_names
+    registry = _BUILTIN_TOOL_CONFIG_REGISTRY.select(normalized_requested_names)
     config = registry.as_worker_tool_config()
-    _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES[registry.names()] = config
+    normalized_names = registry.names()
+    _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES[normalized_names] = config
+    if requested_names != normalized_names:
+        _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES[requested_names] = config
     return _copy_tool_config(config)
 
 

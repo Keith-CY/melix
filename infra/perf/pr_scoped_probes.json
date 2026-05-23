@@ -3952,6 +3952,18 @@
         "unit": "ms",
         "direction": "lower_is_better",
         "warn_pct": 5.0
+      },
+      {
+        "key": "raw_partial_config_template_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "raw_partial_config_template_hits_mean",
+        "unit": "calls",
+        "direction": "higher_is_better",
+        "warn_pct": 0.0
       }
     ]
   },
