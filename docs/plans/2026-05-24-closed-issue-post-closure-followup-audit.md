@@ -128,7 +128,48 @@ behavior.
 ```bash
 git fetch origin main --prune
 gh issue list --state closed --limit 1000 --json number,title,closedAt,updatedAt,comments,url --jq 'length'
-gh api graphql ... # paginated closed issue query with comments(first:100)
+
+# First page omits cursor; later pages pass pageInfo.endCursor as cursor
+# until pageInfo.hasNextPage is false.
+gh api graphql \
+  -f owner=Keith-CY \
+  -f name=melix \
+  -f query='
+query($owner: String!, $name: String!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    issues(
+      states: CLOSED
+      first: 100
+      after: $cursor
+      orderBy: {field: UPDATED_AT, direction: DESC}
+    ) {
+      totalCount
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        number
+        title
+        closedAt
+        updatedAt
+        url
+        comments(first: 100) {
+          totalCount
+          nodes {
+            createdAt
+            url
+            author {
+              login
+            }
+            body
+          }
+        }
+      }
+    }
+  }
+}'
+
 gh issue view 41 --repo Keith-CY/melix --comments
 gh issue view 43 --repo Keith-CY/melix --comments
 gh issue view 365 --repo Keith-CY/melix --comments
