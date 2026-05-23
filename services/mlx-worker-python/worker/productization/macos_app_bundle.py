@@ -498,14 +498,26 @@ def write_unsigned_macos_app_bundle(
 
 def _copy_swiftpm_resource_bundles(source_root: Path, target_roots: list[Path]) -> list[Path]:
     copied_paths: list[Path] = []
-    if not source_root.is_dir():
+    try:
+        with os.scandir(source_root) as entries:
+            bundle_names = []
+            for entry in entries:
+                if not entry.name.endswith(".bundle"):
+                    continue
+                try:
+                    if not entry.is_dir(follow_symlinks=False):
+                        continue
+                except OSError:
+                    continue
+                bundle_names.append(entry.name)
+            bundle_names.sort()
+    except OSError:
         return copied_paths
 
-    for source in sorted(source_root.glob("*.bundle")):
-        if not source.is_dir():
-            continue
+    for bundle_name in bundle_names:
+        source = source_root / bundle_name
         for target_root in target_roots:
-            target = target_root / source.name
+            target = target_root / bundle_name
             backup = target.with_name(f"{target.name}.melix-backup")
             if backup.exists():
                 shutil.rmtree(backup)
