@@ -41,10 +41,10 @@ Out of scope:
 - Modify: `services/mlx-worker-python/tests/test_maintenance_service.py`
 - Modify: `services/mlx-worker-python/tests/test_model_ops_job_registry.py`
 
-- [ ] Add failing tests for stable receipt fields and in-progress timeout receipts.
-- [ ] Add failing tests for duplicate suppression by `operation_id` and `target_scope`.
-- [ ] Add failing tests for strict activation receipt eligibility and registry snapshot fields.
-- [ ] Run the focused red tests and confirm they fail for missing behavior, not syntax errors.
+- [x] Add failing tests for stable receipt fields and in-progress timeout receipts.
+- [x] Add failing tests for duplicate suppression by `operation_id` and `target_scope`.
+- [x] Add failing tests for strict activation receipt eligibility and registry snapshot fields.
+- [x] Run the focused red tests and confirm they fail for missing behavior, not syntax errors.
 
 ### Task 2: Receipt Emission
 
@@ -52,10 +52,10 @@ Out of scope:
 
 - Modify: `services/mlx-worker-python/worker/model_ops/download_pipeline.py`
 
-- [ ] Add deterministic operation identity and target scope helpers.
-- [ ] Include receipt fields in standard and managed Hub download manifests.
-- [ ] Emit an `in_progress` receipt when the test deadline knob expires while progress is still being made.
-- [ ] Keep terminal failure handling separate from `in_progress` receipts.
+- [x] Add deterministic operation identity and target scope helpers.
+- [x] Include receipt fields in standard and managed Hub download manifests.
+- [x] Emit an `in_progress` receipt when the test deadline knob expires while progress is still being made.
+- [x] Keep terminal failure handling separate from `in_progress` receipts.
 
 ### Task 3: Registry And Duplicate Suppression
 
@@ -64,10 +64,10 @@ Out of scope:
 - Modify: `services/mlx-worker-python/worker/model_ops/job_registry.py`
 - Modify: `services/mlx-worker-python/worker/engine/maintenance_core.py`
 
-- [ ] Expose receipt fields in the `downloads` registry snapshot.
-- [ ] Add a registry lookup for scoped managed artifact operations.
-- [ ] Suppress duplicate managed installs before a new job is created.
-- [ ] Add the strict activation fixture helper that only passes completed receipts with passed artifact integrity.
+- [x] Expose receipt fields in the `downloads` registry snapshot.
+- [x] Add a registry lookup for scoped managed artifact operations.
+- [x] Suppress duplicate managed installs before a new job is created.
+- [x] Add the strict activation fixture helper that only passes completed receipts with passed artifact integrity.
 
 ### Task 4: Documentation And Verification
 
@@ -75,9 +75,9 @@ Out of scope:
 
 - Modify: `docs/runbooks/phase-8-local-install.md`
 
-- [ ] Document operation receipt fields, duplicate suppression, in-progress deadline semantics, and strict activation fixture behavior.
-- [ ] Run focused red/green tests.
-- [ ] Run the required combined pytest command.
-- [ ] Run a coverage command for the changed Python scope if feasible.
-- [ ] Run `git diff --check`.
-- [ ] Commit one focused change.
+- [x] Document operation receipt fields, duplicate suppression, in-progress deadline semantics, and strict activation fixture behavior.
+- [x] Run focused red/green tests.
+- [x] Run the required combined pytest command.
+- [x] Run a coverage command for the changed Python scope if feasible.
+- [x] Run `git diff --check`.
+- [x] Commit one focused change.
