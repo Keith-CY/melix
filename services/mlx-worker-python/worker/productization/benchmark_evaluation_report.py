@@ -533,14 +533,17 @@ def build_benchmark_evaluation_report(
 
 def render_terminal_report(report: dict[str, object]) -> str:
     rows = _report_rows(report)
-    headers = ["Metric", "Baseline", "Candidate", "Delta", "Status"]
+    headers = ["Metric", "Baseline", "Candidate", "Delta", "CI95", "N", "Status", "Note"]
     rendered_rows = [
         [
             str(row["metric"]),
             _format_value(row.get("baseline")),
             _format_value(row.get("candidate")),
             _format_delta(row),
+            _format_ci95(row),
+            _format_sample_count(row),
             str(row["status"]),
+            str(row.get("note") or ""),
         ]
         for row in rows
     ]
@@ -635,8 +638,8 @@ def render_markdown_report(report: dict[str, object]) -> str:
         [
             "## Result Metrics",
             "",
-        "| Metric | Baseline | Candidate | Delta | Status |",
-        "| --- | ---: | ---: | ---: | --- |",
+        "| Metric | Baseline | Candidate | Delta | CI95 | N | Status | Note |",
+        "| --- | ---: | ---: | ---: | --- | ---: | --- | --- |",
         ]
     )
     for row in _report_rows(report):
@@ -648,7 +651,10 @@ def render_markdown_report(report: dict[str, object]) -> str:
                     _markdown_cell(_format_value(row.get("baseline"))),
                     _markdown_cell(_format_value(row.get("candidate"))),
                     _markdown_cell(_format_delta(row)),
+                    _markdown_cell(_format_ci95(row)),
+                    _markdown_cell(_format_sample_count(row)),
                     _markdown_cell(row["status"]),
+                    _markdown_cell(row.get("note", "")),
                 ]
             )
             + " |"
@@ -898,7 +904,7 @@ def _status_counts(rows: list[dict[str, object]]) -> tuple[int, int, int]:
 
 def _report_metric_row(row: dict[str, object]) -> dict[str, object]:
     result = _row_result(row)
-    return {
+    payload = {
         "metric": row.get("metric"),
         "baseline": row.get("baseline"),
         "current": row.get("candidate"),
@@ -911,10 +917,25 @@ def _report_metric_row(row: dict[str, object]) -> dict[str, object]:
         "gate_policy": _row_gate_policy(row),
         "result": result,
     }
+    for field_name in (
+        "baseline_ci95_low",
+        "baseline_ci95_high",
+        "candidate_ci95_low",
+        "candidate_ci95_high",
+        "ci95_overlap",
+        "baseline_sample_count",
+        "candidate_sample_count",
+        "note",
+    ):
+        if field_name in row:
+            payload[field_name] = row[field_name]
+    return payload
 
 
 def _row_result(row: dict[str, object]) -> str:
     status = str(row.get("status") or "")
+    if status == "informational":
+        return "informational"
     if status == "warning":
         return "fail"
     if status in {"missing", "not_comparable"}:
@@ -1162,7 +1183,7 @@ def _comparison_section(
 
 
 def _comparison_delta(row: dict[str, object]) -> dict[str, object]:
-    return {
+    payload = {
         "metric": row.get("metric"),
         "baseline": row.get("baseline"),
         "current": row.get("current"),
@@ -1172,6 +1193,19 @@ def _comparison_delta(row: dict[str, object]) -> dict[str, object]:
         "gate_policy": row.get("gate_policy"),
         "result": row.get("result"),
     }
+    for field_name in (
+        "baseline_ci95_low",
+        "baseline_ci95_high",
+        "candidate_ci95_low",
+        "candidate_ci95_high",
+        "ci95_overlap",
+        "baseline_sample_count",
+        "candidate_sample_count",
+        "note",
+    ):
+        if field_name in row:
+            payload[field_name] = row[field_name]
+    return payload
 
 
 def _agentic_adapter_delta_rows(
@@ -1447,7 +1481,7 @@ def _missing_evidence_failure(field_name: str, message: str) -> dict[str, object
 
 
 def _gate_row(row: dict[str, object]) -> dict[str, object]:
-    return {
+    payload = {
         "metric": row.get("metric"),
         "result": row.get("result"),
         "status": row.get("status"),
@@ -1458,6 +1492,19 @@ def _gate_row(row: dict[str, object]) -> dict[str, object]:
         "delta": row.get("delta"),
         "delta_percent": row.get("delta_percent"),
     }
+    for field_name in (
+        "baseline_ci95_low",
+        "baseline_ci95_high",
+        "candidate_ci95_low",
+        "candidate_ci95_high",
+        "ci95_overlap",
+        "baseline_sample_count",
+        "candidate_sample_count",
+        "note",
+    ):
+        if field_name in row:
+            payload[field_name] = row[field_name]
+    return payload
 
 
 def _report_id(
@@ -1591,6 +1638,14 @@ def _write_report_csv_outputs(report: dict[str, object], csv_paths: dict[str, Pa
             "direction",
             "status",
             "result",
+            "baseline_ci95_low",
+            "baseline_ci95_high",
+            "candidate_ci95_low",
+            "candidate_ci95_high",
+            "ci95_overlap",
+            "baseline_sample_count",
+            "candidate_sample_count",
+            "note",
             "gate_policy",
         ),
     )
@@ -1689,6 +1744,14 @@ def _write_report_csv_outputs(report: dict[str, object], csv_paths: dict[str, Pa
             "current",
             "delta",
             "delta_percent",
+            "baseline_ci95_low",
+            "baseline_ci95_high",
+            "candidate_ci95_low",
+            "candidate_ci95_high",
+            "ci95_overlap",
+            "baseline_sample_count",
+            "candidate_sample_count",
+            "note",
             "gate_policy",
         ),
     )
@@ -1717,6 +1780,14 @@ def _write_report_csv_outputs(report: dict[str, object], csv_paths: dict[str, Pa
             "delta_percent",
             "direction",
             "result",
+            "baseline_ci95_low",
+            "baseline_ci95_high",
+            "candidate_ci95_low",
+            "candidate_ci95_high",
+            "ci95_overlap",
+            "baseline_sample_count",
+            "candidate_sample_count",
+            "note",
             "gate_policy",
         ),
     )
@@ -2170,6 +2241,7 @@ def _collect_metrics(bundle: dict[str, object]) -> dict[str, object]:
         prefix="bench.request",
         label_cache=label_cache,
     )
+    _collect_benchmark_repeat_group_metrics(metrics, bundle.get("benchmark_repeat_groups", []))
     for row in _dict_rows(bundle.get("benchmark_matrix_summary_rows", [])):
         label = _matrix_label(row, label_cache=label_cache)
         for key in _MATRIX_SUMMARY_METRIC_KEYS:
@@ -2217,19 +2289,39 @@ def _build_metric_row(
             "status": "missing",
         }
     baseline_type = type(baseline)
-    if baseline_type is float:
-        baseline_number = baseline
-    elif baseline_type is int or baseline_type is bool:
-        baseline_number = float(baseline)
-    else:
-        baseline_number = _float_or_none(baseline)
     candidate_type = type(candidate)
-    if candidate_type is float:
-        candidate_number = candidate
-    elif candidate_type is int or candidate_type is bool:
-        candidate_number = float(candidate)
-    else:
+    if (baseline_type is float or baseline_type is int or baseline_type is bool) and (
+        candidate_type is float or candidate_type is int or candidate_type is bool
+    ):
+        return _build_numeric_metric_row(
+            metric_name=metric_name,
+            baseline_number=float(baseline),
+            candidate_number=float(candidate),
+            direction=direction,
+        )
+    if baseline_type is not dict and candidate_type is not dict:
+        baseline_number = _float_or_none(baseline)
         candidate_number = _float_or_none(candidate)
+        if baseline_number is not None and candidate_number is not None:
+            return _build_numeric_metric_row(
+                metric_name=metric_name,
+                baseline_number=baseline_number,
+                candidate_number=candidate_number,
+                direction=direction,
+            )
+        return {
+            "metric": metric_name,
+            "baseline": baseline,
+            "candidate": candidate,
+            "delta": None,
+            "delta_pct": None,
+            "direction": "metadata",
+            "status": "ok" if str(baseline) == str(candidate) else "not_comparable",
+        }
+    baseline_payload = _metric_value_payload(baseline)
+    candidate_payload = _metric_value_payload(candidate)
+    baseline_number = baseline_payload.get("value")
+    candidate_number = candidate_payload.get("value")
     if baseline_number is None or candidate_number is None:
         return {
             "metric": metric_name,
@@ -2242,11 +2334,62 @@ def _build_metric_row(
         }
     delta = candidate_number - baseline_number
     delta_pct = (delta / abs(baseline_number) * 100.0) if baseline_number != 0 else None
+    ci_fields = _metric_ci_fields(
+        baseline_payload=baseline_payload,
+        candidate_payload=candidate_payload,
+    )
     if direction == "neutral":
         status = "ok" if round(delta, 6) == 0 else "not_comparable"
     else:
         status = "ok"
+    note = ""
+    if ci_fields.get("ci95_overlap") or _single_run_ci_payload(
+        baseline_payload,
+        candidate_payload,
+    ):
+        status = "informational"
+        note = (
+            "inconclusive: overlapping confidence intervals"
+            if ci_fields.get("ci95_overlap")
+            else "inconclusive: single-run group has no variance estimate"
+        )
     if direction == "lower_is_better" and (
+        (delta_pct is not None and delta_pct > _WARNING_THRESHOLD_PCT)
+        or (baseline_number == 0 and candidate_number > baseline_number)
+    ) and status != "informational":
+        status = "warning"
+    elif direction == "higher_is_better" and (
+        (delta_pct is not None and delta_pct < -_WARNING_THRESHOLD_PCT)
+        or (baseline_number == 0 and candidate_number < baseline_number)
+    ) and status != "informational":
+        status = "warning"
+    row = {
+        "metric": metric_name,
+        "baseline": baseline_number,
+        "candidate": candidate_number,
+        "delta": round(delta, 6),
+        "delta_pct": round(delta_pct, 6) if delta_pct is not None else None,
+        "direction": direction,
+        "status": status,
+    }
+    row.update(ci_fields)
+    if note:
+        row["note"] = note
+    return row
+
+
+def _build_numeric_metric_row(
+    *,
+    metric_name: str,
+    baseline_number: float,
+    candidate_number: float,
+    direction: str,
+) -> dict[str, object]:
+    delta = candidate_number - baseline_number
+    delta_pct = (delta / abs(baseline_number) * 100.0) if baseline_number != 0 else None
+    if direction == "neutral":
+        status = "ok" if round(delta, 6) == 0 else "not_comparable"
+    elif direction == "lower_is_better" and (
         (delta_pct is not None and delta_pct > _WARNING_THRESHOLD_PCT)
         or (baseline_number == 0 and candidate_number > baseline_number)
     ):
@@ -2256,6 +2399,8 @@ def _build_metric_row(
         or (baseline_number == 0 and candidate_number < baseline_number)
     ):
         status = "warning"
+    else:
+        status = "ok"
     return {
         "metric": metric_name,
         "baseline": baseline_number,
@@ -2265,6 +2410,66 @@ def _build_metric_row(
         "direction": direction,
         "status": status,
     }
+
+
+def _metric_value_payload(value: object) -> dict[str, float | int | None]:
+    if isinstance(value, dict):
+        return {
+            "value": _float_or_none(value.get("value")),
+            "ci95_low": _float_or_none(value.get("ci95_low")),
+            "ci95_high": _float_or_none(value.get("ci95_high")),
+            "stdev": _float_or_none(value.get("stdev")),
+            "sample_count": _int_or_none(value.get("sample_count")),
+        }
+    value_type = type(value)
+    if value_type is float:
+        return {"value": value}
+    if value_type is int or value_type is bool:
+        return {"value": float(value)}
+    return {"value": _float_or_none(value)}
+
+
+def _metric_ci_fields(
+    *,
+    baseline_payload: dict[str, float | int | None],
+    candidate_payload: dict[str, float | int | None],
+) -> dict[str, object]:
+    if not all(
+        key in payload
+        for payload in (baseline_payload, candidate_payload)
+        for key in ("ci95_low", "ci95_high")
+    ):
+        return {}
+    baseline_low = baseline_payload.get("ci95_low")
+    baseline_high = baseline_payload.get("ci95_high")
+    candidate_low = candidate_payload.get("ci95_low")
+    candidate_high = candidate_payload.get("ci95_high")
+    if not all(isinstance(value, (int, float)) for value in (baseline_low, baseline_high, candidate_low, candidate_high)):
+        return {}
+    return {
+        "baseline_ci95_low": baseline_low,
+        "baseline_ci95_high": baseline_high,
+        "candidate_ci95_low": candidate_low,
+        "candidate_ci95_high": candidate_high,
+        "ci95_overlap": bool(
+            max(float(baseline_low), float(candidate_low))
+            <= min(float(baseline_high), float(candidate_high))
+        ),
+        "baseline_sample_count": _int_or_none(baseline_payload.get("sample_count")),
+        "candidate_sample_count": _int_or_none(candidate_payload.get("sample_count")),
+    }
+
+
+def _single_run_ci_payload(
+    baseline_payload: dict[str, float | int | None],
+    candidate_payload: dict[str, float | int | None],
+) -> bool:
+    if "sample_count" not in baseline_payload and "sample_count" not in candidate_payload:
+        return False
+    return (
+        (_int_or_none(baseline_payload.get("sample_count")) or 0) <= 1
+        or (_int_or_none(candidate_payload.get("sample_count")) or 0) <= 1
+    )
 
 
 @lru_cache(maxsize=None)
@@ -2359,6 +2564,64 @@ def _collect_benchmark_probe_metrics(
                         value=value,
                     )
     metrics.update(_finalize_probe_aggregates(aggregate_pairs, prefix=prefix))
+
+
+def _collect_benchmark_repeat_group_metrics(
+    metrics: dict[str, object],
+    rows: object,
+) -> None:
+    for row in _dict_rows(rows):
+        label = _repeat_group_label(row)
+        if not label:
+            continue
+        for metric_prefix in (
+            "throughput",
+            "ttft_ms",
+            "request_latency_ms",
+            "peak_memory_bytes",
+            "energy_joules",
+        ):
+            value = _float_or_none(row.get(f"{metric_prefix}_mean"))
+            if value is None:
+                continue
+            metrics[f"bench.repeat_group.{label}.{metric_prefix}_mean"] = {
+                "value": value,
+                "stdev": _float_or_none(row.get(f"{metric_prefix}_stdev")),
+                "ci95_low": _float_or_none(row.get(f"{metric_prefix}_ci95_low")),
+                "ci95_high": _float_or_none(row.get(f"{metric_prefix}_ci95_high")),
+                "sample_count": _int_or_none(row.get("sample_count")),
+            }
+
+
+def _repeat_group_label(row: dict[str, object]) -> str:
+    parts = [
+        row.get("model_id", ""),
+        row.get("source_repo", ""),
+        _normalized_repeat_group_id(row),
+        row.get("source_row_kind", "group"),
+        row.get("methodology_version", ""),
+        row.get("suite", "suite"),
+        row.get("context_length", 0),
+        row.get("generation_length", 0),
+        row.get("batch_size", 0),
+        row.get("cache_profile", ""),
+        row.get("reasoning_mode", ""),
+        row.get("structured_output_mode", ""),
+    ]
+    trimmed_parts = [_label_part(part) for part in parts]
+    while trimmed_parts and trimmed_parts[-1] == "":
+        trimmed_parts.pop()
+    return ".".join(trimmed_parts)
+
+
+def _normalized_repeat_group_id(row: dict[str, object]) -> str:
+    group_id = str(row.get("group_id") or "")
+    job_id = str(row.get("job_id") or "")
+    if job_id and group_id.startswith(f"{job_id}:"):
+        return group_id[len(job_id) + 1:]
+    if group_id.count(":") >= 6:
+        return group_id.split(":", maxsplit=1)[1]
+    return group_id
 
 
 def _collect_evaluation_sample_probe_metrics(
@@ -2760,6 +3023,28 @@ def _format_delta(row: dict[str, object]) -> str:
     if delta_pct is None:
         return f"{delta_value:+.4f}"
     return f"{delta_value:+.4f} ({float(delta_pct):+.2f}%)"
+
+
+def _format_ci95(row: dict[str, object]) -> str:
+    baseline_low = _float_or_none(row.get("baseline_ci95_low"))
+    baseline_high = _float_or_none(row.get("baseline_ci95_high"))
+    candidate_low = _float_or_none(row.get("candidate_ci95_low"))
+    candidate_high = _float_or_none(row.get("candidate_ci95_high"))
+    if None in (baseline_low, baseline_high, candidate_low, candidate_high):
+        return "-"
+    overlap = "overlap" if bool(row.get("ci95_overlap")) else "separate"
+    return (
+        f"base [{baseline_low:.4f}, {baseline_high:.4f}]; "
+        f"candidate [{candidate_low:.4f}, {candidate_high:.4f}] ({overlap})"
+    )
+
+
+def _format_sample_count(row: dict[str, object]) -> str:
+    baseline_count = _int_or_none(row.get("baseline_sample_count"))
+    candidate_count = _int_or_none(row.get("candidate_sample_count"))
+    if baseline_count is None and candidate_count is None:
+        return "-"
+    return f"n={baseline_count or 0}/{candidate_count or 0}"
 
 
 def _markdown_cell(value: object) -> str:

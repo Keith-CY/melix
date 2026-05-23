@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -614,6 +615,114 @@ def test_run_performance_report_exports_requested_base_ref(monkeypatch, tmp_path
     assert outcome.status == "ok"
     assert observed_head_base_refs == ["merge-head"]
     assert observed_base_refs == ["merge-head"]
+
+
+def test_run_performance_report_preserves_repeat_group_report_rows(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    observed_report: dict[str, object] = {}
+    observed_terminal: dict[str, object] = {}
+    monkeypatch.setattr(pre_commit_gate, "_report_run_dir", lambda root: tmp_path / "run")
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "build_scope_report",
+        lambda registry_path, changed_files: {
+            "changed_files": changed_files,
+            "force_all": False,
+            "matched_probe_ids": ["benchmark-evaluation-report-running-aggregates"],
+            "selected_probes": [
+                {
+                    "id": "benchmark-evaluation-report-running-aggregates",
+                    "name": "Benchmark evaluation report running aggregates",
+                    "metrics": [],
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        pre_commit_gate,
+        "load_probe_registry",
+        lambda registry_path: (
+            SimpleNamespace(
+                probe_id="benchmark-evaluation-report-running-aggregates",
+                watch_globs=(),
+            ),
+        ),
+    )
+    monkeypatch.setattr(pre_commit_gate, "export_head_comparison_snapshot", lambda root, destination, base_ref: destination.mkdir())
+    monkeypatch.setattr(pre_commit_gate, "export_base_snapshot", lambda root, destination, base_ref, **kwargs: destination.mkdir())
+
+    def run_probe_job(**kwargs):
+        return (
+            {
+                "probe": {"id": "benchmark-evaluation-report-running-aggregates"},
+                "benchmark_repeat_groups": [
+                    {
+                        "group_id": "bench-1:context:smoke:64:16:1:cold:::",
+                        "sample_count": 3,
+                        "throughput_mean": 100.0,
+                        "throughput_ci95_low": 99.0,
+                        "throughput_ci95_high": 101.0,
+                    }
+                ],
+            },
+            True,
+        )
+
+    def build_performance_report(scope, probe_results):
+        return {
+            "summary": {"status": "ok"},
+            "rows": [
+                {
+                    "metric": "bench.repeat_group.context.smoke.throughput_mean",
+                    "baseline": 100.0,
+                    "candidate": 101.0,
+                    "delta": 1.0,
+                    "delta_pct": 1.0,
+                    "status": "informational",
+                    "baseline_ci95_low": 99.0,
+                    "baseline_ci95_high": 101.0,
+                    "candidate_ci95_low": 100.0,
+                    "candidate_ci95_high": 102.0,
+                    "baseline_sample_count": 3,
+                    "candidate_sample_count": 3,
+                    "note": "inconclusive: overlapping confidence intervals",
+                }
+            ],
+            "probe_results": probe_results,
+        }
+
+    def write_report_outputs(report, report_dir):
+        nonlocal observed_report
+        observed_report = report
+        report_dir.mkdir(parents=True, exist_ok=True)
+        (report_dir / "report.json").write_text(
+            json.dumps(report, sort_keys=True),
+            encoding="utf-8",
+        )
+        return {"markdown": report_dir / "report.md"}
+
+    def render_terminal_report(report):
+        nonlocal observed_terminal
+        observed_terminal = report
+        return "CI95 n=3/3 inconclusive\n"
+
+    monkeypatch.setattr(pre_commit_gate, "run_probe_job", run_probe_job)
+    monkeypatch.setattr(pre_commit_gate, "build_performance_report", build_performance_report)
+    monkeypatch.setattr(pre_commit_gate, "write_report_outputs", write_report_outputs)
+    monkeypatch.setattr(pre_commit_gate, "render_terminal_report", render_terminal_report)
+
+    outcome = pre_commit_gate.run_performance_report(
+        tmp_path,
+        ["services/mlx-worker-python/worker/productization/benchmark_evaluation_report.py"],
+    )
+
+    assert outcome.status == "ok"
+    assert observed_report["probe_results"][0]["benchmark_repeat_groups"][0]["sample_count"] == 3
+    assert observed_report["rows"][0]["baseline_ci95_low"] == 99.0
+    assert observed_report["rows"][0]["note"] == "inconclusive: overlapping confidence intervals"
+    assert observed_terminal is observed_report
 
 
 def test_run_performance_report_skips_empty_selected_probe_entries(monkeypatch, tmp_path: Path) -> None:

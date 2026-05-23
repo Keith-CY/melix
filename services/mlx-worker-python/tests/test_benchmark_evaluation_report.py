@@ -224,6 +224,251 @@ def test_status_counts_reads_each_row_status_once() -> None:
         rows[0].get("status")
 
 
+def test_report_marks_overlapping_repeat_group_ci_as_informational() -> None:
+    baseline = {
+        "export_schema_version": "melix.benchmark_export.v1",
+        "benchmark_repeat_groups": [
+            {
+                "schema_version": "melix.serving_benchmark_repeat_group.v1",
+                "group_id": "bench-a:context:smoke:64:16:1:cold:::",
+                "source_row_kind": "context",
+                "suite": "smoke",
+                "context_length": 64,
+                "generation_length": 16,
+                "batch_size": 1,
+                "cache_profile": "cold",
+                "reasoning_mode": "",
+                "structured_output_mode": "",
+                "sample_count": 3,
+                "throughput_mean": 100.0,
+                "throughput_stdev": 5.0,
+                "throughput_ci95_low": 94.342,
+                "throughput_ci95_high": 105.658,
+            }
+        ],
+    }
+    candidate = {
+        "export_schema_version": "melix.benchmark_export.v1",
+        "benchmark_repeat_groups": [
+            {
+                "schema_version": "melix.serving_benchmark_repeat_group.v1",
+                "group_id": "bench-b:context:smoke:64:16:1:cold:::",
+                "source_row_kind": "context",
+                "suite": "smoke",
+                "context_length": 64,
+                "generation_length": 16,
+                "batch_size": 1,
+                "cache_profile": "cold",
+                "reasoning_mode": "",
+                "structured_output_mode": "",
+                "sample_count": 3,
+                "throughput_mean": 93.0,
+                "throughput_stdev": 4.0,
+                "throughput_ci95_low": 88.4744,
+                "throughput_ci95_high": 97.5256,
+            }
+        ],
+    }
+
+    report = build_benchmark_evaluation_report(baseline=baseline, candidate=candidate)
+    metric_name = (
+        "bench.repeat_group...context:smoke:64:16:1:cold:::."
+        "context..smoke.64.16.1.cold.throughput_mean"
+    )
+    rows = {row["metric"]: row for row in report["rows"]}
+    metrics = {row["metric"]: row for row in report["metrics"]}
+
+    assert rows[metric_name]["status"] == "informational"
+    assert rows[metric_name]["ci95_overlap"] is True
+    assert rows[metric_name]["baseline_ci95_low"] == 94.342
+    assert rows[metric_name]["candidate_ci95_high"] == 97.5256
+    assert "overlapping confidence intervals" in rows[metric_name]["note"]
+    assert metrics[metric_name]["result"] == "informational"
+    assert report["summary"]["warning_count"] == 0
+
+
+def test_report_marks_single_run_repeat_group_as_informational() -> None:
+    baseline = {
+        "export_schema_version": "melix.benchmark_export.v1",
+        "benchmark_repeat_groups": [
+            {
+                "schema_version": "melix.serving_benchmark_repeat_group.v1",
+                "source_row_kind": "context",
+                "suite": "smoke",
+                "context_length": 64,
+                "generation_length": 16,
+                "batch_size": 1,
+                "cache_profile": "cold",
+                "sample_count": 1,
+                "throughput_mean": 100.0,
+                "throughput_ci95_low": "invalid",
+                "throughput_ci95_high": 100.0,
+            }
+        ],
+    }
+    candidate = {
+        "export_schema_version": "melix.benchmark_export.v1",
+        "benchmark_repeat_groups": [
+            {
+                "schema_version": "melix.serving_benchmark_repeat_group.v1",
+                "source_row_kind": "context",
+                "suite": "smoke",
+                "context_length": 64,
+                "generation_length": 16,
+                "batch_size": 1,
+                "cache_profile": "cold",
+                "sample_count": 1,
+                "throughput_mean": 120.0,
+                "throughput_ci95_low": 120.0,
+                "throughput_ci95_high": 120.0,
+            },
+            {"source_row_kind": "", "throughput_mean": 1.0},
+        ],
+    }
+
+    report = build_benchmark_evaluation_report(baseline=baseline, candidate=candidate)
+    metric_name = "bench.repeat_group....context..smoke.64.16.1.cold.throughput_mean"
+    row = {row["metric"]: row for row in report["rows"]}[metric_name]
+
+    assert row["status"] == "informational"
+    assert row["note"] == "inconclusive: single-run group has no variance estimate"
+    assert "ci95_overlap" not in row
+
+
+def test_repeat_group_metric_labels_include_identity_to_avoid_overwrites() -> None:
+    baseline = {
+        "export_schema_version": "melix.benchmark_export.v1",
+        "benchmark_repeat_groups": [
+            {
+                "schema_version": "melix.serving_benchmark_repeat_group.v1",
+                "group_id": "group-a",
+                "job_id": "bench-a",
+                "model_id": "model-a",
+                "task_kind": "text-generation",
+                "source_repo": "source-a",
+                "suite": "smoke",
+                "context_length": 64,
+                "generation_length": 16,
+                "batch_size": 1,
+                "cache_profile": "cold",
+                "reasoning_mode": "",
+                "structured_output_mode": "",
+                "source_row_kind": "context",
+                "sample_count": 2,
+                "methodology_version": "method-a",
+                "throughput_mean": 100.0,
+                "throughput_ci95_low": 99.0,
+                "throughput_ci95_high": 101.0,
+            },
+            {
+                "schema_version": "melix.serving_benchmark_repeat_group.v1",
+                "group_id": "group-b",
+                "job_id": "bench-a",
+                "model_id": "model-b",
+                "task_kind": "text-generation",
+                "source_repo": "source-b",
+                "suite": "smoke",
+                "context_length": 64,
+                "generation_length": 16,
+                "batch_size": 1,
+                "cache_profile": "cold",
+                "reasoning_mode": "",
+                "structured_output_mode": "",
+                "source_row_kind": "context",
+                "sample_count": 2,
+                "methodology_version": "method-b",
+                "throughput_mean": 120.0,
+                "throughput_ci95_low": 119.0,
+                "throughput_ci95_high": 121.0,
+            },
+        ],
+    }
+    candidate = {
+        "export_schema_version": "melix.benchmark_export.v1",
+        "benchmark_repeat_groups": [
+            {**baseline["benchmark_repeat_groups"][0], "throughput_mean": 101.0},
+            {**baseline["benchmark_repeat_groups"][1], "throughput_mean": 121.0},
+        ],
+    }
+
+    report = build_benchmark_evaluation_report(baseline=baseline, candidate=candidate)
+    repeat_group_rows = [
+        row for row in report["rows"] if str(row["metric"]).startswith("bench.repeat_group.")
+    ]
+
+    assert len(repeat_group_rows) == 2
+    assert len({row["metric"] for row in repeat_group_rows}) == 2
+    assert any("model-a" in str(row["metric"]) for row in repeat_group_rows)
+    assert any("source-b" in str(row["metric"]) for row in repeat_group_rows)
+    assert any("group-b" in str(row["metric"]) for row in repeat_group_rows)
+    assert any("method-b" in str(row["metric"]) for row in repeat_group_rows)
+
+
+def test_report_outputs_render_repeat_group_ci_sample_count_and_note(tmp_path: Path) -> None:
+    report = {
+        "summary": {"status": "ok", "metric_count": 1},
+        "rows": [
+            {
+                "metric": "bench.repeat_group.context.smoke.throughput_mean",
+                "baseline": 100.0,
+                "candidate": 93.0,
+                "delta": -7.0,
+                "delta_pct": -7.0,
+                "direction": "higher_is_better",
+                "status": "informational",
+                "baseline_ci95_low": 94.342,
+                "baseline_ci95_high": 105.658,
+                "candidate_ci95_low": 88.4744,
+                "candidate_ci95_high": 97.5256,
+                "ci95_overlap": True,
+                "baseline_sample_count": 3,
+                "candidate_sample_count": 3,
+                "note": "inconclusive: overlapping confidence intervals",
+            }
+        ],
+        "metrics": [
+            {
+                "metric": "bench.repeat_group.context.smoke.throughput_mean",
+                "baseline": 100.0,
+                "current": 93.0,
+                "candidate": 93.0,
+                "delta": -7.0,
+                "delta_percent": -7.0,
+                "delta_pct": -7.0,
+                "direction": "higher_is_better",
+                "status": "informational",
+                "result": "informational",
+                "gate_policy": {"required": True},
+                "baseline_ci95_low": 94.342,
+                "baseline_ci95_high": 105.658,
+                "candidate_ci95_low": 88.4744,
+                "candidate_ci95_high": 97.5256,
+                "ci95_overlap": True,
+                "baseline_sample_count": 3,
+                "candidate_sample_count": 3,
+                "note": "inconclusive: overlapping confidence intervals",
+            }
+        ],
+        "comparison": {"agentic_adapter_deltas": []},
+    }
+
+    terminal = render_terminal_report(report)
+    markdown = render_markdown_report(report)
+    outputs = write_report_outputs(report=report, output_dir=tmp_path)
+    metrics_csv = (tmp_path / "csv" / "metrics.csv").read_text(encoding="utf-8")
+
+    assert "CI95" in terminal
+    assert "n=3/3" in terminal
+    assert "overlapping confidence intervals" in terminal
+    assert "CI95" in markdown
+    assert "n=3/3" in markdown
+    assert "overlapping confidence intervals" in markdown
+    assert "baseline_ci95_low" in metrics_csv
+    assert "candidate_sample_count" in metrics_csv
+    assert "inconclusive: overlapping confidence intervals" in metrics_csv
+    assert outputs["metrics_csv"] == tmp_path / "csv" / "metrics.csv"
+
+
 def _run_evidence(
     *,
     run_id: str,
@@ -2225,7 +2470,7 @@ def test_report_renderers_are_stable_and_sticky_comment_is_marked() -> None:
 
     assert "Metric" in terminal
     assert "bench.smoke.ttft_ms" in terminal
-    assert "| Metric | Baseline | Candidate | Delta | Status |" in markdown
+    assert "| Metric | Baseline | Candidate | Delta | CI95 | N | Status | Note |" in markdown
     assert "<!-- melix-benchmark-evaluation-report -->" in comment
     assert comment.endswith("\n")
 
@@ -2506,7 +2751,7 @@ def test_write_report_outputs_writes_json_and_markdown(tmp_path: Path) -> None:
     report_json = json.loads(outputs["json"].read_text(encoding="utf-8"))
     assert report_json["schema_version"] == "melix.benchmark_evaluation_report.v1"
     assert report_json["artifacts"]["csv_export_paths"]["metrics"].endswith("metrics.csv")
-    assert "| Metric | Baseline | Candidate | Delta | Status |" in outputs["markdown"].read_text(
+    assert "| Metric | Baseline | Candidate | Delta | CI95 | N | Status | Note |" in outputs["markdown"].read_text(
         encoding="utf-8"
     )
     assert outputs["csv_dir"].is_dir()
