@@ -141,6 +141,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
     public let tools: [NormalizedToolDefinition]
     public let toolChoice: String?
     public let chatTemplate: ChatTemplateSelection?
+    public let mediaPartsSummary: NormalizedMediaPartsSummary
 
     public init(
         endpoint: TextEndpointKind,
@@ -169,7 +170,8 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         toolParser: ToolParserSelection? = nil,
         tools: [NormalizedToolDefinition] = [],
         toolChoice: String? = nil,
-        chatTemplate: ChatTemplateSelection? = nil
+        chatTemplate: ChatTemplateSelection? = nil,
+        mediaPartsSummary: NormalizedMediaPartsSummary = .init()
     ) {
         self.endpoint = endpoint
         self.model = model
@@ -200,6 +202,7 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         let trimmedToolChoice = toolChoice?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.toolChoice = trimmedToolChoice?.isEmpty == false ? trimmedToolChoice : nil
         self.chatTemplate = chatTemplate
+        self.mediaPartsSummary = mediaPartsSummary
     }
 }
 
@@ -232,7 +235,8 @@ public extension NormalizedTextRequest {
             toolParser: toolParser,
             tools: tools,
             toolChoice: toolChoice,
-            chatTemplate: chatTemplate
+            chatTemplate: chatTemplate,
+            mediaPartsSummary: mediaPartsSummary
         )
     }
 }
@@ -289,6 +293,7 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let ocrPolicy: ResolvedOCRExecutionPolicy?
     public let partialMode: String?
     public let assistantPrefill: AssistantPrefillSelection?
+    public let mediaPartsSummary: NormalizedMediaPartsSummary
 }
 
 public struct AssistantPrefillSelection: Sendable, Equatable {
@@ -1488,9 +1493,12 @@ public struct ChatRequestTranslator: Sendable {
         let normalizer = MultimodalRequestNormalizer()
         let messages = try request.messages.map { message in
             if let contentParts = message.contentParts {
-                let normalized = try normalizer.normalize(
-                    OpenAIMultimodalMessage(role: message.role, name: message.name, content: contentParts)
+                let multimodalMessage = OpenAIMultimodalMessage(
+                    role: message.role,
+                    name: message.name,
+                    content: contentParts
                 )
+                let normalized = try normalizer.normalize(multimodalMessage)
                 return NormalizedTextMessage(role: normalized.role, name: normalized.name, parts: Array(normalized.parts))
             }
             return NormalizedTextMessage(role: message.role, name: message.name, content: message.content)
@@ -1521,7 +1529,8 @@ public struct ChatRequestTranslator: Sendable {
             toolParser: try request.toolParserSelection,
             tools: try request.normalizedTools,
             toolChoice: request.normalizedToolChoice,
-            chatTemplate: request.chatTemplateSelection
+            chatTemplate: request.chatTemplateSelection,
+            mediaPartsSummary: normalizer.mediaPartsSummary(for: messages)
         )
     }
 
@@ -1682,9 +1691,12 @@ public struct ChatRequestTranslator: Sendable {
         toolParser: ToolParserSelection? = nil,
         tools: [NormalizedToolDefinition] = [],
         toolChoice: String? = nil,
-        chatTemplate: ChatTemplateSelection? = nil
+        chatTemplate: ChatTemplateSelection? = nil,
+        mediaPartsSummary: NormalizedMediaPartsSummary? = nil
     ) -> NormalizedTextRequest {
-        NormalizedTextRequest(
+        let resolvedMediaPartsSummary = mediaPartsSummary
+            ?? MultimodalRequestNormalizer().mediaPartsSummary(for: messages)
+        return NormalizedTextRequest(
             endpoint: endpoint,
             model: model,
             messages: messages,
@@ -1711,13 +1723,16 @@ public struct ChatRequestTranslator: Sendable {
             toolParser: toolParser,
             tools: tools,
             toolChoice: toolChoice,
-            chatTemplate: chatTemplate
+            chatTemplate: chatTemplate,
+            mediaPartsSummary: resolvedMediaPartsSummary
         )
     }
 
     private func messageParts(
         from blocks: [MelixMessagesContentBlock]
     ) -> [Melix_Worker_V1_MessagePart] {
+        // Melix Messages content blocks are text-only in this adapter today;
+        // media-bearing adapters should enter through MultimodalRequestNormalizer.
         blocks.compactMap { block in
             let text = block.normalizedText
             guard !text.isEmpty else {
@@ -1829,6 +1844,7 @@ public struct ChatRequestTranslator: Sendable {
             generateRequest.execution.ext["melix.workflow"] = workflow.rawValue
         }
         generateRequest.execution.ext["melix.endpoint"] = shapedRequest.endpoint.rawValue
+        applyMediaEndpointContract(shapedRequest, to: &generateRequest.execution)
         if let userID = shapedRequest.userID, !userID.isEmpty {
             generateRequest.execution.ext["melix.messages.user_id"] = userID
         }
@@ -1928,6 +1944,7 @@ public struct ChatRequestTranslator: Sendable {
         if hasHarmonyMetadata {
             generateRequest.execution.ext["melix.harmony"] = "true"
         }
+        applyMediaPartsSummary(shapedRequest.mediaPartsSummary, to: &generateRequest.execution)
         if let thinking = shapedRequest.thinking, thinking.isEnabled {
             generateRequest.execution.reasoning.enabled = true
             generateRequest.execution.reasoning.separateStream = true
@@ -2002,6 +2019,54 @@ public struct ChatRequestTranslator: Sendable {
             workerRequest: generateRequest,
             stream: generateRequest.stream
         )
+    }
+
+    private func applyMediaEndpointContract(
+        _ shapedRequest: ShapedTextRequest,
+        to execution: inout Melix_Worker_V1_ExecutionMetadata
+    ) {
+        if !shapedRequest.mediaPartsSummary.isEmpty {
+            execution.ext["melix.media_parts.contract"] = "shared_summary"
+            return
+        }
+
+        switch shapedRequest.endpoint {
+        case .chatCompletions:
+            execution.ext["melix.media_parts.contract"] = "shared_summary_empty"
+        case .completions, .responses, .messages:
+            execution.ext["melix.media_parts.contract"] = "adapter_specific_text_only"
+            execution.ext["melix.media_parts.adapter_scope"] = shapedRequest.endpoint.rawValue
+        }
+    }
+
+    private func applyMediaPartsSummary(
+        _ summary: NormalizedMediaPartsSummary,
+        to execution: inout Melix_Worker_V1_ExecutionMetadata
+    ) {
+        guard !summary.isEmpty else {
+            return
+        }
+        execution.ext["melix.media_parts.count"] = String(summary.count)
+        for (index, part) in summary.parts.enumerated() {
+            let prefix = "melix.media_parts.\(index)"
+            execution.ext["\(prefix).kind"] = part.mediaKind
+            execution.ext["\(prefix).source_kind"] = part.sourceKind
+            execution.ext["\(prefix).source"] = part.source
+            execution.ext["\(prefix).turn_index"] = String(part.turnIndex)
+            execution.ext["\(prefix).part_index"] = String(part.partIndex)
+            if let byteLength = part.byteLength {
+                execution.ext["\(prefix).byte_length"] = String(byteLength)
+            }
+            if let filename = part.filename {
+                execution.ext["\(prefix).filename"] = filename
+            }
+            if let format = part.format {
+                execution.ext["\(prefix).format"] = format
+            }
+            if let stableDigest = part.stableDigest {
+                execution.ext["\(prefix).digest"] = stableDigest
+            }
+        }
     }
 
     private static func workerToolConfig(

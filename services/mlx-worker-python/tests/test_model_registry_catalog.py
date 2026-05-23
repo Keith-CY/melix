@@ -1105,6 +1105,17 @@ def test_registry_snapshot_reuses_plain_local_tree_scan_and_config_payload(
     assert scandir_calls.count(os.fspath(model_dir.resolve())) == 1
     assert config_load_count == 1
 
+    tensor_cases_root = tmp_path / "tensor-index-cases"
+    test_registry_snapshot_promotes_gemma4_text_manifest_to_vlm_text_backed(tensor_cases_root / "text-manifest")
+    test_registry_snapshot_keeps_multimodal_gemma4_manifest_in_multimodal_mode(tensor_cases_root / "multimodal")
+    test_registry_snapshot_promotes_gemma4_from_text_config_with_processor_hint(tensor_cases_root / "processor")
+    test_registry_snapshot_uses_gemma4_weight_index_to_keep_multimodal_mode(tensor_cases_root / "weight-index")
+    test_registry_snapshot_uses_tensor_index_to_fall_back_for_config_only_vision(tensor_cases_root / "config-only")
+    test_registry_snapshot_uses_tensor_index_to_enable_vision_and_audio_routes(tensor_cases_root / "many-modal")
+    test_registry_snapshot_falls_back_when_declared_vision_lacks_tensor_evidence(tensor_cases_root / "mismatch")
+    test_registry_snapshot_malformed_tensor_index_falls_back_with_warning(tensor_cases_root / "malformed")
+    _assert_tensor_index_defensive_branches(tensor_cases_root / "defensive", monkeypatch)
+
 
 
 def test_registry_snapshot_reuses_hf_cache_config_payload(
@@ -2593,6 +2604,7 @@ def test_registry_snapshot_promotes_gemma4_text_manifest_to_vlm_text_backed(tmp_
     assert gemma4.model_kind == "vlm"
     assert gemma4.ext["melix.vlm.backend_id"] == "mlx_vlm"
     assert gemma4.ext["melix.vlm.execution_mode"] == "text_backed"
+    assert gemma4.ext["melix.capability.tensor_index.warning_code"] == "missing_tensor_index"
     assert gemma4.ext["vision_family_id"] == "gemma4-v1"
     assert gemma4.ext["vision_prompt_profile_id"] == "gemma4-chatml-v1"
     assert gemma4.ext["melix.capability.route_kind"] == "python_vlm"
@@ -2627,6 +2639,18 @@ def test_registry_snapshot_keeps_multimodal_gemma4_manifest_in_multimodal_mode(t
         },
     )
     (variant_dir / "processor_config.json").write_text("{}\n", encoding="utf-8")
+    _write_weight_index(
+        variant_dir,
+        {
+            "metadata": {"total_size": 1},
+            "weight_map": {
+                "model.embed_tokens.weight": "model.safetensors",
+                "vision_tower.blocks.0.attn.q_proj.weight": "model.safetensors",
+                "embed_vision.proj.weight": "model.safetensors",
+                "multi_modal_projector.linear.weight": "model.safetensors",
+            },
+        },
+    )
 
     catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
 
@@ -2738,7 +2762,9 @@ def test_registry_snapshot_promotes_gemma4_from_text_config_with_processor_hint(
 
     assert gemma4.model_kind == "vlm"
     assert gemma4.ext["vision_family_id"] == "gemma4-v1"
-    assert gemma4.ext.get("melix.vlm.execution_mode", "") == ""
+    assert gemma4.ext["melix.vlm.execution_mode"] == "text_backed"
+    assert gemma4.ext["melix.capability.supported_modalities"] == "text"
+    assert gemma4.ext["melix.capability.tensor_index.warning_code"] == "missing_tensor_index"
 
 
 def test_registry_snapshot_uses_gemma4_weight_index_to_keep_multimodal_mode(tmp_path: Path) -> None:
@@ -2778,6 +2804,261 @@ def test_registry_snapshot_uses_gemma4_weight_index_to_keep_multimodal_mode(tmp_
     assert gemma4.model_kind == "vlm"
     assert gemma4.ext["vision_family_id"] == "gemma4-v1"
     assert gemma4.ext.get("melix.vlm.execution_mode", "") == ""
+
+
+def test_registry_snapshot_uses_tensor_index_to_fall_back_for_config_only_vision(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "gemma-4-config-only-vision" / "4bit"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/gemma-4-config-only-vision/4bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": {"model_type": "gemma4_vision"},
+        },
+    )
+    _write_weight_index(
+        variant_dir,
+        {
+            "metadata": {"total_size": 1},
+            "weight_map": {
+                "model.embed_tokens.weight": "model.safetensors",
+                "model.layers.0.self_attn.q_proj.weight": "model.safetensors",
+            },
+        },
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    gemma4 = discovered["mlx-community/gemma-4-config-only-vision/4bit"]
+
+    assert gemma4.model_kind == "vlm"
+    assert gemma4.ext["melix.vlm.execution_mode"] == "text_backed"
+    assert gemma4.ext["melix.capability.supported_modalities"] == "text"
+    assert gemma4.ext["melix.capability.tensor_index.modalities"] == "text"
+    assert gemma4.ext["melix.capability.tensor_index.warning_code"] == "config_declared_missing_tensor_evidence"
+    assert gemma4.ext["melix.capability.tensor_index.warning_modalities"] == "vision"
+    assert gemma4.ext["melix.model.components"] == "text_backbone"
+
+
+def test_registry_snapshot_uses_tensor_index_to_enable_vision_and_audio_routes(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "gemma-4-audio-vision" / "4bit"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/gemma-4-audio-vision/4bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": {"model_type": "gemma4_vision"},
+            "audio_config": {"model_type": "gemma4_audio"},
+            "image_token_id": 258880,
+            "audio_token_id": 258881,
+        },
+    )
+    _write_weight_index(
+        variant_dir,
+        {
+            "metadata": {"total_size": 1},
+            "weight_map": {
+                "model.embed_tokens.weight": "model.safetensors",
+                "vision_tower.blocks.0.attn.q_proj.weight": "model.safetensors",
+                "embed_vision.proj.weight": "model.safetensors",
+                "audio_tower.blocks.0.attn.q_proj.weight": "model.safetensors",
+                "embed_audio.proj.weight": "model.safetensors",
+                "multi_modal_projector.linear.weight": "model.safetensors",
+            },
+        },
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    gemma4 = discovered["mlx-community/gemma-4-audio-vision/4bit"]
+
+    assert gemma4.model_kind == "vlm"
+    assert gemma4.ext.get("melix.vlm.execution_mode", "") == ""
+    assert gemma4.ext["melix.capability.supported_modalities"] == "text,image,audio"
+    assert gemma4.ext["melix.capability.tensor_index.modalities"] == "text,vision,audio,projector"
+    assert gemma4.ext["melix.capability.tensor_index.warning_code"] == ""
+    assert gemma4.ext["melix.model.components"] == "text_backbone,vision_encoder,multimodal_projector,audio_encoder"
+
+
+def test_registry_snapshot_falls_back_when_declared_vision_lacks_tensor_evidence(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "gemma-4-audio-only-vision-config" / "4bit"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/gemma-4-audio-only-vision-config/4bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": {"model_type": "gemma4_vision"},
+            "audio_config": {"model_type": "gemma4_audio"},
+            "image_token_id": 258880,
+            "audio_token_id": 258881,
+        },
+    )
+    _write_weight_index(
+        variant_dir,
+        {
+            "metadata": {"total_size": 1},
+            "weight_map": {
+                "model.embed_tokens.weight": "model.safetensors",
+                "model.layers.0.self_attn.q_proj.weight": "model.safetensors",
+                "audio_tower.blocks.0.attn.q_proj.weight": "model.safetensors",
+                "embed_audio.proj.weight": "model.safetensors",
+            },
+        },
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    gemma4 = discovered["mlx-community/gemma-4-audio-only-vision-config/4bit"]
+
+    assert gemma4.model_kind == "vlm"
+    assert gemma4.ext["melix.vlm.execution_mode"] == "text_backed"
+    assert gemma4.ext["melix.capability.supported_modalities"] == "text"
+    assert gemma4.ext["melix.capability.tensor_index.modalities"] == "text,audio"
+    assert gemma4.ext["melix.capability.tensor_index.warning_code"] == "config_declared_missing_tensor_evidence"
+    assert gemma4.ext["melix.capability.tensor_index.warning_modalities"] == "vision"
+    assert gemma4.ext["melix.model.components"] == "text_backbone,audio_encoder"
+
+
+def test_registry_snapshot_malformed_tensor_index_falls_back_with_warning(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "gemma-4-malformed-index" / "4bit"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/gemma-4-malformed-index/4bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": {"model_type": "gemma4_vision"},
+        },
+    )
+    variant_dir.mkdir(parents=True, exist_ok=True)
+    (variant_dir / "model.safetensors.index.json").write_text("{not-json}\n", encoding="utf-8")
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root)})
+
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+    gemma4 = discovered["mlx-community/gemma-4-malformed-index/4bit"]
+
+    assert gemma4.model_kind == "vlm"
+    assert gemma4.ext["melix.vlm.execution_mode"] == "text_backed"
+    assert gemma4.ext["melix.capability.supported_modalities"] == "text"
+    assert gemma4.ext["melix.capability.tensor_index.warning_code"] == "malformed_tensor_index"
+    assert gemma4.ext["melix.capability.tensor_index.warning_source"].endswith("model.safetensors.index.json")
+
+
+def _assert_tensor_index_defensive_branches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    non_file_dir = tmp_path / "non-file-index"
+    _write_model_config(
+        non_file_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "video_config": {"model_type": "gemma4_video"},
+            "projector_config": {"model_type": "gemma4_projector"},
+            "draft_config": {"model_type": "gemma4_draft"},
+            "video_token_id": 258882,
+            "draft_model_type": "gemma4_draft",
+        },
+    )
+    (non_file_dir / "model.safetensors.index.json").mkdir(parents=True)
+
+    non_file_evidence = catalog_module._tensor_index_evidence(non_file_dir)
+    assert non_file_evidence.status == "missing_tensor_index"
+    assert catalog_module._supported_vlm_modalities_from_tensor_index(non_file_evidence) == ("text",)
+    assert catalog_module._tensor_index_missing_declared_modalities(
+        non_file_evidence,
+        {"video_config": {"model_type": "gemma4_video"}},
+    ) == set()
+
+    malformed_map_dir = tmp_path / "malformed-weight-map"
+    _write_weight_index(malformed_map_dir, {"weight_map": ["not-a-mapping"]})
+    assert catalog_module._tensor_index_evidence(malformed_map_dir).status == "malformed_tensor_index"
+
+    rich_dir = tmp_path / "video-draft-index"
+    _write_weight_index(
+        rich_dir,
+        {
+            "weight_map": {
+                "video_tower.blocks.0.weight": "model.safetensors",
+                "projector.video.weight": "model.safetensors",
+                "draft_model.layers.0.weight": "model.safetensors",
+                "unclassified.weight": "model.safetensors",
+            }
+        },
+    )
+    rich_evidence = catalog_module._tensor_index_evidence(rich_dir)
+    assert rich_evidence.modalities == ("video", "projector", "draft")
+    assert catalog_module._supported_vlm_modalities_from_tensor_index(
+        rich_evidence,
+        {"video_config": {"model_type": "gemma4_video"}, "projector_config": {}, "draft_config": {}},
+    ) == ("text", "video")
+
+    config_modalities = catalog_module._config_declared_modalities(
+        {
+            "video_config": {"model_type": "gemma4_video"},
+            "projector_config": {"model_type": "gemma4_projector"},
+            "draft_config": {"model_type": "gemma4_draft"},
+            "draft_model_type": "gemma4_draft",
+        }
+    )
+    assert {"video", "projector", "draft"}.issubset(config_modalities)
+
+    stat_error_dir = tmp_path / "stat-error"
+    _write_weight_index(stat_error_dir, {"weight_map": {"model.embed_tokens.weight": "model.safetensors"}})
+    original_stat = Path.stat
+
+    def raising_stat(self: Path, *args: object, **kwargs: object) -> os.stat_result:
+        if self == stat_error_dir / "model.safetensors.index.json":
+            raise OSError("synthetic stat failure")
+        return original_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", raising_stat)
+    try:
+        assert catalog_module._tensor_index_evidence(stat_error_dir).status == "missing_tensor_index"
+    finally:
+        monkeypatch.setattr(Path, "stat", original_stat)
 
 
 def test_registry_snapshot_records_gemma4_text_backbone_layer_count(tmp_path: Path) -> None:

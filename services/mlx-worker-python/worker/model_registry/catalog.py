@@ -80,6 +80,14 @@ class _PlainLocalModelScan:
     has_generation_config: bool
 
 
+@dataclass(frozen=True, slots=True)
+class _TensorIndexEvidence:
+    source_path: str
+    status: str
+    modalities: tuple[str, ...]
+    tensor_counts: Mapping[str, int]
+
+
 def _normalized(value: str | None) -> str:
     return (value or "").strip()
 
@@ -174,6 +182,131 @@ def _load_model_config_payload(
 ) -> dict[str, object]:
     config_path = model_dir / "config.json"
     return _load_json_dict_file(config_path, json_cache=json_cache)
+
+
+def _load_tensor_index_payload(
+    model_dir: Path,
+    *,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+) -> tuple[Path, dict[str, object], str]:
+    index_path = model_dir / "model.safetensors.index.json"
+    try:
+        stat_result = index_path.stat()
+    except OSError:
+        if json_cache is not None:
+            json_cache.pop(index_path, None)
+        return index_path, {}, "missing_tensor_index"
+    if not stat.S_ISREG(stat_result.st_mode):
+        if json_cache is not None:
+            json_cache.pop(index_path, None)
+        return index_path, {}, "missing_tensor_index"
+
+    payload = _load_json_dict_file(index_path, json_cache=json_cache)
+    if not payload:
+        return index_path, {}, "malformed_tensor_index"
+    weight_map = payload.get("weight_map")
+    if not isinstance(weight_map, Mapping):
+        return index_path, {}, "malformed_tensor_index"
+    return index_path, payload, ""
+
+
+def _tensor_index_evidence(
+    model_dir: Path,
+    *,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+) -> _TensorIndexEvidence:
+    index_path, payload, warning_code = _load_tensor_index_payload(model_dir, json_cache=json_cache)
+    if warning_code:
+        return _TensorIndexEvidence(
+            source_path=str(index_path),
+            status=warning_code,
+            modalities=(),
+            tensor_counts={},
+        )
+
+    weight_map = payload.get("weight_map")
+    if not isinstance(weight_map, Mapping):
+        return _TensorIndexEvidence(
+            source_path=str(index_path),
+            status="malformed_tensor_index",
+            modalities=(),
+            tensor_counts={},
+        )
+
+    counts = {
+        "text": 0,
+        "vision": 0,
+        "audio": 0,
+        "video": 0,
+        "projector": 0,
+        "draft": 0,
+    }
+    for raw_name in weight_map:
+        name = str(raw_name)
+        if _tensor_name_is_vision(name):
+            counts["vision"] += 1
+        elif _tensor_name_is_audio(name):
+            counts["audio"] += 1
+        elif _tensor_name_is_video(name):
+            counts["video"] += 1
+        elif _tensor_name_is_projector(name):
+            counts["projector"] += 1
+        elif _tensor_name_is_draft(name):
+            counts["draft"] += 1
+        elif _tensor_name_is_text(name):
+            counts["text"] += 1
+
+    modalities = tuple(
+        modality
+        for modality in ("text", "vision", "audio", "video", "projector", "draft")
+        if counts[modality] > 0
+    )
+    return _TensorIndexEvidence(
+        source_path=str(index_path),
+        status="ok",
+        modalities=modalities,
+        tensor_counts={key: value for key, value in counts.items() if value > 0},
+    )
+
+
+def _tensor_name_is_vision(name: str) -> bool:
+    return name.startswith(("vision_tower.", "vision_model.", "embed_vision.", "visual.", "vision_encoder."))
+
+
+def _tensor_name_is_audio(name: str) -> bool:
+    return name.startswith(("audio_tower.", "audio_model.", "embed_audio.", "audio_encoder."))
+
+
+def _tensor_name_is_video(name: str) -> bool:
+    return name.startswith(("video_tower.", "video_model.", "embed_video.", "video_encoder."))
+
+
+def _tensor_name_is_projector(name: str) -> bool:
+    lowered = name.lower()
+    return (
+        name.startswith(("multi_modal_projector.", "multimodal_projector.", "mm_projector.", "projector."))
+        or ".multi_modal_projector." in lowered
+        or ".multimodal_projector." in lowered
+        or ".mm_projector." in lowered
+    )
+
+
+def _tensor_name_is_draft(name: str) -> bool:
+    lowered = name.lower()
+    return name.startswith(("draft_model.", "mtp.", "dflash.")) or ".draft_" in lowered or ".mtp_" in lowered
+
+
+def _tensor_name_is_text(name: str) -> bool:
+    return name.startswith(
+        (
+            "model.",
+            "language_model.",
+            "text_model.",
+            "text_config.",
+            "transformer.",
+            "lm_head.",
+        )
+    )
 
 
 def _has_model_weight_files(model_dir: Path) -> bool:
@@ -807,8 +940,16 @@ def _gemma4_execution_mode(
     config_payload: Mapping[str, object] | None,
     *,
     json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+    tensor_evidence: _TensorIndexEvidence | None = None,
 ) -> str:
     config_payload = dict(config_payload or {})
+    tensor_evidence = tensor_evidence or _tensor_index_evidence(model_dir, json_cache=json_cache)
+    if tensor_evidence.status != "ok":
+        return "text_backed"
+    if "vision" not in tensor_evidence.modalities and "audio" not in tensor_evidence.modalities and "video" not in tensor_evidence.modalities:
+        return "text_backed"
+    if _tensor_index_missing_declared_modalities(tensor_evidence, config_payload):
+        return "text_backed"
     vision_config = config_payload.get("vision_config")
     if isinstance(vision_config, Mapping) and len(vision_config) > 0:
         return ""
@@ -839,11 +980,16 @@ def _gemma4_has_vision_component(
     config_payload: Mapping[str, object] | None,
     *,
     json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+    tensor_evidence: _TensorIndexEvidence | None = None,
 ) -> bool:
-    config_payload = config_payload or {}
-    vision_config = config_payload.get("vision_config")
-    if isinstance(vision_config, Mapping) and len(vision_config) > 0:
+    has_explicit_tensor_evidence = tensor_evidence is not None
+    tensor_evidence = tensor_evidence or _tensor_index_evidence(model_dir, json_cache=json_cache)
+    if "vision" in tensor_evidence.modalities:
         return True
+    if has_explicit_tensor_evidence and tensor_evidence.status != "ok":
+        return False
+    if tensor_evidence.status == "ok":
+        return False
     if (model_dir / "processor_config.json").is_file() or (model_dir / "preprocessor_config.json").is_file():
         return True
     return _gemma4_index_has_vision_weights(model_dir, json_cache=json_cache)
@@ -855,6 +1001,7 @@ def _gemma4_component_lora_metadata(
     model_dir: Path,
     config_payload: Mapping[str, object] | None,
     json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+    tensor_evidence: _TensorIndexEvidence | None = None,
 ) -> dict[str, str]:
     text_config = _gemma4_text_backbone_config(config_payload)
     if text_config is None:
@@ -865,9 +1012,12 @@ def _gemma4_component_lora_metadata(
         model_dir,
         config_payload,
         json_cache=json_cache,
+        tensor_evidence=tensor_evidence,
     )
     if has_vision_component:
         components.extend(["vision_encoder", "multimodal_projector"])
+    if tensor_evidence is not None and "audio" in tensor_evidence.modalities:
+        components.append("audio_encoder")
 
     ext = {
         **_text_lora_support_metadata("gemma", moe_enabled=False),
@@ -920,17 +1070,8 @@ def _gemma4_index_has_vision_weights(
     *,
     json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
 ) -> bool:
-    index_path = model_dir / "model.safetensors.index.json"
-    payload = _load_json_dict_file(index_path, json_cache=json_cache)
-    if not payload:
-        return False
-    weight_map = payload.get("weight_map")
-    if not isinstance(weight_map, dict):
-        return False
-    return any(
-        str(name).startswith("vision_tower.") or str(name).startswith("embed_vision.")
-        for name in weight_map
-    )
+    evidence = _tensor_index_evidence(model_dir, json_cache=json_cache)
+    return "vision" in evidence.modalities
 
 
 def _gemma4_mtp_assistant_metadata(
@@ -974,6 +1115,7 @@ def _vlm_capability_metadata(
 ) -> dict[str, str]:
     metadata = dict(metadata or {})
     config_payload = dict(config_payload or {})
+    tensor_evidence = _tensor_index_evidence(model_dir, json_cache=json_cache)
     family_id = _normalized(metadata.get("vision_family_id", ""))
     if not family_id and _is_gemma4_vlm_config(config_payload):
         family_id = "gemma4-v1"
@@ -1000,8 +1142,17 @@ def _vlm_capability_metadata(
             or resolved_family.multimodal_adapter_hash
         ),
     }
+    ext.update(_tensor_index_receipt_metadata(tensor_evidence, config_payload))
+    supported_modalities = _supported_vlm_modalities_from_tensor_index(tensor_evidence, config_payload)
+    if supported_modalities != ("text", "image"):
+        ext[_CAPABILITY_SUPPORTED_MODALITIES_KEY] = ",".join(supported_modalities)
     execution_mode = (
-        _gemma4_execution_mode(model_dir, config_payload, json_cache=json_cache)
+        _gemma4_execution_mode(
+            model_dir,
+            config_payload,
+            json_cache=json_cache,
+            tensor_evidence=tensor_evidence,
+        )
         if family_id == "gemma4-v1"
         else ""
     )
@@ -1013,9 +1164,101 @@ def _vlm_capability_metadata(
             model_dir=model_dir,
             config_payload=config_payload,
             json_cache=json_cache,
+            tensor_evidence=tensor_evidence,
         )
     )
     return ext
+
+
+def _supported_vlm_modalities_from_tensor_index(
+    tensor_evidence: _TensorIndexEvidence,
+    config_payload: Mapping[str, object] | None = None,
+) -> tuple[str, ...]:
+    if tensor_evidence.status != "ok":
+        return ("text",)
+    if _tensor_index_missing_declared_modalities(tensor_evidence, config_payload):
+        return ("text",)
+    modalities = ["text"]
+    if "vision" in tensor_evidence.modalities:
+        modalities.append("image")
+    if "audio" in tensor_evidence.modalities:
+        modalities.append("audio")
+    if "video" in tensor_evidence.modalities:
+        modalities.append("video")
+    return tuple(modalities)
+
+
+def _tensor_index_receipt_metadata(
+    tensor_evidence: _TensorIndexEvidence,
+    config_payload: Mapping[str, object] | None,
+) -> dict[str, str]:
+    metadata = {
+        "melix.capability.tensor_index.source": tensor_evidence.source_path,
+        "melix.capability.tensor_index.status": tensor_evidence.status,
+        "melix.capability.tensor_index.modalities": ",".join(tensor_evidence.modalities),
+        "melix.capability.tensor_index.warning_code": "",
+        "melix.capability.tensor_index.warning_modalities": "",
+        "melix.capability.tensor_index.warning_source": "",
+    }
+    if tensor_evidence.tensor_counts:
+        metadata["melix.capability.tensor_index.tensor_counts"] = ",".join(
+            f"{modality}:{tensor_evidence.tensor_counts[modality]}"
+            for modality in ("text", "vision", "audio", "video", "projector", "draft")
+            if tensor_evidence.tensor_counts.get(modality, 0) > 0
+        )
+
+    if tensor_evidence.status != "ok":
+        metadata["melix.capability.tensor_index.warning_code"] = tensor_evidence.status
+        metadata["melix.capability.tensor_index.warning_source"] = tensor_evidence.source_path
+        return metadata
+
+    missing_declared = _tensor_index_missing_declared_modalities(tensor_evidence, config_payload)
+    if missing_declared:
+        metadata["melix.capability.tensor_index.warning_code"] = "config_declared_missing_tensor_evidence"
+        metadata["melix.capability.tensor_index.warning_modalities"] = ",".join(
+            modality for modality in ("vision", "audio", "video", "projector", "draft") if modality in missing_declared
+        )
+    return metadata
+
+
+def _tensor_index_missing_declared_modalities(
+    tensor_evidence: _TensorIndexEvidence,
+    config_payload: Mapping[str, object] | None,
+) -> set[str]:
+    if tensor_evidence.status != "ok":
+        return set()
+    missing_declared = _config_declared_modalities(config_payload) - set(tensor_evidence.modalities)
+    missing_declared.discard("text")
+    return missing_declared
+
+
+def _config_declared_modalities(config_payload: Mapping[str, object] | None) -> set[str]:
+    if not isinstance(config_payload, Mapping):
+        return set()
+    modalities = {"text"}
+    if _config_declares_component(config_payload, "vision_config") or any(
+        key in config_payload and config_payload.get(key) not in (None, "", [], {})
+        for key in ("image_token_id", "boi_token_id", "eoi_token_id")
+    ):
+        modalities.add("vision")
+    if _config_declares_component(config_payload, "audio_config") or (
+        "audio_token_id" in config_payload and config_payload.get("audio_token_id") not in (None, "", [], {})
+    ):
+        modalities.add("audio")
+    if _config_declares_component(config_payload, "video_config") or (
+        "video_token_id" in config_payload and config_payload.get("video_token_id") not in (None, "", [], {})
+    ):
+        modalities.add("video")
+    if _config_declares_component(config_payload, "projector_config"):
+        modalities.add("projector")
+    if _config_declares_component(config_payload, "draft_config") or _normalized(str(config_payload.get("draft_model_type", ""))):
+        modalities.add("draft")
+    return modalities
+
+
+def _config_declares_component(config_payload: Mapping[str, object], key: str) -> bool:
+    value = config_payload.get(key)
+    return isinstance(value, Mapping) and len(value) > 0
 
 
 def _audio_capability_metadata(

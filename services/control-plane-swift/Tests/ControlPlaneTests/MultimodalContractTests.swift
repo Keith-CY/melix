@@ -255,6 +255,118 @@ struct MultimodalContractTests {
         #expect(normalized[0].parts[2].media.filename == "second-image.png")
     }
 
+    @Test("multimodal request normalizer emits stable shared media part summaries")
+    func sharedMediaPartSummaryRecordsOrderingSourcesAndDigests() throws {
+        let decoder = JSONDecoder()
+        let messages = try decoder.decode(
+            [OpenAIMultimodalMessage].self,
+            from: Data(
+                """
+                [
+                  {
+                    "role": "system",
+                    "content": [
+                      { "type": "text", "text": "Use the media carefully." }
+                    ]
+                  },
+                  {
+                    "role": "user",
+                    "content": [
+                      { "type": "text", "text": "Compare these inputs." },
+                      {
+                        "type": "input_image",
+                        "input_image": {
+                          "data": "aW1hZ2U=",
+                          "mime_type": "image/png",
+                          "format": "png",
+                          "filename": "inline.png"
+                        }
+                      },
+                      {
+                        "type": "input_audio",
+                        "input_audio": {
+                          "data": "YXVkaW8=",
+                          "format": "wav",
+                          "filename": "clip.wav"
+                        }
+                      },
+                      {
+                        "type": "input_video",
+                        "input_video": {
+                          "data": "dmlkZW8=",
+                          "format": "mp4",
+                          "filename": "clip.mp4"
+                        }
+                      },
+                      {
+                        "type": "image_url",
+                        "image_url": {
+                          "url": "https://example.com/reference.png",
+                          "format": "png",
+                          "filename": "reference.png"
+                        }
+                      },
+                      {
+                        "type": "input_video",
+                        "input_video": {
+                          "url": "/tmp/local-demo.mov",
+                          "format": "mov",
+                          "filename": "local-demo.mov"
+                        }
+                      }
+                    ]
+                  }
+                ]
+                """.utf8
+            )
+        )
+
+        let normalizer = MultimodalRequestNormalizer()
+        let firstSummary = try normalizer.mediaPartsSummary(for: messages)
+        let secondSummary = try normalizer.mediaPartsSummary(for: messages)
+
+        #expect(firstSummary.parts == secondSummary.parts)
+        #expect(firstSummary.parts.map(\.mediaKind) == ["image", "audio", "video", "image", "video"])
+        #expect(firstSummary.parts.map(\.turnIndex) == [1, 1, 1, 1, 1])
+        #expect(firstSummary.parts.map(\.partIndex) == [1, 2, 3, 4, 5])
+        #expect(firstSummary.parts.map(\.sourceKind) == ["inline_bytes", "inline_bytes", "inline_bytes", "remote", "local"])
+
+        let image = firstSummary.parts[0]
+        #expect(image.source == "inline_bytes")
+        #expect(image.byteLength == 5)
+        #expect(image.filename == "inline.png")
+        #expect(image.format == "png")
+        #expect(image.stableDigest?.count == 64)
+
+        let audio = firstSummary.parts[1]
+        #expect(audio.byteLength == 5)
+        #expect(audio.filename == "clip.wav")
+        #expect(audio.format == "wav")
+        #expect(audio.stableDigest == firstSummary.parts[1].stableDigest)
+        #expect(audio.stableDigest != image.stableDigest)
+
+        let video = firstSummary.parts[2]
+        #expect(video.byteLength == 5)
+        #expect(video.filename == "clip.mp4")
+        #expect(video.format == "mp4")
+        #expect(video.stableDigest != image.stableDigest)
+
+        let remoteImage = firstSummary.parts[3]
+        #expect(remoteImage.source == "https://example.com/reference.png")
+        #expect(remoteImage.byteLength == nil)
+        #expect(remoteImage.filename == "reference.png")
+        #expect(remoteImage.format == "png")
+        #expect(remoteImage.stableDigest?.count == 64)
+
+        let localVideo = firstSummary.parts[4]
+        #expect(localVideo.source == "/tmp/local-demo.mov")
+        #expect(localVideo.byteLength == nil)
+        #expect(localVideo.filename == "local-demo.mov")
+        #expect(localVideo.format == "mov")
+        #expect(localVideo.stableDigest?.count == 64)
+        #expect(localVideo.stableDigest != remoteImage.stableDigest)
+    }
+
     @Test("multimodal request normalizer accepts image-only payloads")
     func imageOnlyPayloadsNormalizeWithoutSyntheticText() throws {
         let decoder = JSONDecoder()

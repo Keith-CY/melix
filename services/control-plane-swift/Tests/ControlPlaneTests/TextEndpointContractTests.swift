@@ -1272,6 +1272,78 @@ struct TextEndpointContractTests {
         #expect(message.parts[1].media.filename == "fixture.png")
     }
 
+    @Test("OpenAI multimodal chat normalization emits shared media part summary metadata")
+    func openAIMultimodalChatNormalizationEmitsSharedMediaPartSummaryMetadata() throws {
+        let decoder = JSONDecoder()
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-media-summary" })
+        let request = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-vlm",
+                  "stream": false,
+                  "messages": [
+                    {
+                      "role": "user",
+                      "content": [
+                        { "type": "text", "text": "Inspect the media." },
+                        {
+                          "type": "input_image",
+                          "input_image": {
+                            "data": "aW1hZ2U=",
+                            "mime_type": "image/png",
+                            "format": "png",
+                            "filename": "inline.png"
+                          }
+                        },
+                        {
+                          "type": "input_audio",
+                          "input_audio": {
+                            "url": "file:///tmp/clip.wav",
+                            "format": "wav",
+                            "filename": "clip.wav"
+                          }
+                        },
+                        {
+                          "type": "input_video",
+                          "input_video": {
+                            "url": "/tmp/demo.mp4",
+                            "format": "mp4",
+                            "filename": "demo.mp4"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        let normalized = try translator.normalizeMultimodalChat(request)
+        let translated = try translator.translate(normalized, modelHandle: "worker-vlm")
+
+        #expect(normalized.mediaPartsSummary.parts.count == 3)
+        #expect(normalized.mediaPartsSummary.parts.map(\.mediaKind) == ["image", "audio", "video"])
+        #expect(normalized.mediaPartsSummary.parts.map(\.sourceKind) == ["inline_bytes", "local", "local"])
+        #expect(normalized.mediaPartsSummary.parts.map(\.turnIndex) == [0, 0, 0])
+        #expect(normalized.mediaPartsSummary.parts.map(\.partIndex) == [1, 2, 3])
+        #expect(normalized.mediaPartsSummary.parts[0].byteLength == 5)
+        #expect(normalized.mediaPartsSummary.parts[0].stableDigest?.count == 64)
+        #expect(normalized.mediaPartsSummary.parts[1].source == "file:///tmp/clip.wav")
+        #expect(normalized.mediaPartsSummary.parts[2].source == "/tmp/demo.mp4")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.count"] == "3")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.contract"] == "shared_summary")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.0.kind"] == "image")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.0.source_kind"] == "inline_bytes")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.0.byte_length"] == "5")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.0.filename"] == "inline.png")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.1.source"] == "file:///tmp/clip.wav")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.2.source"] == "/tmp/demo.mp4")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.2.digest"]?.count == 64)
+    }
+
     @Test("ocr model policies shape multimodal requests with default sampling and stop sequences")
     func ocrModelPoliciesShapeMultimodalRequestsWithDefaultSamplingAndStopSequences() throws {
         let decoder = JSONDecoder()
@@ -2141,6 +2213,13 @@ struct TextEndpointContractTests {
             #expect(request.sampling.temperature == 0.2)
             #expect(request.sampling.maxOutputTokens == 512)
         }
+        #expect(chatTranslated.workerRequest.execution.ext["melix.media_parts.contract"] == "shared_summary_empty")
+        #expect(completionsTranslated.workerRequest.execution.ext["melix.media_parts.contract"] == "adapter_specific_text_only")
+        #expect(completionsTranslated.workerRequest.execution.ext["melix.media_parts.adapter_scope"] == "completions")
+        #expect(responsesTranslated.workerRequest.execution.ext["melix.media_parts.contract"] == "adapter_specific_text_only")
+        #expect(responsesTranslated.workerRequest.execution.ext["melix.media_parts.adapter_scope"] == "responses")
+        #expect(messagesTranslated.workerRequest.execution.ext["melix.media_parts.contract"] == "adapter_specific_text_only")
+        #expect(messagesTranslated.workerRequest.execution.ext["melix.media_parts.adapter_scope"] == "messages")
     }
 
     @Test("explicit request fields override preset defaults while workflow routing remains stable")
