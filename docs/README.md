@@ -86,6 +86,9 @@ follow-up work:
 - [Sparrow and LocalAI Lessons](reference-scans/sparrow-localai-lessons.md)
   Reference scan for structured local task workflows, operator UX, and follow-up
   issue priority.
+- [M-Courtyard Lessons](reference-scans/m-courtyard-lessons.md)
+  Reference scan for guided local fine-tuning workflows, dataset preparation,
+  runtime-aware export, environment diagnostics, and follow-up issue priority.
 
 ---
 

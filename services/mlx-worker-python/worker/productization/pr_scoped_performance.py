@@ -74,12 +74,27 @@ def _log_progress(message: str) -> None:
 
 
 def _summarize_command(command: str, *, max_length: int = 180) -> str:
-    lines = [line.strip() for line in command.splitlines() if line.strip()]
-    if not lines:
+    summary = ""
+    has_more_lines = False
+    line_start = 0
+    command_length = len(command)
+    while line_start <= command_length:
+        line_end = command.find("\n", line_start)
+        if line_end == -1:
+            line_end = command_length
+        line = command[line_start:line_end].strip()
+        if line:
+            if summary:
+                has_more_lines = True
+                break
+            summary = line
+        if line_end == command_length:
+            break
+        line_start = line_end + 1
+    if not summary:
         return "<empty command>"
 
-    summary = lines[0]
-    if len(lines) > 1:
+    if has_more_lines:
         summary = f"{summary} ..."
     if len(summary) > max_length:
         return f"{summary[: max_length - 4]} ..."
@@ -1687,20 +1702,37 @@ def _probe_pr_scoped_scope_matcher(repo_root: Path) -> dict[str, float]:
     elapsed_samples: list[float] = []
     selected_probe_counts: list[float] = []
     force_all_selected_samples: list[float] = []
+    command_summary_samples: list[float] = []
+    command_summary_iterations = 20_000
+    command_summary_payload = _command_summary_probe_payload()
+    expected_summary = "python3 - <<'PY' ..."
     for _ in range(sample_count):
         started = time.perf_counter()
         scope = build_scope_report(registry_path=registry_path, changed_files=changed_files)
         elapsed_samples.append((time.perf_counter() - started) * 1000.0)
         selected_probe_counts.append(float(scope["selected_count"]))
         force_all_selected_samples.append(1.0 if scope["force_all"] else 0.0)
+
+        started = time.perf_counter()
+        for _index in range(command_summary_iterations):
+            if _summarize_command(command_summary_payload) != expected_summary:
+                raise ValueError("unexpected command summary probe output")
+        command_summary_samples.append((time.perf_counter() - started) * 1000.0)
     return {
         "build_scope_report_ms_mean": round(sum(elapsed_samples) / len(elapsed_samples), 6),
         "build_scope_report_ms_min": round(min(elapsed_samples), 6),
+        "command_summary_ms_mean": round(sum(command_summary_samples) / len(command_summary_samples), 6),
+        "command_summary_iterations": float(command_summary_iterations),
         "changed_file_count": float(len(changed_files)),
         "selected_probe_count_mean": round(sum(selected_probe_counts) / len(selected_probe_counts), 6),
         "force_all_selected_mean": round(sum(force_all_selected_samples) / len(force_all_selected_samples), 6),
         "sample_count": float(sample_count),
     }
+
+
+def _command_summary_probe_payload() -> str:
+    body_lines = (f"print({index})" for index in range(512))
+    return "\n".join(("", "  python3 - <<'PY'  ", *body_lines, "PY"))
 
 
 def _build_large_scope_probe_changed_files() -> list[str]:
