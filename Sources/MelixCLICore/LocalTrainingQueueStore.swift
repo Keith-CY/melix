@@ -336,7 +336,12 @@ public final class LocalTrainingQueueStore: @unchecked Sendable {
             document.metrics.cancellationLatencyMS = 0
             recomputeMetrics(&document)
             try writeCancellationRequest(updated)
-            try saveDocumentUnlocked(document)
+            do {
+                try saveDocumentUnlocked(document)
+            } catch {
+                removeCancellationRequest(updated)
+                throw error
+            }
             return updated
         }
     }
@@ -441,6 +446,14 @@ public final class LocalTrainingQueueStore: @unchecked Sendable {
                 message: "Failed to persist cancellation request for \(job.jobID): \(error.localizedDescription)"
             )
         }
+    }
+
+    private func removeCancellationRequest(_ job: LocalTrainingQueueJob) {
+        let url = URL(fileURLWithPath: job.cancellationRequestPath)
+        guard fileManager.fileExists(atPath: url.path) else {
+            return
+        }
+        try? fileManager.removeItem(at: url)
     }
 
     private func normalizedRunDirectory(_ value: String, jobID: String) -> String {

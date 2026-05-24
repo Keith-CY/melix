@@ -158,6 +158,10 @@ Queue admission must be durable before any worker launch. Local Apple Silicon
 training remains exclusive unless a later scheduler explicitly marks a resource
 class as shareable. Cancellation and recovery transitions must also persist
 before the CLI or Desktop reports them.
+If a cancellation request file is written but the queue document cannot be
+persisted, the cancellation request must be removed before the error is
+reported so the worker and operator surfaces do not observe a stale cancel
+intent for a still-running queue row.
 
 Queue operator errors may include `remediation`. Older queue documents without
 that field must continue to decode with an empty remediation string. When a
