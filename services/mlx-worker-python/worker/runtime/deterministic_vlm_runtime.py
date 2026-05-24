@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import json
 from pathlib import Path
 from threading import Event
@@ -11,6 +11,7 @@ from packages.protocol.python.worker.v1 import cache_pb2, common_pb2
 from worker.runtime.deterministic_delay import sleep_if_configured
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent, RuntimeToolCallEvent
 from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
+from worker.runtime.multimodal_position_receipts import build_position_metadata_receipt
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request
 from worker.runtime.temp_media_lifecycle import TempMediaSession
 from worker.runtime.token_counting import whitespace_token_count as _whitespace_token_count
@@ -41,6 +42,9 @@ class VisionProbeSnapshot:
     multi_image_scatter_mode: str = "none"
     quantized_load_mode: str = "fallback"
     quantized_load_fallback_reason: str = "not_reported"
+    position_metadata_receipt: dict[str, object] = field(
+        default_factory=lambda: build_position_metadata_receipt()
+    )
     text_batch_generator_submitted_request_count: int = 0
     text_batch_generator_completed_request_count: int = 0
     text_batch_generator_step_count: int = 0
@@ -173,7 +177,11 @@ class DeterministicVLMRuntime:
             loaded_model=loaded_model,
             execution_ext=execution_ext,
         )
-        self._record_fast_path_probe(loaded_model, prompt.prepared_request)
+        self._record_fast_path_probe(
+            loaded_model,
+            prompt.prepared_request,
+            seq_len=prompt.prompt_tokens,
+        )
         self._last_probe = replace(
             self._last_probe,
             cache_identity=prompt.cache_identity,
@@ -207,7 +215,11 @@ class DeterministicVLMRuntime:
         prompt_tokens = prompt.prompt_tokens
         cache_identity = prompt.cache_identity
         scope_id = prompt.scope_id
-        self._ensure_fast_path_probe(loaded_model, prepared_request)
+        self._ensure_fast_path_probe(
+            loaded_model,
+            prepared_request,
+            seq_len=prompt_tokens,
+        )
         self._cache_lookups += 1
         cache_hit = cache_identity in self._cache_entries
         if cache_hit:
@@ -417,11 +429,18 @@ class DeterministicVLMRuntime:
         self,
         loaded_model,
         prepared_request: PreparedVisionRequest,
+        *,
+        seq_len: int | None = None,
     ) -> None:
         signature = fast_path_probe_signature(loaded_model, prepared_request)
         if self._last_fast_path_signature == signature:
             return
-        self._record_fast_path_probe(loaded_model, prepared_request, signature=signature)
+        self._record_fast_path_probe(
+            loaded_model,
+            prepared_request,
+            signature=signature,
+            seq_len=seq_len,
+        )
 
     def _record_fast_path_probe(
         self,
@@ -429,6 +448,7 @@ class DeterministicVLMRuntime:
         prepared_request: PreparedVisionRequest,
         *,
         signature: tuple[str, ...] | None = None,
+        seq_len: int | None = None,
     ) -> None:
         fast_path = self._fast_path_controller.plan(loaded_model, prepared_request)
         self._last_fast_path_signature = signature or fast_path_probe_signature(
@@ -454,6 +474,28 @@ class DeterministicVLMRuntime:
             multi_image_scatter_mode=fast_path.multi_image_scatter_mode,
             quantized_load_mode=fast_path.quantized_load_mode,
             quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
+            position_metadata_receipt=self._position_metadata_receipt(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+                fallback_reason=fast_path.multimodal_fallback_reason,
+                seq_len=seq_len,
+            ),
+        )
+
+    def _position_metadata_receipt(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        fallback_reason: str,
+        seq_len: int | None = None,
+    ) -> dict[str, object]:
+        if seq_len is None:
+            seq_len = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
+        return build_position_metadata_receipt(
+            prepared_request=prepared_request,
+            seq_len=seq_len,
+            fallback_reason=fallback_reason,
         )
 
     def cache_stats_response(self) -> cache_pb2.GetCacheStatsResponse:

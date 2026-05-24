@@ -378,6 +378,55 @@ def test_metrics_snapshot_adds_multimodal_batching_hint(tmp_path: Path) -> None:
     assert "cooperative text-only token-step batching" in hints[0]["melix_blocked_reason"]
 
 
+def test_melix_metrics_snapshot_merges_control_plane_and_swift_worker(tmp_path: Path) -> None:
+    control_plane_path = tmp_path / "control-plane-metrics.json"
+    swift_worker_path = tmp_path / "swift-text-worker-metrics.json"
+    control_plane_path.write_text(
+        json.dumps({
+            "updated_at_unix_ms": 100,
+            "values": {
+                "control_plane.text_first_load_ms": 8547.46,
+                "http.ttfd_ms": 3447.17,
+            },
+        }),
+        encoding="utf-8",
+    )
+    swift_worker_path.write_text(
+        json.dumps({
+            "updated_at_unix_ms": 200,
+            "values": {
+                "swift_text.prefill_ms": 3706,
+                "swift_text.decode_ttft_ms": 1910,
+                "swift_text.decode_tokens_per_second": 2,
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    snapshot = bench.load_melix_metrics_snapshot(
+        control_plane_path=control_plane_path,
+        swift_text_worker_path=swift_worker_path,
+    )
+
+    assert snapshot["ok"] is True
+    assert snapshot["updated_at_unix_ms"] == 200
+    assert snapshot["sources"] == {
+        "control_plane": {
+            "ok": True,
+            "path": str(control_plane_path),
+            "updated_at_unix_ms": 100,
+        },
+        "swift_text_worker": {
+            "ok": True,
+            "path": str(swift_worker_path),
+            "updated_at_unix_ms": 200,
+        },
+    }
+    assert snapshot["values"]["control_plane.text_first_load_ms"] == 8547.46
+    assert snapshot["values"]["swift_text.prefill_ms"] == 3706
+    assert snapshot["values"]["swift_text.decode_tokens_per_second"] == 2
+
+
 def test_markdown_summary_lists_text_batch_generator_metrics() -> None:
     markdown = bench.render_markdown_summary(
         [],
@@ -404,6 +453,11 @@ def test_markdown_summary_lists_text_batch_generator_metrics() -> None:
             },
         },
         dry_run=False,
+        measurement_profile={
+            "profile": "cold",
+            "warmup_requests_per_endpoint": 0,
+            "operator_note": "",
+        },
     )
 
     assert "`vision.text_batch_generator.step_count` | 16.00" in markdown
@@ -441,6 +495,185 @@ def test_metrics_snapshot_reports_text_batch_generator_http_gap() -> None:
     assert "`http.stream_first_event_ms` | 1552.02" in markdown
     assert "`http.parser.text_batch_generator_first_visible_ms` | 1435.31" in markdown
     assert "`http.text_batch_generator_first_visible_to_stream_first_event_ms` | 116.71" in markdown
+
+
+def test_warmup_requests_mark_measurements_as_warm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_preflight(endpoint: bench.EndpointConfig, *, timeout_seconds: float) -> dict[str, object]:
+        return {
+            "endpoint": endpoint.name,
+            "base_url": endpoint.base_url,
+            "status_code": 200,
+            "ok": True,
+            "model": endpoint.model,
+            "model_listed": True,
+            "model_count": 1,
+            "models": [endpoint.model],
+            "error": None,
+        }
+
+    def fake_run_group(
+        endpoint: bench.EndpointConfig,
+        scenario: bench.BenchmarkScenario,
+        *,
+        include_usage: bool,
+        temperature: float,
+        timeout_seconds: float,
+    ) -> list[bench.RequestObservation]:
+        return [
+            bench.RequestObservation(
+                endpoint=endpoint.name,
+                model=endpoint.model,
+                scenario_id=scenario.scenario_id,
+                group_id=f"{endpoint.name}-{scenario.scenario_id}",
+                prompt_token_target=scenario.prompt_token_target,
+                prompt_token_source="usage",
+                max_tokens=scenario.max_tokens,
+                concurrency=scenario.concurrency,
+                cache_profile=scenario.cache_profile,
+                repeat_index=scenario.repeat_index,
+                request_index=0,
+                status="ok",
+                http_status=200,
+                error="",
+                ttft_ms=10.0 if scenario.scenario_id.startswith("warmup") else 100.0,
+                total_ms=20.0 if scenario.scenario_id.startswith("warmup") else 200.0,
+                decode_ms=10.0,
+                completion_tokens=5.0,
+                completion_token_source="usage",
+                prompt_tokens=20.0,
+                streamed_chunks=1,
+                completion_chars=20,
+                decode_tokens_per_second=500.0,
+                group_elapsed_ms=20.0,
+            )
+        ]
+
+    monkeypatch.setattr(bench, "preflight_endpoint", fake_preflight)
+    monkeypatch.setattr(bench, "run_group", fake_run_group)
+    control_plane_path = tmp_path / "control-plane-metrics.json"
+    swift_worker_path = tmp_path / "swift-text-worker-metrics.json"
+    control_plane_path.write_text(
+        json.dumps({
+            "updated_at_unix_ms": 100,
+            "values": {"control_plane.text_first_load_ms": 8547.46},
+        }),
+        encoding="utf-8",
+    )
+    swift_worker_path.write_text(
+        json.dumps({
+            "updated_at_unix_ms": 200,
+            "values": {"swift_text.prefill_ms": 3706},
+        }),
+        encoding="utf-8",
+    )
+    args = bench.build_arg_parser().parse_args(
+        [
+            "--model",
+            "local-model",
+            "--run-id",
+            "warm-run",
+            "--staging-root",
+            str(tmp_path),
+            "--no-export",
+            "--warmup-requests",
+            "1",
+            "--repeats",
+            "1",
+            "--melix-control-plane-metrics",
+            str(control_plane_path),
+            "--melix-swift-text-worker-metrics",
+            str(swift_worker_path),
+        ]
+    )
+    bench.validate_args(args)
+
+    result = bench.run_benchmark(args)
+
+    staging_dir = tmp_path / "warm-run"
+    manifest = json.loads((staging_dir / "manifest.json").read_text(encoding="utf-8"))
+    summary = json.loads((staging_dir / "summary.json").read_text(encoding="utf-8"))
+    markdown = (staging_dir / "summary.md").read_text(encoding="utf-8")
+
+    assert result["measurement_profile"] == "warm"
+    assert manifest["measurement_profile"]["profile"] == "warm"
+    assert summary["measurement_profile"]["warmup_requests_per_endpoint"] == 1
+    assert manifest["metrics"]["melix"]["artifact"] == "melix-metrics.json"
+    assert manifest["metrics"]["melix_control_plane"]["path"] == str(control_plane_path)
+    assert manifest["metrics"]["melix_control_plane"]["artifact"] == "melix-metrics.json"
+    assert summary["melix_metrics_snapshot"]["values"]["swift_text.prefill_ms"] == 3706
+    assert "- Measurement profile: `warm`" in markdown
+    assert "`swift_text.prefill_ms` | 3706.00" in markdown
+
+
+def test_markdown_summary_lists_text_first_load_metrics() -> None:
+    markdown = bench.render_markdown_summary(
+        [],
+        [],
+        preflight=[],
+        warmups=[],
+        metrics_snapshot={
+            "ok": True,
+            "values": {
+                "control_plane.text_first_load_ms": 8547.46,
+                "control_plane.text_first_load_resident_bytes": 32942997504,
+                "swift_text.prefill_ms": 3447.17,
+                "swift_text.decode_ttft_ms": 8554.38,
+            },
+        },
+        dry_run=False,
+        measurement_profile={
+            "profile": "cold",
+            "warmup_requests_per_endpoint": 0,
+            "operator_note": "first measured request includes model load",
+        },
+    )
+
+    assert "- Measurement profile: `cold`" in markdown
+    assert "`control_plane.text_first_load_ms` | 8547.46" in markdown
+    assert "`swift_text.prefill_ms` | 3447.17" in markdown
+    assert "`swift_text.decode_ttft_ms` | 8554.38" in markdown
+
+
+def test_markdown_summary_lists_token_count_sources() -> None:
+    markdown = bench.render_markdown_summary(
+        [
+            bench.ScenarioSummary(
+                endpoint="omlx",
+                model="model",
+                prompt_token_target=1024,
+                max_tokens=16,
+                concurrency=1,
+                cache_profile="cold_unique",
+                request_count=1,
+                success_count=1,
+                error_count=0,
+                error_rate=0.0,
+                median_ttft_ms=100.0,
+                p95_ttft_ms=100.0,
+                median_total_ms=200.0,
+                p95_total_ms=200.0,
+                median_decode_tokens_per_second=16.0,
+                median_aggregate_output_tokens_per_second=8.0,
+                median_completion_tokens=16.0,
+                prompt_token_sources="estimated_chars",
+                completion_token_sources="usage",
+            )
+        ],
+        [],
+        preflight=[],
+        warmups=[],
+        metrics_snapshot=None,
+        dry_run=False,
+        measurement_profile={
+            "profile": "warm",
+            "warmup_requests_per_endpoint": 1,
+            "operator_note": "",
+        },
+    )
+
+    assert "Prompt Token Source" in markdown
+    assert "Completion Token Source" in markdown
+    assert "| omlx | 1024 | concise | estimated_chars | usage | 16 | 1 | 0 |" in markdown
 
 
 def test_dry_run_writes_artifacts_without_export(tmp_path: Path) -> None:

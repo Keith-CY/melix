@@ -26,6 +26,7 @@ _SIZE_HINT_MULTIPLIERS = {
 
 _BARE_SIZE_HINT_RE = re.compile(r"(?:model\s+size\s*[:|]?\s*)?(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
 _EXPLICIT_SIZE_HINT_RE = re.compile(r"\bmodel\s+size\s*[:|]?\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
+_NEXT_LINK_REL_MARKER = 'rel="next"'
 @dataclass(frozen=True, slots=True)
 class HubModelSummaryRecord:
     repo_id: str
@@ -266,20 +267,22 @@ class HubCatalog:
 
 
 def _next_cursor_from_link(link_header: str) -> str:
+    marker = _NEXT_LINK_REL_MARKER
+    marker_len = len(marker)
     search_start = 0
     while True:
-        url_start = link_header.find("<", search_start)
-        if url_start < 0:
+        relation_start = link_header.find(marker, search_start)
+        if relation_start < 0:
             return ""
-        url_end = link_header.find(">", url_start + 1)
+        url_end = link_header.rfind(">", 0, relation_start)
         if url_end < 0:
-            return ""
-        next_url_start = link_header.find("<", url_end + 1)
-        relation_start = url_end + 1
-        relation_end = next_url_start if next_url_start >= 0 else len(link_header)
-        if link_header.find('rel="next"', relation_start, relation_end) >= 0:
-            return _cursor_query_value(link_header, url_start + 1, url_end)
-        search_start = relation_end
+            search_start = relation_start + marker_len
+            continue
+        url_start = link_header.rfind("<", 0, url_end)
+        if url_start < 0:
+            search_start = relation_start + marker_len
+            continue
+        return _cursor_query_value(link_header, url_start + 1, url_end)
 
 
 def _cursor_query_value(url: str, start: int, end: int) -> str:
@@ -503,6 +506,15 @@ def _local_fit_evidence(
             "recommended_action": "inspect_metadata",
         }
 
+    config = _text_config(payload)
+    kv_cache_bytes = _estimated_kv_cache_bytes(config)
+    if kv_cache_bytes > 0:
+        estimated_resident_bytes += kv_cache_bytes
+        context_tokens = _context_token_count_from_config(config)
+        reasons.append(
+            f"Estimated KV cache bytes for {context_tokens} context tokens: {kv_cache_bytes}."
+        )
+
     memory_budget_bytes = int(max(local_memory_gb, 0.0) * (1024 ** 3) * MEMORY_COMFORT_BUDGET_FACTOR)
     if memory_budget_bytes > 0 and estimated_resident_bytes > memory_budget_bytes:
         reasons.append("Estimated resident bytes exceed the memory comfort budget.")
@@ -725,6 +737,68 @@ def _estimated_resident_bytes(
     else:
         return 0
     return math.ceil(base_size * RESIDENT_MEMORY_OVERHEAD_FACTOR)
+
+
+def _estimated_kv_cache_bytes(config: dict[str, Any]) -> int:
+    context_tokens = _context_token_count_from_config(config)
+    layers = _positive_config_int(config, "num_hidden_layers", "n_layer", "num_layers")
+    attention_heads = _positive_config_int(config, "num_attention_heads", "n_head", "n_heads")
+    kv_heads = _positive_config_int(config, "num_key_value_heads", "n_kv_heads") or attention_heads
+    head_dim = _positive_config_int(config, "head_dim")
+    if head_dim <= 0 and attention_heads > 0:
+        hidden_size = _positive_config_int(config, "hidden_size", "n_embd", "d_model")
+        if hidden_size > 0 and hidden_size % attention_heads == 0:
+            head_dim = hidden_size // attention_heads
+    if context_tokens <= 0 or layers <= 0 or kv_heads <= 0 or head_dim <= 0:
+        return 0
+    return context_tokens * layers * kv_heads * head_dim * _kv_cache_bytes_per_element(config) * 2
+
+
+def _text_config(payload: dict[str, Any]) -> dict[str, Any]:
+    config = payload.get("config")
+    if not isinstance(config, dict):
+        return {}
+    text_config = config.get("text_config")
+    if not isinstance(text_config, dict):
+        return config
+    merged = dict(config)
+    merged.update(text_config)
+    return merged
+
+
+def _context_token_count_from_config(config: dict[str, Any]) -> int:
+    return _positive_config_int(
+        config,
+        "max_position_embeddings",
+        "model_max_length",
+        "max_seq_len",
+        "max_sequence_length",
+        "context_length",
+        "seq_length",
+    )
+
+
+def _positive_config_int(config: dict[str, Any], *keys: str) -> int:
+    for key in keys:
+        raw_value = config.get(key)
+        value = _int(raw_value)
+        if value > 0:
+            return value
+        # _int() does not coerce strings; handle string-typed config fields explicitly
+        if isinstance(raw_value, str) and raw_value.isdecimal():
+            parsed = int(raw_value)
+            if parsed > 0:
+                return parsed
+    return 0
+
+
+def _kv_cache_bytes_per_element(config: dict[str, Any]) -> int:
+    dtype = _string(config.get("torch_dtype") or config.get("dtype")).lower()
+    if dtype in {"float32", "fp32", "f32"}:
+        return 4
+    if dtype in {"float8", "fp8", "int8", "uint8"}:
+        return 1
+    return 2
 
 
 def _bytes_per_parameter(tags: list[str], *, lowered_tags: set[str] | None = None) -> float:

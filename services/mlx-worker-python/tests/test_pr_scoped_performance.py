@@ -1230,8 +1230,22 @@ def test_scope_report_selects_deterministic_embedding_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/deterministic_embedding_runtime.py"],
     )
 
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert scope["selected_count"] == 2
+    assert probe_ids == {
+        "deterministic-embedding-duplicate-input-cache",
+        "embedding-core-inputs-view",
+    }
+
+
+def test_scope_report_selects_embedding_core_inputs_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/engine/embedding_core.py"],
+    )
+
     assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "deterministic-embedding-duplicate-input-cache"
+    assert scope["selected_probes"][0]["id"] == "embedding-core-inputs-view"
 
 
 def test_scope_report_selects_benchmark_export_probe() -> None:
@@ -2046,6 +2060,30 @@ def test_deterministic_embedding_duplicate_probe_script_emits_metrics(
     assert metrics["checksum"] > 0
 
 
+def test_embedding_core_inputs_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_EMBEDDING_CORE_INPUTS_ITERATIONS", "2")
+    monkeypatch.setenv("MELIX_EMBEDDING_CORE_INPUTS_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_EMBEDDING_CORE_INPUTS_COUNT", "8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/embedding_core_inputs_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["input_count"] == 8.0
+    assert metrics["iterations"] == 2.0
+    assert metrics["runtime_input_is_list"] == 0.0
+    assert metrics["runtime_input_is_view"] == 1.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
 def test_stream_assembler_parser_mode_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -2547,6 +2585,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "evaluation-compare-target-lookup-early-stop",
         "evaluation-store-samples-csv-streaming",
         "engine-generate-usage-token-elision",
+        "embedding-core-inputs-view",
         "job-registry-derived-model-single-pass",
         "job-registry-restore-sort-elision",
         "lora-experiment-run-dir-name-scan",
@@ -3404,6 +3443,8 @@ def test_probe_smokes_return_metrics_against_current_repo() -> None:
     assert evaluation_store_metrics["sample_count"] == 10000.0
     assert evaluation_store_metrics["csv_line_count"] == 10001.0
     assert scope_matcher_metrics["build_scope_report_ms_mean"] > 0
+    assert scope_matcher_metrics["command_summary_ms_mean"] > 0
+    assert scope_matcher_metrics["command_summary_iterations"] == 20000.0
     assert scope_matcher_metrics["changed_file_count"] == float(len(_build_large_scope_probe_changed_files()))
     assert scope_matcher_metrics["selected_probe_count_mean"] == float(
         len(SCOPE_MATCHER_SELECTED_PROBE_IDS)
@@ -3823,6 +3864,8 @@ def test_dispatch_probe_impl_supports_pr_scoped_scope_matcher_probe() -> None:
     metrics = _dispatch_probe_impl(probe=probe, repo_root=REPO_ROOT)
 
     assert metrics["build_scope_report_ms_mean"] > 0
+    assert metrics["command_summary_ms_mean"] > 0
+    assert metrics["command_summary_iterations"] == 20000.0
     assert metrics["changed_file_count"] == float(len(_build_large_scope_probe_changed_files()))
     assert metrics["selected_probe_count_mean"] == float(
         len(SCOPE_MATCHER_SELECTED_PROBE_IDS)
@@ -4247,6 +4290,7 @@ def test_command_and_verification_helpers_cover_skip_and_failure_paths(
 
 def test_command_summary_keeps_ci_heartbeats_compact() -> None:
     assert _summarize_command("python3 - <<'PY'\nprint('x')\nPY") == "python3 - <<'PY' ..."
+    assert _summarize_command(" \n  python3 - <<'PY'  \nprint('x')") == "python3 - <<'PY' ..."
     assert _summarize_command(" \n ") == "<empty command>"
 
     long_summary = _summarize_command("python3 -c " + "x" * 300, max_length=80)

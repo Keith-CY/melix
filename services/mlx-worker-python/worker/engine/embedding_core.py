@@ -27,16 +27,15 @@ class EmbeddingCore:
         try:
             vectors = self._registry.embedding_runtime.embed_inputs(
                 loaded_model.runtime_model,
-                list(request.inputs),
+                request.inputs,
             )
         except Exception as exc:  # pragma: no cover - defensive branch
             return inference_pb2.EmbedResponse(
                 error=common_pb2.ErrorStatus(code="runtime_error", message=str(exc))
             )
 
-        return inference_pb2.EmbedResponse(
-            embeddings=[
-                inference_pb2.Embedding(values=values)
-                for values in vectors
-            ]
-        )
+        response = inference_pb2.EmbedResponse()
+        add_embedding = response.embeddings.add
+        for values in vectors:
+            add_embedding().values.extend(values)
+        return response

@@ -32,6 +32,7 @@ DEFAULT_PREFLIGHT_RETRY_INTERVAL_SECONDS = 2.0
 DEFAULT_TOP_P = 1.0
 DEFAULT_TOP_K = 0
 PROMPT_STYLES = ("concise", "saturating")
+MEASUREMENT_PROFILES = ("auto", "cold", "warm", "mixed")
 REPORT_SCHEMA_VERSION = 1
 MELIX_VLM_BATCHING_BLOCKED_REASON_CODES = {
     1: "multimodal route does not expose a streaming continuous batching path",
@@ -107,6 +108,8 @@ class ScenarioSummary:
     median_aggregate_output_tokens_per_second: float | None
     median_completion_tokens: float | None
     prompt_style: str = "concise"
+    prompt_token_sources: str = "unknown"
+    completion_token_sources: str = "unknown"
 
 
 def normalize_base_url(value: str) -> str:
@@ -572,6 +575,7 @@ def summarize_observations(observations: list[RequestObservation]) -> list[Scena
     for key, rows in sorted(grouped.items()):
         endpoint, model, prompt_token_target, max_tokens, concurrency, cache_profile, prompt_style = key
         successes = [row for row in rows if row.status == "ok"]
+        source_rows = successes if successes else rows
         group_tps = aggregate_output_tps_by_group(successes)
         summaries.append(
             ScenarioSummary(
@@ -595,9 +599,18 @@ def summarize_observations(observations: list[RequestObservation]) -> list[Scena
                 median_aggregate_output_tokens_per_second=median(group_tps),
                 median_completion_tokens=median([row.completion_tokens for row in successes]),
                 prompt_style=prompt_style,
+                prompt_token_sources=_source_summary(row.prompt_token_source for row in source_rows),
+                completion_token_sources=_source_summary(
+                    row.completion_token_source for row in source_rows
+                ),
             )
         )
     return summaries
+
+
+def _source_summary(values: Iterable[str]) -> str:
+    sources = sorted({value for value in values if value})
+    return ",".join(sources) if sources else "unknown"
 
 
 def aggregate_output_tps_by_group(rows: list[RequestObservation]) -> list[float]:
@@ -753,6 +766,66 @@ def load_metrics_snapshot(path: Path | None) -> dict[str, Any] | None:
     }
 
 
+def load_melix_metrics_snapshot(
+    *,
+    control_plane_path: Path | None,
+    swift_text_worker_path: Path | None,
+) -> dict[str, Any] | None:
+    source_paths = {
+        "control_plane": control_plane_path,
+        "swift_text_worker": swift_text_worker_path,
+    }
+    source_snapshots = {
+        name: load_metrics_snapshot(path)
+        for name, path in source_paths.items()
+        if path is not None
+    }
+    if not source_snapshots:
+        return None
+
+    values: dict[str, Any] = {}
+    sources: dict[str, dict[str, Any]] = {}
+    updated_at_values: list[Any] = []
+    errors: list[str] = []
+    primary_path: str | None = None
+    ok = True
+    for name, snapshot in source_snapshots.items():
+        if snapshot is None:
+            continue
+        if primary_path is None:
+            primary_path = snapshot.get("path")
+        source = {
+            "ok": snapshot.get("ok"),
+            "path": snapshot.get("path"),
+            "updated_at_unix_ms": snapshot.get("updated_at_unix_ms"),
+        }
+        if snapshot.get("error"):
+            source["error"] = snapshot.get("error")
+        sources[name] = source
+        if snapshot.get("ok") is True:
+            snapshot_values = snapshot.get("values")
+            if isinstance(snapshot_values, dict):
+                values.update(snapshot_values)
+            updated_at_values.append(snapshot.get("updated_at_unix_ms"))
+        else:
+            ok = False
+            errors.append(f"{name}: {snapshot.get('error', 'unknown')}")
+
+    numeric_updates = [
+        value
+        for value in updated_at_values
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+    ]
+    return {
+        "path": primary_path,
+        "ok": ok,
+        "updated_at_unix_ms": max(numeric_updates) if numeric_updates else None,
+        "sources": sources,
+        "values": values,
+        **({"error": "; ".join(errors)} if errors else {}),
+    }
+
+
 def enrich_hints_with_metrics(
     hints: list[dict[str, Any]],
     metrics_snapshot: dict[str, Any] | None,
@@ -796,6 +869,29 @@ def enrich_hints_with_metrics(
     return hints
 
 
+def metrics_manifest_entries(metrics_snapshot: dict[str, Any] | None, *, artifact_name: str) -> dict[str, Any]:
+    if metrics_snapshot is None:
+        return {}
+    entry = {
+        "ok": metrics_snapshot.get("ok"),
+        "path": metrics_snapshot.get("path"),
+        "sources": metrics_snapshot.get("sources"),
+        "updated_at_unix_ms": metrics_snapshot.get("updated_at_unix_ms"),
+        "artifact": artifact_name,
+    }
+    entries: dict[str, Any] = {"melix": entry}
+    sources = metrics_snapshot.get("sources")
+    if isinstance(sources, dict) and isinstance(sources.get("control_plane"), dict):
+        control_plane = sources["control_plane"]
+        entries["melix_control_plane"] = {
+            "ok": control_plane.get("ok"),
+            "path": control_plane.get("path"),
+            "updated_at_unix_ms": control_plane.get("updated_at_unix_ms"),
+            "artifact": artifact_name,
+        }
+    return entries
+
+
 def _numeric_metric(values: dict[str, Any], key: str) -> float | None:
     value = values.get(key)
     if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -816,6 +912,7 @@ def write_artifacts(
     summaries: list[ScenarioSummary],
     hints: list[dict[str, Any]],
     dry_run: bool,
+    measurement_profile: dict[str, Any],
 ) -> dict[str, str]:
     staging_dir.mkdir(parents=True, exist_ok=True)
     generated_at = datetime.now(timezone.utc).isoformat()
@@ -829,11 +926,12 @@ def write_artifacts(
     if warmups:
         paths["warmups"] = staging_dir / "warmups.jsonl"
     if metrics_snapshot is not None:
-        paths["melix_metrics"] = staging_dir / "melix-control-plane-metrics.json"
+        paths["melix_metrics"] = staging_dir / "melix-metrics.json"
     manifest = {
         "schema_version": REPORT_SCHEMA_VERSION,
         "generated_at": generated_at,
         "dry_run": dry_run,
+        "measurement_profile": measurement_profile,
         "endpoints": [
             {
                 "name": endpoint.name,
@@ -851,14 +949,10 @@ def write_artifacts(
         "warmup_settings": warmup_settings,
         "observation_count": len(observations),
         "preflight": preflight,
-        "metrics": {
-            "melix_control_plane": {
-                "ok": metrics_snapshot.get("ok"),
-                "path": metrics_snapshot.get("path"),
-                "updated_at_unix_ms": metrics_snapshot.get("updated_at_unix_ms"),
-                "artifact": paths["melix_metrics"].name,
-            }
-        } if metrics_snapshot is not None else {},
+        "metrics": metrics_manifest_entries(
+            metrics_snapshot,
+            artifact_name=paths["melix_metrics"].name,
+        ) if metrics_snapshot is not None else {},
         "artifacts": {key: path.name for key, path in paths.items()},
     }
     paths["manifest"].write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -877,6 +971,7 @@ def write_artifacts(
     summary_payload = {
         "schema_version": REPORT_SCHEMA_VERSION,
         "generated_at": generated_at,
+        "measurement_profile": measurement_profile,
         "melix_metrics_snapshot": metrics_snapshot,
         "warmups": [asdict(observation) for observation in warmups],
         "summaries": [asdict(summary) for summary in summaries],
@@ -895,6 +990,7 @@ def write_artifacts(
             warmups=warmups,
             metrics_snapshot=metrics_snapshot,
             dry_run=dry_run,
+            measurement_profile=measurement_profile,
         ),
         encoding="utf-8",
     )
@@ -918,9 +1014,13 @@ def render_markdown_summary(
     warmups: list[RequestObservation],
     metrics_snapshot: dict[str, Any] | None,
     dry_run: bool,
+    measurement_profile: dict[str, Any],
 ) -> str:
     lines = ["# OMLX And Melix Serving Benchmark Summary", ""]
     lines.append(f"- Dry run: `{str(dry_run).lower()}`")
+    lines.append(f"- Measurement profile: `{measurement_profile.get('profile', 'unknown')}`")
+    if measurement_profile.get("operator_note"):
+        lines.append(f"- Measurement note: {measurement_profile['operator_note']}")
     lines.append("")
     lines.append("## Preflight")
     lines.append("")
@@ -959,16 +1059,19 @@ def render_markdown_summary(
     lines.append("## Scenario Summary")
     lines.append("")
     lines.append(
-        "| Endpoint | Prompt Target | Prompt Style | Max Tokens | Concurrency | Errors | Median TTFT ms | "
-        "Median Total ms | Median Decode tok/s | Median Aggregate tok/s |"
+        "| Endpoint | Prompt Target | Prompt Style | Prompt Token Source | Completion Token Source | "
+        "Max Tokens | Concurrency | Errors | Median TTFT ms | Median Total ms | "
+        "Median Decode tok/s | Median Aggregate tok/s |"
     )
-    lines.append("|---|---:|---|---:|---:|---:|---:|---:|---:|---:|")
+    lines.append("|---|---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|")
     for summary in summaries:
         lines.append(
-            "| {endpoint} | {prompt} | {prompt_style} | {max_tokens} | {concurrency} | {errors} | {ttft} | {total} | {decode} | {aggregate} |".format(
+            "| {endpoint} | {prompt} | {prompt_style} | {prompt_token_sources} | {completion_token_sources} | {max_tokens} | {concurrency} | {errors} | {ttft} | {total} | {decode} | {aggregate} |".format(
                 endpoint=summary.endpoint,
                 prompt=summary.prompt_token_target,
                 prompt_style=summary.prompt_style,
+                prompt_token_sources=summary.prompt_token_sources,
+                completion_token_sources=summary.completion_token_sources,
                 max_tokens=summary.max_tokens,
                 concurrency=summary.concurrency,
                 errors=summary.error_count,
@@ -993,6 +1096,14 @@ def render_markdown_summary(
                 "scheduler.multimodal_continuous_batch_blocked_count",
                 "scheduler.multimodal_continuous_batch_blocked_reason_code",
                 "scheduler.continuous_batch_size",
+                "control_plane.text_first_load_ms",
+                "control_plane.text_first_load_estimated_resident_bytes",
+                "control_plane.text_first_load_resident_bytes",
+                "swift_text.prefill_ms",
+                "swift_text.prefill_prompt_tokens",
+                "swift_text.decode_ttft_ms",
+                "swift_text.decode_ms",
+                "swift_text.decode_tokens_per_second",
                 "scheduler.multimodal_queue_delay_ms",
                 "vision.vlm_first_token_ms",
                 "vision.multimodal_decode_mode_code",
@@ -1097,6 +1208,23 @@ def _fmt_metric(value: Any) -> str:
     return str(value)
 
 
+def measurement_profile_metadata(
+    *,
+    requested_profile: str,
+    warmup_requests: int,
+    operator_note: str = "",
+) -> dict[str, Any]:
+    if requested_profile == "auto":
+        profile = "warm" if warmup_requests > 0 else "cold"
+    else:
+        profile = requested_profile
+    return {
+        "profile": profile,
+        "warmup_requests_per_endpoint": warmup_requests,
+        "operator_note": operator_note,
+    }
+
+
 def export_bundle(staging_dir: Path, export_dir: Path | None) -> Path | None:
     if export_dir is None:
         return None
@@ -1180,6 +1308,11 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     )
     run_id = args.run_id or datetime.now(timezone.utc).strftime("omlx-melix-benchmark-%Y%m%d-%H%M%S")
     staging_dir = args.staging_root.expanduser() / run_id
+    measurement_profile = measurement_profile_metadata(
+        requested_profile=args.measurement_profile,
+        warmup_requests=args.warmup_requests,
+        operator_note=args.measurement_profile_note,
+    )
 
     if args.dry_run:
         preflight = [
@@ -1249,7 +1382,10 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                         )
                     )
 
-    metrics_snapshot = load_metrics_snapshot(args.melix_control_plane_metrics)
+    metrics_snapshot = load_melix_metrics_snapshot(
+        control_plane_path=args.melix_control_plane_metrics,
+        swift_text_worker_path=args.melix_swift_text_worker_metrics,
+    )
     summaries = summarize_observations(observations)
     hints = enrich_hints_with_metrics(comparison_hints(summaries), metrics_snapshot)
     warmup_settings = {
@@ -1270,6 +1406,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         summaries=summaries,
         hints=hints,
         dry_run=args.dry_run,
+        measurement_profile=measurement_profile,
     )
     exported_to = None if args.no_export else export_bundle(staging_dir, args.export_dir)
     return {
@@ -1279,6 +1416,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "preflight": preflight,
         "scenario_count": len(scenarios),
         "warmup_count": len(warmups),
+        "measurement_profile": measurement_profile["profile"],
         "observation_count": len(observations),
         "summary_count": len(summaries),
         "optimization_hint_count": len(hints),
@@ -1363,6 +1501,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optional Melix control-plane metrics JSON to snapshot into the report.",
+    )
+    parser.add_argument(
+        "--melix-swift-text-worker-metrics",
+        type=Path,
+        default=None,
+        help="Optional Melix Swift text worker metrics JSON to merge into the report.",
+    )
+    parser.add_argument(
+        "--measurement-profile",
+        choices=MEASUREMENT_PROFILES,
+        default="auto",
+        help="Label measured scenarios as cold, warm, or mixed. 'auto' uses warm when warmups are run, otherwise cold.",
+    )
+    parser.add_argument(
+        "--measurement-profile-note",
+        default="",
+        help="Optional note describing how endpoint residency was prepared before measurement.",
     )
     parser.add_argument("--allow-failed-preflight", action="store_true")
     parser.add_argument("--preflight-only", action="store_true")
