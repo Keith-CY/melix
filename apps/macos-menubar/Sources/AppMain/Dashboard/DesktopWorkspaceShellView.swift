@@ -4934,7 +4934,35 @@ struct DesktopJobsToolSectionView: View {
                     }
 
                     if let error = detail.error {
-                        DesktopJobDetailBlock(title: "Error", values: [error.code, error.message])
+                        DesktopJobDetailBlock(
+                            title: "Error",
+                            values: [
+                                error.code,
+                                error.message,
+                                retriableText(error.retriable),
+                                error.remediation,
+                            ]
+                        )
+                    }
+
+                    if let trainingQueue = detail.trainingQueue {
+                        DesktopJobDetailBlock(
+                            title: "Training Queue",
+                            values: [
+                                trainingQueue.recoveryPolicy,
+                                trainingQueue.resourceClass,
+                                trainingQueue.datasetVersionID,
+                                trainingQueue.preflightReceiptPath,
+                                trainingQueue.queuePath,
+                            ]
+                        )
+                    }
+
+                    if let preflight = detail.trainabilityPreflight {
+                        DesktopJobDetailBlock(
+                            title: "Trainability Preflight",
+                            values: trainabilityPreflightValues(preflight)
+                        )
                     }
 
                     DesktopJobDetailBlock(
@@ -5046,6 +5074,35 @@ struct DesktopJobsToolSectionView: View {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { $0.isEmpty == false }
             .joined(separator: " • ")
+    }
+
+    private func trainabilityPreflightValues(_ preflight: RuntimeJobTrainabilityPreflightState) -> [String] {
+        var values = [
+            preflight.status,
+            preflight.modelID,
+            preflight.trainingMode,
+            preflight.receiptPath,
+        ]
+        values.append(contentsOf: preflight.blockingChecks.flatMap { check in
+            [
+                check.code,
+                check.operatorMessage,
+                check.remediation,
+            ]
+        })
+        values.append(contentsOf: preflight.operatorErrors.flatMap { error in
+            [
+                error.code,
+                error.operatorMessage,
+                retriableText(error.retriable),
+                error.remediation,
+            ]
+        })
+        return values
+    }
+
+    private func retriableText(_ retriable: Bool) -> String {
+        retriable ? "retriable" : "not retriable"
     }
 
     private func statusColor(for job: RuntimeJobSummaryState) -> Color {
