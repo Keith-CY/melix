@@ -51,7 +51,8 @@ class DeterministicEmbeddingBackend:
         ]
         full_repeats, remainder = divmod(dimensions, 8)
         squared_sum = sum(value * value for value in base_values) * full_repeats
-        for value in base_values[:remainder]:
+        for index in range(remainder):
+            value = base_values[index]
             squared_sum += value * value
 
         l2_norm = math.sqrt(squared_sum)
