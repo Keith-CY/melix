@@ -290,8 +290,10 @@ def _rule_matches_report(
     run_kinds = rule.get("run_kinds", ())
     if run_kinds:
         run_kind_set = _string_frozenset(run_kinds)
+        run_kind_key = "run_kind"
+        to_string = str
         for run in runs:
-            if str(run.get("run_kind", "")) in run_kind_set:
+            if to_string(run.get(run_kind_key, "")) in run_kind_set:
                 return True
     metric_prefixes = tuple(str(item) for item in rule.get("metric_prefixes", ()))
     if metric_prefixes and any(
