@@ -8,7 +8,10 @@ from packages.protocol.python.worker.v1 import common_pb2
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.runtime.deterministic_vlm_runtime import DeterministicVLMRuntime
 from worker.runtime.mlx_vlm_runtime import AutoMLXVLMBackend, MLXVLMRuntime
-from worker.runtime.multimodal_position_receipts import build_position_metadata_receipt
+from worker.runtime.multimodal_position_receipts import (
+    build_mixed_batch_geometry_receipt,
+    build_position_metadata_receipt,
+)
 from worker.runtime.multimodal_preprocessing import (
     PreparedImageInput,
     PreparedVideoFramePolicy,
@@ -142,6 +145,296 @@ def test_position_metadata_receipt_counts_flat_metadata_values() -> None:
 
     assert receipt["position_ids_count"] == 4
     assert receipt["rope_deltas_count"] == 2
+
+
+def test_mixed_batch_geometry_receipt_preserves_three_row_prompt_and_media_geometry() -> None:
+    receipt = build_mixed_batch_geometry_receipt(
+        rows=[
+            {
+                "row_index": 0,
+                "prompt_kwargs": {"input_ids_len": 13, "attention_mask_len": 17},
+                "seq_len": 13,
+                "cache_offset": 0,
+                "media_count": 1,
+                "left_padding": 4,
+                "mrope_delta_override": [0],
+                "mrope_delta_override_identity": ["row-0-image"],
+                "expected_mrope_delta_override_identity": ["row-0-image"],
+                "visual_embed_count": 64,
+                "expected_visual_embed_count": 64,
+                "visual_embed_identity": ["row-0-image"],
+                "expected_visual_embed_identity": ["row-0-image"],
+            },
+            {
+                "row_index": 1,
+                "prompt_kwargs": {"input_ids_len": 21, "attention_mask_len": 21},
+                "seq_len": 21,
+                "cache_offset": 5,
+                "media_count": 2,
+                "left_padding": 0,
+                "mrope_delta_override": [2, 3],
+                "mrope_delta_override_identity": ["row-1-first", "row-1-second"],
+                "expected_mrope_delta_override_identity": ["row-1-first", "row-1-second"],
+                "visual_embed_count": 128,
+                "expected_visual_embed_count": 128,
+                "visual_embed_identity": ["row-1-first", "row-1-second"],
+                "expected_visual_embed_identity": ["row-1-first", "row-1-second"],
+            },
+            {
+                "row_index": 2,
+                "prompt_kwargs": {"input_ids_len": 8, "attention_mask_len": 15},
+                "seq_len": 8,
+                "cache_offset": 12,
+                "media_count": 0,
+                "left_padding": 7,
+                "visual_embed_count": 0,
+                "expected_visual_embed_count": 0,
+            },
+        ]
+    )
+
+    assert receipt == {
+        "batch_row_count": 3,
+        "mixed_length_batch": True,
+        "row_geometry_guard": "aligned",
+        "row_drift_count": 0,
+        "total_media_count": 3,
+        "total_visual_embed_count": 192,
+        "rows": [
+            {
+                "row_index": 0,
+                "prompt_kwargs": {"input_ids_len": 13, "attention_mask_len": 17},
+                "seq_len": 13,
+                "cache_offset": 0,
+                "media_count": 1,
+                "left_padding": 4,
+                "expected_left_padding": 4,
+                "mrope_delta_override_count": 1,
+                "mrope_delta_override_identity": ["row-0-image"],
+                "visual_embed_count": 64,
+                "visual_embed_identity": ["row-0-image"],
+                "row_geometry_guard": "aligned",
+                "row_drift_reasons": [],
+            },
+            {
+                "row_index": 1,
+                "prompt_kwargs": {"input_ids_len": 21, "attention_mask_len": 21},
+                "seq_len": 21,
+                "cache_offset": 5,
+                "media_count": 2,
+                "left_padding": 0,
+                "expected_left_padding": 0,
+                "mrope_delta_override_count": 2,
+                "mrope_delta_override_identity": ["row-1-first", "row-1-second"],
+                "visual_embed_count": 128,
+                "visual_embed_identity": ["row-1-first", "row-1-second"],
+                "row_geometry_guard": "aligned",
+                "row_drift_reasons": [],
+            },
+            {
+                "row_index": 2,
+                "prompt_kwargs": {"input_ids_len": 8, "attention_mask_len": 15},
+                "seq_len": 8,
+                "cache_offset": 12,
+                "media_count": 0,
+                "left_padding": 7,
+                "expected_left_padding": 7,
+                "mrope_delta_override_count": 0,
+                "mrope_delta_override_identity": [],
+                "visual_embed_count": 0,
+                "visual_embed_identity": [],
+                "row_geometry_guard": "aligned",
+                "row_drift_reasons": [],
+            },
+        ],
+    }
+
+
+def test_mixed_batch_geometry_receipt_detects_left_padding_and_mrope_row_drift() -> None:
+    receipt = build_mixed_batch_geometry_receipt(
+        rows=[
+            {
+                "row_index": 0,
+                "prompt_kwargs": {"input_ids_len": 13, "attention_mask_len": 17},
+                "seq_len": 13,
+                "media_count": 1,
+                "left_padding": 4,
+                "mrope_delta_override": [0],
+                "visual_embed_count": 64,
+                "expected_visual_embed_count": 64,
+            },
+            {
+                "row_index": 1,
+                "prompt_kwargs": {"input_ids_len": 21, "attention_mask_len": 24},
+                "seq_len": 21,
+                "media_count": 2,
+                "left_padding": 0,
+                "mrope_delta_override": [2],
+                "visual_embed_count": 64,
+                "expected_visual_embed_count": 128,
+            },
+            {
+                "row_index": 2,
+                "prompt_kwargs": {"input_ids_len": 8, "attention_mask_len": 15},
+                "seq_len": 8,
+                "media_count": 1,
+                "left_padding": 7,
+                "mrope_delta_override": [4],
+                "visual_embed_count": 32,
+                "expected_visual_embed_count": 32,
+            },
+        ]
+    )
+
+    assert receipt["row_geometry_guard"] == "row_drift"
+    assert receipt["row_drift_count"] == 1
+    assert receipt["rows"][1]["row_geometry_guard"] == "row_drift"
+    assert receipt["rows"][1]["row_drift_reasons"] == [
+        "prompt_attention_mask_len_mismatch",
+        "mrope_delta_override_count_mismatch",
+        "visual_embed_scatter_drift",
+    ]
+
+
+def test_mixed_batch_geometry_receipt_detects_self_consistent_left_padding_drift() -> None:
+    receipt = build_mixed_batch_geometry_receipt(
+        rows=[
+            {
+                "row_index": 0,
+                "prompt_kwargs": {"input_ids_len": 10, "attention_mask_len": 12},
+                "seq_len": 10,
+                "media_count": 1,
+                "left_padding": 2,
+                "expected_left_padding": 4,
+                "mrope_delta_override": [0],
+                "visual_embed_count": 64,
+                "expected_visual_embed_count": 64,
+            },
+        ]
+    )
+
+    assert receipt["row_geometry_guard"] == "row_drift"
+    assert receipt["row_drift_count"] == 1
+    assert receipt["rows"][0]["expected_left_padding"] == 4
+    assert receipt["rows"][0]["row_drift_reasons"] == [
+        "left_padding_mismatch",
+        "prompt_attention_mask_len_mismatch",
+    ]
+
+
+def test_mixed_batch_geometry_receipt_detects_row_index_prompt_and_missing_embed_drift() -> None:
+    receipt = build_mixed_batch_geometry_receipt(
+        rows=[
+            {
+                "row_index": 3,
+                "prompt_kwargs": {"input_ids_len": 7, "attention_mask_len": 9},
+                "seq_len": 8,
+                "media_count": 1,
+                "left_padding": 1,
+                "mrope_delta_override": [1],
+                "visual_embed_count": 0,
+            },
+            {
+                "prompt_kwargs": "not-a-dict",
+                "seq_len": 4,
+                "media_count": 0,
+                "visual_embed_count": 0,
+            },
+        ]
+    )
+
+    assert receipt["row_drift_count"] == 2
+    assert receipt["rows"][0]["row_drift_reasons"] == [
+        "row_index_mismatch",
+        "prompt_input_ids_len_mismatch",
+        "visual_embed_count_missing",
+    ]
+    assert receipt["rows"][1]["prompt_kwargs"] == {}
+    assert receipt["rows"][1]["row_geometry_guard"] == "row_drift"
+    assert receipt["rows"][1]["row_drift_reasons"] == ["prompt_kwargs_missing"]
+
+
+def test_mixed_batch_geometry_receipt_detects_same_cardinality_identity_swaps() -> None:
+    receipt = build_mixed_batch_geometry_receipt(
+        rows=[
+            {
+                "row_index": 0,
+                "prompt_kwargs": {"input_ids_len": 9, "attention_mask_len": 9},
+                "seq_len": 9,
+                "media_count": 1,
+                "mrope_delta_override": [0],
+                "mrope_delta_override_identity": ["row-1-image"],
+                "expected_mrope_delta_override_identity": ["row-0-image"],
+                "visual_embed_count": 64,
+                "expected_visual_embed_count": 64,
+                "visual_embed_identity": ["row-1-image"],
+                "expected_visual_embed_identity": ["row-0-image"],
+            },
+            {
+                "row_index": 1,
+                "prompt_kwargs": {"input_ids_len": 9, "attention_mask_len": 9},
+                "seq_len": 9,
+                "media_count": 1,
+                "mrope_delta_override": [1],
+                "mrope_delta_override_identity": ["row-0-image"],
+                "expected_mrope_delta_override_identity": ["row-1-image"],
+                "visual_embed_count": 64,
+                "expected_visual_embed_count": 64,
+                "visual_embed_identity": ["row-0-image"],
+                "expected_visual_embed_identity": ["row-1-image"],
+            },
+        ]
+    )
+
+    assert receipt["row_geometry_guard"] == "row_drift"
+    assert receipt["row_drift_count"] == 2
+    assert receipt["rows"][0]["row_drift_reasons"] == [
+        "mrope_delta_override_identity_drift",
+        "visual_embed_scatter_drift",
+    ]
+    assert receipt["rows"][1]["row_drift_reasons"] == [
+        "mrope_delta_override_identity_drift",
+        "visual_embed_scatter_drift",
+    ]
+
+
+def test_mixed_batch_geometry_receipt_normalizes_scalar_and_missing_identity_tokens() -> None:
+    receipt = build_mixed_batch_geometry_receipt(
+        rows=[
+            {
+                "row_index": 0,
+                "prompt_kwargs": {"input_ids_len": 6, "attention_mask_len": 6},
+                "seq_len": 6,
+                "media_count": 1,
+                "mrope_delta_override": [0],
+                "mrope_delta_override_identity": "row-0-image",
+                "expected_mrope_delta_override_identity": "row-0-image",
+                "visual_embed_count": 64,
+                "expected_visual_embed_count": 64,
+                "visual_embed_identity": "row-0-image",
+                "expected_visual_embed_identity": "row-0-image",
+            },
+            {
+                "row_index": 1,
+                "prompt_kwargs": {"input_ids_len": 3, "attention_mask_len": 3},
+                "seq_len": 3,
+                "media_count": 0,
+                "mrope_delta_override": None,
+                "mrope_delta_override_identity": None,
+                "expected_mrope_delta_override_identity": None,
+                "visual_embed_count": 0,
+                "expected_visual_embed_count": 0,
+                "visual_embed_identity": None,
+                "expected_visual_embed_identity": None,
+            },
+        ]
+    )
+
+    assert receipt["row_geometry_guard"] == "aligned"
+    assert receipt["rows"][0]["mrope_delta_override_identity"] == ["row-0-image"]
+    assert receipt["rows"][0]["visual_embed_identity"] == ["row-0-image"]
+    assert receipt["rows"][1]["mrope_delta_override_identity"] == []
+    assert receipt["rows"][1]["visual_embed_identity"] == []
 
 
 def test_position_metadata_receipt_blocks_media_reuse_when_position_metadata_is_missing() -> None:
