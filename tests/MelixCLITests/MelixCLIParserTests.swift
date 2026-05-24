@@ -2168,6 +2168,79 @@ struct MelixCLIParserTests {
         }
     }
 
+    @Test("server session codec normalizes equals-form profile launch flags")
+    func serverSessionCodecNormalizesEqualsFormProfileLaunchFlags() throws {
+        let createCommand = try MelixCLIParser.parse([
+            "server",
+            "session",
+            "create",
+            "--title=Qwen Throughput",
+            "--model=mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "--default-model=mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "--host=127.0.0.1",
+            "--port=12434",
+            "--rate-limit-per-minute=60",
+            "--timeout-seconds=90",
+            "--model-idle-timeout-seconds=240",
+            "--acceleration-profile=throughput",
+            "--acceleration-mode=speculative_decode",
+            "--draft-model-id=z-lab/Qwen3.5-27B-DFlash",
+            "--num-draft-tokens=8",
+            "--json",
+        ])
+        let updateCommand = try MelixCLIParser.parse([
+            "server",
+            "session",
+            "update",
+            "--server-session-id=server-session-qwen",
+            "--models=mlx-community/Qwen3.5-0.8B-OptiQ-4bit,melix-secondary",
+            "--default-model=melix-secondary",
+            "--acceleration-profile=low_memory",
+            "--acceleration-mode=baseline",
+            "--json",
+        ])
+
+        let createOptions = try #require(createCommand.serverSessionCreateOptions)
+        let updateOptions = try #require(updateCommand.serverSessionUpdateOptions)
+        #expect(createOptions.accelerationProfile == "throughput")
+        #expect(createOptions.accelerationMode == "speculative_decode")
+        #expect(createOptions.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
+        #expect(createOptions.numDraftTokens == 8)
+        #expect(updateOptions.serverSessionID == "server-session-qwen")
+        #expect(updateOptions.servedModelIDs == [
+            "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "melix-secondary",
+        ])
+        #expect(updateOptions.defaultModelID == "melix-secondary")
+        #expect(updateOptions.accelerationProfile == "low-memory")
+        #expect(updateOptions.accelerationMode == "baseline")
+        #expect(updateOptions.draftModelID.isEmpty)
+        #expect(updateOptions.numDraftTokens == 0)
+
+        let createArguments = try MelixCLICommandCodec.arguments(for: createCommand)
+        let updateArguments = try MelixCLICommandCodec.arguments(for: updateCommand)
+        #expect(createArguments.contains { $0.contains("=") && $0.hasPrefix("--") } == false)
+        #expect(updateArguments.contains { $0.contains("=") && $0.hasPrefix("--") } == false)
+        #expect(Self.optionValue("--acceleration-profile", in: createArguments) == "throughput")
+        #expect(Self.optionValue("--acceleration-mode", in: createArguments) == "speculative_decode")
+        #expect(Self.optionValue("--draft-model-id", in: createArguments) == "z-lab/Qwen3.5-27B-DFlash")
+        #expect(Self.optionValue("--num-draft-tokens", in: createArguments) == "8")
+        #expect(Self.optionValue("--acceleration-profile", in: updateArguments) == "low-memory")
+        #expect(Self.optionValue("--acceleration-mode", in: updateArguments) == "baseline")
+        #expect(Self.optionValue("--draft-model-id", in: updateArguments) == nil)
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            try MelixCLIParser.parse([
+                "server",
+                "session",
+                "update",
+                "--server-session-id=server-session-qwen",
+                "--json=true",
+            ])
+        }
+        #expect(try MelixCLIParser.parse(createArguments) == createCommand)
+        #expect(try MelixCLIParser.parse(updateArguments) == updateCommand)
+    }
+
     @Test("parses server start resume wake and stop commands")
     func parsesServerLifecycleCommands() throws {
         let startCommand = try MelixCLIParser.parse([
@@ -4700,6 +4773,17 @@ private extension MelixCLICommand {
             return options
         }
         return nil
+    }
+}
+
+private extension MelixCLIParserTests {
+    static func optionValue(_ option: String, in arguments: [String]) -> String? {
+        guard let index = arguments.firstIndex(of: option),
+              arguments.indices.contains(index + 1)
+        else {
+            return nil
+        }
+        return arguments[index + 1]
     }
 }
 
