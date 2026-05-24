@@ -34,9 +34,8 @@ class EmbeddingCore:
                 error=common_pb2.ErrorStatus(code="runtime_error", message=str(exc))
             )
 
-        return inference_pb2.EmbedResponse(
-            embeddings=[
-                inference_pb2.Embedding(values=values)
-                for values in vectors
-            ]
-        )
+        response = inference_pb2.EmbedResponse()
+        for values in vectors:
+            embedding = response.embeddings.add()
+            embedding.values.extend(values)
+        return response
