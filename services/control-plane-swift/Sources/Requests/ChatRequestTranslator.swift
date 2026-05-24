@@ -271,6 +271,25 @@ public extension NormalizedTextRequest {
             legacyImageFallbackInjected: legacyImageFallbackInjected
         )
     }
+
+    var mediaTypes: Set<String> {
+        var types = Set<String>()
+        for message in messages {
+            for part in message.parts {
+                switch part.media.mediaType {
+                case .image:
+                    types.insert("image")
+                case .audio:
+                    types.insert("audio")
+                case .video:
+                    types.insert("video")
+                default:
+                    continue
+                }
+            }
+        }
+        return types
+    }
 }
 
 public struct ShapedTextRequest: Sendable, Equatable {
@@ -559,7 +578,7 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
                 switch part.type {
                 case .text, .inputText:
                     return false
-                case .imageURL, .inputImage, .inputAudio, .inputVideo:
+                case .image, .imageURL, .inputImage, .audio, .audioURL, .inputAudio, .video, .videoURL, .inputVideo:
                     return true
                 }
             } ?? false

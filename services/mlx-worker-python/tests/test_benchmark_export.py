@@ -25,6 +25,7 @@ from worker.productization.benchmark_export import (
     build_comparison_table,
     build_benchmark_batch_csv,
     build_benchmark_context_csv,
+    build_benchmark_repeat_groups_csv,
     build_benchmark_requests_csv,
     build_benchmark_matrix_requests_csv,
     build_benchmark_matrix_summary_csv,
@@ -645,6 +646,66 @@ def test_collect_benchmark_artifacts_finds_persisted_bench_files(tmp_path: Path)
     assert len(result["benchmark_results"]) == 1
     assert result["benchmark_results"][0]["suite"] == "smoke"
     assert result["run_evidence"][0]["run_id"] == "bench-1"
+
+
+def test_export_bundle_collects_repeat_group_rows_and_csv(tmp_path: Path) -> None:
+    _write_bench_fixtures(tmp_path)
+    (tmp_path / "bench-repeat-groups.jsonl").write_text(
+        json.dumps({
+            "schema_version": "melix.serving_benchmark_repeat_group.v1",
+            "group_id": "bench-1:context:smoke:32:8:1:cold:::",
+            "job_id": "bench-1",
+            "model_id": "melix-dev-text",
+            "task_kind": "text-generation",
+            "source_repo": "HuggingFaceH4/ultrachat_200k",
+            "suite": "smoke",
+            "context_length": 32,
+            "generation_length": 8,
+            "batch_size": 1,
+            "cache_profile": "cold",
+            "reasoning_mode": "",
+            "structured_output_mode": "",
+            "source_row_kind": "context",
+            "repetition_index": [0, 1, 2],
+            "sample_count": 3,
+            "seed_strategy": "runner_repeat_index",
+            "methodology_version": "melix.benchmark_repeat_group.methodology.v1",
+            "throughput_mean": 102.0,
+            "throughput_stdev": 2.0,
+            "throughput_ci95_low": 99.7368,
+            "throughput_ci95_high": 104.2632,
+            "ttft_ms_mean": 12.0,
+            "ttft_ms_stdev": 2.0,
+            "ttft_ms_ci95_low": 9.7368,
+            "ttft_ms_ci95_high": 14.2632,
+            "request_latency_ms_mean": 42.0,
+            "request_latency_ms_stdev": 2.0,
+            "request_latency_ms_ci95_low": 39.7368,
+            "request_latency_ms_ci95_high": 44.2632,
+            "peak_memory_bytes_mean": 2080.0,
+            "peak_memory_bytes_stdev": 32.0,
+            "peak_memory_bytes_ci95_low": 2043.7896,
+            "peak_memory_bytes_ci95_high": 2116.2104,
+            "energy_joules_mean": 4.2,
+            "energy_joules_stdev": 0.2,
+            "energy_joules_ci95_low": 3.9737,
+            "energy_joules_ci95_high": 4.4263,
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    artifacts = collect_benchmark_artifacts(tmp_path)
+    bundle = build_export_bundle(tmp_path)
+    csv_rows = list(csv.DictReader(io.StringIO(build_benchmark_repeat_groups_csv(bundle))))
+
+    assert len(artifacts["benchmark_context_rows"]) == 1
+    assert len(artifacts["benchmark_repeat_groups"]) == 1
+    assert len(bundle["benchmark_repeat_groups"]) == 1
+    assert bundle["benchmark_repeat_groups"][0]["group_id"] == "bench-1:context:smoke:32:8:1:cold:::"
+    assert csv_rows[0]["group_id"] == "bench-1:context:smoke:32:8:1:cold:::"
+    assert csv_rows[0]["repetition_index"] == "0,1,2"
+    assert csv_rows[0]["throughput_ci95_low"] == "99.7368"
+    assert csv_rows[0]["throughput_ci95_high"] == "104.2632"
 
 
 def test_collect_benchmark_artifacts_falls_back_to_legacy_job_json(tmp_path: Path) -> None:

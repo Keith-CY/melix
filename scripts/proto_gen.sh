@@ -16,6 +16,7 @@ PYTHON_PROJECT="$ROOT_DIR/services/mlx-worker-python"
 
 PROTO_FILES=(
   "$SCHEMA_DIR/controlplane/v1/control_plane.proto"
+  "$SCHEMA_DIR/workspace/v1/workspace_manifest.proto"
   "$SCHEMA_DIR/worker/v1/common.proto"
   "$SCHEMA_DIR/worker/v1/runtime.proto"
   "$SCHEMA_DIR/worker/v1/inference.proto"
@@ -99,6 +100,7 @@ python_out = Path(os.environ["PYTHON_OUT_PATH"])
 replacements = {
     "from worker.v1 import ": "from packages.protocol.python.worker.v1 import ",
     "from controlplane.v1 import ": "from packages.protocol.python.controlplane.v1 import ",
+    "from workspace.v1 import ": "from packages.protocol.python.workspace.v1 import ",
 }
 
 for path in python_out.rglob("*.py"):

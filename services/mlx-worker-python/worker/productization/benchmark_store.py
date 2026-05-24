@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import time
 from collections.abc import Iterable
 from dataclasses import replace
@@ -25,6 +26,7 @@ from worker.productization.benchmark_schemas import (
     BenchmarkMatrixSummaryRow,
     ServingBenchmarkRequestRow,
     ServingBenchmarkJob,
+    build_serving_benchmark_repeat_group_row,
     ServingBenchmarkResult,
     build_serving_benchmark_request_row,
 )
@@ -76,6 +78,17 @@ def _float_value(value: object) -> float:
         return float(value or 0.0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _optional_float_value(value: object) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _round_repeat_group_metric(value: float) -> float:
+    return round(float(value), 4)
 
 
 def _int_value(value: object) -> int:
@@ -169,6 +182,15 @@ class BenchmarkStore:
             self._write_jsonl(batch_rows_path, batch_rows_tuple)
             persisted["batch_rows_jsonl"] = batch_rows_path
 
+        repeat_group_rows = self._repeat_group_rows_from_benchmark_rows(
+            context_rows=context_rows_tuple,
+            batch_rows=batch_rows_tuple,
+        )
+        if repeat_group_rows:
+            repeat_groups_path = jobs_root / "bench-repeat-groups.jsonl"
+            self._write_jsonl(repeat_groups_path, repeat_group_rows)
+            persisted["repeat_groups_jsonl"] = repeat_groups_path
+
         request_rows_tuple = tuple(request_rows)
         if not request_rows_tuple:
             request_rows_tuple = self._request_rows_from_context_rows(context_rows_tuple)
@@ -246,6 +268,131 @@ class BenchmarkStore:
             dump_json = json.dumps
             for row in rows:
                 write(dump_json(row) + "\n")
+
+    @staticmethod
+    def _repeat_group_rows_from_benchmark_rows(
+        *,
+        context_rows: tuple[dict[str, object], ...],
+        batch_rows: tuple[dict[str, object], ...],
+    ) -> tuple[dict[str, object], ...]:
+        grouped: dict[tuple[object, ...], list[dict[str, object]]] = {}
+        for source_row_kind, rows in (("context", context_rows), ("batch", batch_rows)):
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                key = BenchmarkStore._repeat_group_key(row, source_row_kind=source_row_kind)
+                if key is None:
+                    continue
+                grouped.setdefault(key, []).append(row)
+
+        repeat_group_rows: list[dict[str, object]] = []
+        for key in sorted(grouped):
+            rows = grouped[key]
+            if not rows:
+                continue
+            first = rows[0]
+            source_row_kind = str(key[0])
+            repetition_index = tuple(
+                sorted({_int_value(row.get("repeat_index", 0)) for row in rows})
+            )
+            metric_fields = BenchmarkStore._repeat_group_metric_fields(rows)
+            repeat_group_rows.append(
+                build_serving_benchmark_repeat_group_row(
+                    job_id=str(first.get("job_id", "")),
+                    model_id=str(first.get("model_id", "")),
+                    task_kind=str(first.get("task_kind", "")),
+                    source_repo=str(first.get("source_repo", "")),
+                    suite=str(first.get("suite", "")),
+                    context_length=_int_value(first.get("context_length", 0)),
+                    generation_length=_int_value(first.get("generation_length", 0)),
+                    batch_size=_int_value(first.get("batch_size", 0)),
+                    cache_profile=str(first.get("cache_profile", "")),
+                    reasoning_mode=str(first.get("reasoning_mode", "")),
+                    structured_output_mode=str(first.get("structured_output_mode", "")),
+                    source_row_kind=source_row_kind,
+                    repetition_index=repetition_index,
+                    sample_count=len(repetition_index),
+                    seed_strategy="runner_repeat_index",
+                    **metric_fields,
+                ).to_dict()
+            )
+        return tuple(repeat_group_rows)
+
+    @staticmethod
+    def _repeat_group_key(
+        row: dict[str, object],
+        *,
+        source_row_kind: str,
+    ) -> tuple[object, ...] | None:
+        if not row.get("job_id") or not row.get("suite"):
+            return None
+        return (
+            source_row_kind,
+            str(row.get("job_id", "")),
+            str(row.get("model_id", "")),
+            str(row.get("task_kind", "")),
+            str(row.get("source_repo", "")),
+            str(row.get("suite", "")),
+            _int_value(row.get("context_length", 0)),
+            _int_value(row.get("generation_length", 0)),
+            _int_value(row.get("batch_size", 0)),
+            str(row.get("cache_profile", "")),
+            str(row.get("reasoning_mode", "")),
+            str(row.get("structured_output_mode", "")),
+        )
+
+    @staticmethod
+    def _repeat_group_metric_fields(rows: list[dict[str, object]]) -> dict[str, float | None]:
+        fields: dict[str, float | None] = {}
+        for output_prefix, input_key in (
+            ("throughput", "decode_tokens_per_second"),
+            ("ttft_ms", "ttft_ms"),
+            ("request_latency_ms", "request_latency_ms"),
+            ("peak_memory_bytes", "peak_memory_bytes"),
+            ("energy_joules", "energy_joules"),
+        ):
+            values_by_repeat: dict[int, list[float]] = {}
+            for row in rows:
+                value = _optional_float_value(row.get(input_key))
+                if value is None:
+                    continue
+                repeat_index = _int_value(row.get("repeat_index", 0))
+                values_by_repeat.setdefault(repeat_index, []).append(value)
+            values = [
+                sum(repeat_values) / len(repeat_values)
+                for repeat_index, repeat_values in sorted(values_by_repeat.items())
+                if repeat_values
+            ]
+            mean, stdev, ci95_low, ci95_high = BenchmarkStore._repeat_group_stats(values)
+            if mean is None:
+                continue
+            fields[f"{output_prefix}_mean"] = mean
+            fields[f"{output_prefix}_stdev"] = stdev
+            fields[f"{output_prefix}_ci95_low"] = ci95_low
+            fields[f"{output_prefix}_ci95_high"] = ci95_high
+        return fields
+
+    @staticmethod
+    def _repeat_group_stats(values: list[float]) -> tuple[float | None, float | None, float | None, float | None]:
+        if not values:
+            return (None, None, None, None)
+        mean = sum(values) / len(values)
+        if len(values) == 1:
+            return (
+                _round_repeat_group_metric(mean),
+                0.0,
+                _round_repeat_group_metric(mean),
+                _round_repeat_group_metric(mean),
+            )
+        variance = sum((value - mean) ** 2 for value in values) / (len(values) - 1)
+        stdev = math.sqrt(variance)
+        half_width = 1.96 * stdev / math.sqrt(len(values))
+        return (
+            _round_repeat_group_metric(mean),
+            _round_repeat_group_metric(stdev),
+            _round_repeat_group_metric(mean - half_width),
+            _round_repeat_group_metric(mean + half_width),
+        )
 
     @staticmethod
     def _output_token_count(

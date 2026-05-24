@@ -96,7 +96,7 @@ The integration evidence path validates these `checks` keys:
 - `vision.ingress.remote_image_refusal_success`
 - `vision.ingress.multi_image_success`
 - `vision.ocr.default_stop_success`
-- `vision.vlm.tool_call_success`
+- `vision.vlm.tool_rejection_success`
 
 The matching `metrics` payload includes:
 

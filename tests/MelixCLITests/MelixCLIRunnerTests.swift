@@ -2570,15 +2570,10 @@ struct MelixCLIRunnerTests {
         let executor = RecordingCLICommandExecutor(
             responses: [
                 #"{"operation":"train_lora","job_id":"lora-job-1","output_path":"/tmp/melix/train_lora/issue365-sft.adapter.json"}"#,
-                #"{"operation":"registry_snapshot","adapters":[]}"#,
                 #"{"operation":"train_alignment","job_id":"align-job-1","output_path":"/tmp/melix/alignment/issue365-dpo.adapter.json","alignment_run_manifest_path":"/tmp/melix/alignment/issue365-dpo.alignment_run.json"}"#,
                 #"{"operation":"upload","job_id":"publish-job-1","output_path":"/tmp/melix/publish/issue365-dpo-merged","artifact_manifest_path":"/tmp/melix/publish/issue365-dpo-merged/manifest.json"}"#,
-                #"{"operation":"registry_snapshot","adapters":[]}"#,
                 #"{"operation":"quantize","job_id":"quantize-job-1","output_path":"/tmp/melix/quantized/issue365-dpo-q4","bundle_path":"/tmp/melix/quantized/issue365-dpo-q4","local_inference_smoke":{"status":"passed","smoke_mode":"runtime_generate"}}"#,
-                #"{"operation":"registry_snapshot","adapters":[]}"#,
                 #"{"operation":"activate_adapter","job_id":"activate-job-1","output_path":"/tmp/melix/activate_adapter/issue365-dpo"}"#,
-                #"{"operation":"registry_snapshot","adapters":[]}"#,
-                #"{"operation":"registry_snapshot","adapters":[]}"#,
             ]
         )
 
@@ -6991,9 +6986,15 @@ struct MelixCLIRunnerTests {
     @Test("lora train forwards dataset, adapter, repo, and tuning parameters")
     func loraTrainForwardsExpectedOperationPayload() async throws {
         let client = StubControlPlaneXPCClient()
+        let melixHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-train-forward-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: melixHome) }
         await client.setModelOperationResult(makeModelOperationResult(outputPath: "/tmp/melix/train_lora/job-1"))
 
-        let output = try await MelixCLIRunner(client: client).run(
+        let output = try await MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": melixHome.path]
+        ).run(
             .loraTrain(
                 .init(
                     modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
@@ -7028,9 +7029,15 @@ struct MelixCLIRunnerTests {
     @Test("lora train forwards Hugging Face dataset metadata and boolean flags")
     func loraTrainForwardsHFDatasetPayload() async throws {
         let client = StubControlPlaneXPCClient()
+        let melixHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-train-hf-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: melixHome) }
         await client.setModelOperationResult(makeModelOperationResult(outputPath: "/tmp/melix/train_lora/job-hf"))
 
-        let output = try await MelixCLIRunner(client: client).run(
+        let output = try await MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": melixHome.path]
+        ).run(
             .loraTrain(
                 .init(
                     modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
@@ -7077,12 +7084,18 @@ struct MelixCLIRunnerTests {
     @Test("lora train returns manifest json when requested")
     func loraTrainReturnsManifestJSONWhenRequested() async throws {
         let client = StubControlPlaneXPCClient()
+        let melixHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-train-json-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: melixHome) }
         await client.setModelOperationResult(makeModelOperationResult(
             outputPath: "/tmp/melix/train_lora/job-1",
             manifestJSON: #"{"job_id":"job-1","status":"completed"}"#
         ))
 
-        let output = try await MelixCLIRunner(client: client).run(
+        let output = try await MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": melixHome.path]
+        ).run(
             .loraTrain(
                 .init(
                     modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
@@ -7102,6 +7115,9 @@ struct MelixCLIRunnerTests {
     @Test("lora train memory fit preflight blocks unsafe Hub model targets")
     func loraTrainMemoryFitPreflightBlocksUnsafeHubModelTargets() async throws {
         let client = StubControlPlaneXPCClient()
+        let melixHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-train-fit-block-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: melixHome) }
         await client.setHubModelCard(
             makeHubModelCard(
                 repoID: "mlx-community/Qwen3.6-35B-A3B-4bit",
@@ -7114,7 +7130,10 @@ struct MelixCLIRunnerTests {
         )
 
         do {
-            _ = try await MelixCLIRunner(client: client).run(
+            _ = try await MelixCLIRunner(
+                client: client,
+                environment: ["MELIX_HOME": melixHome.path]
+            ).run(
                 .loraTrain(
                     .init(
                         modelID: "mlx-community/Qwen3.6-35B-A3B-4bit",
@@ -7141,6 +7160,9 @@ struct MelixCLIRunnerTests {
     @Test("lora train memory risk override stores fit receipt in operation ext")
     func loraTrainMemoryRiskOverrideStoresFitReceiptParameters() async throws {
         let client = StubControlPlaneXPCClient()
+        let melixHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-train-fit-override-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: melixHome) }
         await client.setHubModelCard(
             makeHubModelCard(
                 repoID: "mlx-community/Qwen3.6-35B-A3B-4bit",
@@ -7153,7 +7175,10 @@ struct MelixCLIRunnerTests {
         )
         await client.setModelOperationResult(makeModelOperationResult(outputPath: "/tmp/melix/train_lora/job-fit"))
 
-        _ = try await MelixCLIRunner(client: client).run(
+        _ = try await MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": melixHome.path]
+        ).run(
             .loraTrain(
                 .init(
                     modelID: "mlx-community/Qwen3.6-35B-A3B-4bit",
@@ -7177,6 +7202,209 @@ struct MelixCLIRunnerTests {
         #expect(["good", "blocked", "unknown"].contains(call.ext["memory_fit_disk_status"] ?? ""))
         #expect((receipt["unknown_fields"] as? [String])?.contains("optimizer_state_bytes") == true)
         #expect((receipt["probe"] as? [String: Any])?["name"] as? String == "cli.memory_fit.train")
+    }
+
+    @Test("lora train persists durable queue admission before worker launch")
+    func loraTrainPersistsDurableQueueAdmissionBeforeWorkerLaunch() async throws {
+        let client = StubControlPlaneXPCClient()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-train-queue-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let home = MelixHome(environment: ["MELIX_HOME": root.path])
+        await client.setModelOperationResult(makeModelOperationResult(
+            outputPath: "/tmp/melix/train_lora/job-queue",
+            manifestJSON: #"{"job_id":"job-queue","status":"completed"}"#
+        ))
+
+        let output = try await MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": root.path]
+        ).run(
+            .loraTrain(
+                .init(
+                    modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    datasetSourceKind: "local_package",
+                    datasetURI: "/tmp/datasets/alpaca.jsonl",
+                    adapterName: "demo-adapter",
+                    trainingMode: "qlora",
+                    parameters: [
+                        "dataset_version_id": "dataset-v2",
+                        "project_id": "workspace-a",
+                    ],
+                    json: true
+                )
+            )
+        )
+        let call = try #require(await client.lastModelOperationCall)
+        let queuePayload = try #require(try parseJSONFile(home.localTrainingQueueFileURL.path))
+        let jobs = try #require(queuePayload["jobs"] as? [[String: Any]])
+        let queueJob = try #require(jobs.first)
+
+        #expect(output == #"{"job_id":"job-queue","status":"completed"}"#)
+        #expect(call.operation == "train_lora")
+        #expect(call.ext["training_queue_schema_version"] == "melix.local_training_queue.v1")
+        #expect(call.ext["training_queue_job_id"] == "training-queue-0001")
+        #expect(queueJob["job_id"] as? String == "training-queue-0001")
+        #expect(queueJob["status"] as? String == "succeeded")
+        #expect(queueJob["model_id"] as? String == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(queueJob["dataset_version_id"] as? String == "dataset-v2")
+    }
+
+    @Test("lora train rejects busy durable queue before worker launch")
+    func loraTrainRejectsBusyDurableQueueBeforeWorkerLaunch() async throws {
+        let client = StubControlPlaneXPCClient()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-train-busy-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let home = MelixHome(environment: ["MELIX_HOME": root.path])
+        let queue = LocalTrainingQueueStore(melixHome: home)
+        let active = try queue.admit(
+            LocalTrainingQueueAdmissionRequest(
+                modelID: "melix-dev-text",
+                datasetURI: "/tmp/active.jsonl",
+                adapterName: "active-adapter"
+            )
+        )
+        _ = try queue.markRunning(jobID: active.jobID)
+
+        do {
+            _ = try await MelixCLIRunner(
+                client: client,
+                environment: ["MELIX_HOME": root.path]
+            ).run(
+                .loraTrain(
+                    .init(
+                        modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                        datasetURI: "/tmp/datasets/alpaca.jsonl",
+                        adapterName: "demo-adapter"
+                    )
+                )
+            )
+            Issue.record("Expected busy training queue to reject before train_lora worker launch.")
+        } catch let error as MelixCLIError {
+            #expect(error == .requestFailed(
+                code: "training_queue_busy",
+                message: "Local training queue is busy with training-queue-0001."
+            ))
+        }
+
+        #expect(await client.modelOperationCalls.filter { $0.operation == "train_lora" }.isEmpty)
+        let queuePayload = try #require(try parseJSONFile(home.localTrainingQueueFileURL.path))
+        let metrics = try #require(queuePayload["metrics"] as? [String: Any])
+        #expect(metrics["admission_refusal_count"] as? Int == 1)
+    }
+
+    @Test("lora train marks durable queue failed when worker throws Melix errors")
+    func loraTrainMarksDurableQueueFailedWhenWorkerThrowsMelixErrors() async throws {
+        let cases: [(name: String, error: MelixCLIError, expectedCode: String)] = [
+            (
+                "request-failed",
+                .requestFailed(code: "worker_busy", message: "Worker is busy."),
+                "worker_busy"
+            ),
+            (
+                "request-failed-empty-code",
+                .requestFailed(code: "", message: "Worker failed without a code."),
+                "training_queue_worker_failed"
+            ),
+            (
+                "usage",
+                .usage("Bad train options."),
+                "training_queue_invalid_options"
+            ),
+            (
+                "missing",
+                .missingRequired("dataset is required."),
+                "training_queue_missing_options"
+            ),
+            (
+                "runtime",
+                .runtime("Worker crashed."),
+                "training_queue_worker_failed"
+            ),
+        ]
+
+        for testCase in cases {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("melix-lora-train-error-\(testCase.name)-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let home = MelixHome(environment: ["MELIX_HOME": root.path])
+            let runner = MelixCLIRunner(
+                client: StubControlPlaneXPCClient(),
+                environment: ["MELIX_HOME": root.path],
+                commandExecutor: { _ in
+                    throw testCase.error
+                }
+            )
+
+            do {
+                _ = try await runner.run(
+                    .loraTrain(
+                        .init(
+                            modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                            datasetURI: "/tmp/datasets/alpaca.jsonl",
+                            adapterName: "demo-adapter",
+                            json: true
+                        )
+                    )
+                )
+                Issue.record("Expected lora train to rethrow \(testCase.name) worker error.")
+            } catch let error as MelixCLIError {
+                #expect(error == testCase.error)
+            }
+
+            let queuePayload = try #require(try parseJSONFile(home.localTrainingQueueFileURL.path))
+            let jobs = try #require(queuePayload["jobs"] as? [[String: Any]])
+            let queueJob = try #require(jobs.first)
+            let operatorErrors = try #require(queueJob["operator_errors"] as? [[String: Any]])
+            let operatorError = try #require(operatorErrors.first)
+
+            #expect(queueJob["status"] as? String == "failed")
+            #expect(operatorError["code"] as? String == testCase.expectedCode)
+            #expect(operatorError["message"] as? String == testCase.error.errorDescription)
+        }
+    }
+
+    @Test("lora train marks durable queue failed when worker throws non-Melix error")
+    func loraTrainMarksDurableQueueFailedWhenWorkerThrowsNonMelixError() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-train-non-melix-error-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let home = MelixHome(environment: ["MELIX_HOME": root.path])
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": root.path],
+            commandExecutor: { _ in
+                throw NSError(domain: "MelixCLIRunnerTests", code: 42)
+            }
+        )
+
+        do {
+            _ = try await runner.run(
+                .loraTrain(
+                    .init(
+                        modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                        datasetURI: "/tmp/datasets/alpaca.jsonl",
+                        adapterName: "demo-adapter",
+                        json: true
+                    )
+                )
+            )
+            Issue.record("Expected lora train to rethrow non-Melix worker error.")
+        } catch let error as NSError {
+            #expect(error.domain == "MelixCLIRunnerTests")
+            #expect(error.code == 42)
+        }
+
+        let queuePayload = try #require(try parseJSONFile(home.localTrainingQueueFileURL.path))
+        let jobs = try #require(queuePayload["jobs"] as? [[String: Any]])
+        let queueJob = try #require(jobs.first)
+        let operatorErrors = try #require(queueJob["operator_errors"] as? [[String: Any]])
+        let operatorError = try #require(operatorErrors.first)
+
+        #expect(queueJob["status"] as? String == "failed")
+        #expect(operatorError["code"] as? String == "training_queue_worker_failed")
+        #expect((operatorError["message"] as? String)?.contains("MelixCLIRunnerTests") == true)
     }
 
     @Test("lora run chains train activate compare and exports artifacts")
@@ -7215,7 +7443,10 @@ struct MelixCLIRunnerTests {
         ])
         await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
 
-        let output = try await MelixCLIRunner(client: client).run(
+        let output = try await MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": root.path]
+        ).run(
             .loraRun(
                 .init(
                     training: .init(
@@ -7306,7 +7537,10 @@ struct MelixCLIRunnerTests {
         ])
         await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
 
-        let output = try await MelixCLIRunner(client: client).run(
+        let output = try await MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": root.path]
+        ).run(
             .loraRun(
                 .init(
                     training: .init(
@@ -7412,9 +7646,15 @@ struct MelixCLIRunnerTests {
     @Test("lora run memory fit preflight blocks local model ids before training")
     func loraRunMemoryFitPreflightBlocksLocalModelIDsBeforeTraining() async throws {
         let client = StubControlPlaneXPCClient()
+        let melixHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-run-fit-block-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: melixHome) }
 
         do {
-            _ = try await MelixCLIRunner(client: client).run(
+            _ = try await MelixCLIRunner(
+                client: client,
+                environment: ["MELIX_HOME": melixHome.path]
+            ).run(
                 .loraRun(
                     .init(
                         training: .init(
@@ -8348,6 +8588,15 @@ struct MelixCLIRunnerTests {
         #expect(detailed.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == output)
     }
 
+    @Test("process executor resolves bare command names through PATH")
+    func processExecutorResolvesBareCommandNamesThroughPATH() async throws {
+        let executor = MelixCLIProcessExecutor(baseCommand: ["printf"])
+
+        let output = try await executor.run(arguments: ["melix-path-ok"])
+
+        #expect(output == "melix-path-ok")
+    }
+
     @Test("process executor surfaces subprocess failures and rejects empty commands")
     func processExecutorSurfacesFailuresAndMisconfiguration() async throws {
         let failingExecutor = MelixCLIProcessExecutor(
@@ -8548,6 +8797,590 @@ struct MelixCLIRunnerTests {
         #expect(result.manifestJson == "plain-manifest-output")
         #expect(result.jobID.isEmpty)
         #expect(result.outputPath.isEmpty)
+    }
+
+    @Test("workspace preflight command shells out through the Python receipt builder")
+    func workspacePreflightCommandShellsOutThroughPythonReceiptBuilder() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(
+            responses: [
+                """
+                {
+                  "schema_version": "melix.workspace_preflight_receipt.v1",
+                  "status": "blocked",
+                  "project_id": "demo",
+                  "manifest_path": "workspace-manifest.json",
+                  "workspace_manifest_schema_version": "melix.workspace_manifest.v1",
+                  "checks": [
+                    {
+                      "code": "WORKSPACE_ROOT_MISSING",
+                      "status": "error",
+                      "title": "Required workspace roots are missing.",
+                      "detail": "Create the missing root directories or restore the workspace artifact before running this workspace.",
+                      "recovery_hint": "Create the missing root paths, or regenerate the workspace manifest after moving the workspace.",
+                      "items": [
+                        {
+                          "root_id": "runs",
+                          "path": "/tmp/melix-workspace/runs"
+                        }
+                      ]
+                    }
+                  ],
+                  "metrics": {
+                    "missing_root_count": 1,
+                    "preflight_latency_ms": 2.5
+                  }
+                }
+                """,
+            ]
+        )
+        let runner = MelixCLIRunner(client: client, commandExecutor: executor.run)
+
+        let output = try await runner.run(
+            .workspacePreflight(
+                .init(
+                    manifestPath: "/tmp/melix-workspace/workspace-manifest.json",
+                    outputPath: "/tmp/melix-workspace/workspace-preflight-receipt.json",
+                    json: true
+                )
+            )
+        )
+
+        let payload = try #require(parseJSONObject(output))
+        #expect(payload["status"] as? String == "blocked")
+        let commands = await executor.commands
+        #expect(commands == [
+            [
+                "run",
+                "--project",
+                "services/mlx-worker-python",
+                "--extra",
+                "mlx",
+                "python",
+                "scripts/workspace_manifest_preflight.py",
+                "--manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--output",
+                "/tmp/melix-workspace/workspace-preflight-receipt.json",
+            ],
+        ])
+    }
+
+    @Test("dataset prepare ingest command shells out through the Python receipt builder")
+    func datasetPrepareIngestCommandShellsOutThroughPythonReceiptBuilder() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(
+            responses: [
+                """
+                {
+                  "schema_version": "melix.dataset_ingest_receipt.v1",
+                  "status": "ready",
+                  "workspace_project_id": "m-courtyard-demo",
+                  "dataset_preparation_id": "prep-1",
+                  "source_inventory": [
+                    {
+                      "source_id": "source-notes",
+                      "source_kind": "text",
+                      "record_count": 1
+                    }
+                  ],
+                  "quality_control_summary": {
+                    "source_file_count": 1,
+                    "segment_count": 1,
+                    "pii_mask_count": 1,
+                    "exact_dedup_count": 0,
+                    "fuzzy_dedup_count": 0,
+                    "fuzzy_dedup_ratio": 0
+                  },
+                  "metrics": {
+                    "source_file_count": 1,
+                    "segment_count": 1,
+                    "pii_mask_count": 1
+                  }
+                }
+                """,
+            ]
+        )
+        let runner = MelixCLIRunner(client: client, commandExecutor: executor.run)
+
+        let output = try await runner.run(
+            .datasetPrepareIngest(
+                .init(
+                    workspaceProjectID: "m-courtyard-demo",
+                    workspaceManifestPath: "/tmp/melix-workspace/workspace-manifest.json",
+                    inputPath: "/tmp/melix-workspace/raw",
+                    outputDir: "/tmp/melix-workspace/datasets/prep",
+                    datasetPreparationID: "prep-1",
+                    receiptOutputPath: "/tmp/melix-workspace/reports/dataset-ingest-receipt.json",
+                    piiMask: true,
+                    exactDedup: false,
+                    fuzzyDedup: true,
+                    segmentation: true,
+                    segmentationStrategy: "paragraph",
+                    json: true
+                )
+            )
+        )
+
+        let payload = try #require(parseJSONObject(output))
+        #expect(payload["schema_version"] as? String == "melix.dataset_ingest_receipt.v1")
+        let commands = await executor.commands
+        #expect(commands == [
+            [
+                "run",
+                "--project",
+                "services/mlx-worker-python",
+                "--extra",
+                "mlx",
+                "python",
+                "scripts/dataset_preparation_ingest.py",
+                "--workspace-project-id",
+                "m-courtyard-demo",
+                "--workspace-manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--input",
+                "/tmp/melix-workspace/raw",
+                "--output-dir",
+                "/tmp/melix-workspace/datasets/prep",
+                "--dataset-preparation-id",
+                "prep-1",
+                "--output",
+                "/tmp/melix-workspace/reports/dataset-ingest-receipt.json",
+                "--pii-mask",
+                "true",
+                "--exact-dedup",
+                "false",
+                "--fuzzy-dedup",
+                "true",
+                "--segmentation",
+                "true",
+                "--segmentation-strategy",
+                "paragraph",
+            ],
+        ])
+    }
+
+    @Test("dataset prepare version commands shell out through the Python version builder")
+    func datasetPrepareVersionCommandsShellOutThroughPythonVersionBuilder() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(
+            responses: [
+                """
+                {
+                  "schema_version": "melix.dataset_version.v1",
+                  "status": "ready",
+                  "dataset_id": "support-chat",
+                  "version_id": "support-chat-v1",
+                  "train_count": 2,
+                  "validation_count": 1,
+                  "failed_count": 1
+                }
+                """,
+                """
+                {
+                  "schema_version": "melix.dataset_retry_receipt.v1",
+                  "base_version_id": "support-chat-v1",
+                  "retry_version_id": "support-chat-v2",
+                  "input_failed_segment_count": 1,
+                  "retry_success_count": 1,
+                  "retry_failed_count": 0,
+                  "reused_successful_sample_count": 3,
+                  "rewritten_successful_sample_count": 0,
+                  "failed_retry_success_rate": 1.0
+                }
+                """,
+                """
+                {
+                  "schema_version": "melix.dataset_version_list.v1",
+                  "dataset_id": "support-chat",
+                  "versions": [
+                    {
+                      "version_id": "support-chat-v1",
+                      "created_at": "2026-05-24T01:00:00Z"
+                    },
+                    {
+                      "version_id": "support-chat-v2",
+                      "created_at": "2026-05-24T02:00:00Z"
+                    }
+                  ],
+                  "metrics": {
+                    "dataset_version_listing_latency_ms": 0.25,
+                    "dataset_version_count": 2
+                  }
+                }
+                """,
+            ]
+        )
+        let runner = MelixCLIRunner(client: client, commandExecutor: executor.run)
+
+        let versionOutput = try await runner.run(
+            .datasetPrepareVersion(
+                .init(
+                    workspaceManifestPath: "/tmp/melix-workspace/workspace-manifest.json",
+                    ingestReceiptPath: "/tmp/melix-workspace/prepared/dataset-ingest-receipt.json",
+                    outputRoot: "/tmp/melix-workspace/datasets",
+                    datasetID: "support-chat",
+                    versionID: "support-chat-v1",
+                    createdAt: "2026-05-24T01:00:00Z",
+                    mode: "chat",
+                    generatorModel: "melix.local.dataset-versioner.v1",
+                    outputKind: "training",
+                    outputFormat: "prompt_completion",
+                    validationRatio: "0.2",
+                    failSegmentIDs: ["segment-1"],
+                    json: true
+                )
+            )
+        )
+        let retryOutput = try await runner.run(
+            .datasetPrepareRetryFailed(
+                .init(
+                    workspaceManifestPath: "/tmp/melix-workspace/workspace-manifest.json",
+                    datasetVersionPath: "/tmp/melix-workspace/datasets/support-chat/versions/support-chat-v1/dataset-version.json",
+                    outputRoot: "/tmp/melix-workspace/datasets",
+                    versionID: "support-chat-v2",
+                    createdAt: "2026-05-24T02:00:00Z",
+                    generatorModel: "melix.local.dataset-versioner.v1",
+                    json: true
+                )
+            )
+        )
+        let listOutput = try await runner.run(
+            .datasetPrepareListVersions(
+                .init(
+                    workspaceManifestPath: "/tmp/melix-workspace/workspace-manifest.json",
+                    outputRoot: "/tmp/melix-workspace/datasets",
+                    datasetID: "support-chat",
+                    json: true
+                )
+            )
+        )
+
+        #expect(try #require(parseJSONObject(versionOutput))["schema_version"] as? String == "melix.dataset_version.v1")
+        #expect(try #require(parseJSONObject(retryOutput))["schema_version"] as? String == "melix.dataset_retry_receipt.v1")
+        #expect(try #require(parseJSONObject(listOutput))["schema_version"] as? String == "melix.dataset_version_list.v1")
+        let commands = await executor.commands
+        #expect(commands == [
+            [
+                "run",
+                "--project",
+                "services/mlx-worker-python",
+                "--extra",
+                "mlx",
+                "python",
+                "scripts/dataset_preparation_version.py",
+                "version",
+                "--workspace-manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--ingest-receipt",
+                "/tmp/melix-workspace/prepared/dataset-ingest-receipt.json",
+                "--output-root",
+                "/tmp/melix-workspace/datasets",
+                "--dataset-id",
+                "support-chat",
+                "--version-id",
+                "support-chat-v1",
+                "--created-at",
+                "2026-05-24T01:00:00Z",
+                "--mode",
+                "chat",
+                "--generator-model",
+                "melix.local.dataset-versioner.v1",
+                "--output-kind",
+                "training",
+                "--output-format",
+                "prompt_completion",
+                "--validation-ratio",
+                "0.2",
+                "--fail-segment-id",
+                "segment-1",
+            ],
+            [
+                "run",
+                "--project",
+                "services/mlx-worker-python",
+                "--extra",
+                "mlx",
+                "python",
+                "scripts/dataset_preparation_version.py",
+                "retry-failed",
+                "--workspace-manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--dataset-version",
+                "/tmp/melix-workspace/datasets/support-chat/versions/support-chat-v1/dataset-version.json",
+                "--output-root",
+                "/tmp/melix-workspace/datasets",
+                "--version-id",
+                "support-chat-v2",
+                "--created-at",
+                "2026-05-24T02:00:00Z",
+                "--generator-model",
+                "melix.local.dataset-versioner.v1",
+            ],
+            [
+                "run",
+                "--project",
+                "services/mlx-worker-python",
+                "--extra",
+                "mlx",
+                "python",
+                "scripts/dataset_preparation_version.py",
+                "list-versions",
+                "--workspace-manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--output-root",
+                "/tmp/melix-workspace/datasets",
+                "--dataset-id",
+                "support-chat",
+            ],
+        ])
+    }
+
+    @Test("dataset prepare commands render readable receipts")
+    func datasetPrepareCommandsRenderReadableReceipts() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(
+            responses: [
+                """
+                {
+                  "schema_version": "melix.dataset_ingest_receipt.v1",
+                  "status": "ready",
+                  "workspace_project_id": "m-courtyard-demo",
+                  "metrics": {
+                    "source_file_count": 2,
+                    "segment_count": 5
+                  }
+                }
+                """,
+                """
+                {
+                  "schema_version": "melix.workspace_preflight_receipt.v1",
+                  "status": "blocked",
+                  "project_id": "m-courtyard-demo",
+                  "checks": [
+                    {
+                      "code": "WORKSPACE_ROOT_MISSING",
+                      "status": "error",
+                      "title": "Workspace artifact root is missing",
+                      "detail": "Create the missing root before running the workspace."
+                    },
+                    {
+                      "code": "RAW_DATA_READY",
+                      "status": "ok",
+                      "title": "Raw data is readable."
+                    }
+                  ]
+                }
+                """,
+                """
+                {
+                  "schema_version": "melix.dataset_version.v1",
+                  "dataset_id": "support-chat",
+                  "version_id": "support-chat-v1",
+                  "train_count": 7,
+                  "validation_count": 2,
+                  "failed_count": 1
+                }
+                """,
+                """
+                {
+                  "schema_version": "melix.dataset_retry_receipt.v1",
+                  "base_version_id": "support-chat-v1",
+                  "retry_version_id": "support-chat-v2",
+                  "retry_success_count": 1,
+                  "retry_failed_count": 0,
+                  "rewritten_successful_sample_count": 3
+                }
+                """,
+                """
+                {
+                  "schema_version": "melix.dataset_version_list.v1",
+                  "dataset_id": "support-chat",
+                  "versions": [
+                    {
+                      "version_id": "support-chat-v1",
+                      "created_at": "2026-05-24T01:00:00Z",
+                      "train_count": 7,
+                      "validation_count": 2,
+                      "failed_count": 1
+                    }
+                  ]
+                }
+                """,
+                "plain ingest receipt",
+            ]
+        )
+        let runner = MelixCLIRunner(client: client, commandExecutor: executor.run)
+
+        let ingestOutput = try await runner.run(
+            .datasetPrepareIngest(
+                .init(
+                    workspaceProjectID: "m-courtyard-demo",
+                    workspaceManifestPath: "/tmp/melix-workspace/workspace-manifest.json",
+                    inputPath: "/tmp/melix-workspace/raw",
+                    outputDir: "/tmp/melix-workspace/datasets/prep",
+                    datasetPreparationID: "prep-1"
+                )
+            )
+        )
+        let preflightOutput = try await runner.run(
+            .workspacePreflight(
+                .init(manifestPath: "/tmp/melix-workspace/workspace-manifest.json")
+            )
+        )
+        let versionOutput = try await runner.run(
+            .datasetPrepareVersion(
+                .init(
+                    workspaceManifestPath: "/tmp/melix-workspace/workspace-manifest.json",
+                    ingestReceiptPath: "/tmp/melix-workspace/reports/dataset-ingest-receipt.json",
+                    outputRoot: "/tmp/melix-workspace/datasets",
+                    datasetID: "support-chat"
+                )
+            )
+        )
+        let retryOutput = try await runner.run(
+            .datasetPrepareRetryFailed(
+                .init(
+                    workspaceManifestPath: "/tmp/melix-workspace/workspace-manifest.json",
+                    datasetVersionPath: "/tmp/melix-workspace/datasets/support-chat/versions/support-chat-v1/dataset-version.json",
+                    outputRoot: "/tmp/melix-workspace/datasets"
+                )
+            )
+        )
+        let listOutput = try await runner.run(
+            .datasetPrepareListVersions(
+                .init(
+                    workspaceManifestPath: "/tmp/melix-workspace/workspace-manifest.json",
+                    outputRoot: "/tmp/melix-workspace/datasets",
+                    datasetID: "support-chat"
+                )
+            )
+        )
+        let fallbackOutput = try await runner.run(
+            .datasetPrepareIngest(
+                .init(
+                    workspaceProjectID: "m-courtyard-demo",
+                    workspaceManifestPath: "/tmp/melix-workspace/workspace-manifest.json",
+                    inputPath: "/tmp/melix-workspace/raw",
+                    outputDir: "/tmp/melix-workspace/datasets/prep",
+                    datasetPreparationID: "prep-2"
+                )
+            )
+        )
+
+        #expect(ingestOutput == "Dataset ingest ready for m-courtyard-demo\nSources: 2, segments: 5\n")
+        #expect(preflightOutput.contains("Workspace preflight blocked for m-courtyard-demo"))
+        #expect(preflightOutput.contains("- WORKSPACE_ROOT_MISSING: Workspace artifact root is missing"))
+        #expect(preflightOutput.contains("Create the missing root before running the workspace."))
+        #expect(preflightOutput.contains("RAW_DATA_READY") == false)
+        #expect(versionOutput == "Dataset version support-chat-v1 for support-chat\nSamples: train 7, validation 2, failed 1\n")
+        #expect(retryOutput == "Dataset retry support-chat-v1 -> support-chat-v2\nRetry success: 1, failed: 0, rewritten successful samples: 3\n")
+        #expect(listOutput == """
+        dataset_id\tversion_id\tcreated_at\ttrain_count\tvalidation_count\tfailed_count
+        support-chat\tsupport-chat-v1\t2026-05-24T01:00:00Z\t7\t2\t1
+
+        """)
+        #expect(fallbackOutput == "plain ingest receipt\n")
+    }
+
+    @Test("workspace preflight rejects an empty manifest path before dispatch")
+    func workspacePreflightRejectsEmptyManifestPathBeforeDispatch() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(responses: [])
+        let runner = MelixCLIRunner(client: client, commandExecutor: executor.run)
+
+        do {
+            _ = try await runner.run(.workspacePreflight(.init(manifestPath: "  ", json: true)))
+            Issue.record("Expected workspace preflight to reject an empty manifest path.")
+        } catch let error as MelixCLIError {
+            #expect(error == .missingRequired("--manifest is required for melix workspace preflight."))
+        }
+
+        #expect(await executor.commands.isEmpty)
+    }
+
+    @Test("workspace preflight preserves undecodable readable subprocess output")
+    func workspacePreflightPreservesUndecodableReadableSubprocessOutput() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(responses: ["plain preflight output"])
+        let runner = MelixCLIRunner(client: client, commandExecutor: executor.run)
+
+        let output = try await runner.run(
+            .workspacePreflight(.init(manifestPath: "/tmp/workspace-manifest.json"))
+        )
+
+        #expect(output == "plain preflight output\n")
+    }
+
+    @Test("workspace preflight live subprocess renders blocking receipt")
+    func workspacePreflightLiveSubprocessRendersBlockingReceipt() async throws {
+        let workspaceRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: workspaceRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: workspaceRoot) }
+
+        let manifestPath = workspaceRoot.appendingPathComponent("workspace-manifest.json")
+        try writeWorkspaceManifestForPreflightTest(to: manifestPath)
+        try FileManager.default.createDirectory(
+            at: workspaceRoot.appendingPathComponent("raw", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try "dialogue".write(
+            to: workspaceRoot.appendingPathComponent("raw/dialogues.jsonl"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let repoRoot = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        #expect(FileManager.default.fileExists(
+            atPath: repoRoot.appendingPathComponent("scripts/workspace_manifest_preflight.py").path
+        ))
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: [
+                "MELIX_REPO_ROOT": repoRoot.path,
+                "MELIX_UV": try requireExecutablePathForTest("uv"),
+            ]
+        )
+
+        let output = try await runner.run(.workspacePreflight(.init(manifestPath: manifestPath.path)))
+
+        #expect(output.contains("Workspace preflight blocked for swift-preflight"))
+        #expect(output.contains("- WORKSPACE_ROOT_MISSING: Workspace artifact root is missing"))
+        #expect(output.contains("One or more manifest artifact roots do not exist on disk."))
+    }
+
+    @Test("workspace preflight live subprocess reports unexpected process failures")
+    func workspacePreflightLiveSubprocessReportsUnexpectedProcessFailures() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let fakeUV = root.appendingPathComponent("fake-uv")
+        try """
+        #!/bin/sh
+        printf 'partial receipt\\n'
+        printf 'fatal preflight\\n' >&2
+        exit 2
+        """.write(to: fakeUV, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fakeUV.path)
+
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: [
+                "MELIX_REPO_ROOT": FileManager.default.currentDirectoryPath,
+                "MELIX_UV": fakeUV.path,
+            ]
+        )
+
+        do {
+            _ = try await runner.run(.workspacePreflight(.init(manifestPath: "/tmp/workspace-manifest.json", json: true)))
+            Issue.record("Expected workspace preflight to report an unexpected subprocess failure.")
+        } catch let error as MelixCLIError {
+            let message = error.localizedDescription
+            #expect(message.contains("fatal preflight"))
+        }
     }
 
     @Test("subprocess-backed eval compare supports repo ids and decodes nested result payloads")
@@ -11210,6 +12043,87 @@ struct MelixCLIRunnerTests {
         #expect(renderedFallbacks.contains("manual"))
     }
 
+    @Test("jobs CLI restores local training queue rows and persists cancellation")
+    func jobsCLIRestoresLocalTrainingQueueRowsAndPersistsCancellation() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-jobs-training-queue-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let home = MelixHome(environment: ["MELIX_HOME": root.path])
+        let queue = LocalTrainingQueueStore(melixHome: home)
+        let admitted = try queue.admit(
+            LocalTrainingQueueAdmissionRequest(
+                modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                datasetURI: "/tmp/datasets/alpaca.jsonl",
+                adapterName: "demo-adapter",
+                trainingMode: "qlora",
+                parameters: [
+                    "dataset_version_id": "dataset-v2",
+                    "workspace_manifest_path": "/tmp/workspace/manifest.json",
+                ]
+            )
+        )
+        _ = try queue.markRunning(jobID: admitted.jobID)
+
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": root.path]
+        )
+
+        let listJSON = try #require(parseJSONArray(
+            try await runner.run(.jobsList(.init(json: true)))
+        ) as? [[String: Any]])
+        let summary = try #require(listJSON.first { $0["job_id"] as? String == admitted.jobID })
+        #expect(summary["status"] as? String == "running")
+        #expect(summary["record_path"] as? String == home.localTrainingQueueFileURL.path)
+
+        let showJSON = try #require(parseJSONObject(
+            try await runner.run(.jobsShow(.init(jobID: admitted.jobID, json: true)))
+        ))
+        let trainingQueue = try #require(showJSON["training_queue"] as? [String: Any])
+        #expect(showJSON["schema_version"] as? String == "melix.job_status.v1")
+        #expect(showJSON["phase"] as? String == "running")
+        #expect(trainingQueue["schema_version"] as? String == "melix.local_training_queue.v1")
+        #expect(trainingQueue["dataset_version_id"] as? String == "dataset-v2")
+
+        let artifactsJSON = try #require(parseJSONObject(
+            try await runner.run(.jobsArtifacts(.init(jobID: admitted.jobID, json: true)))
+        ))
+        let artifacts = try #require(artifactsJSON["artifacts"] as? [[String: Any]])
+        #expect(artifactsJSON["artifact_count"] as? Int == artifacts.count)
+        #expect(artifacts.contains { $0["kind"] as? String == "training_queue" })
+        #expect(artifacts.contains { $0["kind"] as? String == "cancel_request" })
+
+        do {
+            _ = try await runner.run(.jobsLogs(.init(jobID: admitted.jobID, follow: true, json: true)))
+            Issue.record("Expected local training queue job logs to report no log snapshot.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("No logs were found for \(admitted.jobID)."))
+        }
+
+        let cancelJSON = try #require(parseJSONObject(
+            try await runner.run(.jobsCancel(.init(jobID: admitted.jobID, json: true)))
+        ))
+        let requestPath = try #require(cancelJSON["request_path"] as? String)
+        let request = try #require(try parseJSONFile(requestPath))
+        let cancelledShow = try #require(parseJSONObject(
+            try await runner.run(.jobsShow(.init(jobID: admitted.jobID, json: true)))
+        ))
+        let cancellation = try #require(cancelledShow["cancellation"] as? [String: Any])
+
+        #expect(cancelJSON["cancel_requested"] as? Bool == true)
+        #expect(cancelJSON["status"] as? String == "cancel_requested")
+        #expect(request["source_queue_path"] as? String == home.localTrainingQueueFileURL.path)
+        #expect(cancellation["requested"] as? Bool == true)
+
+        _ = try queue.markSucceeded(jobID: admitted.jobID)
+        let terminalCancelJSON = try #require(parseJSONObject(
+            try await runner.run(.jobsCancel(.init(jobID: admitted.jobID, json: true)))
+        ))
+        #expect(terminalCancelJSON["cancel_requested"] as? Bool == false)
+        #expect(terminalCancelJSON["status"] as? String == "succeeded")
+        #expect(terminalCancelJSON["reason"] as? String == "job_terminal_or_not_active")
+    }
+
     @Test("run record store handles default roots invalid records and render fallbacks")
     func runRecordStoreHandlesDefaultRootsInvalidRecordsAndRenderFallbacks() throws {
         let root = FileManager.default.temporaryDirectory
@@ -12479,6 +13393,180 @@ private func parseJSONObject(_ text: String) -> [String: Any]? {
 private func writeJSONObjectForTest(_ object: [String: Any], to url: URL) throws {
     let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
     try data.write(to: url)
+}
+
+private func requireExecutablePathForTest(_ executableName: String) throws -> String {
+    let searchPaths = (ProcessInfo.processInfo.environment["PATH"] ?? "")
+        .split(separator: ":")
+        .map(String.init)
+    for searchPath in searchPaths {
+        let candidate = URL(fileURLWithPath: searchPath).appendingPathComponent(executableName).path
+        if FileManager.default.isExecutableFile(atPath: candidate) {
+            return candidate
+        }
+    }
+    throw MelixCLIError.runtime("Required test executable '\(executableName)' was not found in PATH.")
+}
+
+private func writeWorkspaceManifestForPreflightTest(to url: URL) throws {
+    try writeJSONObjectForTest(
+        [
+            "schema_version": "melix.workspace_manifest.v1",
+            "project": [
+                "project_id": "swift-preflight",
+                "display_name": "Swift Preflight Workspace",
+                "owner": "melix-local",
+                "created_at": "2026-05-24T00:00:00Z",
+                "updated_at": "2026-05-24T00:00:00Z",
+            ],
+            "artifact_roots": [
+                [
+                    "root_id": "workspace",
+                    "kind": "ARTIFACT_ROOT_KIND_WORKSPACE",
+                    "path": ".",
+                    "uri": "melix-workspace://swift-preflight",
+                    "melix_owned": true,
+                    "redaction_scope": "relative_path_only",
+                ],
+                [
+                    "root_id": "jobs",
+                    "kind": "ARTIFACT_ROOT_KIND_JOBS",
+                    "path": "jobs",
+                    "uri": "melix-workspace://swift-preflight/jobs",
+                    "melix_owned": true,
+                    "redaction_scope": "relative_path_only",
+                ],
+            ],
+            "artifacts": [
+                [
+                    "artifact_id": "raw-dialogues",
+                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_RAW_INPUTS",
+                    "root_id": "workspace",
+                    "relative_path": "raw/dialogues.jsonl",
+                    "media_type": "application/jsonl",
+                    "provenance_ref_ids": ["operator-import"],
+                ],
+                [
+                    "artifact_id": "cleaned-dialogues",
+                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_CLEANED_DATA",
+                    "root_id": "workspace",
+                    "relative_path": "cleaned/dialogues.clean.jsonl",
+                    "media_type": "application/jsonl",
+                    "provenance_ref_ids": ["operator-import"],
+                ],
+                [
+                    "artifact_id": "dataset-v1",
+                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_DATASET_VERSION",
+                    "root_id": "workspace",
+                    "relative_path": "dataset/20260524T000000Z/manifest.json",
+                    "schema_version": "melix.training_dataset_package.v1",
+                    "media_type": "application/json",
+                    "provenance_ref_ids": ["operator-import", "dataset-generation-v1"],
+                ],
+                [
+                    "artifact_id": "adapter-v1",
+                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_ADAPTER",
+                    "root_id": "jobs",
+                    "relative_path": "train_lora/model-ops-0001/train_lora.adapter.json",
+                    "schema_version": "melix.lora_adapter_package.v1",
+                    "media_type": "application/json",
+                    "provenance_ref_ids": ["dataset-generation-v1", "lora-train-v1"],
+                ],
+                [
+                    "artifact_id": "training-log",
+                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_LOG",
+                    "root_id": "jobs",
+                    "relative_path": "train_lora/model-ops-0001/run.log",
+                    "media_type": "text/plain",
+                    "provenance_ref_ids": ["lora-train-v1"],
+                ],
+                [
+                    "artifact_id": "adapter-export",
+                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_EXPORT",
+                    "root_id": "workspace",
+                    "relative_path": "exports/adapter-v1/export-manifest.json",
+                    "media_type": "application/json",
+                    "provenance_ref_ids": ["lora-train-v1"],
+                ],
+                [
+                    "artifact_id": "evaluation-report",
+                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_REPORT",
+                    "root_id": "workspace",
+                    "relative_path": "reports/evaluation-summary.json",
+                    "media_type": "application/json",
+                    "provenance_ref_ids": ["eval-compare-v1"],
+                ],
+                [
+                    "artifact_id": "release-evidence",
+                    "artifact_type": "WORKSPACE_ARTIFACT_TYPE_EVIDENCE_BUNDLE",
+                    "root_id": "workspace",
+                    "relative_path": "evidence/release-compare.bundle.json",
+                    "schema_version": "melix.run_evidence_bundle.v1",
+                    "media_type": "application/json",
+                    "provenance_ref_ids": ["eval-compare-v1"],
+                ],
+            ],
+            "provenance": [
+                [
+                    "provenance_ref_id": "operator-import",
+                    "kind": "operator_import",
+                    "uri": "melix-workspace://swift-preflight/raw/dialogues.jsonl",
+                    "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                    "created_by": "operator",
+                    "created_at": "2026-05-24T00:00:00Z",
+                ],
+                [
+                    "provenance_ref_id": "dataset-generation-v1",
+                    "kind": "dataset_generation",
+                    "uri": "melix-job://dataset-generation/jobs-0001",
+                    "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+                    "created_by": "melix",
+                    "created_at": "2026-05-24T00:05:00Z",
+                ],
+                [
+                    "provenance_ref_id": "lora-train-v1",
+                    "kind": "lora_training",
+                    "uri": "melix-job://train_lora/model-ops-0001",
+                    "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+                    "created_by": "melix",
+                    "created_at": "2026-05-24T00:10:00Z",
+                ],
+                [
+                    "provenance_ref_id": "eval-compare-v1",
+                    "kind": "evaluation_compare",
+                    "uri": "melix-job://evaluation/eval-compare-0001",
+                    "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+                    "created_by": "melix",
+                    "created_at": "2026-05-24T00:20:00Z",
+                ],
+            ],
+            "redaction_policy": [
+                "policy_id": "workspace-local-redacted-v1",
+                "mode": "REDACTION_MODE_LOCAL_PATHS_AND_SECRETS",
+                "description": "Keep workspace artifact paths relative and redact operator identity, absolute paths, credentials, prompts, responses, and dataset rows from exported summaries.",
+                "redact_absolute_paths": true,
+                "redact_operator_identity": true,
+                "rules": [
+                    [
+                        "rule_id": "relative-artifact-paths",
+                        "field_selector": "artifacts.relative_path",
+                        "action": "REDACTION_ACTION_KEEP_RELATIVE",
+                    ],
+                    [
+                        "rule_id": "operator-identity",
+                        "field_selector": "project.owner",
+                        "action": "REDACTION_ACTION_HASH",
+                    ],
+                    [
+                        "rule_id": "secrets",
+                        "field_selector": "provenance.ext.credentials",
+                        "action": "REDACTION_ACTION_DROP",
+                    ],
+                ],
+            ] as [String: Any],
+        ],
+        to: url
+    )
 }
 
 private func parseJSONArray(_ text: String) -> [Any]? {

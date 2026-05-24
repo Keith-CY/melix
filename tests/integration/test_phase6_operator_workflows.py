@@ -59,6 +59,21 @@ def _chat_completions_tool_call_stream_success(status: int, payload: object) -> 
     )
 
 
+def _chat_completions_media_tool_rejection_success(status: int, payload: object) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return False
+    return (
+        status == 400
+        and error.get("code") == "unsupported_multimodal_request"
+        and error.get("reason") == "media_tools_unsupported"
+        and error.get("model_id") == "melix-dev-vlm"
+        and error.get("media_types") == ["image"]
+    )
+
+
 def _json_error_code(payload: object) -> str:
     if not isinstance(payload, dict):
         return ""
@@ -67,6 +82,19 @@ def _json_error_code(payload: object) -> str:
         return ""
     code = error.get("code")
     return code if isinstance(code, str) else ""
+
+
+def _private_external_media_refusal_success(status: int, payload: object) -> bool:
+    return (
+        status == 400
+        and _json_error_code(payload) == "invalid_argument"
+        and "External media URL host is not allowed" in json.dumps(payload)
+    )
+
+
+def test_media_tool_rejection_success_helper_rejects_malformed_payloads() -> None:
+    assert _chat_completions_media_tool_rejection_success(400, b"not-json") is False
+    assert _chat_completions_media_tool_rejection_success(400, {"error": "bad"}) is False
 
 
 def test_text_requests_record_interference_metrics_during_multimodal_load() -> None:
@@ -391,8 +419,7 @@ def test_multimodal_chat_accepts_local_and_rejects_private_remote_image_urls(tmp
             },
         )
         assert remote_status == 400
-        assert _json_error_code(remote_payload) == "unsupported_media_payload"
-        assert "External media URL host is not allowed" in json.dumps(remote_payload)
+        assert _private_external_media_refusal_success(remote_status, remote_payload)
     finally:
         stack.stop()
 
@@ -510,7 +537,7 @@ def test_multimodal_chat_accepts_image_only_requests() -> None:
         stack.stop()
 
 
-def test_multimodal_chat_streams_tool_calls_with_shared_parser_selection(tmp_path: Path) -> None:
+def test_multimodal_chat_rejects_tool_calls_with_shared_parser_selection(tmp_path: Path) -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
     image_path = tmp_path / "tool-image.txt"
     image_path.write_text("phase6 tool image")
@@ -548,21 +575,14 @@ def test_multimodal_chat_streams_tool_calls_with_shared_parser_selection(tmp_pat
             },
         )
 
-        assert status == 200
-        assert b"event: message" in payload
-        assert b"\"object\":\"chat.completion.chunk\"" in payload
-        assert b"\"tool_calls\"" in payload
-        assert b"\"parser_mode\":\"qwen\"" in payload
-        assert b"\"parser_namespaces\":[\"tools.vision\"]" in payload
-        assert b"\"parser_fallback_mode\":\"xml\"" in payload
-        assert b"\"name\":\"tools.vision\"" in payload
-        assert b"Image content: phase6 tool image" in payload
-        assert b"Prompt: Call the tool for this image." in payload
+        assert _chat_completions_media_tool_rejection_success(status, payload)
     finally:
         stack.stop()
 
 
-def test_multimodal_chat_uses_model_default_parser_selection_for_llava_family(tmp_path: Path) -> None:
+def test_multimodal_chat_suppresses_model_default_parser_selection_for_llava_family(
+    tmp_path: Path,
+) -> None:
     stack = LiveMelixStack(Path(__file__).resolve().parents[2])
     image_path = tmp_path / "default-tool-image.txt"
     image_path.write_text("phase6 default tool image")
@@ -598,11 +618,13 @@ def test_multimodal_chat_uses_model_default_parser_selection_for_llava_family(tm
         assert status == 200
         assert b"event: message" in payload
         assert b"\"object\":\"chat.completion.chunk\"" in payload
-        assert b"\"tool_calls\"" in payload
-        assert b"\"parser_mode\":\"qwen\"" in payload
-        assert b"\"parser_namespaces\":[\"tools.vision\"]" in payload
-        assert b"\"parser_fallback_mode\":\"xml\"" in payload
-        assert b"\"name\":\"tools.vision\"" in payload
+        assert b"\"tool_calls\"" not in payload
+        assert b"\"parser_mode\":\"qwen\"" not in payload
+        assert b"\"parser_namespaces\":[\"tools.vision\"]" not in payload
+        assert b"\"parser_fallback_mode\":\"xml\"" not in payload
+        assert b"\"name\":\"tools.vision\"" not in payload
+        assert b"Image content: phase6 default tool image" in payload
+        assert b"Prompt: Call the tool for this image." in payload
     finally:
         stack.stop()
 
@@ -764,9 +786,7 @@ def test_phase6_vision_evidence_report_is_machine_readable(tmp_path: Path) -> No
                     and b"Image content: phase6 local evidence image" in local_payload
                 ),
                 "remote_image_refusal_success": (
-                    remote_status == 400
-                    and _json_error_code(remote_payload) == "unsupported_media_payload"
-                    and "External media URL host is not allowed" in json.dumps(remote_payload)
+                    _private_external_media_refusal_success(remote_status, remote_payload)
                 ),
                 "multi_image_success": (
                     multi_status == 200
@@ -785,7 +805,10 @@ def test_phase6_vision_evidence_report_is_machine_readable(tmp_path: Path) -> No
             },
             vlm={
                 "request_latency_ms": tool_elapsed_ms,
-                "tool_call_success": _chat_completions_tool_call_stream_success(tool_status, tool_payload),
+                "tool_rejection_success": _chat_completions_media_tool_rejection_success(
+                    tool_status,
+                    tool_payload,
+                ),
             },
             metrics_snapshot=read_metrics_export(stack.control_plane_metrics_path),
         )
@@ -796,13 +819,13 @@ def test_phase6_vision_evidence_report_is_machine_readable(tmp_path: Path) -> No
         assert checks["vision.ingress.remote_image_refusal_success"] is True
         assert checks["vision.ingress.multi_image_success"] is True
         assert checks["vision.ocr.default_stop_success"] is True
-        assert checks["vision.vlm.tool_call_success"] is True
+        assert checks["vision.vlm.tool_rejection_success"] is True
         assert metrics["vision.integration_success_rate"] == 100.0
         assert metrics["vision.ingress.local_image_success_rate"] == 100.0
         assert metrics["vision.ingress.remote_image_refusal_success_rate"] == 100.0
         assert metrics["vision.ingress.multi_image_success_rate"] == 100.0
         assert metrics["vision.ocr.default_stop_success_rate"] == 100.0
-        assert metrics["vision.vlm.tool_call_success_rate"] == 100.0
+        assert metrics["vision.vlm.tool_rejection_success_rate"] == 100.0
         assert metrics["vision.ocr.request_latency_ms"] >= 0
         assert metrics["vision.vlm.request_latency_ms"] >= 0
         assert metrics["vision.ocr_latency_ms"] >= 0

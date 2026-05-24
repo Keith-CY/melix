@@ -1696,7 +1696,8 @@
         "key": "active_manifest_elapsed_ms_mean",
         "unit": "ms",
         "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "warn_pct": 5.0,
+        "warn_abs": 0.01
       },
       {
         "key": "resolve_target_elapsed_ms_mean",
@@ -1925,6 +1926,13 @@
         "unit": "bytes",
         "direction": "lower_is_better",
         "warn_pct": 10.0
+      },
+      {
+        "key": "request_elapsed_ms",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0,
+        "warn_abs": 1.0
       }
     ]
   },

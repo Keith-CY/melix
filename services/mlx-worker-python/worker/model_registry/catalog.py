@@ -931,7 +931,7 @@ def _vision_capability_metadata(family_id: str) -> dict[str, str]:
         adapter_set_hash=f"vision-family-{family_id}",
         route_kind="python_vlm",
         capability_class="vlm",
-        supported_modalities=("text", "image"),
+        supported_modalities=("text", "image", "video"),
         supported_tasks=("vlm", "generate"),
         supported_parsers=("text", "qwen"),
         tool_parser_mode="qwen",
@@ -1483,8 +1483,7 @@ def _vlm_capability_metadata(
         )
         ext["melix.capability.tensor_index.warning_modalities"] = "projector"
         ext["melix.capability.tensor_index.warning_source"] = tensor_evidence.source_path
-    if supported_modalities != ("text", "image"):
-        ext[_CAPABILITY_SUPPORTED_MODALITIES_KEY] = ",".join(supported_modalities)
+    ext[_CAPABILITY_SUPPORTED_MODALITIES_KEY] = ",".join(supported_modalities)
     execution_mode = (
         _gemma4_execution_mode(
             model_dir,

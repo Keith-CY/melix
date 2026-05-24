@@ -5,6 +5,7 @@ import json
 import math
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -328,6 +329,356 @@ def test_snapshot_job_returns_cached_manifest_for_restored_job_with_empty_manife
     )
 
     assert snapshot["manifest"] == restored_manifest
+
+
+def test_strict_activation_receipt_fixture_requires_completed_integrity_passed() -> None:
+    completed_receipt = {
+        "operation_id": "managed_model_install:abc",
+        "target_scope": "hub:mlx-community/demo@main",
+        "operation_kind": "managed_model_install",
+        "status": "completed",
+        "terminal_state": "completed",
+        "artifact_integrity": {
+            "verification_mode": "receipt_fixture",
+            "policy_present": True,
+            "digest": "sha256:abc",
+            "checked_at": "2026-05-24T00:00:00Z",
+            "failure_reason": "",
+            "status": "passed",
+        },
+    }
+    in_progress_receipt = {
+        **completed_receipt,
+        "status": "in_progress",
+        "terminal_state": "in_progress",
+    }
+    failed_integrity_receipt = {
+        **completed_receipt,
+        "artifact_integrity": {
+            **completed_receipt["artifact_integrity"],
+            "status": "failed",
+            "failure_reason": "digest_mismatch",
+        },
+    }
+
+    assert ModelOpsJobRegistry.strict_activation_receipt_passed(completed_receipt) is True
+    assert ModelOpsJobRegistry.strict_activation_receipt_passed(in_progress_receipt) is False
+    assert ModelOpsJobRegistry.strict_activation_receipt_passed(failed_integrity_receipt) is False
+
+
+def test_strict_activation_receipt_rejects_missing_core_receipt_fields() -> None:
+    completed_receipt = {
+        "operation_id": "managed_model_install:abc",
+        "target_scope": "hub:mlx-community/demo@main",
+        "operation_kind": "managed_model_install",
+        "status": "completed",
+        "terminal_state": "completed",
+        "artifact_integrity": {
+            "verification_mode": "receipt_fixture",
+            "policy_present": True,
+            "digest": "sha256:abc",
+            "checked_at": "2026-05-24T00:00:00Z",
+            "failure_reason": "",
+            "status": "passed",
+        },
+    }
+
+    assert ModelOpsJobRegistry.strict_activation_receipt_passed(completed_receipt) is True
+    for key in ("operation_id", "target_scope", "operation_kind"):
+        incomplete = dict(completed_receipt)
+        incomplete[key] = ""
+        assert ModelOpsJobRegistry.strict_activation_receipt_passed(incomplete) is False
+
+    for key in ("verification_mode", "digest", "checked_at"):
+        incomplete_integrity = dict(completed_receipt["artifact_integrity"])
+        incomplete_integrity[key] = ""
+        assert (
+            ModelOpsJobRegistry.strict_activation_receipt_passed(
+                {**completed_receipt, "artifact_integrity": incomplete_integrity}
+            )
+            is False
+        )
+
+    missing_policy = dict(completed_receipt["artifact_integrity"])
+    missing_policy.pop("policy_present")
+    assert (
+        ModelOpsJobRegistry.strict_activation_receipt_passed(
+            {**completed_receipt, "artifact_integrity": missing_policy}
+        )
+        is False
+    )
+
+    failed_with_pass_status = {
+        **completed_receipt["artifact_integrity"],
+        "failure_reason": "digest_mismatch",
+    }
+    assert (
+        ModelOpsJobRegistry.strict_activation_receipt_passed(
+            {**completed_receipt, "artifact_integrity": failed_with_pass_status}
+        )
+        is False
+    )
+    pending_integrity = {
+        **completed_receipt["artifact_integrity"],
+        "status": "pending",
+    }
+    assert (
+        ModelOpsJobRegistry.strict_activation_receipt_passed(
+            {**completed_receipt, "artifact_integrity": pending_integrity}
+        )
+        is False
+    )
+
+
+def test_download_registry_snapshot_exposes_operation_receipt_fields() -> None:
+    registry = ModelOpsJobRegistry()
+    job = registry.start("download", "mlx-community/demo", "/runtime/download")
+    registry.attach_manifest(
+        job.job_id,
+        json.dumps(
+            {
+                "status": "completed",
+                "terminal_state": "completed",
+                "operation_id": "managed_model_install:abc",
+                "target_scope": "hub:mlx-community/demo@main",
+                "operation_kind": "managed_model_install",
+                "attempts": 1,
+                "timeout_ms": 250,
+                "retry_after_ms": 500,
+                "last_error": "",
+                "artifact_integrity": {
+                    "verification_mode": "receipt_fixture",
+                    "policy_present": True,
+                    "digest": "sha256:abc",
+                    "checked_at": "2026-05-24T00:00:00Z",
+                    "failure_reason": "",
+                    "status": "passed",
+                },
+            }
+        ),
+    )
+    registry.complete(job.job_id, "/runtime/download/download.artifact")
+
+    snapshot = registry.snapshot()
+    download = snapshot["downloads"][0]
+
+    assert download["operation_id"] == "managed_model_install:abc"
+    assert download["target_scope"] == "hub:mlx-community/demo@main"
+    assert download["operation_kind"] == "managed_model_install"
+    assert download["attempts"] == 1
+    assert download["timeout_ms"] == 250
+    assert download["retry_after_ms"] == 500
+    assert download["last_error"] == ""
+    assert download["artifact_integrity_status"] == "passed"
+    assert download["artifact_integrity"]["policy_present"] is True
+
+    registry.attach_manifest(
+        job.job_id,
+        json.dumps(
+            {
+                "status": "completed",
+                "terminal_state": "completed",
+                "operation_id": "managed_model_install:def",
+                "target_scope": "hub:mlx-community/demo@main",
+                "operation_kind": "managed_model_install",
+                "artifact_integrity": "not-a-receipt",
+            }
+        ),
+    )
+    refreshed_download = registry.snapshot()["downloads"][0]
+
+    assert refreshed_download["operation_id"] == "managed_model_install:def"
+    assert refreshed_download["artifact_integrity"] == {}
+    assert refreshed_download["artifact_integrity_status"] == ""
+
+
+def test_find_download_by_operation_receipt_matches_only_scoped_active_or_completed_jobs() -> None:
+    registry = ModelOpsJobRegistry()
+    wrong_operation = registry.start("quantize", "mlx-community/demo", "/runtime/quantize")
+    registry.attach_manifest(
+        wrong_operation.job_id,
+        json.dumps(
+            {
+                "operation_id": "managed_model_install:abc",
+                "target_scope": "scope-a",
+                "operation_kind": "managed_model_install",
+                "terminal_state": "completed",
+            }
+        ),
+    )
+    failed_download = registry.start("download", "mlx-community/demo", "/runtime/failed")
+    registry.attach_manifest(
+        failed_download.job_id,
+        json.dumps(
+            {
+                "operation_id": "managed_model_install:abc",
+                "target_scope": "scope-a",
+                "operation_kind": "managed_model_install",
+                "terminal_state": "failed",
+            }
+        ),
+    )
+    active_download = registry.start("download", "mlx-community/demo", "/runtime/active")
+    registry.attach_manifest(
+        active_download.job_id,
+        json.dumps(
+            {
+                "operation_id": "managed_model_install:abc",
+                "target_scope": "scope-a",
+                "operation_kind": "managed_model_install",
+                "terminal_state": "in_progress",
+            }
+        ),
+    )
+
+    assert (
+        registry.find_download_by_operation_receipt(
+            operation_id=" managed_model_install:abc ",
+            target_scope=" scope-a ",
+            operation_kind=" managed_model_install ",
+        )
+        is active_download
+    )
+    assert registry.find_download_by_operation_receipt(
+        operation_id="",
+        target_scope="scope-a",
+        operation_kind="managed_model_install",
+    ) is None
+    assert registry.find_download_by_operation_receipt(
+        operation_id="managed_model_install:abc",
+        target_scope="scope-b",
+        operation_kind="managed_model_install",
+    ) is None
+
+    registry.fail(active_download.job_id, "download_failed", "failed after receipt")
+
+    assert registry.find_download_by_operation_receipt(
+        operation_id="managed_model_install:abc",
+        target_scope="scope-a",
+        operation_kind="managed_model_install",
+    ) is None
+
+
+def test_find_download_by_operation_receipt_rebuilds_stale_index_entry() -> None:
+    registry = ModelOpsJobRegistry()
+    stale_download = registry.start("download", "mlx-community/demo", "/runtime/stale")
+    registry.attach_manifest(
+        stale_download.job_id,
+        json.dumps(
+            {
+                "operation_id": "managed_model_install:abc",
+                "target_scope": "scope-a",
+                "operation_kind": "managed_model_install",
+                "terminal_state": "in_progress",
+            }
+        ),
+    )
+    current_download = registry.start("download", "mlx-community/demo", "/runtime/current")
+    registry.attach_manifest(
+        current_download.job_id,
+        json.dumps(
+            {
+                "operation_id": "managed_model_install:def",
+                "target_scope": "scope-b",
+                "operation_kind": "managed_model_install",
+                "terminal_state": "in_progress",
+            }
+        ),
+    )
+    registry._download_operation_receipt_index[
+        ("managed_model_install:def", "scope-b", "managed_model_install")
+    ] = stale_download.job_id
+
+    assert registry.find_download_by_operation_receipt(
+        operation_id="managed_model_install:def",
+        target_scope="scope-b",
+        operation_kind="managed_model_install",
+    ) is current_download
+
+
+def test_find_download_by_operation_receipt_cache_miss_avoids_sorting_all_jobs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = ModelOpsJobRegistry()
+    for index in range(5):
+        registry.start("train_lora", "melix-dev-text", f"/runtime/train-{index}")
+    download = registry.start("download", "mlx-community/demo", "/runtime/download")
+    registry.attach_manifest(
+        download.job_id,
+        json.dumps(
+            {
+                "operation_id": "managed_model_install:abc",
+                "target_scope": "scope-a",
+                "operation_kind": "managed_model_install",
+                "terminal_state": "in_progress",
+            }
+        ),
+    )
+    registry._download_operation_receipt_index.clear()
+
+    sort_key = Mock(side_effect=AssertionError("download receipt cache misses should not sort registry jobs"))
+    monkeypatch.setattr(ModelOpsJobRegistry, "_job_sort_key", sort_key)
+
+    assert registry.find_download_by_operation_receipt(
+        operation_id="managed_model_install:abc",
+        target_scope="scope-a",
+        operation_kind="managed_model_install",
+    ) is download
+    sort_key.assert_not_called()
+
+
+def test_download_operation_receipt_key_rejects_missing_fields() -> None:
+    job = ModelOpsJob(
+        job_id="model-ops-0001",
+        operation="download",
+        source_model="mlx-community/demo",
+        output_dir="/runtime/download",
+        status="completed",
+    )
+
+    assert (
+        ModelOpsJobRegistry._download_operation_receipt_key(
+            job,
+            {
+                "operation_id": "managed_model_install:abc",
+                "target_scope": "scope-a",
+                "operation_kind": "",
+                "terminal_state": "completed",
+            },
+        )
+        is None
+    )
+
+
+def test_non_download_manifest_updates_do_not_refresh_download_receipt_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = ModelOpsJobRegistry()
+    train_job = registry.start("train_lora", "melix-dev-text", "/runtime/train")
+    refresh = Mock(
+        side_effect=AssertionError("non-download jobs should not refresh the download receipt index")
+    )
+
+    monkeypatch.setattr(registry, "_refresh_download_operation_receipt_index", refresh)
+
+    registry.attach_manifest(
+        train_job.job_id,
+        json.dumps({"adapter_name": "adapter-a", "adapter_set_hash": "hash-a"}),
+    )
+    registry.complete(train_job.job_id, "/runtime/train/train_lora.adapter.json")
+
+    failed_job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    registry.fail(failed_job.job_id, "activation_failed", "boom")
+    refresh.assert_not_called()
+
+
+def test_strict_activation_receipt_rejects_missing_integrity_object() -> None:
+    assert (
+        ModelOpsJobRegistry.strict_activation_receipt_passed(
+            {"status": "completed", "artifact_integrity": "passed"}
+        )
+        is False
+    )
 
 
 def test_active_derived_model_manifests_avoids_full_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:

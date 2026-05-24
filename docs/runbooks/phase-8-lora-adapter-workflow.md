@@ -76,6 +76,10 @@ acceptance. It trains the adapter, activates it, evaluates base versus the
 fresh adapter manifest, and writes compare summary/sample artifacts under the
 run output directory. `--training-mode auto` resolves quantized model ids such
 as 4-bit and 8-bit MLX repos to QLoRA; non-quantized targets resolve to LoRA.
+When these inputs and outputs are collected under a Melix project workspace,
+their raw data, dataset version, adapter, log, export, report, and evidence
+paths are recorded by the
+[workspace manifest contract](../workspace-manifest-contract.md).
 
 ## Dataset Package Layout
 
@@ -250,6 +254,9 @@ Expected training behavior:
   serialized vision, audio, embedding, projector, or full base tensor outside the intended
   LoRA/DoRA target surface fails export before the adapter manifest is written
 - the completed artifact is `train_lora.adapter.json` with schema `melix.lora_adapter_package.v1`
+- workspace-aware consumers should reference the adapter, normalized dataset
+  snapshot, and training log through `workspace-manifest.json` entries instead
+  of relying on absolute local paths.
 
 ## Family Support Boundaries
 
@@ -363,6 +370,9 @@ adapter is backed by a release compare evidence bundle:
    through `release_compare_default_minimum_sample_count`.
 6. Paired base-vs-adapter compare artifacts for those suites are attached to the release evidence
    and identify the base model, adapter manifest path, dataset lineage, metric deltas, and verdicts.
+   In a project workspace, the release compare bundle is also represented as a
+   `WORKSPACE_ARTIFACT_TYPE_EVIDENCE_BUNDLE` entry in
+   [`workspace-manifest.json`](../workspace-manifest-contract.md).
 
 Do not treat a published or promoted adapter candidate as release-ready when the compare policy is
 empty for the target release, when paired compare artifacts are missing, or when the compare

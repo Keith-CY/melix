@@ -65,10 +65,15 @@ private struct MelixModelOpsJobRecord {
     let updatedAtUnixMS: Int
 }
 
+private struct MelixLocalTrainingQueueJobRecord {
+    let job: LocalTrainingQueueJob
+}
+
 final class MelixJobStatusStore {
     private let runRecordStore: MelixRunRecordStore
     private let diagnosticsStore: MelixDiagnosticsStore
     private let melixHome: MelixHome
+    private let trainingQueueStore: LocalTrainingQueueStore
     private let fileManager: FileManager
 
     init(
@@ -80,21 +85,29 @@ final class MelixJobStatusStore {
         self.runRecordStore = runRecordStore
         self.diagnosticsStore = diagnosticsStore
         self.melixHome = melixHome
+        self.trainingQueueStore = LocalTrainingQueueStore(melixHome: melixHome, fileManager: fileManager)
         self.fileManager = fileManager
     }
 
     func list(sourcePath: String = "") throws -> [[String: Any]] {
         let runJobs = try runRecordStore.loadRecords(sourcePath: sourcePath).map(jobSummaryPayload)
         let runJobIDs = Set(runJobs.compactMap { $0["job_id"] as? String })
+        let queueJobs = try loadLocalTrainingQueueJobs(sourcePath: sourcePath)
+            .filter { !runJobIDs.contains($0.job.jobID) }
+            .map(localTrainingQueueSummaryPayload)
+        let visibleQueueJobIDs = Set(queueJobs.compactMap { $0["job_id"] as? String })
         let modelOpsJobs = try loadModelOpsTrainingJobs(sourcePath: sourcePath)
-            .filter { !runJobIDs.contains($0.jobID) }
+            .filter { !runJobIDs.contains($0.jobID) && !visibleQueueJobIDs.contains($0.jobID) }
             .map(modelOpsJobSummaryPayload)
-        return sortJobPayloads(runJobs + modelOpsJobs)
+        return sortJobPayloads(runJobs + queueJobs + modelOpsJobs)
     }
 
     func show(jobID: String, sourcePath: String = "") throws -> [String: Any] {
         if let record = try findRunRecord(jobID: jobID, sourcePath: sourcePath) {
             return jobStatusPayload(record)
+        }
+        if let record = try findLocalTrainingQueueJob(jobID: jobID, sourcePath: sourcePath) {
+            return localTrainingQueueStatusPayload(record)
         }
         if let record = try findModelOpsTrainingJob(jobID: jobID, sourcePath: sourcePath) {
             return modelOpsJobStatusPayload(record)
@@ -108,6 +121,15 @@ final class MelixJobStatusStore {
             return [
                 "schema_version": "melix.job_artifacts.v1",
                 "job_id": record.runID,
+                "artifact_count": artifacts.count,
+                "artifacts": artifacts,
+            ]
+        }
+        if let record = try findLocalTrainingQueueJob(jobID: jobID, sourcePath: sourcePath) {
+            let artifacts = localTrainingQueueArtifactPayloads(record)
+            return [
+                "schema_version": "melix.job_artifacts.v1",
+                "job_id": record.job.jobID,
                 "artifact_count": artifacts.count,
                 "artifacts": artifacts,
             ]
@@ -128,6 +150,9 @@ final class MelixJobStatusStore {
         if let record = try findRunRecord(jobID: jobID, sourcePath: sourcePath) {
             return try diagnosticsStore.logSnapshot(record: record, follow: follow)
         }
+        if let record = try findLocalTrainingQueueJob(jobID: jobID, sourcePath: sourcePath) {
+            throw MelixCLIError.runtime("No logs were found for \(record.job.jobID).")
+        }
         guard let record = try findModelOpsTrainingJob(jobID: jobID, sourcePath: sourcePath) else {
             throw MelixCLIError.runtime("No job was found for \(jobID).")
         }
@@ -146,6 +171,10 @@ final class MelixJobStatusStore {
     }
 
     func cancel(jobID: String, sourcePath: String = "") throws -> MelixJobCancelResult {
+        if let queueRecord = try findLocalTrainingQueueJob(jobID: jobID, sourcePath: sourcePath),
+           try findRunRecord(jobID: jobID, sourcePath: sourcePath) == nil {
+            return try cancel(queueRecord)
+        }
         if let modelOpsRecord = try findModelOpsTrainingJob(jobID: jobID, sourcePath: sourcePath),
            try findRunRecord(jobID: jobID, sourcePath: sourcePath) == nil {
             return try cancel(modelOpsRecord)
@@ -299,6 +328,71 @@ final class MelixJobStatusStore {
         return payload
     }
 
+    private func localTrainingQueueSummaryPayload(_ record: MelixLocalTrainingQueueJobRecord) -> [String: Any] {
+        let job = record.job
+        return [
+            "schema_version": "melix.job_summary.v1",
+            "job_id": job.jobID,
+            "run_kind": "training",
+            "operation": "train_lora",
+            "status": job.status.rawValue,
+            "phase": job.status.rawValue,
+            "started_at_unix_ms": job.createdAtUnixMS,
+            "updated_at_unix_ms": job.updatedAtUnixMS,
+            "duration_ms": 0,
+            "model_id": job.modelID,
+            "task_kind": "train_lora",
+            "suite_ids": [],
+            "dataset_id": job.datasetID,
+            "artifact_root": job.runDirectory,
+            "record_path": melixHome.localTrainingQueueFileURL.path,
+            "cancelable": job.status.isActive,
+            "cancellation_requested": job.status == .cancelRequested || fileManager.fileExists(atPath: job.cancellationRequestPath),
+        ]
+    }
+
+    private func localTrainingQueueStatusPayload(_ record: MelixLocalTrainingQueueJobRecord) -> [String: Any] {
+        let job = record.job
+        var payload = localTrainingQueueSummaryPayload(record)
+        payload["schema_version"] = "melix.job_status.v1"
+        payload["command"] = [
+            "display": localTrainingQueueCommandDisplay(job),
+        ]
+        payload["timestamps"] = [
+            "started_at_unix_ms": job.createdAtUnixMS,
+            "updated_at_unix_ms": job.updatedAtUnixMS,
+            "ended_at_unix_ms": job.status.isTerminal ? job.updatedAtUnixMS : 0,
+            "duration_ms": 0,
+        ]
+        let pct: Any = job.status.isTerminal ? 1.0 : NSNull()
+        payload["progress"] = [
+            "phase": job.status.rawValue,
+            "status": job.status.rawValue,
+            "duration_ms": 0,
+            "pct": pct,
+        ]
+        payload["throughput_metrics"] = [[String: Any]]()
+        payload["error"] = localTrainingQueueErrorPayload(job)
+        payload["logs"] = [
+            "schema_version": "melix.job_logs_ref.v1",
+            "available": false,
+            "path": "",
+            "command": "melix jobs logs \(job.jobID) --follow",
+        ]
+        payload["artifacts"] = localTrainingQueueArtifactPayloads(record)
+        payload["cancellation"] = localTrainingQueueCancellationPayload(job)
+        payload["training_queue"] = [
+            "schema_version": LocalTrainingQueueStore.schemaVersion,
+            "resource_class": job.resourceClass,
+            "recovery_policy": job.recoveryPolicy,
+            "queue_path": melixHome.localTrainingQueueFileURL.path,
+            "workspace_manifest_path": job.workspaceManifestPath,
+            "dataset_version_id": job.datasetVersionID,
+            "preflight_receipt_path": job.preflightReceiptPath,
+        ]
+        return payload
+    }
+
     private func artifactPayloads(_ record: MelixRunRecord) -> [[String: Any]] {
         var artifacts: [[String: Any]] = []
         appendArtifact(
@@ -380,6 +474,36 @@ final class MelixJobStatusStore {
                 into: &artifacts
             )
         }
+        return dedupeArtifacts(artifacts)
+    }
+
+    private func localTrainingQueueArtifactPayloads(_ record: MelixLocalTrainingQueueJobRecord) -> [[String: Any]] {
+        let job = record.job
+        var artifacts: [[String: Any]] = []
+        appendArtifact(
+            kind: "training_queue",
+            path: melixHome.localTrainingQueueFileURL.path,
+            relativePath: "local-training-queue.json",
+            into: &artifacts
+        )
+        appendArtifact(
+            kind: "artifact_root",
+            path: job.runDirectory,
+            relativePath: "",
+            into: &artifacts
+        )
+        appendArtifact(
+            kind: "cancel_request",
+            path: job.cancellationRequestPath,
+            relativePath: "cancel-request.json",
+            into: &artifacts
+        )
+        appendArtifact(
+            kind: "preflight_receipt",
+            path: job.preflightReceiptPath,
+            relativePath: "",
+            into: &artifacts
+        )
         return dedupeArtifacts(artifacts)
     }
 
@@ -485,6 +609,17 @@ final class MelixJobStatusStore {
         ]
     }
 
+    private func localTrainingQueueCancellationPayload(_ job: LocalTrainingQueueJob) -> [String: Any] {
+        let request = loadCancelRequest(at: URL(fileURLWithPath: job.cancellationRequestPath))
+        return [
+            "schema_version": "melix.job_cancellation_state.v1",
+            "cancelable": job.status.isActive,
+            "requested": job.status == .cancelRequested || request != nil,
+            "request_path": job.cancellationRequestPath,
+            "request": request ?? NSNull(),
+        ]
+    }
+
     private func modelOpsErrorPayload(_ record: MelixModelOpsJobRecord) -> Any {
         let code = stringField(record.manifest, "error_code")
         let message = stringField(record.manifest, "error_message")
@@ -499,6 +634,16 @@ final class MelixJobStatusStore {
             return ["message": "Job status was \(record.status)."]
         }
         return NSNull()
+    }
+
+    private func localTrainingQueueErrorPayload(_ job: LocalTrainingQueueJob) -> Any {
+        guard let first = job.operatorErrors.first else {
+            return NSNull()
+        }
+        return [
+            "code": first.code,
+            "message": first.message,
+        ]
     }
 
     private func modelOpsThroughputMetrics(_ record: MelixModelOpsJobRecord) -> [[String: Any]] {
@@ -525,6 +670,20 @@ final class MelixJobStatusStore {
         let datasetURI = stringField(record.manifest, "dataset_uri")
         if !datasetURI.isEmpty {
             parts.append(contentsOf: ["--dataset-uri", datasetURI])
+        }
+        return parts.joined(separator: " ")
+    }
+
+    private func localTrainingQueueCommandDisplay(_ job: LocalTrainingQueueJob) -> String {
+        var parts = ["melix", "lora", "train"]
+        if !job.modelID.isEmpty {
+            parts.append(contentsOf: ["--model-id", job.modelID])
+        }
+        if !job.adapterName.isEmpty {
+            parts.append(contentsOf: ["--adapter-name", job.adapterName])
+        }
+        if !job.datasetID.isEmpty {
+            parts.append(contentsOf: ["--dataset-uri", job.datasetID])
         }
         return parts.joined(separator: " ")
     }
@@ -610,6 +769,36 @@ final class MelixJobStatusStore {
 
     private func cancelRequestExists(_ record: MelixRunRecord) -> Bool {
         fileManager.fileExists(atPath: cancelRequestURL(record).path)
+    }
+
+    private func cancel(_ record: MelixLocalTrainingQueueJobRecord) throws -> MelixJobCancelResult {
+        let job = record.job
+        let requestURL = URL(fileURLWithPath: job.cancellationRequestPath)
+        let existingRequest = loadCancelRequest(at: requestURL)
+        guard job.status.isActive else {
+            return MelixJobCancelResult(payload: [
+                "schema_version": "melix.job_cancel_result.v1",
+                "job_id": job.jobID,
+                "cancel_requested": false,
+                "status": job.status.rawValue,
+                "phase": job.status.rawValue,
+                "reason": "job_terminal_or_not_active",
+                "request_path": requestURL.path,
+                "existing_request": existingRequest ?? NSNull(),
+            ])
+        }
+
+        let updated = try trainingQueueStore.requestCancel(jobID: job.jobID)
+        let request = loadCancelRequest(at: URL(fileURLWithPath: updated.cancellationRequestPath)) ?? [:]
+        return MelixJobCancelResult(payload: [
+            "schema_version": "melix.job_cancel_result.v1",
+            "job_id": updated.jobID,
+            "cancel_requested": true,
+            "status": updated.status.rawValue,
+            "phase": updated.status.rawValue,
+            "request_path": updated.cancellationRequestPath,
+            "request": request,
+        ])
     }
 
     private func cancel(_ record: MelixModelOpsJobRecord) throws -> MelixJobCancelResult {
@@ -709,6 +898,21 @@ final class MelixJobStatusStore {
 
     private func findModelOpsTrainingJob(jobID: String, sourcePath: String) throws -> MelixModelOpsJobRecord? {
         try loadModelOpsTrainingJobs(sourcePath: sourcePath).first { $0.jobID == jobID }
+    }
+
+    private func findLocalTrainingQueueJob(
+        jobID: String,
+        sourcePath: String
+    ) throws -> MelixLocalTrainingQueueJobRecord? {
+        try loadLocalTrainingQueueJobs(sourcePath: sourcePath).first { $0.job.jobID == jobID }
+    }
+
+    private func loadLocalTrainingQueueJobs(sourcePath: String) throws -> [MelixLocalTrainingQueueJobRecord] {
+        let trimmed = sourcePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty else {
+            return []
+        }
+        return try trainingQueueStore.list().map(MelixLocalTrainingQueueJobRecord.init(job:))
     }
 
     private func loadModelOpsTrainingJobs(sourcePath: String) throws -> [MelixModelOpsJobRecord] {

@@ -890,7 +890,12 @@ public struct OpenAIHandler: Sendable {
                 idleSweepRequest: resolvedRequest.idleSweepRequest
             )
         } catch let error as MultimodalRequestNormalizationError {
+            if case .externalMediaURLBlocked = error {
+                return invalidArgumentResponse(message: error.operatorMessage)
+            }
             return mediaNormalizationErrorResponse(error)
+        } catch is DecodingError {
+            return invalidArgumentResponse(message: "Malformed multimodal chat payload.")
         } catch let error as StructuredOutputFormatError {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ToolParserConfigurationError {
@@ -2002,11 +2007,6 @@ public struct OpenAIHandler: Sendable {
         )
         let routed = normalized.replacingModel(resolved.modelID)
         let originalModelID = routed.model
-        let executionModelID = await textExecutionModelID(
-            for: routed,
-            servedModelID: originalModelID
-        )
-        let executionRequest = routed.replacingModel(executionModelID)
         if await shouldRefreshRegistryBeforeTextRequest(modelID: routed.model) {
             await RegistrySnapshotSync.syncModelsIfAvailable(
                 modelCatalog: modelCatalog,
@@ -2015,23 +2015,42 @@ public struct OpenAIHandler: Sendable {
                 rescan: true
             )
         }
+        let originalModel = await modelCatalog.model(id: originalModelID)
+        if let unsupportedMediaResponse = await unsupportedMultimodalRequestResponse(
+            routed,
+            model: originalModel
+        ) {
+            throw HTTPRequestHandlingError.gatewayResponse(unsupportedMediaResponse)
+        }
+        let executionModelID = await textExecutionModelID(
+            for: routed,
+            servedModelID: originalModelID
+        )
+        let executionRequest = routed.replacingModel(executionModelID)
+        let resolvedModel = executionModelID == originalModelID
+            ? originalModel
+            : await modelCatalog.model(id: executionModelID)
+        let requestedServingDefaults = await gatewayServingDefaultsStore.requestedDefaults(
+            serverSessionID: gatewayRuntimeBinding.activeServerSessionID
+        )
+        let servingDefaults = requestedServingDefaults.resolvingAccelerationCompatibility(for: resolvedModel)
+        if let unsupportedMediaResponse = await unsupportedMultimodalAccelerationResponse(
+            routed,
+            gatewayServingDefaults: servingDefaults
+        ) {
+            throw HTTPRequestHandlingError.gatewayResponse(unsupportedMediaResponse)
+        }
         if let validationFailure = await endpointCompatibilityFailureResponse(
             modelID: routed.model,
             endpoint: .textGeneration
         ) {
             throw HTTPRequestHandlingError.gatewayResponse(validationFailure)
         }
-        let resolvedModel = await modelCatalog.model(id: executionModelID)
-        let originalModel = await modelCatalog.model(id: originalModelID)
         let modelSamplingPolicy: ModelSamplingPolicy? = if let resolvedModel {
             ModelSamplingPolicy(modelSettings: resolvedModel.settings)
         } else {
             nil
         }
-        let requestedServingDefaults = await gatewayServingDefaultsStore.requestedDefaults(
-            serverSessionID: gatewayRuntimeBinding.activeServerSessionID
-        )
-        let servingDefaults = requestedServingDefaults.resolvingAccelerationCompatibility(for: resolvedModel)
         if let admissionFailure = promptBudgetAdmissionFailureResponse(
             normalized: executionRequest,
             model: resolvedModel,
@@ -2043,7 +2062,7 @@ public struct OpenAIHandler: Sendable {
         if let mediaAdmissionFailure = mediaAdmissionFailure(
             for: routed,
             model: originalModel,
-            requestedSpeculativeDecode: requestedServingDefaults.accelerationMode == .speculativeDecode
+            requestedSpeculativeDecode: servingDefaults.accelerationMode == .speculativeDecode
         ) {
             await recordMediaAdmissionFailure(mediaAdmissionFailure)
             throw HTTPRequestHandlingError.gatewayResponse(mediaAdmissionFailureResponse(mediaAdmissionFailure))
@@ -2072,6 +2091,7 @@ public struct OpenAIHandler: Sendable {
         } else {
             nil
         }
+        let shapingModelToolParser = executionRequest.mediaTypes.isEmpty ? modelToolParser : nil
         let modelChatTemplatePolicy: ModelChatTemplatePolicy? = if let resolvedModel {
             try ModelChatTemplatePolicy(modelSettings: resolvedModel.settings)
         } else {
@@ -2086,7 +2106,7 @@ public struct OpenAIHandler: Sendable {
         let translated = try translator.translate(
             executionRequest,
             modelHandle: modelHandle,
-            modelToolParser: modelToolParser,
+            modelToolParser: shapingModelToolParser,
             modelChatTemplatePolicy: modelChatTemplatePolicy,
             modelOCRPolicy: modelOCRPolicy,
             modelSamplingPolicy: modelSamplingPolicy,
@@ -2114,7 +2134,7 @@ public struct OpenAIHandler: Sendable {
         let mediaAdmissionFailure = mediaAdmissionFailure(
             for: finalTranslated,
             model: originalModel ?? resolvedModel,
-            requestedSpeculativeDecode: requestedServingDefaults.accelerationMode == .speculativeDecode
+            requestedSpeculativeDecode: servingDefaults.accelerationMode == .speculativeDecode
         )
         if let mediaAdmissionFailure {
             finalTranslated = translatedRequest(
@@ -2275,10 +2295,7 @@ public struct OpenAIHandler: Sendable {
         guard let model else {
             return mediaKinds.sorted().first.map { ($0, "unknown_media_modalities") }
         }
-        let supportedModalities = Set(normalizedIdentifierList(
-            model.supportedModalities,
-            fallback: model.settings.ext["melix.capability.supported_modalities"]
-        ))
+        let supportedModalities = supportedMediaTypes(for: model)
         guard !supportedModalities.isEmpty else {
             return mediaKinds.sorted().first.map { ($0, "unknown_media_modalities") }
         }
@@ -2386,6 +2403,119 @@ public struct OpenAIHandler: Sendable {
             )
         }
         return companionID
+    }
+
+    private func unsupportedMultimodalRequestResponse(
+        _ request: NormalizedTextRequest,
+        model: Melix_Controlplane_V1_ModelSummary?
+    ) async -> HTTPResponse? {
+        let mediaTypes = request.mediaTypes
+        guard mediaTypes.isEmpty == false else {
+            return nil
+        }
+        if mediaRequestHasToolPath(request) {
+            return await unsupportedMultimodalRequestResponse(
+                modelID: request.model,
+                reason: "media_tools_unsupported",
+                message: "Media-bearing chat requests cannot use tools until multimodal tool routing is supported.",
+                mediaTypes: mediaTypes
+            )
+        }
+        guard let model else {
+            let mediaList = mediaTypes.sorted().joined(separator: ", ")
+            return await unsupportedMultimodalRequestResponse(
+                modelID: request.model,
+                reason: "model_does_not_support_media",
+                message: "Model \(request.model) does not advertise support for \(mediaList) media.",
+                mediaTypes: mediaTypes
+            )
+        }
+        let unsupportedTypes = mediaTypes.subtracting(supportedMediaTypes(for: model))
+        guard unsupportedTypes.isEmpty == false else {
+            return nil
+        }
+        let unsupportedList = unsupportedTypes.sorted().joined(separator: ", ")
+        return await unsupportedMultimodalRequestResponse(
+            modelID: request.model,
+            reason: "model_does_not_support_media",
+            message: "Model \(request.model) does not advertise support for \(unsupportedList) media.",
+            mediaTypes: mediaTypes
+        )
+    }
+
+    private func mediaRequestHasToolPath(_ request: NormalizedTextRequest) -> Bool {
+        if request.tools.isEmpty == false || request.toolParser?.isExplicit == true {
+            return true
+        }
+        return !mcpToolCatalog.resolvedNamespaces.isEmpty
+    }
+
+    private func unsupportedMultimodalAccelerationResponse(
+        _ request: NormalizedTextRequest,
+        gatewayServingDefaults: GatewayServingDefaultsPolicy
+    ) async -> HTTPResponse? {
+        let mediaTypes = request.mediaTypes
+        guard mediaTypes.isEmpty == false else {
+            return nil
+        }
+        guard gatewayServingDefaults.accelerationMode == .speculativeDecode else {
+            return nil
+        }
+        return await unsupportedMultimodalRequestResponse(
+            modelID: request.model,
+            reason: "media_speculative_decode_unsupported",
+            message: "Media-bearing chat requests cannot use speculative decoding until multimodal drafter routing is supported.",
+            mediaTypes: mediaTypes
+        )
+    }
+
+    private func unsupportedMultimodalRequestResponse(
+        modelID: String,
+        reason: String,
+        message: String,
+        mediaTypes: Set<String>
+    ) async -> HTTPResponse {
+        await metricsStore.increment("http.multimodal_admission_rejection_count")
+        await metricsStore.increment("http.multimodal_admission_rejection.\(reason)")
+        return jsonResponse(
+            statusCode: 400,
+            payload: [
+                "error": [
+                    "code": "unsupported_multimodal_request",
+                    "message": message,
+                    "model_id": modelID,
+                    "reason": reason,
+                    "media_types": mediaTypes.sorted(),
+                ],
+            ]
+        )
+    }
+
+    private func supportedMediaTypes(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> Set<String> {
+        let configured = normalizedIdentifierList(
+            model.supportedModalities,
+            fallback: model.settings.ext["melix.capability.supported_modalities"]
+        )
+        var supported = Set(configured)
+        if !supported.isEmpty {
+            return supported
+        }
+        let capabilityIdentifier = ModelCatalogPresentation.capabilityIdentifier(for: model)
+        switch capabilityIdentifier {
+        case "vlm":
+            supported.insert("image")
+        case "ocr", "image_generation":
+            supported.formUnion(["image"])
+        case "transcription":
+            supported.formUnion(["audio"])
+        case "speech":
+            supported.formUnion(["audio", "text"])
+        default:
+            break
+        }
+        return supported
     }
 
     private func shouldRouteTextOnlyRequestToCompanion(

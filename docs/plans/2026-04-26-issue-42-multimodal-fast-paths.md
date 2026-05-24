@@ -56,12 +56,22 @@ Not yet proven:
 - Media-bearing speculative decode. Current MTP speculative support is
   text-backed/prompt-only and explicitly rejects media inputs.
 
+This PR is a narrow fail-closed unit for issue 42. It prioritizes correctness
+and operator trust before generation: media-bearing chat requests must either be
+admitted to a model that advertises the requested media modality, reject with a
+typed 4xx response, or disable incompatible speculative defaults before worker
+dispatch. This unit does not claim throughput or latency speedups.
+
 ## Public Interface Boundary
 
-- No public HTTP request or response shape changes are required.
+- Successful HTTP request and response shapes remain unchanged.
 - No chat payload shape changes are required.
 - Protobuf changes are allowed only when a receipt or diagnostic surface needs a
   typed field that cannot be represented safely through existing metadata.
+- Unsupported multimodal admission paths return the existing OpenAI-style error
+  envelope with typed Melix fields such as `reason`, `media_types`, and
+  `model_id` so operators can distinguish capability, tool-routing, and
+  acceleration refusals.
 - Externally visible additions are limited to health/status payloads,
   diagnostics bundles, benchmark/evidence JSON, CLI status, and stable typed
   unsupported reasons.
@@ -321,6 +331,14 @@ Executable unit issues:
   selected model is absent from the catalog; admission returns
   `unsupported_media_for_model` with route kind `unknown` before lazy loading or
   worker dispatch.
+- The fail-closed admission unit normalizes compatible media aliases, rejects
+  media-bearing chat requests on text-only models before model load or
+  generation, rejects media plus tools until multimodal tool routing is
+  supported, and disables incompatible speculative defaults before VLM
+  generation. It measures success with admission outcomes rather than speed:
+  typed `4xx` responses for unsupported media requests, no worker
+  load/generate call on rejected requests, and baseline acceleration metadata
+  when speculative defaults are disabled for admitted media.
 - Unit 1.3.3 extends the packaged VLM route receipt with
   `processor_modality_counts`, `media_token_expansion`,
   `packaged_media_route`, and `unsupported_reason`. The deterministic packaged

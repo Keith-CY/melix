@@ -9,6 +9,7 @@ let package = Package(
     ],
     products: [
         .library(name: "MelixControlPlaneProtocol", targets: ["MelixControlPlaneProtocol"]),
+        .library(name: "MelixWorkspaceProtocol", targets: ["MelixWorkspaceProtocol"]),
         .library(name: "MelixWorkerProtocol", targets: ["MelixWorkerProtocol"]),
     ],
     dependencies: [
@@ -23,6 +24,13 @@ let package = Package(
                 .product(name: "SwiftProtobuf", package: "swift-protobuf"),
             ],
             path: "controlplane/v1"
+        ),
+        .target(
+            name: "MelixWorkspaceProtocol",
+            dependencies: [
+                .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+            ],
+            path: "workspace/v1"
         ),
         .target(
             name: "MelixWorkerProtocol",

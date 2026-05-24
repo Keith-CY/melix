@@ -170,7 +170,7 @@ def test_build_phase6_vision_metrics_report_includes_machine_readable_checks() -
         },
         vlm={
             "request_latency_ms": 24.1,
-            "tool_call_success": True,
+            "tool_rejection_success": True,
         },
         metrics_snapshot={
             "values": {
@@ -198,13 +198,13 @@ def test_build_phase6_vision_metrics_report_includes_machine_readable_checks() -
     assert checks["vision.ingress.remote_image_refusal_success"] is True
     assert checks["vision.ingress.multi_image_success"] is True
     assert checks["vision.ocr.default_stop_success"] is True
-    assert checks["vision.vlm.tool_call_success"] is True
+    assert checks["vision.vlm.tool_rejection_success"] is True
     assert metrics["vision.integration_success_rate"] == 100.0
     assert metrics["vision.ingress.local_image_success_rate"] == 100.0
     assert metrics["vision.ingress.remote_image_refusal_success_rate"] == 100.0
     assert metrics["vision.ingress.multi_image_success_rate"] == 100.0
     assert metrics["vision.ocr.default_stop_success_rate"] == 100.0
-    assert metrics["vision.vlm.tool_call_success_rate"] == 100.0
+    assert metrics["vision.vlm.tool_rejection_success_rate"] == 100.0
     assert metrics["vision.ocr.request_latency_ms"] == 18.4
     assert metrics["vision.vlm.request_latency_ms"] == 24.1
     assert metrics["vision.ocr_latency_ms"] == 4.2
@@ -236,7 +236,7 @@ def test_build_phase6_vision_metrics_report_defaults_missing_values() -> None:
         },
         vlm={
             "request_latency_ms": None,
-            "tool_call_success": False,
+            "tool_rejection_success": False,
         },
         metrics_snapshot={"values": []},
     )
@@ -247,7 +247,7 @@ def test_build_phase6_vision_metrics_report_defaults_missing_values() -> None:
     assert metrics["vision.ingress.remote_image_refusal_success_rate"] == 0.0
     assert metrics["vision.ingress.multi_image_success_rate"] == 0.0
     assert metrics["vision.ocr.default_stop_success_rate"] == 0.0
-    assert metrics["vision.vlm.tool_call_success_rate"] == 0.0
+    assert metrics["vision.vlm.tool_rejection_success_rate"] == 0.0
     assert metrics["vision.ocr.request_latency_ms"] == 0.0
     assert metrics["vision.vlm.request_latency_ms"] == 0.0
     assert metrics["vision.ocr_latency_ms"] == 0.0
@@ -264,6 +264,28 @@ def test_build_phase6_vision_metrics_report_defaults_missing_values() -> None:
     assert metrics["vision.multi_image_scatter_mode"] == "none"
     assert metrics["vision.quantized_load_mode"] == "fallback"
     assert metrics["vision.quantized_load_fallback_reason"] == "not_reported"
+
+
+def test_build_phase6_vision_metrics_report_accepts_legacy_tool_success_key() -> None:
+    report = exported_build_phase6_vision_metrics_report(
+        ingress={
+            "local_image_success": True,
+            "remote_image_refusal_success": True,
+            "multi_image_success": True,
+        },
+        ocr={
+            "request_latency_ms": 1.0,
+            "default_stop_success": True,
+        },
+        vlm={
+            "request_latency_ms": 1.0,
+            "tool_call_success": True,
+        },
+        metrics_snapshot={"values": {}},
+    )
+
+    assert report["checks"]["vision.vlm.tool_rejection_success"] is True
+    assert report["metrics"]["vision.vlm.tool_rejection_success_rate"] == 100.0
 
 
 def test_build_phase6_vision_metrics_report_defaults_non_string_fast_path_modes(caplog) -> None:

@@ -2068,13 +2068,14 @@ struct OpenAIHandlerTests {
         let error = try #require(payload["error"] as? [String: Any])
 
         #expect(response.statusCode == 400)
-        #expect(error["code"] as? String == "unsupported_media_for_model")
-        #expect(error["unsupported_reason"] as? String == "text_only_runtime")
-        #expect(error["media_count"] as? Int == 1)
+        #expect(error["code"] as? String == "unsupported_multimodal_request")
+        #expect(error["reason"] as? String == "model_does_not_support_media")
+        #expect(error["model_id"] as? String == "melix-dev-text")
+        #expect(error["media_types"] as? [String] == ["image"])
         #expect(await workerClient.lastLoadModelRequest == nil)
         #expect(await workerClient.lastGenerateRequest == nil)
-        #expect(await metricsStore.value(forKey: "http.media_admission_refusal_count") == 1)
-        #expect(await metricsStore.value(forKey: "http.media_admission_refusal.text_only_runtime") == 1)
+        #expect(await metricsStore.value(forKey: "http.multimodal_admission_rejection_count") == 1)
+        #expect(await metricsStore.value(forKey: "http.multimodal_admission_rejection.model_does_not_support_media") == 1)
     }
 
     @Test("POST /v1/chat/completions rejects media for unknown models before lazy loading")
@@ -2127,14 +2128,14 @@ struct OpenAIHandlerTests {
         let error = try #require(payload["error"] as? [String: Any])
 
         #expect(response.statusCode == 400)
-        #expect(error["code"] as? String == "unsupported_media_for_model")
-        #expect(error["unsupported_reason"] as? String == "text_only_runtime")
-        #expect(error["media_count"] as? Int == 1)
-        #expect(error["route_kind"] as? String == "unknown")
+        #expect(error["code"] as? String == "unsupported_multimodal_request")
+        #expect(error["reason"] as? String == "model_does_not_support_media")
+        #expect(error["model_id"] as? String == "melix-unknown-vlm")
+        #expect(error["media_types"] as? [String] == ["image"])
         #expect(await workerClient.lastLoadModelRequest == nil)
         #expect(await workerClient.lastGenerateRequest == nil)
-        #expect(await metricsStore.value(forKey: "http.media_admission_refusal_count") == 1)
-        #expect(await metricsStore.value(forKey: "http.media_admission_refusal.text_only_runtime") == 1)
+        #expect(await metricsStore.value(forKey: "http.multimodal_admission_rejection_count") == 1)
+        #expect(await metricsStore.value(forKey: "http.multimodal_admission_rejection.model_does_not_support_media") == 1)
     }
 
     @Test("POST /v1/chat/completions returns typed media errors for invalid base64")
@@ -2330,14 +2331,14 @@ struct OpenAIHandlerTests {
         let error = try #require(payload["error"] as? [String: Any])
 
         #expect(response.statusCode == 400)
-        #expect(error["code"] as? String == "unsupported_media_for_model")
-        #expect(error["unsupported_reason"] as? String == "unsupported_media_modality")
-        #expect(error["media_kind"] as? String == "video")
-        #expect(error["route_kind"] as? String == "python_ocr")
+        #expect(error["code"] as? String == "unsupported_multimodal_request")
+        #expect(error["reason"] as? String == "model_does_not_support_media")
+        #expect(error["model_id"] as? String == "melix-dev-ocr")
+        #expect(error["media_types"] as? [String] == ["video"])
         #expect(await workerClient.lastLoadModelRequest == nil)
         #expect(await workerClient.lastGenerateRequest == nil)
-        #expect(await metricsStore.value(forKey: "http.media_admission_refusal_count") == 1)
-        #expect(await metricsStore.value(forKey: "http.media_admission_refusal.unsupported_media_modality") == 1)
+        #expect(await metricsStore.value(forKey: "http.multimodal_admission_rejection_count") == 1)
+        #expect(await metricsStore.value(forKey: "http.multimodal_admission_rejection.model_does_not_support_media") == 1)
     }
 
     @Test("POST /v1/chat/completions rejects text-backed VLM media before worker dispatch")
@@ -2417,16 +2418,16 @@ struct OpenAIHandlerTests {
         let error = try #require(payload["error"] as? [String: Any])
 
         #expect(response.statusCode == 400)
-        #expect(error["code"] as? String == "unsupported_media_for_model")
-        #expect(error["unsupported_reason"] as? String == "unsupported_media_modality")
-        #expect(error["media_kind"] as? String == "image")
-        #expect(error["route_kind"] as? String == "python_vlm")
+        #expect(error["code"] as? String == "unsupported_multimodal_request")
+        #expect(error["reason"] as? String == "model_does_not_support_media")
+        #expect(error["model_id"] as? String == "melix-dev-vlm")
+        #expect(error["media_types"] as? [String] == ["image"])
         #expect(await textClient.lastLoadModelRequest == nil)
         #expect(await textClient.lastGenerateRequest == nil)
         #expect(await vlmClient.lastLoadModelRequest == nil)
         #expect(await vlmClient.lastGenerateRequest == nil)
-        #expect(await metricsStore.value(forKey: "http.media_admission_refusal_count") == 1)
-        #expect(await metricsStore.value(forKey: "http.media_admission_refusal.unsupported_media_modality") == 1)
+        #expect(await metricsStore.value(forKey: "http.multimodal_admission_rejection_count") == 1)
+        #expect(await metricsStore.value(forKey: "http.multimodal_admission_rejection.model_does_not_support_media") == 1)
     }
 
     @Test("POST /v1/chat/completions rejects media when model modalities are unknown")
@@ -2440,29 +2441,28 @@ struct OpenAIHandlerTests {
             storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
             defaults: ["MELIX_GATEWAY_ACCELERATION_MODE": "baseline"]
         )
-        var vlmModel = ModelCatalog.devVLMModel()
-        vlmModel.supportedModalities = []
-        vlmModel.settings.ext["melix.capability.supported_modalities"] = ""
-        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), vlmModel])
-        _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::python")
+        var model = warmModel()
+        model.modelID = "melix-unknown-media"
+        model.kind = "custom"
+        model.capabilityClass = .unspecified
+        model.routeClass = .unspecified
+        model.supportedModalities = []
+        model.settings.ext.removeValue(forKey: "melix.capability.class")
+        model.settings.ext["melix.capability.supported_modalities"] = ""
+        let catalog = ModelCatalog(seedModels: [model])
         let metricsStore = MetricsStore()
-        let textClient = ScriptedWorkerClient(events: [])
-        let vlmClient = ScriptedWorkerClient(
+        let workerClient = ScriptedWorkerClient(
             events: [
                 makeCompletedEvent(
-                    requestID: "req-http-vlm-unknown-modalities",
+                    requestID: "req-http-unknown-modalities",
                     seq: 1,
                     finishReason: "stop",
                     assistantText: "done"
                 ),
             ],
-            loadModelHandle: "melix-dev-vlm::python"
+            loadModelHandle: "melix-unknown-media::local"
         )
-        let workerRegistry = WorkerRegistry(
-            defaultTextClient: textClient,
-            pythonCompatibilityClient: vlmClient,
-            modelCatalog: catalog
-        )
+        let workerRegistry = WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog)
         let handler = OpenAIHandler(
             modelCatalog: catalog,
             requestCoordinator: RequestCoordinator(
@@ -2472,14 +2472,14 @@ struct OpenAIHandlerTests {
             ),
             workerRegistry: workerRegistry,
             metricsStore: metricsStore,
-            translator: ChatRequestTranslator(requestIDGenerator: { "req-http-vlm-unknown-modalities" }),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-http-unknown-modalities" }),
             gatewayServingDefaultsStore: servingDefaultsStore
         )
 
         let body = try #require(
             """
             {
-              "model": "melix-dev-vlm",
+              "model": "melix-unknown-media",
               "stream": true,
               "messages": [
                 {
@@ -2506,15 +2506,14 @@ struct OpenAIHandlerTests {
         let error = try #require(payload["error"] as? [String: Any])
 
         #expect(response.statusCode == 400)
-        #expect(error["code"] as? String == "unsupported_media_for_model")
-        #expect(error["unsupported_reason"] as? String == "unknown_media_modalities")
-        #expect(error["media_kind"] as? String == "image")
-        #expect(await textClient.lastLoadModelRequest == nil)
-        #expect(await textClient.lastGenerateRequest == nil)
-        #expect(await vlmClient.lastLoadModelRequest == nil)
-        #expect(await vlmClient.lastGenerateRequest == nil)
-        #expect(await metricsStore.value(forKey: "http.media_admission_refusal_count") == 1)
-        #expect(await metricsStore.value(forKey: "http.media_admission_refusal.unknown_media_modalities") == 1)
+        #expect(error["code"] as? String == "unsupported_multimodal_request")
+        #expect(error["reason"] as? String == "model_does_not_support_media")
+        #expect(error["model_id"] as? String == "melix-unknown-media")
+        #expect(error["media_types"] as? [String] == ["image"])
+        #expect(await workerClient.lastLoadModelRequest == nil)
+        #expect(await workerClient.lastGenerateRequest == nil)
+        #expect(await metricsStore.value(forKey: "http.multimodal_admission_rejection_count") == 1)
+        #expect(await metricsStore.value(forKey: "http.multimodal_admission_rejection.model_does_not_support_media") == 1)
     }
 
     @Test("POST /v1/chat/completions refuses OpenAI tools on media-bearing requests")
@@ -2561,9 +2560,10 @@ struct OpenAIHandlerTests {
         let error = try #require(payload["error"] as? [String: Any])
 
         #expect(response.statusCode == 400)
-        #expect(error["code"] as? String == "unsupported_media_for_tools")
-        #expect(error["tools_disabled_reason"] as? String == "media_present")
-        #expect(error["media_count"] as? Int == 1)
+        #expect(error["code"] as? String == "unsupported_multimodal_request")
+        #expect(error["reason"] as? String == "media_tools_unsupported")
+        #expect(error["model_id"] as? String == "melix-dev-vlm")
+        #expect(error["media_types"] as? [String] == ["image"])
         #expect(await harness.vlmClient.lastLoadModelRequest == nil)
         #expect(await harness.vlmClient.lastGenerateRequest == nil)
     }
@@ -2852,15 +2852,14 @@ struct OpenAIHandlerTests {
                 body: body
             )
         )
-        let payload = try await jsonPayload(from: response.body)
-        let error = try #require(payload["error"] as? [String: Any])
-
-        #expect(response.statusCode == 400)
-        #expect(error["code"] as? String == "unsupported_media_for_speculative_decode")
-        #expect(error["speculative_disabled_reason"] as? String == "media_present")
-        #expect(error["media_count"] as? Int == 1)
-        #expect(await vlmClient.lastLoadModelRequest == nil)
-        #expect(await vlmClient.lastGenerateRequest == nil)
+        let payload = try await collectBody(response.body)
+        #expect(response.statusCode == 200, Comment(rawValue: payload))
+        let generateRequest = try #require(await vlmClient.lastGenerateRequest)
+        #expect(generateRequest.execution.modelHandle == "melix-dev-vlm::python")
+        #expect(generateRequest.execution.ext["melix.gateway.acceleration_mode"] == "baseline")
+        #expect(generateRequest.execution.ext["melix.media_parts.count"] == "1")
+        #expect(await textClient.lastLoadModelRequest == nil)
+        #expect(await textClient.lastGenerateRequest == nil)
     }
 
     @Test("POST /v1/chat/completions reports both tool and speculative media refusals")
@@ -2964,10 +2963,10 @@ struct OpenAIHandlerTests {
         let error = try #require(payload["error"] as? [String: Any])
 
         #expect(response.statusCode == 400)
-        #expect(error["code"] as? String == "unsupported_media_for_tools")
-        #expect(error["tools_disabled_reason"] as? String == "media_present")
-        #expect(error["speculative_disabled_reason"] as? String == "media_present")
-        #expect(error["media_count"] as? Int == 1)
+        #expect(error["code"] as? String == "unsupported_multimodal_request")
+        #expect(error["reason"] as? String == "media_tools_unsupported")
+        #expect(error["model_id"] as? String == "melix-dev-vlm")
+        #expect(error["media_types"] as? [String] == ["image"])
         #expect(await vlmClient.lastLoadModelRequest == nil)
         #expect(await vlmClient.lastGenerateRequest == nil)
     }
@@ -3145,6 +3144,8 @@ struct OpenAIHandlerTests {
         model.settings.accelerationProfileID = "structured-user"
         model.settings.ext["melix.acceleration.supported_modes"] = "baseline,sparse_prefill"
         model.settings.ext["melix.acceleration.target_capability"] = "sparse_prefill"
+        model.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-sparse-prefill-v1"
+        model.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
         let catalog = ModelCatalog(seedModels: [model])
         let workerClient = ScriptedWorkerClient(events: [
             makeCompletedEvent(requestID: "req-sparse-prefill", seq: 1, finishReason: "stop", assistantText: "done"),
@@ -4059,6 +4060,976 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"code\":\"unsupported_media_payload\""))
         #expect(payload.contains("\"unsupported_reason\":\"missing_media_value\""))
         #expect(payload.contains("\"message\":\"input_image.url or input_image.data is required.\""))
+        #expect(await workerClient.lastLoadModelRequest == nil)
+        #expect(await workerClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions rejects media on text-only models before worker dispatch")
+    func postChatCompletionsRejectsMediaOnTextOnlyModelsBeforeWorkerDispatch() async throws {
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(
+                requestID: "req-text-media-rejected",
+                seq: 1,
+                finishReason: "stop",
+                assistantText: "should not generate"
+            ),
+        ])
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-text-media-rejected" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "text", "text": "Describe the image." },
+                    {
+                      "type": "input_image",
+                      "input_image": {
+                        "data": "aW1hZ2U=",
+                        "mime_type": "image/png",
+                        "filename": "fixture.png"
+                      }
+                    },
+                    {
+                      "type": "input_audio",
+                      "input_audio": {
+                        "data": "YXVkaW8=",
+                        "format": "wav",
+                        "mime_type": "audio/wav",
+                        "filename": "fixture.wav"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("\"code\":\"unsupported_multimodal_request\""))
+        #expect(payload.contains("\"reason\":\"model_does_not_support_media\""))
+        #expect(payload.contains("Model melix-dev-text does not advertise support for audio, image media."))
+        #expect(await workerClient.lastLoadModelRequest == nil)
+        #expect(await workerClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions rejects video when VLM does not advertise video support")
+    func postChatCompletionsRejectsVideoWhenVLMDoesNotAdvertiseVideoSupport() async throws {
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: "req-vlm-video-rejected",
+            configureModel: { model in
+                model.supportedModalities = ["text", "image"]
+                model.settings.ext["melix.capability.supported_modalities"] = "text,image"
+            }
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "text", "text": "Summarize the clip." },
+                    {
+                      "type": "input_video",
+                      "input_video": {
+                        "data": "dmlkZW8gZml4dHVyZQ==",
+                        "format": "mp4",
+                        "filename": "clip.mp4"
+                      }
+                    },
+                    {
+                      "type": "input_audio",
+                      "input_audio": {
+                        "data": "YXVkaW8=",
+                        "format": "wav",
+                        "mime_type": "audio/wav",
+                        "filename": "clip.wav"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("\"code\":\"unsupported_multimodal_request\""))
+        #expect(payload.contains("\"reason\":\"model_does_not_support_media\""))
+        #expect(payload.contains("Model melix-dev-vlm does not advertise support for audio, video media."))
+        #expect(await harness.vlmClient.lastLoadModelRequest == nil)
+        #expect(await harness.vlmClient.lastGenerateRequest == nil)
+        #expect(await harness.textClient.lastLoadModelRequest == nil)
+        #expect(await harness.textClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions derives legacy VLM media support from capability class")
+    func postChatCompletionsDerivesLegacyVLMMediaSupportFromCapabilityClass() async throws {
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: "req-legacy-vlm-image",
+            configureModel: { model in
+                model.supportedModalities = []
+                model.settings.ext["melix.capability.supported_modalities"] = ""
+                model.settings.ext["melix.vlm.execution_mode"] = "multimodal"
+            }
+        )
+        _ = await harness.catalog.recordLoadSucceeded(
+            id: "melix-dev-vlm",
+            dispatchHandle: "melix-dev-vlm::python"
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "text", "text": "Describe the image." },
+                    {
+                      "type": "input_image",
+                      "input_image": {
+                        "data": "aW1hZ2U=",
+                        "mime_type": "image/png"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+        let request = try #require(await harness.vlmClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("data: [DONE]"))
+        #expect(request.execution.modelHandle == "melix-dev-vlm::python")
+        #expect(await harness.textClient.lastLoadModelRequest == nil)
+        #expect(await harness.textClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions derives legacy OCR media support from capability class")
+    func postChatCompletionsDerivesLegacyOCRMediaSupportFromCapabilityClass() async throws {
+        var model = warmOCRModel()
+        model.supportedModalities = []
+        model.settings.ext["melix.capability.supported_modalities"] = ""
+        let catalog = ModelCatalog(seedModels: [model])
+        let workerClient = ScriptedWorkerClient(
+            events: [
+                makeCompletedEvent(
+                    requestID: "req-legacy-ocr-image",
+                    seq: 1,
+                    finishReason: "stop",
+                    assistantText: "done"
+                ),
+            ],
+            loadModelHandle: "melix-dev-ocr::python"
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(
+                    defaultTextClient: ScriptedWorkerClient(events: []),
+                    pythonCompatibilityClient: workerClient,
+                    modelCatalog: catalog
+                ),
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: ScriptedWorkerClient(events: []),
+                pythonCompatibilityClient: workerClient,
+                modelCatalog: catalog
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-legacy-ocr-image" }),
+            sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-ocr",
+              "stream": true,
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "text", "text": "Read the image." },
+                    {
+                      "type": "input_image",
+                      "input_image": {
+                        "data": "aW1hZ2U=",
+                        "mime_type": "image/png"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+        let request = try #require(await workerClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("data: [DONE]"))
+        #expect(request.execution.modelHandle == "melix-dev-ocr::local")
+    }
+
+    @Test("POST /v1/chat/completions derives legacy capability media fallbacks before endpoint validation")
+    func postChatCompletionsDerivesLegacyCapabilityMediaFallbacksBeforeEndpointValidation() async throws {
+        var imageModel = ModelCatalog.devImageModel()
+        imageModel.supportedModalities = []
+        imageModel.settings.ext["melix.capability.supported_modalities"] = ""
+        var transcriptionModel = ModelCatalog.devTranscriptionModel()
+        transcriptionModel.supportedModalities = []
+        transcriptionModel.settings.ext["melix.capability.supported_modalities"] = ""
+        var speechModel = ModelCatalog.devSpeechModel()
+        speechModel.supportedModalities = []
+        speechModel.settings.ext["melix.capability.supported_modalities"] = ""
+        var textModel = warmModel()
+        textModel.supportedModalities = []
+        textModel.settings.ext["melix.capability.supported_modalities"] = ""
+
+        let cases: [(Melix_Controlplane_V1_ModelSummary, String, String, String)] = [
+            (
+                imageModel,
+                """
+                [
+                  { "type": "text", "text": "Generate from this image." },
+                  {
+                    "type": "input_image",
+                    "input_image": {
+                      "data": "aW1hZ2U=",
+                      "mime_type": "image/png"
+                    }
+                  }
+                ]
+                """,
+                "\"code\":\"wrong_endpoint_for_model\"",
+                "\"code\":\"unsupported_multimodal_request\""
+            ),
+            (
+                transcriptionModel,
+                """
+                [
+                  { "type": "text", "text": "Transcribe this clip." },
+                  {
+                    "type": "input_audio",
+                    "input_audio": {
+                      "data": "aGVsbG8=",
+                      "format": "wav",
+                      "mime_type": "audio/wav"
+                    }
+                  }
+                ]
+                """,
+                "\"code\":\"wrong_endpoint_for_model\"",
+                "\"code\":\"unsupported_multimodal_request\""
+            ),
+            (
+                speechModel,
+                """
+                [
+                  { "type": "text", "text": "Speak from this audio context." },
+                  {
+                    "type": "input_audio",
+                    "input_audio": {
+                      "data": "aGVsbG8=",
+                      "format": "wav",
+                      "mime_type": "audio/wav"
+                    }
+                  }
+                ]
+                """,
+                "\"code\":\"wrong_endpoint_for_model\"",
+                "\"code\":\"unsupported_multimodal_request\""
+            ),
+            (
+                textModel,
+                """
+                [
+                  { "type": "text", "text": "Describe the image." },
+                  {
+                    "type": "input_image",
+                    "input_image": {
+                      "data": "aW1hZ2U=",
+                      "mime_type": "image/png"
+                    }
+                  }
+                ]
+                """,
+                "\"code\":\"unsupported_multimodal_request\"",
+                "\"code\":\"wrong_endpoint_for_model\""
+            ),
+        ]
+
+        for (model, content, expectedFragment, unexpectedFragment) in cases {
+            let workerClient = ScriptedWorkerClient(events: [])
+            let handler = OpenAIHandler(
+                modelCatalog: ModelCatalog(seedModels: [model]),
+                requestCoordinator: RequestCoordinator(
+                    workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                    abortRegistry: AbortRegistry()
+                ),
+                translator: ChatRequestTranslator(requestIDGenerator: { "req-legacy-media-fallback" })
+            )
+            let body = try #require(
+                """
+                {
+                  "model": "\(model.modelID)",
+                  "stream": true,
+                  "messages": [
+                    {
+                      "role": "user",
+                      "content": \(content)
+                    }
+                  ]
+                }
+                """.data(using: .utf8)
+            )
+
+            let response = try await handler.handle(
+                HTTPRequest(
+                    method: .post,
+                    path: "/v1/chat/completions",
+                    headers: ["content-type": "application/json"],
+                    body: body
+                )
+            )
+            let payload = try await collectBody(response.body)
+
+            #expect(response.statusCode == 400)
+            #expect(payload.contains(expectedFragment))
+            #expect(!payload.contains(unexpectedFragment))
+            #expect(await workerClient.lastLoadModelRequest == nil)
+            #expect(await workerClient.lastGenerateRequest == nil)
+        }
+    }
+
+    @Test("POST /v1/chat/completions rejects media when routed model is not catalogued")
+    func postChatCompletionsRejectsMediaWhenRoutedModelIsNotCatalogued() async throws {
+        let workerClient = ScriptedWorkerClient(events: [])
+        let gatewayConfigStore = GatewayConfigStore(
+            storeURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("melix-test-missing-media-model-\(UUID().uuidString).json"),
+            defaults: [:]
+        )
+        var command = Melix_Controlplane_V1_ApplyGatewayConfig()
+        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.host = "127.0.0.1"
+        command.port = 11_434
+        command.defaultModelID = "missing-vlm"
+        command.servedModelIds = ["missing-vlm"]
+        command.rateLimitPerMinute = 120
+        command.timeoutSeconds = 60
+        try await gatewayConfigStore.apply(command: command)
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: []),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-missing-media-model" }),
+            gatewayConfigStore: gatewayConfigStore
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "missing-vlm",
+              "stream": true,
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "text", "text": "Describe the image." },
+                    {
+                      "type": "input_image",
+                      "input_image": {
+                        "data": "aW1hZ2U=",
+                        "mime_type": "image/png"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("\"code\":\"unsupported_multimodal_request\""))
+        #expect(payload.contains("\"reason\":\"model_does_not_support_media\""))
+        #expect(payload.contains("Model missing-vlm does not advertise support for image media."))
+        #expect(await workerClient.lastLoadModelRequest == nil)
+        #expect(await workerClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions rejects unknown multimodal part types before worker dispatch")
+    func postChatCompletionsRejectsUnknownMultimodalPartTypesBeforeWorkerDispatch() async throws {
+        let workerClient = ScriptedWorkerClient(events: [])
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-unknown-media-type" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "thermal_image", "thermal_image": { "data": "aW1hZ2U=" } }
+                  ]
+                }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("\"code\":\"unsupported_media_payload\""))
+        #expect(payload.contains("\"unsupported_reason\":\"unsupported_part_type\""))
+        #expect(payload.contains("Unsupported multimodal part type: thermal_image."))
+        #expect(await workerClient.lastLoadModelRequest == nil)
+        #expect(await workerClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions returns invalid argument for non-string multimodal part types")
+    func postChatCompletionsReturnsInvalidArgumentForNonStringMultimodalPartTypes() async throws {
+        let workerClient = ScriptedWorkerClient(events: [])
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-non-string-media-type" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": 123, "text": "not a valid media part type" }
+                  ]
+                }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("\"code\":\"invalid_argument\""))
+        #expect(payload.contains("Malformed multimodal chat payload."))
+        #expect(await workerClient.lastLoadModelRequest == nil)
+        #expect(await workerClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions rejects media with tools before worker dispatch")
+    func postChatCompletionsRejectsMediaWithToolsBeforeWorkerDispatch() async throws {
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: "req-media-tools-rejected",
+            configureModel: { model in
+                model.settings.ext["melix.vlm.execution_mode"] = "multimodal"
+            }
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "tools": [
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "inspect",
+                    "description": "Inspect a visible object.",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "object": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              ],
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "text", "text": "Describe the image." },
+                    {
+                      "type": "input_image",
+                      "input_image": {
+                        "data": "aW1hZ2U=",
+                        "mime_type": "image/png"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("\"code\":\"unsupported_multimodal_request\""))
+        #expect(payload.contains("\"reason\":\"media_tools_unsupported\""))
+        #expect(payload.contains("Media-bearing chat requests cannot use tools until multimodal tool routing is supported."))
+        #expect(await harness.vlmClient.lastLoadModelRequest == nil)
+        #expect(await harness.vlmClient.lastGenerateRequest == nil)
+        #expect(await harness.textClient.lastLoadModelRequest == nil)
+        #expect(await harness.textClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions rejects media with explicit tool parser before worker dispatch")
+    func postChatCompletionsRejectsMediaWithExplicitToolParserBeforeWorkerDispatch() async throws {
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: "req-media-tool-parser-rejected",
+            configureModel: { model in
+                model.settings.ext["melix.vlm.execution_mode"] = "multimodal"
+            }
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "tool_parser": {
+                "mode": "qwen",
+                "namespaces": ["tools.vision"]
+              },
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "text", "text": "Describe the image." },
+                    {
+                      "type": "input_image",
+                      "input_image": {
+                        "data": "aW1hZ2U=",
+                        "mime_type": "image/png"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("\"code\":\"unsupported_multimodal_request\""))
+        #expect(payload.contains("\"reason\":\"media_tools_unsupported\""))
+        #expect(payload.contains("Media-bearing chat requests cannot use tools until multimodal tool routing is supported."))
+        #expect(await harness.vlmClient.lastLoadModelRequest == nil)
+        #expect(await harness.vlmClient.lastGenerateRequest == nil)
+        #expect(await harness.textClient.lastLoadModelRequest == nil)
+        #expect(await harness.textClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions rejects media with MCP tool injection before worker dispatch")
+    func postChatCompletionsRejectsMediaWithMCPToolInjectionBeforeWorkerDispatch() async throws {
+        let mcpCatalog = MCPToolCatalog(
+            configPath: "/tmp/mcp-tools.json",
+            defaultParserMode: .json,
+            sources: [
+                .init(
+                    sourceID: "filesystem",
+                    enabled: true,
+                    namespaces: ["tools.fs.read"]
+                ),
+            ]
+        )
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: "req-media-mcp-rejected",
+            mcpToolCatalog: mcpCatalog,
+            configureModel: { model in
+                model.settings.ext["melix.vlm.execution_mode"] = "multimodal"
+            }
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "text", "text": "Describe the image." },
+                    {
+                      "type": "input_image",
+                      "input_image": {
+                        "data": "aW1hZ2U=",
+                        "mime_type": "image/png"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("\"code\":\"unsupported_multimodal_request\""))
+        #expect(payload.contains("\"reason\":\"media_tools_unsupported\""))
+        #expect(await harness.vlmClient.lastLoadModelRequest == nil)
+        #expect(await harness.vlmClient.lastGenerateRequest == nil)
+        #expect(await harness.textClient.lastLoadModelRequest == nil)
+        #expect(await harness.textClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions suppresses model default tool parser for admitted media")
+    func postChatCompletionsSuppressesModelDefaultToolParserForAdmittedMedia() async throws {
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: "req-media-model-parser-suppressed",
+            configureModel: { model in
+                model.settings.ext["melix.vlm.execution_mode"] = "multimodal"
+            }
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "text", "text": "Describe the image." },
+                    {
+                      "type": "input_image",
+                      "input_image": {
+                        "data": "aW1hZ2U=",
+                        "mime_type": "image/png"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let request = try #require(await harness.vlmClient.lastGenerateRequest)
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("data: [DONE]"))
+        #expect(request.execution.ext["melix.tool_parser.mode"] == nil)
+        #expect(request.execution.ext["melix.tool_parser.source"] == nil)
+        #expect(request.execution.ext["melix.tool_parser.namespaces"] == nil)
+        #expect(request.execution.ext["melix.tool_parser.fallback_mode"] == nil)
+        #expect(request.execution.scope.parserMode.isEmpty)
+        #expect(request.execution.scope.toolParserMode.isEmpty)
+        #expect(request.execution.ext["melix.cache.fingerprint.parser_mode"] == "")
+        #expect(await harness.textClient.lastLoadModelRequest == nil)
+        #expect(await harness.textClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions disables speculative defaults for media before VLM generation")
+    func postChatCompletionsDisablesSpeculativeDefaultsForMediaBeforeVLMGeneration() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-http-media-speculative-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let servingDefaultsStore = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:]
+        )
+        var defaults = Melix_Controlplane_V1_ApplyServingDefaults()
+        defaults.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        defaults.temperature = 0.7
+        defaults.topP = 1.0
+        defaults.maxTokens = 256
+        defaults.streamIntervalTokens = 1
+        defaults.maxConcurrentRequests = 4
+        defaults.concurrentProcessingEnabled = true
+        defaults.prefillBatchSize = 2
+        defaults.completionBatchSize = 2
+        defaults.accelerationMode = .speculativeDecode
+        defaults.draftModelID = "melix-dev-draft"
+        defaults.numDraftTokens = 4
+        try await servingDefaultsStore.apply(command: defaults)
+
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: "req-media-speculative-disabled",
+            gatewayServingDefaultsStore: servingDefaultsStore,
+            configureModel: { model in
+                model.settings.ext["melix.vlm.execution_mode"] = "multimodal"
+            }
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "text", "text": "Describe the image." },
+                    {
+                      "type": "input_image",
+                      "input_image": {
+                        "data": "aW1hZ2U=",
+                        "mime_type": "image/png"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200)
+        #expect(generateRequest.execution.modelHandle == "melix-dev-vlm::python")
+        #expect(generateRequest.execution.ext["melix.gateway.acceleration_mode"] == "baseline")
+        #expect(generateRequest.execution.ext["melix.gateway.draft_model_id"] == nil)
+        #expect(generateRequest.execution.ext["melix.gateway.num_draft_tokens"] == "0")
+        #expect(await harness.textClient.lastLoadModelRequest == nil)
+        #expect(await harness.textClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions rejects media when speculative defaults remain active")
+    func postChatCompletionsRejectsMediaWhenSpeculativeDefaultsRemainActive() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-http-media-speculative-reject-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let servingDefaultsStore = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:]
+        )
+        var defaults = Melix_Controlplane_V1_ApplyServingDefaults()
+        defaults.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        defaults.temperature = 0.7
+        defaults.topP = 1.0
+        defaults.maxTokens = 256
+        defaults.streamIntervalTokens = 1
+        defaults.maxConcurrentRequests = 4
+        defaults.concurrentProcessingEnabled = true
+        defaults.prefillBatchSize = 2
+        defaults.completionBatchSize = 2
+        defaults.accelerationMode = .speculativeDecode
+        defaults.draftModelID = "melix-dev-draft"
+        defaults.numDraftTokens = 4
+        try await servingDefaultsStore.apply(command: defaults)
+
+        var model = warmModel()
+        model.supportedModalities = ["text", "image"]
+        model.settings.ext["melix.capability.supported_modalities"] = "text,image"
+        let workerClient = ScriptedWorkerClient(events: [])
+        let catalog = ModelCatalog(seedModels: [model])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-media-speculative-rejected" }),
+            gatewayServingDefaultsStore: servingDefaultsStore
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "text", "text": "Describe the image." },
+                    {
+                      "type": "input_image",
+                      "input_image": {
+                        "data": "aW1hZ2U=",
+                        "mime_type": "image/png"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 400)
+        #expect(payload.contains("\"code\":\"unsupported_multimodal_request\""))
+        #expect(payload.contains("\"reason\":\"media_speculative_decode_unsupported\""))
+        #expect(await workerClient.lastLoadModelRequest == nil)
         #expect(await workerClient.lastGenerateRequest == nil)
     }
 
@@ -4112,10 +5083,10 @@ struct OpenAIHandlerTests {
         )
         let metricsStore = MetricsStore()
         let schedulerReadModel = SchedulerReadModel(metricsStore: metricsStore)
-        var vlmModel = ModelCatalog.devVLMModel()
-        vlmModel.supportedModalities = ["text", "image", "video"]
-        vlmModel.settings.ext["melix.capability.supported_modalities"] = "text,image,video"
-        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), vlmModel])
+        var videoModel = ModelCatalog.devVLMModel()
+        videoModel.supportedModalities = ["text", "image", "video"]
+        videoModel.settings.ext["melix.capability.supported_modalities"] = "text,image,video"
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), videoModel])
         _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::python")
         let workerRegistry = WorkerRegistry(
             defaultTextClient: textClient,
@@ -10504,6 +11475,8 @@ struct OpenAIHandlerTests {
         assistantText: String = "ready",
         textEvents: [Melix_Worker_V1_ExecuteEvent] = [],
         textLoadModelHandle: String = "melix-dev-text::swift",
+        gatewayServingDefaultsStore: GatewayServingDefaultsStore? = nil,
+        mcpToolCatalog: MCPToolCatalog = .empty,
         configureModel: (inout Melix_Controlplane_V1_ModelSummary) -> Void = { _ in }
     ) -> (
         handler: OpenAIHandler,
@@ -10547,6 +11520,7 @@ struct OpenAIHandlerTests {
                 "MELIX_GATEWAY_ACCELERATION_PROFILE": "balanced",
             ]
         )
+        let resolvedServingDefaultsStore = gatewayServingDefaultsStore ?? servingDefaultsStore
         let handler = OpenAIHandler(
             modelCatalog: catalog,
             requestCoordinator: RequestCoordinator(
@@ -10557,7 +11531,8 @@ struct OpenAIHandlerTests {
             workerRegistry: workerRegistry,
             translator: ChatRequestTranslator(requestIDGenerator: { requestID }),
             sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) }),
-            gatewayServingDefaultsStore: servingDefaultsStore
+            mcpToolCatalog: mcpToolCatalog,
+            gatewayServingDefaultsStore: resolvedServingDefaultsStore
         )
         return (handler, catalog, textClient, vlmClient)
     }

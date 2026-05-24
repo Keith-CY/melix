@@ -58,6 +58,11 @@ The non-dry-run mode must execute one model at a time, update the manifest after
 each stage, export benchmark and evaluation artifacts as soon as their jobs
 complete, and keep an operator-visible bundle under `output_root` synchronized
 with the temporary run directory.
+When a batch run is associated with a project workspace, exported benchmark,
+evaluation, report, and evidence paths must also be representable in the
+[workspace manifest contract](workspace-manifest-contract.md). The batch
+`manifest.jsonl` remains the per-model execution ledger; `workspace-manifest.json`
+is the project-level artifact inventory.
 
 ### Model List Contract
 
@@ -174,6 +179,10 @@ that look like raw secret fields, such as `*_api_key`, `*_token`, `*_secret`, or
 Batch-run planning must write `manifest.jsonl` in both the temporary run
 directory and the operator output directory. Each selected model receives one
 JSONL record with `schema_version: melix.batch.manifest_entry.v1`.
+This execution manifest is separate from the project
+[`workspace-manifest.json`](workspace-manifest-contract.md), which records
+artifact roots, artifact types, provenance references, schema version, and
+redaction policy for workspace-level artifact consumers.
 
 The initial dry-run manifest entry status is `planned`. Per-step statuses start
 as `pending` for:
@@ -612,6 +621,8 @@ Every completed `bench run` must persist:
 - one run summary
 - zero or more context-sweep rows
 - zero or more batch-sweep rows
+- zero or more repeated-run group rows derived from existing context-sweep or
+  batch-sweep rows
 - zero or more request-level phase rows
 - task-aware summary metrics
 - exportable CSV rows
@@ -805,6 +816,69 @@ identity, metric name, base value, adapter value, delta, delta percent,
 direction, gate policy, status, and result. Markdown, terminal, and
 `comparison_deltas.csv` report outputs must render the same structured rows with
 `kind=agentic_adapter` in the CSV.
+
+### Repeated-Run Group Rows
+
+Repeated benchmark observations use the existing per-row `repeat_index` as the
+compatibility source of truth. A benchmark runner or persistence layer may also
+derive repeated-run group rows into `bench-repeat-groups.jsonl`. This artifact
+does not replace `bench-context-rows.jsonl`, `bench-batch-rows.jsonl`, or their
+CSV exports; it is an additive aggregate surface for report and CI consumers.
+
+Each repeated-run group row must include:
+
+- `schema_version: melix.serving_benchmark_repeat_group.v1`
+- `group_id`
+- `job_id`
+- `model_id`
+- `task_kind`
+- `source_repo`
+- `suite`
+- `context_length`
+- `generation_length`
+- `batch_size`
+- `cache_profile`
+- `reasoning_mode`
+- `structured_output_mode`
+- `source_row_kind`, either `context` or `batch`
+- `repetition_index`, the sorted repeat indexes included in the group
+- `sample_count`
+- `seed_strategy`
+- `methodology_version`
+- `throughput_mean`, `throughput_stdev`, `throughput_ci95_low`,
+  `throughput_ci95_high`
+- `ttft_ms_mean`, `ttft_ms_stdev`, `ttft_ms_ci95_low`, `ttft_ms_ci95_high`
+- `request_latency_ms_mean`, `request_latency_ms_stdev`,
+  `request_latency_ms_ci95_low`, `request_latency_ms_ci95_high`
+- `peak_memory_bytes_mean`, `peak_memory_bytes_stdev`,
+  `peak_memory_bytes_ci95_low`, `peak_memory_bytes_ci95_high`
+- `energy_joules_mean`, `energy_joules_stdev`, `energy_joules_ci95_low`,
+  `energy_joules_ci95_high` when energy data is available
+
+The group identity is the benchmark shape excluding `repeat_index`: job, model,
+source repository, source row kind, suite, context length, generation length,
+batch size, cache profile, reasoning mode, and structured-output mode.
+`sample_count` is the number of distinct repeat indexes, not the number of
+context, batch, prompt, or case rows. When one repeat contains multiple case
+rows for the same group, the persistence layer first aggregates those rows into
+one per-repeat sample value, then computes the repeated-run statistics from the
+per-repeat samples.
+
+The current methodology computes the arithmetic mean, sample standard deviation
+for `sample_count > 1`, and a normal-approximation 95 percent confidence
+interval using `1.96 * stdev / sqrt(sample_count)`. A single-run group must
+remain valid, with zero standard deviation and an interval equal to the observed
+value, but reports must treat it as informational because variance cannot be
+estimated from one sample. Optional metrics such as energy must be omitted when
+the source rows do not contain values; exporters and reports must not synthesize
+missing energy or cost metrics as `0.0`.
+
+Export bundles must expose these rows as `benchmark_repeat_groups`. CSV export
+helpers may provide a separate repeat-group CSV, but existing benchmark summary,
+context, batch, request, and matrix CSV column contracts must remain backward
+compatible. Benchmark/evaluation Markdown, terminal, and comparison CSV report
+outputs must preserve CI95 bounds, baseline and candidate sample counts, and
+any inconclusive note for repeated-run metrics.
 
 ### Compatibility Aliases
 
@@ -1067,6 +1141,9 @@ The canonical comparison extension fields are:
 `compare_target_model_ids` names registered catalog targets that are already
 loadable by the local runtime. `compare_target_adapter_manifest_paths` names
 LoRA adapter package manifests with schema `melix.lora_adapter_package.v1`.
+Workspace-aware evaluation flows may resolve those adapter manifests from
+`WORKSPACE_ARTIFACT_TYPE_ADAPTER` entries in
+[`workspace-manifest.json`](workspace-manifest-contract.md).
 During local compare execution, Melix resolves each adapter manifest into an
 ephemeral adapter-backed target using the manifest's source model, weights path,
 and adapter set hash. Those ephemeral targets are unloaded after compare
@@ -1757,10 +1834,12 @@ python scripts/benchmark_evaluation_report.py \
 The report accepts either a bundle file or a directory containing `benchmark-evaluation-export.json`
 or `export-bundle.json`.
 
-The report aggregates summary metrics plus additive benchmark request probes, matrix request probes,
-evaluation sample timing probes, failure-stage counts, run-evidence aggregate probes, and runtime
-metadata rows from persisted job parameters. Representative sample-detail probes are diagnostic
-context and must not be counted as additional aggregate duration or failure metrics.
+The report aggregates summary metrics, repeated-run group means with confidence
+intervals, additive benchmark request probes, matrix request probes, evaluation
+sample timing probes, failure-stage counts, run-evidence aggregate probes, and
+runtime metadata rows from persisted job parameters. Representative
+sample-detail probes are diagnostic context and must not be counted as
+additional aggregate duration or failure metrics.
 
 Report semantics:
 
@@ -1774,7 +1853,15 @@ Report semantics:
   metrics, plus speculative acceptance and accepted-token metrics
 - runtime metadata from job parameters is rendered as metadata rows; matching values are `ok`, and
   differing non-numeric values are `not_comparable`
-- advisory status values are `ok`, `warning`, `missing`, and `not_comparable`
+- repeated-run group rows with overlapping baseline and candidate 95 percent
+  confidence intervals are inconclusive and must be rendered as informational
+  rather than warning or improvement rows, even when the raw delta exceeds the
+  advisory threshold
+- repeated-run group rows with `sample_count <= 1` are also informational
+  because a confidence interval equal to the observed value is a compatibility
+  artifact, not evidence of low noise
+- advisory status values are `ok`, `warning`, `missing`, `not_comparable`, and
+  `informational`
 - regression warnings do not fail CI; malformed report inputs are the only non-zero report-script
   exit path
 
