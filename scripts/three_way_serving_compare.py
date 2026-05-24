@@ -369,6 +369,11 @@ def run_comparison(args: argparse.Namespace) -> dict[str, Any]:
     )
     run_id = args.run_id or datetime.now(timezone.utc).strftime("three-way-gemma31b128k-%Y%m%d-%H%M%S")
     staging_dir = args.staging_root.expanduser() / run_id
+    measurement_profile = base.measurement_profile_metadata(
+        requested_profile=args.measurement_profile,
+        warmup_requests=args.warmup_requests,
+        operator_note=args.measurement_profile_note,
+    )
 
     if args.dry_run:
         preflight = [
@@ -434,7 +439,10 @@ def run_comparison(args: argparse.Namespace) -> dict[str, Any]:
                         )
                     )
 
-    metrics_snapshot = base.load_metrics_snapshot(args.melix_control_plane_metrics)
+    metrics_snapshot = base.load_melix_metrics_snapshot(
+        control_plane_path=args.melix_control_plane_metrics,
+        swift_text_worker_path=args.melix_swift_text_worker_metrics,
+    )
     summaries = base.summarize_observations(observations)
     prompt_evidence = prompt_token_evidence(observations)
     comparisons, peer_hints = peer_comparisons(summaries, target_endpoint=args.target_endpoint)
@@ -461,6 +469,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, Any]:
         hints=hints,
         dry_run=args.dry_run,
         target_endpoint=args.target_endpoint,
+        measurement_profile=measurement_profile,
     )
     exported_to = None if args.no_export else export_bundle(staging_dir, args.export_dir)
     return {
@@ -471,6 +480,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, Any]:
         "preflight": preflight,
         "scenario_count": len(scenarios),
         "warmup_count": len(warmups),
+        "measurement_profile": measurement_profile["profile"],
         "observation_count": len(observations),
         "summary_count": len(summaries),
         "comparison_count": len(comparisons),
@@ -496,6 +506,7 @@ def write_artifacts(
     hints: list[dict[str, Any]],
     dry_run: bool,
     target_endpoint: str,
+    measurement_profile: dict[str, Any],
 ) -> dict[str, str]:
     staging_dir.mkdir(parents=True, exist_ok=True)
     generated_at = datetime.now(timezone.utc).isoformat()
@@ -510,13 +521,14 @@ def write_artifacts(
     if warmups:
         paths["warmups"] = staging_dir / "warmups.jsonl"
     if metrics_snapshot is not None:
-        paths["melix_metrics"] = staging_dir / "melix-control-plane-metrics.json"
+        paths["melix_metrics"] = staging_dir / "melix-metrics.json"
 
     manifest = {
         "schema_version": 1,
         "generated_at": generated_at,
         "dry_run": dry_run,
         "target_endpoint": target_endpoint,
+        "measurement_profile": measurement_profile,
         "endpoints": [
             {
                 "name": endpoint.name,
@@ -557,6 +569,7 @@ def write_artifacts(
         "schema_version": 1,
         "generated_at": generated_at,
         "target_endpoint": target_endpoint,
+        "measurement_profile": measurement_profile,
         "runtime_snapshots": runtime_snapshots,
         "melix_metrics_snapshot": metrics_snapshot,
         "warmups": [asdict(observation) for observation in warmups],
@@ -582,6 +595,7 @@ def write_artifacts(
             metrics_snapshot=metrics_snapshot,
             dry_run=dry_run,
             target_endpoint=target_endpoint,
+            measurement_profile=measurement_profile,
         ),
         encoding="utf-8",
     )
@@ -600,10 +614,14 @@ def render_markdown_summary(
     metrics_snapshot: dict[str, Any] | None,
     dry_run: bool,
     target_endpoint: str,
+    measurement_profile: dict[str, Any],
 ) -> str:
     lines = ["# Three-Way Gemma 4 31B 128K Serving Comparison", ""]
     lines.append(f"- Dry run: `{str(dry_run).lower()}`")
     lines.append(f"- Target endpoint: `{target_endpoint}`")
+    lines.append(f"- Measurement profile: `{measurement_profile.get('profile', 'unknown')}`")
+    if measurement_profile.get("operator_note"):
+        lines.append(f"- Measurement note: {measurement_profile['operator_note']}")
     lines.append("")
     lines.append("## Preflight")
     lines.append("")
@@ -623,16 +641,19 @@ def render_markdown_summary(
     lines.append("## Scenario Summary")
     lines.append("")
     lines.append(
-        "| Endpoint | Prompt Target | Style | Max Tokens | Concurrency | Errors | Median TTFT ms | "
-        "Median Total ms | Median Decode tok/s | Median Aggregate tok/s |"
+        "| Endpoint | Prompt Target | Style | Prompt Source | Completion Source | Max Tokens | "
+        "Concurrency | Errors | Median TTFT ms | Median Total ms | Median Decode tok/s | "
+        "Median Aggregate tok/s |"
     )
-    lines.append("|---|---:|---|---:|---:|---:|---:|---:|---:|---:|")
+    lines.append("|---|---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|")
     for summary in summaries:
         lines.append(
-            "| {endpoint} | {prompt} | {style} | {max_tokens} | {concurrency} | {errors} | {ttft} | {total} | {decode} | {aggregate} |".format(
+            "| {endpoint} | {prompt} | {style} | {prompt_source} | {completion_source} | {max_tokens} | {concurrency} | {errors} | {ttft} | {total} | {decode} | {aggregate} |".format(
                 endpoint=summary.endpoint,
                 prompt=summary.prompt_token_target,
                 style=summary.prompt_style,
+                prompt_source=summary.prompt_token_sources,
+                completion_source=summary.completion_token_sources,
                 max_tokens=summary.max_tokens,
                 concurrency=summary.concurrency,
                 errors=summary.error_count,
@@ -715,6 +736,14 @@ def render_markdown_summary(
                 "scheduler.multimodal_continuous_batch_blocked_count",
                 "scheduler.multimodal_continuous_batch_blocked_reason_code",
                 "scheduler.continuous_batch_size",
+                "control_plane.text_first_load_ms",
+                "control_plane.text_first_load_estimated_resident_bytes",
+                "control_plane.text_first_load_resident_bytes",
+                "swift_text.prefill_ms",
+                "swift_text.prefill_prompt_tokens",
+                "swift_text.decode_ttft_ms",
+                "swift_text.decode_ms",
+                "swift_text.decode_tokens_per_second",
                 "vision.text_batch_generator.peak_active_batch_size",
                 "vision.text_batch_generator.queue_wait_ms_total",
                 "vision.text_batch_generator.executor_step_ms_total",
@@ -792,6 +821,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--preflight-wait-seconds", type=float, default=0.0)
     parser.add_argument("--preflight-retry-interval-seconds", type=float, default=2.0)
     parser.add_argument("--melix-control-plane-metrics", type=Path, default=None)
+    parser.add_argument("--melix-swift-text-worker-metrics", type=Path, default=None)
+    parser.add_argument(
+        "--measurement-profile",
+        choices=base.MEASUREMENT_PROFILES,
+        default="auto",
+        help="Label measured scenarios as cold, warm, or mixed. 'auto' uses warm when warmups are run, otherwise cold.",
+    )
+    parser.add_argument(
+        "--measurement-profile-note",
+        default="",
+        help="Optional note describing how endpoint residency was prepared before measurement.",
+    )
     parser.add_argument("--allow-failed-preflight", action="store_true")
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--dry-run", action="store_true")

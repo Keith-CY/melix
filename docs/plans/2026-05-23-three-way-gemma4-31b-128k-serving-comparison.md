@@ -140,3 +140,76 @@ Export the final stakeholder-readable report bundle to:
 - Focused regression evidence: `WorkerScaffoldTests/testGemma4TextFullAttentionCacheUsesLongContextGrowthStep` first failed with both full-attention caches reporting `step = 256`, then passed after the Gemma 4 cache growth change.
 
 Current bottleneck conclusion: Melix is no longer blocked by Gemma 4 loading, text-only routing, or context-limit rejection. The remaining blocker to beating SwiftLM/OMLX is the Swift Gemma 4 long-context prefill path, plus missing prompt-prefill cancellation. Melix must optimize that path before claiming success against the user's 128k requirement.
+
+## 2026-05-24 Follow-Up Diagnosis
+
+The short `1024/16/c1` smoke artifact at
+`~/Downloads/live-smoke-c1-20260523-2217` is useful only as a startup
+compatibility check. It must not be used as a warm inference comparison:
+
+- Melix reported benchmark TTFT around `12.0s`, but its control-plane metrics
+  snapshot recorded `http.ttfd_ms ~= 3.45s` and
+  `control_plane.text_first_load_ms ~= 8.55s`.
+- The roughly `8.55s` gap matches first model load time, so this smoke run
+  mixed cold model loading into the first text-token latency.
+- SwiftLM's peer health snapshot already showed the model resident in memory;
+  OMLX and SwiftLM were therefore not proven to be in the same cold/warm state.
+
+Before making runtime changes from this smoke result, the benchmark tooling must
+record the measurement profile explicitly:
+
+- `warm` when the run performs warmup streaming requests before measured
+  scenarios, or when the operator explicitly marks a reused hot service as
+  warm.
+- `cold` when measured scenarios intentionally include first-load behavior.
+- `mixed` only when cold and warm endpoints are intentionally compared and the
+  report calls that out.
+
+The report must include Melix first-load and worker prefill/decode metrics beside
+the request timing table. Otherwise the benchmark can incorrectly attribute model
+load time to prefill or decode performance.
+
+This is the next implementation slice. After it lands, rerun a same-host
+three-way smoke with warmups enabled and use that artifact to decide whether the
+remaining gap is runtime prefill/decode behavior or only previous cold-load
+contamination.
+
+## 2026-05-24 Warm Smoke Result
+
+The follow-up warm smoke was exported to
+`~/Downloads/live-warm-smoke-current-metrics-20260524-0600` and staged at
+`.runtime/three-way-gemma31b128k/live-warm-smoke-current-metrics-20260524-0600`.
+
+Scenario: `1024` prompt target, `16` output tokens, concurrency `1`, one
+streaming warmup per endpoint, `--include-usage`, measurement profile `warm`.
+All measured scenario rows used endpoint-reported usage token counts for both
+prompt and completion tokens.
+
+| Endpoint | Prompt Usage Tokens | TTFT ms | Total ms | Decode tok/s | Aggregate tok/s |
+|---|---:|---:|---:|---:|---:|
+| Melix | 659 | 2933.24 | 3866.34 | 17.15 | 4.14 |
+| OMLX | 658 | 2894.18 | 3769.68 | 18.28 | 4.24 |
+| SwiftLM | 658 | 2700.01 | 3518.33 | 19.55 | 4.55 |
+
+This validates that the earlier `~12s` Melix TTFT from the short smoke was not
+a fair warm-inference result. Under the warm profile, Melix is within about
+`1.3%` of OMLX TTFT and about `8.6%` of SwiftLM TTFT for this short scenario,
+with decode throughput still behind the fastest peer by about `12.3%`.
+
+The merged Melix metrics snapshot in `melix-metrics.json` records the split:
+
+- `control_plane.text_first_load_ms = 7259.02`, retained as historical first
+  load evidence but excluded from the measured warm scenario timing.
+- `http.ttfd_ms = 2915.67`, matching the measured Melix TTFT.
+- `swift_text.prefill_ms = 1902`, `swift_text.decode_ttft_ms = 816`, and
+  `swift_text.decode_ms = 1727` for the current measured request.
+- `swift_text.decode_tokens_per_second = 9` is lower than the client-side
+  usage-token decode value because the worker metric uses its internal token
+  accounting cadence; the report must keep both values visible rather than
+  replacing one with the other.
+
+Conclusion: for short warm requests, the previous apparent OMLX tok/s and
+SwiftLM TTFT advantage was mostly measurement-profile and token-accounting
+contamination. Melix still has a small warm-path gap, but the next runtime
+optimization should be justified with longer decode or long-context scenarios,
+not with the old cold-loaded short smoke.
