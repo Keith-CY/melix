@@ -197,8 +197,10 @@ def test_report_evidence_gate_run_kind_probe_script_emits_metrics(
 
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["elapsed_ms_mean"] >= 0.0
-    assert metrics["match_count"] == metrics["iterations"] * metrics["sample_count"]
+    assert metrics["match_count"] == metrics["iterations"] * metrics["sample_count"] * 2.0
     assert metrics["run_kind_count"] == 65.0
+    assert metrics["metric_prefix_count"] == 17.0
+    assert metrics["target_field_count"] == 17.0
 
 
 def test_scope_report_selects_tool_registry_schema_bytes_probe() -> None:

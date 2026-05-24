@@ -209,6 +209,60 @@ def test_report_evidence_gate_run_kind_list_rules_reflect_mutation() -> None:
     )
 
 
+def test_report_evidence_gate_tuple_rule_fields_reuse_normalized_tuple() -> None:
+    report_evidence_gate_module._string_tuple_from_tuple.cache_clear()
+    rule = {"metric_prefixes": ("adapter.",), "target_fields": ("adapter_id",)}
+
+    assert report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[],
+        targets=[],
+        metrics=[{"metric": "adapter.latency_ms"}],
+        probe_phases=set(),
+    )
+    assert report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[],
+        targets=[{"adapter_id": "adapter-a"}],
+        metrics=[],
+        probe_phases=set(),
+    )
+
+    cache_info = report_evidence_gate_module._string_tuple_from_tuple.cache_info()
+    assert cache_info.hits >= 1
+    assert cache_info.misses == 2
+
+
+def test_report_evidence_gate_list_rule_fields_reflect_mutation() -> None:
+    metric_prefixes = ["adapter."]
+    target_fields = ["adapter_id"]
+    rule = {"metric_prefixes": metric_prefixes, "target_fields": target_fields}
+
+    assert not report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[],
+        targets=[{"adapter_snapshot": "snapshot-a"}],
+        metrics=[{"metric": "runtime.prepare_ms"}],
+        probe_phases=set(),
+    )
+    metric_prefixes.append("runtime.")
+    target_fields.append("adapter_snapshot")
+    assert report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[],
+        targets=[],
+        metrics=[{"metric": "runtime.prepare_ms"}],
+        probe_phases=set(),
+    )
+    assert report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[],
+        targets=[{"adapter_snapshot": "snapshot-a"}],
+        metrics=[],
+        probe_phases=set(),
+    )
+
+
 def test_report_evidence_gate_passes_complete_release_matrix(tmp_path: Path) -> None:
     serving_report = _write_report(tmp_path, "serving", run_kind="serving_benchmark")
     evaluation_report = _write_report(tmp_path, "evaluation", run_kind="evaluation")

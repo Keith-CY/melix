@@ -17,8 +17,15 @@ from worker.productization.report_evidence_gate import _rule_matches_report  # n
 
 def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     run_kinds = tuple(f"probe_kind_{index}" for index in range(64)) + ("target_kind",)
-    rule = {"run_kinds": run_kinds}
+    run_kind_rule = {"run_kinds": run_kinds}
     runs = [{"run_kind": f"observed_kind_{index}"} for index in range(79)] + [{"run_kind": "target_kind"}]
+    metric_prefixes = tuple(f"adapter.probe_{index}." for index in range(16)) + ("adapter.target.",)
+    target_fields = tuple(f"adapter_field_{index}" for index in range(16)) + ("adapter_target",)
+    tuple_rule = {"metric_prefixes": metric_prefixes, "target_fields": target_fields}
+    metrics = [{"metric": f"runtime.probe_{index}.latency_ms"} for index in range(47)] + [
+        {"metric": "adapter.target.latency_ms"}
+    ]
+    targets = [{"unused": ""} for _ in range(16)] + [{"adapter_target": "adapter-a"}]
     elapsed_samples: list[float] = []
     match_count = 0
 
@@ -26,14 +33,22 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         started = time.perf_counter()
         for _index in range(iterations):
             if not _rule_matches_report(
-                rule=rule,
+                rule=run_kind_rule,
                 runs=runs,
                 targets=[],
                 metrics=[],
                 probe_phases=set(),
             ):
                 raise RuntimeError("expected run-kind rule to match target run")
-            match_count += 1
+            if not _rule_matches_report(
+                rule=tuple_rule,
+                runs=[],
+                targets=targets,
+                metrics=metrics,
+                probe_phases=set(),
+            ):
+                raise RuntimeError("expected tuple-backed metric/target rule to match")
+            match_count += 2
         elapsed_samples.append((time.perf_counter() - started) * 1000.0)
 
     return {
@@ -42,6 +57,8 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         "sample_count": float(sample_count),
         "run_kind_count": float(len(run_kinds)),
         "runs_per_call": float(len(runs)),
+        "metric_prefix_count": float(len(metric_prefixes)),
+        "target_field_count": float(len(target_fields)),
         "match_count": float(match_count),
     }
 

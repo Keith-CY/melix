@@ -293,12 +293,12 @@ def _rule_matches_report(
         for run in runs:
             if str(run.get("run_kind", "")) in run_kind_set:
                 return True
-    metric_prefixes = tuple(str(item) for item in rule.get("metric_prefixes", ()))
+    metric_prefixes = _string_tuple(rule.get("metric_prefixes", ()))
     if metric_prefixes and any(
         str(metric.get("metric", "")).startswith(metric_prefixes) for metric in metrics
     ):
         return True
-    target_fields = tuple(str(item) for item in rule.get("target_fields", ()))
+    target_fields = _string_tuple(rule.get("target_fields", ()))
     if target_fields and any(str(target.get(field, "")).strip() for target in targets for field in target_fields):
         return True
     required_probe_phases = set(str(item) for item in rule.get("probe_phases", ()))
@@ -314,6 +314,17 @@ def _string_frozenset(values: object) -> frozenset[str]:
     if isinstance(values, tuple):
         return _string_frozenset_from_tuple(values)
     return frozenset(str(item) for item in values)  # type: ignore[union-attr]
+
+
+@lru_cache(maxsize=128)
+def _string_tuple_from_tuple(values: tuple[object, ...]) -> tuple[str, ...]:
+    return tuple(str(item) for item in values)
+
+
+def _string_tuple(values: object) -> tuple[str, ...]:
+    if isinstance(values, tuple):
+        return _string_tuple_from_tuple(values)
+    return tuple(str(item) for item in values)  # type: ignore[union-attr]
 
 
 def _telemetry_failures(report: dict[str, object]) -> list[str]:
