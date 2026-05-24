@@ -27,6 +27,7 @@ from worker.runtime.mlx_text_runtime import (
 from worker.runtime.multimodal_attention_policy import (
     AttentionPrefillPolicyDecision,
     MultimodalPrefillAttentionBudgetExceeded,
+    attention_policy_metadata,
     attention_budget_configured,
     build_attention_budget_receipt,
     choose_attention_prefill_policy,
@@ -156,6 +157,7 @@ class _TextOnlyBatchRequest:
         prompt_tokens: int,
         started_at: float | None = None,
         prepare_ms: float = 0.0,
+        prefill_step_size: int | None = None,
     ) -> None:
         self.loaded_model = loaded_model
         self.input_ids = input_ids
@@ -175,6 +177,7 @@ class _TextOnlyBatchRequest:
         self.empty_text_token_count_before_first_visible = 0
         self.completion_tokens = 0
         self.cumulative_raw_text = ""
+        self.prefill_step_size = prefill_step_size
 
 
 @dataclass
@@ -371,6 +374,9 @@ class _TextOnlyBatchGeneratorScheduler:
             [request.input_ids for request in requests],
             max_tokens=[request.max_tokens for request in requests],
         )
+        for request in requests:
+            if request.prefill_step_size is not None:
+                self._stats.prefill_step_size = request.prefill_step_size
         for uid, request in zip(uids, requests):
             request.uid = int(uid)
             self._active_by_uid[int(uid)] = request
@@ -1340,6 +1346,7 @@ class MLXVLMRuntime:
                     sampling=sampling,
                     cancel_event=cancel_event,
                     acceleration_policy=acceleration_policy,
+                    execution_ext=execution_ext,
                 )
                 return
             if not bool(getattr(acceleration_policy, "allow_baseline_fallback", False)):
@@ -1351,10 +1358,15 @@ class MLXVLMRuntime:
             raise RuntimeError(
                 "The loaded Gemma 4 MLX package does not include vision weights, so image inputs are unavailable."
             )
-        self._ensure_fast_path_probe(loaded_model, prepared_request)
         attention_policy = self._attention_prefill_policy(
             loaded_model=loaded_model,
             prepared_request=prepared_request,
+            execution_ext=execution_ext,
+        )
+        self._ensure_fast_path_probe(
+            loaded_model,
+            prepared_request,
+            attention_policy=attention_policy,
         )
         enforce_attention_prefill_policy(attention_policy)
         if cancel_event.is_set():
@@ -1386,6 +1398,7 @@ class MLXVLMRuntime:
                 sampling=sampling,
                 cancel_event=cancel_event,
                 prompt_tokens=prompt_tokens,
+                prefill_step_size=selected_prefill_step_size,
             )
             return
         if self._can_use_text_only_step_fast_path(
@@ -1565,8 +1578,8 @@ class MLXVLMRuntime:
         sampling,
         cancel_event: Event,
         acceleration_policy: common_pb2.AccelerationPolicy,
+        execution_ext: dict[str, str] | None = None,
     ):
-        self._ensure_fast_path_probe(loaded_model, prepared_request)
         if cancel_event.is_set():
             return
         prompt_tokens = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
@@ -1576,6 +1589,12 @@ class MLXVLMRuntime:
             loaded_model=loaded_model,
             prepared_request=prepared_request,
             seq_len=prompt_tokens,
+            execution_ext=execution_ext,
+        )
+        self._ensure_fast_path_probe(
+            loaded_model,
+            prepared_request,
+            attention_policy=attention_policy,
         )
         enforce_attention_prefill_policy(attention_policy)
         selected_prefill_step_size = (
@@ -2004,6 +2023,7 @@ class MLXVLMRuntime:
         sampling,
         cancel_event: Event,
         prompt_tokens: int,
+        prefill_step_size: int | None = None,
     ):
         from mlx_vlm.utils import prepare_inputs
 
@@ -2043,7 +2063,10 @@ class MLXVLMRuntime:
             if hasattr(loaded_model["processor"], "tokenizer")
             else loaded_model["processor"]
         )
-        scheduler = self._text_only_batch_generator_scheduler(loaded_model)
+        scheduler = self._text_only_batch_generator_scheduler(
+            loaded_model,
+            prefill_step_size=prefill_step_size,
+        )
         request = _TextOnlyBatchRequest(
             loaded_model=loaded_model,
             input_ids=input_ids,
@@ -2054,6 +2077,7 @@ class MLXVLMRuntime:
             prompt_tokens=prompt_tokens,
             started_at=started_at,
             prepare_ms=prepare_ms,
+            prefill_step_size=prefill_step_size,
         )
         first_event = True
         for event in scheduler.submit(request):
@@ -2086,11 +2110,21 @@ class MLXVLMRuntime:
                 ),
             )
 
-    def _text_only_batch_generator_scheduler(self, loaded_model) -> _TextOnlyBatchGeneratorScheduler:
+    def _text_only_batch_generator_scheduler(
+        self,
+        loaded_model,
+        *,
+        prefill_step_size: int | None = None,
+    ) -> _TextOnlyBatchGeneratorScheduler:
         scheduler_key = "_melix_text_only_batch_generator_scheduler"
+        requested_prefill_step_size = _text_only_batch_prefill_step_size(prefill_step_size)
         scheduler = loaded_model.get(scheduler_key)
         if isinstance(scheduler, _TextOnlyBatchGeneratorScheduler):
-            return scheduler
+            if scheduler._prefill_step_size != requested_prefill_step_size:
+                scheduler.close()
+                loaded_model.pop(scheduler_key, None)
+            else:
+                return scheduler
         adapter = _TextOnlyVLMDecodeAdapter(loaded_model["model"])
         scheduler = _TextOnlyBatchGeneratorScheduler(
             model=loaded_model["model"],
@@ -2099,6 +2133,7 @@ class MLXVLMRuntime:
             executor=self._executor,
             max_batch_size=8,
             wait_ms=2.0,
+            prefill_step_size=requested_prefill_step_size,
         )
         loaded_model[scheduler_key] = scheduler
         if not any(candidate is loaded_model for candidate in self._loaded_models_with_schedulers):
@@ -2265,6 +2300,8 @@ class MLXVLMRuntime:
         self,
         loaded_model,
         prepared_request: PreparedVisionRequest,
+        *,
+        attention_policy: AttentionPrefillPolicyDecision | None = None,
     ) -> None:
         """Call plan() when generate_tokens() did not follow render_prompt().
 
@@ -2277,8 +2314,18 @@ class MLXVLMRuntime:
         """
         signature = fast_path_probe_signature(loaded_model, prepared_request)
         if self._last_fast_path_signature == signature:
+            if attention_policy is not None:
+                self._last_probe = replace(
+                    self._last_probe,
+                    attention_budget_receipt=build_attention_budget_receipt(attention_policy),
+                )
             return
-        self._record_fast_path_probe(loaded_model, prepared_request, signature=signature)
+        self._record_fast_path_probe(
+            loaded_model,
+            prepared_request,
+            signature=signature,
+            attention_policy=attention_policy,
+        )
 
     def _record_fast_path_probe(
         self,
@@ -2287,6 +2334,7 @@ class MLXVLMRuntime:
         *,
         signature: tuple[str, ...] | None = None,
         seq_len: int | None = None,
+        attention_policy: AttentionPrefillPolicyDecision | None = None,
     ) -> None:
         signature = signature or fast_path_probe_signature(
             loaded_model,
@@ -2318,7 +2366,9 @@ class MLXVLMRuntime:
             quantized_load_mode=fast_path.quantized_load_mode,
             quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
             attention_budget_receipt=build_attention_budget_receipt(
-                self._attention_prefill_policy(
+                attention_policy
+                if attention_policy is not None
+                else self._attention_prefill_policy(
                     loaded_model=loaded_model,
                     prepared_request=prepared_request,
                     seq_len=seq_len,
@@ -2354,10 +2404,11 @@ class MLXVLMRuntime:
         loaded_model,
         prepared_request: PreparedVisionRequest,
         seq_len: int | None = None,
+        execution_ext: dict[str, str] | None = None,
     ) -> AttentionPrefillPolicyDecision | None:
-        if not attention_budget_configured(loaded_model):
+        if not attention_budget_configured(loaded_model, execution_ext=execution_ext):
             return None
-        metadata = loaded_model.get("metadata", {}) if isinstance(loaded_model, dict) else {}
+        metadata = attention_policy_metadata(loaded_model, execution_ext=execution_ext)
         family_config = self._family_config(loaded_model)
         if seq_len is None:
             seq_len = self.prompt_token_count(prepared_request, loaded_model=loaded_model)

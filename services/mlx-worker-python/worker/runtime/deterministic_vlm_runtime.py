@@ -352,6 +352,7 @@ class DeterministicVLMRuntime:
             prompt_token_counter=self.prompt_token_count,
             cached_signature=self._last_attention_policy_signature,
             cached_decision=self._last_attention_policy,
+            execution_ext=execution_ext,
         )
         enforce_attention_prefill_policy(attention_policy)
         self._ensure_fast_path_probe(
@@ -481,7 +482,7 @@ class DeterministicVLMRuntime:
         signature: tuple[str, ...] | None = None,
         seq_len: int | None = None,
         attention_policy: AttentionPrefillPolicyDecision | None = None,
-        ) -> None:
+    ) -> None:
         fast_path = self._fast_path_controller.plan(loaded_model, prepared_request)
         attention_decision = attention_policy
         if attention_decision is None:
@@ -497,6 +498,7 @@ class DeterministicVLMRuntime:
                 prompt_token_counter=self.prompt_token_count,
                 cached_signature=self._last_attention_policy_signature,
                 cached_decision=self._last_attention_policy,
+                execution_ext=None,
             )
         attention_budget_receipt = build_attention_budget_receipt(attention_decision)
         self._last_fast_path_signature = signature or fast_path_probe_signature(
@@ -877,6 +879,7 @@ class DeterministicVLMRuntime:
             prompt_token_counter=self.prompt_token_count,
             cached_signature=self._last_attention_policy_signature,
             cached_decision=self._last_attention_policy,
+            execution_ext=execution_ext,
         )
         return PreparedVisionPrompt(
             prepared_request=prepared_request,

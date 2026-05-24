@@ -841,6 +841,7 @@ def test_mlx_vlm_runtime_text_only_step_flushes_buffer_before_stop_token(
         stop_token_ids={1},
         cancel_event=Event(),
         prompt_tokens=5,
+        prefill_step_size=256,
     )
 
     batch_events = list(scheduler.submit(request))
@@ -903,14 +904,21 @@ def test_mlx_vlm_runtime_text_only_step_flushes_buffer_before_stop_token(
         "processor": SimpleNamespace(eos_token_id=1),
     }
     live_scheduler = runtime._text_only_batch_generator_scheduler(loaded_model)
+    same_live_scheduler = runtime._text_only_batch_generator_scheduler(loaded_model, prefill_step_size=512)
     live_scheduler._stats.prefill_response_count = 3
     live_scheduler._stats.prefill_step_count = 3
     live_scheduler._stats.prefill_processed_token_count = 1536
     live_scheduler._stats.prefill_total_token_count = 4096
     live_scheduler._stats.prefill_completed_request_count = 0
     live_probe = runtime.last_probe_snapshot()
+    replacement_scheduler = runtime._text_only_batch_generator_scheduler(loaded_model, prefill_step_size=123)
     runtime.close_loaded_model(loaded_model)
 
+    assert same_live_scheduler is live_scheduler
+    assert replacement_scheduler is not live_scheduler
+    assert live_scheduler._closed is True
+    assert replacement_scheduler._prefill_step_size == 123
+    assert replacement_scheduler._closed is True
     assert live_probe.text_batch_generator_prefill_response_count == 3
     assert live_probe.text_batch_generator_prefill_step_count == 3
     assert live_probe.text_batch_generator_prefill_processed_token_count == 1536
@@ -3128,6 +3136,50 @@ def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
     batch_attention_receipt = runtime.last_probe_snapshot().attention_budget_receipt
     assert [event.text for event in batch_events] == ["batch"]
     assert batch_generate_calls[0]["prefill_step_size"] == batch_attention_receipt["selected_prefill_step_size"]
+
+    class FakeBatchScheduler:
+        def submit(self, request):
+            request.detokenizer.add_token(202)
+            yield mlx_vlm_runtime_module.RuntimeTokenEvent(
+                text="batch-generator",
+                raw_text="batch-generator",
+                token_ids=(202,),
+                prompt_tokens=request.prompt_tokens,
+                completion_tokens=1,
+                finish_reason="stop",
+            )
+
+        @staticmethod
+        def stats_snapshot():
+            return mlx_vlm_runtime_module._TextOnlyBatchGeneratorStats(
+                prefill_step_size=batch_attention_receipt["selected_prefill_step_size"],
+            )
+
+    batch_scheduler_kwargs: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        runtime,
+        "_text_only_batch_generator_scheduler",
+        lambda _loaded_model, **kwargs: batch_scheduler_kwargs.append(kwargs) or FakeBatchScheduler(),
+    )
+    batch_generator_events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(max_output_tokens=8, top_k=1),
+            Event(),
+            execution_ext={_TEXT_ONLY_BATCH_GENERATOR_EXT_KEY: "true"},
+        )
+    )
+    batch_generator_receipt = runtime.last_probe_snapshot().attention_budget_receipt
+
+    assert [event.text for event in batch_generator_events] == ["batch-generator"]
+    assert batch_generator_receipt["prefill_chunk_mode"] == "auto_chunk"
+    assert batch_scheduler_kwargs[0]["prefill_step_size"] == batch_generator_receipt[
+        "selected_prefill_step_size"
+    ]
+    assert runtime.last_probe_snapshot().text_batch_generator_prefill_step_size == batch_generator_receipt[
+        "selected_prefill_step_size"
+    ]
 
 
 @pytest.mark.parametrize(

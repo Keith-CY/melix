@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 import math
 
@@ -11,6 +11,10 @@ _DEFAULT_NUM_HIDDEN_LAYERS = 32
 _DEFAULT_DTYPE_BYTES = 2
 _MIN_PREFILL_STEP_SIZE = 1
 _MAX_PREFILL_STEP_SIZE = 8192
+_ATTENTION_BUDGET_METADATA_KEYS = (
+    "melix.vlm.attention_cost_budget_bytes",
+    "melix.vlm.prefill_attention_budget_bytes",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,18 +71,45 @@ def int_metadata(metadata: object, *keys: str) -> int:
     return 0
 
 
-def attention_budget_configured(loaded_model: object) -> bool:
+def attention_policy_metadata(
+    loaded_model: object,
+    execution_ext: object | None = None,
+) -> dict[str, object]:
+    if not isinstance(loaded_model, dict):
+        base: dict[str, object] = {}
+    else:
+        metadata = loaded_model.get("metadata", {})
+        base = dict(metadata) if isinstance(metadata, dict) else {}
+        base.update(
+            {
+                key: value
+                for key, value in loaded_model.items()
+                if key not in {"metadata", "model", "processor"}
+            }
+        )
+    if isinstance(execution_ext, Mapping):
+        base.update(execution_ext)
+    return base
+
+
+def attention_budget_configured(
+    loaded_model: object,
+    execution_ext: object | None = None,
+) -> bool:
+    if isinstance(execution_ext, Mapping):
+        for key in _ATTENTION_BUDGET_METADATA_KEYS:
+            value = execution_ext.get(key)
+            if value is not None and str(value).strip():
+                return True
     if not isinstance(loaded_model, dict):
         return False
-    metadata = loaded_model.get("metadata", {})
-    for key in (
-        "melix.vlm.attention_cost_budget_bytes",
-        "melix.vlm.prefill_attention_budget_bytes",
-    ):
+    for key in _ATTENTION_BUDGET_METADATA_KEYS:
         value = loaded_model.get(key)
         if value is not None and str(value).strip():
             return True
-        if isinstance(metadata, dict):
+    metadata = loaded_model.get("metadata")
+    if isinstance(metadata, dict):
+        for key in _ATTENTION_BUDGET_METADATA_KEYS:
             value = metadata.get(key)
             if value is not None and str(value).strip():
                 return True
@@ -96,21 +127,24 @@ def resolve_attention_prefill_policy(
     prompt_token_counter: Callable[..., int] | None = None,
     cached_signature: tuple[str, ...] | None = None,
     cached_decision: AttentionPrefillPolicyDecision | None = None,
+    execution_ext: object | None = None,
 ) -> tuple[AttentionPrefillPolicyDecision | None, tuple[str, ...] | None, AttentionPrefillPolicyDecision | None]:
-    if not attention_budget_configured(loaded_model):
+    if not attention_budget_configured(loaded_model, execution_ext=execution_ext):
         return None, cached_signature, cached_decision
-    metadata = loaded_model.get("metadata", {}) if isinstance(loaded_model, dict) else {}
+    metadata = attention_policy_metadata(loaded_model, execution_ext=execution_ext)
     signature = attention_policy_signature(
         loaded_model=loaded_model,
         prepared_request=prepared_request,
         requested_prefill_step_size=requested_prefill_step_size,
+        execution_ext=execution_ext,
     )
     if seq_len is None and cached_signature == signature and cached_decision is not None:
         return cached_decision, cached_signature, cached_decision
     if family_config is None:
-        if family_config_resolver is None:
+        if family_config_resolver is not None:
+            family_config = family_config_resolver(loaded_model)
+        elif seq_len is None:
             raise ValueError("family_config_resolver is required when no family_config is provided")
-        family_config = family_config_resolver(loaded_model)
     if seq_len is None:
         if prompt_token_counter is None:
             raise ValueError("prompt_token_counter is required when seq_len is not provided")
@@ -118,9 +152,12 @@ def resolve_attention_prefill_policy(
             prepared_request,
             loaded_model=loaded_model,
             family_config=family_config,
-        )
+    )
     decision = choose_attention_prefill_policy(
-        family_id=str(getattr(family_config, "family_id", "") or metadata.get("vision_family_id", "")),
+        family_id=str(
+            (getattr(family_config, "family_id", "") if family_config is not None else "")
+            or metadata.get("vision_family_id", "")
+        ),
         prompt_tokens=seq_len,
         budget_bytes=int_metadata(
             metadata,
@@ -155,8 +192,9 @@ def resolve_configured_attention_prefill_policy(
     prompt_token_counter: Callable[..., int] | None = None,
     cached_signature: tuple[str, ...] | None = None,
     cached_decision: AttentionPrefillPolicyDecision | None = None,
+    execution_ext: object | None = None,
 ) -> tuple[AttentionPrefillPolicyDecision | None, tuple[str, ...] | None, AttentionPrefillPolicyDecision | None]:
-    if not loaded_model or not attention_budget_configured(loaded_model):
+    if not loaded_model or not attention_budget_configured(loaded_model, execution_ext=execution_ext):
         return None, cached_signature, cached_decision
     return resolve_attention_prefill_policy(
         loaded_model=loaded_model,
@@ -168,6 +206,7 @@ def resolve_configured_attention_prefill_policy(
         prompt_token_counter=prompt_token_counter,
         cached_signature=cached_signature,
         cached_decision=cached_decision,
+        execution_ext=execution_ext,
     )
 
 
@@ -176,8 +215,9 @@ def attention_policy_signature(
     loaded_model: object,
     prepared_request: object,
     requested_prefill_step_size: int,
+    execution_ext: object | None = None,
 ) -> tuple[str, ...]:
-    metadata = loaded_model.get("metadata", {}) if isinstance(loaded_model, dict) else {}
+    metadata = attention_policy_metadata(loaded_model, execution_ext=execution_ext)
     return (
         str(metadata.get("vision_family_id", "")),
         str(metadata.get("melix.vlm.attention_cost_budget_bytes", "")),

@@ -20,6 +20,7 @@ from worker.runtime.multimodal_attention_policy import (
     attention_budget_configured,
     build_attention_budget_receipt,
     choose_attention_prefill_policy,
+    resolve_configured_attention_prefill_policy,
 )
 
 
@@ -239,6 +240,38 @@ def test_engine_generate_emits_typed_attention_refusal_error() -> None:
     )
 
 
+def test_engine_generate_applies_execution_ext_attention_budget_override() -> None:
+    runtime = DeterministicVLMRuntime()
+    registry = WorkerRegistry(vlm_runtime=runtime, model_catalog=WorkerModelCatalog())
+    runtime_service = WorkerRuntimeService(registry)
+    inference_service = WorkerInferenceService(registry)
+    model = WorkerModelCatalog.dev_vlm_model()
+    model.ext["melix.vlm.attention_cost_budget_bytes"] = "999999999"
+    model_handle = _load_model(runtime_service, model)
+
+    events = list(
+        inference_service.Generate(
+            inference_pb2.GenerateRequest(
+                execution=inference_pb2.ExecutionMetadata(
+                    id=common_pb2.RequestIdentity(request_id="vlm-generate-attention-budget-ext"),
+                    model_handle=model_handle,
+                    ext={"melix.vlm.attention_cost_budget_bytes": "1"},
+                ),
+                messages=[_vision_message()],
+                sampling=common_pb2.SamplingConfig(max_output_tokens=8),
+                stream=True,
+                return_usage=True,
+            ),
+            context=None,
+        )
+    )
+
+    assert len(events) == 1
+    assert events[0].HasField("error")
+    assert events[0].error.error.code == "multimodal_prefill_attention_budget_exceeded"
+    assert events[0].error.error.details["attention_budget_bytes"] == "1"
+
+
 def test_deterministic_vlm_records_attention_policy_before_first_token() -> None:
     runtime = DeterministicVLMRuntime()
     registry = WorkerRegistry(vlm_runtime=runtime, model_catalog=WorkerModelCatalog())
@@ -293,6 +326,44 @@ def test_attention_budget_configured_detects_top_level_and_nested_metadata() -> 
         )
         is True
     )
+
+
+def test_attention_policy_resolves_top_level_budget_metadata() -> None:
+    decision, _, _ = resolve_configured_attention_prefill_policy(
+        loaded_model={
+            "vision_family_id": "gemma4-v1",
+            "melix.vlm.attention_cost_budget_bytes": "1000000",
+            "melix.vlm.hidden_size": "1024",
+            "melix.vlm.num_hidden_layers": "8",
+        },
+        prepared_request=SimpleNamespace(prompt_hash_hex="prompt", multimodal_hash_hex="media"),
+        seq_len=128,
+    )
+
+    assert decision is not None
+    assert decision.budget_bytes == 1_000_000
+    assert decision.prefill_chunk_mode == "auto_chunk"
+
+
+def test_attention_policy_uses_execution_metadata_budget_override() -> None:
+    decision, _, _ = resolve_configured_attention_prefill_policy(
+        loaded_model={
+            "metadata": {
+                "vision_family_id": "gemma4-v1",
+                "melix.vlm.attention_cost_budget_bytes": "999999999",
+                "melix.vlm.hidden_size": "1024",
+                "melix.vlm.num_hidden_layers": "8",
+            }
+        },
+        prepared_request=SimpleNamespace(prompt_hash_hex="prompt", multimodal_hash_hex="media"),
+        seq_len=128,
+        execution_ext={"melix.vlm.attention_cost_budget_bytes": "1"},
+    )
+
+    assert decision is not None
+    assert decision.budget_bytes == 1
+    assert decision.prefill_chunk_mode == "refused"
+    assert decision.refusal_count == 1
 
 
 def test_engine_error_event_preserves_attention_refusal_details() -> None:
