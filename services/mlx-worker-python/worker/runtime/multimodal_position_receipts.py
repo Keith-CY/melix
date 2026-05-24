@@ -97,6 +97,7 @@ def _mixed_batch_row_geometry_receipt(
     cache_offset = _non_negative_int(row.get("cache_offset", 0))
     media_count = _non_negative_int(row.get("media_count", 0))
     left_padding = _non_negative_int(row.get("left_padding", 0))
+    expected_left_padding = _non_negative_int(row.get("expected_left_padding", left_padding))
     visual_embed_count = _non_negative_int(row.get("visual_embed_count", 0))
     expected_visual_embed_count = _non_negative_int(
         row.get("expected_visual_embed_count", visual_embed_count)
@@ -126,7 +127,12 @@ def _mixed_batch_row_geometry_receipt(
         drift_reasons.append("prompt_kwargs_missing")
     if prompt_kwargs.get("input_ids_len", seq_len) != seq_len:
         drift_reasons.append("prompt_input_ids_len_mismatch")
-    if prompt_kwargs.get("attention_mask_len", seq_len + left_padding) != seq_len + left_padding:
+    if left_padding != expected_left_padding:
+        drift_reasons.append("left_padding_mismatch")
+    if (
+        prompt_kwargs.get("attention_mask_len", seq_len + left_padding)
+        != seq_len + expected_left_padding
+    ):
         drift_reasons.append("prompt_attention_mask_len_mismatch")
     if mrope_delta_override_count != media_count:
         drift_reasons.append("mrope_delta_override_count_mismatch")
@@ -147,6 +153,7 @@ def _mixed_batch_row_geometry_receipt(
         "cache_offset": cache_offset,
         "media_count": media_count,
         "left_padding": left_padding,
+        "expected_left_padding": expected_left_padding,
         "mrope_delta_override_count": mrope_delta_override_count,
         "mrope_delta_override_identity": mrope_delta_override_identity,
         "visual_embed_count": visual_embed_count,

@@ -136,7 +136,7 @@ def test_fast_path_records_partial_reuse_for_multi_image_turns() -> None:
     assert decision.multi_image_scatter_mode == "per_sample"
 
 
-def test_fast_path_records_per_sample_scatter_for_heterogeneous_multi_image_batches() -> None:
+def test_fast_path_records_row_local_per_sample_scatter_for_heterogeneous_multi_image_rows() -> None:
     controller = MultimodalFastPathController()
     loaded_model = _loaded_model()
     row_images = [

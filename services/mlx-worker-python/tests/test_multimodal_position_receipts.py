@@ -185,15 +185,10 @@ def test_mixed_batch_geometry_receipt_preserves_three_row_prompt_and_media_geome
                 "prompt_kwargs": {"input_ids_len": 8, "attention_mask_len": 15},
                 "seq_len": 8,
                 "cache_offset": 12,
-                "media_count": 1,
+                "media_count": 0,
                 "left_padding": 7,
-                "mrope_delta_override": [4],
-                "mrope_delta_override_identity": ["row-2-image"],
-                "expected_mrope_delta_override_identity": ["row-2-image"],
-                "visual_embed_count": 32,
-                "expected_visual_embed_count": 32,
-                "visual_embed_identity": ["row-2-image"],
-                "expected_visual_embed_identity": ["row-2-image"],
+                "visual_embed_count": 0,
+                "expected_visual_embed_count": 0,
             },
         ]
     )
@@ -203,8 +198,8 @@ def test_mixed_batch_geometry_receipt_preserves_three_row_prompt_and_media_geome
         "mixed_length_batch": True,
         "row_geometry_guard": "aligned",
         "row_drift_count": 0,
-        "total_media_count": 4,
-        "total_visual_embed_count": 224,
+        "total_media_count": 3,
+        "total_visual_embed_count": 192,
         "rows": [
             {
                 "row_index": 0,
@@ -213,6 +208,7 @@ def test_mixed_batch_geometry_receipt_preserves_three_row_prompt_and_media_geome
                 "cache_offset": 0,
                 "media_count": 1,
                 "left_padding": 4,
+                "expected_left_padding": 4,
                 "mrope_delta_override_count": 1,
                 "mrope_delta_override_identity": ["row-0-image"],
                 "visual_embed_count": 64,
@@ -227,6 +223,7 @@ def test_mixed_batch_geometry_receipt_preserves_three_row_prompt_and_media_geome
                 "cache_offset": 5,
                 "media_count": 2,
                 "left_padding": 0,
+                "expected_left_padding": 0,
                 "mrope_delta_override_count": 2,
                 "mrope_delta_override_identity": ["row-1-first", "row-1-second"],
                 "visual_embed_count": 128,
@@ -239,12 +236,13 @@ def test_mixed_batch_geometry_receipt_preserves_three_row_prompt_and_media_geome
                 "prompt_kwargs": {"input_ids_len": 8, "attention_mask_len": 15},
                 "seq_len": 8,
                 "cache_offset": 12,
-                "media_count": 1,
+                "media_count": 0,
                 "left_padding": 7,
-                "mrope_delta_override_count": 1,
-                "mrope_delta_override_identity": ["row-2-image"],
-                "visual_embed_count": 32,
-                "visual_embed_identity": ["row-2-image"],
+                "expected_left_padding": 7,
+                "mrope_delta_override_count": 0,
+                "mrope_delta_override_identity": [],
+                "visual_embed_count": 0,
+                "visual_embed_identity": [],
                 "row_geometry_guard": "aligned",
                 "row_drift_reasons": [],
             },
@@ -295,6 +293,32 @@ def test_mixed_batch_geometry_receipt_detects_left_padding_and_mrope_row_drift()
         "prompt_attention_mask_len_mismatch",
         "mrope_delta_override_count_mismatch",
         "visual_embed_scatter_drift",
+    ]
+
+
+def test_mixed_batch_geometry_receipt_detects_self_consistent_left_padding_drift() -> None:
+    receipt = build_mixed_batch_geometry_receipt(
+        rows=[
+            {
+                "row_index": 0,
+                "prompt_kwargs": {"input_ids_len": 10, "attention_mask_len": 12},
+                "seq_len": 10,
+                "media_count": 1,
+                "left_padding": 2,
+                "expected_left_padding": 4,
+                "mrope_delta_override": [0],
+                "visual_embed_count": 64,
+                "expected_visual_embed_count": 64,
+            },
+        ]
+    )
+
+    assert receipt["row_geometry_guard"] == "row_drift"
+    assert receipt["row_drift_count"] == 1
+    assert receipt["rows"][0]["expected_left_padding"] == 4
+    assert receipt["rows"][0]["row_drift_reasons"] == [
+        "left_padding_mismatch",
+        "prompt_attention_mask_len_mismatch",
     ]
 
 

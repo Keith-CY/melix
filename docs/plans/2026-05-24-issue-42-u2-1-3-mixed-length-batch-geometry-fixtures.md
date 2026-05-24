@@ -2,7 +2,7 @@
 
 ## Source
 
-- Parent issue: <https://github.com/Keith-CY/melix/issues/1449>
+- Unit issue: <https://github.com/Keith-CY/melix/issues/1449>
 - Governing roadmap: `docs/plans/2026-04-26-issue-42-multimodal-fast-paths.md`
 - Prior units:
   - `docs/plans/2026-05-24-issue-42-u2-1-1-position-metadata-receipts.md`
@@ -36,8 +36,9 @@ payload shapes unchanged.
 - Three-row fixtures cover text-only, single-image, and heterogeneous
   multi-image rows in one synthetic batch.
 - The existing fast-path `multi_image_scatter_mode=per_sample` fixture remains
-  the evidence that heterogeneous multi-image turns are handled as per-sample
-  scatter rather than a batch-wide broadcast.
+  row-local evidence that multi-image turns are handled as per-sample scatter.
+  This unit does not claim full continuous-batching scatter correctness; it
+  records the row-local guard data needed for that later work.
 
 ## Performance And Metrics
 
