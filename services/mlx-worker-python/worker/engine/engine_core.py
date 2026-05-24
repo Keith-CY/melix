@@ -15,6 +15,29 @@ from worker.runtime.token_counting import whitespace_token_count as _whitespace_
 _ENGINE_STOP_CONTRACT_CACHE_FIELD = "_melix.engine.resolved_text_stop_contract_cache"
 
 
+def _text_native_mtp_parser_metrics(event: RuntimeTokenEvent | None) -> dict[str, str]:
+    if event is None:
+        return {}
+
+    metric_fields = {
+        "text_batch_generator_speculative_cycle_count_total": event.speculative_cycle_count,
+        "text_batch_generator_speculative_accepted_count_total": event.speculative_accepted_tokens,
+        "text_batch_generator_speculative_rejected_count_total": event.speculative_rejected_tokens,
+        "text_batch_generator_speculative_backbone_ms_total": event.speculative_target_verify_ms,
+        "text_batch_generator_speculative_mtp_head_ms_total": event.speculative_mtp_head_ms,
+        "text_batch_generator_speculative_sample_ms_total": event.speculative_sample_ms,
+        "text_batch_generator_speculative_cache_ops_ms_total": event.speculative_cache_ops_ms,
+        "text_batch_generator_insert_ms": event.text_batch_generator_insert_ms,
+        "text_batch_generator_prepare_ms": event.text_batch_generator_prepare_ms,
+        "text_batch_generator_prompt_encode_ms": event.text_batch_generator_prompt_encode_ms,
+        "text_batch_generator_prefill_ms": event.text_batch_generator_prefill_ms,
+        "text_batch_generator_batch_insert_ms": event.text_batch_generator_batch_insert_ms,
+        "text_batch_generator_first_response_ms": event.text_batch_generator_first_response_ms,
+        "text_batch_generator_first_visible_ms": event.text_batch_generator_first_visible_ms,
+    }
+    return {key: str(value) for key, value in metric_fields.items() if value is not None}
+
+
 def _resolve_generate_stop_contract(
     loaded_model: object,
     sampling: common_pb2.SamplingConfig,
@@ -209,6 +232,7 @@ class EngineCore:
 
             assembled = assembler.completed()
             parser_metrics = {key: str(value) for key, value in assembled.metrics.items()}
+            parser_metrics.update(_text_native_mtp_parser_metrics(last_token_event))
             parser_metrics["response_history_normalized_count"] = execution_ext.get(
                 "melix.response_history.normalized_count",
                 "0",

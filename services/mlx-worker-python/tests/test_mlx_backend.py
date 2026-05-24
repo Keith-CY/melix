@@ -6,6 +6,7 @@ from threading import get_ident
 from pathlib import Path
 import types
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,6 +18,16 @@ from worker.runtime import runtime_utils
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, RuntimeTokenEvent, RuntimeToolCallEvent
 from worker.runtime.mlx_text_runtime import RuntimeUnavailableError, resolve_text_stop_contract
+
+
+def _install_fake_mlx_core(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
+    fake_mlx = types.ModuleType("mlx")
+    fake_core = types.ModuleType("mlx.core")
+    fake_core.metal = types.SimpleNamespace(get_peak_memory=lambda: 0)
+    fake_mlx.core = fake_core
+    monkeypatch.setitem(sys.modules, "mlx", fake_mlx)
+    monkeypatch.setitem(sys.modules, "mlx.core", fake_core)
+    return fake_core
 
 
 class FakeTokenizer:
@@ -224,6 +235,7 @@ def test_auto_backend_uses_mlx_load_stream_and_sampler_hooks() -> None:
         "sampler": "fake-sampler",
     }
     assert [chunk.text for chunk in chunks] == ["Hel", "lo"]
+    assert [chunk.raw_text for chunk in chunks] == ["Hel", "Hello"]
     assert chunks[-1].finish_reason == "stop"
     assert chunks[-1].prompt_tokens == 12
     assert chunks[-1].completion_tokens == 2
@@ -233,6 +245,488 @@ def test_auto_backend_uses_mlx_load_stream_and_sampler_hooks() -> None:
     assert chunks[-1].speculative_draft_model_configured is True
     assert chunks[-1].dflash_enabled is True
     assert chunks[-1].dflash_rollback_count == 2
+
+
+def test_auto_backend_uses_batch_generator_for_native_mtp_text_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_fake_mlx_core(monkeypatch)
+    seen: dict[str, object] = {
+        "closed": 0,
+        "detokenizer_access_count": 0,
+        "detokenizer_copy_count": 0,
+        "init_count": 0,
+        "insert_calls": [],
+        "prefill_calls": [],
+        "removed_calls": [],
+        "request_detokenizers": [],
+        "request_detokenizer_ids": [],
+    }
+
+    class FakeDetokenizer:
+        def __copy__(self):
+            seen["detokenizer_copy_count"] = int(seen["detokenizer_copy_count"]) + 1
+            clone = FakeDetokenizer()
+            seen["request_detokenizers"].append(clone)
+            seen["request_detokenizer_ids"].append(id(clone))
+            return clone
+
+        def __init__(self) -> None:
+            self._text = ""
+            self._last_offset = 0
+            self.tokens: list[int] = []
+
+        def reset(self) -> None:
+            self._text = ""
+            self._last_offset = 0
+            self.tokens = []
+
+        def add_token(self, token: int) -> None:
+            self.tokens.append(token)
+            self._text += {101: "A", 102: "B"}.get(token, "")
+
+        @property
+        def last_segment(self) -> str:
+            segment = self._text[self._last_offset :]
+            self._last_offset = len(self._text)
+            return segment
+
+        def finalize(self) -> None:
+            self._text += "!"
+
+    class FakeTokenizer:
+        eos_token = "</s>"
+        eos_token_id = 2
+
+        @property
+        def detokenizer(self) -> FakeDetokenizer:
+            seen["detokenizer_access_count"] = int(seen["detokenizer_access_count"]) + 1
+            return FakeDetokenizer()
+
+        def encode(self, prompt: str, add_special_tokens: bool = True):
+            seen["encoded"] = (prompt, add_special_tokens)
+            return [11, 12, 13]
+
+    logprob_index_calls = {"count": 0}
+
+    class UnrequestedLogprobs:
+        def __getitem__(self, _token_id: int):
+            logprob_index_calls["count"] += 1
+            raise AssertionError("native MTP text should not materialize unrequested logprobs")
+
+    class FakeBatchGenerator:
+        def __init__(
+            self,
+            model,
+            *,
+            max_tokens: int,
+            stop_tokens,
+            sampler,
+            prefill_batch_size: int,
+            completion_batch_size: int,
+            prefill_step_size: int,
+        ) -> None:
+            seen["init_count"] = int(seen["init_count"]) + 1
+            seen["batch_generator_init"] = {
+                "model": model,
+                "max_tokens": max_tokens,
+                "stop_tokens": stop_tokens,
+                "sampler": sampler,
+                "prefill_batch_size": prefill_batch_size,
+                "completion_batch_size": completion_batch_size,
+                "prefill_step_size": prefill_step_size,
+            }
+            self._step = 0
+
+        def insert(self, prompts, max_tokens=None, caches=None, all_tokens=None, samplers=None):
+            seen["insert_calls"].append(
+                {
+                    "prompts": prompts,
+                    "max_tokens": max_tokens,
+                    "caches": caches,
+                    "all_tokens": all_tokens,
+                    "samplers": samplers,
+                }
+            )
+            seen["insert"] = {
+                "prompts": prompts,
+                "max_tokens": max_tokens,
+                "caches": caches,
+                "all_tokens": all_tokens,
+                "samplers": samplers,
+            }
+            self._step = 0
+            return [77]
+
+        def next_generated(self):
+            self._step += 1
+            if self._step == 1:
+                return [
+                    SimpleNamespace(
+                        uid=77,
+                        token=101,
+                        logprobs=UnrequestedLogprobs(),
+                        finish_reason=None,
+                        speculative_acceptance_rate=0.5,
+                        speculative_accepted_tokens=1,
+                        speculative_rejected_tokens=1,
+                        speculative_num_draft_tokens=1,
+                        speculative_draft_model_configured=True,
+                    )
+                ]
+            return [
+                SimpleNamespace(
+                    uid=77,
+                    token=102,
+                    logprobs=UnrequestedLogprobs(),
+                    finish_reason="length",
+                    speculative_acceptance_rate=0.75,
+                    speculative_rollback_rate=0.25,
+                    speculative_accepted_tokens=3,
+                    speculative_rejected_tokens=1,
+                    speculative_num_draft_tokens=1,
+                    speculative_draft_model_configured=True,
+                    speculative_backbone_ms=12.5,
+                )
+            ]
+
+        def remove(self, uids):
+            seen["removed_calls"].append(list(uids))
+            seen["removed"] = list(uids)
+
+        def close(self):
+            seen["closed"] = int(seen["closed"]) + 1
+
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "_load_mlx_batch_generator_class",
+        lambda: FakeBatchGenerator,
+    )
+
+    def fake_prefill(model, prompt_tokens, *, prefill_step_size: int, stream):
+        seen["prefill_calls"].append(
+            {
+                "model": model,
+                "prompt_tokens": list(prompt_tokens),
+                "prefill_step_size": prefill_step_size,
+                "stream": stream,
+            }
+        )
+        return ["prompt-cache"], [13], [11, 12]
+
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "_native_mtp_prefill_prompt_cache",
+        fake_prefill,
+    )
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "maybe_apply_native_mtp_text_preload_patches",
+        lambda _model_path, *, metadata: {
+            "melix.native_mtp.enabled": "true",
+            "melix.native_mtp.compatible": "true",
+            "melix.native_mtp.weights_present": "true",
+            "melix.native_mtp.weight_count": "15",
+            "melix.native_mtp.patch_applied": "true",
+            "melix.native_mtp.active": "true",
+            "melix.native_mtp.reason": "",
+        },
+    )
+
+    model = SimpleNamespace(
+        mtp=object(),
+        mtp_forward=lambda *_args, **_kwargs: None,
+        _melix_native_mtp_active=True,
+    )
+
+    def fake_load(model_source: str, **kwargs):
+        seen["load"] = (model_source, kwargs)
+        return model, FakeTokenizer()
+
+    def fake_stream_generate(*_args, **_kwargs):  # pragma: no cover
+        raise AssertionError("native MTP text path should not call stream_generate")
+
+    def fake_sampler_factory(**kwargs):
+        seen["sampler"] = dict(kwargs)
+        return "sampler"
+
+    peak_memory_calls = {"count": 0}
+
+    def fake_peak_memory(_mx):
+        peak_memory_calls["count"] += 1
+        return 42.0
+
+    monkeypatch.setattr(mlx_text_runtime_module, "_mlx_peak_memory_gb", fake_peak_memory)
+
+    backend = AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=fake_stream_generate,
+        sampler_factory=fake_sampler_factory,
+    )
+    model_spec = WorkerModelCatalog.dev_text_model(
+        environment={"MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/test-model"}
+    )
+    model_spec.ext["melix.native_mtp.enabled"] = "true"
+    model_spec.ext["melix.native_mtp.active"] = "true"
+    model_spec.ext["melix.native_mtp.patch_applied"] = "true"
+    model_spec.ext["melix.native_mtp.compatible"] = "true"
+    loaded_model = backend.load_model(model_spec)
+
+    events = list(
+        backend.generate_tokens(
+            loaded_model,
+            "prompt",
+            common_pb2.SamplingConfig(max_output_tokens=2),
+            Event(),
+        )
+    )
+    events_again = list(
+        backend.generate_tokens(
+            loaded_model,
+            "prompt",
+            common_pb2.SamplingConfig(max_output_tokens=2),
+            Event(),
+        )
+    )
+
+    assert seen["encoded"] == ("prompt", True)
+    assert seen["init_count"] == 1
+    assert seen["batch_generator_init"] == {
+        "model": model,
+        "max_tokens": 2,
+        "stop_tokens": [[2]],
+        "sampler": "sampler",
+        "prefill_batch_size": 1,
+        "completion_batch_size": 1,
+        "prefill_step_size": 2048,
+    }
+    assert seen["prefill_calls"] == [
+        {
+            "model": model,
+            "prompt_tokens": [11, 12, 13],
+            "prefill_step_size": 2048,
+            "stream": None,
+        },
+        {
+            "model": model,
+            "prompt_tokens": [11, 12, 13],
+            "prefill_step_size": 2048,
+            "stream": None,
+        },
+    ]
+    assert seen["insert_calls"] == [
+        {
+            "prompts": [[13]],
+            "max_tokens": [2],
+            "caches": [["prompt-cache"]],
+            "all_tokens": [[11, 12]],
+            "samplers": ["sampler"],
+        },
+        {
+            "prompts": [[13]],
+            "max_tokens": [2],
+            "caches": [["prompt-cache"]],
+            "all_tokens": [[11, 12]],
+            "samplers": ["sampler"],
+        },
+    ]
+    assert seen["removed_calls"] == [[77], [77]]
+    assert seen["closed"] == 0
+    assert [event.text for event in events] == ["A", "B!"]
+    assert [event.raw_text for event in events] == ["A", "AB!"]
+    assert [event.text for event in events_again] == ["A", "B!"]
+    assert [event.raw_text for event in events_again] == ["A", "AB!"]
+    assert seen["detokenizer_access_count"] == 1
+    assert seen["detokenizer_copy_count"] == 2
+    assert len(set(seen["request_detokenizer_ids"])) == 2
+    assert [event.token_logprobs for event in events] == [(), ()]
+    assert [event.token_logprobs for event in events_again] == [(), ()]
+    assert logprob_index_calls["count"] == 0
+    assert events[0].peak_memory is None
+    assert events[-1].peak_memory == 42.0
+    assert events_again[0].peak_memory is None
+    assert events_again[-1].peak_memory == 42.0
+    assert peak_memory_calls["count"] == 2
+    assert events[0].generation_tps is None
+    assert events[-1].generation_tps is not None
+    assert events[-1].generation_tps > 0.0
+    assert events_again[0].generation_tps is None
+    assert events_again[-1].generation_tps is not None
+    assert events_again[-1].generation_tps > 0.0
+    assert events[-1].finish_reason == "length"
+    assert events[-1].completion_tokens == 2
+    assert events[-1].speculative_acceptance_rate == 0.75
+    assert events[-1].speculative_rollback_rate == 0.25
+    assert events[-1].speculative_accepted_tokens == 3
+    assert events[-1].speculative_rejected_tokens == 1
+    assert events[-1].speculative_num_draft_tokens == 1
+    assert events[-1].speculative_draft_model_configured is True
+    assert events[-1].speculative_target_verify_ms == 12.5
+    assert events[0].text_batch_generator_insert_ms is None
+    assert events[0].text_batch_generator_prepare_ms is None
+    assert events[0].text_batch_generator_prompt_encode_ms is None
+    assert events[0].text_batch_generator_prefill_ms is None
+    assert events[0].text_batch_generator_batch_insert_ms is None
+    assert events[0].text_batch_generator_first_response_ms is None
+    assert events[0].text_batch_generator_first_visible_ms is None
+    assert events[-1].text_batch_generator_insert_ms is not None
+    assert events[-1].text_batch_generator_prepare_ms is not None
+    assert events[-1].text_batch_generator_prompt_encode_ms is not None
+    assert events[-1].text_batch_generator_prefill_ms is not None
+    assert events[-1].text_batch_generator_batch_insert_ms is not None
+    assert events[-1].text_batch_generator_first_response_ms is not None
+    assert events[-1].text_batch_generator_first_visible_ms is not None
+
+    backend.close_loaded_model(loaded_model)
+    assert seen["closed"] == 1
+
+
+def test_native_mtp_text_patch_adds_qwen35_methods() -> None:
+    import worker.runtime.native_mtp.qwen35_model as qwen35_model
+
+    if not qwen35_model.apply():
+        pytest.skip("mlx-lm Qwen3.5 model patch is unavailable")
+
+    from mlx_lm.models.qwen3_5 import Model, TextModel, TextModelArgs
+
+    args = TextModelArgs.from_dict(
+        {
+            "model_type": "qwen3_5_text",
+            "hidden_size": 64,
+            "intermediate_size": 128,
+            "num_hidden_layers": 4,
+            "num_attention_heads": 4,
+            "num_key_value_heads": 2,
+            "vocab_size": 256,
+            "linear_num_value_heads": 2,
+            "linear_num_key_heads": 2,
+            "linear_key_head_dim": 16,
+            "linear_value_head_dim": 16,
+            "linear_conv_kernel_dim": 3,
+            "full_attention_interval": 2,
+            "tie_word_embeddings": True,
+            "rms_norm_eps": 1e-5,
+            "head_dim": 32,
+            "rope_theta": 1000.0,
+            "partial_rotary_factor": 0.5,
+            "max_position_embeddings": 128,
+            "mtp_num_hidden_layers": 1,
+        }
+    )
+
+    assert getattr(args, "mtp_num_hidden_layers", None) == 1
+    assert hasattr(TextModel, "mtp_forward")
+    assert hasattr(TextModel, "make_mtp_cache")
+    assert hasattr(TextModel, "_melix_mtp_patched")
+    assert hasattr(Model, "mtp_forward")
+    assert hasattr(Model, "make_mtp_cache")
+
+
+def test_native_mtp_text_sanitize_allows_non_mtp_weight_shards() -> None:
+    import worker.runtime.native_mtp as native_mtp
+    import worker.runtime.native_mtp.qwen35_model as qwen35_model
+
+    native_mtp.set_mtp_active(True)
+    if not qwen35_model.apply():
+        pytest.skip("mlx-lm Qwen3.5 model patch is unavailable")
+
+    from mlx_lm.models.qwen3_5 import TextModel
+
+    class FakeTextModel(TextModel):
+        pass
+
+    fake_model = FakeTextModel.__new__(FakeTextModel)
+    fake_model.args = SimpleNamespace(tie_word_embeddings=False)
+    fake_model.mtp = object()
+    weights = {
+        "language_model.model.embed_tokens.weight": SimpleNamespace(
+            shape=(4, 4),
+            ndim=2,
+            moveaxis=lambda *_args: None,
+        )
+    }
+
+    assert fake_model.sanitize(weights) == weights
+
+
+def test_native_mtp_loader_discovers_extra_index_mtp_shards(tmp_path: Path) -> None:
+    from worker.runtime.native_mtp.mlx_lm_loader import extra_mtp_safetensor_files
+
+    (tmp_path / "model-00001-of-00001.safetensors").write_bytes(b"base")
+    (tmp_path / "mtp-extra.safetensors").write_bytes(b"mtp")
+    (tmp_path / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "weight_map": {
+                    "language_model.model.embed_tokens.weight": "model-00001-of-00001.safetensors",
+                    "language_model.mtp.fc.weight": "mtp-extra.safetensors",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert [path.name for path in extra_mtp_safetensor_files(tmp_path)] == [
+        "mtp-extra.safetensors"
+    ]
+
+
+def test_native_mtp_batch_generator_eligibility_uses_text_model_melix_flag() -> None:
+    from worker.runtime.native_mtp import batch_generator
+
+    if not batch_generator.apply():
+        pytest.skip("mlx-lm BatchGenerator patch is unavailable")
+
+    class MtpTextModel:
+        def __init__(self) -> None:
+            self.mtp = object()
+            self._melix_native_mtp_active = True
+
+        def mtp_forward(self, *_args):
+            return None
+
+    gen_batch = SimpleNamespace(
+        model=MtpTextModel(),
+        uids=[1],
+        logits_processors=[],
+    )
+
+    assert batch_generator._is_mtp_eligible(gen_batch) is True
+
+
+def test_native_mtp_response_stats_are_terminal_only() -> None:
+    from worker.runtime.native_mtp import batch_generator
+
+    stats = batch_generator._MtpStats(
+        cycles=2,
+        accepts=1,
+        rejects=1,
+        backbone_ms=10.0,
+        mtp_head_ms=2.0,
+        sample_ms=1.0,
+        cache_ops_ms=0.5,
+    )
+
+    nonterminal = SimpleNamespace()
+    terminal = SimpleNamespace()
+
+    batch_generator._attach_mtp_response_stats(
+        nonterminal,
+        stats,
+        terminal=False,
+    )
+    batch_generator._attach_mtp_response_stats(
+        terminal,
+        stats,
+        terminal=True,
+    )
+
+    assert not hasattr(nonterminal, "speculative_cycle_count")
+    assert terminal.speculative_cycle_count == 2
+    assert terminal.speculative_accepted_tokens == 1
+    assert terminal.speculative_rejected_tokens == 1
+    assert terminal.speculative_backbone_ms == 10.0
+    assert terminal.speculative_mtp_head_ms == 2.0
+    assert terminal.speculative_sample_ms == 1.0
+    assert terminal.speculative_cache_ops_ms == 0.5
 
 
 def test_auto_backend_forwards_trust_remote_code_when_loader_supports_it() -> None:
@@ -799,6 +1293,23 @@ def test_stop_sequence_filter_reuses_unmodified_token_events() -> None:
 
     assert events == [event]
     assert events[0] is event
+
+
+def test_stop_sequence_filter_preserves_cumulative_raw_text_when_visible_is_unmodified() -> None:
+    runtime = MLXTextRuntime(backend=object())
+    first = RuntimeTokenEvent(text="Hel", raw_text="Hel", prompt_tokens=1, completion_tokens=1)
+    second = RuntimeTokenEvent(
+        text="lo",
+        raw_text="Hello",
+        prompt_tokens=1,
+        completion_tokens=2,
+        finish_reason="length",
+    )
+
+    events = list(runtime._apply_stop_sequences([first, second], ("<stop>", "</turn>")))
+
+    assert [event.text for event in events] == ["Hel", "lo"]
+    assert [event.raw_text for event in events] == ["Hel", "Hello"]
 
 
 def test_stop_sequence_helpers_preserve_earliest_match_and_viable_suffix() -> None:

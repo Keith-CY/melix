@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from copy import copy
 from dataclasses import dataclass
 from dataclasses import replace
 import importlib.util
+import inspect
 import json
+import os
 from pathlib import Path
 import re
+import time
 from typing import Any
 
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
@@ -44,8 +48,19 @@ class RuntimeTokenEvent:
     speculative_fallback_count: int | None = None
     speculative_num_draft_tokens: int | None = None
     speculative_draft_model_configured: bool | None = None
+    speculative_cycle_count: int | None = None
     speculative_draft_propose_ms: float | None = None
     speculative_target_verify_ms: float | None = None
+    speculative_mtp_head_ms: float | None = None
+    speculative_sample_ms: float | None = None
+    speculative_cache_ops_ms: float | None = None
+    text_batch_generator_insert_ms: float | None = None
+    text_batch_generator_prepare_ms: float | None = None
+    text_batch_generator_prompt_encode_ms: float | None = None
+    text_batch_generator_prefill_ms: float | None = None
+    text_batch_generator_batch_insert_ms: float | None = None
+    text_batch_generator_first_response_ms: float | None = None
+    text_batch_generator_first_visible_ms: float | None = None
     dflash_enabled: bool | None = None
     dflash_block_size: int | None = None
     dflash_rollback_count: int | None = None
@@ -149,6 +164,257 @@ _STREAM_STOP_KWARG_NAMES = ("stop", "stop_words", "stop_sequences")
 _SAMPLER_PENALTY_KWARG_NAMES = ("frequency_penalty", "presence_penalty")
 _STOP_CONTRACT_CACHE_FIELD = "_melix.resolved_text_stop_contract_cache"
 _STOP_KWARGS_CACHE_FIELD = "_melix.resolved_text_stop_kwargs_cache"
+_NATIVE_MTP_ENABLED_EXT_KEY = "melix.native_mtp.enabled"
+_NATIVE_MTP_TEXT_BATCH_PREFILL_STEP_SIZE_ENV = "MELIX_TEXT_NATIVE_MTP_PREFILL_STEP_SIZE"
+_NATIVE_MTP_TEXT_BATCH_DEFAULT_PREFILL_STEP_SIZE = 2048
+_NATIVE_MTP_TEXT_BATCH_GENERATOR_FIELD = "_melix.native_mtp_text_batch_generator"
+_NATIVE_MTP_TEXT_BATCH_GENERATOR_CONFIG_FIELD = "_melix.native_mtp_text_batch_generator_config"
+_NATIVE_MTP_TEXT_DETOKENIZER_FIELD = "_melix.native_mtp_text_detokenizer"
+
+
+def _truthy_string(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on", "enabled"}
+
+
+def _load_json_payload(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _native_mtp_model_type(config_payload: dict[str, Any]) -> str:
+    text_config = config_payload.get("text_config")
+    if isinstance(text_config, dict):
+        value = text_config.get("model_type") or config_payload.get("model_type")
+    else:
+        value = config_payload.get("model_type")
+    return str(value or "").strip().lower()
+
+
+def _native_mtp_layer_count(config_payload: dict[str, Any]) -> int:
+    candidates: list[Any] = []
+    text_config = config_payload.get("text_config")
+    if isinstance(text_config, dict):
+        candidates.append(text_config.get("mtp_num_hidden_layers"))
+    candidates.append(config_payload.get("mtp_num_hidden_layers"))
+    for value in candidates:
+        try:
+            return max(0, int(value or 0))
+        except (TypeError, ValueError):
+            continue
+    return 0
+
+
+def _native_mtp_weight_presence(model_dir: Path) -> tuple[bool, int]:
+    index_payload = _load_json_payload(model_dir / "model.safetensors.index.json")
+    weight_map = index_payload.get("weight_map")
+    if not isinstance(weight_map, dict):
+        return False, 0
+    count = sum(
+        1
+        for key in weight_map
+        if str(key).startswith("language_model.mtp.") or str(key).startswith("mtp.")
+    )
+    return count > 0, count
+
+
+def maybe_apply_native_mtp_text_preload_patches(
+    model_path: str,
+    *,
+    metadata: dict[str, str],
+) -> dict[str, str]:
+    enabled = _truthy_string(metadata.get(_NATIVE_MTP_ENABLED_EXT_KEY, ""))
+    model_dir = Path(model_path)
+    config_payload = _load_json_payload(model_dir / "config.json")
+    model_type = _native_mtp_model_type(config_payload)
+    mtp_layers = _native_mtp_layer_count(config_payload)
+    compatible = model_type in {"qwen3_5", "qwen3_5_text"} and mtp_layers > 0
+    weights_present, weight_count = _native_mtp_weight_presence(model_dir)
+
+    active = False
+    patch_applied = False
+    reason = "disabled"
+    try:
+        from worker.runtime import native_mtp
+
+        native_mtp.set_mtp_active(False)
+        native_mtp.set_mtp_weight_attachment(False)
+        if compatible:
+            native_mtp.set_mtp_weight_attachment(weights_present)
+            patch_applied = native_mtp.apply_native_mtp_patches()
+            if not patch_applied:
+                reason = "patch_failed"
+            elif not enabled:
+                reason = "disabled"
+            elif not weights_present:
+                reason = "missing_mtp_weights"
+            else:
+                active = True
+                reason = ""
+        elif enabled:
+            reason = "unsupported_model"
+        native_mtp.set_mtp_active(active)
+    except Exception:
+        reason = "patch_error"
+        try:
+            native_mtp.set_mtp_active(False)
+            native_mtp.set_mtp_weight_attachment(False)
+        except Exception:
+            pass
+
+    return {
+        "melix.native_mtp.enabled": "true" if enabled else "false",
+        "melix.native_mtp.compatible": "true" if compatible else "false",
+        "melix.native_mtp.weights_present": "true" if weights_present else "false",
+        "melix.native_mtp.weight_count": str(weight_count),
+        "melix.native_mtp.patch_applied": "true" if patch_applied else "false",
+        "melix.native_mtp.active": "true" if active else "false",
+        "melix.native_mtp.reason": reason,
+    }
+
+
+def _load_mlx_batch_generator_class():
+    from mlx_lm.generate import BatchGenerator
+
+    return BatchGenerator
+
+
+def _native_mtp_text_model_active(loaded_model: Any) -> bool:
+    if not isinstance(loaded_model, dict):
+        return False
+    metadata = loaded_model.get("metadata")
+    if not isinstance(metadata, dict) or not _truthy_string(metadata.get("melix.native_mtp.active")):
+        return False
+    model = loaded_model.get("model")
+    inner = getattr(model, "language_model", model)
+    if not hasattr(model, "mtp_forward") and not hasattr(inner, "mtp_forward"):
+        return False
+    return bool(hasattr(inner, "mtp") and getattr(inner, "mtp", None) is not None)
+
+
+def _native_mtp_text_prefill_step_size() -> int:
+    raw_value = os.environ.get(_NATIVE_MTP_TEXT_BATCH_PREFILL_STEP_SIZE_ENV, "").strip()
+    if raw_value:
+        try:
+            value = int(raw_value)
+        except ValueError:
+            value = 0
+        if value > 0:
+            return value
+    return _NATIVE_MTP_TEXT_BATCH_DEFAULT_PREFILL_STEP_SIZE
+
+
+def _close_native_mtp_text_batch_generator(loaded_model: Any) -> None:
+    if not isinstance(loaded_model, dict):
+        return
+    batch_generator = loaded_model.pop(_NATIVE_MTP_TEXT_BATCH_GENERATOR_FIELD, None)
+    loaded_model.pop(_NATIVE_MTP_TEXT_BATCH_GENERATOR_CONFIG_FIELD, None)
+    close = getattr(batch_generator, "close", None)
+    if callable(close):
+        close()
+
+
+def _has_static_attribute(value: Any, name: str) -> bool:
+    try:
+        inspect.getattr_static(value, name)
+    except AttributeError:
+        return False
+    return True
+
+
+def _copyable_native_mtp_text_detokenizer(loaded_model: Any, tokenizer: Any) -> Any | None:
+    if not isinstance(loaded_model, dict):
+        return getattr(tokenizer, "detokenizer", None)
+
+    template = loaded_model.get(_NATIVE_MTP_TEXT_DETOKENIZER_FIELD)
+    if template is None:
+        template = getattr(tokenizer, "detokenizer", None)
+        if template is None:
+            return None
+        loaded_model[_NATIVE_MTP_TEXT_DETOKENIZER_FIELD] = template
+
+    try:
+        detokenizer = copy(template)
+    except Exception:
+        loaded_model.pop(_NATIVE_MTP_TEXT_DETOKENIZER_FIELD, None)
+        return getattr(tokenizer, "detokenizer", None)
+    if detokenizer is template:
+        loaded_model.pop(_NATIVE_MTP_TEXT_DETOKENIZER_FIELD, None)
+        return getattr(tokenizer, "detokenizer", None)
+    return detokenizer
+
+
+def _native_mtp_prefill_prompt_cache(
+    model: Any,
+    prompt_tokens: list[int],
+    *,
+    prefill_step_size: int,
+    stream: Any,
+) -> tuple[list[Any], list[int], list[int]]:
+    try:
+        import mlx.core as mx
+        from mlx_lm.models.cache import make_prompt_cache
+    except ModuleNotFoundError as exc:  # pragma: no cover - guarded by native MTP availability.
+        raise RuntimeUnavailableError("mlx-lm prompt cache support is not installed") from exc
+
+    prompt_cache = make_prompt_cache(model)
+    if len(prompt_tokens) <= 1:
+        return prompt_cache, list(prompt_tokens), []
+
+    prefill_tokens = list(prompt_tokens[:-1])
+    last_token = [int(prompt_tokens[-1])]
+    step_size = max(1, int(prefill_step_size or 1))
+
+    def run_prefill() -> None:
+        input_arr = mx.array(prefill_tokens)[None]
+        while input_arr.shape[1] > 0:
+            n_to_process = min(step_size, input_arr.shape[1])
+            model(input_arr[:, :n_to_process], cache=prompt_cache)
+            mx.eval([cache.state for cache in prompt_cache])
+            mx.clear_cache()
+            input_arr = input_arr[:, n_to_process:]
+
+    if stream is None:
+        run_prefill()
+    else:
+        with mx.stream(stream):
+            run_prefill()
+
+    return prompt_cache, last_token, prefill_tokens
+
+
+def _tokenizer_eos_stop_tokens(tokenizer: Any) -> list[list[int]] | None:
+    eos_token_ids = getattr(tokenizer, "eos_token_ids", None)
+    if eos_token_ids is None:
+        eos_token_ids = getattr(tokenizer, "eos_token_id", None)
+    if eos_token_ids is None:
+        return None
+    if isinstance(eos_token_ids, list | tuple | set):
+        values = eos_token_ids
+    else:
+        values = (eos_token_ids,)
+    stop_tokens: list[list[int]] = []
+    for value in values:
+        try:
+            token_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        stop_tokens.append([token_id])
+    return stop_tokens or None
+
+
+def _mlx_peak_memory_gb(mx: Any) -> float | None:
+    try:
+        if hasattr(mx, "get_peak_memory"):
+            return float(mx.get_peak_memory() / 1e9)
+        metal = getattr(mx, "metal", None)
+        if metal is not None and hasattr(metal, "get_peak_memory"):
+            return float(metal.get_peak_memory() / 1e9)
+    except Exception:
+        return None
+    return None
 
 
 def _split_stop_sequence_value(value: Any) -> list[str]:
@@ -648,6 +914,12 @@ class AutoMLXBackend:
             raise RuntimeUnavailableError("mlx-lm is not installed") from self._error
         self._ensure_runtime()
         adapter_metadata = _resolve_adapter_backed_metadata(model_spec)
+        metadata = dict(model_spec.ext)
+        native_mtp_metadata = maybe_apply_native_mtp_text_preload_patches(
+            model_spec.model_path,
+            metadata=metadata,
+        )
+        metadata.update(native_mtp_metadata)
         load_kwargs: dict[str, Any] = {"lazy": False}
         if trust_remote_code and not _callable_accepts_kwarg(self._load_fn, "trust_remote_code"):
             raise RuntimeError("mlx-lm loader cannot honor trust_remote_code.")
@@ -668,15 +940,23 @@ class AutoMLXBackend:
             loaded = (model, tokenizer)
         model, tokenizer = loaded[:2]
         family_config = resolve_text_family_config(
-            dict(model_spec.ext),
+            dict(metadata),
             model_path=model_spec.model_path,
-            default_route_kind=model_spec.ext.get("melix.capability.route_kind", "swift_text") or "swift_text",
+            default_route_kind=metadata.get("melix.capability.route_kind", "swift_text") or "swift_text",
         )
+        native_mtp_active = _truthy_string(metadata.get("melix.native_mtp.active"))
+        for target in (model, getattr(model, "language_model", None)):
+            if target is None:
+                continue
+            try:
+                setattr(target, "_melix_native_mtp_active", native_mtp_active)
+            except Exception:
+                pass
         return {
             "model_id": model_spec.model_id,
             "model_path": model_spec.model_path,
-            "model_ext": dict(model_spec.ext),
-            "metadata": dict(model_spec.ext),
+            "model_ext": dict(metadata),
+            "metadata": dict(metadata),
             "model": model,
             "tokenizer": tokenizer,
             "mlx_version": _installed_package_version("mlx"),
@@ -687,6 +967,9 @@ class AutoMLXBackend:
 
     def estimate_resident_bytes(self, model_spec) -> int:
         return _estimate_model_weight_resident_bytes(str(getattr(model_spec, "model_path", "") or ""))
+
+    def close_loaded_model(self, loaded_model: Any) -> None:
+        _close_native_mtp_text_batch_generator(loaded_model)
 
     def score_response(
         self,
@@ -744,6 +1027,17 @@ class AutoMLXBackend:
             self._stream_stop_kwarg,
         )
 
+        if _native_mtp_text_model_active(loaded_model):
+            yield from self._generate_native_mtp_batch_tokens(
+                loaded_model,
+                prompt,
+                sampler=sampler,
+                max_tokens=max_tokens,
+                cancel_event=cancel_event,
+            )
+            return
+
+        cumulative_raw_text = ""
         for response in self._stream_generate_fn(
             loaded_model["model"],
             loaded_model["tokenizer"],
@@ -758,9 +1052,15 @@ class AutoMLXBackend:
             finish_reason = getattr(response, "finish_reason", None)
             if not text and finish_reason is None:
                 continue
+            response_raw_text = getattr(response, "raw_text", None)
+            if response_raw_text is None:
+                cumulative_raw_text += str(text or "")
+                raw_text = cumulative_raw_text
+            else:
+                raw_text = response_raw_text
             yield RuntimeTokenEvent(
                 text=text,
-                raw_text=getattr(response, "raw_text", None),
+                raw_text=raw_text,
                 token_ids=_int_tuple(
                     _first_present(
                         getattr(response, "token_ids", None),
@@ -800,13 +1100,215 @@ class AutoMLXBackend:
                     "speculative_draft_model_configured",
                     None,
                 ),
+                speculative_cycle_count=getattr(response, "speculative_cycle_count", None),
                 speculative_draft_propose_ms=getattr(response, "speculative_draft_propose_ms", None),
                 speculative_target_verify_ms=getattr(response, "speculative_target_verify_ms", None),
+                speculative_mtp_head_ms=getattr(response, "speculative_mtp_head_ms", None),
+                speculative_sample_ms=getattr(response, "speculative_sample_ms", None),
+                speculative_cache_ops_ms=getattr(response, "speculative_cache_ops_ms", None),
                 dflash_enabled=getattr(response, "dflash_enabled", None),
                 dflash_block_size=getattr(response, "dflash_block_size", None),
                 dflash_rollback_count=getattr(response, "dflash_rollback_count", None),
                 dflash_target_hidden_layers=getattr(response, "dflash_target_hidden_layers", None),
             )
+
+    def _generate_native_mtp_batch_tokens(
+        self,
+        loaded_model,
+        prompt: str,
+        *,
+        sampler,
+        max_tokens: int,
+        cancel_event,
+    ) -> Iterable[RuntimeTokenEvent]:
+        try:
+            import mlx.core as mx
+        except ModuleNotFoundError as exc:  # pragma: no cover - guarded by mlx-lm availability.
+            raise RuntimeUnavailableError("mlx is not installed") from exc
+
+        prepare_started_at = time.perf_counter()
+        tokenizer = loaded_model["tokenizer"]
+        if not hasattr(tokenizer, "encode"):
+            raise RuntimeUnavailableError("Native MTP text path requires a tokenizer with encode().")
+        try:
+            from mlx_lm.tokenizer_utils import TokenizerWrapper
+        except ModuleNotFoundError:
+            TokenizerWrapper = ()  # type: ignore[assignment]
+
+        if (
+            TokenizerWrapper
+            and not isinstance(tokenizer, TokenizerWrapper)
+            and not _has_static_attribute(tokenizer, "detokenizer")
+        ):
+            tokenizer = TokenizerWrapper(tokenizer)
+            loaded_model["tokenizer"] = tokenizer
+
+        add_special_tokens = getattr(tokenizer, "bos_token", None) is None or not prompt.startswith(
+            str(getattr(tokenizer, "bos_token", "") or "")
+        )
+        encode_started_at = time.perf_counter()
+        prompt_tokens = list(tokenizer.encode(prompt, add_special_tokens=add_special_tokens))
+        prompt_encode_ms = (time.perf_counter() - encode_started_at) * 1000.0
+        if not prompt_tokens:
+            return
+
+        detokenizer = _copyable_native_mtp_text_detokenizer(loaded_model, tokenizer)
+        if detokenizer is None:
+            raise RuntimeUnavailableError("Native MTP text path requires a streaming detokenizer.")
+        reset = getattr(detokenizer, "reset", None)
+        if callable(reset):
+            reset()
+
+        batch_generator = self._native_mtp_batch_generator(
+            loaded_model,
+            sampler=sampler,
+            max_tokens=max_tokens,
+            stop_tokens=_tokenizer_eos_stop_tokens(tokenizer),
+            prefill_step_size=_native_mtp_text_prefill_step_size(),
+        )
+        prepare_ms = (time.perf_counter() - prepare_started_at) * 1000.0
+        uid: int | None = None
+        generation_started_at = time.perf_counter()
+        first_response_ms: float | None = None
+        first_visible_ms: float | None = None
+        prompt_tps: float | None = None
+        cumulative_raw_text = ""
+        try:
+            insert_started_at = time.perf_counter()
+            prefill_started_at = time.perf_counter()
+            prompt_cache, last_token, cached_tokens = _native_mtp_prefill_prompt_cache(
+                loaded_model["model"],
+                prompt_tokens,
+                prefill_step_size=_native_mtp_text_prefill_step_size(),
+                stream=getattr(batch_generator, "stream", None),
+            )
+            prefill_ms = (time.perf_counter() - prefill_started_at) * 1000.0
+            batch_insert_started_at = time.perf_counter()
+            inserted = batch_generator.insert(
+                [last_token],
+                max_tokens=[max_tokens],
+                caches=[prompt_cache],
+                all_tokens=[cached_tokens],
+                samplers=[sampler],
+            )
+            batch_insert_ms = (time.perf_counter() - batch_insert_started_at) * 1000.0
+            insert_ms = (time.perf_counter() - insert_started_at) * 1000.0
+            uid = int(inserted[0])
+            while not cancel_event.is_set():
+                responses = batch_generator.next_generated()
+                if not responses:
+                    break
+                observed_response_ms = (time.perf_counter() - generation_started_at) * 1000.0
+                if first_response_ms is None:
+                    first_response_ms = observed_response_ms
+                for response in responses:
+                    if int(getattr(response, "uid", uid)) != uid:
+                        continue
+                    token_id = int(getattr(response, "token"))
+                    detokenizer.add_token(token_id)
+                    finish_reason = getattr(response, "finish_reason", None)
+                    if finish_reason is not None:
+                        finalize = getattr(detokenizer, "finalize", None)
+                        if callable(finalize):
+                            finalize()
+                    text = str(getattr(detokenizer, "last_segment", "") or "")
+                    cumulative_raw_text += text
+                    if text and first_visible_ms is None:
+                        first_visible_ms = (time.perf_counter() - generation_started_at) * 1000.0
+                    token_count = len(getattr(detokenizer, "tokens", ()) or ())
+                    generation_tps = None
+                    if finish_reason is not None:
+                        elapsed = max(time.perf_counter() - generation_started_at, 1e-9)
+                        generation_tps = token_count / elapsed
+                    if prompt_tps is None and token_count > 0:
+                        prompt_tps = None
+                    peak_memory = _mlx_peak_memory_gb(mx) if finish_reason is not None else None
+                    yield RuntimeTokenEvent(
+                        text=text,
+                        raw_text=cumulative_raw_text,
+                        token_ids=(token_id,),
+                        token_logprobs=(),
+                        prompt_tokens=len(prompt_tokens),
+                        completion_tokens=token_count,
+                        prompt_tps=prompt_tps,
+                        generation_tps=generation_tps,
+                        peak_memory=peak_memory,
+                        finish_reason=finish_reason,
+                        speculative_acceptance_rate=getattr(response, "speculative_acceptance_rate", None),
+                        speculative_rollback_rate=getattr(response, "speculative_rollback_rate", None),
+                        speculative_accepted_tokens=getattr(response, "speculative_accepted_tokens", None),
+                        speculative_rejected_tokens=getattr(response, "speculative_rejected_tokens", None),
+                        speculative_fallback_count=0,
+                        speculative_num_draft_tokens=getattr(response, "speculative_num_draft_tokens", None),
+                        speculative_draft_model_configured=getattr(
+                            response,
+                            "speculative_draft_model_configured",
+                            None,
+                        ),
+                        speculative_cycle_count=getattr(response, "speculative_cycle_count", None),
+                        speculative_target_verify_ms=getattr(response, "speculative_backbone_ms", None),
+                        speculative_mtp_head_ms=getattr(response, "speculative_mtp_head_ms", None),
+                        speculative_sample_ms=getattr(response, "speculative_sample_ms", None),
+                        speculative_cache_ops_ms=getattr(response, "speculative_cache_ops_ms", None),
+                        text_batch_generator_insert_ms=insert_ms if finish_reason is not None else None,
+                        text_batch_generator_prepare_ms=prepare_ms
+                        if finish_reason is not None
+                        else None,
+                        text_batch_generator_prompt_encode_ms=prompt_encode_ms
+                        if finish_reason is not None
+                        else None,
+                        text_batch_generator_prefill_ms=prefill_ms
+                        if finish_reason is not None
+                        else None,
+                        text_batch_generator_batch_insert_ms=batch_insert_ms
+                        if finish_reason is not None
+                        else None,
+                        text_batch_generator_first_response_ms=first_response_ms
+                        if finish_reason is not None
+                        else None,
+                        text_batch_generator_first_visible_ms=first_visible_ms
+                        if finish_reason is not None
+                        else None,
+                    )
+                    if finish_reason is not None:
+                        return
+        finally:
+            if uid is not None:
+                remove = getattr(batch_generator, "remove", None)
+                if callable(remove):
+                    try:
+                        remove([uid])
+                    except Exception:
+                        pass
+
+    def _native_mtp_batch_generator(
+        self,
+        loaded_model: dict[str, Any],
+        *,
+        sampler,
+        max_tokens: int,
+        stop_tokens: list[list[int]] | None,
+        prefill_step_size: int,
+    ):
+        config = (tuple(tuple(token) for token in stop_tokens or ()), 1, 1, prefill_step_size)
+        cached_config = loaded_model.get(_NATIVE_MTP_TEXT_BATCH_GENERATOR_CONFIG_FIELD)
+        cached_generator = loaded_model.get(_NATIVE_MTP_TEXT_BATCH_GENERATOR_FIELD)
+        if cached_generator is not None and cached_config == config:
+            return cached_generator
+        _close_native_mtp_text_batch_generator(loaded_model)
+        BatchGenerator = _load_mlx_batch_generator_class()
+        batch_generator = BatchGenerator(
+            loaded_model["model"],
+            max_tokens=max_tokens,
+            stop_tokens=stop_tokens,
+            sampler=sampler,
+            prefill_batch_size=1,
+            completion_batch_size=1,
+            prefill_step_size=prefill_step_size,
+        )
+        loaded_model[_NATIVE_MTP_TEXT_BATCH_GENERATOR_FIELD] = batch_generator
+        loaded_model[_NATIVE_MTP_TEXT_BATCH_GENERATOR_CONFIG_FIELD] = config
+        return batch_generator
 
 
 class MLXTextRuntime:
@@ -840,6 +1342,14 @@ class MLXTextRuntime:
 
     def estimate_resident_bytes(self, model_spec) -> int:
         return int(self._backend.estimate_resident_bytes(model_spec))
+
+    def close_loaded_model(self, loaded_model) -> None:
+        close_loaded_model = getattr(self._backend, "close_loaded_model", None)
+        if callable(close_loaded_model):
+            if self._executor is None:
+                close_loaded_model(loaded_model)
+            else:
+                self._executor.run(lambda: close_loaded_model(loaded_model))
 
     def score_response(
         self,
@@ -1035,10 +1545,11 @@ class MLXTextRuntime:
                 if not pending and event.raw_text is None:
                     yield event
                 else:
+                    raw_text = event.raw_text if visible == event.text else visible
                     yield replace(
                         event,
                         text=visible,
-                        raw_text=visible,
+                        raw_text=raw_text,
                         finish_reason=None if pending else event.finish_reason,
                     )
             elif event.finish_reason and not pending:

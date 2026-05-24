@@ -2022,7 +2022,6 @@ public struct OpenAIHandler: Sendable {
             ).resolvingAccelerationCompatibility(for: resolvedModel),
             mcpToolCatalog: mcpToolCatalog
         )
-        await recordShapingMetrics(for: translated, startedAt: shapingStartedAt)
         let responseModelID = executionModelID == originalModelID ? nil : originalModelID
         let responseTranslated = TranslatedChatRequest(
             requestID: translated.requestID,
@@ -2040,6 +2039,7 @@ public struct OpenAIHandler: Sendable {
         } else {
             responseTranslated
         }
+        await recordShapingMetrics(for: finalTranslated, startedAt: shapingStartedAt)
         return ResolvedOpenAITextRequest(
             translated: finalTranslated,
             idleSweepRequest: resolved.idleSweepRequest
@@ -2162,6 +2162,20 @@ public struct OpenAIHandler: Sendable {
             )
         if batchGeneratorEnabled {
             workerRequest.execution.ext["melix.vlm.text_only_batch_generator"] = "true"
+            if shouldSuppressVLMTextOnlyBatchGeneratorModelToolParser(
+                normalizedRequest: normalizedRequest,
+                workerRequest: workerRequest
+            ) {
+                workerRequest.execution.ext.removeValue(forKey: "melix.tool_parser.mode")
+                workerRequest.execution.ext.removeValue(forKey: "melix.tool_parser.source")
+                workerRequest.execution.ext.removeValue(forKey: "melix.tool_parser.namespaces")
+                workerRequest.execution.ext.removeValue(forKey: "melix.tool_parser.fallback_mode")
+                workerRequest.execution.ext["melix.tool_parser.suppressed_reason"] =
+                    "vlm_text_only_batch_generator_no_tools"
+                workerRequest.execution.scope.parserMode = ""
+                workerRequest.execution.scope.toolParserMode = ""
+                workerRequest.execution.ext["melix.cache.fingerprint.parser_mode"] = ""
+            }
             if shouldNormalizeVLMTextOnlyBatchGeneratorSampling(
                 normalizedRequest: normalizedRequest,
                 workerRequest: workerRequest
@@ -2177,6 +2191,25 @@ public struct OpenAIHandler: Sendable {
             workerRequest: workerRequest,
             stream: translated.stream
         )
+    }
+
+    private func shouldSuppressVLMTextOnlyBatchGeneratorModelToolParser(
+        normalizedRequest: NormalizedTextRequest,
+        workerRequest: Melix_Worker_V1_GenerateRequest
+    ) -> Bool {
+        guard normalizedRequest.toolParser == nil,
+              normalizedRequest.tools.isEmpty,
+              normalizedRequest.toolChoice == nil
+        else {
+            return false
+        }
+        guard workerRequest.execution.ext["melix.tool_parser.source"] == "model" else {
+            return false
+        }
+        guard workerRequest.execution.ext["melix.mcp.source_ids"] == nil else {
+            return false
+        }
+        return true
     }
 
     private func shouldAutoEnableVLMTextOnlyBatchGenerator(

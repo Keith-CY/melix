@@ -244,13 +244,19 @@ class RequestStreamAssembler:
             token_count = self._record_token_metadata(fragment)
             if token_bytes is not None:
                 byte_delta = self._token_byte_delta(token_bytes)
-        raw = fragment.raw_text if fragment.raw_text is not None else fragment.text
         if byte_delta is not None:
             if not byte_delta:
                 return []
             delta = byte_delta
-        elif raw:
-            delta = self._unseen_delta(raw)
+        elif fragment.raw_text is None:
+            delta = fragment.text
+            if delta:
+                self._materialized_raw_seen()
+                self._raw_seen += delta
+            else:
+                return []
+        elif fragment.raw_text:
+            delta = self._unseen_delta(fragment.raw_text)
         else:
             return []
 

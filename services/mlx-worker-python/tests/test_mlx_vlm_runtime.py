@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 import sys
 from threading import Event
@@ -31,6 +32,9 @@ from worker.runtime.mlx_vlm_runtime import (
     _TEXT_ONLY_BATCH_DONE,
     _TextOnlyBatchGeneratorScheduler,
     _TextOnlyBatchRequest,
+    _TextOnlyVLMDecodeAdapter,
+    maybe_apply_native_mtp_preload_patches,
+    _text_batch_generator_probe_kwargs,
     _text_only_streaming_decoder,
     _gemma4_loaded_execution_mode,
     _gemma4_multimodal_weight_presence,
@@ -99,6 +103,22 @@ def _install_fake_mlx_core(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_mlx.nn = fake_nn
     monkeypatch.setitem(sys.modules, "mlx", fake_mlx)
     monkeypatch.setitem(sys.modules, "mlx.core", fake_core)
+    monkeypatch.setitem(sys.modules, "mlx.nn", fake_nn)
+
+
+def _install_native_mtp_fake_mlx(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_mx: ModuleType,
+    fake_nn: ModuleType | None = None,
+) -> None:
+    fake_mlx = ModuleType("mlx")
+    fake_mlx.core = fake_mx
+    fake_nn = fake_nn or ModuleType("mlx.nn")
+    if not hasattr(fake_nn, "Module"):
+        fake_nn.Module = object
+    monkeypatch.setitem(sys.modules, "mlx", fake_mlx)
+    monkeypatch.setitem(sys.modules, "mlx.core", fake_mx)
+    fake_mlx.nn = fake_nn
     monkeypatch.setitem(sys.modules, "mlx.nn", fake_nn)
 
 
@@ -711,6 +731,11 @@ def test_mlx_vlm_runtime_text_only_step_flushes_buffer_before_stop_token(
     assert mlx_vlm_runtime_module._text_only_batch_prefill_step_size("invalid") == 512
     assert mlx_vlm_runtime_module._text_only_batch_prefill_step_size("0") == 1
     assert mlx_vlm_runtime_module._text_only_batch_prefill_step_size("9000") == 8192
+    assert mlx_vlm_runtime_module._text_only_batch_max_batch_size(None) == 8
+    assert mlx_vlm_runtime_module._text_only_batch_max_batch_size("") == 8
+    assert mlx_vlm_runtime_module._text_only_batch_max_batch_size("invalid") == 8
+    assert mlx_vlm_runtime_module._text_only_batch_max_batch_size("0") == 1
+    assert mlx_vlm_runtime_module._text_only_batch_max_batch_size("9000") == 256
 
     class FakePromptResponse:
         def __init__(self, progress: tuple[object, object] | list[object]) -> None:
@@ -1006,6 +1031,874 @@ def test_mlx_vlm_runtime_text_only_step_uses_isolated_detokenizer() -> None:
     assert isolated is not processor.detokenizer
     assert isolated.text == ""
     assert processor.detokenizer.text == "shared"
+
+
+def test_mlx_vlm_runtime_applies_native_mtp_preload_patch_before_load(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "qwen36-mtp"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text(
+        '{"model_type":"qwen3_5","text_config":{"mtp_num_hidden_layers":1}}\n'
+    )
+    patch_calls: list[tuple[str, dict[str, str]]] = []
+    load_seen_after_patch = False
+
+    def fake_preload_patch(model_path: str, *, metadata: dict[str, str]):
+        patch_calls.append((model_path, dict(metadata)))
+        return {
+            "melix.native_mtp.compatible": "true",
+            "melix.native_mtp.patch_applied": "true",
+            "melix.native_mtp.active": "true",
+        }
+
+    def fake_load(model_path: str, revision: str = "main"):
+        nonlocal load_seen_after_patch
+        _ = revision
+        assert model_path == str(model_dir)
+        assert patch_calls
+        load_seen_after_patch = True
+        return (
+            SimpleNamespace(config=SimpleNamespace(model_type="qwen3_5")),
+            SimpleNamespace(detokenizer=None),
+        )
+
+    monkeypatch.setattr(
+        mlx_vlm_runtime_module,
+        "maybe_apply_native_mtp_preload_patches",
+        fake_preload_patch,
+    )
+    monkeypatch.setattr(
+        mlx_vlm_runtime_module,
+        "_installed_package_version",
+        lambda name: f"{name}-version",
+    )
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=fake_load,
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda *_args, **_kwargs: "formatted::prompt",
+        )
+    )
+    model = common_pb2.ModelSpec(
+        model_id="qwen36-mtp",
+        model_path=str(model_dir),
+        model_kind="vlm",
+        revision="main",
+        ext={"melix.native_mtp.enabled": "true"},
+    )
+
+    loaded = runtime.load_model(model)
+
+    assert load_seen_after_patch is True
+    assert len(patch_calls) == 1
+    assert patch_calls[0][0] == str(model_dir)
+    assert patch_calls[0][1]["melix.native_mtp.enabled"] == "true"
+    assert loaded["metadata"]["melix.native_mtp.patch_applied"] == "true"
+    assert loaded["metadata"]["melix.native_mtp.active"] == "true"
+    assert loaded["metadata"][_TEXT_ONLY_BATCH_GENERATOR_EXT_KEY] == "true"
+
+
+def test_native_mtp_preload_patch_detects_qwen36_mtp_weights(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "qwen36-mtp"
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "model_type": "qwen3_5",
+                "text_config": {
+                    "model_type": "qwen3_5",
+                    "mtp_num_hidden_layers": 1,
+                },
+            }
+        )
+    )
+    (model_dir / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "weight_map": {
+                    "language_model.mtp.fc.weight": "mtp.safetensors",
+                    "language_model.model.embed_tokens.weight": "model.safetensors",
+                }
+            }
+        )
+    )
+    calls: list[tuple[str, bool]] = []
+
+    class FakeNativeMTP:
+        @staticmethod
+        def set_mtp_active(active: bool) -> None:
+            calls.append(("active", active))
+
+        @staticmethod
+        def set_mtp_weight_attachment(active: bool) -> None:
+            calls.append(("attach", active))
+
+        @staticmethod
+        def apply_native_mtp_patches() -> bool:
+            calls.append(("patch", True))
+            return True
+
+    import worker.runtime as worker_runtime_pkg
+
+    monkeypatch.setitem(sys.modules, "worker.runtime.native_mtp", FakeNativeMTP)
+    monkeypatch.setattr(
+        worker_runtime_pkg,
+        "native_mtp",
+        FakeNativeMTP,
+        raising=False,
+    )
+
+    metadata = maybe_apply_native_mtp_preload_patches(
+        str(model_dir),
+        metadata={"melix.native_mtp.enabled": "true"},
+    )
+
+    assert metadata["melix.native_mtp.compatible"] == "true"
+    assert metadata["melix.native_mtp.weights_present"] == "true"
+    assert metadata["melix.native_mtp.weight_count"] == "1"
+    assert metadata["melix.native_mtp.patch_applied"] == "true"
+    assert metadata["melix.native_mtp.active"] == "true"
+    assert ("attach", True) in calls
+    assert calls[-1] == ("active", True)
+
+
+def test_text_only_vlm_decode_adapter_exposes_native_mtp_methods() -> None:
+    calls: list[tuple[str, object]] = []
+
+    class FakeLanguageModel:
+        mtp = object()
+
+        def mtp_forward(self, hidden_states, next_token_ids, mtp_cache):
+            calls.append(("mtp_forward", (hidden_states, next_token_ids, mtp_cache)))
+            return "mtp-logits"
+
+        def make_mtp_cache(self):
+            calls.append(("make_mtp_cache", None))
+            return ["mtp-cache"]
+
+        def rollback_speculative_cache(self, caches, gdn_states, accepted, block_size):
+            calls.append(
+                (
+                    "rollback",
+                    (caches, gdn_states, accepted, block_size),
+                )
+            )
+            return "rolled-back"
+
+    adapter = _TextOnlyVLMDecodeAdapter(SimpleNamespace(language_model=FakeLanguageModel()))
+
+    assert adapter.mtp is not None
+    assert adapter.make_mtp_cache() == ["mtp-cache"]
+    assert adapter.mtp_forward("hidden", "token", ["cache"]) == "mtp-logits"
+    assert adapter.rollback_speculative_cache(["kv"], ["gdn"], 0, 2) == "rolled-back"
+    assert [call[0] for call in calls] == [
+        "make_mtp_cache",
+        "mtp_forward",
+        "rollback",
+    ]
+
+
+def test_text_only_vlm_decode_adapter_forces_text_only_rope_context() -> None:
+    calls: list[str] = []
+
+    class FakeRoPEContext:
+        def __enter__(self):
+            calls.append("enter-rope")
+
+        def __exit__(self, exc_type, exc, tb):
+            _ = exc_type
+            _ = exc
+            _ = tb
+            calls.append("exit-rope")
+            return False
+
+    class FakeLanguageModel:
+        def _melix_force_text_only_rope_context(self):
+            calls.append("context")
+            return FakeRoPEContext()
+
+        def __call__(self, input_ids, cache=None, **kwargs):
+            calls.append(f"call:{input_ids}:{cache}:{kwargs}")
+            return SimpleNamespace(logits="logits")
+
+    adapter = _TextOnlyVLMDecodeAdapter(SimpleNamespace(language_model=FakeLanguageModel()))
+
+    assert adapter([1, 2], cache=["kv"], return_hidden=True) == "logits"
+    assert calls == [
+        "context",
+        "enter-rope",
+        "call:[1, 2]:['kv']:{'return_hidden': True}",
+        "exit-rope",
+    ]
+
+
+def test_text_only_vlm_decode_adapter_uses_forced_plain_rope_without_position_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_mx = ModuleType("mlx.core")
+
+    class FakeArray:
+        def __init__(self, label: str, shape=(1,)):
+            self.label = label
+            self.shape = shape
+            self.ndim = len(shape)
+
+        def __getitem__(self, item):
+            return FakeArray(f"{self.label}[{item!r}]", self.shape)
+
+        def __add__(self, other):
+            return FakeArray(f"({self.label}+{getattr(other, 'label', other)!r})", self.shape)
+
+        def __radd__(self, other):
+            return FakeArray(f"({getattr(other, 'label', other)!r}+{self.label})", self.shape)
+
+        def reshape(self, *shape):
+            return FakeArray(f"{self.label}.reshape{shape!r}", shape)
+
+    fake_mx.array = FakeArray
+    fake_mx.arange = lambda value: FakeArray(f"arange:{value}", (value,))
+    fake_mx.broadcast_to = lambda value, shape: FakeArray(
+        f"broadcast:{getattr(value, 'label', value)}:{shape}",
+        shape,
+    )
+    monkeypatch.setitem(sys.modules, "mlx.core", fake_mx)
+
+    calls: list[Any] = []
+    context_calls: list[str] = []
+
+    class FakeInputIDs:
+        shape = (1, 2)
+
+    class FakeCache:
+        offset = 7
+
+    class FakeLanguageModel:
+        def _melix_force_text_only_rope_context(self):
+            class Context:
+                def __enter__(self_inner):
+                    context_calls.append("enter")
+
+                def __exit__(self_inner, exc_type, exc, tb):
+                    _ = exc_type
+                    _ = exc
+                    _ = tb
+                    context_calls.append("exit")
+                    return False
+
+            return Context()
+
+        def __call__(self, input_ids, cache=None, **kwargs):
+            _ = input_ids
+            _ = cache
+            calls.append(kwargs)
+            return SimpleNamespace(logits="logits")
+
+    text_config = SimpleNamespace(rope_parameters={"mrope_section": [16, 24, 24]})
+    vlm_model = SimpleNamespace(
+        language_model=FakeLanguageModel(),
+        config=SimpleNamespace(text_config=text_config),
+    )
+    adapter = _TextOnlyVLMDecodeAdapter(vlm_model)
+
+    assert adapter(FakeInputIDs(), cache=[FakeCache()]) == "logits"
+    assert calls == [{}]
+    assert context_calls == ["enter", "exit"]
+
+
+def test_text_only_vlm_decode_adapter_skips_position_state_in_forced_plain_rope_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_mx = ModuleType("mlx.core")
+
+    class FakeArray:
+        def __init__(self, label: str, shape=(1,)):
+            self.label = label
+            self.shape = shape
+            self.ndim = len(shape)
+
+        def __getitem__(self, item):
+            return FakeArray(f"{self.label}[{item!r}]", self.shape)
+
+        def __add__(self, other):
+            return FakeArray(f"({self.label}+{getattr(other, 'label', other)!r})", self.shape)
+
+        def __radd__(self, other):
+            return FakeArray(f"({getattr(other, 'label', other)!r}+{self.label})", self.shape)
+
+        def reshape(self, *shape):
+            return FakeArray(f"{self.label}.reshape{shape!r}", shape)
+
+    fake_mx.array = FakeArray
+    fake_mx.arange = lambda value: FakeArray(f"arange:{value}", (value,))
+    fake_mx.broadcast_to = lambda value, shape: FakeArray(
+        f"broadcast:{getattr(value, 'label', value)}:{shape}",
+        shape,
+    )
+    monkeypatch.setitem(sys.modules, "mlx.core", fake_mx)
+
+    calls: list[str] = []
+
+    class FakeInputIDs:
+        shape = (1, 2)
+
+    class FakeCache:
+        offset = 7
+
+    class FakeLanguageModel:
+        def _melix_force_text_only_rope_context(self):
+            class Context:
+                def __enter__(self_inner):
+                    return None
+
+                def __exit__(self_inner, exc_type, exc, tb):
+                    _ = exc_type
+                    _ = exc
+                    _ = tb
+                    return False
+
+            return Context()
+
+        def __call__(self, input_ids, cache=None, **kwargs):
+            _ = input_ids
+            _ = cache
+            if "position_ids" in kwargs:
+                calls.append("position_ids")
+            return SimpleNamespace(logits="logits")
+
+    class FakeVLMModel:
+        language_model = FakeLanguageModel()
+        config = SimpleNamespace(
+            text_config=SimpleNamespace(rope_parameters={"mrope_section": [16, 24, 24]})
+        )
+
+        def _set_position_state(self, input_ids):
+            _ = input_ids
+            calls.append("set_position_state")
+
+    adapter = _TextOnlyVLMDecodeAdapter(FakeVLMModel())
+
+    assert adapter(FakeInputIDs(), cache=[FakeCache()]) == "logits"
+    assert calls == []
+
+
+def test_native_mtp_qwen35_attention_forced_plain_skips_mrope_position_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    class FakeTensor:
+        dtype = "float16"
+
+        def __init__(self, label: str, shape=(1,)) -> None:
+            self.label = label
+            self.shape = tuple(shape)
+            self.ndim = len(self.shape)
+
+        def __getitem__(self, item):
+            return FakeTensor(f"{self.label}[{item!r}]", self.shape)
+
+        def __neg__(self):
+            return FakeTensor(f"-{self.label}", self.shape)
+
+        def __add__(self, other):
+            return FakeTensor(f"{self.label}+{getattr(other, 'label', other)!r}", self.shape)
+
+        def __radd__(self, other):
+            return FakeTensor(f"{getattr(other, 'label', other)!r}+{self.label}", self.shape)
+
+        def __mul__(self, other):
+            return FakeTensor(f"{self.label}*{getattr(other, 'label', other)!r}", self.shape)
+
+        def __rmul__(self, other):
+            return FakeTensor(f"{getattr(other, 'label', other)!r}*{self.label}", self.shape)
+
+        def reshape(self, *shape):
+            return FakeTensor(f"{self.label}.reshape", shape)
+
+        def transpose(self, *axes):
+            if len(axes) == len(self.shape):
+                shape = tuple(self.shape[index] for index in axes)
+            else:
+                shape = self.shape
+            return FakeTensor(f"{self.label}.transpose", shape)
+
+        def astype(self, dtype):
+            return FakeTensor(f"{self.label}.astype:{dtype}", self.shape)
+
+    fake_mx = ModuleType("mlx.core")
+    fake_mx.array = FakeTensor
+    fake_mx.float32 = "float32"
+
+    def fake_arange(start, stop=None):
+        calls.append(f"arange:{start}:{stop}")
+        length = int((stop if stop is not None else start) - (start if stop is not None else 0))
+        return FakeTensor("arange", (length,))
+
+    def forbidden(name):
+        def fail(*_args, **_kwargs):
+            calls.append(name)
+            raise AssertionError(f"{name} should not be used in forced plain-RoPE")
+
+        return fail
+
+    fake_mx.arange = fake_arange
+    fake_mx.expand_dims = forbidden("expand_dims")
+    fake_mx.tile = forbidden("tile")
+    fake_mx.split = lambda value, _sections, axis=-1: (
+        FakeTensor(f"{value.label}.q", value.shape),
+        FakeTensor(f"{value.label}.gate", value.shape),
+    )
+    fake_mx.concatenate = lambda values, axis=0: FakeTensor(
+        "concat",
+        getattr(values[0], "shape", (1,)),
+    )
+    fake_mx.cos = lambda value: FakeTensor(f"cos:{value.label}", value.shape)
+    fake_mx.sin = lambda value: FakeTensor(f"sin:{value.label}", value.shape)
+    fake_mx.sigmoid = lambda value: FakeTensor(f"sigmoid:{value.label}", value.shape)
+    _install_native_mtp_fake_mlx(monkeypatch, fake_mx)
+
+    import worker.runtime.native_mtp.qwen35_vlm_runtime as qwen35_runtime
+
+    monkeypatch.setattr(qwen35_runtime, "mx", fake_mx)
+
+    class FakeAttention:
+        num_attention_heads = 1
+        num_key_value_heads = 1
+        scale = 1.0
+
+        def __init__(self) -> None:
+            self.rotary_emb = SimpleNamespace(inv_freq=FakeTensor("inv_freq", (1,)))
+
+        def q_proj(self, x):
+            return FakeTensor("q_proj", (x.shape[0], x.shape[1], 4))
+
+        def k_proj(self, x):
+            return FakeTensor("k_proj", (x.shape[0], x.shape[1], 2))
+
+        def v_proj(self, x):
+            return FakeTensor("v_proj", (x.shape[0], x.shape[1], 2))
+
+        def q_norm(self, value):
+            return value
+
+        def k_norm(self, value):
+            return value
+
+        def o_proj(self, value):
+            return ("out", value)
+
+    fake_language_module = SimpleNamespace(
+        Qwen3_5Attention=FakeAttention,
+        scaled_dot_product_attention=lambda *_args, **_kwargs: FakeTensor(
+            "attn_out",
+            (1, 1, 2, 2),
+        ),
+        apply_multimodal_rotary_pos_emb=forbidden("mrope"),
+    )
+
+    qwen35_runtime._patch_attention_plain_rope(fake_language_module)
+
+    with qwen35_runtime._ForceTextOnlyRoPE():
+        cache = SimpleNamespace(
+            offset=7,
+            update_and_fetch=lambda keys, values: (keys, values),
+        )
+        assert FakeAttention()(
+            FakeTensor("x", (1, 2, 8)),
+            cache=cache,
+            position_ids=None,
+        )[0] == "out"
+
+    assert "expand_dims" not in calls
+    assert "tile" not in calls
+    assert "mrope" not in calls
+
+
+def test_native_mtp_qwen35_vlm_return_hidden_uses_gdn_sink_rollback_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_mx = ModuleType("mlx.core")
+    fake_mx.concatenate = lambda values, axis=0: ("concat", axis, values)
+    fake_mx.zeros = lambda shape, dtype=None: ("zeros", shape, dtype)
+    fake_mx.where = lambda mask, value, other: ("where", mask, value, other)
+    fake_mx.split = lambda value, indices, axis: ("q", "k", "v")
+    fake_mx.fast = SimpleNamespace(rms_norm=lambda value, _weight, _eps: ("rms", value))
+    fake_mx.distributed = SimpleNamespace(all_sum=lambda value, group=None: ("all_sum", value, group))
+
+    fake_nn = ModuleType("mlx.nn")
+    fake_nn.Module = object
+    fake_nn.RMSNorm = lambda *_args, **_kwargs: object()
+    fake_nn.Linear = lambda *_args, **_kwargs: object()
+    fake_nn.silu = lambda value: ("silu", value)
+    fake_layers_distributed = ModuleType("mlx.nn.layers.distributed")
+    fake_layers_distributed.sum_gradients = lambda _group: (lambda value: value)
+    fake_gated_delta = ModuleType("mlx_lm.models.gated_delta")
+    fake_gated_delta.gated_delta_update = lambda *args, **_kwargs: (("gdn-out", args), "ssm-final")
+    fake_cache = ModuleType("mlx_lm.models.cache")
+    fake_cache.KVCache = type("KVCache", (), {})
+    _install_native_mtp_fake_mlx(monkeypatch, fake_mx, fake_nn)
+    monkeypatch.setitem(sys.modules, "mlx.nn.layers.distributed", fake_layers_distributed)
+    monkeypatch.setitem(sys.modules, "mlx_lm.models.gated_delta", fake_gated_delta)
+    monkeypatch.setitem(sys.modules, "mlx_lm.models.cache", fake_cache)
+
+    import worker.runtime.native_mtp.qwen35_vlm_runtime as qwen35_runtime
+
+    class FakeConfigModule:
+        class TextConfig:
+            @classmethod
+            def from_dict(cls, params):
+                return SimpleNamespace(**params)
+
+    class FakeGatedDeltaNet:
+        sharding_group = None
+        conv_kernel_size = 3
+        conv_dim = 4
+        num_k_heads = 1
+        num_v_heads = 1
+        head_k_dim = 1
+        head_v_dim = 1
+        key_dim = 1
+        A_log = "A"
+        dt_bias = "dt"
+        training = False
+
+        def in_proj_qkv(self, inputs):
+            return FakeTensor("qkv", (1, 2, 3))
+
+        def in_proj_z(self, inputs):
+            return FakeTensor("z", (1, 2, 1))
+
+        def in_proj_b(self, inputs):
+            return FakeTensor("b", (1, 2, 1))
+
+        def in_proj_a(self, inputs):
+            return FakeTensor("a", (1, 2, 1))
+
+        def conv1d(self, value):
+            return value
+
+        def norm(self, out, z):
+            return ("norm", out, z)
+
+        def out_proj(self, value):
+            return ("out", value)
+
+    class FakeLayer:
+        is_linear = True
+
+        def __init__(self) -> None:
+            self.linear_attn = FakeGatedDeltaNet()
+
+        def __call__(self, x, mask=None, cache=None, position_ids=None, gdn_sink=None):
+            return x
+
+    model_calls: list[dict[str, object]] = []
+
+    class FakeInnerModel:
+        fa_idx = 0
+        ssm_idx = 0
+
+        def __init__(self) -> None:
+            self.layers = [FakeLayer()]
+
+        def __call__(
+            self,
+            inputs,
+            cache=None,
+            inputs_embeds=None,
+            position_ids=None,
+            capture_layer_ids=None,
+            hidden_sink=None,
+            gdn_sink=None,
+            n_confirmed=0,
+            return_pre_norm=False,
+        ):
+            _ = return_pre_norm
+            model_calls.append(
+                {
+                    "capture_layer_ids": capture_layer_ids,
+                    "hidden_sink": hidden_sink,
+                    "gdn_sink": gdn_sink,
+                    "n_confirmed": n_confirmed,
+                }
+            )
+            if hidden_sink is not None:
+                hidden_sink.append("heavy-hidden")
+            if gdn_sink is not None:
+                gdn_sink.append("heavy-gdn")
+            return "normed"
+
+        def norm(self, hidden):
+            return ("norm", hidden)
+
+    class FakeLanguageModel:
+        def __init__(self, args=None, config=None) -> None:
+            _ = config
+            self._init_args = args or SimpleNamespace(mtp_num_hidden_layers=0)
+            self.model = FakeInnerModel()
+            self.args = SimpleNamespace(tie_word_embeddings=False, mtp_num_hidden_layers=0)
+            self.lm_head = lambda value: ("logits", value)
+
+    def original_language_call(
+        self,
+        inputs,
+        inputs_embeds=None,
+        mask=None,
+        cache=None,
+        **kwargs,
+    ):
+        hidden_sink = [] if kwargs.get("capture_layer_ids") is not None else None
+        gdn_sink = [] if kwargs.get("capture_layer_ids") is not None else None
+        out = self.model(
+            inputs,
+            cache=cache,
+            inputs_embeds=inputs_embeds,
+            position_ids=kwargs.get("position_ids"),
+            capture_layer_ids=kwargs.get("capture_layer_ids"),
+            hidden_sink=hidden_sink,
+            gdn_sink=gdn_sink,
+        )
+        return SimpleNamespace(
+            logits=("logits", out),
+            hidden_states=hidden_sink,
+            gdn_states=gdn_sink,
+        )
+
+    FakeLanguageModel.__call__ = original_language_call
+    fake_language_module = SimpleNamespace(
+        Qwen3_5GatedDeltaNet=FakeGatedDeltaNet,
+        Qwen3_5DecoderLayer=type("Qwen3_5DecoderLayer", (), {}),
+        Qwen3_5Model=type("Qwen3_5Model", (), {}),
+        Qwen3_5Attention=type("Qwen3_5Attention", (), {}),
+        Qwen3_5MLP=lambda *_args, **_kwargs: object(),
+        create_attention_mask=lambda *_args, **_kwargs: "mask",
+        LanguageModel=FakeLanguageModel,
+    )
+    fake_qwen_pkg = ModuleType("mlx_vlm.models.qwen3_5")
+    fake_qwen_pkg.__path__ = []
+    fake_qwen_pkg.config = FakeConfigModule
+    fake_qwen_pkg.language = fake_language_module
+    monkeypatch.setitem(sys.modules, "mlx_vlm.models.qwen3_5", fake_qwen_pkg)
+    monkeypatch.setitem(sys.modules, "mlx_vlm.models.qwen3_5.config", FakeConfigModule)
+    monkeypatch.setitem(sys.modules, "mlx_vlm.models.qwen3_5.language", fake_language_module)
+    monkeypatch.setattr(qwen35_runtime, "_APPLIED", False)
+
+    assert qwen35_runtime.apply() is True
+
+    cache = [SimpleNamespace(offset=0)]
+    model = FakeLanguageModel(SimpleNamespace(mtp_num_hidden_layers=0))
+    result = model([101, 102], cache=cache, return_hidden=True, n_confirmed=1)
+
+    assert result == (("logits", ("norm", "normed")), "normed", ["heavy-gdn"])
+    assert model_calls == [
+        {
+            "capture_layer_ids": None,
+            "hidden_sink": None,
+            "gdn_sink": ["heavy-gdn"],
+            "n_confirmed": 1,
+        }
+    ]
+
+
+def test_native_mtp_qwen35_vlm_model_forwards_n_confirmed_to_linear_layers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_mx = ModuleType("mlx.core")
+    fake_mx.concatenate = lambda values, axis=0: ("concat", axis, values)
+    fake_mx.zeros = lambda shape, dtype=None: ("zeros", shape, dtype)
+    fake_mx.where = lambda mask, value, other: ("where", mask, value, other)
+    fake_mx.split = lambda value, indices, axis: ("q", "k", "v")
+    fake_mx.fast = SimpleNamespace(rms_norm=lambda value, _weight, _eps: ("rms", value))
+    fake_mx.distributed = SimpleNamespace(
+        all_sum=lambda value, group=None: ("all_sum", value, group)
+    )
+    fake_nn = ModuleType("mlx.nn")
+    fake_nn.Module = object
+    fake_nn.RMSNorm = lambda *_args, **_kwargs: object()
+    fake_nn.Linear = lambda *_args, **_kwargs: object()
+    fake_nn.silu = lambda value: ("silu", value)
+    fake_layers_distributed = ModuleType("mlx.nn.layers.distributed")
+    fake_layers_distributed.sum_gradients = lambda _group: (lambda value: value)
+    fake_gated_delta = ModuleType("mlx_lm.models.gated_delta")
+    fake_gated_delta.gated_delta_update = lambda *args, **_kwargs: (
+        ("gdn-out", args),
+        "ssm-final",
+    )
+    fake_cache = ModuleType("mlx_lm.models.cache")
+    fake_cache.KVCache = type("KVCache", (), {})
+    _install_native_mtp_fake_mlx(monkeypatch, fake_mx, fake_nn)
+    monkeypatch.setitem(sys.modules, "mlx.nn.layers.distributed", fake_layers_distributed)
+    monkeypatch.setitem(sys.modules, "mlx_lm.models.gated_delta", fake_gated_delta)
+    monkeypatch.setitem(sys.modules, "mlx_lm.models.cache", fake_cache)
+
+    import worker.runtime.native_mtp.qwen35_vlm_runtime as qwen35_runtime
+
+    calls: list[dict[str, object]] = []
+
+    class FakeConfigModule:
+        class TextConfig:
+            @classmethod
+            def from_dict(cls, params):
+                return SimpleNamespace(**params)
+
+    class FakeLinearAttn:
+        def __call__(self, value, mask=None, cache=None, n_confirmed=0, gdn_sink=None):
+            calls.append(
+                {
+                    "value": value,
+                    "mask": mask,
+                    "cache": cache,
+                    "n_confirmed": n_confirmed,
+                    "gdn_sink": gdn_sink,
+                }
+            )
+            cache.rollback_state = ("conv-confirmed", "ssm-confirmed")
+            return "linear-out"
+
+    class FakeDecoderLayer:
+        is_linear = True
+
+        def __init__(self) -> None:
+            self.linear_attn = FakeLinearAttn()
+            self.input_layernorm = lambda value: ("ln", value)
+            self.post_attention_layernorm = lambda value: ("post-ln", value)
+            self.mlp = lambda value: ("mlp", value)
+
+    class FakeModel:
+        fa_idx = 0
+        ssm_idx = 0
+
+        def __init__(self) -> None:
+            self.layers = [FakeDecoderLayer()]
+            self.embed_tokens = lambda inputs: f"emb:{inputs!r}"
+            self.norm = lambda hidden: ("norm", hidden)
+
+    fake_language_module = SimpleNamespace(
+        Qwen3_5GatedDeltaNet=type("Qwen3_5GatedDeltaNet", (), {}),
+        Qwen3_5DecoderLayer=FakeDecoderLayer,
+        Qwen3_5Model=FakeModel,
+        Qwen3_5Attention=type("Qwen3_5Attention", (), {}),
+        Qwen3_5MLP=lambda *_args, **_kwargs: object(),
+        create_attention_mask=lambda *_args, **_kwargs: "fa-mask",
+        create_ssm_mask=lambda *_args, **_kwargs: "ssm-mask",
+        LanguageModel=type(
+            "LanguageModel",
+            (),
+            {"__init__": lambda self, args, config=None: None, "__call__": lambda self: None},
+        ),
+    )
+    fake_qwen_pkg = ModuleType("mlx_vlm.models.qwen3_5")
+    fake_qwen_pkg.__path__ = []
+    fake_qwen_pkg.config = FakeConfigModule
+    fake_qwen_pkg.language = fake_language_module
+    monkeypatch.setitem(sys.modules, "mlx_vlm.models.qwen3_5", fake_qwen_pkg)
+    monkeypatch.setitem(sys.modules, "mlx_vlm.models.qwen3_5.config", FakeConfigModule)
+    monkeypatch.setitem(sys.modules, "mlx_vlm.models.qwen3_5.language", fake_language_module)
+    monkeypatch.setattr(qwen35_runtime, "_APPLIED", False)
+
+    assert qwen35_runtime.apply() is True
+
+    cache = SimpleNamespace(offset=0, rollback_state=None)
+    model = FakeModel()
+    model.layers[0].mlp = lambda value: f"mlp:{value}"
+    model.layers[0].post_attention_layernorm = lambda value: f"post-ln:{value}"
+    model.layers[0].input_layernorm = lambda value: f"ln:{value}"
+    hidden = model(
+        [101, 102],
+        cache=[cache],
+        n_confirmed=1,
+        return_pre_norm=True,
+    )
+
+    assert calls == [
+        {
+            "value": "ln:emb:[101, 102]",
+            "mask": "ssm-mask",
+            "cache": cache,
+            "n_confirmed": 1,
+            "gdn_sink": None,
+        }
+    ]
+    assert hidden == "emb:[101, 102]linear-outmlp:post-ln:emb:[101, 102]linear-out"
+    assert cache.rollback_state == ("conv-confirmed", "ssm-confirmed")
+
+
+def test_text_only_batch_generator_forwards_native_mtp_stats_to_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeGenerationResponse:
+        uid = 0
+        token = 11
+        logprobs = None
+        finish_reason = "length"
+        speculative_acceptance_rate = 0.75
+        speculative_rollback_rate = 0.25
+        speculative_accepted_tokens = 3
+        speculative_rejected_tokens = 1
+        speculative_num_draft_tokens = 1
+        speculative_draft_model_configured = True
+
+    class FakeBatchGenerator:
+        def __init__(self, **_kwargs) -> None:
+            self.next_calls = 0
+
+        def insert(self, *_args, **_kwargs):
+            return [0]
+
+        def next(self):
+            self.next_calls += 1
+            return [], [FakeGenerationResponse()]
+
+    class FakeDetokenizer:
+        last_segment = ""
+
+        def add_token(self, token: int) -> None:
+            self.last_segment = f"tok-{token}"
+
+        def finalize(self) -> None:
+            self.last_segment = ""
+
+    fake_generate = ModuleType("mlx_lm.generate")
+    fake_generate.BatchGenerator = lambda *_args, **kwargs: FakeBatchGenerator(**kwargs)
+    fake_sample_utils = ModuleType("mlx_lm.sample_utils")
+    fake_sample_utils.make_sampler = lambda **_kwargs: object()
+    monkeypatch.setitem(sys.modules, "mlx_lm.generate", fake_generate)
+    monkeypatch.setitem(sys.modules, "mlx_lm.sample_utils", fake_sample_utils)
+
+    scheduler = _TextOnlyBatchGeneratorScheduler(
+        model=SimpleNamespace(),
+        adapter=SimpleNamespace(),
+        processor=SimpleNamespace(eos_token_id=1),
+        executor=None,
+        max_batch_size=1,
+        wait_ms=0.0,
+    )
+    request = _TextOnlyBatchRequest(
+        loaded_model={},
+        input_ids=[1, 2, 3],
+        max_tokens=8,
+        detokenizer=FakeDetokenizer(),
+        stop_token_ids={1},
+        cancel_event=Event(),
+        prompt_tokens=3,
+    )
+
+    events = list(scheduler.submit(request))
+    scheduler.close()
+
+    assert len(events) == 1
+    assert events[0].text == "tok-11"
+    assert events[0].speculative_acceptance_rate == 0.75
+    assert events[0].speculative_rollback_rate == 0.25
+    assert events[0].speculative_accepted_tokens == 3
+    assert events[0].speculative_rejected_tokens == 1
+    assert events[0].speculative_num_draft_tokens == 1
+    assert events[0].speculative_draft_model_configured is True
 
 
 def test_mlx_vlm_runtime_text_only_batch_generator_requires_opt_in(
@@ -1381,6 +2274,192 @@ def test_text_only_batch_generator_records_scheduler_timings() -> None:
     assert stats.first_visible_ms_total >= stats.first_response_ms_total
     assert stats.first_visible_token_index_total == 1
     assert stats.first_empty_segment_count == 0
+
+
+def test_text_only_batch_generator_records_native_mtp_timing_deltas() -> None:
+    class FakeResponse:
+        def __init__(
+            self,
+            *,
+            uid: int,
+            token: int,
+            finish_reason: str = "",
+            speculative_cycle_count: int,
+            speculative_accepted_tokens: int,
+            speculative_rejected_tokens: int,
+            speculative_backbone_ms: float,
+            speculative_mtp_head_ms: float,
+            speculative_sample_ms: float,
+            speculative_cache_ops_ms: float,
+        ) -> None:
+            self.uid = uid
+            self.token = token
+            self.finish_reason = finish_reason
+            self.speculative_cycle_count = speculative_cycle_count
+            self.speculative_accepted_tokens = speculative_accepted_tokens
+            self.speculative_rejected_tokens = speculative_rejected_tokens
+            self.speculative_backbone_ms = speculative_backbone_ms
+            self.speculative_mtp_head_ms = speculative_mtp_head_ms
+            self.speculative_sample_ms = speculative_sample_ms
+            self.speculative_cache_ops_ms = speculative_cache_ops_ms
+
+    class FakeBatchGenerator:
+        def __init__(self) -> None:
+            self.next_calls = 0
+
+        def insert(self, requests, *, max_tokens, caches=None, all_tokens=None):
+            _ = requests
+            _ = max_tokens
+            _ = caches
+            _ = all_tokens
+            return [7]
+
+        def next(self):
+            self.next_calls += 1
+            if self.next_calls == 1:
+                return [], [
+                    FakeResponse(
+                        uid=7,
+                        token=11,
+                        speculative_cycle_count=1,
+                        speculative_accepted_tokens=1,
+                        speculative_rejected_tokens=0,
+                        speculative_backbone_ms=100.0,
+                        speculative_mtp_head_ms=10.0,
+                        speculative_sample_ms=2.0,
+                        speculative_cache_ops_ms=3.0,
+                    )
+                ]
+            return [], [
+                FakeResponse(
+                    uid=7,
+                    token=12,
+                    finish_reason="length",
+                    speculative_cycle_count=2,
+                    speculative_accepted_tokens=1,
+                    speculative_rejected_tokens=1,
+                    speculative_backbone_ms=220.0,
+                    speculative_mtp_head_ms=25.0,
+                    speculative_sample_ms=5.0,
+                    speculative_cache_ops_ms=8.0,
+                )
+            ]
+
+    class FakeDetokenizer:
+        def __init__(self) -> None:
+            self.last_segment = ""
+
+        def add_token(self, token: int) -> None:
+            self.last_segment = f"tok-{token}"
+
+        def finalize(self) -> None:
+            self.last_segment = ""
+
+    scheduler = _TextOnlyBatchGeneratorScheduler(
+        model=SimpleNamespace(),
+        adapter=SimpleNamespace(),
+        processor=SimpleNamespace(eos_token_id=1),
+        executor=None,
+        max_batch_size=1,
+        wait_ms=0.0,
+    )
+    scheduler._adapter._melix_batch_generator = FakeBatchGenerator()
+    request = _TextOnlyBatchRequest(
+        loaded_model={},
+        input_ids=[1, 2, 3],
+        max_tokens=8,
+        detokenizer=FakeDetokenizer(),
+        stop_token_ids={1},
+        cancel_event=Event(),
+        prompt_tokens=3,
+    )
+
+    events = list(scheduler.submit(request))
+    stats = scheduler.stats_snapshot()
+    probe_kwargs = _text_batch_generator_probe_kwargs(stats)
+    scheduler.close()
+
+    assert [event.text for event in events] == ["tok-11", "tok-12"]
+    assert stats.speculative_cycle_count_total == 2
+    assert stats.speculative_accepted_count_total == 1
+    assert stats.speculative_rejected_count_total == 1
+    assert stats.speculative_backbone_ms_total == 220.0
+    assert stats.speculative_mtp_head_ms_total == 25.0
+    assert stats.speculative_sample_ms_total == 5.0
+    assert stats.speculative_cache_ops_ms_total == 8.0
+    assert probe_kwargs["text_batch_generator_speculative_cycle_count_total"] == 2
+    assert probe_kwargs["text_batch_generator_speculative_backbone_ms_total"] == 220.0
+    assert (
+        mlx_vlm_runtime_module.VisionProbeSnapshot(
+            0.0,
+            0,
+            0,
+            0.0,
+            **probe_kwargs,
+        ).text_batch_generator_speculative_cycle_count_total
+        == 2
+    )
+
+
+def test_text_only_batch_generator_uses_single_executor_handoff_per_tick() -> None:
+    class FakeResponse:
+        uid = 7
+        token = 11
+        finish_reason = "stop"
+
+    class FakeBatchGenerator:
+        def insert(self, requests, *, max_tokens, caches=None, all_tokens=None):
+            _ = requests
+            _ = max_tokens
+            _ = caches
+            _ = all_tokens
+            return [7]
+
+        def next(self):
+            return [], [FakeResponse()]
+
+    class FakeDetokenizer:
+        last_segment = ""
+
+        def add_token(self, token: int) -> None:
+            self.last_segment = f"tok-{token}"
+
+        def finalize(self) -> None:
+            self.last_segment = ""
+
+    class FakeExecutor:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run(self, callback):
+            self.calls += 1
+            return callback()
+
+    executor = FakeExecutor()
+    scheduler = _TextOnlyBatchGeneratorScheduler(
+        model=SimpleNamespace(),
+        adapter=SimpleNamespace(),
+        processor=SimpleNamespace(eos_token_id=1),
+        executor=executor,
+        max_batch_size=1,
+        wait_ms=0.0,
+    )
+    scheduler._adapter._melix_batch_generator = FakeBatchGenerator()
+    request = _TextOnlyBatchRequest(
+        loaded_model={},
+        input_ids=[1, 2, 3],
+        max_tokens=8,
+        detokenizer=FakeDetokenizer(),
+        stop_token_ids={1},
+        cancel_event=Event(),
+        prompt_tokens=3,
+    )
+
+    events = list(scheduler.submit(request))
+    scheduler.close()
+
+    assert [event.text for event in events] == ["tok-11"]
+    assert executor.calls == 1
 
 
 def test_text_only_batch_generator_records_empty_segments_before_visible_text() -> None:
