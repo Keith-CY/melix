@@ -145,7 +145,7 @@ struct DesktopFoundationViewTests {
             makefile.slice(from: "swift-coverage:", to: "py-coverage:")
         )
 
-        #expect(makefile.contains("MENUBAR_SWIFT_TEST_FLAGS := -Xswiftc -gnone"))
+        #expect(makefile.contains("MENUBAR_SWIFT_TEST_FLAGS := --no-parallel -Xswiftc -gnone"))
         #expect(menubarTestTarget.contains("$(MENUBAR_SWIFT_TEST_FLAGS)"))
         #expect(menubarCoverageCommand.contains("$(MENUBAR_SWIFT_TEST_FLAGS)"))
     }

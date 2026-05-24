@@ -6,7 +6,8 @@ PROTOCOL_SWIFT_HOME := $(SWIFT_HOME)/protocol
 TEXT_WORKER_SWIFT_HOME := $(SWIFT_HOME)/mlx-text-worker-swift
 CONTROL_PLANE_SWIFT_HOME := $(SWIFT_HOME)/control-plane-swift
 MENUBAR_SWIFT_HOME := $(SWIFT_HOME)/macos-menubar
-MENUBAR_SWIFT_TEST_FLAGS := -Xswiftc -gnone
+# AppKit-backed menubar tests share NSApplication/status-bar process state.
+MENUBAR_SWIFT_TEST_FLAGS := --no-parallel -Xswiftc -gnone
 
 PROTOCOL_MODULE_CACHE_PATH := $(CLANG_MODULE_CACHE_PATH)/protocol
 TEXT_WORKER_MODULE_CACHE_PATH := $(CLANG_MODULE_CACHE_PATH)/mlx-text-worker-swift

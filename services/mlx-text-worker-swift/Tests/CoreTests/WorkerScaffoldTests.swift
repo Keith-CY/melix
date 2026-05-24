@@ -1563,6 +1563,54 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertGreaterThan(activeKVProbe.estimatedQuantizedBytes, 0)
         XCTAssertEqual(activeKVProbe.estimatedMemorySavingsPercent, 75)
     }
+
+    func testAutoSwiftMLXBackendDecodeRecordsOptInModelEvalSyncProbe() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let promptTokens = [1, 2, 3, 4, 5]
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 2
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .activeKvQuantized
+        acceleration.activeKvQuantProfile = "q4"
+
+        setenv("MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE", "1", 1)
+        defer { unsetenv("MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE") }
+
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(
+                    storage: makeQuantizableLiveSwiftMLXModelContainer(promptTokens: promptTokens)
+                )
+                let prefill = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("bridge active kv eval probe")],
+                    prefillStepSize: 32,
+                    resumeHint: "live-active-kv-eval-probe",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let stream = try await backend.decodeEvents(
+                    model: model,
+                    context: prefill.context,
+                    sampling: sampling,
+                    maxOutputTokens: 2,
+                    decodeStepSize: 1,
+                    prefillToken: "",
+                    acceleration: acceleration,
+                    shouldAbort: { false }
+                )
+                return try await collectTextGenerationEvents(from: stream)
+            }
+        }
+
+        let summary = try XCTUnwrap(renderedSummary(from: events))
+        let activeKVProbe = try XCTUnwrap(summary.activeKVProbe)
+        XCTAssertEqual(activeKVProbe.decodeModelEvalSyncCallCount, 1)
+        XCTAssertGreaterThanOrEqual(activeKVProbe.decodeModelEvalSyncTotalMicros, 0)
+    }
     #endif
 
     func testChatMessageConversionFlattensTextAndRejectsUnsupportedParts() throws {
