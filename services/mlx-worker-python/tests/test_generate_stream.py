@@ -721,6 +721,59 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     assert json.loads(
         EngineCore._inactive_token_route_receipt_json(inactive_route_request, {})
     ) == inactive_receipt
+    plain_compat_receipt = json.dumps(
+        {
+            "reasoning_mode": "disabled",
+            "tool_choice_resolved": "auto",
+        },
+        sort_keys=True,
+    )
+    inactive_compat_request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-inactive-compat-route-receipt"),
+            model_handle=model_handle,
+            ext={
+                "melix.compat.policy_receipt_json": plain_compat_receipt,
+                "melix.compat.effective_config_hash": "plain-compat-hash",
+                "melix.response.created": "1716500000",
+            },
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Say hello")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+    assert EngineCore._plain_text_fast_path(inactive_compat_request) is True
+    inactive_compat_events = list(inference_service.Generate(inactive_compat_request, context=None))
+    inactive_compat_completed = next(
+        event.completed for event in inactive_compat_events if event.HasField("completed")
+    )
+    inactive_compat_receipt = json.loads(
+        inactive_compat_completed.parser_metrics["token_route_receipt_json"]
+    )
+    assert inactive_compat_receipt["route_tracking_enabled"] is False
+    assert inactive_compat_receipt["reasoning_mode"] == "disabled"
+    assert inactive_compat_receipt["tool_choice_policy"] == "auto"
+    assert inactive_compat_completed.parser_metrics["compat_policy_receipt_json"] == plain_compat_receipt
+    assert inactive_compat_completed.parser_metrics["compat_effective_config_hash"] == "plain-compat-hash"
+    assert inactive_compat_completed.parser_metrics["created"] == "1716500000"
+    assert EngineCore._ext_requires_token_route_tracking(
+        {"melix.structured_output.mode": "json_schema"}
+    ) is True
+    assert EngineCore._ext_requires_token_route_tracking(
+        {"melix.reasoning.mode": "adaptive"}
+    ) is True
+    assert EngineCore._ext_requires_token_route_tracking(
+        {"melix.compat.tool_choice_resolved": "required"}
+    ) is True
+    assert EngineCore._ext_requires_token_route_tracking(
+        {},
+        {"reasoning_mode": "enabled"},
+    ) is True
     active_receipt = EngineCore._active_token_route_receipt(inactive_route_request)
     assert active_receipt.enabled is True
     assert json.loads(active_receipt.to_json())["route_tracking_enabled"] is True

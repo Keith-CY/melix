@@ -12,6 +12,7 @@ BoolValue = Callable[[str, bool], bool]
 
 def build_training_planner_receipt(
     *,
+    source_model: Any,
     ext: dict[str, str],
     training_mode: str,
     quantization_mode: str,
@@ -55,6 +56,7 @@ def build_training_planner_receipt(
         },
         "kernel_policy": kernel_policy,
         "expected_peak_memory_class": expected_peak_memory_class(
+            source_model=source_model,
             batch_size=batch_size,
             gradient_accumulation=gradient_accumulation,
             token_budget_unit=token_budget_unit,
@@ -82,6 +84,7 @@ def media_count(ext: dict[str, str], key: str, *, int_value: IntValue) -> int:
 
 def expected_peak_memory_class(
     *,
+    source_model: Any,
     batch_size: int,
     gradient_accumulation: int,
     token_budget_unit: int,
@@ -90,11 +93,49 @@ def expected_peak_memory_class(
     weighted_tokens = batch_size * gradient_accumulation * token_budget_unit
     if training_mode == "qlora":
         weighted_tokens = int(weighted_tokens * 0.75)
+    model_ext = getattr(source_model, "ext", {}) or {}
+    estimated_resident_bytes = _model_metadata_int(
+        model_ext,
+        "melix.estimated_resident_bytes",
+        "estimated_resident_bytes",
+        "resident_bytes",
+    )
+    if estimated_resident_bytes is not None:
+        if estimated_resident_bytes >= 32 * 1024 * 1024 * 1024:
+            return "high"
+        if estimated_resident_bytes >= 8 * 1024 * 1024 * 1024:
+            return "medium"
+    parameter_count = _model_metadata_int(
+        model_ext,
+        "melix.parameter_count",
+        "parameter_count",
+        "parameters",
+    )
+    if parameter_count is not None:
+        if parameter_count >= 20_000_000_000:
+            return "high"
+        if parameter_count >= 7_000_000_000:
+            return "medium"
     if weighted_tokens <= 2048:
         return "low"
     if weighted_tokens <= 12288:
         return "medium"
     return "high"
+
+
+def _model_metadata_int(ext: object, *keys: str) -> int | None:
+    getter = getattr(ext, "get", lambda _key, _default="": "")
+    for key in keys:
+        raw_value = str(getter(key, "")).strip().replace("_", "")
+        if not raw_value:
+            continue
+        try:
+            value = int(raw_value)
+        except ValueError:
+            continue
+        if value >= 0:
+            return value
+    return None
 
 
 def attention_backend_receipt(raw_backend: str) -> dict[str, str]:

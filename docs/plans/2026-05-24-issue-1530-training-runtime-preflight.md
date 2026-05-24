@@ -60,3 +60,11 @@ probe performs bounded `importlib.util.find_spec` checks and optional GC cleanup
 only on failure. Success metric: focused unit tests prove text-only training
 does not fail when optional media decoders are broken, and failure metrics report
 bounded retained tensor bytes where measurable.
+
+## 2026-05-24 Review Follow-Up
+
+The media decoder receipt records every optional decoder module and reports
+`partial` when at least one media path is unavailable instead of returning
+healthy after the first importable decoder. Failure cleanup captures a bounded
+traceback summary before clearing traceback references, and retained tensor
+bytes use active MLX memory after garbage collection rather than peak memory.

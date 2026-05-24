@@ -97,6 +97,49 @@ def test_generate_completed_event_preserves_compatibility_policy_receipt() -> No
     assert "hidden" not in completed.parser_metrics["compat_policy_receipt_json"]
 
 
+def test_plain_compatibility_receipt_keeps_metadata_without_route_tracking() -> None:
+    inference_service, model_handle = _build_services(FinalizerParityBackend(raw_text="plain answer"))
+    receipt = json.dumps(
+        {
+            "compat_surface": "openai.chat.completions",
+            "reasoning_mode": "disabled",
+            "stream_mode": "stream",
+            "tool_choice_resolved": "auto",
+        },
+        sort_keys=True,
+    )
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-plain-compat-policy-receipt"),
+            model_handle=model_handle,
+            ext={
+                "melix.compat.policy_receipt_json": receipt,
+                "melix.compat.effective_config_hash": "plain123",
+                "melix.response.created": "1716500000",
+            },
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Say hello")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+
+    completed = next(
+        event.completed for event in inference_service.Generate(request, context=None)
+        if event.HasField("completed")
+    )
+    token_route_receipt = json.loads(completed.parser_metrics["token_route_receipt_json"])
+
+    assert completed.parser_metrics["compat_policy_receipt_json"] == receipt
+    assert completed.parser_metrics["compat_effective_config_hash"] == "plain123"
+    assert completed.parser_metrics["created"] == "1716500000"
+    assert token_route_receipt["route_tracking_enabled"] is False
+
+
 def test_generate_token_route_receipt_uses_compat_policy_context_and_matches_stream_modes() -> None:
     inference_service, model_handle = _build_services(StructuredStreamingBackend())
     compat_receipt = (

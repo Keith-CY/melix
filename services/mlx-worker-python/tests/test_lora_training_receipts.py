@@ -330,6 +330,61 @@ def test_training_runtime_preflight_records_healthy_and_missing_decoder_states(
     assert fields["disabled_decoder_paths"] == expected_disabled_paths
 
 
+def test_training_runtime_preflight_reports_partial_decoder_state_when_video_decoder_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def fake_find_spec(name: str):
+        if name in {"mlx", "mlx_lm"}:
+            return object()
+        if name == "av":
+            return None
+        return object()
+
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
+    monkeypatch.setattr("importlib.util.find_spec", fake_find_spec)
+    monkeypatch.setattr("importlib.import_module", lambda name: object())
+
+    fields = _training_runtime_preflight_fields(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        adapter_scope={"training_surface": "model"},
+    )
+
+    dependency = fields["media_decoder_dependency"]
+    assert dependency["state"] == "partial"
+    assert dependency["module"] == "av"
+    assert dependency["modules"]["PIL"]["state"] == "healthy"
+    assert dependency["modules"]["av"]["state"] == "missing"
+    assert fields["disabled_decoder_paths"] == ["media"]
+
+
+def test_training_runtime_preflight_reports_broken_decoder_spec_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def fake_find_spec(name: str):
+        if name in {"mlx", "mlx_lm"}:
+            return object()
+        if name == "PIL":
+            raise ValueError("corrupt decoder spec")
+        return object()
+
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
+    monkeypatch.setattr("importlib.util.find_spec", fake_find_spec)
+
+    fields = _training_runtime_preflight_fields(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        adapter_scope={"training_surface": "model"},
+    )
+
+    dependency = fields["media_decoder_dependency"]
+    assert dependency["state"] == "broken"
+    assert dependency["module"] == "PIL"
+    assert dependency["modules"]["PIL"]["state"] == "broken"
+    assert dependency["message"] == "corrupt decoder spec"
+    assert fields["disabled_decoder_paths"] == ["media"]
+
+
 def test_training_failure_cleanup_details_clear_nested_tracebacks_and_report_retained_bytes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -337,7 +392,10 @@ def test_training_failure_cleanup_details_clear_nested_tracebacks_and_report_ret
     fake_mlx_pkg = types.ModuleType("mlx")
     fake_mlx_pkg.__path__ = []
     fake_mlx_core = types.ModuleType("mlx.core")
-    fake_mlx_core.metal = types.SimpleNamespace(get_peak_memory=lambda: 4096)
+    fake_mlx_core.metal = types.SimpleNamespace(
+        get_active_memory=lambda: 4096,
+        get_peak_memory=lambda: 999999,
+    )
     fake_mlx_pkg.core = fake_mlx_core
     monkeypatch.setitem(sys.modules, "mlx", fake_mlx_pkg)
     monkeypatch.setitem(sys.modules, "mlx.core", fake_mlx_core)
@@ -378,6 +436,8 @@ def test_training_failure_cleanup_details_clear_nested_tracebacks_and_report_ret
     assert exc.value.code == "backend_training_failure"
     assert exc.value.details["traceback_cleanup_result"] == "cleared"
     assert exc.value.details["retained_tensor_bytes_after_failure"] == "4096"
+    assert "outer training failed" in exc.value.details["traceback_summary_before_cleanup"]
+    assert "inner tensor load failed" in exc.value.details["traceback_summary_before_cleanup"]
     assert captured["outer"].__traceback__ is None
     assert captured["inner"].__traceback__ is None
 

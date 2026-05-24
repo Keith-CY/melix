@@ -2431,7 +2431,7 @@ public struct OpenAIHandler: Sendable {
             case .imageUri, .imageBytes, .audioUri, .audioBytes:
                 return partial + 256
             case .videoUri, .videoBytes:
-                return partial
+                return partial + 1_024
             case nil:
                 return partial
             }
@@ -2439,7 +2439,13 @@ public struct OpenAIHandler: Sendable {
     }
 
     private func tokenCount(in text: String) -> UInt32 {
-        UInt32(text.trimmingCharacters(in: .whitespacesAndNewlines).split(whereSeparator: \.isWhitespace).count)
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return 0
+        }
+        let whitespaceEstimate = trimmed.split(whereSeparator: \.isWhitespace).count
+        let byteEstimate = max(1, (trimmed.utf8.count + 3) / 4)
+        return UInt32(min(Int(UInt32.max), max(whitespaceEstimate, byteEstimate)))
     }
 
     private func defaultServedModelIDs(
@@ -2930,29 +2936,88 @@ public struct OpenAIHandler: Sendable {
     }
 
     private func rawJSONValueToken(named fieldName: String, in rawJSON: String) -> String? {
-        guard let fieldRange = rawJSON.range(of: "\"\(fieldName)\"") else {
-            return nil
+        var cursor = rawJSON.startIndex
+        var objectDepth = 0
+        var arrayDepth = 0
+
+        while cursor < rawJSON.endIndex {
+            let character = rawJSON[cursor]
+            switch character {
+            case "{":
+                objectDepth += 1
+                cursor = rawJSON.index(after: cursor)
+            case "}":
+                objectDepth = max(0, objectDepth - 1)
+                cursor = rawJSON.index(after: cursor)
+            case "[":
+                arrayDepth += 1
+                cursor = rawJSON.index(after: cursor)
+            case "]":
+                arrayDepth = max(0, arrayDepth - 1)
+                cursor = rawJSON.index(after: cursor)
+            case "\"":
+                let keyStart = rawJSON.index(after: cursor)
+                guard let stringEnd = endOfRawJSONString(in: rawJSON, startingAt: keyStart) else {
+                    return nil
+                }
+                let afterString = rawJSON.index(after: stringEnd)
+                if objectDepth == 1, arrayDepth == 0 {
+                    var lookahead = afterString
+                    while lookahead < rawJSON.endIndex, rawJSON[lookahead].isWhitespace {
+                        lookahead = rawJSON.index(after: lookahead)
+                    }
+                    if lookahead < rawJSON.endIndex, rawJSON[lookahead] == ":" {
+                        let key = String(rawJSON[keyStart..<stringEnd])
+                        if key == fieldName {
+                            return rawJSONScalarToken(afterColon: lookahead, in: rawJSON)
+                        }
+                    }
+                }
+                cursor = afterString
+            default:
+                cursor = rawJSON.index(after: cursor)
+            }
         }
-        guard let colonRange = rawJSON[fieldRange.upperBound...].range(of: ":") else {
-            return nil
+        return nil
+    }
+
+    private func endOfRawJSONString(in rawJSON: String, startingAt start: String.Index) -> String.Index? {
+        var cursor = start
+        var escaping = false
+        while cursor < rawJSON.endIndex {
+            let character = rawJSON[cursor]
+            if escaping {
+                escaping = false
+            } else if character == "\\" {
+                escaping = true
+            } else if character == "\"" {
+                return cursor
+            }
+            cursor = rawJSON.index(after: cursor)
         }
-        var cursor = colonRange.upperBound
+        return nil
+    }
+
+    private func rawJSONScalarToken(afterColon colon: String.Index, in rawJSON: String) -> String? {
+        var cursor = rawJSON.index(after: colon)
         while cursor < rawJSON.endIndex, rawJSON[cursor].isWhitespace {
             cursor = rawJSON.index(after: cursor)
+        }
+        guard cursor < rawJSON.endIndex else {
+            return nil
+        }
+        if rawJSON[cursor] == "\"" || rawJSON[cursor] == "{" || rawJSON[cursor] == "[" {
+            return ""
         }
         let tokenStart = cursor
         while cursor < rawJSON.endIndex {
             let character = rawJSON[cursor]
-            if character == "," || character == "}" || character.isWhitespace {
+            if character == "," || character == "}" || character == "]" || character.isWhitespace {
                 break
             }
             cursor = rawJSON.index(after: cursor)
         }
-        guard tokenStart < cursor else {
-            return nil
-        }
-        return String(rawJSON[tokenStart..<cursor])
-            .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+        return tokenStart < cursor ? String(rawJSON[tokenStart..<cursor]) : nil
     }
 
     private func parsedGenerationBound(

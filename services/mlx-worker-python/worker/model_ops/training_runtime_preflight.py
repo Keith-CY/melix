@@ -4,6 +4,7 @@ import gc
 import importlib
 import importlib.util
 import platform
+import traceback
 from typing import Any, Callable, TypeVar
 
 from worker.model_ops.errors import ModelOperationError
@@ -99,39 +100,71 @@ def _module_spec_available(module_name: str) -> bool:
         return False
 
 
-def _media_decoder_dependency_state() -> dict[str, str]:
+def _media_decoder_dependency_state() -> dict[str, Any]:
+    modules: dict[str, dict[str, str]] = {}
     for module_name in _MEDIA_DECODER_MODULES:
         try:
             spec = importlib.util.find_spec(module_name)
         except (ImportError, AttributeError, ValueError) as exc:
+            modules[module_name] = {"state": "broken", "message": str(exc)}
             return {
                 "state": "broken",
                 "module": module_name,
                 "message": str(exc),
+                "modules": modules,
             }
         if spec is None:
+            modules[module_name] = {
+                "state": "missing",
+                "message": f"Optional media decoder dependency is not installed: {module_name}.",
+            }
             continue
         try:
             importlib.import_module(module_name)
         except Exception as exc:
+            modules[module_name] = {"state": "broken", "message": str(exc)}
             return {
                 "state": "broken",
                 "module": module_name,
                 "message": str(exc),
+                "modules": modules,
             }
+        modules[module_name] = {"state": "healthy", "message": ""}
+    missing_modules = [
+        module_name
+        for module_name, module_state in modules.items()
+        if module_state["state"] == "missing"
+    ]
+    healthy_modules = [
+        module_name
+        for module_name, module_state in modules.items()
+        if module_state["state"] == "healthy"
+    ]
+    if not missing_modules:
         return {
             "state": "healthy",
-            "module": module_name,
+            "module": healthy_modules[0] if healthy_modules else "",
             "message": "",
+            "modules": modules,
+        }
+    if healthy_modules:
+        first_missing = missing_modules[0]
+        return {
+            "state": "partial",
+            "module": first_missing,
+            "message": f"Missing optional media decoder dependency: {first_missing}.",
+            "modules": modules,
         }
     return {
         "state": "missing",
         "module": "",
         "message": "No optional media decoder dependency is installed.",
+        "modules": modules,
     }
 
 
 def _cleanup_training_failure_exception(exc: BaseException) -> dict[str, str]:
+    traceback_summary = _traceback_summary_before_cleanup(exc)
     cleared_count = 0
     visited: set[int] = set()
     pending: list[BaseException] = [exc]
@@ -153,6 +186,7 @@ def _cleanup_training_failure_exception(exc: BaseException) -> dict[str, str]:
     return {
         "traceback_cleanup_result": "cleared" if cleared_count else "not_needed",
         "retained_tensor_bytes_after_failure": str(retained_bytes),
+        "traceback_summary_before_cleanup": traceback_summary,
     }
 
 
@@ -162,8 +196,26 @@ def _retained_tensor_bytes_after_failure() -> int:
     except ModuleNotFoundError:
         return 0
     try:
-        if hasattr(mx, "metal") and hasattr(mx.metal, "get_peak_memory"):
-            return int(float(mx.metal.get_peak_memory() or 0.0))
+        if hasattr(mx, "metal") and hasattr(mx.metal, "get_active_memory"):
+            return int(float(mx.metal.get_active_memory() or 0.0))
     except Exception:
         return 0
     return 0
+
+
+def _traceback_summary_before_cleanup(exc: BaseException) -> str:
+    rendered: list[str] = []
+    visited: set[int] = set()
+    pending: list[BaseException] = [exc]
+    while pending:
+        current = pending.pop()
+        current_id = id(current)
+        if current_id in visited:
+            continue
+        visited.add(current_id)
+        rendered.extend(traceback.format_exception(type(current), current, current.__traceback__, limit=8))
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+    return "".join(rendered)[-4096:]

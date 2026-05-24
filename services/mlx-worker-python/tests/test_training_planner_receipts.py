@@ -144,6 +144,87 @@ def test_training_planner_receipt_covers_qlora_chunked_token_budget_and_refused_
     assert receipt["final_logit_softcapping"] is None
 
 
+def test_training_planner_receipt_accounts_for_source_model_size() -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(**{"melix.parameter_count": "70000000000"}),
+        ext={
+            "training_mode": "lora",
+            "batch_size": "1",
+            "gradient_accumulation": "1",
+            "max_seq_length": "512",
+        },
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+
+    assert config.training_planner_receipt["effective_token_budget"] == 512
+    assert config.training_planner_receipt["expected_peak_memory_class"] == "high"
+
+
+def test_training_planner_receipt_uses_resident_bytes_before_parameter_count() -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_quantized_text_model(
+            **{
+                "melix.estimated_resident_bytes": str(9 * 1024 * 1024 * 1024),
+                "melix.parameter_count": "3000000000",
+            }
+        ),
+        ext={
+            "training_mode": "lora",
+            "batch_size": "1",
+            "gradient_accumulation": "1",
+            "max_seq_length": "512",
+        },
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+
+    assert config.training_planner_receipt["expected_peak_memory_class"] == "medium"
+
+
+def test_training_planner_receipt_uses_medium_model_parameter_count() -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(**{"parameter_count": "8000000000"}),
+        ext={
+            "training_mode": "lora",
+            "batch_size": "1",
+            "gradient_accumulation": "1",
+            "max_seq_length": "512",
+        },
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+
+    assert config.training_planner_receipt["expected_peak_memory_class"] == "medium"
+
+
+def test_training_planner_receipt_uses_model_size_aliases_and_ignores_malformed_values() -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_quantized_text_model(
+            **{
+                "estimated_resident_bytes": "not-a-number",
+                "resident_bytes": str(33 * 1024 * 1024 * 1024),
+                "parameter_count": "bad",
+                "parameters": "8000000000",
+            }
+        ),
+        ext={
+            "training_mode": "qlora",
+            "batch_size": "1",
+            "gradient_accumulation": "1",
+            "max_seq_length": "512",
+        },
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+
+    assert config.training_planner_receipt["expected_peak_memory_class"] == "high"
+
+
 def test_training_planner_receipt_is_persisted_in_adapter_manifest(tmp_path: Path) -> None:
     dataset_dir = _write_dataset_package(tmp_path / "dataset")
     output_dir = tmp_path / "train-output"

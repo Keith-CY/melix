@@ -92,3 +92,10 @@ This slice adds constant-size receipt construction and manifest JSON fields on t
 - `profile_artifact_path`: empty when no profiler artifact exists, or a configured path when supplied.
 
 No PR-scoped runtime performance probe is required for this focused receipt-only slice.
+
+## 2026-05-24 Review Follow-Up
+
+`expected_peak_memory_class` also accounts for source-model size metadata when
+available. Resident-byte metadata is evaluated before parameter-count metadata,
+then the original effective-token-budget heuristic remains the fallback for
+models without size hints.

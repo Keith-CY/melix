@@ -310,6 +310,15 @@ class EngineCore:
                     "melix.response_history.normalized_count",
                     "0",
                 )
+                compat_policy_receipt_json = execution_ext.get(
+                    "melix.compat.policy_receipt_json",
+                    "",
+                )
+                compat_effective_config_hash = execution_ext.get(
+                    "melix.compat.effective_config_hash",
+                    "",
+                )
+                created = execution_ext.get("melix.response.created", "")
                 generated_tool_call_delta_count_text = str(generated_tool_call_delta_count)
                 if token_route_receipt is not None:
                     token_route_receipt_json = token_route_receipt.to_json()
@@ -320,14 +329,14 @@ class EngineCore:
                         "response_history_normalized_count": response_history_normalized_count,
                         "native_tool_exemplar_injected_count": "0",
                         "reasoning_flag_source": reasoning.mode_source or "unspecified",
-                        "compat_policy_receipt_json": "",
-                        "compat_effective_config_hash": "",
+                        "compat_policy_receipt_json": compat_policy_receipt_json,
+                        "compat_effective_config_hash": compat_effective_config_hash,
                         "turn_boundary_stop_reason": turn_boundary_stop_reason or finish_reason,
                         "generated_reasoning_delta_count": "0",
                         "generated_tool_call_delta_count": generated_tool_call_delta_count_text,
                         "token_route_receipt_json": token_route_receipt_json,
                         "response_id": request_id,
-                        "created": "",
+                        "created": created,
                         "stream_mode": stream_mode_text,
                         "finish_reason": finish_reason,
                         "usage_prompt_tokens": str(finalized_prompt_tokens),
@@ -643,7 +652,7 @@ class EngineCore:
     def _plain_text_fast_path(request: inference_pb2.GenerateRequest) -> bool:
         execution = request.execution
         return (
-            not execution.ext
+            not EngineCore._ext_requires_token_route_tracking(execution.ext)
             and not execution.reasoning.enabled
             and not execution.reasoning.mode
             and not execution.tool_config.tools
@@ -706,13 +715,36 @@ class EngineCore:
         route_tracking_enabled = (
             bool(request.execution.reasoning.enabled)
             or bool(reasoning_mode and reasoning_mode != "disabled")
-            or bool(ext.get("melix.tool_parser.mode", ""))
-            or bool(ext.get("melix.structured_output.mode", ""))
+            or EngineCore._ext_requires_token_route_tracking(ext, compat_receipt)
             or bool(request.execution.tool_config.tools)
             or bool(tool_choice_policy and tool_choice_policy != "auto")
-            or bool(ext.get("melix.compat.policy_receipt_json", ""))
         )
         return reasoning_mode, tool_choice_policy, route_tracking_enabled
+
+    @staticmethod
+    def _ext_requires_token_route_tracking(
+        ext: object,
+        compat_receipt: dict[str, object] | None = None,
+    ) -> bool:
+        if not ext and not compat_receipt:
+            return False
+        getter = getattr(ext, "get", lambda _key, _default="": "")
+        if str(getter("melix.tool_parser.mode", "")).strip():
+            return True
+        if str(getter("melix.structured_output.mode", "")).strip():
+            return True
+        reasoning_mode = str(getter("melix.reasoning.mode", "")).strip().lower()
+        if reasoning_mode and reasoning_mode != "disabled":
+            return True
+        tool_choice = str(getter("melix.compat.tool_choice_resolved", "")).strip().lower()
+        if tool_choice and tool_choice != "auto":
+            return True
+        compat_receipt = compat_receipt if compat_receipt is not None else EngineCore._compat_policy_receipt(ext)
+        compat_reasoning_mode = str(compat_receipt.get("reasoning_mode", "")).strip().lower()
+        if compat_reasoning_mode and compat_reasoning_mode != "disabled":
+            return True
+        compat_tool_choice = str(compat_receipt.get("tool_choice_resolved", "")).strip().lower()
+        return bool(compat_tool_choice and compat_tool_choice != "auto")
 
     @staticmethod
     def _token_route_receipt(

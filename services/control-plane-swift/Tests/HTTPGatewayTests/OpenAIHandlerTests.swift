@@ -1098,6 +1098,153 @@ struct OpenAIHandlerTests {
         #expect(await workerClient.lastGenerateRequest == nil)
     }
 
+    @Test("generation bounds validation ignores field-like text inside JSON strings")
+    func generationBoundsValidationIgnoresFieldLikeTextInsideJSONString() async throws {
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(
+                requestID: "req-field-like-string",
+                seq: 1,
+                finishReason: "stop",
+                assistantText: "ok"
+            ),
+        ])
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-field-like-string" })
+        )
+        let body = Data(
+            #"""
+            {
+              "model": "melix-dev-text",
+              "stream": false,
+              "messages": [
+                { "role": "user", "content": "literal \"max_tokens\": 0 should not be parsed as a field" }
+              ]
+            }
+            """#.utf8
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+
+        #expect(response.statusCode == 200)
+        #expect(await workerClient.lastGenerateRequest != nil)
+    }
+
+    @Test("raw generation bounds fallback ignores nested generation-bound fields")
+    func rawGenerationBoundsFallbackIgnoresNestedGenerationBoundFields() async throws {
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(
+                requestID: "req-nested-generation-bound",
+                seq: 1,
+                finishReason: "stop",
+                assistantText: "ok"
+            ),
+        ])
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-nested-generation-bound" })
+        )
+        let body = Data(
+            #"""
+            {
+              "model": "melix-dev-text",
+              "stream": false,
+              "messages": [
+                { "role": "user", "content": "hello" }
+              ],
+              "metadata": { "max_tokens": 1e999 }
+            }
+            """#.utf8
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+
+        #expect(response.statusCode == 200)
+        #expect(await workerClient.lastGenerateRequest != nil)
+    }
+
+    @Test("prompt budget admission treats dense text and video parts as non-zero budget consumers")
+    func promptBudgetAdmissionTreatsDenseTextAndVideoPartsAsBudgetConsumers() async throws {
+        let workerClient = ScriptedWorkerClient(events: [])
+        var model = ModelCatalog.devVLMModel()
+        model.state = .modelWarm
+        model.maxContext = 512
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [model]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(
+                    defaultTextClient: ScriptedWorkerClient(events: []),
+                    pythonCompatibilityClient: workerClient
+                ),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-dense-video-budget" })
+        )
+        let denseText = String(repeating: "a", count: 2048)
+        let body = Data(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "max_tokens": 128,
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "text", "text": "\(denseText)" },
+                    {
+                      "type": "input_video",
+                      "input_video": {
+                        "data": "\(Data("video fixture".utf8).base64EncodedString())",
+                        "format": "mp4",
+                        "frame_count": 2,
+                        "frame_budget": 2,
+                        "window_ms": 1000
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """.utf8
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+        let metadata = try #require(error["prompt_token_metadata"] as? [String: Any])
+
+        #expect(response.statusCode == 400)
+        #expect(error["code"] as? String == "prompt_budget_exceeded")
+        #expect((metadata["prompt_tokens_estimated"] as? Int ?? 0) > 512)
+        #expect(metadata["prefill_started"] as? Bool == false)
+        #expect(await workerClient.lastGenerateRequest == nil)
+    }
+
     @Test("POST /v1/chat/completions routes by payload model within the active server roster")
     func postChatCompletionsRoutesByPayloadModelWithinActiveServerRoster() async throws {
         var primary = ModelCatalog.devTextModel()
@@ -8834,7 +8981,7 @@ struct OpenAIHandlerTests {
         #expect(error["status"] as? String == "invalid_request_error")
         #expect(metadata["max_prompt_tokens_requested"] as? Int == 4)
         #expect(metadata["max_prompt_tokens_effective"] as? Int == 4)
-        #expect(metadata["prompt_tokens_estimated"] as? Int == 12)
+        #expect(metadata["prompt_tokens_estimated"] as? Int == 16)
         #expect(metadata["context_window_tokens"] as? Int == 8)
         #expect(metadata["output_cap_tokens"] as? Int == 4)
         #expect(metadata["admission_phase"] as? String == "prompt_budget")
@@ -8880,7 +9027,7 @@ struct OpenAIHandlerTests {
         #expect(response.statusCode == 400)
         #expect(response.headers["content-type"] == "application/json")
         #expect(error["code"] as? String == "prompt_budget_exceeded")
-        #expect(metadata["prompt_tokens_estimated"] as? Int == 12)
+        #expect(metadata["prompt_tokens_estimated"] as? Int == 16)
         #expect(metadata["prefill_started"] as? Bool == false)
         if case .stream = response.body {
             Issue.record("Stream over-budget rejection must not return an SSE body.")
@@ -8925,7 +9072,7 @@ struct OpenAIHandlerTests {
 
         #expect(response.statusCode == 400)
         #expect(error["code"] as? String == "prompt_budget_exceeded")
-        #expect(metadata["prompt_tokens_estimated"] as? Int == 5)
+        #expect(metadata["prompt_tokens_estimated"] as? Int == 6)
         #expect(metadata["max_prompt_tokens_effective"] as? Int == 4)
         #expect(metadata["output_cap_tokens"] as? Int == 4)
         #expect(await workerClient.lastGenerateRequest == nil)

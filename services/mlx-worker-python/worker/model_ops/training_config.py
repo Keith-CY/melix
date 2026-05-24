@@ -676,6 +676,7 @@ def normalize_training_config(
     )
     scheduler_kwargs_omitted = scheduler_kwargs_omitted_receipt(ext)
     training_planner_receipt = build_training_planner_receipt(
+        source_model=source_model,
         ext=ext,
         training_mode=training_mode,
         quantization_mode=quantization_mode,
