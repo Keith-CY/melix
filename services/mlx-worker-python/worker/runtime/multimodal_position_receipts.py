@@ -5,6 +5,36 @@ from operator import mul
 from typing import Any
 
 
+def build_mixed_batch_geometry_receipt(*, rows: list[dict[str, Any]]) -> dict[str, object]:
+    row_receipts: list[dict[str, object]] = []
+    total_media_count = 0
+    total_visual_embed_count = 0
+    seq_lens: set[int] = set()
+
+    for expected_row_index, row in enumerate(rows):
+        row_receipt = _mixed_batch_row_geometry_receipt(
+            row=row,
+            expected_row_index=expected_row_index,
+        )
+        row_receipts.append(row_receipt)
+        total_media_count += int(row_receipt["media_count"])
+        total_visual_embed_count += int(row_receipt["visual_embed_count"])
+        seq_lens.add(int(row_receipt["seq_len"]))
+
+    row_drift_count = sum(
+        1 for row_receipt in row_receipts if row_receipt["row_geometry_guard"] == "row_drift"
+    )
+    return {
+        "batch_row_count": len(row_receipts),
+        "mixed_length_batch": len(seq_lens) > 1,
+        "row_geometry_guard": "row_drift" if row_drift_count else "aligned",
+        "row_drift_count": row_drift_count,
+        "total_media_count": total_media_count,
+        "total_visual_embed_count": total_visual_embed_count,
+        "rows": row_receipts,
+    }
+
+
 def build_position_metadata_receipt(
     *,
     prepared_request: Any | None = None,
@@ -57,6 +87,82 @@ def build_position_metadata_receipt(
     }
 
 
+def _mixed_batch_row_geometry_receipt(
+    *,
+    row: dict[str, Any],
+    expected_row_index: int,
+) -> dict[str, object]:
+    row_index = _non_negative_int(row.get("row_index", expected_row_index))
+    seq_len = _non_negative_int(row.get("seq_len", 0))
+    cache_offset = _non_negative_int(row.get("cache_offset", 0))
+    media_count = _non_negative_int(row.get("media_count", 0))
+    left_padding = _non_negative_int(row.get("left_padding", 0))
+    expected_left_padding = _non_negative_int(row.get("expected_left_padding", left_padding))
+    visual_embed_count = _non_negative_int(row.get("visual_embed_count", 0))
+    expected_visual_embed_count = _non_negative_int(
+        row.get("expected_visual_embed_count", visual_embed_count)
+    )
+    raw_prompt_kwargs = row.get("prompt_kwargs")
+    prompt_kwargs = _normalized_prompt_kwargs(raw_prompt_kwargs)
+    prompt_kwargs_complete = isinstance(raw_prompt_kwargs, dict) and {
+        "input_ids_len",
+        "attention_mask_len",
+    }.issubset(raw_prompt_kwargs)
+    mrope_delta_override_count = _value_count(row.get("mrope_delta_override"))
+    mrope_delta_override_identity = _normalized_identity(
+        row.get("mrope_delta_override_identity", [])
+    )
+    expected_mrope_delta_override_identity = _normalized_identity(
+        row.get("expected_mrope_delta_override_identity", mrope_delta_override_identity)
+    )
+    visual_embed_identity = _normalized_identity(row.get("visual_embed_identity", []))
+    expected_visual_embed_identity = _normalized_identity(
+        row.get("expected_visual_embed_identity", visual_embed_identity)
+    )
+
+    drift_reasons: list[str] = []
+    if row_index != expected_row_index:
+        drift_reasons.append("row_index_mismatch")
+    if not prompt_kwargs_complete:
+        drift_reasons.append("prompt_kwargs_missing")
+    if prompt_kwargs.get("input_ids_len", seq_len) != seq_len:
+        drift_reasons.append("prompt_input_ids_len_mismatch")
+    if left_padding != expected_left_padding:
+        drift_reasons.append("left_padding_mismatch")
+    if (
+        prompt_kwargs.get("attention_mask_len", seq_len + left_padding)
+        != seq_len + expected_left_padding
+    ):
+        drift_reasons.append("prompt_attention_mask_len_mismatch")
+    if mrope_delta_override_count != media_count:
+        drift_reasons.append("mrope_delta_override_count_mismatch")
+    if mrope_delta_override_identity != expected_mrope_delta_override_identity:
+        drift_reasons.append("mrope_delta_override_identity_drift")
+    if media_count and visual_embed_count <= 0:
+        drift_reasons.append("visual_embed_count_missing")
+    if (
+        visual_embed_count != expected_visual_embed_count
+        or visual_embed_identity != expected_visual_embed_identity
+    ):
+        drift_reasons.append("visual_embed_scatter_drift")
+
+    return {
+        "row_index": row_index,
+        "prompt_kwargs": prompt_kwargs,
+        "seq_len": seq_len,
+        "cache_offset": cache_offset,
+        "media_count": media_count,
+        "left_padding": left_padding,
+        "expected_left_padding": expected_left_padding,
+        "mrope_delta_override_count": mrope_delta_override_count,
+        "mrope_delta_override_identity": mrope_delta_override_identity,
+        "visual_embed_count": visual_embed_count,
+        "visual_embed_identity": visual_embed_identity,
+        "row_geometry_guard": "row_drift" if drift_reasons else "aligned",
+        "row_drift_reasons": drift_reasons,
+    }
+
+
 def _media_position_count(prepared_request: Any | None) -> int:
     if prepared_request is None:
         return 0
@@ -67,6 +173,27 @@ def _media_position_count(prepared_request: Any | None) -> int:
     if videos and video_frame_count <= 0:
         video_frame_count = len(videos)
     return max(0, image_count + video_frame_count)
+
+
+def _normalized_prompt_kwargs(value: Any) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: dict[str, int] = {}
+    for key in sorted(value):
+        normalized[str(key)] = _non_negative_int(value[key])
+    return normalized
+
+
+def _normalized_identity(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(item) for item in value]
+    return [str(value)]
+
+
+def _non_negative_int(value: Any) -> int:
+    return max(0, int(value or 0))
 
 
 def _value_count(value: Any | None) -> int:

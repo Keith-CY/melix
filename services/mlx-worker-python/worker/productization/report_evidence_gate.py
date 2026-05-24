@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -288,9 +289,10 @@ def _rule_matches_report(
 ) -> bool:
     run_kinds = rule.get("run_kinds", ())
     if run_kinds:
-        run_kind_set = frozenset(str(item) for item in run_kinds)
-        if any(str(run.get("run_kind", "")) in run_kind_set for run in runs):
-            return True
+        run_kind_set = _string_frozenset(run_kinds)
+        for run in runs:
+            if str(run.get("run_kind", "")) in run_kind_set:
+                return True
     metric_prefixes = tuple(str(item) for item in rule.get("metric_prefixes", ()))
     if metric_prefixes and any(
         str(metric.get("metric", "")).startswith(metric_prefixes) for metric in metrics
@@ -301,6 +303,17 @@ def _rule_matches_report(
         return True
     required_probe_phases = set(str(item) for item in rule.get("probe_phases", ()))
     return bool(required_probe_phases and required_probe_phases.issubset(probe_phases))
+
+
+@lru_cache(maxsize=128)
+def _string_frozenset_from_tuple(values: tuple[object, ...]) -> frozenset[str]:
+    return frozenset(str(item) for item in values)
+
+
+def _string_frozenset(values: object) -> frozenset[str]:
+    if isinstance(values, tuple):
+        return _string_frozenset_from_tuple(values)
+    return frozenset(str(item) for item in values)  # type: ignore[union-attr]
 
 
 def _telemetry_failures(report: dict[str, object]) -> list[str]:
