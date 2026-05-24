@@ -2563,15 +2563,10 @@ struct MelixCLIRunnerTests {
         let executor = RecordingCLICommandExecutor(
             responses: [
                 #"{"operation":"train_lora","job_id":"lora-job-1","output_path":"/tmp/melix/train_lora/issue365-sft.adapter.json"}"#,
-                #"{"operation":"registry_snapshot","adapters":[]}"#,
                 #"{"operation":"train_alignment","job_id":"align-job-1","output_path":"/tmp/melix/alignment/issue365-dpo.adapter.json","alignment_run_manifest_path":"/tmp/melix/alignment/issue365-dpo.alignment_run.json"}"#,
                 #"{"operation":"upload","job_id":"publish-job-1","output_path":"/tmp/melix/publish/issue365-dpo-merged","artifact_manifest_path":"/tmp/melix/publish/issue365-dpo-merged/manifest.json"}"#,
-                #"{"operation":"registry_snapshot","adapters":[]}"#,
                 #"{"operation":"quantize","job_id":"quantize-job-1","output_path":"/tmp/melix/quantized/issue365-dpo-q4","bundle_path":"/tmp/melix/quantized/issue365-dpo-q4","local_inference_smoke":{"status":"passed","smoke_mode":"runtime_generate"}}"#,
-                #"{"operation":"registry_snapshot","adapters":[]}"#,
                 #"{"operation":"activate_adapter","job_id":"activate-job-1","output_path":"/tmp/melix/activate_adapter/issue365-dpo"}"#,
-                #"{"operation":"registry_snapshot","adapters":[]}"#,
-                #"{"operation":"registry_snapshot","adapters":[]}"#,
             ]
         )
 
@@ -6970,9 +6965,15 @@ struct MelixCLIRunnerTests {
     @Test("lora train forwards dataset, adapter, repo, and tuning parameters")
     func loraTrainForwardsExpectedOperationPayload() async throws {
         let client = StubControlPlaneXPCClient()
+        let melixHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-train-forward-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: melixHome) }
         await client.setModelOperationResult(makeModelOperationResult(outputPath: "/tmp/melix/train_lora/job-1"))
 
-        let output = try await MelixCLIRunner(client: client).run(
+        let output = try await MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": melixHome.path]
+        ).run(
             .loraTrain(
                 .init(
                     modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
@@ -7007,9 +7008,15 @@ struct MelixCLIRunnerTests {
     @Test("lora train forwards Hugging Face dataset metadata and boolean flags")
     func loraTrainForwardsHFDatasetPayload() async throws {
         let client = StubControlPlaneXPCClient()
+        let melixHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-train-hf-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: melixHome) }
         await client.setModelOperationResult(makeModelOperationResult(outputPath: "/tmp/melix/train_lora/job-hf"))
 
-        let output = try await MelixCLIRunner(client: client).run(
+        let output = try await MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": melixHome.path]
+        ).run(
             .loraTrain(
                 .init(
                     modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
@@ -7056,12 +7063,18 @@ struct MelixCLIRunnerTests {
     @Test("lora train returns manifest json when requested")
     func loraTrainReturnsManifestJSONWhenRequested() async throws {
         let client = StubControlPlaneXPCClient()
+        let melixHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-train-json-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: melixHome) }
         await client.setModelOperationResult(makeModelOperationResult(
             outputPath: "/tmp/melix/train_lora/job-1",
             manifestJSON: #"{"job_id":"job-1","status":"completed"}"#
         ))
 
-        let output = try await MelixCLIRunner(client: client).run(
+        let output = try await MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": melixHome.path]
+        ).run(
             .loraTrain(
                 .init(
                     modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
@@ -7081,6 +7094,9 @@ struct MelixCLIRunnerTests {
     @Test("lora train memory fit preflight blocks unsafe Hub model targets")
     func loraTrainMemoryFitPreflightBlocksUnsafeHubModelTargets() async throws {
         let client = StubControlPlaneXPCClient()
+        let melixHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-train-fit-block-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: melixHome) }
         await client.setHubModelCard(
             makeHubModelCard(
                 repoID: "mlx-community/Qwen3.6-35B-A3B-4bit",
@@ -7093,7 +7109,10 @@ struct MelixCLIRunnerTests {
         )
 
         do {
-            _ = try await MelixCLIRunner(client: client).run(
+            _ = try await MelixCLIRunner(
+                client: client,
+                environment: ["MELIX_HOME": melixHome.path]
+            ).run(
                 .loraTrain(
                     .init(
                         modelID: "mlx-community/Qwen3.6-35B-A3B-4bit",
@@ -7120,6 +7139,9 @@ struct MelixCLIRunnerTests {
     @Test("lora train memory risk override stores fit receipt in operation ext")
     func loraTrainMemoryRiskOverrideStoresFitReceiptParameters() async throws {
         let client = StubControlPlaneXPCClient()
+        let melixHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-train-fit-override-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: melixHome) }
         await client.setHubModelCard(
             makeHubModelCard(
                 repoID: "mlx-community/Qwen3.6-35B-A3B-4bit",
@@ -7132,7 +7154,10 @@ struct MelixCLIRunnerTests {
         )
         await client.setModelOperationResult(makeModelOperationResult(outputPath: "/tmp/melix/train_lora/job-fit"))
 
-        _ = try await MelixCLIRunner(client: client).run(
+        _ = try await MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": melixHome.path]
+        ).run(
             .loraTrain(
                 .init(
                     modelID: "mlx-community/Qwen3.6-35B-A3B-4bit",
@@ -7156,6 +7181,209 @@ struct MelixCLIRunnerTests {
         #expect(["good", "blocked", "unknown"].contains(call.ext["memory_fit_disk_status"] ?? ""))
         #expect((receipt["unknown_fields"] as? [String])?.contains("optimizer_state_bytes") == true)
         #expect((receipt["probe"] as? [String: Any])?["name"] as? String == "cli.memory_fit.train")
+    }
+
+    @Test("lora train persists durable queue admission before worker launch")
+    func loraTrainPersistsDurableQueueAdmissionBeforeWorkerLaunch() async throws {
+        let client = StubControlPlaneXPCClient()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-train-queue-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let home = MelixHome(environment: ["MELIX_HOME": root.path])
+        await client.setModelOperationResult(makeModelOperationResult(
+            outputPath: "/tmp/melix/train_lora/job-queue",
+            manifestJSON: #"{"job_id":"job-queue","status":"completed"}"#
+        ))
+
+        let output = try await MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": root.path]
+        ).run(
+            .loraTrain(
+                .init(
+                    modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                    datasetSourceKind: "local_package",
+                    datasetURI: "/tmp/datasets/alpaca.jsonl",
+                    adapterName: "demo-adapter",
+                    trainingMode: "qlora",
+                    parameters: [
+                        "dataset_version_id": "dataset-v2",
+                        "project_id": "workspace-a",
+                    ],
+                    json: true
+                )
+            )
+        )
+        let call = try #require(await client.lastModelOperationCall)
+        let queuePayload = try #require(try parseJSONFile(home.localTrainingQueueFileURL.path))
+        let jobs = try #require(queuePayload["jobs"] as? [[String: Any]])
+        let queueJob = try #require(jobs.first)
+
+        #expect(output == #"{"job_id":"job-queue","status":"completed"}"#)
+        #expect(call.operation == "train_lora")
+        #expect(call.ext["training_queue_schema_version"] == "melix.local_training_queue.v1")
+        #expect(call.ext["training_queue_job_id"] == "training-queue-0001")
+        #expect(queueJob["job_id"] as? String == "training-queue-0001")
+        #expect(queueJob["status"] as? String == "succeeded")
+        #expect(queueJob["model_id"] as? String == "mlx-community/Qwen3.5-0.8B-OptiQ-4bit")
+        #expect(queueJob["dataset_version_id"] as? String == "dataset-v2")
+    }
+
+    @Test("lora train rejects busy durable queue before worker launch")
+    func loraTrainRejectsBusyDurableQueueBeforeWorkerLaunch() async throws {
+        let client = StubControlPlaneXPCClient()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-train-busy-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let home = MelixHome(environment: ["MELIX_HOME": root.path])
+        let queue = LocalTrainingQueueStore(melixHome: home)
+        let active = try queue.admit(
+            LocalTrainingQueueAdmissionRequest(
+                modelID: "melix-dev-text",
+                datasetURI: "/tmp/active.jsonl",
+                adapterName: "active-adapter"
+            )
+        )
+        _ = try queue.markRunning(jobID: active.jobID)
+
+        do {
+            _ = try await MelixCLIRunner(
+                client: client,
+                environment: ["MELIX_HOME": root.path]
+            ).run(
+                .loraTrain(
+                    .init(
+                        modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                        datasetURI: "/tmp/datasets/alpaca.jsonl",
+                        adapterName: "demo-adapter"
+                    )
+                )
+            )
+            Issue.record("Expected busy training queue to reject before train_lora worker launch.")
+        } catch let error as MelixCLIError {
+            #expect(error == .requestFailed(
+                code: "training_queue_busy",
+                message: "Local training queue is busy with training-queue-0001."
+            ))
+        }
+
+        #expect(await client.modelOperationCalls.filter { $0.operation == "train_lora" }.isEmpty)
+        let queuePayload = try #require(try parseJSONFile(home.localTrainingQueueFileURL.path))
+        let metrics = try #require(queuePayload["metrics"] as? [String: Any])
+        #expect(metrics["admission_refusal_count"] as? Int == 1)
+    }
+
+    @Test("lora train marks durable queue failed when worker throws Melix errors")
+    func loraTrainMarksDurableQueueFailedWhenWorkerThrowsMelixErrors() async throws {
+        let cases: [(name: String, error: MelixCLIError, expectedCode: String)] = [
+            (
+                "request-failed",
+                .requestFailed(code: "worker_busy", message: "Worker is busy."),
+                "worker_busy"
+            ),
+            (
+                "request-failed-empty-code",
+                .requestFailed(code: "", message: "Worker failed without a code."),
+                "training_queue_worker_failed"
+            ),
+            (
+                "usage",
+                .usage("Bad train options."),
+                "training_queue_invalid_options"
+            ),
+            (
+                "missing",
+                .missingRequired("dataset is required."),
+                "training_queue_missing_options"
+            ),
+            (
+                "runtime",
+                .runtime("Worker crashed."),
+                "training_queue_worker_failed"
+            ),
+        ]
+
+        for testCase in cases {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("melix-lora-train-error-\(testCase.name)-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let home = MelixHome(environment: ["MELIX_HOME": root.path])
+            let runner = MelixCLIRunner(
+                client: StubControlPlaneXPCClient(),
+                environment: ["MELIX_HOME": root.path],
+                commandExecutor: { _ in
+                    throw testCase.error
+                }
+            )
+
+            do {
+                _ = try await runner.run(
+                    .loraTrain(
+                        .init(
+                            modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                            datasetURI: "/tmp/datasets/alpaca.jsonl",
+                            adapterName: "demo-adapter",
+                            json: true
+                        )
+                    )
+                )
+                Issue.record("Expected lora train to rethrow \(testCase.name) worker error.")
+            } catch let error as MelixCLIError {
+                #expect(error == testCase.error)
+            }
+
+            let queuePayload = try #require(try parseJSONFile(home.localTrainingQueueFileURL.path))
+            let jobs = try #require(queuePayload["jobs"] as? [[String: Any]])
+            let queueJob = try #require(jobs.first)
+            let operatorErrors = try #require(queueJob["operator_errors"] as? [[String: Any]])
+            let operatorError = try #require(operatorErrors.first)
+
+            #expect(queueJob["status"] as? String == "failed")
+            #expect(operatorError["code"] as? String == testCase.expectedCode)
+            #expect(operatorError["message"] as? String == testCase.error.errorDescription)
+        }
+    }
+
+    @Test("lora train marks durable queue failed when worker throws non-Melix error")
+    func loraTrainMarksDurableQueueFailedWhenWorkerThrowsNonMelixError() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-train-non-melix-error-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let home = MelixHome(environment: ["MELIX_HOME": root.path])
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": root.path],
+            commandExecutor: { _ in
+                throw NSError(domain: "MelixCLIRunnerTests", code: 42)
+            }
+        )
+
+        do {
+            _ = try await runner.run(
+                .loraTrain(
+                    .init(
+                        modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                        datasetURI: "/tmp/datasets/alpaca.jsonl",
+                        adapterName: "demo-adapter",
+                        json: true
+                    )
+                )
+            )
+            Issue.record("Expected lora train to rethrow non-Melix worker error.")
+        } catch let error as NSError {
+            #expect(error.domain == "MelixCLIRunnerTests")
+            #expect(error.code == 42)
+        }
+
+        let queuePayload = try #require(try parseJSONFile(home.localTrainingQueueFileURL.path))
+        let jobs = try #require(queuePayload["jobs"] as? [[String: Any]])
+        let queueJob = try #require(jobs.first)
+        let operatorErrors = try #require(queueJob["operator_errors"] as? [[String: Any]])
+        let operatorError = try #require(operatorErrors.first)
+
+        #expect(queueJob["status"] as? String == "failed")
+        #expect(operatorError["code"] as? String == "training_queue_worker_failed")
+        #expect((operatorError["message"] as? String)?.contains("MelixCLIRunnerTests") == true)
     }
 
     @Test("lora run chains train activate compare and exports artifacts")
@@ -7194,7 +7422,10 @@ struct MelixCLIRunnerTests {
         ])
         await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
 
-        let output = try await MelixCLIRunner(client: client).run(
+        let output = try await MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": root.path]
+        ).run(
             .loraRun(
                 .init(
                     training: .init(
@@ -7285,7 +7516,10 @@ struct MelixCLIRunnerTests {
         ])
         await client.setExportResult(.init(exportBundleJSON: makeBenchmarkExportBundleJSON()))
 
-        let output = try await MelixCLIRunner(client: client).run(
+        let output = try await MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": root.path]
+        ).run(
             .loraRun(
                 .init(
                     training: .init(
@@ -7391,9 +7625,15 @@ struct MelixCLIRunnerTests {
     @Test("lora run memory fit preflight blocks local model ids before training")
     func loraRunMemoryFitPreflightBlocksLocalModelIDsBeforeTraining() async throws {
         let client = StubControlPlaneXPCClient()
+        let melixHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-lora-run-fit-block-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: melixHome) }
 
         do {
-            _ = try await MelixCLIRunner(client: client).run(
+            _ = try await MelixCLIRunner(
+                client: client,
+                environment: ["MELIX_HOME": melixHome.path]
+            ).run(
                 .loraRun(
                     .init(
                         training: .init(
@@ -11175,8 +11415,9 @@ struct MelixCLIRunnerTests {
 
         let terminalReport = try await runner.run(.benchReport(.init(sourcePath: sourceRoot.path, format: "terminal")))
         #expect(terminalReport.contains("Melix Benchmark Dashboard"))
-        #expect(terminalReport.contains("runs=1 completed=1 failed=0 other=0"))
+        #expect(terminalReport.contains("runs=2 completed=1 failed=1 other=0"))
         #expect(terminalReport.contains("bench-1  completed  text-generation  HuggingFaceH4/ultrachat_200k"))
+        #expect(terminalReport.contains("failed-1  failed  text-generation  HuggingFaceH4/ultrachat_200k"))
         #expect(terminalReport.contains("bench.smoke.ttft_ms=24.5 ms"))
         #expect(terminalReport.contains("run-record.json"))
     }
@@ -11558,6 +11799,87 @@ struct MelixCLIRunnerTests {
         ])
         #expect(renderedFallbacks.contains("1,smoke"))
         #expect(renderedFallbacks.contains("manual"))
+    }
+
+    @Test("jobs CLI restores local training queue rows and persists cancellation")
+    func jobsCLIRestoresLocalTrainingQueueRowsAndPersistsCancellation() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-jobs-training-queue-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let home = MelixHome(environment: ["MELIX_HOME": root.path])
+        let queue = LocalTrainingQueueStore(melixHome: home)
+        let admitted = try queue.admit(
+            LocalTrainingQueueAdmissionRequest(
+                modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                datasetURI: "/tmp/datasets/alpaca.jsonl",
+                adapterName: "demo-adapter",
+                trainingMode: "qlora",
+                parameters: [
+                    "dataset_version_id": "dataset-v2",
+                    "workspace_manifest_path": "/tmp/workspace/manifest.json",
+                ]
+            )
+        )
+        _ = try queue.markRunning(jobID: admitted.jobID)
+
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": root.path]
+        )
+
+        let listJSON = try #require(parseJSONArray(
+            try await runner.run(.jobsList(.init(json: true)))
+        ) as? [[String: Any]])
+        let summary = try #require(listJSON.first { $0["job_id"] as? String == admitted.jobID })
+        #expect(summary["status"] as? String == "running")
+        #expect(summary["record_path"] as? String == home.localTrainingQueueFileURL.path)
+
+        let showJSON = try #require(parseJSONObject(
+            try await runner.run(.jobsShow(.init(jobID: admitted.jobID, json: true)))
+        ))
+        let trainingQueue = try #require(showJSON["training_queue"] as? [String: Any])
+        #expect(showJSON["schema_version"] as? String == "melix.job_status.v1")
+        #expect(showJSON["phase"] as? String == "running")
+        #expect(trainingQueue["schema_version"] as? String == "melix.local_training_queue.v1")
+        #expect(trainingQueue["dataset_version_id"] as? String == "dataset-v2")
+
+        let artifactsJSON = try #require(parseJSONObject(
+            try await runner.run(.jobsArtifacts(.init(jobID: admitted.jobID, json: true)))
+        ))
+        let artifacts = try #require(artifactsJSON["artifacts"] as? [[String: Any]])
+        #expect(artifactsJSON["artifact_count"] as? Int == artifacts.count)
+        #expect(artifacts.contains { $0["kind"] as? String == "training_queue" })
+        #expect(artifacts.contains { $0["kind"] as? String == "cancel_request" })
+
+        do {
+            _ = try await runner.run(.jobsLogs(.init(jobID: admitted.jobID, follow: true, json: true)))
+            Issue.record("Expected local training queue job logs to report no log snapshot.")
+        } catch let error as MelixCLIError {
+            #expect(error == .runtime("No logs were found for \(admitted.jobID)."))
+        }
+
+        let cancelJSON = try #require(parseJSONObject(
+            try await runner.run(.jobsCancel(.init(jobID: admitted.jobID, json: true)))
+        ))
+        let requestPath = try #require(cancelJSON["request_path"] as? String)
+        let request = try #require(try parseJSONFile(requestPath))
+        let cancelledShow = try #require(parseJSONObject(
+            try await runner.run(.jobsShow(.init(jobID: admitted.jobID, json: true)))
+        ))
+        let cancellation = try #require(cancelledShow["cancellation"] as? [String: Any])
+
+        #expect(cancelJSON["cancel_requested"] as? Bool == true)
+        #expect(cancelJSON["status"] as? String == "cancel_requested")
+        #expect(request["source_queue_path"] as? String == home.localTrainingQueueFileURL.path)
+        #expect(cancellation["requested"] as? Bool == true)
+
+        _ = try queue.markSucceeded(jobID: admitted.jobID)
+        let terminalCancelJSON = try #require(parseJSONObject(
+            try await runner.run(.jobsCancel(.init(jobID: admitted.jobID, json: true)))
+        ))
+        #expect(terminalCancelJSON["cancel_requested"] as? Bool == false)
+        #expect(terminalCancelJSON["status"] as? String == "succeeded")
+        #expect(terminalCancelJSON["reason"] as? String == "job_terminal_or_not_active")
     }
 
     @Test("run record store handles default roots invalid records and render fallbacks")

@@ -7003,12 +7003,45 @@ public actor MelixCLIRunner {
         if !trainingMode.isEmpty {
             ext["training_mode"] = trainingMode
         }
-        return try await performModelOperation(
-            modelID: options.modelID,
-            operation: "train_lora",
-            outputDir: outputDir,
-            ext: ext
+        let queue = localTrainingQueueStore()
+        let admitted = try queue.admit(
+            LocalTrainingQueueAdmissionRequest(
+                modelID: options.modelID,
+                datasetURI: options.datasetURI,
+                adapterName: options.adapterName,
+                trainingMode: trainingMode,
+                runDirectory: outputDir,
+                parameters: ext
+            )
         )
+        ext["training_queue_job_id"] = admitted.jobID
+        ext["training_queue_schema_version"] = LocalTrainingQueueStore.schemaVersion
+        ext["training_queue_path"] = MelixHome(environment: environment).localTrainingQueueFileURL.path
+        do {
+            _ = try queue.markRunning(jobID: admitted.jobID)
+            let result = try await performModelOperation(
+                modelID: options.modelID,
+                operation: "train_lora",
+                outputDir: outputDir,
+                ext: ext
+            )
+            _ = try? queue.markSucceeded(jobID: admitted.jobID)
+            return result
+        } catch let error as MelixCLIError {
+            _ = try? queue.markFailed(
+                jobID: admitted.jobID,
+                code: queueErrorCode(for: error),
+                message: error.errorDescription ?? "\(error)"
+            )
+            throw error
+        } catch {
+            _ = try? queue.markFailed(
+                jobID: admitted.jobID,
+                code: "training_queue_worker_failed",
+                message: "\(error)"
+            )
+            throw error
+        }
     }
 
     private func runLoraActivateOperation(
@@ -7496,7 +7529,7 @@ public actor MelixCLIRunner {
     }
 
     public func run(_ command: MelixCLICommand) async throws -> String {
-        if commandRequiresConfiguredRegistryRootPriming(command) {
+        if commandExecutor == nil, commandRequiresConfiguredRegistryRootPriming(command) {
             try await primeConfiguredRegistryRootsIfNeeded()
         }
         switch command {
@@ -9341,6 +9374,23 @@ public actor MelixCLIRunner {
             diagnosticsStore: diagnosticsStore(),
             melixHome: melixHome
         )
+    }
+
+    private func localTrainingQueueStore() -> LocalTrainingQueueStore {
+        LocalTrainingQueueStore(melixHome: MelixHome(environment: environment))
+    }
+
+    private func queueErrorCode(for error: MelixCLIError) -> String {
+        switch error {
+        case .requestFailed(let code, _):
+            return code.isEmpty ? "training_queue_worker_failed" : code
+        case .usage:
+            return "training_queue_invalid_options"
+        case .missingValue, .missingRequired:
+            return "training_queue_missing_options"
+        case .runtime:
+            return "training_queue_worker_failed"
+        }
     }
 
     private func renderRunReport(kind: String, options: RunReportOptions) throws -> String {

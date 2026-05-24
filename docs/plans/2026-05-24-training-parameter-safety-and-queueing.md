@@ -179,6 +179,19 @@ Verification:
 - Python pipeline test proving queue admission failure prevents worker launch
   when the CLI attaches a queue token to the run.
 
+Implementation slice:
+
+- Add a Swift `LocalTrainingQueueStore` under `MelixCLICore` rooted at
+  `MELIX_HOME/state/local-training-queue.json`.
+- Make `melix lora train` persist an admitted queue row before invoking
+  `train_lora`; if another non-terminal exclusive training job is present,
+  return `training_queue_busy` before calling the worker.
+- Project queue rows into the existing `melix jobs list/show/cancel` surfaces
+  without changing the public `melix.job_summary.v1`,
+  `melix.job_status.v1`, or `melix.job_cancel_result.v1` schemas.
+- Mark admitted rows `running` before worker launch and transition them to
+  `succeeded` or `failed` after the synchronous operation returns.
+
 ## Delivery Order
 
 1. Implement the trainability receipt and worker-side no-launch guardrails.
@@ -186,4 +199,3 @@ Verification:
 3. Implement the durable queue store and exclusive local admission.
 4. Wire queue status into CLI and Desktop views.
 5. Update the LoRA runbook after both unit issues have executable evidence.
-

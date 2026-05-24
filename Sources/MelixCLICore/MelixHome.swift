@@ -24,6 +24,7 @@ public struct MelixHome: Equatable, Sendable {
     public let serverSessionsFileURL: URL
     public let modelRootsFileURL: URL
     public let downloadQueueFileURL: URL
+    public let localTrainingQueueFileURL: URL
     public let remoteServersFileURL: URL
     public let evaluationPromptsFileURL: URL
     public let loraTrainingJobsFileURL: URL
@@ -49,6 +50,7 @@ public struct MelixHome: Equatable, Sendable {
         self.serverSessionsFileURL = configDirectoryURL.appendingPathComponent("server-sessions.json")
         self.modelRootsFileURL = configDirectoryURL.appendingPathComponent("model-roots.json")
         self.downloadQueueFileURL = stateDirectoryURL.appendingPathComponent("download-queue.json")
+        self.localTrainingQueueFileURL = stateDirectoryURL.appendingPathComponent("local-training-queue.json")
         self.remoteServersFileURL = configDirectoryURL.appendingPathComponent("remote-servers.json")
         self.evaluationPromptsFileURL = configDirectoryURL.appendingPathComponent("evaluation-prompts.json")
         self.loraTrainingJobsFileURL = stateDirectoryURL.appendingPathComponent("lora-training-jobs.json")
