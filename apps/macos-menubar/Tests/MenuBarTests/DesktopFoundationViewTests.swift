@@ -3331,6 +3331,13 @@ struct DesktopFoundationViewTests {
                 "operator_message": "LoRA training requires at least one training sample.",
                 "retriable": false,
                 "remediation": "Add more accepted training samples before starting training."
+              },
+              {
+                "code": "workspace_manifest_unreadable",
+                "severity": "error",
+                "operator_message": "",
+                "retriable": true,
+                "remediation": "   "
               }
             ]
           },
@@ -3366,6 +3373,9 @@ struct DesktopFoundationViewTests {
         #expect(values.contains("LoRA training requires at least one training sample."))
         #expect(values.contains("not retriable"))
         #expect(values.contains("Add more accepted training samples before starting training."))
+        #expect(values.contains("workspace_manifest_unreadable"))
+        #expect(values.contains("retriable"))
+        #expect(values.allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false })
         #expect(values.contains("fix_preflight_and_retry"))
         #expect(values.contains("exclusive_local_training"))
         #expect(values.contains("support-chat-v2"))

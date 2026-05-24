@@ -5099,6 +5099,8 @@ struct DesktopJobsToolSectionView: View {
             ]
         })
         return values
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.isEmpty == false }
     }
 
     private func retriableText(_ retriable: Bool) -> String {

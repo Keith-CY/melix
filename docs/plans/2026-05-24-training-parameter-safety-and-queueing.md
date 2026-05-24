@@ -65,7 +65,7 @@ receipt must include:
 Each check row must include:
 
 - `code`
-- `status`: `passed`, `blocked`, or `warning`
+- `status`: `passed`, `blocked`, `error`, or `warning`
 - `severity`
 - `operator_message`
 - `remediation`

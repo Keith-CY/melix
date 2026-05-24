@@ -1178,7 +1178,7 @@ func renderJobStatus(_ payload: [String: Any]) -> String {
        let checks = preflight["checks"] as? [[String: Any]] {
         for check in checks {
             let status = stringField(check, "status").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            guard status == "blocked" else {
+            guard status == "blocked" || status == "error" else {
                 continue
             }
             let code = stringField(check, "code")

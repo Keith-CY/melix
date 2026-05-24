@@ -11945,6 +11945,12 @@ struct MelixCLIRunnerTests {
                         "operator_message": "LoRA training requires at least one training sample.",
                         "remediation": "Add accepted samples before retrying.",
                     ],
+                    [
+                        "code": "workspace_manifest_unreadable",
+                        "status": "error",
+                        "operator_message": "Workspace manifest could not be decoded.",
+                        "remediation": "Repair the workspace manifest before retrying.",
+                    ],
                 ],
             ],
         ])
@@ -11953,6 +11959,8 @@ struct MelixCLIRunnerTests {
         #expect(renderedQueueStatus.contains("Preflight: /tmp/melix/jobs/training-queue-0001/trainability-preflight.json"))
         #expect(renderedQueueStatus.contains("Preflight Check: insufficient_training_samples: LoRA training requires at least one training sample."))
         #expect(renderedQueueStatus.contains("Preflight Remediation: Add accepted samples before retrying."))
+        #expect(renderedQueueStatus.contains("Preflight Check: workspace_manifest_unreadable: Workspace manifest could not be decoded."))
+        #expect(renderedQueueStatus.contains("Preflight Remediation: Repair the workspace manifest before retrying."))
 
         #expect(renderJobArtifacts(["job_id": "empty", "artifacts": []]) == "No artifacts found for empty.\n")
         let renderedFallbacks = renderJobList([
