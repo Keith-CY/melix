@@ -1374,6 +1374,9 @@ struct PythonBridgeWorkerClientTests {
     @Test("bootstrap worker preparation carries VLM family metadata into worker model specs")
     func bootstrapWorkerPreparationCarriesVLMFamilyMetadataIntoWorkerModelSpecs() throws {
         var summary = ModelCatalog.devVLMModel()
+        let defaultSpec = try #require(BootstrapWorkerPreparation.modelSpec(for: "melix-dev-vlm"))
+        #expect(defaultSpec.ext["melix.capability.supported_modalities"] == "text,image,video")
+
         summary.settings.ext["vision_family_id"] = "paligemma-v1"
         summary.settings.ext["vision_prompt_profile_id"] = "paligemma-caption-v1"
         summary.settings.ext["vision_tokenization_mode"] = "prefix"

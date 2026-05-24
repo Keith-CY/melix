@@ -422,7 +422,6 @@ def test_generate_streams_vlm_response_from_file_image_uri(tmp_path: Path) -> No
     assert token_text == "Image content: cat on mat\nPrompt: Describe the image."
     assert completed.assistant_text == "Image content: cat on mat\nPrompt: Describe the image."
     assert model_info.ok is True
-    assert model_info.supported_modalities == ["text", "image"]
     assert model_info.supported_tasks == ["vlm", "generate"]
     assert model_info.supported_parsers == ["text", "qwen"]
 

@@ -125,21 +125,25 @@ machine-readable receipt and the UI can explain each failure.
 #### Plan P1.2: Dataset Preparation Quality and Versioning
 
 Productize dataset preparation as a reusable Melix path with explicit quality
-controls, version metadata, retry behavior, and reportable metrics.
+controls, version metadata, retry behavior, and reportable metrics. The detailed
+execution plan is
+[`2026-05-24-dataset-preparation-quality-and-versioning.md`](2026-05-24-dataset-preparation-quality-and-versioning.md).
 
 ##### Unit U1.2.1: Add Document Ingest Cleaning Quality Controls
 
 Add text, PDF, DOCX, markdown, code, and structured-data ingest with PII
 masking, exact deduplication, fuzzy deduplication, and strategy-specific
-segmentation receipts. The unit is complete when sample fixtures produce
-stable segment counts and quality-control metrics.
+segmentation receipts. The unit is complete when sample fixtures produce stable
+segment counts, typed ingest failures, and quality-control metrics that CLI and
+Desktop can read from one receipt schema.
 
 ##### Unit U1.2.2: Add Dataset Versions, Failed-Segment Retry, and Quality Summary
 
 Create versioned dataset directories with metadata, train/validation counts,
 failed-segment files, failed-only retry, and a quality summary that can be
 rendered in CLI, Desktop, and reports. The unit is complete when a failed
-generation can be repaired without rewriting the successful samples.
+generation can be repaired into a new dataset version without rewriting
+successful samples, and the retry receipt proves that behavior.
 
 ### Milestone M2: Training Monitor and Adapter Provenance
 
@@ -158,7 +162,8 @@ adapter manifest write latency, and loss-series row count.
 
 Add explicit trainability checks and a durable admission path for local
 training so unsupported runs fail early and queued runs survive navigation or
-process restart.
+process restart. The execution plan is
+[`2026-05-24-training-parameter-safety-and-queueing.md`](2026-05-24-training-parameter-safety-and-queueing.md).
 
 ##### Unit U2.1.1: Add Trainability Guardrails for Unsupported Configurations
 

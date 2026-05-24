@@ -8,6 +8,7 @@ from worker.productization.benchmark_schemas import (
     build_benchmark_matrix_summary_row,
     build_evaluation_job,
     build_evaluation_result,
+    build_serving_benchmark_repeat_group_row,
     build_serving_benchmark_request_row,
     build_serving_benchmark_batch_row,
     build_serving_benchmark_context_row,
@@ -228,6 +229,112 @@ def test_build_serving_benchmark_context_and_batch_rows_include_canonical_fields
         **_default_speculative_dflash_fields(),
         **_default_agentic_benchmark_fields(),
     }
+
+
+def test_build_serving_benchmark_repeat_group_row_includes_ci_fields() -> None:
+    row = build_serving_benchmark_repeat_group_row(
+        job_id="bench-123",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="local",
+        suite="smoke",
+        context_length=64,
+        generation_length=16,
+        batch_size=1,
+        cache_profile="cold",
+        reasoning_mode="",
+        structured_output_mode="",
+        source_row_kind="context",
+        repetition_index=(0, 1, 2),
+        sample_count=3,
+        seed_strategy="runner_repeat_index",
+        throughput_mean=102.0,
+        throughput_stdev=2.0,
+        throughput_ci95_low=99.7368,
+        throughput_ci95_high=104.2632,
+        ttft_ms_mean=12.0,
+        ttft_ms_stdev=1.0,
+        ttft_ms_ci95_low=10.8684,
+        ttft_ms_ci95_high=13.1316,
+        peak_memory_bytes_mean=2048.0,
+        peak_memory_bytes_stdev=16.0,
+        peak_memory_bytes_ci95_low=2029.891,
+        peak_memory_bytes_ci95_high=2066.109,
+        energy_joules_mean=4.2,
+        energy_joules_stdev=0.2,
+        energy_joules_ci95_low=3.9737,
+        energy_joules_ci95_high=4.4263,
+    ).to_dict()
+
+    assert row == {
+        "schema_version": "melix.serving_benchmark_repeat_group.v1",
+        "group_id": "bench-123:context:smoke:64:16:1:cold:::",
+        "job_id": "bench-123",
+        "model_id": "melix-dev-text",
+        "task_kind": "text-generation",
+        "source_repo": "local",
+        "suite": "smoke",
+        "context_length": 64,
+        "generation_length": 16,
+        "batch_size": 1,
+        "cache_profile": "cold",
+        "reasoning_mode": "",
+        "structured_output_mode": "",
+        "source_row_kind": "context",
+        "repetition_index": [0, 1, 2],
+        "sample_count": 3,
+        "seed_strategy": "runner_repeat_index",
+        "methodology_version": "melix.benchmark_repeat_group.methodology.v1",
+        "throughput_mean": 102.0,
+        "throughput_stdev": 2.0,
+        "throughput_ci95_low": 99.7368,
+        "throughput_ci95_high": 104.2632,
+        "ttft_ms_mean": 12.0,
+        "ttft_ms_stdev": 1.0,
+        "ttft_ms_ci95_low": 10.8684,
+        "ttft_ms_ci95_high": 13.1316,
+        "request_latency_ms_mean": 0.0,
+        "request_latency_ms_stdev": 0.0,
+        "request_latency_ms_ci95_low": 0.0,
+        "request_latency_ms_ci95_high": 0.0,
+        "peak_memory_bytes_mean": 2048.0,
+        "peak_memory_bytes_stdev": 16.0,
+        "peak_memory_bytes_ci95_low": 2029.891,
+        "peak_memory_bytes_ci95_high": 2066.109,
+        "energy_joules_mean": 4.2,
+        "energy_joules_stdev": 0.2,
+        "energy_joules_ci95_low": 3.9737,
+        "energy_joules_ci95_high": 4.4263,
+    }
+
+
+def test_build_serving_benchmark_repeat_group_row_omits_absent_optional_energy() -> None:
+    row = build_serving_benchmark_repeat_group_row(
+        job_id="bench-repeat",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="local",
+        suite="smoke",
+        context_length=64,
+        generation_length=16,
+        batch_size=1,
+        cache_profile="cold",
+        reasoning_mode="",
+        structured_output_mode="",
+        source_row_kind="context",
+        repetition_index=(0,),
+        sample_count=1,
+        seed_strategy="runner_repeat_index",
+        throughput_mean=100.0,
+        throughput_ci95_low=100.0,
+        throughput_ci95_high=100.0,
+    ).to_dict()
+
+    assert row["sample_count"] == 1
+    assert "energy_joules_mean" not in row
+    assert "energy_joules_stdev" not in row
+    assert "energy_joules_ci95_low" not in row
+    assert "energy_joules_ci95_high" not in row
 
 
 def test_benchmark_rows_preserve_phase_probe_fields() -> None:

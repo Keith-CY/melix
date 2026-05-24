@@ -56,6 +56,15 @@ struct RuntimeEvidenceReportStateTests {
         #expect(report.markdownReportPath == "/tmp/report.md")
         #expect(report.csvArtifactRows.map(\.kindText).contains("Telemetry Summary"))
         #expect(report.artifactRows.contains { $0.kindText == "Markdown Report" })
+        #expect(report.artifactRows.contains {
+            $0.kindText == "Dataset Version" && $0.path == "/tmp/datasets/support-chat/versions/support-chat-v1/dataset-version.json"
+        })
+        #expect(report.artifactRows.contains {
+            $0.kindText == "Dataset Quality Summary" && $0.path == "/tmp/datasets/support-chat/versions/support-chat-v1/quality-summary.json"
+        })
+        #expect(report.artifactRows.contains {
+            $0.kindText == "Dataset Ingest Receipt" && $0.path == "/tmp/prepared/dataset-ingest-receipt.json"
+        })
         #expect(report.instrumentationGapRows.contains("candidate:candidate-failed:powermetrics_failed:fixture"))
     }
 
@@ -965,6 +974,9 @@ private func makeStructuredEvidenceReportJSON() -> String {
         },
         "probe_timeline_path": "/tmp/probes.jsonl",
         "telemetry_jsonl_path": "/tmp/telemetry-samples.jsonl",
+        "dataset_version_path": "/tmp/datasets/support-chat/versions/support-chat-v1/dataset-version.json",
+        "dataset_quality_summary_path": "/tmp/datasets/support-chat/versions/support-chat-v1/quality-summary.json",
+        "dataset_ingest_receipt_path": "/tmp/prepared/dataset-ingest-receipt.json",
         "raw_output_paths": ["/tmp/baseline-completed", "/tmp/candidate-failed"],
         "logs_path": "/tmp/logs",
         "screenshots_path": "",

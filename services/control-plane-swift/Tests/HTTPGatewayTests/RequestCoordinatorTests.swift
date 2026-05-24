@@ -3569,6 +3569,8 @@ struct RequestCoordinatorTests {
         textModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-text"
         textModel.settings.ext["melix.acceleration.target_capability"] = "speculative_decode"
         textModel.settings.ext["melix.acceleration.drafter_capability"] = "speculative_draft"
+        textModel.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-throughput-v1"
+        textModel.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
         let catalog = ModelCatalog(seedModels: [textModel])
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
@@ -3615,6 +3617,8 @@ struct RequestCoordinatorTests {
         #expect(prefillRequest.execution.ext["melix.acceleration.drafter_capability"] == "speculative_draft")
         #expect(prefillRequest.execution.ext["melix.acceleration.unsupported_reason"] == "none")
         #expect(prefillRequest.execution.ext["melix.acceleration.valid_draft_model_ids"] == "melix-dev-text")
+        #expect(prefillRequest.execution.ext["melix.acceleration.profile.profile_admission_status"] == "admitted")
+        #expect(prefillRequest.execution.ext["melix.acceleration.profile.proof_matrix_id"] == "profile-proof-throughput-v1")
 
         await workerClient.emitDecodeStarted(
             requestID: "req-gateway-speculative-defaults",
@@ -3683,6 +3687,82 @@ struct RequestCoordinatorTests {
                 reason: .unsupportedReasonDraftModelNotAllowed,
                 message: "Draft model other-draft is not allowed for this target model.",
                 recoveryHint: "Choose one of the target receipt's valid_draft_model_ids."
+            ))
+        }
+
+        #expect(await workerClient.generatedRequests.isEmpty)
+        #expect(await workerClient.lastPrefillRequest() == nil)
+        #expect(await workerClient.lastDecodeRequest() == nil)
+    }
+
+    @Test("unverified optimized profile is rejected before worker dispatch")
+    func unverifiedOptimizedProfileIsRejectedBeforeWorkerDispatch() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var textModel = ModelCatalog.devTextModel()
+        textModel.settings.defaultAccelerationMode = .unspecified
+        textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        textModel.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-text"
+        let catalog = ModelCatalog(seedModels: [textModel])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        do {
+            _ = try await coordinator.startChatCompletion(
+                makeTranslatedChatRequest(
+                    requestID: "req-unverified-profile",
+                    executionExt: [
+                        "melix.gateway.acceleration_mode": "speculative_decode",
+                        "melix.gateway.acceleration_profile": "throughput",
+                        "melix.gateway.draft_model_id": "melix-dev-text",
+                    ]
+                )
+            )
+            Issue.record("Expected unverified profile to be refused.")
+        } catch let error as RequestCoordinatorError {
+            #expect(error == .unsupportedAcceleration(
+                reason: .unsupportedReasonExperimentalUnverified,
+                message: "Serving profile throughput requires a passing proof matrix row before optimized admission.",
+                recoveryHint: "Attach a passing proof matrix row before enabling this profile."
+            ))
+        }
+
+        #expect(await workerClient.generatedRequests.isEmpty)
+        #expect(await workerClient.lastPrefillRequest() == nil)
+        #expect(await workerClient.lastDecodeRequest() == nil)
+    }
+
+    @Test("baseline requests cannot dispatch unverified optimized profiles")
+    func baselineRequestsCannotDispatchUnverifiedOptimizedProfiles() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        var textModel = ModelCatalog.devTextModel()
+        textModel.settings.defaultAccelerationMode = .baseline
+        textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline"
+        let catalog = ModelCatalog(seedModels: [textModel])
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
+        )
+
+        do {
+            _ = try await coordinator.startChatCompletion(
+                makeTranslatedChatRequest(
+                    requestID: "req-baseline-unverified-profile",
+                    executionExt: [
+                        "melix.gateway.acceleration_mode": "baseline",
+                        "melix.gateway.acceleration_profile": "throughput",
+                    ]
+                )
+            )
+            Issue.record("Expected baseline request with unverified optimized profile to be refused.")
+        } catch let error as RequestCoordinatorError {
+            #expect(error == .unsupportedAcceleration(
+                reason: .unsupportedReasonExperimentalUnverified,
+                message: "Serving profile throughput requires a passing proof matrix row before optimized admission.",
+                recoveryHint: "Attach a passing proof matrix row before enabling this profile."
             ))
         }
 
@@ -3843,6 +3923,8 @@ struct RequestCoordinatorTests {
         textModel.settings.defaultAccelerationMode = .activeKvQuantized
         textModel.settings.accelerationProfileID = ""
         textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,active_kv_quantized"
+        textModel.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-active-kv-v1"
+        textModel.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
         let catalog = ModelCatalog(seedModels: [textModel])
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
@@ -3881,6 +3963,8 @@ struct RequestCoordinatorTests {
         textModel.settings.defaultAccelerationMode = .activeKvQuantized
         textModel.settings.accelerationProfileID = "balanced"
         textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,active_kv_quantized"
+        textModel.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-active-kv-v1"
+        textModel.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
         let catalog = ModelCatalog(seedModels: [textModel])
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),
@@ -3919,6 +4003,8 @@ struct RequestCoordinatorTests {
         textModel.settings.defaultAccelerationMode = .activeKvQuantized
         textModel.settings.accelerationProfileID = "q8"
         textModel.settings.ext["melix.acceleration.supported_modes"] = "baseline,active_kv_quantized"
+        textModel.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-active-kv-v1"
+        textModel.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
         let catalog = ModelCatalog(seedModels: [textModel])
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(defaultTextClient: workerClient, modelCatalog: catalog),

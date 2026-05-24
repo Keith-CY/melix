@@ -75,6 +75,8 @@ class ModelOpsJobRegistry:
         self._active_derived_model_manifests_cache: tuple[dict[str, Any], ...] | None = None
         self._active_derived_model_by_id_cache: dict[str, _ActiveDerivedModelLookup] | None = None
         self._active_derived_model_by_manifest_path_cache: dict[str, _ActiveDerivedModelLookup] | None = None
+        self._download_operation_receipt_index: dict[tuple[str, str, str], str] = {}
+        self._download_operation_receipt_job_keys: dict[str, set[tuple[str, str, str]]] = {}
         self._jobs_root = Path(jobs_root).expanduser().resolve() if jobs_root is not None else None
         self._lora_experiment_store = LoraExperimentStore()
         if self._jobs_root is not None:
@@ -109,6 +111,8 @@ class ModelOpsJobRegistry:
             job.manifest_json = manifest_json
             job.manifest = self._decode_manifest_json(manifest_json)
             job.manifest_cached = True
+            if job.operation == "download":
+                self._refresh_download_operation_receipt_index(job)
             self._invalidate_active_derived_model_rows_cache()
 
     def complete(self, job_id: str, output_path: str) -> None:
@@ -116,6 +120,8 @@ class ModelOpsJobRegistry:
             job = self._jobs[job_id]
             job.status = "completed"
             job.output_path = output_path
+            if job.operation == "download":
+                self._refresh_download_operation_receipt_index(job)
             self._invalidate_active_derived_model_rows_cache()
 
     def fail(self, job_id: str, code: str, message: str) -> None:
@@ -124,7 +130,41 @@ class ModelOpsJobRegistry:
             job.status = "failed"
             job.error_code = code
             job.error_message = message
+            if job.operation == "download":
+                self._refresh_download_operation_receipt_index(job)
             self._invalidate_active_derived_model_rows_cache()
+
+    def find_download_by_operation_receipt(
+        self,
+        *,
+        operation_id: str,
+        target_scope: str,
+        operation_kind: str,
+    ) -> ModelOpsJob | None:
+        operation_id = operation_id.strip()
+        target_scope = target_scope.strip()
+        operation_kind = operation_kind.strip()
+        if not operation_id or not target_scope or not operation_kind:
+            return None
+        with self._lock:
+            key = (operation_id, target_scope, operation_kind)
+            indexed_job_id = self._download_operation_receipt_index.get(key)
+            if indexed_job_id:
+                indexed_job = self._jobs.get(indexed_job_id)
+                if (
+                    indexed_job is not None
+                    and self._download_operation_receipt_key(indexed_job, self._job_manifest(indexed_job)) == key
+                ):
+                    return indexed_job
+            for job in reversed(tuple(self._jobs.values())):
+                if job.operation != "download":
+                    continue
+                manifest = self._job_manifest(job)
+                if self._download_operation_receipt_key(job, manifest) == key:
+                    self._download_operation_receipt_index[key] = job.job_id
+                    self._download_operation_receipt_job_keys.setdefault(job.job_id, set()).add(key)
+                    return job
+        return None
 
     def snapshot(self, exclude_job_ids: set[str] | None = None) -> dict[str, Any]:
         excluded = exclude_job_ids or set()
@@ -344,6 +384,38 @@ class ModelOpsJobRegistry:
         self._active_derived_model_manifests_cache = None
         self._active_derived_model_by_id_cache = None
         self._active_derived_model_by_manifest_path_cache = None
+
+    def _refresh_download_operation_receipt_index(self, job: ModelOpsJob) -> None:
+        previous_keys = self._download_operation_receipt_job_keys.pop(job.job_id, set())
+        for key in previous_keys:
+            if self._download_operation_receipt_index.get(key) == job.job_id:
+                self._download_operation_receipt_index.pop(key, None)
+
+        manifest = self._job_manifest(job)
+        key = self._download_operation_receipt_key(job, manifest)
+        if key is None:
+            return
+        self._download_operation_receipt_index[key] = job.job_id
+        self._download_operation_receipt_job_keys[job.job_id] = {key}
+
+    @staticmethod
+    def _download_operation_receipt_key(
+        job: ModelOpsJob,
+        manifest: dict[str, Any],
+    ) -> tuple[str, str, str] | None:
+        if job.operation != "download":
+            return None
+        if job.status == "failed":
+            return None
+        terminal_state = str(manifest.get("terminal_state", manifest.get("status", job.status)))
+        if terminal_state not in {"completed", "in_progress"}:
+            return None
+        operation_id = str(manifest.get("operation_id", "")).strip()
+        target_scope = str(manifest.get("target_scope", "")).strip()
+        operation_kind = str(manifest.get("operation_kind", "")).strip()
+        if not operation_id or not target_scope or not operation_kind:
+            return None
+        return (operation_id, target_scope, operation_kind)
 
     def _cached_active_derived_model_job_rows(
         self,
@@ -1153,6 +1225,9 @@ class ModelOpsJobRegistry:
                 continue
 
             manifest = job.get("manifest") or {}
+            artifact_integrity = manifest.get("artifact_integrity")
+            if not isinstance(artifact_integrity, dict):
+                artifact_integrity = {}
             downloaded_bytes = int(manifest.get("downloaded_bytes", 0))
             total_bytes = int(manifest.get("total_bytes", 0))
             partial_path = str(manifest.get("partial_path", ""))
@@ -1164,6 +1239,15 @@ class ModelOpsJobRegistry:
                     "status": status,
                     "stage": str(manifest.get("stage", job["stage"])),
                     "pct": float(manifest.get("pct", job["pct"])),
+                    "operation_id": str(manifest.get("operation_id", "")),
+                    "target_scope": str(manifest.get("target_scope", "")),
+                    "operation_kind": str(manifest.get("operation_kind", "")),
+                    "attempts": int(manifest.get("attempts", manifest.get("retry_count", 0) + 1)),
+                    "timeout_ms": int(manifest.get("timeout_ms", 0)),
+                    "retry_after_ms": int(manifest.get("retry_after_ms", 0)),
+                    "last_error": str(manifest.get("last_error", "")),
+                    "artifact_integrity": artifact_integrity,
+                    "artifact_integrity_status": str(artifact_integrity.get("status", "")),
                     "output_dir": str(manifest.get("output_dir", job["output_dir"])),
                     "output_path": str(manifest.get("output_path", job["output_path"])),
                     "partial_path": partial_path,
@@ -1185,6 +1269,25 @@ class ModelOpsJobRegistry:
                 }
             )
         return downloads
+
+    @staticmethod
+    def strict_activation_receipt_passed(manifest: dict[str, Any]) -> bool:
+        if str(manifest.get("terminal_state", manifest.get("status", ""))) != "completed":
+            return False
+        for key in ("operation_id", "target_scope", "operation_kind"):
+            if not str(manifest.get(key, "")).strip():
+                return False
+        artifact_integrity = manifest.get("artifact_integrity")
+        if not isinstance(artifact_integrity, dict):
+            return False
+        if str(artifact_integrity.get("status", "")).strip() != "passed":
+            return False
+        if str(artifact_integrity.get("failure_reason", "")).strip():
+            return False
+        for key in ("verification_mode", "digest", "checked_at"):
+            if not str(artifact_integrity.get(key, "")).strip():
+                return False
+        return artifact_integrity.get("policy_present") is True
 
     def _experiment_groups(self) -> list[dict[str, Any]]:
         if self._jobs_root is None:

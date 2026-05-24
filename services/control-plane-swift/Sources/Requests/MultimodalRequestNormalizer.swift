@@ -146,10 +146,29 @@ public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
     public enum PartType: String, Sendable, Codable, Equatable {
         case text = "text"
         case inputText = "input_text"
+        case image = "image"
         case imageURL = "image_url"
         case inputImage = "input_image"
+        case audio = "audio"
+        case audioURL = "audio_url"
         case inputAudio = "input_audio"
+        case video = "video"
+        case videoURL = "video_url"
         case inputVideo = "input_video"
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            let rawValue = try container.decode(String.self)
+            guard let value = PartType(rawValue: rawValue) else {
+                throw MultimodalRequestNormalizationError.unsupportedPartType(rawValue)
+            }
+            self = value
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            try container.encode(rawValue)
+        }
     }
 
     public let type: PartType
@@ -163,8 +182,13 @@ public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
         case type
         case text
         case imageURL = "image_url"
+        case image
         case inputImage = "input_image"
+        case audio
+        case audioURL = "audio_url"
         case inputAudio = "input_audio"
+        case video
+        case videoURL = "video_url"
         case inputVideo = "input_video"
         case imageBase64 = "image_base64"
         case audioBase64 = "audio_base64"
@@ -215,12 +239,13 @@ public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
             inputImage = nil
             inputAudio = nil
             inputVideo = nil
-        case .imageURL:
+        case .image, .imageURL:
             text = nil
             inputImage = nil
             inputAudio = nil
             inputVideo = nil
-            if let inlineURL = try? container.decode(String.self, forKey: .imageURL) {
+            let imageKey: CodingKeys = type == .image ? .image : .imageURL
+            if let inlineURL = try? container.decode(String.self, forKey: imageKey) {
                 imageURL = OpenAIMultimodalImageReference(
                     url: inlineURL,
                     detail: topLevelDetail,
@@ -228,7 +253,7 @@ public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
                     format: topLevelFormat,
                     filename: topLevelFilename
                 )
-            } else if let decoded = try container.decodeIfPresent(OpenAIMultimodalImageReference.self, forKey: .imageURL) {
+            } else if let decoded = try container.decodeIfPresent(OpenAIMultimodalImageReference.self, forKey: imageKey) {
                 imageURL = OpenAIMultimodalImageReference(
                     url: decoded.url,
                     data: decoded.data,
@@ -238,7 +263,7 @@ public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
                     filename: decoded.filename ?? topLevelFilename
                 )
             } else {
-                throw MultimodalRequestNormalizationError.missingValue("image_url")
+                throw MultimodalRequestNormalizationError.missingValue(type.rawValue)
             }
         case .inputImage:
             text = nil
@@ -265,12 +290,27 @@ public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
             } else {
                 throw MultimodalRequestNormalizationError.missingValue("input_image")
             }
-        case .inputAudio:
+        case .audio, .audioURL, .inputAudio:
             text = nil
             imageURL = nil
             inputImage = nil
             inputVideo = nil
-            if let decoded = try container.decodeIfPresent(OpenAIMultimodalAudioReference.self, forKey: .inputAudio) {
+            let audioKey: CodingKeys = switch type {
+            case .audio:
+                .audio
+            case .audioURL:
+                .audioURL
+            default:
+                .inputAudio
+            }
+            if let inlineURL = try? container.decode(String.self, forKey: audioKey) {
+                inputAudio = OpenAIMultimodalAudioReference(
+                    url: inlineURL,
+                    format: topLevelFormat,
+                    mimeType: topLevelMimeType,
+                    filename: topLevelFilename
+                )
+            } else if let decoded = try container.decodeIfPresent(OpenAIMultimodalAudioReference.self, forKey: audioKey) {
                 inputAudio = OpenAIMultimodalAudioReference(
                     data: decoded.data,
                     url: decoded.url,
@@ -286,14 +326,33 @@ public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
                     filename: topLevelFilename
                 )
             } else {
-                throw MultimodalRequestNormalizationError.missingValue("input_audio")
+                throw MultimodalRequestNormalizationError.missingValue(type.rawValue)
             }
-        case .inputVideo:
+        case .video, .videoURL, .inputVideo:
             text = nil
             imageURL = nil
             inputImage = nil
             inputAudio = nil
-            if let decoded = try container.decodeIfPresent(OpenAIMultimodalVideoReference.self, forKey: .inputVideo) {
+            let videoKey: CodingKeys = switch type {
+            case .video:
+                .video
+            case .videoURL:
+                .videoURL
+            default:
+                .inputVideo
+            }
+            if let inlineURL = try? container.decode(String.self, forKey: videoKey) {
+                inputVideo = OpenAIMultimodalVideoReference(
+                    url: inlineURL,
+                    format: topLevelFormat,
+                    mimeType: topLevelMimeType,
+                    filename: topLevelFilename,
+                    durationMs: topLevelDurationMs,
+                    frameBudget: topLevelFrameBudget,
+                    startMs: topLevelStartMs,
+                    endMs: topLevelEndMs
+                )
+            } else if let decoded = try container.decodeIfPresent(OpenAIMultimodalVideoReference.self, forKey: videoKey) {
                 inputVideo = OpenAIMultimodalVideoReference(
                     data: decoded.data,
                     url: decoded.url,
@@ -317,7 +376,7 @@ public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
                     endMs: topLevelEndMs
                 )
             } else {
-                throw MultimodalRequestNormalizationError.missingValue("input_video")
+                throw MultimodalRequestNormalizationError.missingValue(type.rawValue)
             }
         }
     }
@@ -329,14 +388,31 @@ public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
         switch type {
         case .text, .inputText:
             try container.encodeIfPresent(text, forKey: .text)
-        case .imageURL:
-            try container.encodeIfPresent(imageURL, forKey: .imageURL)
+        case .image, .imageURL:
+            let imageKey: CodingKeys = type == .image ? .image : .imageURL
+            try container.encodeIfPresent(imageURL, forKey: imageKey)
         case .inputImage:
             try container.encodeIfPresent(inputImage, forKey: .inputImage)
-        case .inputAudio:
-            try container.encodeIfPresent(inputAudio, forKey: .inputAudio)
-        case .inputVideo:
-            try container.encodeIfPresent(inputVideo, forKey: .inputVideo)
+        case .audio, .audioURL, .inputAudio:
+            let audioKey: CodingKeys = switch type {
+            case .audio:
+                .audio
+            case .audioURL:
+                .audioURL
+            default:
+                .inputAudio
+            }
+            try container.encodeIfPresent(inputAudio, forKey: audioKey)
+        case .video, .videoURL, .inputVideo:
+            let videoKey: CodingKeys = switch type {
+            case .video:
+                .video
+            case .videoURL:
+                .videoURL
+            default:
+                .inputVideo
+            }
+            try container.encodeIfPresent(inputVideo, forKey: videoKey)
         }
     }
 }
@@ -387,13 +463,13 @@ public struct MultimodalRequestNormalizer: Sendable {
         switch part.type {
         case .text, .inputText:
             return try normalizeText(part)
-        case .imageURL:
+        case .image, .imageURL:
             return try normalizeImage(part.imageURL, inlineOnly: false)
         case .inputImage:
             return try normalizeImage(part.inputImage, inlineOnly: true)
-        case .inputAudio:
+        case .audio, .audioURL, .inputAudio:
             return try normalizeAudio(part.inputAudio)
-        case .inputVideo:
+        case .video, .videoURL, .inputVideo:
             return try normalizeVideo(part.inputVideo)
         }
     }

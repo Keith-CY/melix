@@ -106,6 +106,14 @@ Worker-owned download jobs now persist a machine-readable state file alongside t
 
 The JSON state snapshot records at least these fields:
 
+- `operation_id`
+- `target_scope`
+- `operation_kind`
+- `attempts`
+- `timeout_ms`
+- `retry_after_ms`
+- `last_error`
+- `artifact_integrity`
 - `selected_mirror`
 - `downloaded_bytes`
 - `total_bytes`
@@ -117,6 +125,22 @@ The JSON state snapshot records at least these fields:
 - `terminal_state`
 
 This state is intended to remain stable enough for later desktop queue recovery and release-gate automation.
+
+Managed artifact installs derive `operation_id` from `operation_kind` plus
+`target_scope` unless the caller supplies `melix.operation_id`. A repeated
+managed download/install request with the same `operation_id`, `target_scope`,
+and `operation_kind` reuses the existing receipt instead of creating an
+ambiguous duplicate job or incrementing attempts. Requests with different
+`target_scope` values are independent operations.
+
+When a request deadline is exceeded while bytes are still progressing, the
+receipt status is `in_progress` rather than `failed`. Failed, stalled, and
+cancelled terminal paths still set `last_error` and a failed
+`artifact_integrity` receipt. The current strict activation gate is a
+worker-side fixture helper for receipts: activation is eligible only when the
+receipt is completed and `artifact_integrity.status` is `passed`. This is not
+a full signature system, release publish-token flow, asynchronous installer, or
+desktop UI contract.
 
 ## Bootstrap
 

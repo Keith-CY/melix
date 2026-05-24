@@ -1388,7 +1388,7 @@ public enum BootstrapWorkerPreparation {
         model.ext["melix.adapter_set_hash"] = "vision-family-llava-v1"
         model.ext["melix.capability.route_kind"] = "python_vlm"
         model.ext["melix.capability.class"] = "vlm"
-        model.ext["melix.capability.supported_modalities"] = "text,image"
+        model.ext["melix.capability.supported_modalities"] = "text,image,video"
         model.ext["melix.capability.supported_tasks"] = "vlm,generate"
         model.ext["melix.capability.supported_parsers"] = "text,qwen"
         model.ext["tool_parser_mode"] = "qwen"

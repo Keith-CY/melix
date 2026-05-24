@@ -306,6 +306,194 @@ def test_persist_serving_benchmark_request_rows_attach_adapter_identity(
     assert jsonl_row["adapter_activation_mode"] == "adapter_backed_runtime"
 
 
+def test_persist_serving_benchmark_writes_repeat_group_artifact_from_existing_rows(
+    tmp_path: Path,
+) -> None:
+    store = BenchmarkStore(telemetry_collector=fixture_telemetry_collector())
+    jobs_root = tmp_path / "bench"
+    job = build_serving_benchmark_job(
+        job_id="bench-repeat",
+        model_id="melix-dev-text",
+        task_kind="text-generation",
+        source_repo="local",
+        suites=("smoke",),
+        context_lengths=(64,),
+        generation_length=16,
+        batch_sizes=(1,),
+        repeats=3,
+        parameters={},
+        status="completed",
+        output_dir=str(jobs_root),
+    )
+    results = build_serving_benchmark_results(
+        job_id="bench-repeat",
+        metrics={"bench.smoke.tokens_per_second": 102.0},
+        units={"bench.smoke.tokens_per_second": "tok/s"},
+        report_path=str(jobs_root / "bench-report.md"),
+        report_markdown="# Melix Bench\n",
+    )
+    context_rows = tuple(
+        {
+            "schema_version": "melix.serving_benchmark_context_row.v1",
+            "job_id": "bench-repeat",
+            "model_id": "melix-dev-text",
+            "task_kind": "text-generation",
+            "source_repo": "local",
+            "suite": "smoke",
+            "context_length": 64,
+            "generation_length": 16,
+            "batch_size": 1,
+            "repeat_index": repeat_index,
+            "prefill_tokens_per_second": 1000.0 + repeat_index,
+            "decode_tokens_per_second": decode_tps,
+            "ttft_ms": ttft_ms,
+            "request_latency_ms": latency_ms,
+            "peak_memory_bytes": memory_bytes,
+            "speedup_vs_batch_1": 1.0,
+            "cache_profile": "cold",
+            "reasoning_mode": "",
+            "structured_output_mode": "",
+            "energy_joules": energy_joules,
+        }
+        for repeat_index, decode_tps, ttft_ms, latency_ms, memory_bytes, energy_joules in (
+            (0, 100.0, 10.0, 40.0, 2048.0, 4.0),
+            (1, 102.0, 12.0, 42.0, 2080.0, 4.2),
+            (2, 104.0, 14.0, 44.0, 2112.0, 4.4),
+        )
+    )
+
+    persisted = store.persist_serving_benchmark(
+        jobs_root=jobs_root,
+        job=job,
+        results=results,
+        context_rows=context_rows,
+    )
+
+    assert persisted["repeat_groups_jsonl"] == jobs_root / "bench-repeat-groups.jsonl"
+    rows = [
+        json.loads(line)
+        for line in persisted["repeat_groups_jsonl"].read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["schema_version"] == "melix.serving_benchmark_repeat_group.v1"
+    assert row["group_id"] == "bench-repeat:context:smoke:64:16:1:cold:::"
+    assert row["source_row_kind"] == "context"
+    assert row["repetition_index"] == [0, 1, 2]
+    assert row["sample_count"] == 3
+    assert row["seed_strategy"] == "runner_repeat_index"
+    assert row["throughput_mean"] == 102.0
+    assert row["throughput_stdev"] == 2.0
+    assert row["throughput_ci95_low"] == 99.7368
+    assert row["throughput_ci95_high"] == 104.2632
+    assert row["ttft_ms_mean"] == 12.0
+    assert row["ttft_ms_stdev"] == 2.0
+    assert row["ttft_ms_ci95_low"] == 9.7368
+    assert row["ttft_ms_ci95_high"] == 14.2632
+    assert row["peak_memory_bytes_mean"] == 2080.0
+    assert row["peak_memory_bytes_stdev"] == 32.0
+    assert row["energy_joules_mean"] == 4.2
+
+
+def test_repeat_group_aggregates_unique_repetitions_not_case_rows() -> None:
+    rows = BenchmarkStore._repeat_group_rows_from_benchmark_rows(
+        context_rows=(
+            {
+                "schema_version": "melix.serving_benchmark_context_row.v1",
+                "job_id": "bench-multi-case",
+                "model_id": "melix-dev-text",
+                "task_kind": "text-generation",
+                "source_repo": "local",
+                "suite": "smoke",
+                "context_length": 64,
+                "generation_length": 16,
+                "batch_size": 1,
+                "repeat_index": 0,
+                "request_index": 0,
+                "decode_tokens_per_second": 100.0,
+                "ttft_ms": 10.0,
+                "request_latency_ms": 40.0,
+                "peak_memory_bytes": 2000.0,
+                "cache_profile": "cold",
+                "reasoning_mode": "",
+                "structured_output_mode": "",
+            },
+            {
+                "schema_version": "melix.serving_benchmark_context_row.v1",
+                "job_id": "bench-multi-case",
+                "model_id": "melix-dev-text",
+                "task_kind": "text-generation",
+                "source_repo": "local",
+                "suite": "smoke",
+                "context_length": 64,
+                "generation_length": 16,
+                "batch_size": 1,
+                "repeat_index": 0,
+                "request_index": 1,
+                "decode_tokens_per_second": 120.0,
+                "ttft_ms": 14.0,
+                "request_latency_ms": 44.0,
+                "peak_memory_bytes": 2200.0,
+                "cache_profile": "cold",
+                "reasoning_mode": "",
+                "structured_output_mode": "",
+            },
+        ),
+        batch_rows=(),
+    )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["repetition_index"] == [0]
+    assert row["sample_count"] == 1
+    assert row["throughput_mean"] == 110.0
+    assert row["throughput_stdev"] == 0.0
+    assert row["throughput_ci95_low"] == 110.0
+    assert row["throughput_ci95_high"] == 110.0
+    assert "energy_joules_mean" not in row
+
+
+def test_repeat_group_helpers_tolerate_sparse_rows_and_single_sample() -> None:
+    rows = BenchmarkStore._repeat_group_rows_from_benchmark_rows(
+        context_rows=(
+            "not-a-row",  # type: ignore[arg-type]
+            {"job_id": "bench-sparse"},
+            {
+                "schema_version": "melix.serving_benchmark_context_row.v1",
+                "job_id": "bench-single",
+                "model_id": "melix-dev-text",
+                "task_kind": "text-generation",
+                "source_repo": "local",
+                "suite": "smoke",
+                "context_length": "64",
+                "generation_length": "bad-int",
+                "batch_size": 1,
+                "repeat_index": "bad-repeat",
+                "decode_tokens_per_second": "not-a-float",
+                "ttft_ms": 10.0,
+                "request_latency_ms": 40.0,
+                "peak_memory_bytes": 2048.0,
+                "cache_profile": "cold",
+                "reasoning_mode": "",
+                "structured_output_mode": "",
+            },
+        ),
+        batch_rows=(),
+    )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["group_id"] == "bench-single:context:smoke:64:0:1:cold:::"
+    assert row["repetition_index"] == [0]
+    assert row["sample_count"] == 1
+    assert row["throughput_mean"] == 0.0
+    assert row["throughput_ci95_low"] == 0.0
+    assert row["ttft_ms_mean"] == 10.0
+    assert row["ttft_ms_stdev"] == 0.0
+    assert row["ttft_ms_ci95_low"] == 10.0
+    assert row["ttft_ms_ci95_high"] == 10.0
+
+
 def test_persist_serving_benchmark_clears_stale_adapter_identity_for_base_rows(
     tmp_path: Path,
 ) -> None:

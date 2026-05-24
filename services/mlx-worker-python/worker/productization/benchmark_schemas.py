@@ -18,6 +18,10 @@ from worker.trajectory_provenance import append_trajectory_provenance
 _SERVING_BENCHMARK_JOB_SCHEMA_VERSION = "melix.serving_benchmark_job.v1"
 _SERVING_BENCHMARK_RESULT_SCHEMA_VERSION = "melix.serving_benchmark_result.v1"
 _SERVING_BENCHMARK_REQUEST_ROW_SCHEMA_VERSION = "melix.serving_benchmark_request_row.v1"
+_SERVING_BENCHMARK_REPEAT_GROUP_SCHEMA_VERSION = "melix.serving_benchmark_repeat_group.v1"
+_SERVING_BENCHMARK_REPEAT_GROUP_METHODOLOGY_VERSION = (
+    "melix.benchmark_repeat_group.methodology.v1"
+)
 _BENCHMARK_MATRIX_JOB_SCHEMA_VERSION = "melix.benchmark_matrix_job.v1"
 
 
@@ -466,6 +470,96 @@ class ServingBenchmarkResult:
             "report_path": self.report_path,
             "report_markdown": self.report_markdown,
         }
+
+
+@dataclass(frozen=True)
+class ServingBenchmarkRepeatGroupRow:
+    schema_version: str
+    group_id: str
+    job_id: str
+    model_id: str
+    task_kind: str
+    source_repo: str
+    suite: str
+    context_length: int
+    generation_length: int
+    batch_size: int
+    cache_profile: str
+    reasoning_mode: str
+    structured_output_mode: str
+    source_row_kind: str
+    repetition_index: tuple[int, ...]
+    sample_count: int
+    seed_strategy: str
+    methodology_version: str
+    throughput_mean: float = 0.0
+    throughput_stdev: float = 0.0
+    throughput_ci95_low: float = 0.0
+    throughput_ci95_high: float = 0.0
+    ttft_ms_mean: float = 0.0
+    ttft_ms_stdev: float = 0.0
+    ttft_ms_ci95_low: float = 0.0
+    ttft_ms_ci95_high: float = 0.0
+    request_latency_ms_mean: float = 0.0
+    request_latency_ms_stdev: float = 0.0
+    request_latency_ms_ci95_low: float = 0.0
+    request_latency_ms_ci95_high: float = 0.0
+    peak_memory_bytes_mean: float = 0.0
+    peak_memory_bytes_stdev: float = 0.0
+    peak_memory_bytes_ci95_low: float = 0.0
+    peak_memory_bytes_ci95_high: float = 0.0
+    energy_joules_mean: float | None = None
+    energy_joules_stdev: float | None = None
+    energy_joules_ci95_low: float | None = None
+    energy_joules_ci95_high: float | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "schema_version": self.schema_version,
+            "group_id": self.group_id,
+            "job_id": self.job_id,
+            "model_id": self.model_id,
+            "task_kind": self.task_kind,
+            "source_repo": self.source_repo,
+            "suite": self.suite,
+            "context_length": self.context_length,
+            "generation_length": self.generation_length,
+            "batch_size": self.batch_size,
+            "cache_profile": self.cache_profile,
+            "reasoning_mode": self.reasoning_mode,
+            "structured_output_mode": self.structured_output_mode,
+            "source_row_kind": self.source_row_kind,
+            "repetition_index": list(self.repetition_index),
+            "sample_count": self.sample_count,
+            "seed_strategy": self.seed_strategy,
+            "methodology_version": self.methodology_version,
+            "throughput_mean": self.throughput_mean,
+            "throughput_stdev": self.throughput_stdev,
+            "throughput_ci95_low": self.throughput_ci95_low,
+            "throughput_ci95_high": self.throughput_ci95_high,
+            "ttft_ms_mean": self.ttft_ms_mean,
+            "ttft_ms_stdev": self.ttft_ms_stdev,
+            "ttft_ms_ci95_low": self.ttft_ms_ci95_low,
+            "ttft_ms_ci95_high": self.ttft_ms_ci95_high,
+            "request_latency_ms_mean": self.request_latency_ms_mean,
+            "request_latency_ms_stdev": self.request_latency_ms_stdev,
+            "request_latency_ms_ci95_low": self.request_latency_ms_ci95_low,
+            "request_latency_ms_ci95_high": self.request_latency_ms_ci95_high,
+            "peak_memory_bytes_mean": self.peak_memory_bytes_mean,
+            "peak_memory_bytes_stdev": self.peak_memory_bytes_stdev,
+            "peak_memory_bytes_ci95_low": self.peak_memory_bytes_ci95_low,
+            "peak_memory_bytes_ci95_high": self.peak_memory_bytes_ci95_high,
+        }
+        for field_name in (
+            "energy_joules_mean",
+            "energy_joules_stdev",
+            "energy_joules_ci95_low",
+            "energy_joules_ci95_high",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                payload[field_name] = value
+        return payload
 
 
 @dataclass(frozen=True)
@@ -994,6 +1088,102 @@ def build_benchmark_matrix_job(
         updated_at_unix_ms=updated_at_unix_ms,
         parameters=dict(parameters or {}),
         trajectory_provenance=dict(trajectory_provenance or {}),
+    )
+
+
+def build_serving_benchmark_repeat_group_row(
+    *,
+    job_id: str,
+    model_id: str,
+    task_kind: str,
+    source_repo: str,
+    suite: str,
+    context_length: int,
+    generation_length: int,
+    batch_size: int,
+    cache_profile: str,
+    reasoning_mode: str,
+    structured_output_mode: str,
+    source_row_kind: str,
+    repetition_index: tuple[int, ...],
+    sample_count: int,
+    seed_strategy: str,
+    methodology_version: str = _SERVING_BENCHMARK_REPEAT_GROUP_METHODOLOGY_VERSION,
+    group_id: str = "",
+    throughput_mean: float = 0.0,
+    throughput_stdev: float = 0.0,
+    throughput_ci95_low: float = 0.0,
+    throughput_ci95_high: float = 0.0,
+    ttft_ms_mean: float = 0.0,
+    ttft_ms_stdev: float = 0.0,
+    ttft_ms_ci95_low: float = 0.0,
+    ttft_ms_ci95_high: float = 0.0,
+    request_latency_ms_mean: float = 0.0,
+    request_latency_ms_stdev: float = 0.0,
+    request_latency_ms_ci95_low: float = 0.0,
+    request_latency_ms_ci95_high: float = 0.0,
+    peak_memory_bytes_mean: float = 0.0,
+    peak_memory_bytes_stdev: float = 0.0,
+    peak_memory_bytes_ci95_low: float = 0.0,
+    peak_memory_bytes_ci95_high: float = 0.0,
+    energy_joules_mean: float | None = None,
+    energy_joules_stdev: float | None = None,
+    energy_joules_ci95_low: float | None = None,
+    energy_joules_ci95_high: float | None = None,
+) -> ServingBenchmarkRepeatGroupRow:
+    resolved_group_id = group_id or ":".join(
+        (
+            job_id,
+            source_row_kind,
+            suite,
+            str(context_length),
+            str(generation_length),
+            str(batch_size),
+            cache_profile,
+            reasoning_mode,
+            structured_output_mode,
+            "",
+        )
+    )
+    return ServingBenchmarkRepeatGroupRow(
+        schema_version=_SERVING_BENCHMARK_REPEAT_GROUP_SCHEMA_VERSION,
+        group_id=resolved_group_id,
+        job_id=job_id,
+        model_id=model_id,
+        task_kind=task_kind,
+        source_repo=source_repo,
+        suite=suite,
+        context_length=context_length,
+        generation_length=generation_length,
+        batch_size=batch_size,
+        cache_profile=cache_profile,
+        reasoning_mode=reasoning_mode,
+        structured_output_mode=structured_output_mode,
+        source_row_kind=source_row_kind,
+        repetition_index=tuple(repetition_index),
+        sample_count=sample_count,
+        seed_strategy=seed_strategy,
+        methodology_version=methodology_version,
+        throughput_mean=throughput_mean,
+        throughput_stdev=throughput_stdev,
+        throughput_ci95_low=throughput_ci95_low,
+        throughput_ci95_high=throughput_ci95_high,
+        ttft_ms_mean=ttft_ms_mean,
+        ttft_ms_stdev=ttft_ms_stdev,
+        ttft_ms_ci95_low=ttft_ms_ci95_low,
+        ttft_ms_ci95_high=ttft_ms_ci95_high,
+        request_latency_ms_mean=request_latency_ms_mean,
+        request_latency_ms_stdev=request_latency_ms_stdev,
+        request_latency_ms_ci95_low=request_latency_ms_ci95_low,
+        request_latency_ms_ci95_high=request_latency_ms_ci95_high,
+        peak_memory_bytes_mean=peak_memory_bytes_mean,
+        peak_memory_bytes_stdev=peak_memory_bytes_stdev,
+        peak_memory_bytes_ci95_low=peak_memory_bytes_ci95_low,
+        peak_memory_bytes_ci95_high=peak_memory_bytes_ci95_high,
+        energy_joules_mean=energy_joules_mean,
+        energy_joules_stdev=energy_joules_stdev,
+        energy_joules_ci95_low=energy_joules_ci95_low,
+        energy_joules_ci95_high=energy_joules_ci95_high,
     )
 
 
