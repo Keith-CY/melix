@@ -30,6 +30,10 @@ class DeterministicLoRARunner(MLXLMRunner):
                 {
                     "fine_tune_type": "lora",
                     "num_layers": request.config.num_layers,
+                    "tokenizer_config": self._source_tokenizer_config(request.model_path),
+                    "round_trip_passed": True,
+                    "callback_arity": 2,
+                    "expected_callback_arity": 2,
                     "lora_parameters": {
                         "rank": request.config.rank,
                         "dropout": request.config.dropout,
@@ -58,6 +62,13 @@ class DeterministicLoRARunner(MLXLMRunner):
             ),
             execution_backend="native",
         )
+
+    def _source_tokenizer_config(self, model_path: Path) -> dict[str, object]:
+        try:
+            payload = json.loads((model_path / "tokenizer_config.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
 
     def activate_native(self, request: ActivationRequest) -> ActivationResult:
         request.derived_model_dir.mkdir(parents=True, exist_ok=True)

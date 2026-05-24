@@ -12,6 +12,63 @@ public enum ToolParserMode: String, Codable, Sendable, Equatable {
     case xml
 }
 
+public enum ToolParserKind: String, Codable, Sendable, Equatable {
+    case plainText = "plain_text"
+    case structuredOutput = "structured_output"
+    case toolCall = "tool_call"
+}
+
+public enum ToolParserSelectorSurface: String, Codable, Sendable, Equatable {
+    case api
+    case desktop
+    case cli
+}
+
+public enum ToolParserRequestContextMode: String, Codable, Sendable, Equatable, Hashable {
+    case structuredJSON = "structured_json"
+    case toolParser = "tool_parser"
+    case reasoning
+    case plain
+}
+
+public struct ToolParserAuditReceipt: Codable, Sendable, Equatable {
+    public let parserID: String
+    public let parserKind: ToolParserKind
+    public let acceptedWireFormats: [String]
+    public let selectorSurface: ToolParserSelectorSurface
+    public let selectorSource: String
+    public let requestContextMode: ToolParserRequestContextMode
+    public let exemptionReason: String
+
+    enum CodingKeys: String, CodingKey {
+        case parserID = "parser_id"
+        case parserKind = "parser_kind"
+        case acceptedWireFormats = "accepted_wire_formats"
+        case selectorSurface = "selector_surface"
+        case selectorSource = "selector_source"
+        case requestContextMode = "request_context_mode"
+        case exemptionReason = "exemption_reason"
+    }
+
+    public init(
+        parserID: String,
+        parserKind: ToolParserKind,
+        acceptedWireFormats: [String],
+        selectorSurface: ToolParserSelectorSurface,
+        selectorSource: String,
+        requestContextMode: ToolParserRequestContextMode,
+        exemptionReason: String = ""
+    ) {
+        self.parserID = parserID
+        self.parserKind = parserKind
+        self.acceptedWireFormats = acceptedWireFormats
+        self.selectorSurface = selectorSurface
+        self.selectorSource = selectorSource
+        self.requestContextMode = requestContextMode
+        self.exemptionReason = exemptionReason
+    }
+}
+
 public enum ToolParserConfigurationError: Error, Equatable {
     case unsupportedMode(String)
     case invalidNamespace(String)
@@ -155,23 +212,138 @@ public struct ToolParserRegistry: Sendable {
     private struct Descriptor: Sendable {
         let mode: ToolParserMode
         let aliases: Set<String>
+        let parserKind: ToolParserKind
+        let acceptedWireFormats: [String]
+        let requestContextModes: [ToolParserRequestContextMode]
     }
 
     private let descriptors: [Descriptor] = [
-        .init(mode: .text, aliases: ["text", "plain"]),
-        .init(mode: .json, aliases: ["json", "json_object"]),
-        .init(mode: .qwen, aliases: ["qwen"]),
-        .init(mode: .gemma, aliases: ["gemma"]),
-        .init(mode: .minimax, aliases: ["minimax"]),
-        .init(mode: .glm, aliases: ["glm"]),
-        .init(mode: .mistral, aliases: ["mistral"]),
-        .init(mode: .xml, aliases: ["xml"]),
+        .init(
+            mode: .text,
+            aliases: ["text", "plain"],
+            parserKind: .plainText,
+            acceptedWireFormats: ["raw_text"],
+            requestContextModes: [.plain]
+        ),
+        .init(
+            mode: .json,
+            aliases: ["json", "json_object"],
+            parserKind: .structuredOutput,
+            acceptedWireFormats: ["json_object"],
+            requestContextModes: [.structuredJSON]
+        ),
+        .init(
+            mode: .qwen,
+            aliases: ["qwen"],
+            parserKind: .toolCall,
+            acceptedWireFormats: ["qwen_xml_tool_call"],
+            requestContextModes: [.toolParser, .reasoning]
+        ),
+        .init(
+            mode: .gemma,
+            aliases: ["gemma"],
+            parserKind: .toolCall,
+            acceptedWireFormats: ["gemma_tool_call"],
+            requestContextModes: [.toolParser]
+        ),
+        .init(
+            mode: .minimax,
+            aliases: ["minimax"],
+            parserKind: .toolCall,
+            acceptedWireFormats: ["minimax_tool_call"],
+            requestContextModes: [.toolParser]
+        ),
+        .init(
+            mode: .glm,
+            aliases: ["glm"],
+            parserKind: .toolCall,
+            acceptedWireFormats: ["glm_tool_call"],
+            requestContextModes: [.toolParser]
+        ),
+        .init(
+            mode: .mistral,
+            aliases: ["mistral"],
+            parserKind: .toolCall,
+            acceptedWireFormats: ["mistral_tool_call"],
+            requestContextModes: [.toolParser]
+        ),
+        .init(
+            mode: .xml,
+            aliases: ["xml"],
+            parserKind: .toolCall,
+            acceptedWireFormats: ["xml_tool_call"],
+            requestContextModes: [.toolParser]
+        ),
     ]
 
     public init() {}
 
     public func supportedModes() -> [ToolParserMode] {
         descriptors.map(\.mode)
+    }
+
+    public func auditReceipts() -> [ToolParserAuditReceipt] {
+        descriptors.flatMap { descriptor in
+            descriptor.requestContextModes.map { requestContextMode in
+                ToolParserAuditReceipt(
+                    parserID: descriptor.mode.rawValue,
+                    parserKind: descriptor.parserKind,
+                    acceptedWireFormats: acceptedWireFormats(
+                        for: descriptor,
+                        requestContextMode: requestContextMode
+                    ),
+                    selectorSurface: .api,
+                    selectorSource: "request.tool_parser",
+                    requestContextMode: requestContextMode
+                )
+            }
+        }
+    }
+
+    public func selectorAuditReceipts() -> [ToolParserAuditReceipt] {
+        descriptors.flatMap { descriptor in
+            let requestContextMode = primaryContext(for: descriptor)
+            let acceptedWireFormats = acceptedWireFormats(
+                for: descriptor,
+                requestContextMode: requestContextMode
+            )
+            return [
+                ToolParserAuditReceipt(
+                    parserID: descriptor.mode.rawValue,
+                    parserKind: descriptor.parserKind,
+                    acceptedWireFormats: acceptedWireFormats,
+                    selectorSurface: .api,
+                    selectorSource: "request.tool_parser",
+                    requestContextMode: requestContextMode
+                ),
+                ToolParserAuditReceipt(
+                    parserID: descriptor.mode.rawValue,
+                    parserKind: descriptor.parserKind,
+                    acceptedWireFormats: acceptedWireFormats,
+                    selectorSurface: .desktop,
+                    selectorSource: "tooling_settings.builtin_tool_parser_modes",
+                    requestContextMode: requestContextMode
+                ),
+                ToolParserAuditReceipt(
+                    parserID: descriptor.mode.rawValue,
+                    parserKind: descriptor.parserKind,
+                    acceptedWireFormats: acceptedWireFormats,
+                    selectorSurface: .cli,
+                    selectorSource: "none",
+                    requestContextMode: requestContextMode,
+                    exemptionReason: Self.cliSelectorExemptionReason
+                ),
+            ]
+        }
+    }
+
+    public func requestContextFixtures() -> [ToolParserAuditReceipt] {
+        [
+            receipt(mode: .json, requestContextMode: .structuredJSON),
+            receipt(mode: .qwen, requestContextMode: .toolParser),
+            receipt(mode: .qwen, requestContextMode: .reasoning),
+            receipt(mode: .text, requestContextMode: .plain),
+        ]
     }
 
     func mode(for rawMode: String) -> ToolParserMode? {
@@ -290,5 +462,36 @@ public struct ToolParserRegistry: Sendable {
             fallbackMode: base.fallbackMode,
             mcpSourceIDs: mergedSourceIDs
         )
+    }
+
+    private static let cliSelectorExemptionReason = "CLI has no request-construction surface for tool parser selection; it reports remote model supported_parsers only."
+
+    private func primaryContext(for descriptor: Descriptor) -> ToolParserRequestContextMode {
+        descriptor.requestContextModes.first ?? .plain
+    }
+
+    private func receipt(
+        mode: ToolParserMode,
+        requestContextMode: ToolParserRequestContextMode
+    ) -> ToolParserAuditReceipt {
+        let descriptor = descriptors.first(where: { $0.mode == mode })!
+        return ToolParserAuditReceipt(
+            parserID: descriptor.mode.rawValue,
+            parserKind: descriptor.parserKind,
+            acceptedWireFormats: acceptedWireFormats(for: descriptor, requestContextMode: requestContextMode),
+            selectorSurface: .api,
+            selectorSource: "request.tool_parser",
+            requestContextMode: requestContextMode
+        )
+    }
+
+    private func acceptedWireFormats(
+        for descriptor: Descriptor,
+        requestContextMode: ToolParserRequestContextMode
+    ) -> [String] {
+        if descriptor.mode == .qwen, requestContextMode == .reasoning {
+            return descriptor.acceptedWireFormats + ["reasoning_channel_tags"]
+        }
+        return descriptor.acceptedWireFormats
     }
 }
