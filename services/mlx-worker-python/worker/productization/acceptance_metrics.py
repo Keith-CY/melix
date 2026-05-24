@@ -58,6 +58,9 @@ def build_phase6_vision_metrics_report(
     vlm: dict[str, Any],
     metrics_snapshot: dict[str, Any],
 ) -> dict[str, Any]:
+    tool_rejection_success = vlm.get("tool_rejection_success")
+    if tool_rejection_success is None:
+        tool_rejection_success = vlm.get("tool_call_success")
     checks = {
         "vision.ingress.local_image_success": bool(ingress.get("local_image_success")),
         "vision.ingress.remote_image_refusal_success": bool(
@@ -65,7 +68,7 @@ def build_phase6_vision_metrics_report(
         ),
         "vision.ingress.multi_image_success": bool(ingress.get("multi_image_success")),
         "vision.ocr.default_stop_success": bool(ocr.get("default_stop_success")),
-        "vision.vlm.tool_call_success": bool(vlm.get("tool_call_success")),
+        "vision.vlm.tool_rejection_success": bool(tool_rejection_success),
     }
     passed_checks = sum(1 for value in checks.values() if value)
     total_checks = len(checks)
@@ -84,8 +87,8 @@ def build_phase6_vision_metrics_report(
         "vision.ocr.default_stop_success_rate": _success_rate(
             int(checks["vision.ocr.default_stop_success"]), 1
         ),
-        "vision.vlm.tool_call_success_rate": _success_rate(
-            int(checks["vision.vlm.tool_call_success"]), 1
+        "vision.vlm.tool_rejection_success_rate": _success_rate(
+            int(checks["vision.vlm.tool_rejection_success"]), 1
         ),
         "vision.ocr.request_latency_ms": _rounded_float(ocr.get("request_latency_ms")),
         "vision.vlm.request_latency_ms": _rounded_float(vlm.get("request_latency_ms")),

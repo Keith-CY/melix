@@ -16,9 +16,18 @@ supported multimodal families report selected decode and quantized-load modes,
 repeated images report feature-cache reuse, and unsupported paths emit explicit
 fallback receipts instead of silently looking optimized.
 
+This PR is a narrow fail-closed unit for issue 42. It prioritizes correctness
+and operator trust before generation: media-bearing chat requests must either be
+admitted to a model that advertises the requested media modality, reject with a
+typed 4xx response, or disable incompatible speculative defaults before worker
+dispatch. This unit does not claim throughput or latency speedups.
+
 ## Public Interface Boundary
 
-- No HTTP request or response shape changes.
+- Successful HTTP request and response shapes remain unchanged.
+- Unsupported multimodal admission paths return the existing OpenAI-style error
+  envelope with typed Melix fields (`reason`, `media_types`, and `model_id`) so
+  operators can distinguish capability, tool-routing, and acceleration refusals.
 - No protobuf schema changes.
 - No chat payload changes.
 - New externally visible surface is benchmark metrics and phase-6 evidence JSON.
@@ -93,6 +102,11 @@ those sentinel counts instead of letting them reduce totals.
 
 ## Implementation Slices
 
+0. Fail-closed admission unit: normalize compatible media aliases, reject
+   media-bearing chat requests on text-only models before model load or
+   generation, reject media plus tools until multimodal tool routing is
+   supported, and disable speculative defaults for admitted media requests
+   before VLM generation.
 1. Add fast-path unit coverage for mode selection, fallback receipts, repeated
    image reuse, partial multi-image reuse, text-only turns, non-cacheable images,
    bounded-cache eviction, and quantized-load admission.
@@ -118,6 +132,11 @@ those sentinel counts instead of letting them reduce totals.
 
 Live speedup claims require a real MLX multimodal model. Deterministic tests only
 prove admission, fallback, cache-key, and evidence correctness.
+
+The fail-closed unit measures success with admission outcomes rather than speed:
+typed 4xx responses for unsupported media requests, no worker load/generate call
+on rejected requests, and baseline acceleration metadata when speculative
+defaults are disabled for admitted media.
 
 ## Verification
 
