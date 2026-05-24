@@ -63,9 +63,9 @@ struct ToolParserRegistryTests {
         let desktop = selectorReceipts.filter { $0.selectorSurface == .desktop }
         let cli = selectorReceipts.filter { $0.selectorSurface == .cli }
 
-        #expect(api.map(\.parserID) == parserIDs)
-        #expect(desktop.map(\.parserID) == parserIDs)
-        #expect(cli.map(\.parserID) == parserIDs)
+        #expect(Set(api.map(\.parserID)) == Set(parserIDs))
+        #expect(Set(desktop.map(\.parserID)) == Set(parserIDs))
+        #expect(Set(cli.map(\.parserID)) == Set(parserIDs))
         #expect(api.allSatisfy { $0.selectorSource == "request.tool_parser" })
         #expect(desktop.allSatisfy { $0.selectorSource == "tooling_settings.builtin_tool_parser_modes" })
         #expect(cli.allSatisfy { $0.selectorSource == "none" })
@@ -74,6 +74,27 @@ struct ToolParserRegistryTests {
         })
         #expect(api.allSatisfy { $0.exemptionReason.isEmpty })
         #expect(desktop.allSatisfy { $0.exemptionReason.isEmpty })
+    }
+
+    @Test("selector parity audit covers every supported request context")
+    func selectorParityAuditCoversEverySupportedRequestContext() {
+        struct ParserContext: Hashable {
+            let parserID: String
+            let requestContextMode: ToolParserRequestContextMode
+        }
+
+        let registry = ToolParserRegistry()
+        let declaredContexts = Set(registry.auditReceipts().map {
+            ParserContext(parserID: $0.parserID, requestContextMode: $0.requestContextMode)
+        })
+        let selectorReceipts = registry.selectorAuditReceipts()
+
+        for surface in [ToolParserSelectorSurface.api, .desktop, .cli] {
+            let surfaceContexts = Set(selectorReceipts.filter { $0.selectorSurface == surface }.map {
+                ParserContext(parserID: $0.parserID, requestContextMode: $0.requestContextMode)
+            })
+            #expect(surfaceContexts == declaredContexts)
+        }
     }
 
     @Test("fixture request contexts cover JSON tool reasoning and plain parsers")
