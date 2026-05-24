@@ -12,7 +12,8 @@ class RerankCore:
         self._registry = registry
 
     def rerank(self, request: inference_pb2.RerankRequest) -> inference_pb2.RerankResponse:
-        loaded_model = self._registry.get_loaded_model(request.model_handle)
+        registry = self._registry
+        loaded_model = registry.get_loaded_model(request.model_handle)
         if loaded_model is None:
             return inference_pb2.RerankResponse(
                 error=common_pb2.ErrorStatus(code="not_found", message="Unknown model handle.")
@@ -27,7 +28,7 @@ class RerankCore:
             )
 
         try:
-            scores = self._registry.rerank_runtime.score_documents(
+            scores = registry.rerank_runtime.score_documents(
                 loaded_model.runtime_model,
                 request.query,
                 request.documents,
