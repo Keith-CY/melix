@@ -54,13 +54,26 @@ public struct OpenAIConformanceReport: Codable, Sendable, Equatable {
         schemaVersion: String = Self.currentSchemaVersion,
         rows: [OpenAIConformanceRow]
     ) {
+        var passed = 0
+        var failed = 0
+        var skipped = 0
+        for row in rows {
+            switch row.observedStatus {
+            case .pass:
+                passed += 1
+            case .fail:
+                failed += 1
+            case .skipped:
+                skipped += 1
+            }
+        }
         self.schemaVersion = schemaVersion
         self.rows = rows
         self.summary = OpenAIConformanceReportSummary(
             total: rows.count,
-            passed: rows.filter { $0.observedStatus == .pass }.count,
-            failed: rows.filter { $0.observedStatus == .fail }.count,
-            skipped: rows.filter { $0.observedStatus == .skipped }.count
+            passed: passed,
+            failed: failed,
+            skipped: skipped
         )
     }
 

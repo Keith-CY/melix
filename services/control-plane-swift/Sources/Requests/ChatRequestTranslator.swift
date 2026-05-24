@@ -480,11 +480,13 @@ public enum OpenAILegacyFunctionCall: Codable, Sendable, Equatable {
     }
 
     private static func escapedJSONString(_ value: String) -> String {
-        let data = (try? JSONEncoder().encode(value))
+        let data = (try? escapingEncoder.encode(value))
             ?? Data(#""""#.utf8)
         let encoded = String(decoding: data, as: UTF8.self)
         return String(encoded.dropFirst().dropLast())
     }
+
+    private static let escapingEncoder = JSONEncoder()
 }
 
 public struct OpenAIChatTool: Codable, Sendable, Equatable {

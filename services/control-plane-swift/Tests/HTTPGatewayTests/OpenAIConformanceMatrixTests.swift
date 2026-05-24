@@ -157,6 +157,38 @@ struct OpenAIConformanceMatrixTests {
         #expect(reportJSON.contains("\"field\":\"logprobs,top_logprobs\""))
     }
 
+    @Test("conformance report summary counts every observed status in one pass")
+    func conformanceReportSummaryCountsEveryObservedStatus() {
+        let report = OpenAIConformanceReport(rows: [
+            OpenAIConformanceRow(
+                field: "pass",
+                route: "/v1/chat/completions",
+                expectedBehavior: "passes",
+                observedStatus: .pass,
+                observedReason: "ok"
+            ),
+            OpenAIConformanceRow(
+                field: "fail",
+                route: "/v1/chat/completions",
+                expectedBehavior: "fails",
+                observedStatus: .fail,
+                observedReason: "mismatch"
+            ),
+            OpenAIConformanceRow(
+                field: "skipped",
+                route: "/v1/chat/completions",
+                expectedBehavior: "skips",
+                observedStatus: .skipped,
+                observedReason: "deferred"
+            ),
+        ])
+
+        #expect(report.summary.total == 3)
+        #expect(report.summary.passed == 1)
+        #expect(report.summary.failed == 1)
+        #expect(report.summary.skipped == 1)
+    }
+
     @Test("payload model routes to selected served model in active roster")
     func payloadModelRoutesToSelectedServedModelInActiveRoster() async throws {
         var primary = warmConformanceModel(id: "melix-primary")
