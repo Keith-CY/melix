@@ -89,7 +89,11 @@ def prepare_video_input(part) -> PreparedVideoInput:
         )
         resolved_filename = filename
     else:
-        resolved_format = _resolve_video_format(format_name, mime_type, parsed_reference)
+        inferred_suffix = parsed_reference.path_suffix
+        if not format_name and not mime_type and inferred_suffix in SUPPORTED_VIDEO_FORMATS:
+            resolved_format = inferred_suffix
+        else:
+            resolved_format = _resolve_video_format(format_name, mime_type, parsed_reference)
         resolved_filename = parsed_reference.path_name or f"remote-video.{resolved_format}"
     byte_length = int(getattr(media, "byte_length", 0) or 0)
     return PreparedVideoInput(

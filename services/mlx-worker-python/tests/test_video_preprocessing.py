@@ -185,6 +185,7 @@ def test_prepare_video_input_reuses_parsed_uri_when_filename_is_absent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     parse_calls = 0
+    resolve_format_calls = 0
     original_parse = video_preprocessing._parse_video_reference
 
     def counting_parse(reference: str):
@@ -197,8 +198,14 @@ def test_prepare_video_input_reuses_parsed_uri_when_filename_is_absent(
             f"prepare_video_input should reuse parsed path metadata: {reference}"
         )
 
+    def counting_resolve_format(*args: object) -> str:  # pragma: no cover - regression only
+        nonlocal resolve_format_calls
+        resolve_format_calls += 1
+        return "mov"
+
     monkeypatch.setattr(video_preprocessing, "_parse_video_reference", counting_parse)
     monkeypatch.setattr(video_preprocessing, "_filename_from_reference", fail_filename_lookup)
+    monkeypatch.setattr(video_preprocessing, "_resolve_video_format", counting_resolve_format)
     part = common_pb2.MessagePart(
         video_uri="https://example.com/media/demo.mov",
         media=common_pb2.MediaMetadata(
@@ -212,6 +219,7 @@ def test_prepare_video_input_reuses_parsed_uri_when_filename_is_absent(
     assert prepared.format == "mov"
     assert prepared.filename == "demo.mov"
     assert parse_calls == 1
+    assert resolve_format_calls == 0
 
 
 def test_prepare_video_input_infers_format_from_plain_local_path() -> None:
