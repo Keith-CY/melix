@@ -164,6 +164,8 @@ class LoRATrainingPipeline:
             adapter_scope=adapter_scope,
             inspection_only=truthy(request_ext.get("inspect_only_import", "")),
         )
+        runtime_unsupported_reason = str(runtime_preflight_fields.get("unsupported_reason", ""))
+        adapter_unsupported_reason = config.unsupported_reason
         runtime_failure_details = runtime_preflight_failure_details(runtime_preflight_fields)
 
         emit("train", 0.8)
@@ -299,7 +301,9 @@ class LoRATrainingPipeline:
             "adapter_capabilities": dict(config.adapter_capabilities),
             "backend_supported": config.backend_supported,
             **runtime_preflight_fields,
-            "unsupported_reason": config.unsupported_reason,
+            "runtime_unsupported_reason": runtime_unsupported_reason,
+            "adapter_unsupported_reason": adapter_unsupported_reason,
+            "unsupported_reason": adapter_unsupported_reason,
             "preference_loss": config.preference_loss,
             "dataset_contract": config.dataset_contract,
             "dora_enabled": config.adapter_algorithm == "dora",

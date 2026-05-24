@@ -527,7 +527,10 @@ reasoning, tool, structured-output, and compatibility-policy routed output.
 Plain visible-text-only requests may report `route_tracking_enabled=false` with
 empty sampled routes so the default text path avoids per-token routing work.
 When token identifiers are unavailable on tracked routes, the worker may fall
-back to raw-text span routing but must mark the fallback in the receipt.
+back to raw-text span routing but must mark the fallback in the receipt. When a
+single runtime fragment carries multiple token identifiers and parses into
+multiple channel deltas, the route receipt must attribute those identifiers to
+the parsed spans before visible text consumes any remaining tokens.
 
 Malformed or truncated tool fragments are recoverable parser observations. They should increment parser metrics and be skipped rather than fail the request. Display cleanup is not structural parsing; cleanup must not collapse meaningful leading or trailing content whitespace and must not re-emit generation-prefix control tokens.
 
@@ -707,11 +710,12 @@ generation starts. Stop strings are normalized into the worker sampling contract
 for both streaming and buffered responses.
 
 The translated worker request records a request-local generation receipt under
-`execution.ext` with these fields: `max_tokens_requested`,
-`max_tokens_effective`, `max_completion_tokens_requested`,
-`max_completion_tokens_effective`, `output_cap_source`, `stop_requested`,
-`stop_effective`, `stop_source`, `bounds_rejection_reason`, `temperature`,
-`top_p`, `top_k`, `min_p`, `repeat_penalty`, `presence_penalty`, and `seed`.
+`execution.ext` with the `melix.generation.` prefix on these field names:
+`max_tokens_requested`, `max_tokens_effective`,
+`max_completion_tokens_requested`, `max_completion_tokens_effective`,
+`output_cap_source`, `stop_requested`, `stop_effective`, `stop_source`,
+`bounds_rejection_reason`, `temperature`, `top_p`, `top_k`, `min_p`,
+`repeat_penalty`, `presence_penalty`, and `seed`.
 These fields describe the compatibility route request and effective dispatch
 values only; model-recommended sampling or template policy remains a separate
 policy receipt.

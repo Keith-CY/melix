@@ -65,6 +65,34 @@ class TokenRoutedStructuredBackend:
         )
 
 
+class TokenRoutedMultispanBackend:
+    runtime_name = "fake-mlx"
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id}
+
+    def estimate_resident_bytes(self, model_spec):
+        return 2048
+
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
+        _ = loaded_model
+        _ = prompt
+        _ = sampling
+        _ = cancel_event
+        yield RuntimeTokenEvent(
+            text="",
+            raw_text=(
+                "<think>alpha beta gamma</think>"
+                '<tool_call>{"name":"search","arguments":{"q":"one"}}</tool_call>'
+                "visible"
+            ),
+            token_ids=(101, 102, 103, 104, 105, 106),
+            prompt_tokens=3,
+            completion_tokens=6,
+            finish_reason="stop",
+        )
+
+
 class TokenRoutedVisibleBackend:
     runtime_name = "fake-mlx"
 
@@ -363,6 +391,41 @@ def test_generate_token_route_receipt_records_actual_token_ids_by_channel_span()
         (101, "hidden_reasoning", "reasoning_tag"),
         (102, "tool_call", "tool_call_tag"),
         (103, "visible_text", "raw_text"),
+    ]
+
+
+def test_generate_token_route_receipt_keeps_multitoken_hidden_and_tool_spans() -> None:
+    inference_service, model_handle = _build_services(TokenRoutedMultispanBackend())
+    completed = next(
+        event.completed
+        for event in inference_service.Generate(
+            _token_route_request(
+                model_handle,
+                compat_receipt='{"reasoning_mode":"enabled","tool_choice_resolved":"required"}',
+                stream=True,
+            ),
+            context=None,
+        )
+        if event.HasField("completed")
+    )
+    receipt = json.loads(completed.parser_metrics["token_route_receipt_json"])
+
+    assert completed.assistant_text == "visible"
+    assert completed.reasoning_text == "alpha beta gamma"
+    assert receipt["fallback_raw_text_used"] is False
+    assert receipt["visible_text_tokens"] == 1
+    assert receipt["hidden_reasoning_tokens"] == 3
+    assert receipt["route_count"] == 6
+    assert [
+        (route["token_id"], route["channel"], route["channel_source"])
+        for route in receipt["routes"]
+    ] == [
+        (101, "hidden_reasoning", "reasoning_tag"),
+        (102, "hidden_reasoning", "reasoning_tag"),
+        (103, "hidden_reasoning", "reasoning_tag"),
+        (104, "tool_call", "tool_call_tag"),
+        (105, "tool_call", "tool_call_tag"),
+        (106, "visible_text", "raw_text"),
     ]
 
 

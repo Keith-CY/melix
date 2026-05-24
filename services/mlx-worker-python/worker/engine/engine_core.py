@@ -259,6 +259,7 @@ class EngineCore:
                             token_route_receipt.record_span(
                                 channel="hidden_reasoning",
                                 channel_source="reasoning_tag",
+                                token_count=delta.token_count,
                             )
                         yield inference_pb2.ExecuteEvent(
                             request_id=request_id,
@@ -277,6 +278,7 @@ class EngineCore:
                             token_route_receipt.record_span(
                                 channel="tool_call",
                                 channel_source="tool_call_tag",
+                                token_count=delta.token_count,
                             )
                         yield inference_pb2.ExecuteEvent(
                             request_id=request_id,
@@ -296,6 +298,7 @@ class EngineCore:
                             token_route_receipt.record_span(
                                 channel="visible_text",
                                 channel_source="raw_text",
+                                token_count=delta.token_count,
                                 consume_all_available=True,
                             )
                         if track_usage:
