@@ -429,6 +429,37 @@ struct OpenAIConformanceMatrixTests {
         #expect(normalized.openAICompatibilityReceipts["melix.openai.logprobs.effective"] == "unsupported")
     }
 
+    @Test("recording worker fixture covers phase-aware and model lifecycle methods")
+    func recordingWorkerFixtureCoversPhaseAwareAndModelLifecycleMethods() async throws {
+        let worker = RecordingConformanceWorker(requestID: "req-fixture")
+
+        #expect(try await worker.abort(requestID: "req-fixture"))
+
+        var prefillRequest = Melix_Worker_V1_PrefillRequest()
+        prefillRequest.execution.id.requestID = "req-fixture"
+        let prefill = try await worker.prefill(request: prefillRequest)
+        #expect(prefill.ok)
+        #expect(prefill.decodeHandle == "decode-req-fixture")
+        #expect(prefill.promptTokens == 1)
+        #expect(prefill.appliedAcceleration.mode == .baseline)
+
+        var decodeRequest = Melix_Worker_V1_DecodeRequest()
+        decodeRequest.execution.id.requestID = "req-fixture"
+        let decodeEvents = try await collectConformanceEvents(worker.decode(request: decodeRequest))
+        #expect(decodeEvents.count == 1)
+
+        var loadRequest = Melix_Worker_V1_LoadModelRequest()
+        loadRequest.model.modelID = "melix-fixture"
+        let load = try await worker.loadModel(request: loadRequest)
+        #expect(load.ok)
+        #expect(load.modelHandle == "melix-fixture::swift")
+
+        let unload = try await worker.unloadModel(request: Melix_Worker_V1_UnloadModelRequest())
+        #expect(unload.ok)
+        let stats = try await worker.runtimeStats()
+        #expect(!stats.hasStats)
+    }
+
     private static func handler(worker: RecordingConformanceWorker) -> OpenAIHandler {
         let catalog = ModelCatalog(seedModels: [warmConformanceModel(id: "melix-dev-text")])
         let registry = WorkerRegistry(defaultTextClient: worker, modelCatalog: catalog)
@@ -497,6 +528,16 @@ private func collectConformanceBody(_ body: HTTPBody) async throws -> String {
         }
         return try #require(String(data: data, encoding: .utf8))
     }
+}
+
+private func collectConformanceEvents(
+    _ stream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
+) async throws -> [Melix_Worker_V1_ExecuteEvent] {
+    var events: [Melix_Worker_V1_ExecuteEvent] = []
+    for try await event in stream {
+        events.append(event)
+    }
+    return events
 }
 
 private actor RecordingConformanceWorker:
