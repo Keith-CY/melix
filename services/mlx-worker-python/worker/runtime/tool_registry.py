@@ -294,34 +294,36 @@ class ToolRegistry:
     def as_openai_tools(self) -> list[dict[str, Any]]:
         copy_dict = _COPY_DICT
         copy_list = _COPY_LIST
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": description,
-                    "parameters": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "properties": {
-                            argument_name: copy_dict(schema)
-                            for argument_name, schema in schema_properties
+        tools: list[dict[str, Any]] = []
+        for (
+            name,
+            description,
+            tool_kind,
+            observation_kind,
+            schema_properties,
+            required_arguments,
+        ) in self._openai_tool_templates:
+            properties: dict[str, Any] = {}
+            for argument_name, schema in schema_properties:
+                properties[argument_name] = copy_dict(schema)
+            tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": description,
+                        "parameters": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": properties,
+                            "required": copy_list(required_arguments),
                         },
-                        "required": copy_list(required_arguments),
                     },
-                },
-                "x-melix-tool-kind": tool_kind,
-                "x-melix-observation-kind": observation_kind,
-            }
-            for (
-                name,
-                description,
-                tool_kind,
-                observation_kind,
-                schema_properties,
-                required_arguments,
-            ) in self._openai_tool_templates
-        ]
+                    "x-melix-tool-kind": tool_kind,
+                    "x-melix-observation-kind": observation_kind,
+                }
+            )
+        return tools
 
     def as_worker_tool_config(self) -> common_pb2.ToolConfig:
         if self._worker_tool_config_bytes:
