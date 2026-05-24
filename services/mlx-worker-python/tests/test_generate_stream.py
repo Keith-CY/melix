@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
@@ -9,7 +10,7 @@ from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime import mlx_text_runtime
-from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, RuntimeTokenEvent
+from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, RuntimeTokenEvent, RuntimeToolCallEvent
 
 
 class StreamingFakeBackend:
@@ -578,6 +579,169 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     usage = next(event.usage_delta for event in events if event.HasField("usage_delta"))
     assert usage.prompt_tokens == 5
     assert usage.completion_tokens == 2
+
+    structured_registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=StructuredStreamingBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    structured_runtime_service = WorkerRuntimeService(structured_registry)
+    structured_inference_service = WorkerInferenceService(structured_registry)
+    structured_handle = structured_runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    ).model_handle
+    structured_request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-generate-structured-receipts"),
+            model_handle=structured_handle,
+            ext={
+                "melix.compat.policy_receipt_json": (
+                    '{"reasoning_mode":"enabled","tool_choice_resolved":"required"}'
+                ),
+                "melix.reasoning.mode": "enabled",
+                "melix.tool_parser.mode": "qwen",
+            },
+            reasoning=common_pb2.ReasoningConfig(enabled=True),
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Use a tool")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+    structured_events = list(structured_inference_service.Generate(structured_request, context=None))
+    structured_completed = next(
+        event.completed for event in structured_events if event.HasField("completed")
+    )
+    token_route_receipt = json.loads(
+        structured_completed.parser_metrics["token_route_receipt_json"]
+    )
+
+    assert structured_completed.parser_metrics["generated_reasoning_delta_count"] == "1"
+    assert structured_completed.parser_metrics["generated_tool_call_delta_count"] == "1"
+    assert token_route_receipt["reasoning_mode"] == "enabled"
+    assert token_route_receipt["tool_choice_policy"] == "required"
+    assert token_route_receipt["visible_text_tokens"] == 1
+    assert token_route_receipt["hidden_reasoning_tokens"] == 1
+
+    class RuntimeToolEventBackend:
+        runtime_name = "fake-mlx"
+
+        def load_model(self, model_spec):
+            return {"model_id": model_spec.model_id}
+
+        def estimate_resident_bytes(self, model_spec):
+            _ = model_spec
+            return 2048
+
+        def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
+            _ = loaded_model
+            _ = prompt
+            _ = sampling
+            _ = cancel_event
+            yield RuntimeToolCallEvent(
+                call_id="call-native",
+                tool_name="lookup",
+                arguments_json_fragment='{"q":"native"}',
+            )
+            yield RuntimeTokenEvent(text="done", prompt_tokens=4, completion_tokens=1, finish_reason="stop")
+
+    native_tool_registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=RuntimeToolEventBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    native_tool_runtime_service = WorkerRuntimeService(native_tool_registry)
+    native_tool_inference_service = WorkerInferenceService(native_tool_registry)
+    native_tool_handle = native_tool_runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    ).model_handle
+    native_tool_request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-native-tool-event"),
+            model_handle=native_tool_handle,
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Call native tool")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+    native_tool_events = list(
+        native_tool_inference_service.Generate(native_tool_request, context=None)
+    )
+    native_tool_call = next(
+        event.tool_call_delta for event in native_tool_events if event.HasField("tool_call_delta")
+    )
+    native_tool_completed = next(
+        event.completed for event in native_tool_events if event.HasField("completed")
+    )
+
+    assert native_tool_call.tool_name == "lookup"
+    assert native_tool_call.arguments_json_fragment == '{"q":"native"}'
+    assert native_tool_completed.parser_metrics["generated_tool_call_delta_count"] == "1"
+    native_tool_receipt = json.loads(
+        native_tool_completed.parser_metrics["token_route_receipt_json"]
+    )
+    assert native_tool_receipt["route_tracking_enabled"] is True
+    assert native_tool_receipt["tool_choice_policy"] == "auto"
+
+    inactive_route_request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-inactive-route-receipt"),
+            model_handle=model_handle,
+            ext={"melix.response.created": "123"},
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Say hello")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+    inactive_events = list(inference_service.Generate(inactive_route_request, context=None))
+    inactive_completed = next(
+        event.completed for event in inactive_events if event.HasField("completed")
+    )
+    inactive_receipt = json.loads(
+        inactive_completed.parser_metrics["token_route_receipt_json"]
+    )
+    assert inactive_receipt["route_tracking_enabled"] is False
+    assert inactive_receipt["reasoning_mode"] == "disabled"
+    assert inactive_receipt["tool_choice_policy"] == "auto"
+    assert EngineCore._token_route_receipt(inactive_route_request, {}) is None
+    assert json.loads(
+        EngineCore._inactive_token_route_receipt_json(inactive_route_request, {})
+    ) == inactive_receipt
+    active_receipt = EngineCore._active_token_route_receipt(inactive_route_request)
+    assert active_receipt.enabled is True
+    assert json.loads(active_receipt.to_json())["route_tracking_enabled"] is True
+
+    class RuntimeWithBlockedAccelerationCache:
+        def __setattr__(self, name, value):
+            if name == "_melix_accepts_acceleration_policy":
+                raise RuntimeError("cache unavailable")
+
+        def generate_tokens(self, acceleration_policy=None):
+            return ()
+
+    blocked_runtime = RuntimeWithBlockedAccelerationCache()
+    assert engine_core_module._runtime_accepts_acceleration_policy(
+        blocked_runtime,
+        blocked_runtime.generate_tokens,
+    )
+    assert EngineCore._compat_policy_receipt({}) == {}
+    assert EngineCore._compat_policy_receipt({"melix.compat.policy_receipt_json": ""}) == {}
+    assert EngineCore._compat_policy_receipt({"melix.compat.policy_receipt_json": "{"}) == {}
+    assert EngineCore._compat_policy_receipt({"melix.compat.policy_receipt_json": "[]"}) == {}
 
 
 def test_generate_streams_reasoning_tool_and_content_channels_from_raw_text() -> None:

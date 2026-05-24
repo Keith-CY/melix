@@ -846,6 +846,258 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
+    @Test("POST /v1/chat/completions normalizes generation bounds stop and passthrough receipts")
+    func postChatCompletionsNormalizesGenerationBoundsStopAndPassthroughReceipts() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(requestID: "req-generation-receipts", seq: 1, finishReason: "stop", assistantText: "done"),
+        ])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-generation-receipts" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "Hello" }
+              ],
+              "max_tokens": 16,
+              "max_completion_tokens": 16,
+              "stop": "END",
+              "temperature": 0.25,
+              "top_p": 0.9,
+              "top_k": 42,
+              "min_p": 0.05,
+              "repeat_penalty": 1.15,
+              "presence_penalty": 0.2,
+              "seed": 123
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        _ = try await collectBody(response.body)
+        let request = try #require(await workerClient.lastGenerateRequest)
+        let receipt = request.execution.ext
+
+        #expect(response.statusCode == 200)
+        #expect(request.sampling.maxOutputTokens == 16)
+        #expect(request.sampling.stop == ["END"])
+        #expect(request.sampling.temperature == 0.25)
+        #expect(request.sampling.topP == 0.9)
+        #expect(request.sampling.topK == 42)
+        #expect(request.sampling.presencePenalty == 0.2)
+        #expect(request.sampling.seed == 123)
+        #expect(receipt["melix.generation.max_tokens_requested"] == "16")
+        #expect(receipt["melix.generation.max_tokens_effective"] == "16")
+        #expect(receipt["melix.generation.max_completion_tokens_requested"] == "16")
+        #expect(receipt["melix.generation.max_completion_tokens_effective"] == "16")
+        #expect(receipt["melix.generation.output_cap_source"] == "request_both_equal")
+        #expect(receipt["melix.generation.bounds_rejection_reason"] == "")
+        #expect(receipt["melix.generation.stop_requested"] == "END")
+        #expect(receipt["melix.generation.stop_effective"] == "END")
+        #expect(receipt["melix.generation.stop_source"] == "request")
+        #expect(receipt["melix.generation.temperature"] == "0.25")
+        #expect(receipt["melix.generation.top_p"] == "0.9")
+        #expect(receipt["melix.generation.top_k"] == "42")
+        #expect(receipt["melix.generation.min_p"] == "0.05")
+        #expect(receipt["melix.generation.repeat_penalty"] == "1.15")
+        #expect(receipt["melix.generation.presence_penalty"] == "0.2")
+        #expect(receipt["melix.generation.seed"] == "123")
+    }
+
+    @Test("POST /v1/chat/completions preserves generation receipts across non-stream aggregation")
+    func postChatCompletionsPreservesGenerationReceiptsAcrossNonStreamAggregation() async throws {
+        let catalog = ModelCatalog(seedModels: [warmModel()])
+        let workerClient = ScriptedWorkerClient(events: [
+            makeTokenEvent(requestID: "req-generation-non-stream", seq: 1, text: "done"),
+            makeCompletedEvent(requestID: "req-generation-non-stream", seq: 2, finishReason: "stop", assistantText: "done"),
+        ])
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-generation-non-stream" })
+        )
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": false,
+              "messages": [
+                { "role": "user", "content": "Hello" }
+              ],
+              "max_completion_tokens": 24,
+              "stop": ["END", "DONE"],
+              "temperature": 0,
+              "top_p": 1,
+              "top_k": 0
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        _ = try await jsonPayload(from: response.body)
+        let request = try #require(await workerClient.lastGenerateRequest)
+        let receipt = request.execution.ext
+
+        #expect(response.statusCode == 200)
+        #expect(request.stream)
+        #expect(request.sampling.maxOutputTokens == 24)
+        #expect(request.sampling.stop == ["END", "DONE"])
+        #expect(receipt["melix.generation.max_tokens_requested"] == "")
+        #expect(receipt["melix.generation.max_tokens_effective"] == "24")
+        #expect(receipt["melix.generation.max_completion_tokens_requested"] == "24")
+        #expect(receipt["melix.generation.max_completion_tokens_effective"] == "24")
+        #expect(receipt["melix.generation.output_cap_source"] == "request_max_completion_tokens")
+        #expect(receipt["melix.generation.stop_requested"] == #"["END","DONE"]"#)
+        #expect(receipt["melix.generation.stop_effective"] == #"["END","DONE"]"#)
+        #expect(receipt["melix.generation.stop_source"] == "request")
+    }
+
+    @Test(
+        "POST /v1/chat/completions rejects malformed generation bounds with typed errors",
+        arguments: [
+            (#""max_tokens": 0"#, "max_tokens_non_positive"),
+            (#""max_tokens": -1"#, "max_tokens_non_positive"),
+            (#""max_tokens": "many""#, "max_tokens_malformed"),
+            (#""max_tokens": 1e999"#, "max_tokens_non_finite"),
+            (#""max_tokens": 16, "max_completion_tokens": 24"#, "output_cap_conflict"),
+        ]
+    )
+    func postChatCompletionsRejectsMalformedGenerationBounds(
+        boundsJSON: String,
+        expectedReason: String
+    ) async throws {
+        let workerClient = ScriptedWorkerClient(events: [])
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            )
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "messages": [
+                { "role": "user", "content": "Hello" }
+              ],
+              \(boundsJSON)
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+
+        #expect(response.statusCode == 400)
+        #expect(error["code"] as? String == "invalid_generation_bounds")
+        #expect(error["bounds_rejection_reason"] as? String == expectedReason)
+        #expect(await workerClient.lastGenerateRequest == nil)
+    }
+
+    @Test(
+        "text compatibility routes reject malformed generation bounds before dispatch",
+        arguments: [
+            (
+                "/v1/completions",
+                #"{"model":"melix-dev-text","stream":true,"prompt":"hello","max_tokens":0}"#,
+                "max_tokens_non_positive"
+            ),
+            (
+                "/v1/responses",
+                #"{"model":"melix-dev-text","stream":true,"input":"hello","max_completion_tokens":"many"}"#,
+                "max_completion_tokens_malformed"
+            ),
+            (
+                "/v1/completions",
+                #"{"model":"melix-dev-text","stream":true,"prompt":"hello","max_completion_tokens":Infinity}"#,
+                "max_completion_tokens_non_finite"
+            ),
+            (
+                "/v1/responses",
+                #"{"model":"melix-dev-text","stream":true,"input":"hello","max_tokens":8,"max_completion_tokens":9,}"#,
+                "output_cap_conflict"
+            ),
+            (
+                "/v1/messages",
+                #"{"model":"melix-dev-text","stream":true,"messages":[{"role":"user","content":"hello"}],"max_tokens":1.5,}"#,
+                "max_tokens_malformed"
+            ),
+            (
+                "/v1/messages",
+                #"{"model":"melix-dev-text","stream":true,"messages":[{"role":"user","content":"hello"}],"max_tokens":8,"max_completion_tokens":9}"#,
+                "output_cap_conflict"
+            ),
+        ]
+    )
+    func textCompatibilityRoutesRejectMalformedGenerationBounds(
+        path: String,
+        bodyJSON: String,
+        expectedReason: String
+    ) async throws {
+        let workerClient = ScriptedWorkerClient(events: [])
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            )
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: path,
+                headers: ["content-type": "application/json"],
+                body: Data(bodyJSON.utf8)
+            )
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+
+        #expect(response.statusCode == 400)
+        #expect(error["code"] as? String == "invalid_generation_bounds")
+        #expect(error["bounds_rejection_reason"] as? String == expectedReason)
+        #expect(await workerClient.lastGenerateRequest == nil)
+    }
+
     @Test("POST /v1/chat/completions routes by payload model within the active server roster")
     func postChatCompletionsRoutesByPayloadModelWithinActiveServerRoster() async throws {
         var primary = ModelCatalog.devTextModel()
@@ -3163,6 +3415,82 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"delta\":{\"thinking\":\"trace\",\"type\":\"thinking_delta\"}"))
         #expect(payload.contains("\"stop_reason\":\"end_turn\""))
         #expect(payload.contains("\"content\":[{\"thinking\":\"trace\",\"type\":\"thinking\"},{\"text\":\"done\",\"type\":\"text\"}]"))
+    }
+
+    @Test(
+        "text compatibility routes normalize generation receipts",
+        arguments: [
+            (
+                "completions",
+                "/v1/completions",
+                #"{"model":"melix-dev-text","stream":true,"prompt":"hello","max_completion_tokens":11,"stop":"END","top_k":7,"presence_penalty":0.1,"seed":77}"#,
+                UInt32(11),
+                "request_max_completion_tokens",
+                ["END"],
+                "END"
+            ),
+            (
+                "responses",
+                "/v1/responses",
+                #"{"model":"melix-dev-text","stream":true,"input":"hello","max_tokens":12,"max_completion_tokens":12,"stop":["END","DONE"],"top_k":8,"presence_penalty":0.2,"seed":78}"#,
+                UInt32(12),
+                "request_both_equal",
+                ["END", "DONE"],
+                #"["END","DONE"]"#
+            ),
+            (
+                "messages",
+                "/v1/messages",
+                #"{"model":"melix-dev-text","stream":true,"messages":[{"role":"user","content":"hello"}],"max_tokens":13,"stop_sequences":["END"],"top_k":9,"presence_penalty":0.3,"seed":79}"#,
+                UInt32(13),
+                "request_max_tokens",
+                ["END"],
+                "END"
+            ),
+        ]
+    )
+    func textCompatibilityRoutesNormalizeGenerationReceipts(
+        routeName: String,
+        path: String,
+        bodyJSON: String,
+        expectedCap: UInt32,
+        expectedSource: String,
+        expectedStop: [String],
+        expectedStopReceipt: String
+    ) async throws {
+        let requestID = "req-generation-\(routeName)"
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(requestID: requestID, seq: 1, finishReason: "stop", assistantText: "done"),
+        ])
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { requestID })
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: path,
+                headers: ["content-type": "application/json"],
+                body: Data(bodyJSON.utf8)
+            )
+        )
+        _ = try await collectBody(response.body)
+        let request = try #require(await workerClient.lastGenerateRequest)
+        let receipt = request.execution.ext
+
+        #expect(response.statusCode == 200)
+        #expect(request.sampling.maxOutputTokens == expectedCap)
+        #expect(request.sampling.stop == expectedStop)
+        #expect(receipt["melix.generation.max_tokens_effective"] == "\(expectedCap)")
+        #expect(receipt["melix.generation.max_completion_tokens_effective"] == "\(expectedCap)")
+        #expect(receipt["melix.generation.output_cap_source"] == expectedSource)
+        #expect(receipt["melix.generation.stop_effective"] == expectedStopReceipt)
+        #expect(receipt["melix.generation.stop_source"] == "request")
     }
 
     @Test("POST /v1/responses forwards reasoning and tool delta events")
@@ -8402,6 +8730,207 @@ struct OpenAIHandlerTests {
         #expect(message["content"] as? String == "Hello")
     }
 
+    @Test("chat stream and non-stream requests emit the same compatibility policy receipt shape")
+    func chatStreamAndNonStreamRequestsEmitSameCompatibilityPolicyReceiptShape() async throws {
+        let streamWorkerClient = ScriptedWorkerClient(events: [
+            makeTokenEvent(requestID: "req-compat-stream", seq: 1, text: "{}"),
+            makeCompletedEvent(requestID: "req-compat-stream", seq: 2, finishReason: "stop", assistantText: "{}"),
+        ])
+        let nonStreamWorkerClient = ScriptedWorkerClient(events: [
+            makeTokenEvent(requestID: "req-compat-non-stream", seq: 1, text: "{}"),
+            makeCompletedEvent(requestID: "req-compat-non-stream", seq: 2, finishReason: "stop", assistantText: "{}"),
+        ])
+        let streamHandler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: streamWorkerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-compat-stream" })
+        )
+        let nonStreamHandler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: nonStreamWorkerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-compat-non-stream" })
+        )
+        let streamBody = try #require(compatPolicyChatBody(stream: true))
+        let nonStreamBody = try #require(compatPolicyChatBody(stream: false))
+
+        let streamResponse = try await streamHandler.handle(
+            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: streamBody)
+        )
+        let nonStreamResponse = try await nonStreamHandler.handle(
+            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: nonStreamBody)
+        )
+        _ = try await collectBody(streamResponse.body)
+        _ = try await collectBody(nonStreamResponse.body)
+        let streamExt = try #require(await streamWorkerClient.lastGenerateRequest?.execution.ext)
+        let nonStreamExt = try #require(await nonStreamWorkerClient.lastGenerateRequest?.execution.ext)
+        let streamReceipt = try #require(streamExt["melix.compat.policy_receipt_json"])
+        let nonStreamReceipt = try #require(nonStreamExt["melix.compat.policy_receipt_json"])
+        let streamReceiptFields = compatReceiptFieldNames(streamReceipt)
+        let nonStreamReceiptFields = compatReceiptFieldNames(nonStreamReceipt)
+
+        #expect(streamResponse.statusCode == 200)
+        #expect(nonStreamResponse.statusCode == 200)
+        #expect(streamExt["melix.compat.stream_mode"] == "stream")
+        #expect(nonStreamExt["melix.compat.stream_mode"] == "non_stream")
+        #expect(streamExt["melix.compat.compat_surface"] == "openai.chat.completions")
+        #expect(nonStreamExt["melix.compat.compat_surface"] == "openai.chat.completions")
+        #expect(streamExt["melix.compat.reasoning_mode"] == nonStreamExt["melix.compat.reasoning_mode"])
+        #expect(streamExt["melix.compat.reasoning_source"] == nonStreamExt["melix.compat.reasoning_source"])
+        #expect(streamExt["melix.compat.reasoning_effort"] == nonStreamExt["melix.compat.reasoning_effort"])
+        #expect(streamExt["melix.compat.tool_parser_mode"] == nonStreamExt["melix.compat.tool_parser_mode"])
+        #expect(streamExt["melix.compat.tool_parser_source"] == nonStreamExt["melix.compat.tool_parser_source"])
+        #expect(streamExt["melix.compat.tool_namespaces"] == nonStreamExt["melix.compat.tool_namespaces"])
+        #expect(streamExt["melix.compat.tool_choice_requested"] == nonStreamExt["melix.compat.tool_choice_requested"])
+        #expect(streamExt["melix.compat.tool_choice_resolved"] == nonStreamExt["melix.compat.tool_choice_resolved"])
+        #expect(streamExt["melix.compat.structured_output_mode"] == nonStreamExt["melix.compat.structured_output_mode"])
+        #expect(streamExt["melix.compat.output_modalities"] == nonStreamExt["melix.compat.output_modalities"])
+        #expect(streamExt["melix.compat.effective_config_hash"]?.isEmpty == false)
+        #expect(nonStreamExt["melix.compat.effective_config_hash"]?.isEmpty == false)
+        #expect(streamExt["melix.compat.effective_config_hash"] != nonStreamExt["melix.compat.effective_config_hash"])
+        #expect(streamReceiptFields == nonStreamReceiptFields)
+    }
+
+    @Test("non-stream chat rejects over-budget prompts before worker generation")
+    func nonStreamChatRejectsOverBudgetPromptsBeforeWorkerGeneration() async throws {
+        let workerClient = ScriptedWorkerClient(events: [])
+        var model = warmModel()
+        model.maxContext = 8
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [model]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-over-budget-non-stream" })
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": false,
+              "max_tokens": 4,
+              "messages": [
+                { "role": "user", "content": "one two three four five six seven eight nine ten eleven twelve" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+        let metadata = try #require(error["prompt_token_metadata"] as? [String: Any])
+
+        #expect(response.statusCode == 400)
+        #expect(error["code"] as? String == "prompt_budget_exceeded")
+        #expect(error["status"] as? String == "invalid_request_error")
+        #expect(metadata["max_prompt_tokens_requested"] as? Int == 4)
+        #expect(metadata["max_prompt_tokens_effective"] as? Int == 4)
+        #expect(metadata["prompt_tokens_estimated"] as? Int == 12)
+        #expect(metadata["context_window_tokens"] as? Int == 8)
+        #expect(metadata["output_cap_tokens"] as? Int == 4)
+        #expect(metadata["admission_phase"] as? String == "prompt_budget")
+        #expect(metadata["prefill_started"] as? Bool == false)
+        #expect(await workerClient.lastGenerateRequest == nil)
+        #expect(await workerClient.lastPrefillRequest == nil)
+        #expect(await workerClient.lastDecodeRequest == nil)
+    }
+
+    @Test("stream chat rejects over-budget prompts before first SSE data chunk")
+    func streamChatRejectsOverBudgetPromptsBeforeFirstSSEDataChunk() async throws {
+        let workerClient = ScriptedWorkerClient(events: [])
+        var model = warmModel()
+        model.maxContext = 8
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [model]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-over-budget-stream" })
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": true,
+              "max_tokens": 4,
+              "messages": [
+                { "role": "user", "content": "one two three four five six seven eight nine ten eleven twelve" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+        let metadata = try #require(error["prompt_token_metadata"] as? [String: Any])
+
+        #expect(response.statusCode == 400)
+        #expect(response.headers["content-type"] == "application/json")
+        #expect(error["code"] as? String == "prompt_budget_exceeded")
+        #expect(metadata["prompt_tokens_estimated"] as? Int == 12)
+        #expect(metadata["prefill_started"] as? Bool == false)
+        if case .stream = response.body {
+            Issue.record("Stream over-budget rejection must not return an SSE body.")
+        }
+        #expect(await workerClient.lastGenerateRequest == nil)
+        #expect(await workerClient.lastPrefillRequest == nil)
+        #expect(await workerClient.lastDecodeRequest == nil)
+    }
+
+    @Test("max completion tokens remains an output cap in prompt budget admission")
+    func maxCompletionTokensRemainsAnOutputCapInPromptBudgetAdmission() async throws {
+        let workerClient = ScriptedWorkerClient(events: [])
+        var model = warmModel()
+        model.maxContext = 8
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [model]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-over-budget-max-completion" })
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": false,
+              "max_completion_tokens": 4,
+              "messages": [
+                { "role": "user", "content": "one two three four five" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+        let metadata = try #require(error["prompt_token_metadata"] as? [String: Any])
+
+        #expect(response.statusCode == 400)
+        #expect(error["code"] as? String == "prompt_budget_exceeded")
+        #expect(metadata["prompt_tokens_estimated"] as? Int == 5)
+        #expect(metadata["max_prompt_tokens_effective"] as? Int == 4)
+        #expect(metadata["output_cap_tokens"] as? Int == 4)
+        #expect(await workerClient.lastGenerateRequest == nil)
+    }
+
     @Test("chat requests return 409 when the model is not ready")
     func modelNotReadyReturns409() async throws {
         let handler = OpenAIHandler(
@@ -9662,6 +10191,48 @@ private func jsonObject(from body: HTTPBody) async throws -> (errorCode: String,
 private func jsonPayload(from body: HTTPBody) async throws -> [String: Any] {
     let data = try await collectBodyData(body)
     return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+}
+
+private func compatPolicyChatBody(stream: Bool) -> Data? {
+    """
+    {
+      "model": "melix-dev-text",
+      "stream": \(stream ? "true" : "false"),
+      "enable_thinking": true,
+      "reasoning_effort": "low",
+      "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+          "name": "answer",
+          "schema": { "type": "object" },
+          "strict": true
+        }
+      },
+      "tool_parser": {
+        "mode": "qwen",
+        "namespaces": ["tools.search"]
+      },
+      "tool_choice": "required",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "search",
+            "description": "Search documents",
+            "parameters": { "type": "object" }
+          }
+        }
+      ],
+      "messages": [
+        { "role": "user", "content": "Call a tool and answer as JSON." }
+      ]
+    }
+    """.data(using: .utf8)
+}
+
+private func compatReceiptFieldNames(_ receipt: String) -> Set<String> {
+    let object = (try? JSONSerialization.jsonObject(with: Data(receipt.utf8)) as? [String: Any]) ?? [:]
+    return Set(object.keys)
 }
 
 private final class TestNowUnixMSSequence: @unchecked Sendable {

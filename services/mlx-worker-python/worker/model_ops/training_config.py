@@ -21,6 +21,14 @@ from worker.model_ops.release_compare_policy import (
     ReleaseCompareBundlePolicy,
     resolve_release_compare_bundle_policy,
 )
+from worker.model_ops.training_receipts import (
+    build_training_planner_receipt,
+    eval_batch_size_receipt,
+    grad_clip_policy_receipt,
+    resolved_bounds_receipt,
+    scheduler_kwargs_omitted_receipt,
+    typed_validation_details,
+)
 
 
 @dataclass(frozen=True)
@@ -77,6 +85,11 @@ class LoRATrainingConfig:
     target_repo: str
     chunked_training: bool
     chunk_size: int
+    resolved_bounds: dict[str, dict[str, object]] = field(default_factory=dict)
+    grad_clip_policy: dict[str, object] = field(default_factory=dict)
+    eval_batch_size: dict[str, object] = field(default_factory=dict)
+    scheduler_kwargs_omitted: dict[str, object] = field(default_factory=dict)
+    training_planner_receipt: dict[str, object] = field(default_factory=dict)
     training_objective: str = "supervised_finetuning"
     adapter_algorithm: str = "lora"
     adapter_family: str = "lora"
@@ -530,7 +543,12 @@ def normalize_training_config(
 
     gradient_checkpointing = _bool_value(
         ext.get("gradient_checkpointing", ""),
-        default=bool(preset.get("gradient_checkpointing", False)),
+        default=bool(
+            preset.get(
+                "gradient_checkpointing",
+                training_mode == "qlora",
+            )
+        ),
     )
     gradient_accumulation = _int_value(
         ext.get("gradient_accumulation", ""),
@@ -563,7 +581,7 @@ def normalize_training_config(
         _int_value(
             max_steps_raw,
             default=0,
-            minimum=1,
+            minimum=0,
             field_name="max_steps",
         )
         if max_steps_raw
@@ -629,6 +647,59 @@ def normalize_training_config(
             field_name=field_name,
         ),
     )
+    resolved_bounds = resolved_bounds_receipt(
+        ext,
+        max_steps=max_steps,
+        batch_size=batch_size,
+        sample_count=sample_count,
+        num_layers=num_layers,
+        total_layer_count=total_layer_count,
+    )
+    grad_clip_policy = grad_clip_policy_receipt(
+        ext,
+        float_value=lambda raw_value, default, minimum, field_name: _float_value(
+            raw_value,
+            default=default,
+            minimum=minimum,
+            field_name=field_name,
+        ),
+    )
+    eval_batch_size = eval_batch_size_receipt(
+        ext,
+        validation_sample_count=validation_sample_count,
+        int_value=lambda raw_value, default, minimum, field_name: _int_value(
+            raw_value,
+            default=default,
+            minimum=minimum,
+            field_name=field_name,
+        ),
+    )
+    scheduler_kwargs_omitted = scheduler_kwargs_omitted_receipt(ext)
+    training_planner_receipt = build_training_planner_receipt(
+        ext=ext,
+        training_mode=training_mode,
+        quantization_mode=quantization_mode,
+        batch_size=batch_size,
+        gradient_accumulation=gradient_accumulation,
+        max_seq_length=max_seq_length,
+        chunked_training=chunked_training,
+        chunk_size=chunk_size,
+        gradient_checkpointing=gradient_checkpointing,
+        validation_sample_count=validation_sample_count,
+        int_value=lambda raw_value, default, minimum, field_name: _int_value(
+            raw_value,
+            default=default,
+            minimum=minimum,
+            field_name=field_name,
+        ),
+        float_value=lambda raw_value, default, minimum, field_name: _float_value(
+            raw_value,
+            default=default,
+            minimum=minimum,
+            field_name=field_name,
+        ),
+        bool_value=lambda raw_value, default: _bool_value(raw_value, default=default),
+    )
 
     return LoRATrainingConfig(
         training_mode=training_mode,
@@ -671,6 +742,11 @@ def normalize_training_config(
         target_repo=ext.get("target_repo", "").strip(),
         chunked_training=chunked_training,
         chunk_size=chunk_size,
+        resolved_bounds=resolved_bounds,
+        grad_clip_policy=grad_clip_policy,
+        eval_batch_size=eval_batch_size,
+        scheduler_kwargs_omitted=scheduler_kwargs_omitted,
+        training_planner_receipt=training_planner_receipt,
         training_objective=mode_contract["training_objective"],
         adapter_algorithm=adapter_record.adapter_algorithm,
         adapter_family=adapter_record.adapter_family,
@@ -1295,13 +1371,24 @@ def _int_value(raw_value: str, *, default: int, minimum: int, field_name: str) -
         raise ModelOperationError(
             code="invalid_argument",
             message=f"{field_name} must be an integer.",
-            details={"field": field_name, "raw_value": str(raw_value)},
+            details=typed_validation_details(
+                field_name=field_name,
+                reason="invalid_integer",
+                received=str(raw_value),
+                minimum=minimum,
+                include_raw_value=True,
+            ),
         ) from exc
     if value < minimum:
         raise ModelOperationError(
             code="invalid_argument",
             message=f"{field_name} must be at least {minimum}.",
-            details={"field": field_name, "minimum": str(minimum)},
+            details=typed_validation_details(
+                field_name=field_name,
+                reason="below_minimum",
+                received=str(value),
+                minimum=minimum,
+            ),
         )
     return value
 
@@ -1313,13 +1400,24 @@ def _float_value(raw_value: str, *, default: float, minimum: float, field_name: 
         raise ModelOperationError(
             code="invalid_argument",
             message=f"{field_name} must be a number.",
-            details={"field": field_name, "raw_value": str(raw_value)},
+            details=typed_validation_details(
+                field_name=field_name,
+                reason="invalid_number",
+                received=str(raw_value),
+                minimum=minimum,
+                include_raw_value=True,
+            ),
         ) from exc
     if value < minimum:
         raise ModelOperationError(
             code="invalid_argument",
             message=f"{field_name} must be at least {minimum}.",
-            details={"field": field_name, "minimum": str(minimum)},
+            details=typed_validation_details(
+                field_name=field_name,
+                reason="below_minimum",
+                received=str(value),
+                minimum=minimum,
+            ),
         )
     return value
 
