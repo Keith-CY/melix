@@ -31,12 +31,15 @@ def apply() -> bool:
         logger.debug("mlx_lm.models.cache not importable; skipping rollback_state")
         return False
 
-    if hasattr(ArraysCache, "rollback_state") and not hasattr(
-        ArraysCache, "_omlx_rollback_attached"
-    ):
-        # Upstream may have added it natively (e.g. once PR 990 lands).
+    if hasattr(ArraysCache, "_omlx_rollback_attached"):
+        # Already patched (class attr persists across module reload).
         _PATCHED = True
+        return True
+
+    if hasattr(ArraysCache, "rollback_state"):
+        # Upstream added it natively (e.g. once PR 990 lands); adopt without patching.
         ArraysCache._omlx_rollback_attached = "upstream"
+        _PATCHED = True
         return True
 
     ArraysCache.rollback_state = None

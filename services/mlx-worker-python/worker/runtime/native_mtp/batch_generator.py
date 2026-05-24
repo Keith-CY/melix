@@ -982,10 +982,13 @@ def _run_verify_cycle(gen_batch: Any, state: _MtpState) -> None:
     if is_greedy:
         accept = verify_id == draft_id
     else:
-        log_accept = (
+        log_accept_raw = (
             verify_accept_lp[0, draft_id].item()
             - draft_accept_lp[draft_id].item()
         )
+        # -inf - -inf = NaN (IEEE 754) when the draft token has zero probability
+        # under both distributions. Treat NaN as -inf → reject.
+        log_accept = log_accept_raw if not math.isnan(log_accept_raw) else float("-inf")
         # Draw the acceptance roll from mx.random so it follows the same
         # mx.random.seed the rest of the sampler uses (line ~962 residual
         # sampling). stdlib ``random`` was never seeded by Melix, which made
