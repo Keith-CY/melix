@@ -244,9 +244,39 @@ def test_trainability_preflight_blocks_quantized_embedding_targets_with_operator
     receipt = result.receipt
 
     assert receipt["status"] == "blocked"
-    assert "unsupported_lora_target_module" in _blocked_codes(receipt)
-    assert _operator_codes(receipt) == ["unsupported_lora_target_module"]
+    assert "unsafe_quantized_lora_target" in _blocked_codes(receipt)
+    assert _operator_codes(receipt) == ["unsafe_quantized_lora_target"]
+    assert (
+        receipt["operator_errors"][0]["remediation"]  # type: ignore[index]
+        == "Choose non-embedding LoRA target modules for quantized base models."
+    )
     assert receipt["operator_errors"][0]["details"]["unsupported_target_class"] == "embedding_or_head"  # type: ignore[index]
+
+
+def test_trainability_preflight_blocks_quantized_full_finetuning_with_operator_remediation() -> None:
+    result = evaluate_trainability_preflight(
+        source_model=_text_model(
+            model_path="mlx-community/gemma-MLX-8bit",
+            quant_profile_id="8bit",
+        ),
+        request_ext={"training_mode": "full_finetune"},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+        validation_sample_count=0,
+    )
+
+    receipt = result.receipt
+
+    assert result.config is None
+    assert receipt["status"] == "blocked"
+    assert "unsupported_full_finetune_quantized_base" in _blocked_codes(receipt)
+    assert _operator_codes(receipt) == ["unsupported_full_finetune_quantized_base"]
+    assert (
+        receipt["operator_errors"][0]["remediation"]  # type: ignore[index]
+        == "Use LoRA or QLoRA for quantized bases, or switch to an unquantized base model."
+    )
+    assert receipt["operator_errors"][0]["details"]["training_mode"] == "full_finetune"  # type: ignore[index]
 
 
 def test_trainability_preflight_classifies_training_mode_family_and_dataset_errors() -> None:

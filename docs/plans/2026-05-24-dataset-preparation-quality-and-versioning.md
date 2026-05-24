@@ -82,6 +82,8 @@ The ingest receipt schema is `melix.dataset_ingest_receipt.v1` and must include:
 
 - `workspace_project_id`
 - `workspace_manifest_path`
+- `workspace_preflight_receipt_path`
+- `workspace_preflight_receipt`
 - `dataset_preparation_id`
 - `source_inventory`
 - `cleaning_controls`
@@ -103,6 +105,7 @@ The receipt metrics are:
 - `fuzzy_dedup_count`
 - `fuzzy_dedup_ratio`
 - `segmentation_latency_ms`
+- `workspace_preflight_status`
 
 Operator failures must be typed and explainable without raw logs. Required
 failure codes are:
@@ -114,6 +117,15 @@ failure codes are:
 - `DATASET_INGEST_DEDUP_POLICY_INVALID`
 - `DATASET_INGEST_SEGMENTATION_POLICY_INVALID`
 - `DATASET_INGEST_UNSAFE_PATH`
+- workspace preflight blocker codes forwarded from
+  `melix.workspace_preflight_receipt.v1`, such as `WORKSPACE_ROOT_MISSING`,
+  when the manifest is not ready.
+
+Ingest must call workspace preflight before reading or segmenting source files.
+If preflight returns `blocked`, ingest writes the workspace preflight receipt
+next to the ingest receipt, returns `status: blocked`, leaves
+`source_inventory` empty, preserves the requested cleaning and segmentation
+policy in the receipt, and does not write `segments.jsonl`.
 
 ## U1.2.2 Dataset Versions, Retry, And Quality
 
@@ -311,8 +323,9 @@ reads version manifests from the dataset root, sorts by `created_at` and
 `melix dataset prepare version`, `retry-failed`, and `list-versions`, plus
 Desktop decoders for dataset version, retry receipt, and quality summary states.
 Report evidence consumes the same schema-backed paths by rendering
-`dataset_version_path`, `dataset_quality_summary_path`, and
-`dataset_ingest_receipt_path` artifact rows when they appear in run evidence.
+`dataset_version_path`, `dataset_quality_summary_path`,
+`dataset_ingest_receipt_path`, and `workspace_preflight_receipt_path` artifact
+rows when they appear in run evidence.
 
 #1496 is complete when:
 

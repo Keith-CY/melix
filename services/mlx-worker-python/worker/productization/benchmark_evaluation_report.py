@@ -1555,10 +1555,27 @@ def _default_artifacts(evidence_rows: tuple[dict[str, object], ...]) -> dict[str
     raw_output_paths: list[str] = []
     telemetry_paths: list[str] = []
     probe_paths: list[str] = []
+    dataset_artifact_kinds = {
+        "dataset_ingest_receipt": "dataset_ingest_receipt_path",
+        "dataset_version": "dataset_version_path",
+        "dataset_quality_summary": "dataset_quality_summary_path",
+        "workspace_preflight_receipt": "workspace_preflight_receipt_path",
+    }
+    dataset_artifact_fields = frozenset(dataset_artifact_kinds.values())
+    dataset_artifact_paths = dict.fromkeys(dataset_artifact_fields, "")
+    missing_dataset_artifact_fields = set(dataset_artifact_fields)
     for evidence in evidence_rows:
         artifact_root = str(evidence.get("artifact_root") or "")
         if artifact_root:
             raw_output_paths.append(artifact_root)
+        if missing_dataset_artifact_fields:
+            for artifact_field in tuple(missing_dataset_artifact_fields):
+                raw_path = evidence.get(artifact_field)
+                if not raw_path:
+                    continue
+                artifact_path = str(raw_path)
+                dataset_artifact_paths[artifact_field] = artifact_path
+                missing_dataset_artifact_fields.discard(artifact_field)
         telemetry = evidence.get("telemetry_summary")
         if isinstance(telemetry, dict):
             time_series_path = str(telemetry.get("time_series_path") or "")
@@ -1571,6 +1588,13 @@ def _default_artifacts(evidence_rows: tuple[dict[str, object], ...]) -> dict[str
                 raw_output_paths.append(artifact_path)
             if artifact_kind == "probe_timeline" and artifact_path:
                 probe_paths.append(artifact_path)
+            if missing_dataset_artifact_fields:
+                artifact_field = dataset_artifact_kinds.get(artifact_kind)
+            else:
+                artifact_field = None
+            if artifact_field and artifact_path:
+                dataset_artifact_paths[artifact_field] = artifact_path
+                missing_dataset_artifact_fields.discard(artifact_field)
     return {
         "evidence_json_path": "",
         "report_json_path": "",
@@ -1582,6 +1606,10 @@ def _default_artifacts(evidence_rows: tuple[dict[str, object], ...]) -> dict[str
         "logs_path": "",
         "screenshots_path": "",
         "coverage_path": "",
+        "dataset_ingest_receipt_path": dataset_artifact_paths.get("dataset_ingest_receipt_path", ""),
+        "dataset_version_path": dataset_artifact_paths.get("dataset_version_path", ""),
+        "dataset_quality_summary_path": dataset_artifact_paths.get("dataset_quality_summary_path", ""),
+        "workspace_preflight_receipt_path": dataset_artifact_paths.get("workspace_preflight_receipt_path", ""),
     }
 
 
@@ -2149,6 +2177,10 @@ def _render_artifacts_markdown(artifacts: object) -> list[str]:
         ("Markdown", artifacts.get("markdown_report_path")),
         ("Probe Timeline", artifacts.get("probe_timeline_path")),
         ("Telemetry JSONL", artifacts.get("telemetry_jsonl_path")),
+        ("Workspace Preflight Receipt", artifacts.get("workspace_preflight_receipt_path")),
+        ("Dataset Ingest Receipt", artifacts.get("dataset_ingest_receipt_path")),
+        ("Dataset Version", artifacts.get("dataset_version_path")),
+        ("Dataset Quality Summary", artifacts.get("dataset_quality_summary_path")),
         ("Coverage", artifacts.get("coverage_path")),
     ]
     csv_paths = artifacts.get("csv_export_paths")
