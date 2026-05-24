@@ -4,7 +4,7 @@
 
 Optimize the Python embedding response build path in `services/mlx-worker-python/worker/engine/embedding_core.py`.
 
-This slice is intentionally limited to replacing the intermediate Python list of `Embedding` messages with direct protobuf repeated-field appends. The runtime input forwarding behavior stays unchanged: `request.inputs` is still passed through to the embedding runtime without list materialization.
+This slice is intentionally limited to binding the protobuf repeated-field `add` method once while building the embedding response. The response still appends directly to the repeated field, and runtime input forwarding stays unchanged: `request.inputs` is still passed through to the embedding runtime without list materialization.
 
 ## Registered Probe
 

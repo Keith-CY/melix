@@ -35,7 +35,7 @@ class EmbeddingCore:
             )
 
         response = inference_pb2.EmbedResponse()
+        add_embedding = response.embeddings.add
         for values in vectors:
-            embedding = response.embeddings.add()
-            embedding.values.extend(values)
+            add_embedding().values.extend(values)
         return response
