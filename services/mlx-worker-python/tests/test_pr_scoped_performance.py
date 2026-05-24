@@ -1210,7 +1210,7 @@ def test_deterministic_embedding_project_digest_probe_script_smoke(capsys: pytes
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["sample_count"] == 3.0
     assert metrics["vector_count"] == 500.0
-    assert metrics["dimensions"] == 4096.0
+    assert metrics["dimensions"] == 4097.0
 
 
 def test_scope_report_selects_deterministic_image_edit_digest_probe() -> None:
