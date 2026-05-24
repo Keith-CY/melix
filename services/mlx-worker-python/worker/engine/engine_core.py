@@ -249,6 +249,8 @@ class EngineCore:
                     )
                 else:
                     stream_fragment = StreamFragment(runtime_event.text, runtime_event.raw_text)
+                if token_route_receipt is not None and runtime_event.token_ids:
+                    token_route_receipt.append_token_ids(runtime_event.token_ids)
                 for delta in accept_stream_fragment(stream_fragment):
                     if delta.reasoning_text:
                         generated_reasoning_delta_count += 1
@@ -294,6 +296,7 @@ class EngineCore:
                             token_route_receipt.record_span(
                                 channel="visible_text",
                                 channel_source="raw_text",
+                                consume_all_available=True,
                             )
                         if track_usage:
                             completion_token_count += 1
