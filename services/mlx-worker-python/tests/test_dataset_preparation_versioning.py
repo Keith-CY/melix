@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import sys
 
+import pytest
+
 from worker.productization.dataset_preparation import (
     DatasetIngestRequest,
     DatasetRetryFailedRequest,
@@ -19,6 +21,10 @@ ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS_DIR = ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
+WORKSPACE_FIXTURE = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures/workspace/m-courtyard-smoke.dev.v1/workspace-manifest.json"
+)
 
 
 def test_dataset_version_writes_schema_backed_package_and_quality_summary(
@@ -27,10 +33,11 @@ def test_dataset_version_writes_schema_backed_package_and_quality_summary(
     ingest_receipt = _prepare_ingest_fixture(tmp_path)
     segment_ids = _segment_ids_from_receipt(ingest_receipt)
     output_root = tmp_path / "datasets"
+    manifest_path = Path(str(ingest_receipt["workspace_manifest_path"]))
 
     version = prepare_dataset_version(
         DatasetVersionRequest(
-            workspace_manifest_path=tmp_path / "workspace-manifest.json",
+            workspace_manifest_path=manifest_path,
             ingest_receipt_path=Path(ingest_receipt["segment_artifacts"]["receipt_path"]),
             output_root=output_root,
             dataset_id="support-chat",
@@ -104,19 +111,53 @@ def test_dataset_version_writes_schema_backed_package_and_quality_summary(
     assert quality["metrics"]["quality_scoring_latency_ms"] >= 0
 
 
+def test_dataset_version_rejects_blocked_workspace_preflight_receipt_before_reading_segments(
+    tmp_path: Path,
+) -> None:
+    input_root = tmp_path / "raw-inputs"
+    output_root = tmp_path / "prepared"
+    input_root.mkdir()
+    (input_root / "notes.txt").write_text("This source should not be segmented.\n", encoding="utf-8")
+    manifest_path = _write_ready_workspace_manifest(tmp_path, skip_roots={"jobs"})
+    ingest_receipt = prepare_dataset_ingest(
+        DatasetIngestRequest(
+            workspace_project_id="m-courtyard-demo",
+            workspace_manifest_path=manifest_path,
+            input_path=input_root,
+            output_dir=output_root,
+            dataset_preparation_id="prep-workspace-blocked",
+        )
+    )
+
+    with pytest.raises(ValueError) as exc:
+        prepare_dataset_version(
+            DatasetVersionRequest(
+                workspace_manifest_path=manifest_path,
+                ingest_receipt_path=Path(str(ingest_receipt["segment_artifacts"]["receipt_path"])),
+                output_root=tmp_path / "datasets",
+                dataset_id="support-chat",
+                version_id="support-chat-v1",
+            )
+        )
+
+    assert str(exc.value).startswith("DATASET_VERSION_SOURCE_RECEIPT_BLOCKED:")
+    assert "WORKSPACE_ROOT_MISSING" in str(exc.value)
+
+
 def test_dataset_version_listing_is_deterministic_and_reports_latency(
     tmp_path: Path,
 ) -> None:
     ingest_receipt = _prepare_ingest_fixture(tmp_path)
     output_root = tmp_path / "datasets"
     receipt_path = Path(ingest_receipt["segment_artifacts"]["receipt_path"])
+    manifest_path = Path(str(ingest_receipt["workspace_manifest_path"]))
     for version_id, created_at in [
         ("support-chat-v2", "2026-05-24T02:00:00Z"),
         ("support-chat-v1", "2026-05-24T01:00:00Z"),
     ]:
         prepare_dataset_version(
             DatasetVersionRequest(
-                workspace_manifest_path=tmp_path / "workspace-manifest.json",
+                workspace_manifest_path=manifest_path,
                 ingest_receipt_path=receipt_path,
                 output_root=output_root,
                 dataset_id="support-chat",
@@ -130,7 +171,7 @@ def test_dataset_version_listing_is_deterministic_and_reports_latency(
         )
 
     listing = list_dataset_versions(
-        workspace_manifest_path=tmp_path / "workspace-manifest.json",
+        workspace_manifest_path=manifest_path,
         output_root=output_root,
         dataset_id="support-chat",
     )
@@ -145,15 +186,64 @@ def test_dataset_version_listing_is_deterministic_and_reports_latency(
     assert listing["metrics"]["dataset_version_count"] == 2
 
 
+def test_dataset_version_listing_uses_scandir_without_path_glob(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    ingest_receipt = _prepare_ingest_fixture(tmp_path)
+    output_root = tmp_path / "datasets"
+    receipt_path = Path(ingest_receipt["segment_artifacts"]["receipt_path"])
+    prepare_dataset_version(
+        DatasetVersionRequest(
+            workspace_manifest_path=tmp_path / "workspace-manifest.json",
+            ingest_receipt_path=receipt_path,
+            output_root=output_root,
+            dataset_id="support-chat",
+            version_id="support-chat-v1",
+            created_at="2026-05-24T01:00:00Z",
+            mode="chat",
+            generator_model="melix.local.dataset-versioner.v1",
+            output_kind="training",
+            output_format="prompt_completion",
+        )
+    )
+
+    def fail_glob(self: Path, pattern: str):  # pragma: no cover - exercised only on regression
+        raise AssertionError(f"list_dataset_versions() should not allocate Path.glob({pattern!r})")
+
+    monkeypatch.setattr(Path, "glob", fail_glob)
+
+    listing = list_dataset_versions(
+        workspace_manifest_path=tmp_path / "workspace-manifest.json",
+        output_root=output_root,
+        dataset_id="support-chat",
+    )
+
+    assert [item["version_id"] for item in listing["versions"]] == ["support-chat-v1"]
+    assert listing["metrics"]["dataset_version_count"] == 1
+
+
+def test_dataset_version_listing_handles_missing_versions_root(tmp_path: Path) -> None:
+    listing = list_dataset_versions(
+        workspace_manifest_path=tmp_path / "workspace-manifest.json",
+        output_root=tmp_path / "datasets",
+        dataset_id="missing-dataset",
+    )
+
+    assert listing["versions"] == []
+    assert listing["metrics"]["dataset_version_count"] == 0
+
+
 def test_failed_only_retry_copies_successful_samples_without_rewriting(
     tmp_path: Path,
 ) -> None:
     ingest_receipt = _prepare_ingest_fixture(tmp_path)
     segment_ids = _segment_ids_from_receipt(ingest_receipt)
     output_root = tmp_path / "datasets"
+    manifest_path = Path(str(ingest_receipt["workspace_manifest_path"]))
     base_version = prepare_dataset_version(
         DatasetVersionRequest(
-            workspace_manifest_path=tmp_path / "workspace-manifest.json",
+            workspace_manifest_path=manifest_path,
             ingest_receipt_path=Path(ingest_receipt["segment_artifacts"]["receipt_path"]),
             output_root=output_root,
             dataset_id="support-chat",
@@ -171,7 +261,7 @@ def test_failed_only_retry_copies_successful_samples_without_rewriting(
 
     retry = retry_failed_dataset_version(
         DatasetRetryFailedRequest(
-            workspace_manifest_path=tmp_path / "workspace-manifest.json",
+            workspace_manifest_path=manifest_path,
             dataset_version_path=base_dir / "dataset-version.json",
             output_root=output_root,
             version_id="support-chat-v2",
@@ -210,6 +300,7 @@ def test_dataset_preparation_version_script_writes_version_retry_and_list_json(
     ingest_receipt = _prepare_ingest_fixture(tmp_path)
     segment_ids = _segment_ids_from_receipt(ingest_receipt)
     output_root = tmp_path / "datasets"
+    manifest_path = Path(str(ingest_receipt["workspace_manifest_path"]))
     version_output = tmp_path / "version-output.json"
     retry_output = tmp_path / "retry-output.json"
     list_output = tmp_path / "list-output.json"
@@ -218,7 +309,7 @@ def test_dataset_preparation_version_script_writes_version_retry_and_list_json(
         [
             "version",
             "--workspace-manifest",
-            str(tmp_path / "workspace-manifest.json"),
+            str(manifest_path),
             "--ingest-receipt",
             str(ingest_receipt["segment_artifacts"]["receipt_path"]),
             "--output-root",
@@ -251,7 +342,7 @@ def test_dataset_preparation_version_script_writes_version_retry_and_list_json(
         [
             "retry-failed",
             "--workspace-manifest",
-            str(tmp_path / "workspace-manifest.json"),
+            str(manifest_path),
             "--dataset-version",
             str(output_root / "support-chat" / "versions" / "support-chat-v1" / "dataset-version.json"),
             "--output-root",
@@ -272,7 +363,7 @@ def test_dataset_preparation_version_script_writes_version_retry_and_list_json(
         [
             "list-versions",
             "--workspace-manifest",
-            str(tmp_path / "workspace-manifest.json"),
+            str(manifest_path),
             "--output-root",
             str(output_root),
             "--dataset-id",
@@ -301,7 +392,7 @@ def _prepare_ingest_fixture(tmp_path: Path) -> dict[str, object]:
     return prepare_dataset_ingest(
         DatasetIngestRequest(
             workspace_project_id="m-courtyard-demo",
-            workspace_manifest_path=tmp_path / "workspace-manifest.json",
+            workspace_manifest_path=_write_ready_workspace_manifest(tmp_path),
             input_path=input_root,
             output_dir=output_root,
             dataset_preparation_id="prep-demo",
@@ -320,3 +411,32 @@ def _segment_ids_from_receipt(receipt: dict[str, object]) -> list[str]:
 
 def _jsonl_rows(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+def _write_ready_workspace_manifest(
+    tmp_path: Path,
+    *,
+    skip_roots: set[str] | None = None,
+) -> Path:
+    workspace_root = tmp_path / "workspace"
+    manifest = json.loads(WORKSPACE_FIXTURE.read_text(encoding="utf-8"))
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    manifest_path = workspace_root / "workspace-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    skip_roots = skip_roots or set()
+    root_paths = {
+        root["root_id"]: root["path"]
+        for root in manifest["artifact_roots"]
+        if root.get("path") and root["root_id"] not in skip_roots
+    }
+    for root_path in root_paths.values():
+        (workspace_root / root_path).mkdir(parents=True, exist_ok=True)
+    for artifact in manifest["artifacts"]:
+        root_path = root_paths.get(artifact["root_id"])
+        if root_path is None:
+            continue
+        artifact_path = workspace_root / root_path / artifact["relative_path"]
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_text(artifact["artifact_id"], encoding="utf-8")
+    return manifest_path

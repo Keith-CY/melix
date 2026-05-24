@@ -5,15 +5,19 @@ import csv
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 import re
 import time
 from pathlib import Path
 from typing import Any, Iterable
 
+from worker.productization.workspace_manifest import preflight_workspace
+
 
 DATASET_INGEST_RECEIPT_SCHEMA_VERSION = "melix.dataset_ingest_receipt.v1"
 DATASET_INGEST_RECEIPT_FILENAME = "dataset-ingest-receipt.json"
 DATASET_INGEST_SEGMENTS_FILENAME = "segments.jsonl"
+WORKSPACE_PREFLIGHT_RECEIPT_FILENAME = "workspace-preflight-receipt.json"
 DATASET_VERSION_SCHEMA_VERSION = "melix.dataset_version.v1"
 DATASET_QUALITY_SUMMARY_SCHEMA_VERSION = "melix.dataset_quality_summary.v1"
 DATASET_RETRY_RECEIPT_SCHEMA_VERSION = "melix.dataset_retry_receipt.v1"
@@ -67,12 +71,62 @@ class DatasetRetryFailedRequest:
 
 def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
     started = time.perf_counter()
-    segmentation_started = time.perf_counter()
     input_path = Path(request.input_path).expanduser().resolve()
     output_dir = Path(request.output_dir).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
     segments_path = output_dir / DATASET_INGEST_SEGMENTS_FILENAME
     receipt_path = output_dir / DATASET_INGEST_RECEIPT_FILENAME
+    workspace_preflight_receipt_path = output_dir / WORKSPACE_PREFLIGHT_RECEIPT_FILENAME
+    workspace_preflight_receipt = preflight_workspace(
+        Path(request.workspace_manifest_path).expanduser(),
+        receipt_output_path=workspace_preflight_receipt_path,
+    )
+    _write_json(workspace_preflight_receipt_path, workspace_preflight_receipt)
+
+    if workspace_preflight_receipt.get("status") != "ready":
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        operator_failures = _workspace_preflight_failures(workspace_preflight_receipt)
+        receipt = {
+            "schema_version": DATASET_INGEST_RECEIPT_SCHEMA_VERSION,
+            "status": "blocked",
+            "workspace_project_id": request.workspace_project_id,
+            "workspace_manifest_path": str(Path(request.workspace_manifest_path)),
+            "workspace_preflight_receipt_path": str(workspace_preflight_receipt_path),
+            "workspace_preflight_receipt": workspace_preflight_receipt,
+            "dataset_preparation_id": request.dataset_preparation_id,
+            "source_inventory": [],
+            "cleaning_controls": _cleaning_controls(request),
+            "segmentation_policy": _segmentation_policy(request),
+            "segment_artifacts": {
+                "segments_path": str(segments_path),
+                "receipt_path": str(receipt_path),
+            },
+            "quality_control_summary": {
+                "source_file_count": 0,
+                "source_record_count": 0,
+                "segment_count": 0,
+                "pii_mask_count": 0,
+                "exact_dedup_count": 0,
+                "fuzzy_dedup_count": 0,
+                "fuzzy_dedup_ratio": 0.0,
+            },
+            "operator_failures": operator_failures,
+            "metrics": {
+                "ingest_latency_ms": elapsed_ms,
+                "ingest_throughput_bytes_per_second": 0.0,
+                "source_file_count": 0,
+                "source_record_count": 0,
+                "segment_count": 0,
+                "pii_mask_count": 0,
+                "exact_dedup_count": 0,
+                "fuzzy_dedup_count": 0,
+                "fuzzy_dedup_ratio": 0.0,
+                "segmentation_latency_ms": 0.0,
+                "workspace_preflight_status": workspace_preflight_receipt.get("status", "unknown"),
+            },
+        }
+        _write_json(receipt_path, receipt)
+        return receipt
 
     operator_failures: list[dict[str, Any]] = []
     records = list(_iter_source_records(input_path, operator_failures))
@@ -110,6 +164,7 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
         cleaned_records.append(cleaned)
         pii_mask_count += record_pii_mask_count
 
+    segmentation_started = time.perf_counter()
     segments = list(_segment_records(cleaned_records, request))
     segmentation_latency_ms = (time.perf_counter() - segmentation_started) * 1000.0
     _write_jsonl(segments_path, segments)
@@ -136,33 +191,19 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
         "fuzzy_dedup_count": fuzzy_dedup_count,
         "fuzzy_dedup_ratio": fuzzy_ratio,
         "segmentation_latency_ms": segmentation_latency_ms,
+        "workspace_preflight_status": workspace_preflight_receipt.get("status", "unknown"),
     }
     receipt = {
         "schema_version": DATASET_INGEST_RECEIPT_SCHEMA_VERSION,
         "status": "blocked" if operator_failures else "ready",
         "workspace_project_id": request.workspace_project_id,
         "workspace_manifest_path": str(Path(request.workspace_manifest_path)),
+        "workspace_preflight_receipt_path": str(workspace_preflight_receipt_path),
+        "workspace_preflight_receipt": workspace_preflight_receipt,
         "dataset_preparation_id": request.dataset_preparation_id,
         "source_inventory": source_inventory,
-        "cleaning_controls": {
-            "pii_mask": {
-                "enabled": request.pii_mask,
-                "policy_id": "melix.pii_mask.local.v1",
-            },
-            "exact_dedup": {
-                "enabled": request.exact_dedup,
-                "policy_id": "melix.exact_dedup.sha256.v1",
-            },
-            "fuzzy_dedup": {
-                "enabled": request.fuzzy_dedup,
-                "policy_id": "melix.fuzzy_dedup.tokens.v1",
-            },
-        },
-        "segmentation_policy": {
-            "enabled": request.segmentation,
-            "strategy": request.segmentation_strategy,
-            "policy_id": f"melix.segmentation.{request.segmentation_strategy}.v1",
-        },
+        "cleaning_controls": _cleaning_controls(request),
+        "segmentation_policy": _segmentation_policy(request),
         "segment_artifacts": {
             "segments_path": str(segments_path),
             "receipt_path": str(receipt_path),
@@ -171,7 +212,7 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
         "operator_failures": operator_failures,
         "metrics": metrics,
     }
-    receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _write_json(receipt_path, receipt)
     return receipt
 
 
@@ -179,6 +220,7 @@ def prepare_dataset_version(request: DatasetVersionRequest) -> dict[str, Any]:
     started = time.perf_counter()
     ingest_receipt_path = Path(request.ingest_receipt_path).expanduser()
     ingest_receipt = _read_json(ingest_receipt_path)
+    _raise_if_ingest_receipt_blocked(ingest_receipt)
     segment_artifacts = ingest_receipt.get("segment_artifacts", {})
     if not isinstance(segment_artifacts, dict) or not segment_artifacts.get("segments_path"):
         raise ValueError("DATASET_VERSION_SOURCE_RECEIPT_MISSING: ingest receipt has no segments_path")
@@ -262,6 +304,19 @@ def prepare_dataset_version(request: DatasetVersionRequest) -> dict[str, Any]:
     )
     _write_json(dataset_version_path, version)
     return version
+
+
+def _raise_if_ingest_receipt_blocked(ingest_receipt: dict[str, Any]) -> None:
+    if str(ingest_receipt.get("status") or "") != "blocked":
+        return
+    failures = ingest_receipt.get("operator_failures")
+    failure_codes = [
+        code
+        for failure in failures
+        if isinstance(failure, dict) and (code := str(failure.get("code") or "").strip())
+    ] if isinstance(failures, list) else []
+    code_suffix = ",".join(failure_codes) if failure_codes else "unknown"
+    raise ValueError(f"DATASET_VERSION_SOURCE_RECEIPT_BLOCKED: {code_suffix}")
 
 
 def retry_failed_dataset_version(request: DatasetRetryFailedRequest) -> dict[str, Any]:
@@ -397,7 +452,7 @@ def list_dataset_versions(
     started = time.perf_counter()
     versions_root = Path(output_root).expanduser() / dataset_id / "versions"
     versions: list[dict[str, Any]] = []
-    for manifest_path in sorted(versions_root.glob("*/dataset-version.json")):
+    for manifest_path in _iter_dataset_version_manifest_paths(versions_root):
         version = _read_json(manifest_path)
         versions.append(
             {
@@ -423,6 +478,21 @@ def list_dataset_versions(
             "dataset_version_count": len(versions),
         },
     }
+
+
+def _iter_dataset_version_manifest_paths(versions_root: Path) -> list[Path]:
+    manifest_paths: list[Path] = []
+    try:
+        with os.scandir(versions_root) as entries:
+            for entry in entries:
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+                manifest_path = os.path.join(entry.path, "dataset-version.json")
+                if os.path.isfile(manifest_path):
+                    manifest_paths.append(Path(manifest_path))
+    except OSError:
+        return []
+    return manifest_paths
 
 
 def _iter_source_records(
@@ -482,6 +552,61 @@ def _source_kind(path: Path) -> str | None:
     if suffix in {".jsonl", ".json", ".csv", ".tsv"}:
         return "structured_data"
     return None
+
+
+def _workspace_preflight_failures(receipt: dict[str, Any]) -> list[dict[str, Any]]:
+    failures: list[dict[str, Any]] = []
+    for check in receipt.get("checks", []):
+        if not isinstance(check, dict) or check.get("status") != "blocked":
+            continue
+        code = str(check.get("code") or "WORKSPACE_PREFLIGHT_BLOCKED")
+        failures.append(
+            {
+                "id": f"workspace-preflight-{_safe_component(code.lower())}",
+                "code": code,
+                "path": str(receipt.get("manifest_path") or ""),
+                "detail": str(check.get("detail") or "Workspace preflight blocked dataset ingest."),
+                "recovery_hint": str(check.get("recovery_hint") or "Resolve workspace preflight blockers before dataset ingest."),
+                "items": check.get("items", []),
+            }
+        )
+    if failures:
+        return failures
+    return [
+        {
+            "id": "workspace-preflight-blocked",
+            "code": "WORKSPACE_PREFLIGHT_BLOCKED",
+            "path": str(receipt.get("manifest_path") or ""),
+            "detail": "Workspace preflight blocked dataset ingest.",
+            "recovery_hint": "Resolve workspace preflight blockers before dataset ingest.",
+            "items": [],
+        }
+    ]
+
+
+def _cleaning_controls(request: DatasetIngestRequest) -> dict[str, Any]:
+    return {
+        "pii_mask": {
+            "enabled": request.pii_mask,
+            "policy_id": "melix.pii_mask.local.v1",
+        },
+        "exact_dedup": {
+            "enabled": request.exact_dedup,
+            "policy_id": "melix.exact_dedup.sha256.v1",
+        },
+        "fuzzy_dedup": {
+            "enabled": request.fuzzy_dedup,
+            "policy_id": "melix.fuzzy_dedup.tokens.v1",
+        },
+    }
+
+
+def _segmentation_policy(request: DatasetIngestRequest) -> dict[str, Any]:
+    return {
+        "enabled": request.segmentation,
+        "strategy": request.segmentation_strategy,
+        "policy_id": f"melix.segmentation.{request.segmentation_strategy}.v1",
+    }
 
 
 def _structured_records(path: Path, text: str) -> Iterable[dict[str, Any]]:

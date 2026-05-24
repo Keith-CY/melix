@@ -6,7 +6,7 @@ Define the Melix workspace manifest contract for issue #1492 / U1.1.1 so project
 
 ## Architecture
 
-The authoritative interface is a new `workspace/v1/workspace_manifest.proto` schema under `packages/protocol/schema`. Generated Swift and Python artifacts are regenerated through `make proto`; the Python worker owns the smallest validation helper and metrics probe for fixture validation. Documentation links the contract from the current LoRA and benchmark/evaluation artifact paths without adding preflight or migration behavior reserved for #1493.
+The authoritative interface is a new `workspace/v1/workspace_manifest.proto` schema under `packages/protocol/schema`. Generated Swift and Python artifacts are regenerated through `make proto`; the Python worker owns the smallest validation helper and metrics probe for fixture validation. Documentation links the contract from the current LoRA and benchmark/evaluation artifact paths. The follow-on #1493 slice adds preflight receipts without changing the protobuf manifest contract.
 
 ## Steps
 
@@ -37,7 +37,7 @@ paths, and manifest artifact references that cannot be resolved to known roots.
 
 ### Non-Goals
 
-- Do not implement dataset ingest, training queue admission, or export cleanup.
+- Do not implement the full dataset preparation system, training queue admission, or export cleanup in this slice. Dataset ingest may consume the preflight receipt to block unsafe starts and attach typed workspace evidence.
 - Do not mutate workspace manifests as part of migration validation.
 - Do not introduce a new protobuf schema unless the JSON receipt proves
   insufficient for follow-on consumers.
@@ -57,6 +57,12 @@ The preflight receipt uses schema version
 The CLI script writes this receipt to stdout and, when requested, to an output
 path that can be attached to report bundles. Operators must be able to explain a
 blocked result from the receipt fields alone without raw logs.
+
+Dataset ingest must run the same preflight before segmenting sources. When the
+receipt is blocked, ingest writes `workspace_preflight_receipt_path`, returns a
+blocked ingest receipt with typed workspace operator failures, and does not
+write segment rows. Benchmark/evaluation reports may attach
+`workspace_preflight_receipt_path` when that artifact appears in run evidence.
 
 ### Migration Validation
 

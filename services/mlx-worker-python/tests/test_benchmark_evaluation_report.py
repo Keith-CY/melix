@@ -2767,3 +2767,73 @@ def test_write_report_outputs_writes_json_and_markdown(tmp_path: Path) -> None:
     assert "primary_runtime_process" in outputs["processes_csv"].read_text(encoding="utf-8")
     assert "overall_result" not in outputs["gate_results_csv"].read_text(encoding="utf-8")
     assert "telemetry" in outputs["comparison_deltas_csv"].read_text(encoding="utf-8")
+
+
+def test_report_outputs_attach_and_render_dataset_preparation_artifacts(tmp_path: Path) -> None:
+    ingest_receipt_path = tmp_path / "prepared/dataset-ingest-receipt.json"
+    dataset_version_path = tmp_path / "datasets/support-chat/v1/dataset-version.json"
+    quality_summary_path = tmp_path / "datasets/support-chat/v1/quality-summary.json"
+    workspace_preflight_path = tmp_path / "workspace/workspace-preflight-receipt.json"
+
+    report = build_benchmark_evaluation_report(
+        baseline={
+            **_bundle(ttft_ms=100.0, tokens_per_second=50.0, accuracy=0.8),
+            "run_evidence": [
+                _run_evidence(
+                    run_id="base-run",
+                    run_kind="serving_benchmark",
+                    decode_ms=10.0,
+                    status="completed",
+                )
+            ],
+        },
+        candidate={
+            **_bundle(ttft_ms=95.0, tokens_per_second=55.0, accuracy=0.82),
+            "run_evidence": [
+                {
+                    **_run_evidence(
+                        run_id="head-run",
+                        run_kind="serving_benchmark",
+                        decode_ms=8.0,
+                        status="completed",
+                    ),
+                    "artifacts": [
+                        {
+                            "kind": "dataset_ingest_receipt",
+                            "path": str(ingest_receipt_path),
+                            "role": "dataset_preparation",
+                        },
+                        {
+                            "kind": "dataset_version",
+                            "path": str(dataset_version_path),
+                            "role": "dataset_preparation",
+                        },
+                        {
+                            "kind": "dataset_quality_summary",
+                            "path": str(quality_summary_path),
+                            "role": "dataset_preparation",
+                        },
+                        {
+                            "kind": "workspace_preflight_receipt",
+                            "path": str(workspace_preflight_path),
+                            "role": "workspace_preflight",
+                        },
+                    ],
+                }
+            ],
+        },
+    )
+
+    outputs = write_report_outputs(report=report, output_dir=tmp_path / "report")
+
+    report_json = json.loads(outputs["json"].read_text(encoding="utf-8"))
+    artifacts = report_json["artifacts"]
+    markdown = outputs["markdown"].read_text(encoding="utf-8")
+    assert artifacts["dataset_ingest_receipt_path"] == str(ingest_receipt_path)
+    assert artifacts["dataset_version_path"] == str(dataset_version_path)
+    assert artifacts["dataset_quality_summary_path"] == str(quality_summary_path)
+    assert artifacts["workspace_preflight_receipt_path"] == str(workspace_preflight_path)
+    assert f"Dataset Ingest Receipt: `{ingest_receipt_path}`" in markdown
+    assert f"Dataset Version: `{dataset_version_path}`" in markdown
+    assert f"Dataset Quality Summary: `{quality_summary_path}`" in markdown
+    assert f"Workspace Preflight Receipt: `{workspace_preflight_path}`" in markdown

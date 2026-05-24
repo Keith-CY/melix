@@ -12,6 +12,7 @@ from packages.protocol.python.worker.v1 import common_pb2
 from worker.model_ops.deterministic_lora_runner import DeterministicLoRARunner
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops import training_config as training_config_module
+from worker.model_ops import lora_runtime_metadata as lora_runtime_metadata_module
 from worker.model_ops.lora_runtime_metadata import build_lora_canary_receipt_fields
 from worker.model_ops.lora_training_pipeline import (
     LoRATrainingPipeline,
@@ -509,6 +510,48 @@ def test_lora_canary_receipt_records_tokenizer_resume_and_drift_status(
     assert fields["completion_loss"] == 0.125
     assert fields["round_trip_passed"] is True
     assert fields["grad_norm"] == 0.75
+
+
+def test_lora_canary_aux_module_detection_uses_single_scandir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    base_model_dir = tmp_path / "base-model"
+    base_model_dir.mkdir()
+    (base_model_dir / "tokenization_qwen2.py").write_text(
+        "# custom tokenizer\n", encoding="utf-8"
+    )
+    (base_model_dir / "modeling_notes.txt").write_text("ignored\n", encoding="utf-8")
+
+    def fail_glob(self: Path, pattern: str):
+        raise AssertionError("auxiliary module detection should use os.scandir")  # pragma: no cover
+
+    original_scandir = lora_runtime_metadata_module.os.scandir
+    scanned_paths: list[str] = []
+
+    def counting_scandir(path: str | Path):
+        scanned_paths.append(str(path))
+        return original_scandir(path)
+
+    monkeypatch.setattr(Path, "glob", fail_glob)
+    monkeypatch.setattr(lora_runtime_metadata_module.os, "scandir", counting_scandir)
+
+    assert lora_runtime_metadata_module._aux_modules_restored(base_model_dir) is True
+    assert scanned_paths == [str(base_model_dir)]
+
+
+def test_lora_canary_aux_module_detection_returns_false_when_scandir_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    base_model_dir = tmp_path / "base-model"
+
+    def fail_scandir(path: str | Path):
+        raise OSError("base model unavailable")
+
+    monkeypatch.setattr(lora_runtime_metadata_module.os, "scandir", fail_scandir)
+
+    assert lora_runtime_metadata_module._aux_modules_restored(base_model_dir) is False
 
 
 def test_lora_canary_receipt_detects_missing_checkpoint_resume_assets(

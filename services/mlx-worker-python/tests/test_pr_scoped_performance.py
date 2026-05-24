@@ -201,6 +201,57 @@ def test_report_evidence_gate_run_kind_probe_script_emits_metrics(
     assert metrics["run_kind_count"] == 65.0
 
 
+def test_scope_report_selects_dataset_version_listing_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/dataset_preparation.py"],
+    )
+
+    assert "dataset-version-listing-scandir" in _selected_probe_ids(scope)
+
+
+def test_scope_report_selects_lora_aux_modules_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/model_ops/lora_runtime_metadata.py"],
+    )
+
+    assert _selected_probe_ids(scope) == ["lora-aux-modules-scandir"]
+
+
+def test_lora_aux_modules_scandir_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_LORA_AUX_MODULES_PROBE_NOISE_FILES", "5")
+    monkeypatch.setenv("MELIX_LORA_AUX_MODULES_PROBE_SAMPLES", "1")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/lora_aux_modules_scandir_probe.py"))
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["noise_file_count"] == 5.0
+    assert metrics["scandir_calls_mean"] == 1.0
+
+
+def test_dataset_version_listing_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_VERSION_LISTING_PROBE_COUNT", "5")
+    monkeypatch.setenv("MELIX_DATASET_VERSION_LISTING_PROBE_SAMPLES", "1")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/dataset_version_listing_probe.py"))
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["elapsed_ms_p95"] >= 0.0
+    assert metrics["sample_count"] == 1.0
+    assert metrics["version_count"] == 5.0
+
+
 def test_scope_report_selects_tool_registry_schema_bytes_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -2615,6 +2666,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "embedding-core-inputs-view",
         "job-registry-derived-model-single-pass",
         "job-registry-restore-sort-elision",
+        "lora-aux-modules-scandir",
         "lora-experiment-run-dir-name-scan",
         "lora-reward-summary-candidate-minmax",
         "mlx-lm-structured-result-tail-parse",
@@ -2641,6 +2693,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "training-dataset-validation-sample-limit",
         "training-dataset-chunker-top-level-base-copy",
         "dataset-registry-preview-limit-short-circuit",
+        "dataset-version-listing-scandir",
         "maintenance-bench-report-readback",
         "maintenance-percentile-vector-reuse",
         "maintenance-prompt-shape-vector-repeat",
