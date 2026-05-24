@@ -2808,7 +2808,7 @@ def test_registry_snapshot_accepts_metadata_matched_renamed_projector_receipt(
     discovered = {model.model_id: model for model in snapshot.models}
     gemma4 = discovered["mlx-community/gemma-4-renamed-projector/4bit"]
 
-    assert gemma4.ext["melix.capability.supported_modalities"] == "text,image"
+    assert gemma4.ext["melix.capability.supported_modalities"] == "text,image,video"
     assert gemma4.ext["melix.capability.projector.status"] == "renamed_metadata_matched"
     assert gemma4.ext["melix.capability.projector.family_id"] == "gemma4-v1"
     assert gemma4.ext["melix.capability.vision_weight_remap.status"] == "renamed_metadata_matched"
