@@ -111,7 +111,8 @@ class ModelOpsJobRegistry:
             job.manifest_json = manifest_json
             job.manifest = self._decode_manifest_json(manifest_json)
             job.manifest_cached = True
-            self._refresh_download_operation_receipt_index(job)
+            if job.operation == "download":
+                self._refresh_download_operation_receipt_index(job)
             self._invalidate_active_derived_model_rows_cache()
 
     def complete(self, job_id: str, output_path: str) -> None:
@@ -119,7 +120,8 @@ class ModelOpsJobRegistry:
             job = self._jobs[job_id]
             job.status = "completed"
             job.output_path = output_path
-            self._refresh_download_operation_receipt_index(job)
+            if job.operation == "download":
+                self._refresh_download_operation_receipt_index(job)
             self._invalidate_active_derived_model_rows_cache()
 
     def fail(self, job_id: str, code: str, message: str) -> None:
@@ -128,7 +130,8 @@ class ModelOpsJobRegistry:
             job.status = "failed"
             job.error_code = code
             job.error_message = message
-            self._refresh_download_operation_receipt_index(job)
+            if job.operation == "download":
+                self._refresh_download_operation_receipt_index(job)
             self._invalidate_active_derived_model_rows_cache()
 
     def find_download_by_operation_receipt(

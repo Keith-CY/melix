@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -109,6 +110,39 @@ def test_run_reuses_public_ext_across_many_snapshots(
     }
     assert payload["status"] == "completed"
     assert payload["terminal_state"] == "completed"
+
+
+def test_run_plain_download_does_not_build_operation_receipts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pipeline = DownloadPipeline()
+    source_path = tmp_path / "source.bin"
+    source_path.write_bytes(b"abcdef")
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo",
+        ext={
+            "source_path": str(source_path),
+            "chunk_bytes": "1",
+        },
+    )
+
+    artifact_integrity_receipt = Mock(
+        side_effect=AssertionError("plain downloads should not build operation receipt payloads")
+    )
+    monkeypatch.setattr(
+        DownloadPipeline,
+        "_artifact_integrity_receipt",
+        staticmethod(artifact_integrity_receipt),
+    )
+
+    result = pipeline.run(request, job_id="job-plain", output_dir=tmp_path / "output")
+
+    artifact_integrity_receipt.assert_not_called()
+    assert result.output_path.read_bytes() == b"abcdef"
+    payload = json.loads(result.snapshots[-1].manifest_json)
+    assert "artifact_integrity" not in payload
+    assert "operation_id" not in payload
 
 
 def test_run_retry_exhausted_path_does_not_reparse_manifest_json(

@@ -92,6 +92,7 @@ class DownloadPipeline:
         stall_timeout_ms = max(1, self._int(ext.get("stall_timeout_ms"), default=30_000))
         request_deadline_ms = max(0, self._int(ext.get("test_request_deadline_ms"), default=0))
         slow_in_progress_ms = max(0, self._int(ext.get("test_slow_in_progress_ms"), default=0))
+        deadline_progressing_enabled = request_deadline_ms > 0 and slow_in_progress_ms > request_deadline_ms
 
         retry_count = 0
         stall_detection_count = 0
@@ -141,11 +142,7 @@ class DownloadPipeline:
                             partial_file.write(chunk)
                             partial_file.flush()
                             downloaded_bytes += len(chunk)
-                            deadline_progressing = (
-                                request_deadline_ms > 0
-                                and slow_in_progress_ms > request_deadline_ms
-                                and downloaded_bytes < total_bytes
-                            )
+                            deadline_progressing = deadline_progressing_enabled and downloaded_bytes < total_bytes
                             snapshots.append(
                                 self._snapshot(
                                     manifest_context=manifest_context,
@@ -637,14 +634,6 @@ class DownloadPipeline:
         stall_reason: str,
     ) -> dict[str, Any]:
         payload = dict(manifest_context.base_payload)
-        receipt_update: dict[str, Any] = {}
-        if manifest_context.pending_artifact_integrity is not None:
-            receipt_update["attempts"] = retry_count + 1
-            receipt_update["artifact_integrity"] = (
-                manifest_context.passed_artifact_integrity
-                if terminal_state == "completed"
-                else manifest_context.pending_artifact_integrity
-            )
         payload.update(
             {
             "status": status,
@@ -658,7 +647,6 @@ class DownloadPipeline:
             "retry_count": retry_count,
             "stall_detection_count": stall_detection_count,
             "stall_reason": stall_reason,
-            **receipt_update,
             "metrics": {
                 "download.resume_success_rate": 1.0 if resume_used and terminal_state == "completed" else 0.0,
                 "download.retry_count": retry_count,
@@ -666,6 +654,13 @@ class DownloadPipeline:
             },
             }
         )
+        if manifest_context.pending_artifact_integrity is not None:
+            payload["attempts"] = retry_count + 1
+            payload["artifact_integrity"] = (
+                manifest_context.passed_artifact_integrity
+                if terminal_state == "completed"
+                else manifest_context.pending_artifact_integrity
+            )
         return payload
 
     @staticmethod

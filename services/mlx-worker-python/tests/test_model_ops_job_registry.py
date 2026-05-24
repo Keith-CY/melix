@@ -5,6 +5,7 @@ import json
 import math
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -616,6 +617,28 @@ def test_download_operation_receipt_key_rejects_missing_fields() -> None:
         )
         is None
     )
+
+
+def test_non_download_manifest_updates_do_not_refresh_download_receipt_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = ModelOpsJobRegistry()
+    train_job = registry.start("train_lora", "melix-dev-text", "/runtime/train")
+    refresh = Mock(
+        side_effect=AssertionError("non-download jobs should not refresh the download receipt index")
+    )
+
+    monkeypatch.setattr(registry, "_refresh_download_operation_receipt_index", refresh)
+
+    registry.attach_manifest(
+        train_job.job_id,
+        json.dumps({"adapter_name": "adapter-a", "adapter_set_hash": "hash-a"}),
+    )
+    registry.complete(train_job.job_id, "/runtime/train/train_lora.adapter.json")
+
+    failed_job = registry.start("activate_adapter", "melix-dev-text", "/runtime/activate")
+    registry.fail(failed_job.job_id, "activation_failed", "boom")
+    refresh.assert_not_called()
 
 
 def test_strict_activation_receipt_rejects_missing_integrity_object() -> None:
