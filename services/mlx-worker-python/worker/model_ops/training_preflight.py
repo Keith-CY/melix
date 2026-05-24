@@ -259,6 +259,17 @@ def _classify_config_error(exc: ModelOperationError) -> ModelOperationError:
             retriable=exc.retriable,
             details=exc.details,
         )
+    if (
+        exc.code == "unsupported_lora_target_module"
+        and exc.details.get("unsupported_target_class") == "embedding_or_head"
+        and exc.details.get("quantization_mode") == "quantized_base"
+    ):
+        return ModelOperationError(
+            code="unsafe_quantized_lora_target",
+            message=exc.message,
+            retriable=exc.retriable,
+            details=exc.details,
+        )
     return exc
 
 
@@ -310,6 +321,7 @@ def _remediation(code: str) -> str:
         "unsupported_full_finetune_quantized_base": "Use LoRA or QLoRA for quantized bases, or switch to an unquantized base model.",
         "unsupported_model_family": "Choose a model family with productized LoRA training hooks.",
         "unsupported_lora_target_module": "Choose supported LoRA target modules for this model family.",
+        "unsafe_quantized_lora_target": "Choose non-embedding LoRA target modules for quantized base models.",
         "invalid_dataset_package": "Use a dataset package whose format matches the requested training objective.",
     }.get(code, "Review the typed details and adjust the training request.")
 
