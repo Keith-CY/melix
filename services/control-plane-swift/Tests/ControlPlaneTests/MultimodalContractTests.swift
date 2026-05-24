@@ -101,6 +101,7 @@ struct MultimodalContractTests {
     @Test("multimodal request normalizer accepts compatible media aliases")
     func compatibleMediaAliasesNormalizeToCanonicalWorkerParts() throws {
         let decoder = JSONDecoder()
+        let encoder = JSONEncoder()
         let parts = try decoder.decode(
             [OpenAIMultimodalContentPart].self,
             from: Data(
@@ -145,11 +146,17 @@ struct MultimodalContractTests {
         #expect(normalized[2].media.mediaType == .video)
         #expect(normalized[2].media.format == "mp4")
         #expect(normalized[2].media.frameBudget == 4)
+
+        let roundTripped = try decoder.decode([OpenAIMultimodalContentPart].self, from: encoder.encode(parts))
+        #expect(roundTripped[0].imageURL?.data == "aGVsbG8=")
+        #expect(roundTripped[1].inputAudio?.url == "file:///tmp/alias.wav")
+        #expect(roundTripped[2].inputVideo?.url == "https://example.com/alias.mp4")
     }
 
     @Test("multimodal request normalizer accepts canonical audio and video aliases")
     func canonicalAudioAndVideoAliasesNormalizeToCanonicalWorkerParts() throws {
         let decoder = JSONDecoder()
+        let encoder = JSONEncoder()
         let parts = try decoder.decode(
             [OpenAIMultimodalContentPart].self,
             from: Data(
@@ -180,6 +187,10 @@ struct MultimodalContractTests {
         #expect(normalized[1].videoUri == "file:///tmp/canonical.mp4")
         #expect(normalized[1].media.mediaType == .video)
         #expect(normalized[1].media.format == "mp4")
+
+        let roundTripped = try decoder.decode([OpenAIMultimodalContentPart].self, from: encoder.encode(parts))
+        #expect(roundTripped[0].inputAudio?.url == "file:///tmp/canonical.wav")
+        #expect(roundTripped[1].inputVideo?.url == "file:///tmp/canonical.mp4")
     }
 
     @Test("multimodal request normalizer accepts input-image urls for local and remote ingress")

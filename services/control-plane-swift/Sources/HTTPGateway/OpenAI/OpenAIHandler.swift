@@ -2105,7 +2105,7 @@ public struct OpenAIHandler: Sendable {
             )
         }
         guard let model else {
-            let mediaList = mediaTypes.sorted().joined(separator: ",")
+            let mediaList = mediaTypes.sorted().joined(separator: ", ")
             return await unsupportedMultimodalRequestResponse(
                 modelID: request.model,
                 reason: "model_does_not_support_media",
@@ -2117,7 +2117,7 @@ public struct OpenAIHandler: Sendable {
         guard unsupportedTypes.isEmpty == false else {
             return nil
         }
-        let unsupportedList = unsupportedTypes.sorted().joined(separator: ",")
+        let unsupportedList = unsupportedTypes.sorted().joined(separator: ", ")
         return await unsupportedMultimodalRequestResponse(
             modelID: request.model,
             reason: "model_does_not_support_media",

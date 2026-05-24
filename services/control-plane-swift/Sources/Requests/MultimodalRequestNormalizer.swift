@@ -389,13 +389,30 @@ public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
         case .text, .inputText:
             try container.encodeIfPresent(text, forKey: .text)
         case .image, .imageURL:
-            try container.encodeIfPresent(imageURL, forKey: .imageURL)
+            let imageKey: CodingKeys = type == .image ? .image : .imageURL
+            try container.encodeIfPresent(imageURL, forKey: imageKey)
         case .inputImage:
             try container.encodeIfPresent(inputImage, forKey: .inputImage)
         case .audio, .audioURL, .inputAudio:
-            try container.encodeIfPresent(inputAudio, forKey: .inputAudio)
+            let audioKey: CodingKeys = switch type {
+            case .audio:
+                .audio
+            case .audioURL:
+                .audioURL
+            default:
+                .inputAudio
+            }
+            try container.encodeIfPresent(inputAudio, forKey: audioKey)
         case .video, .videoURL, .inputVideo:
-            try container.encodeIfPresent(inputVideo, forKey: .inputVideo)
+            let videoKey: CodingKeys = switch type {
+            case .video:
+                .video
+            case .videoURL:
+                .videoURL
+            default:
+                .inputVideo
+            }
+            try container.encodeIfPresent(inputVideo, forKey: videoKey)
         }
     }
 }

@@ -2763,6 +2763,15 @@ struct OpenAIHandlerTests {
                         "mime_type": "image/png",
                         "filename": "fixture.png"
                       }
+                    },
+                    {
+                      "type": "input_audio",
+                      "input_audio": {
+                        "data": "YXVkaW8=",
+                        "format": "wav",
+                        "mime_type": "audio/wav",
+                        "filename": "fixture.wav"
+                      }
                     }
                   ]
                 }
@@ -2784,7 +2793,7 @@ struct OpenAIHandlerTests {
         #expect(response.statusCode == 400)
         #expect(payload.contains("\"code\":\"unsupported_multimodal_request\""))
         #expect(payload.contains("\"reason\":\"model_does_not_support_media\""))
-        #expect(payload.contains("Model melix-dev-text does not advertise support for image media."))
+        #expect(payload.contains("Model melix-dev-text does not advertise support for audio, image media."))
         #expect(await workerClient.lastLoadModelRequest == nil)
         #expect(await workerClient.lastGenerateRequest == nil)
     }
@@ -2816,6 +2825,15 @@ struct OpenAIHandlerTests {
                         "format": "mp4",
                         "filename": "clip.mp4"
                       }
+                    },
+                    {
+                      "type": "input_audio",
+                      "input_audio": {
+                        "data": "YXVkaW8=",
+                        "format": "wav",
+                        "mime_type": "audio/wav",
+                        "filename": "clip.wav"
+                      }
                     }
                   ]
                 }
@@ -2837,7 +2855,7 @@ struct OpenAIHandlerTests {
         #expect(response.statusCode == 400)
         #expect(payload.contains("\"code\":\"unsupported_multimodal_request\""))
         #expect(payload.contains("\"reason\":\"model_does_not_support_media\""))
-        #expect(payload.contains("Model melix-dev-vlm does not advertise support for video media."))
+        #expect(payload.contains("Model melix-dev-vlm does not advertise support for audio, video media."))
         #expect(await harness.vlmClient.lastLoadModelRequest == nil)
         #expect(await harness.vlmClient.lastGenerateRequest == nil)
         #expect(await harness.textClient.lastLoadModelRequest == nil)
