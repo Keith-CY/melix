@@ -213,3 +213,99 @@ SwiftLM TTFT advantage was mostly measurement-profile and token-accounting
 contamination. Melix still has a small warm-path gap, but the next runtime
 optimization should be justified with longer decode or long-context scenarios,
 not with the old cold-loaded short smoke.
+
+## 2026-05-24 Decode Throughput Fix Slice
+
+The latest same-host warm smoke after the Melix performance update was exported
+to `~/Downloads/latest-main-release-three-way-warm-1024x16-20260524-073858`.
+It used the same `1024` prompt target, `16` output tokens, concurrency `1`, one
+warmup request per endpoint, `--include-usage`, and measurement profile `warm`.
+
+| Endpoint | TTFT ms | Total ms | Decode tok/s | Aggregate tok/s |
+|---|---:|---:|---:|---:|
+| Melix | 2798.09 | 3695.93 | 16.24 | 4.33 |
+| OMLX | 3206.34 | 4024.23 | 19.56 | 3.98 |
+| SwiftLM | 2841.83 | 3682.82 | 19.03 | 4.34 |
+
+The request payload is not the source of this gap. The benchmark sends
+`temperature: 0.0`, `max_tokens`, `stream: true`, and optional usage accounting;
+it does not send Melix-specific sampling knobs. The Melix control-plane and
+worker metrics also showed baseline decode, with active-KV metrics at zero.
+
+The likely hot-path issue is the custom phase-aware Swift decode loop. Upstream
+`MLXLMCommon.TokenIterator` keeps the MLX lazy graph pipeline full by scheduling
+the next token with `asyncEval(...)` before returning the current token to the
+streaming caller. Melix's custom `makePreparedDecodeEvents(...)` loop emitted
+the current chunk before constructing the next model output, which serialized
+part of next-token model work behind stream emission and made short warm decode
+throughput fall behind OMLX and SwiftLM.
+
+This slice should preserve stream order, terminal-token behavior, active-KV
+route reporting, and the existing max-output guard while scheduling the next
+baseline decode logits before yielding the current chunk. Verification must
+include focused Swift tests for preserved behavior plus a release-built warm
+Gemma 4 31B 8-bit smoke comparison against the previous artifact.
+
+### Post-Fix Verification
+
+The retained code change updates the baseline Swift decode loop to keep a
+pending sampled token, schedule the next sampled token with `asyncEval(...)`
+before yielding the current text chunk, and synchronize the MLX stream before
+finishing the generation stream. This mirrors the upstream `TokenIterator`
+pipeline while keeping the existing max-token guard so the worker still skips the
+terminal extra model call at the output limit. The fix also removes the
+decode-loop KV quantization maintenance branch because active-KV decode
+quantization is already decided and applied before the first sampled decode
+token; leaving the second branch in the pipelined loop would preserve unreachable
+work around the hot path.
+
+Release-built Melix-only verification:
+
+- Export: `~/Downloads/melix-decode-fix-warm-1024x16-20260524-085131`
+- Staged artifact:
+  `.runtime/three-way-gemma31b128k/melix-decode-fix-warm-1024x16-20260524-085131`
+- Scenario: `1024` prompt target, `16` output tokens, concurrency `1`,
+  five measured repeats, one warmup per endpoint, `--include-usage`,
+  measurement profile `warm`.
+- Result: Melix median decode improved from the pre-fix `16.24 tok/s` artifact
+  to `19.65 tok/s` with zero request errors.
+
+Release-built three-way verification:
+
+- Export: `~/Downloads/decode-fix-three-way-warm-1024x16-20260524-085627`
+- Staged artifact:
+  `.runtime/three-way-gemma31b128k/decode-fix-three-way-warm-1024x16-20260524-085627`
+- Same scenario and measurement profile as above, with OMLX at commit
+  `2f2f508` and SwiftLM at commit `d5a9d11`.
+
+| Endpoint | TTFT ms | Total ms | Decode tok/s | Aggregate tok/s |
+|---|---:|---:|---:|---:|
+| Melix | 2786.60 | 3606.11 | 19.33 | 4.44 |
+| OMLX | 3131.58 | 3976.92 | 19.10 | 4.02 |
+| SwiftLM | 2703.73 | 3536.08 | 19.36 | 4.52 |
+
+The fix removes the decode-throughput regression: Melix is now effectively tied
+with SwiftLM for decode throughput on this short warm smoke and slightly ahead
+of OMLX. SwiftLM still wins TTFT and aggregate output throughput by a small
+margin in this scenario, so the next optimization target should be short-context
+prefill/TTFT rather than baseline decode.
+
+Verification commands:
+
+- `git diff --check` -> passed.
+- Focused Swift tests around the live decode bridge, active-KV probe helpers,
+  opt-in model-eval sync probe, lazy quantized-cache prefill, TurboQuant route,
+  and the live max-output decode guard passed.
+- Changed-line coverage for the touched Swift executable and test files:
+  `TOTAL 99.19% (123/124)`.
+- The macOS menubar Swift test shard now runs with `--no-parallel` because the
+  AppKit-backed tests share `NSApplication` and status-bar process state; this
+  keeps the required pre-commit Swift gate deterministic while leaving runtime
+  behavior unchanged. The menubar repository-policy test was updated to keep
+  asserting both `--no-parallel` and `-Xswiftc -gnone` are present.
+- `xcrun swift build --package-path services/mlx-text-worker-swift --product melix-text-worker-swift -c release --disable-automatic-resolution`
+  -> passed.
+- `xcrun swift build --package-path services/control-plane-swift --product melix-control-plane -c release --disable-automatic-resolution`
+  -> passed.
+- Temporary Melix, OMLX, and SwiftLM services were stopped after the benchmark;
+  ports `12465`, `18061`, and `18062` had no listeners afterward.

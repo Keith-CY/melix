@@ -227,7 +227,10 @@ struct AppMainBootstrapTests {
             application: application,
             bootstrapFactory: { _ in bootstrap }
         )
-        try await waitForBootstrapCondition("expected launchLive handshake to complete") {
+        try await waitForBootstrapCondition(
+            "expected launchLive handshake to complete",
+            timeout: .seconds(10)
+        ) {
             await client.handshakeCount == 1
         }
 

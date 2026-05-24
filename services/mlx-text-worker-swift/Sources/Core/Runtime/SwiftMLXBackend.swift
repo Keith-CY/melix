@@ -1891,7 +1891,7 @@ private func makePreparedDecodeEvents(
             var decodeStreamYieldCallCount = 0
             var turboQuantCandidateTotalMicros = 0
             var turboQuantCandidateCallCount = 0
-            var decodeQuantizeTotalMicros = 0
+            let decodeQuantizeTotalMicros = 0
             var prefillQuantizeMicros = decodeState.prefillQuantizeMicros
             let shouldRecordActiveKVDecodeProbe =
                 normalizedAccelerationPolicy(acceleration).mode == .activeKvQuantized
@@ -1925,25 +1925,13 @@ private func makePreparedDecodeEvents(
                 acceleration: acceleration,
                 candidateProbeEnabled: turboQuantCandidateProbeEnabled
             )
-            var shouldMaintainQuantizedDecodeCache = shouldAttemptActiveKVDecodeQuantization(
-                cache: cache,
-                kvBits: parameters.kvBits,
-                quantizedKVStart: parameters.quantizedKVStart,
-                acceleration: acceleration
-            )
             let shouldForceModelEvalProbe =
                 ProcessInfo.processInfo.environment["MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE"] == "1"
                 && normalizedAccelerationPolicy(acceleration).mode == .activeKvQuantized
             let startedAt = Date.timeIntervalSinceReferenceDate
 
-            while parameters.maxTokens.map({ generatedTokenCount < $0 }) ?? true {
-                if Task.isCancelled {
-                    break
-                }
-
-                let tokenEvalStartedAt = shouldRecordActiveKVDecodeProbe
-                    ? Date.timeIntervalSinceReferenceDate
-                    : 0
+            var pendingToken: MLXArray?
+            if parameters.maxTokens.map({ $0 > 0 }) ?? true {
                 let sampleStartedAt = shouldRecordActiveKVDecodeProbe
                     ? Date.timeIntervalSinceReferenceDate
                     : 0
@@ -1956,7 +1944,20 @@ private func makePreparedDecodeEvents(
                     decodeSampleCallCount += 1
                     decodeSampleTotalMicros += elapsedMicros(since: sampleStartedAt)
                 }
+                asyncEval(token)
+                pendingToken = token
+            }
 
+            while let token = pendingToken,
+                  parameters.maxTokens.map({ generatedTokenCount < $0 }) ?? true
+            {
+                if Task.isCancelled {
+                    break
+                }
+
+                let tokenEvalStartedAt = shouldRecordActiveKVDecodeProbe
+                    ? Date.timeIntervalSinceReferenceDate
+                    : 0
                 let tokenIDStartedAt = shouldRecordActiveKVDecodeProbe
                     ? Date.timeIntervalSinceReferenceDate
                     : 0
@@ -1976,6 +1977,60 @@ private func makePreparedDecodeEvents(
                 }
 
                 generatedTokenCount += 1
+                var nextToken: MLXArray?
+                if parameters.maxTokens.map({ generatedTokenCount < $0 }) ?? true {
+                    let nextInput = LMInput.Text(tokens: token)
+                    if shouldEvaluateTurboQuantFusedAttentionCandidate && !didDispatchTurboQuantFusedAttention {
+                        turboQuantCandidateEligibilityCheckCount += 1
+                        let candidateStartedAt = shouldRecordActiveKVDecodeProbe
+                            ? Date.timeIntervalSinceReferenceDate
+                            : 0
+                        didDispatchTurboQuantFusedAttention = dispatchTurboQuantFusedAttentionCandidateIfNeeded(
+                            cache: cache,
+                            acceleration: acceleration,
+                            candidateProbeEnabled: turboQuantCandidateProbeEnabled
+                        )
+                        if shouldRecordActiveKVDecodeProbe {
+                            turboQuantCandidateCallCount += 1
+                            turboQuantCandidateTotalMicros += elapsedMicros(since: candidateStartedAt)
+                        }
+                    }
+                    let modelStartedAt = shouldRecordActiveKVDecodeProbe
+                        ? Date.timeIntervalSinceReferenceDate
+                        : 0
+                    let nextOutput = context.model(
+                        nextInput[text: .newAxis],
+                        cache: cache.isEmpty ? nil : cache,
+                        state: output.state
+                    )
+                    if shouldRecordActiveKVDecodeProbe {
+                        decodeModelCallCount += 1
+                        decodeModelTotalMicros += elapsedMicros(since: modelStartedAt)
+                    }
+                    if let modelEvalSyncMicros = activeKVModelEvalSyncMicrosIfNeeded(
+                        enabled: shouldForceModelEvalProbe,
+                        logits: nextOutput.logits
+                    ) {
+                        decodeModelEvalSyncCallCount += 1
+                        decodeModelEvalSyncTotalMicros += modelEvalSyncMicros
+                    }
+                    output = nextOutput
+                    let sampleStartedAt = shouldRecordActiveKVDecodeProbe
+                        ? Date.timeIntervalSinceReferenceDate
+                        : 0
+                    let sampledNextToken = sampleNextToken(
+                        logits: output.logits,
+                        processor: &processor,
+                        sampler: sampler
+                    )
+                    if shouldRecordActiveKVDecodeProbe {
+                        decodeSampleCallCount += 1
+                        decodeSampleTotalMicros += elapsedMicros(since: sampleStartedAt)
+                    }
+                    asyncEval(sampledNextToken)
+                    nextToken = sampledNextToken
+                }
+
                 let detokenizeStartedAt = shouldRecordActiveKVDecodeProbe
                     ? Date.timeIntervalSinceReferenceDate
                     : 0
@@ -1996,64 +2051,18 @@ private func makePreparedDecodeEvents(
                     }
                 }
 
-                if let maxTokens = parameters.maxTokens, generatedTokenCount >= maxTokens {
+                if let nextToken {
+                    pendingToken = nextToken
+                } else {
                     break
-                }
-
-                let nextInput = LMInput.Text(tokens: token)
-                if shouldEvaluateTurboQuantFusedAttentionCandidate && !didDispatchTurboQuantFusedAttention {
-                    turboQuantCandidateEligibilityCheckCount += 1
-                    let candidateStartedAt = shouldRecordActiveKVDecodeProbe
-                        ? Date.timeIntervalSinceReferenceDate
-                        : 0
-                    didDispatchTurboQuantFusedAttention = dispatchTurboQuantFusedAttentionCandidateIfNeeded(
-                        cache: cache,
-                        acceleration: acceleration,
-                        candidateProbeEnabled: turboQuantCandidateProbeEnabled
-                    )
-                    if shouldRecordActiveKVDecodeProbe {
-                        turboQuantCandidateCallCount += 1
-                        turboQuantCandidateTotalMicros += elapsedMicros(since: candidateStartedAt)
-                    }
-                }
-                let modelStartedAt = shouldRecordActiveKVDecodeProbe
-                    ? Date.timeIntervalSinceReferenceDate
-                    : 0
-                output = context.model(
-                    nextInput[text: .newAxis],
-                    cache: cache.isEmpty ? nil : cache,
-                    state: output.state
-                )
-                if shouldRecordActiveKVDecodeProbe {
-                    decodeModelCallCount += 1
-                    decodeModelTotalMicros += elapsedMicros(since: modelStartedAt)
-                }
-                if let modelEvalSyncMicros = activeKVModelEvalSyncMicrosIfNeeded(
-                    enabled: shouldForceModelEvalProbe,
-                    logits: output.logits
-                ) {
-                    decodeModelEvalSyncCallCount += 1
-                    decodeModelEvalSyncTotalMicros += modelEvalSyncMicros
-                }
-                if shouldMaintainQuantizedDecodeCache {
-                    let quantizeStartedAt = Date.timeIntervalSinceReferenceDate
-                    maybeQuantizeKVCache(
-                        cache: &cache,
-                        kvBits: parameters.kvBits,
-                        kvGroupSize: parameters.kvGroupSize,
-                        quantizedKVStart: parameters.quantizedKVStart
-                    )
-                    decodeQuantizeTotalMicros += elapsedMicros(since: quantizeStartedAt)
-                    shouldMaintainQuantizedDecodeCache = shouldAttemptActiveKVDecodeQuantization(
-                        cache: cache,
-                        kvBits: parameters.kvBits,
-                        quantizedKVStart: parameters.quantizedKVStart,
-                        acceleration: acceleration
-                    )
                 }
             }
 
             let decodeLoopTotalMicros = elapsedMicros(since: startedAt)
+            // `asyncEval` keeps the next-token graph in flight while the current
+            // chunk is streamed; synchronize before finishing so canceled or
+            // terminal streams do not leave MLX work running past stream teardown.
+            Stream().synchronize()
             let elapsed = max(Double(decodeLoopTotalMicros) / 1_000_000, 0.000_001)
             let summaryStartedAt = shouldRecordActiveKVDecodeProbe
                 ? Date.timeIntervalSinceReferenceDate

@@ -201,7 +201,7 @@ def _weight_dir_entry_file_size(entry: os.DirEntry[str]) -> int:
     try:
         if not entry.is_file():
             return 0
-        return max(int(entry.stat().st_size), 0)
+        return entry.stat().st_size
     except OSError:
         return 0
 
@@ -212,6 +212,6 @@ def _weight_file_size(path: Path) -> int:
     try:
         if not path.is_file():
             return 0
-        return max(int(path.stat().st_size), 0)
+        return path.stat().st_size
     except OSError:
         return 0
