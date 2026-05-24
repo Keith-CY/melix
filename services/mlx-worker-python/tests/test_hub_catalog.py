@@ -774,6 +774,13 @@ def test_search_models_skips_kv_cache_estimate_for_incompatible_records(
     estimate_kv_cache.assert_not_called()
 
 
+def test_positive_config_int_continues_to_next_key_when_string_value_is_zero() -> None:
+    # "0" passes isdecimal() but is not positive; the loop must continue to the fallback key
+    config = {"primary_key": "0", "fallback_key": 8}
+    result = hub_catalog_module._positive_config_int(config, "primary_key", "fallback_key")
+    assert result == 8
+
+
 def test_size_hint_from_empty_text_skips_regex_search(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(hub_catalog_module, "_BARE_SIZE_HINT_RE", object())
     monkeypatch.setattr(hub_catalog_module, "_EXPLICIT_SIZE_HINT_RE", object())

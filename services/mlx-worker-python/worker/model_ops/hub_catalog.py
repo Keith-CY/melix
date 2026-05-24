@@ -781,8 +781,11 @@ def _positive_config_int(config: dict[str, Any], *keys: str) -> int:
         value = _int(raw_value)
         if value > 0:
             return value
+        # _int() does not coerce strings; handle string-typed config fields explicitly
         if isinstance(raw_value, str) and raw_value.isdecimal():
-            return int(raw_value)
+            parsed = int(raw_value)
+            if parsed > 0:
+                return parsed
     return 0
 
 
