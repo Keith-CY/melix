@@ -978,6 +978,13 @@ struct OpenAIHandlerTests {
         #expect(receipt["melix.generation.stop_requested"] == #"["END","DONE"]"#)
         #expect(receipt["melix.generation.stop_effective"] == #"["END","DONE"]"#)
         #expect(receipt["melix.generation.stop_source"] == "request")
+        #expect(receipt["melix.generation.temperature"] == "0")
+        #expect(receipt["melix.generation.top_p"] == "1")
+        #expect(receipt["melix.generation.top_k"] == "0")
+        #expect(receipt["melix.generation.min_p"] == "")
+        #expect(receipt["melix.generation.repeat_penalty"] == "")
+        #expect(receipt["melix.generation.presence_penalty"] == "")
+        #expect(receipt["melix.generation.seed"] == "")
     }
 
     @Test(
@@ -4653,6 +4660,9 @@ struct OpenAIHandlerTests {
         #expect(receipt["melix.generation.output_cap_source"] == expectedSource)
         #expect(receipt["melix.generation.stop_effective"] == expectedStopReceipt)
         #expect(receipt["melix.generation.stop_source"] == "request")
+        #expect(receipt["melix.generation.top_k"]?.isEmpty == false)
+        #expect(receipt["melix.generation.presence_penalty"]?.isEmpty == false)
+        #expect(receipt["melix.generation.seed"]?.isEmpty == false)
     }
 
     @Test("POST /v1/responses forwards reasoning and tool delta events")

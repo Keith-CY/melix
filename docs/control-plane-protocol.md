@@ -699,6 +699,23 @@ The control plane protocol is richer than the public HTTP surface, but it must m
 | `GET /v1/models` | aggregate from model catalog and EnginePool |
 | `/admin/*` | expose local operational state from the same control plane truth |
 
+Text-generation compatibility routes normalize visible generation controls before
+dispatch. `max_tokens` and `max_completion_tokens` resolve to one effective
+output cap; malformed, zero, negative, non-finite, or conflicting cap values
+must return a typed `invalid_generation_bounds` response before worker
+generation starts. Stop strings are normalized into the worker sampling contract
+for both streaming and buffered responses.
+
+The translated worker request records a request-local generation receipt under
+`execution.ext` with these fields: `max_tokens_requested`,
+`max_tokens_effective`, `max_completion_tokens_requested`,
+`max_completion_tokens_effective`, `output_cap_source`, `stop_requested`,
+`stop_effective`, `stop_source`, `bounds_rejection_reason`, `temperature`,
+`top_p`, `top_k`, `min_p`, `repeat_penalty`, `presence_penalty`, and `seed`.
+These fields describe the compatibility route request and effective dispatch
+values only; model-recommended sampling or template policy remains a separate
+policy receipt.
+
 ## Minimal UI Interaction Flows
 
 ### Startup
