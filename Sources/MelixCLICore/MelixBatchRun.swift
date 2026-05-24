@@ -1,4 +1,5 @@
 import Foundation
+import MelixControlPlaneCore
 
 public struct BatchRunOptions: Equatable, Sendable {
     public let modelListPath: String
@@ -705,7 +706,7 @@ enum BatchRunPlanner {
                 defaultValue: 1,
                 option: "--bench-batch-size"
             ),
-            benchRepeats: try uint32Value(
+            benchRepeats: try benchmarkRepeatValue(
                 explicit: options.benchRepeats,
                 explicitWasProvided: options.explicitOptions.contains("--bench-repeats"),
                 configValue: configValues["bench_repeats"],
@@ -880,6 +881,28 @@ enum BatchRunPlanner {
             throw MelixCLIError.usage("Invalid value for \(option): \(raw).")
         }
         return parsed
+    }
+
+    private static func benchmarkRepeatValue(
+        explicit: UInt32,
+        explicitWasProvided: Bool,
+        configValue: String?,
+        environmentValue: String?,
+        defaultValue: UInt32,
+        option: String
+    ) throws -> UInt32 {
+        let value = try uint32Value(
+            explicit: explicit,
+            explicitWasProvided: explicitWasProvided,
+            configValue: configValue,
+            environmentValue: environmentValue,
+            defaultValue: defaultValue,
+            option: option
+        )
+        guard (ControlPlaneBenchRequest.minRepeats...ControlPlaneBenchRequest.maxRepeats).contains(value) else {
+            throw MelixCLIError.usage("Invalid value for \(option): \(value). Expected an integer between 1 and 20.")
+        }
+        return value
     }
 
     private static func boolValue(

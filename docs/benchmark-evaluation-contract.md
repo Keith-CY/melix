@@ -154,7 +154,7 @@ The supported config file keys are:
 | `bench_context_length` | `--bench-context-length` | `MELIX_BENCH_CONTEXT_LENGTH` | `1024` | Benchmark prompt context length. |
 | `bench_generation_length` | `--bench-generation-length` | `MELIX_BENCH_GENERATION_LENGTH` | `128` | Benchmark generation length. |
 | `bench_batch_size` | `--bench-batch-size` | `MELIX_BENCH_BATCH_SIZE` | `1` | Benchmark batch size. |
-| `bench_repeats` | `--bench-repeats` | `MELIX_BENCH_REPEATS` | `1` | Benchmark repeat count. |
+| `bench_repeats` | `--bench-repeats` | `MELIX_BENCH_REPEATS` | `1` | Benchmark repeat count. Valid values are `1` through `20`. |
 | `bench_sample_size` | `--bench-sample-size` | `MELIX_BENCH_SAMPLE_SIZE` | `1` | Benchmark sample limit. |
 | `bench_batch_factor` | `--bench-batch-factor` | `MELIX_BENCH_BATCH_FACTOR` | `1` | Benchmark dataset batch factor. |
 | `eval_suite` | `--eval-suite` | `MELIX_EVAL_SUITE` | `event_extraction` | Evaluation suite id. |
@@ -872,6 +872,11 @@ value, but reports must treat it as informational because variance cannot be
 estimated from one sample. Optional metrics such as energy must be omitted when
 the source rows do not contain values; exporters and reports must not synthesize
 missing energy or cost metrics as `0.0`.
+
+Public benchmark runner inputs must bound repeat counts to `1` through `20`.
+The CLI, batch config, environment, and control-plane request surfaces reject
+out-of-range values before starting a benchmark job. Compatibility request
+builders may continue to normalize an omitted or zero repeat count to `1`.
 
 Export bundles must expose these rows as `benchmark_repeat_groups`. CSV export
 helpers may provide a separate repeat-group CSV, but existing benchmark summary,

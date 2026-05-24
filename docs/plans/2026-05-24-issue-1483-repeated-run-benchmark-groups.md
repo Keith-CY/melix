@@ -146,3 +146,9 @@ Commit the narrow implementation with one focused message after verification evi
 - [x] Omit optional energy fields when no source energy samples exist instead of synthesizing `0.0`.
 - [x] Preserve CI95 bounds, sample counts, and inconclusive notes in Markdown, terminal, CSV, and pre-commit report outputs.
 - [x] Include repeat-group identity fields in report metric labels so rows from distinct models, sources, groups, or methodology versions do not overwrite each other.
+
+### Repeat Count Contract Follow-Up
+
+- [x] Bound public repeated-run inputs to `1` through `20` repetitions at the CLI, batch config, environment, and control-plane request surfaces.
+- [x] Preserve compatibility normalization for omitted or zero-valued programmatic request builders while rejecting over-limit direct control-plane commands.
+- [x] Update the benchmark/evaluation contract with the repeat count range and boundary behavior.
