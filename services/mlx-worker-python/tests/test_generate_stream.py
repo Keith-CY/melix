@@ -848,6 +848,19 @@ def test_generate_streams_token_and_terminal_completion() -> None:
         blocked_runtime,
         blocked_runtime.generate_tokens,
     )
+
+    class RuntimeWithBlockedPrefillCache:
+        def __setattr__(self, name, value):
+            if name == "_melix_accepts_prefill_step_size":
+                raise RuntimeError("cache unavailable")
+
+        prefill = lambda self, prefill_step_size=0: None  # noqa: E731
+
+    blocked_prefill_runtime = RuntimeWithBlockedPrefillCache()
+    assert engine_core_module._runtime_prefill_accepts_step_size(
+        blocked_prefill_runtime,
+        blocked_prefill_runtime.prefill,
+    )
     assert EngineCore._compat_policy_receipt({}) == {}
     assert EngineCore._compat_policy_receipt({"melix.compat.policy_receipt_json": ""}) == {}
     assert EngineCore._compat_policy_receipt({"melix.compat.policy_receipt_json": "{"}) == {}

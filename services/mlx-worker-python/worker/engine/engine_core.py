@@ -63,6 +63,18 @@ def _runtime_accepts_acceleration_policy(runtime: object, generate_tokens: objec
     return accepts
 
 
+def _runtime_prefill_accepts_step_size(runtime: object, prefill: object) -> bool:
+    cached = getattr(runtime, "_melix_accepts_prefill_step_size", None)
+    if cached is not None:
+        return bool(cached)
+    accepts = _callable_accepts_kwarg(prefill, "prefill_step_size")
+    try:
+        setattr(runtime, "_melix_accepts_prefill_step_size", accepts)
+    except Exception:
+        pass
+    return accepts
+
+
 class EngineCore:
     def __init__(self, registry: WorkerRegistry) -> None:
         self._registry = registry
@@ -463,7 +475,7 @@ class EngineCore:
                 "messages": request.messages,
                 "execution_ext": request.execution.ext,
             }
-            if _callable_accepts_kwarg(runtime.prefill, "prefill_step_size"):
+            if _runtime_prefill_accepts_step_size(runtime, runtime.prefill):
                 prefill_kwargs["prefill_step_size"] = request.prefill_step_size
             session = runtime.prefill(**prefill_kwargs)
             response = inference_pb2.PrefillResponse(

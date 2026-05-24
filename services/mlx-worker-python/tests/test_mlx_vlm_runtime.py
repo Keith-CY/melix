@@ -668,6 +668,8 @@ def test_mlx_vlm_runtime_uses_generate_step_fast_path_for_text_only_requests(
 def _run_text_only_step_with_buffered_detokenizer(
     monkeypatch: pytest.MonkeyPatch,
     generated_tokens: list[int],
+    *,
+    legacy_generate_step_signature: bool = False,
 ):
     _install_fake_mlx_core(monkeypatch)
     _install_fake_mlx_vlm_prepare_inputs(monkeypatch)
@@ -726,9 +728,32 @@ def _run_text_only_step_with_buffered_detokenizer(
         _ = revision
         return SimpleNamespace(config=SimpleNamespace(model_type="gemma4")), FakeProcessor()
 
-    def fake_generate_step(*_args, **_kwargs):
-        for token_id in generated_tokens:
-            yield token_id, [-0.1]
+    generate_step_calls: list[dict[str, object]] = []
+
+    if legacy_generate_step_signature:
+
+        def fake_generate_step(input_ids, model, pixel_values, mask, *, max_tokens, temperature, top_p, top_k):
+            generate_step_calls.append(
+                {
+                    "input_ids_shape": tuple(input_ids.shape),
+                    "model": model,
+                    "pixel_values": pixel_values,
+                    "mask_shape": tuple(mask.shape),
+                    "max_tokens": max_tokens,
+                    "temperature": temperature,
+                    "top_p": top_p,
+                    "top_k": top_k,
+                }
+            )
+            for token_id in generated_tokens:
+                yield token_id, [-0.1]
+
+    else:
+
+        def fake_generate_step(*_args, **_kwargs):
+            generate_step_calls.append(dict(_kwargs))
+            for token_id in generated_tokens:
+                yield token_id, [-0.1]
 
     monkeypatch.setattr(mlx_vlm_runtime_module, "_installed_package_version", lambda name: f"{name}-version")
     monkeypatch.setattr(mlx_vlm_runtime_module, "_mlx_peak_memory_gb", lambda _mx_module: 7.0)
@@ -740,13 +765,16 @@ def _run_text_only_step_with_buffered_detokenizer(
             generate_step_fn=fake_generate_step,
         ),
     )
-    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    model = imported_gemma4_vlm_model()
+    if legacy_generate_step_signature:
+        model.ext["melix.vlm.attention_cost_budget_bytes"] = "1000000"
+    loaded_model = runtime.load_model(model)
     prepared = runtime.render_prompt(
         [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="Say hello.")])],
         loaded_model=loaded_model,
     )
 
-    return list(
+    events = list(
         runtime.generate_tokens(
             loaded_model,
             prepared,
@@ -754,13 +782,14 @@ def _run_text_only_step_with_buffered_detokenizer(
             Event(),
         )
     )
+    return events, generate_step_calls, runtime.last_probe_snapshot().attention_budget_receipt
 
 
 def test_mlx_vlm_runtime_text_only_step_flushes_buffer_before_stop_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _assert_text_only_follow_up_replaces_media_probe_when_signature_repeats()
-    events = _run_text_only_step_with_buffered_detokenizer(monkeypatch, [101, 102, 106])
+    events, _, _ = _run_text_only_step_with_buffered_detokenizer(monkeypatch, [101, 102, 106])
 
     assert [event.text for event in events] == ["Hello!"]
     assert events[-1].raw_text == "Hello!"
@@ -931,17 +960,24 @@ def test_mlx_vlm_runtime_text_only_step_flushes_buffer_before_stop_token(
 def test_mlx_vlm_runtime_text_only_step_flushes_buffer_after_natural_end(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    events = _run_text_only_step_with_buffered_detokenizer(monkeypatch, [101, 102])
+    events, legacy_calls, legacy_receipt = _run_text_only_step_with_buffered_detokenizer(
+        monkeypatch,
+        [101, 102],
+        legacy_generate_step_signature=True,
+    )
 
     assert [event.text for event in events] == ["Hello!"]
     assert events[-1].raw_text == "Hello!"
     assert events[-1].completion_tokens == 2
+    assert len(legacy_calls) == 1
+    assert "prefill_step_size" not in legacy_calls[0]
+    assert legacy_receipt["prefill_chunk_mode"] == "auto_chunk"
 
 
 def test_mlx_vlm_runtime_text_only_step_skips_empty_final_buffer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    events = _run_text_only_step_with_buffered_detokenizer(monkeypatch, [103])
+    events, _, _ = _run_text_only_step_with_buffered_detokenizer(monkeypatch, [103])
 
     assert events == []
 
@@ -2869,8 +2905,10 @@ def test_mlx_vlm_runtime_uses_mtp_drafter_for_gemma4_text_backed_prompt_only_gen
     assert event.speculative_target_verify_ms == 5.5
 
 
-def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
+def _assert_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    legacy_step_signature: bool = False,
 ) -> None:
     _install_fake_mlx_core(monkeypatch)
     _install_fake_mlx_vlm_prepare_inputs(monkeypatch)
@@ -2929,7 +2967,7 @@ def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
         _ = kind
         return drafter
 
-    def fake_generate_step(
+    def _record_generate_step(
         input_ids,
         model,
         pixel_values,
@@ -2939,7 +2977,7 @@ def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
         draft_model,
         draft_kind: str,
         draft_block_size: int,
-        prefill_step_size,
+        prefill_step_size_marker,
     ):
         generate_step_calls.append(
             {
@@ -2951,11 +2989,62 @@ def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
                 "draft_model": draft_model,
                 "draft_kind": draft_kind,
                 "draft_block_size": draft_block_size,
-                "prefill_step_size": prefill_step_size,
+                "prefill_step_size_marker": prefill_step_size_marker,
             }
         )
         yield 101, None
         yield 102, None
+
+    if legacy_step_signature:
+
+        def fake_generate_step(
+            input_ids,
+            model,
+            pixel_values,
+            mask,
+            *,
+            max_tokens: int,
+            draft_model,
+            draft_kind: str,
+            draft_block_size: int,
+        ):
+            yield from _record_generate_step(
+                input_ids,
+                model,
+                pixel_values,
+                mask,
+                max_tokens=max_tokens,
+                draft_model=draft_model,
+                draft_kind=draft_kind,
+                draft_block_size=draft_block_size,
+                prefill_step_size_marker="legacy-not-passed",
+            )
+
+    else:
+
+        def fake_generate_step(
+            input_ids,
+            model,
+            pixel_values,
+            mask,
+            *,
+            max_tokens: int,
+            draft_model,
+            draft_kind: str,
+            draft_block_size: int,
+            prefill_step_size,
+        ):
+            yield from _record_generate_step(
+                input_ids,
+                model,
+                pixel_values,
+                mask,
+                max_tokens=max_tokens,
+                draft_model=draft_model,
+                draft_kind=draft_kind,
+                draft_block_size=draft_block_size,
+                prefill_step_size_marker=prefill_step_size,
+            )
 
     def fake_stream_generate(*_args, **kwargs):
         stream_generate_calls.append(dict(kwargs))
@@ -3086,7 +3175,11 @@ def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
             "draft_model": drafter,
             "draft_kind": "mtp",
             "draft_block_size": 6,
-            "prefill_step_size": runtime.last_probe_snapshot().attention_budget_receipt["selected_prefill_step_size"],
+            "prefill_step_size_marker": (
+                "legacy-not-passed"
+                if legacy_step_signature
+                else runtime.last_probe_snapshot().attention_budget_receipt["selected_prefill_step_size"]
+            ),
         }
     ]
 
@@ -3181,6 +3274,18 @@ def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
         "selected_prefill_step_size"
     ]
 
+
+def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _assert_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
+        monkeypatch,
+        legacy_step_signature=False,
+    )
+    _assert_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
+        monkeypatch,
+        legacy_step_signature=True,
+    )
 
 @pytest.mark.parametrize(
     ("drafter", "draft_block_size"),

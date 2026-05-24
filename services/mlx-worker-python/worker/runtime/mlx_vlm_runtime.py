@@ -1372,7 +1372,11 @@ class MLXVLMRuntime:
         if cancel_event.is_set():
             return
 
-        prompt_tokens = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
+        prompt_tokens = (
+            attention_policy.prompt_tokens
+            if attention_policy is not None
+            else self.prompt_token_count(prepared_request, loaded_model=loaded_model)
+        )
         selected_prefill_step_size = (
             attention_policy.selected_prefill_step_size
             if attention_policy is not None and attention_policy.prefill_chunk_mode == "auto_chunk"
@@ -1732,16 +1736,24 @@ class MLXVLMRuntime:
             detokenizer.reset()
         first_token_at: float | None = None
         completion_tokens = 0
+        step_kwargs: dict[str, Any] = {
+            "max_tokens": int(getattr(sampling, "max_output_tokens", 0) or 64),
+            "draft_model": drafter,
+            "draft_kind": "mtp",
+            "draft_block_size": draft_block_size,
+        }
+        if _callable_accepts_kwarg(
+            self._backend.generate_step_fn,
+            "prefill_step_size",
+        ):
+            step_kwargs["prefill_step_size"] = prefill_step_size
+
         for token, _logprobs in self._backend.generate_step_fn(
             input_ids,
             loaded_model["model"],
             None,
             mask,
-            max_tokens=int(getattr(sampling, "max_output_tokens", 0) or 64),
-            draft_model=drafter,
-            draft_kind="mtp",
-            draft_block_size=draft_block_size,
-            prefill_step_size=prefill_step_size,
+            **step_kwargs,
         ):
             if cancel_event.is_set():
                 return
@@ -1868,16 +1880,24 @@ class MLXVLMRuntime:
                 speculative_draft_model_configured=False if speculative_fallback_reason else None,
             )
 
+        step_kwargs: dict[str, Any] = {
+            "max_tokens": int(getattr(sampling, "max_output_tokens", 0) or 64),
+            "temperature": float(getattr(sampling, "temperature", 0.0)),
+            "top_p": float(getattr(sampling, "top_p", 1.0)),
+            "top_k": int(getattr(sampling, "top_k", 0)),
+        }
+        if _callable_accepts_kwarg(
+            self._backend.generate_step_fn,
+            "prefill_step_size",
+        ):
+            step_kwargs["prefill_step_size"] = prefill_step_size
+
         for token, logprobs in self._backend.generate_step_fn(
             input_ids,
             loaded_model["model"],
             None,
             mask,
-            max_tokens=int(getattr(sampling, "max_output_tokens", 0) or 64),
-            temperature=float(getattr(sampling, "temperature", 0.0)),
-            top_p=float(getattr(sampling, "top_p", 1.0)),
-            top_k=int(getattr(sampling, "top_k", 0)),
-            prefill_step_size=prefill_step_size,
+            **step_kwargs,
         ):
             if cancel_event.is_set():
                 return
