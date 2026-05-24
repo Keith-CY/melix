@@ -915,6 +915,236 @@ struct TextEndpointContractTests {
         #expect(manyEncoded["stop"] as? [String] == ["</final>", "</alt>"])
     }
 
+    @Test("completions and responses preserve stop aliases across legacy fields")
+    func completionsAndResponsesPreserveStopAliasesAcrossLegacyFields() throws {
+        let decoder = JSONDecoder()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+
+        let completionsWithLegacyStop = try decoder.decode(
+            OpenAICompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-text",
+                  "prompt": "Hello",
+                  "stop_sequences": "</legacy>"
+                }
+                """.utf8
+            )
+        )
+        let responsesWithLegacyStop = try decoder.decode(
+            OpenAIResponsesRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-text",
+                  "input": "Hello",
+                  "stop_sequences": ["</one>", "</two>"]
+                }
+                """.utf8
+            )
+        )
+        let encodedSingleCompletionStop = try #require(
+            JSONSerialization.jsonObject(
+                with: encoder.encode(
+                    OpenAICompletionsRequest(
+                        model: "melix-dev-text",
+                        prompt: "Hello",
+                        stopSequences: ["</final>"]
+                    )
+                )
+            ) as? [String: Any]
+        )
+        let encodedManyResponseStops = try #require(
+            JSONSerialization.jsonObject(
+                with: encoder.encode(
+                    OpenAIResponsesRequest(
+                        model: "melix-dev-text",
+                        input: .text("Hello"),
+                        stopSequences: ["</one>", "</two>"]
+                    )
+                )
+            ) as? [String: Any]
+        )
+
+        #expect(completionsWithLegacyStop.stopSequences == ["</legacy>"])
+        #expect(responsesWithLegacyStop.stopSequences == ["</one>", "</two>"])
+        #expect(encodedSingleCompletionStop["stop"] as? String == "</final>")
+        #expect(encodedManyResponseStops["stop"] as? [String] == ["</one>", "</two>"])
+    }
+
+    @Test("compatibility request contracts encode optional controls without losing aliases")
+    func compatibilityRequestContractsEncodeOptionalControlsWithoutLosingAliases() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let decoder = JSONDecoder()
+        let responseFormat = StructuredOutputRequestFormat(type: .jsonObject)
+        let toolParser = ToolParserRequestConfiguration(
+            mode: .qwen,
+            namespaces: ["tools.search"],
+            xmlFallback: true
+        )
+        let chatTemplate = ChatTemplateRequestConfiguration(values: [
+            "continue_final_message": .bool(true),
+        ])
+
+        let completions = OpenAICompletionsRequest(
+            model: "melix-dev-text",
+            prompt: "Draft the final answer.",
+            enableThinking: true,
+            reasoningEffort: "medium",
+            stream: true,
+            streamOptions: .init(includeUsage: true),
+            temperature: 0.4,
+            topP: 0.9,
+            maxTokens: 64,
+            topK: 40,
+            minP: 0.05,
+            repeatPenalty: 1.1,
+            presencePenalty: 0.2,
+            seed: 123,
+            stopSequences: ["END", "DONE"],
+            sessionID: "session-encode",
+            branchID: "branch-encode",
+            parentRequestID: "req-parent",
+            restoreSnapshotID: "snap-encode",
+            saveBoundarySnapshot: true,
+            presetID: "deep_reasoning",
+            workflow: .toolFollowup,
+            workflowRunID: "wf-encode",
+            workflowNodeID: "node-encode",
+            responseFormat: responseFormat,
+            toolParser: toolParser,
+            chatTemplateKwargs: chatTemplate
+        )
+        let responses = OpenAIResponsesRequest(
+            model: "melix-dev-text",
+            input: .messages([
+                .init(
+                    role: "user",
+                    name: "operator",
+                    content: "Search the notes.",
+                    channel: "analysis",
+                    recipient: "tools.search",
+                    contentType: "text"
+                ),
+            ]),
+            enableThinking: true,
+            reasoningEffort: "high",
+            instructions: "Return JSON.",
+            stream: true,
+            streamOptions: .init(includeUsage: true),
+            temperature: 0.3,
+            topP: 0.8,
+            maxCompletionTokens: 48,
+            topK: 24,
+            minP: 0.02,
+            repeatPenalty: 1.05,
+            presencePenalty: 0.1,
+            seed: 456,
+            stopSequences: ["STOP"],
+            sessionID: "session-response",
+            branchID: "branch-response",
+            parentRequestID: "req-response",
+            restoreSnapshotID: "snap-response",
+            saveBoundarySnapshot: false,
+            presetID: "quick_json",
+            workflow: .backgroundAnalysis,
+            workflowRunID: "wf-response",
+            workflowNodeID: "node-response",
+            text: .init(format: responseFormat),
+            toolParser: toolParser,
+            chatTemplateKwargs: chatTemplate
+        )
+        let messages = MelixMessagesRequest(
+            model: "melix-dev-text",
+            messages: [
+                .init(
+                    role: "assistant",
+                    name: "draft",
+                    contentBlocks: [
+                        .init(type: .thinking, thinking: "Need concise output."),
+                        .init(type: .text, text: "Ready."),
+                    ]
+                ),
+                .init(role: "user", content: "Continue."),
+            ],
+            enableThinking: true,
+            reasoningEffort: "medium",
+            systemBlocks: [.init(type: .text, text: "Use compact JSON.")],
+            stream: false,
+            streamOptions: .init(includeUsage: true),
+            temperature: 0.2,
+            topP: 0.75,
+            maxTokens: 32,
+            topK: 16,
+            minP: 0.01,
+            repeatPenalty: 1.0,
+            presencePenalty: 0.0,
+            seed: 789,
+            stopSequences: ["</final>"],
+            metadata: .init(userID: "operator-encode"),
+            thinking: .init(type: "enabled", budgetTokens: 64),
+            sessionID: "session-message",
+            branchID: "branch-message",
+            parentRequestID: "req-message",
+            restoreSnapshotID: "snap-message",
+            saveBoundarySnapshot: true,
+            presetID: "messages_json",
+            workflow: .interactive,
+            workflowRunID: "wf-message",
+            workflowNodeID: "node-message",
+            responseFormat: responseFormat,
+            toolParser: toolParser,
+            chatTemplateKwargs: chatTemplate
+        )
+
+        let completionsData = try encoder.encode(completions)
+        let responsesData = try encoder.encode(responses)
+        let messagesData = try encoder.encode(messages)
+        let completionsObject = try #require(
+            JSONSerialization.jsonObject(with: completionsData) as? [String: Any]
+        )
+        let responsesObject = try #require(
+            JSONSerialization.jsonObject(with: responsesData) as? [String: Any]
+        )
+        let messagesObject = try #require(
+            JSONSerialization.jsonObject(with: messagesData) as? [String: Any]
+        )
+
+        #expect(completionsObject["stop"] as? [String] == ["END", "DONE"])
+        #expect(completionsObject["max_tokens"] as? Int == 64)
+        #expect(completionsObject["workflow"] as? String == "tool_followup")
+        #expect(completionsObject["tool_parser"] != nil)
+        #expect(completionsObject["chat_template_kwargs"] != nil)
+
+        #expect(responsesObject["stop"] as? String == "STOP")
+        #expect(responsesObject["max_completion_tokens"] as? Int == 48)
+        #expect(responsesObject["instructions"] as? String == "Return JSON.")
+        #expect(responsesObject["workflow"] as? String == "background_analysis")
+        let encodedInput = try #require(responsesObject["input"] as? [[String: Any]])
+        #expect(encodedInput.first?["recipient"] as? String == "tools.search")
+
+        #expect(messagesObject["stop_sequences"] as? [String] == ["</final>"])
+        #expect(messagesObject["metadata"] != nil)
+        #expect(messagesObject["thinking"] != nil)
+        #expect(messagesObject["system"] != nil)
+        #expect(messagesObject["workflow"] as? String == "interactive")
+
+        let decodedCompletions = try decoder.decode(OpenAICompletionsRequest.self, from: completionsData)
+        let decodedResponses = try decoder.decode(OpenAIResponsesRequest.self, from: responsesData)
+        let decodedMessages = try decoder.decode(MelixMessagesRequest.self, from: messagesData)
+        #expect(decodedCompletions.stopSequences == ["END", "DONE"])
+        #expect(decodedCompletions.chatTemplateKwargs == chatTemplate)
+        #expect(decodedResponses.stopSequences == ["STOP"])
+        #expect(decodedResponses.toolParser == toolParser)
+        #expect(decodedMessages.stopSequences == ["</final>"])
+        #expect(decodedMessages.systemBlocks == [.init(type: .text, text: "Use compact JSON.")] as [MelixMessagesContentBlock]?)
+        #expect(decodedMessages.metadata == .init(userID: "operator-encode"))
+        #expect(decodedMessages.thinking == .init(type: "enabled", budgetTokens: 64))
+    }
+
     @Test("ocr execution policy stays disabled when model settings do not declare OCR defaults")
     func ocrExecutionPolicyStaysDisabledWithoutModelDefaults() {
         let policy = OCRExecutionPolicy(modelSettings: .init())
