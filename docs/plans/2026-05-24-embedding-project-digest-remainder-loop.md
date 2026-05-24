@@ -24,10 +24,14 @@ The affected path is covered by the registered PR-scoped performance probe
 
 The digest projection always has an eight-element `base_values` vector and uses a
 remainder branch for dimensions that are not exact multiples of eight. This slice
-replaces the temporary `base_values[:remainder]` slice with an index loop over the
-existing eight-element list. It keeps the same L2 normalization arithmetic and
-output vector values while avoiding a small temporary list allocation on the
-remainder path.
+replaces the temporary remainder slices with a direct single-item path for
+`remainder == 1` and index loops for larger remainders. It keeps the same L2
+normalization arithmetic and output vector values while avoiding small temporary
+list allocations in both the squared-sum and result-extension remainder paths.
+
+The registered probe uses `dimensions=4097` so the synthetic projection workload
+exercises the non-zero remainder branch instead of only measuring exact
+8-element repeats.
 
 ## Verification Plan
 
