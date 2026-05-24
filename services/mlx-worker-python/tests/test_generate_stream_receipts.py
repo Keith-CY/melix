@@ -33,6 +33,61 @@ class StructuredStreamingBackend:
         )
 
 
+class TokenRoutedStructuredBackend:
+    runtime_name = "fake-mlx"
+
+    def __init__(self, *, token_ids: tuple[int, ...]) -> None:
+        self.token_ids = token_ids
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id}
+
+    def estimate_resident_bytes(self, model_spec):
+        return 2048
+
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
+        _ = loaded_model
+        _ = prompt
+        _ = sampling
+        _ = cancel_event
+        yield RuntimeTokenEvent(
+            text="",
+            raw_text=(
+                '<think>trace</think>'
+                '<tool_call>{"name":"search","arguments":{"q":"one"}}</tool_call>'
+                "visible"
+            ),
+            token_ids=self.token_ids,
+            prompt_tokens=3,
+            completion_tokens=3,
+            finish_reason="stop",
+        )
+
+
+class TokenRoutedVisibleBackend:
+    runtime_name = "fake-mlx"
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id}
+
+    def estimate_resident_bytes(self, model_spec):
+        return 2048
+
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
+        _ = loaded_model
+        _ = prompt
+        _ = sampling
+        _ = cancel_event
+        yield RuntimeTokenEvent(
+            text="",
+            raw_text="visible text",
+            token_ids=(201, 202),
+            prompt_tokens=3,
+            completion_tokens=2,
+            finish_reason="stop",
+        )
+
+
 class FinalizerParityBackend:
     runtime_name = "fake-mlx"
 
@@ -177,6 +232,97 @@ def test_generate_token_route_receipt_uses_compat_policy_context_and_matches_str
     assert stream_receipt["routes"] == non_stream_receipt["routes"]
 
 
+def test_generate_token_route_receipt_records_actual_token_ids_by_channel_span() -> None:
+    inference_service, model_handle = _build_services(
+        TokenRoutedStructuredBackend(token_ids=(101, 102, 103))
+    )
+    completed = next(
+        event.completed
+        for event in inference_service.Generate(
+            _token_route_request(
+                model_handle,
+                compat_receipt='{"reasoning_mode":"enabled","tool_choice_resolved":"required"}',
+                stream=True,
+            ),
+            context=None,
+        )
+        if event.HasField("completed")
+    )
+    receipt = json.loads(completed.parser_metrics["token_route_receipt_json"])
+
+    assert completed.assistant_text == "visible"
+    assert completed.reasoning_text == "trace"
+    assert receipt["fallback_raw_text_used"] is False
+    assert receipt["visible_text_tokens"] == 1
+    assert receipt["hidden_reasoning_tokens"] == 1
+    assert [
+        (route["token_id"], route["channel"], route["channel_source"])
+        for route in receipt["routes"]
+    ] == [
+        (101, "hidden_reasoning", "reasoning_tag"),
+        (102, "tool_call", "tool_call_tag"),
+        (103, "visible_text", "raw_text"),
+    ]
+
+
+def test_generate_token_route_receipt_marks_raw_text_fallback_without_token_ids() -> None:
+    inference_service, model_handle = _build_services(
+        TokenRoutedStructuredBackend(token_ids=())
+    )
+    completed = next(
+        event.completed
+        for event in inference_service.Generate(
+            _token_route_request(
+                model_handle,
+                compat_receipt='{"reasoning_mode":"enabled","tool_choice_resolved":"required"}',
+                stream=True,
+            ),
+            context=None,
+        )
+        if event.HasField("completed")
+    )
+    receipt = json.loads(completed.parser_metrics["token_route_receipt_json"])
+
+    assert receipt["fallback_raw_text_used"] is True
+    assert [
+        (route["token_id"], route["channel"], route["channel_source"])
+        for route in receipt["routes"]
+    ] == [
+        (0, "hidden_reasoning", "reasoning_tag"),
+        (1, "tool_call", "tool_call_tag"),
+        (2, "visible_text", "raw_text"),
+    ]
+
+
+def test_generate_token_route_receipt_counts_all_tokens_in_visible_span() -> None:
+    inference_service, model_handle = _build_services(TokenRoutedVisibleBackend())
+    completed = next(
+        event.completed
+        for event in inference_service.Generate(
+            _token_route_request(
+                model_handle,
+                compat_receipt='{"reasoning_mode":"disabled","tool_choice_resolved":"none"}',
+                stream=True,
+                reasoning_enabled=False,
+            ),
+            context=None,
+        )
+        if event.HasField("completed")
+    )
+    receipt = json.loads(completed.parser_metrics["token_route_receipt_json"])
+
+    assert completed.assistant_text == "visible text"
+    assert receipt["fallback_raw_text_used"] is False
+    assert receipt["visible_text_tokens"] == 2
+    assert [
+        (route["token_id"], route["channel"], route["channel_source"])
+        for route in receipt["routes"]
+    ] == [
+        (201, "visible_text", "raw_text"),
+        (202, "visible_text", "raw_text"),
+    ]
+
+
 @pytest.mark.parametrize(
     ("case_id", "raw_text", "expected"),
     [
@@ -287,6 +433,7 @@ def _token_route_request(
     *,
     compat_receipt: str,
     stream: bool,
+    reasoning_enabled: bool = True,
 ) -> inference_pb2.GenerateRequest:
     return inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
@@ -302,7 +449,7 @@ def _token_route_request(
                 "melix.tool_parser.mode": "qwen",
             },
             reasoning=common_pb2.ReasoningConfig(
-                enabled=True,
+                enabled=reasoning_enabled,
                 mode_source="request_enable_thinking",
             ),
             tool_config=common_pb2.ToolConfig(
