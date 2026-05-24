@@ -2597,21 +2597,11 @@ def _repeat_group_label(row: dict[str, object]) -> str:
     parts = [
         row.get("model_id", ""),
         row.get("source_repo", ""),
-        _normalized_repeat_group_id(row),
-        row.get("source_row_kind", "group"),
         row.get("methodology_version", ""),
-        row.get("suite", "suite"),
-        row.get("context_length", 0),
-        row.get("generation_length", 0),
-        row.get("batch_size", 0),
-        row.get("cache_profile", ""),
-        row.get("reasoning_mode", ""),
-        row.get("structured_output_mode", ""),
+        _normalized_repeat_group_id(row).replace(":", "."),
     ]
     trimmed_parts = [_label_part(part) for part in parts]
-    while trimmed_parts and trimmed_parts[-1] == "":
-        trimmed_parts.pop()
-    return ".".join(trimmed_parts)
+    return ".".join(segment for part in trimmed_parts for segment in part.split(".") if segment)
 
 
 def _normalized_repeat_group_id(row: dict[str, object]) -> str:
@@ -2621,7 +2611,19 @@ def _normalized_repeat_group_id(row: dict[str, object]) -> str:
         return group_id[len(job_id) + 1:]
     if group_id.count(":") >= 6:
         return group_id.split(":", maxsplit=1)[1]
-    return group_id
+    if group_id:
+        return group_id
+    fallback_parts = [
+        row.get("source_row_kind", "group"),
+        row.get("suite", "suite"),
+        row.get("context_length", 0),
+        row.get("generation_length", 0),
+        row.get("batch_size", 0),
+        row.get("cache_profile", ""),
+        row.get("reasoning_mode", ""),
+        row.get("structured_output_mode", ""),
+    ]
+    return ".".join(_label_part(part) for part in fallback_parts)
 
 
 def _collect_evaluation_sample_probe_metrics(

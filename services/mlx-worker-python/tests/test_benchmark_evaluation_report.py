@@ -271,10 +271,7 @@ def test_report_marks_overlapping_repeat_group_ci_as_informational() -> None:
     }
 
     report = build_benchmark_evaluation_report(baseline=baseline, candidate=candidate)
-    metric_name = (
-        "bench.repeat_group...context:smoke:64:16:1:cold:::."
-        "context..smoke.64.16.1.cold.throughput_mean"
-    )
+    metric_name = "bench.repeat_group.context.smoke.64.16.1.cold.throughput_mean"
     rows = {row["metric"]: row for row in report["rows"]}
     metrics = {row["metric"]: row for row in report["metrics"]}
 
@@ -327,7 +324,7 @@ def test_report_marks_single_run_repeat_group_as_informational() -> None:
     }
 
     report = build_benchmark_evaluation_report(baseline=baseline, candidate=candidate)
-    metric_name = "bench.repeat_group....context..smoke.64.16.1.cold.throughput_mean"
+    metric_name = "bench.repeat_group.context.smoke.64.16.1.cold.throughput_mean"
     row = {row["metric"]: row for row in report["rows"]}[metric_name]
 
     assert row["status"] == "informational"
