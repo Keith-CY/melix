@@ -26,11 +26,30 @@ public struct LocalTrainingQueueOperatorError: Codable, Equatable, Sendable {
     public var code: String
     public var message: String
     public var retriable: Bool
+    public var remediation: String
 
-    public init(code: String, message: String, retriable: Bool = false) {
+    public init(code: String, message: String, retriable: Bool = false, remediation: String = "") {
         self.code = code
         self.message = message
         self.retriable = retriable
+        self.remediation = remediation
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case code
+        case message
+        case retriable
+        case remediation
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            code: try container.decodeIfPresent(String.self, forKey: .code) ?? "",
+            message: try container.decodeIfPresent(String.self, forKey: .message) ?? "",
+            retriable: try container.decodeIfPresent(Bool.self, forKey: .retriable) ?? false,
+            remediation: try container.decodeIfPresent(String.self, forKey: .remediation) ?? ""
+        )
     }
 }
 
@@ -273,12 +292,21 @@ public final class LocalTrainingQueueStore: @unchecked Sendable {
         jobID: String,
         code: String,
         message: String,
-        retriable: Bool = false
+        retriable: Bool = false,
+        remediation: String = ""
     ) throws -> LocalTrainingQueueJob {
-        try update(
+        let resolvedRemediation = remediation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? Self.defaultRemediation(for: code)
+            : remediation
+        return try update(
             jobID: jobID,
             status: .failed,
-            operatorError: LocalTrainingQueueOperatorError(code: code, message: message, retriable: retriable)
+            operatorError: LocalTrainingQueueOperatorError(
+                code: code,
+                message: message,
+                retriable: retriable,
+                remediation: resolvedRemediation
+            )
         )
     }
 
@@ -432,6 +460,29 @@ public final class LocalTrainingQueueStore: @unchecked Sendable {
             || normalized == "exclusive_local_training"
             || normalized == "local_apple_silicon_training"
             || normalized == "local_training"
+    }
+
+    private static func defaultRemediation(for code: String) -> String {
+        switch code.trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "insufficient_training_samples":
+            return "Add more accepted training samples before starting training."
+        case "sequence_length_exceeds_model_context":
+            return "Lower max_seq_length or choose a model with a larger context window."
+        case "training_memory_fit_failed":
+            return "Choose a smaller model, reduce sequence length or batch size, or pass allow_memory_risk after review."
+        case "unsupported_full_finetune_quantized_base":
+            return "Use LoRA or QLoRA for quantized bases, or switch to an unquantized base model."
+        case "unsupported_lora_target_module":
+            return "Choose supported LoRA target modules for this model family."
+        case "unsafe_quantized_lora_target":
+            return "Choose non-embedding LoRA target modules for quantized base models."
+        case "unsupported_model_family":
+            return "Choose a model family with productized LoRA training hooks."
+        case "invalid_dataset_package":
+            return "Use a dataset package whose format matches the requested training objective."
+        default:
+            return ""
+        }
     }
 
     private func recomputeMetrics(_ document: inout LocalTrainingQueueDocument) {

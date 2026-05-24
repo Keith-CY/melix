@@ -94,6 +94,13 @@ reading the trainability receipt. When a guardrail is attached to a training
 attempt, the run evidence must include a redacted path to the receipt and the
 typed operator errors.
 
+For local queue-backed training attempts, `melix jobs show --json` must attach
+the trainability receipt as `trainability_preflight` when
+`preflight_receipt_path` points to a `melix.trainability_preflight.v1` receipt.
+The text renderer and Desktop job detail surface must show the receipt path,
+blocking check code/message, and remediation so the operator does not need to
+open raw logs to understand why a run is blocked.
+
 Metrics:
 
 - `preflight_latency_ms`
@@ -145,11 +152,18 @@ Each job row must include:
 - `preflight_receipt_path`
 - `run_directory`
 - `operator_errors`
+- `recovery_policy`
 
 Queue admission must be durable before any worker launch. Local Apple Silicon
 training remains exclusive unless a later scheduler explicitly marks a resource
 class as shareable. Cancellation and recovery transitions must also persist
 before the CLI or Desktop reports them.
+
+Queue operator errors may include `remediation`. Older queue documents without
+that field must continue to decode with an empty remediation string. When a
+known trainability guardrail is marked failed without an explicit remediation,
+the store may fill the default guardrail remediation so CLI and Desktop expose a
+single operator-facing recovery path.
 
 Required queue error codes are:
 
@@ -174,8 +188,9 @@ Verification:
 - Swift store tests for queue round-trip, restore, exclusive admission,
   cancellation persistence, and malformed document handling.
 - CLI parser/runner tests for queue status and admission surfaces.
-- Desktop state tests proving queued and running jobs survive app
-  reconstruction from the same `MELIX_HOME`.
+- Desktop state and detail rendering tests proving queued and running jobs
+  survive app reconstruction from the same `MELIX_HOME` and expose recovery
+  policy, trainability preflight, and remediation fields.
 - Python pipeline test proving queue admission failure prevents worker launch
   when the CLI attaches a queue token to the run.
 
@@ -189,6 +204,9 @@ Implementation slice:
 - Project queue rows into the existing `melix jobs list/show/cancel` surfaces
   without changing the public `melix.job_summary.v1`,
   `melix.job_status.v1`, or `melix.job_cancel_result.v1` schemas.
+- Project queue recovery policy, failure remediation, and attached
+  trainability preflight receipts into CLI text/JSON and Desktop job detail
+  views.
 - Mark admitted rows `running` before worker launch and transition them to
   `succeeded` or `failed` after the synchronous operation returns.
 
