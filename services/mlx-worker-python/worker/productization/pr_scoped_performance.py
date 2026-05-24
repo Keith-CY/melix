@@ -2439,16 +2439,13 @@ def _scope_selection_uncached(
         changed_paths=changed_path_set,
         probes=probes,
     )
-    selected_probes = tuple(
-        _probe_scope_dict(probe)
-        for index, probe in enumerate(probes)
-        if force_all or index in matched_probe_indexes
-    )
-    matched_probe_ids = tuple(
-        probe.probe_id
-        for index, probe in enumerate(probes)
-        if index in matched_probe_indexes
-    )
+    matched_probe_index_tuple = tuple(sorted(matched_probe_indexes))
+    matched_probe_entries = tuple(probes[index] for index in matched_probe_index_tuple)
+    if force_all:
+        selected_probes = tuple(_probe_scope_dict(probe) for probe in probes)
+    else:
+        selected_probes = tuple(_probe_scope_dict(probe) for probe in matched_probe_entries)
+    matched_probe_ids = tuple(probe.probe_id for probe in matched_probe_entries)
     return force_all, matched_probe_ids, selected_probes
 
 
