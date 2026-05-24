@@ -757,11 +757,14 @@ def _reward_summary(samples: list[dict[str, Any]]) -> dict[str, float | int]:
         candidates = sample.get("candidates")
         candidate_scores: list[float] = []
         if is_instance(candidates, list_type):
-            candidate_scores = [
-                to_float(candidate["score"])
-                for candidate in candidates
-                if is_instance(candidate, dict_type) and "score" in candidate
-            ]
+            try:
+                candidate_scores = [to_float(candidate["score"]) for candidate in candidates]
+            except (KeyError, TypeError):
+                candidate_scores = [
+                    to_float(candidate["score"])
+                    for candidate in candidates
+                    if is_instance(candidate, dict_type) and "score" in candidate
+                ]
         candidate_score_count = len(candidate_scores)
         if candidate_score_count:
             scores_extend(candidate_scores)

@@ -26,6 +26,7 @@ _SIZE_HINT_MULTIPLIERS = {
 
 _BARE_SIZE_HINT_RE = re.compile(r"(?:model\s+size\s*[:|]?\s*)?(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
 _EXPLICIT_SIZE_HINT_RE = re.compile(r"\bmodel\s+size\s*[:|]?\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
+_NEXT_LINK_REL_MARKER = 'rel="next"'
 @dataclass(frozen=True, slots=True)
 class HubModelSummaryRecord:
     repo_id: str
@@ -266,20 +267,22 @@ class HubCatalog:
 
 
 def _next_cursor_from_link(link_header: str) -> str:
+    marker = _NEXT_LINK_REL_MARKER
+    marker_len = len(marker)
     search_start = 0
     while True:
-        url_start = link_header.find("<", search_start)
-        if url_start < 0:
+        relation_start = link_header.find(marker, search_start)
+        if relation_start < 0:
             return ""
-        url_end = link_header.find(">", url_start + 1)
+        url_end = link_header.rfind(">", 0, relation_start)
         if url_end < 0:
-            return ""
-        next_url_start = link_header.find("<", url_end + 1)
-        relation_start = url_end + 1
-        relation_end = next_url_start if next_url_start >= 0 else len(link_header)
-        if link_header.find('rel="next"', relation_start, relation_end) >= 0:
-            return _cursor_query_value(link_header, url_start + 1, url_end)
-        search_start = relation_end
+            search_start = relation_start + marker_len
+            continue
+        url_start = link_header.rfind("<", 0, url_end)
+        if url_start < 0:
+            search_start = relation_start + marker_len
+            continue
+        return _cursor_query_value(link_header, url_start + 1, url_end)
 
 
 def _cursor_query_value(url: str, start: int, end: int) -> str:
