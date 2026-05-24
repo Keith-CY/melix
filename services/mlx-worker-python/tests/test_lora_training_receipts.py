@@ -115,6 +115,27 @@ def test_training_admission_rejects_invalid_hyperparameters_with_typed_details()
     }
 
 
+def test_training_admission_rejects_non_finite_float_hyperparameters() -> None:
+    with pytest.raises(ModelOperationError) as exc:
+        training_config_module.normalize_training_config(
+            source_model=_text_model(family_id="qwen"),
+            ext={"learning_rate": "nan"},
+            dataset_format="chat_messages",
+            response_only_supported=True,
+            sample_count=1,
+        )
+
+    assert exc.value.code == "invalid_argument"
+    assert exc.value.details == {
+        "field": "learning_rate",
+        "reason": "not_finite",
+        "received": "nan",
+        "minimum": "0.0",
+        "allowed_bounds": "finite >=0.0",
+        "http_status": "422",
+    }
+
+
 def test_training_admission_receipt_records_resolved_controls(tmp_path: Path) -> None:
     dataset_dir = _write_dataset_package(
         tmp_path / "dataset-with-validation",

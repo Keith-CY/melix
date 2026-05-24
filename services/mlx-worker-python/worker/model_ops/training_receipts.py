@@ -188,6 +188,7 @@ def typed_validation_details(
     reason: str,
     received: str,
     minimum: int | float,
+    allowed_bounds: str | None = None,
     include_raw_value: bool = False,
 ) -> dict[str, str]:
     minimum_text = format_bound_value(minimum)
@@ -196,7 +197,7 @@ def typed_validation_details(
         "reason": reason,
         "received": received,
         "minimum": minimum_text,
-        "allowed_bounds": f">={minimum_text}",
+        "allowed_bounds": allowed_bounds or f">={minimum_text}",
         "http_status": "422",
     }
     if include_raw_value:
