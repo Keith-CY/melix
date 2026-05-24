@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from worker.runtime.embedding_backends import (
     resolve_embedding_backend,
     resolve_embedding_family,
 )
 
 
-def _repeated_input_cycle_length(inputs: list[str]) -> int:
+def _repeated_input_cycle_length(inputs: Sequence[str]) -> int:
     input_count = len(inputs)
     if input_count < 1024:
         return 0
@@ -49,7 +51,7 @@ class DeterministicEmbeddingRuntime:
         backend = resolve_embedding_backend(model_spec.ext.get("embedding_backend_id", "bert-v1"))
         return int(backend.descriptor.estimated_resident_bytes)
 
-    def embed_inputs(self, loaded_model, inputs: list[str]) -> list[list[float]]:
+    def embed_inputs(self, loaded_model, inputs: Sequence[str]) -> list[list[float]]:
         dimensions = int(loaded_model.get("dimensions", self.dimensions))
         backend = loaded_model.get("embedding_backend")
         if backend is None:

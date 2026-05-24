@@ -63,9 +63,24 @@ class CountingEmbeddingFamilyAdapter(DeterministicEmbeddingFamilyAdapter):
         return backend.embed_text(text, dimensions)
 
 
-def build_services(model_catalog: WorkerModelCatalog | None = None):
+class RecordingEmbeddingRuntime(DeterministicEmbeddingRuntime):
+    def __init__(self) -> None:
+        super().__init__()
+        self.received_inputs_type_name = ""
+
+    def embed_inputs(self, loaded_model, inputs):
+        self.received_inputs_type_name = type(inputs).__name__
+        return super().embed_inputs(loaded_model, inputs)
+
+
+def build_services(
+    model_catalog: WorkerModelCatalog | None = None,
+    *,
+    embedding_runtime: DeterministicEmbeddingRuntime | None = None,
+):
     registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=PassiveTextBackend()),
+        embedding_runtime=embedding_runtime,
         model_catalog=model_catalog or WorkerModelCatalog(),
     )
     runtime_service = WorkerRuntimeService(registry)
@@ -138,6 +153,29 @@ def test_embed_returns_stable_vectors_for_loaded_embedding_models() -> None:
     assert first.embeddings[0].values == second.embeddings[0].values
     assert first.embeddings[1].values == second.embeddings[1].values
     assert first.embeddings[0].values != first.embeddings[1].values
+
+
+def test_embed_passes_request_inputs_without_list_materialization() -> None:
+    recording_runtime = RecordingEmbeddingRuntime()
+    _, runtime_service, inference_service = build_services(embedding_runtime=recording_runtime)
+    model_handle = load_model(runtime_service, WorkerModelCatalog.dev_embedding_model())
+
+    response = inference_service.Embed(
+        inference_pb2.EmbedRequest(
+            id=common_pb2.RequestIdentity(request_id="embed-no-input-list-copy"),
+            model_handle=model_handle,
+            inputs=["alpha", "beta", "alpha"],
+        ),
+        context=None,
+    )
+
+    assert response.error.code == ""
+    assert [list(embedding.values) for embedding in response.embeddings] == [
+        [*response.embeddings[0].values],
+        [*response.embeddings[1].values],
+        [*response.embeddings[0].values],
+    ]
+    assert recording_runtime.received_inputs_type_name != "list"
 
 
 def test_embed_rejects_missing_and_wrong_model_kinds() -> None:
