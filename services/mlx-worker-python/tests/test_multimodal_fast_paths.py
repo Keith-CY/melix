@@ -16,6 +16,7 @@ from worker.runtime.multimodal_fast_paths import (
     _signature_pairs_repr,
     fast_path_probe_signature,
 )
+from worker.runtime.multimodal_position_receipts import build_mixed_batch_geometry_receipt
 from worker.runtime.multimodal_preprocessing import PreparedImageInput, PreparedVisionRequest
 from worker.runtime.video_preprocessing import PreparedVideoInput
 
@@ -133,6 +134,57 @@ def test_fast_path_records_partial_reuse_for_multi_image_turns() -> None:
     assert decision.image_feature_cache_hits == 1
     assert decision.image_feature_cache_misses == 1
     assert decision.multi_image_scatter_mode == "per_sample"
+
+
+def test_fast_path_records_per_sample_scatter_for_heterogeneous_multi_image_batches() -> None:
+    controller = MultimodalFastPathController()
+    loaded_model = _loaded_model()
+    row_images = [
+        [_image(b"row-0-image", filename="row-0.jpg")],
+        [
+            _image(b"row-1-first-image", filename="row-1-first.jpg"),
+            _image(b"row-1-second-image", filename="row-1-second.jpg"),
+        ],
+        [_image(b"row-2-image", filename="row-2.jpg")],
+    ]
+
+    decisions = [controller.plan(loaded_model, _request(images)) for images in row_images]
+    receipt = build_mixed_batch_geometry_receipt(
+        rows=[
+            {
+                "row_index": index,
+                "prompt_kwargs": {
+                    "input_ids_len": 8 + index,
+                    "attention_mask_len": 8 + index + left_padding,
+                },
+                "seq_len": 8 + index,
+                "left_padding": left_padding,
+                "media_count": len(images),
+                "mrope_delta_override": [image.sha256_hex for image in images],
+                "mrope_delta_override_identity": [image.sha256_hex for image in images],
+                "expected_mrope_delta_override_identity": [image.sha256_hex for image in images],
+                "visual_embed_count": len(images) * 64,
+                "expected_visual_embed_count": len(images) * 64,
+                "visual_embed_identity": [image.sha256_hex for image in images],
+                "expected_visual_embed_identity": [image.sha256_hex for image in images],
+            }
+            for index, (images, left_padding) in enumerate(zip(row_images, [4, 0, 7], strict=True))
+        ]
+    )
+
+    assert [decision.multi_image_scatter_mode for decision in decisions] == [
+        "none",
+        "per_sample",
+        "none",
+    ]
+    assert [decision.image_feature_cache_misses for decision in decisions] == [1, 2, 1]
+    assert receipt["row_geometry_guard"] == "aligned"
+    assert [row["visual_embed_count"] for row in receipt["rows"]] == [64, 128, 64]
+    assert [row["visual_embed_identity"] for row in receipt["rows"]] == [
+        [row_images[0][0].sha256_hex],
+        [row_images[1][0].sha256_hex, row_images[1][1].sha256_hex],
+        [row_images[2][0].sha256_hex],
+    ]
 
 
 def test_fast_path_falls_back_for_text_backed_image_models() -> None:
