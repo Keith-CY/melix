@@ -5,6 +5,7 @@ import csv
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -451,7 +452,7 @@ def list_dataset_versions(
     started = time.perf_counter()
     versions_root = Path(output_root).expanduser() / dataset_id / "versions"
     versions: list[dict[str, Any]] = []
-    for manifest_path in sorted(versions_root.glob("*/dataset-version.json")):
+    for manifest_path in _iter_dataset_version_manifest_paths(versions_root):
         version = _read_json(manifest_path)
         versions.append(
             {
@@ -477,6 +478,21 @@ def list_dataset_versions(
             "dataset_version_count": len(versions),
         },
     }
+
+
+def _iter_dataset_version_manifest_paths(versions_root: Path) -> list[Path]:
+    manifest_paths: list[Path] = []
+    try:
+        with os.scandir(versions_root) as entries:
+            for entry in entries:
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+                manifest_path = os.path.join(entry.path, "dataset-version.json")
+                if os.path.isfile(manifest_path):
+                    manifest_paths.append(Path(manifest_path))
+    except OSError:
+        return []
+    return manifest_paths
 
 
 def _iter_source_records(

@@ -186,6 +186,54 @@ def test_dataset_version_listing_is_deterministic_and_reports_latency(
     assert listing["metrics"]["dataset_version_count"] == 2
 
 
+def test_dataset_version_listing_uses_scandir_without_path_glob(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    ingest_receipt = _prepare_ingest_fixture(tmp_path)
+    output_root = tmp_path / "datasets"
+    receipt_path = Path(ingest_receipt["segment_artifacts"]["receipt_path"])
+    prepare_dataset_version(
+        DatasetVersionRequest(
+            workspace_manifest_path=tmp_path / "workspace-manifest.json",
+            ingest_receipt_path=receipt_path,
+            output_root=output_root,
+            dataset_id="support-chat",
+            version_id="support-chat-v1",
+            created_at="2026-05-24T01:00:00Z",
+            mode="chat",
+            generator_model="melix.local.dataset-versioner.v1",
+            output_kind="training",
+            output_format="prompt_completion",
+        )
+    )
+
+    def fail_glob(self: Path, pattern: str):  # pragma: no cover - exercised only on regression
+        raise AssertionError(f"list_dataset_versions() should not allocate Path.glob({pattern!r})")
+
+    monkeypatch.setattr(Path, "glob", fail_glob)
+
+    listing = list_dataset_versions(
+        workspace_manifest_path=tmp_path / "workspace-manifest.json",
+        output_root=output_root,
+        dataset_id="support-chat",
+    )
+
+    assert [item["version_id"] for item in listing["versions"]] == ["support-chat-v1"]
+    assert listing["metrics"]["dataset_version_count"] == 1
+
+
+def test_dataset_version_listing_handles_missing_versions_root(tmp_path: Path) -> None:
+    listing = list_dataset_versions(
+        workspace_manifest_path=tmp_path / "workspace-manifest.json",
+        output_root=tmp_path / "datasets",
+        dataset_id="missing-dataset",
+    )
+
+    assert listing["versions"] == []
+    assert listing["metrics"]["dataset_version_count"] == 0
+
+
 def test_failed_only_retry_copies_successful_samples_without_rewriting(
     tmp_path: Path,
 ) -> None:
