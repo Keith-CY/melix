@@ -201,6 +201,32 @@ def test_report_evidence_gate_run_kind_probe_script_emits_metrics(
     assert metrics["run_kind_count"] == 65.0
 
 
+def test_scope_report_selects_dataset_version_listing_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/dataset_preparation.py"],
+    )
+
+    assert "dataset-version-listing-scandir" in _selected_probe_ids(scope)
+
+
+def test_dataset_version_listing_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_VERSION_LISTING_PROBE_COUNT", "5")
+    monkeypatch.setenv("MELIX_DATASET_VERSION_LISTING_PROBE_SAMPLES", "1")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/dataset_version_listing_probe.py"))
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["elapsed_ms_p95"] >= 0.0
+    assert metrics["sample_count"] == 1.0
+    assert metrics["version_count"] == 5.0
+
+
 def test_scope_report_selects_tool_registry_schema_bytes_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -2641,6 +2667,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "training-dataset-validation-sample-limit",
         "training-dataset-chunker-top-level-base-copy",
         "dataset-registry-preview-limit-short-circuit",
+        "dataset-version-listing-scandir",
         "maintenance-bench-report-readback",
         "maintenance-percentile-vector-reuse",
         "maintenance-prompt-shape-vector-repeat",
