@@ -660,22 +660,26 @@ class DownloadPipeline:
         stall_reason: str,
     ) -> dict[str, Any]:
         payload = dict(manifest_context.base_payload)
-        payload["status"] = status
-        payload["terminal_state"] = terminal_state
-        payload["stage"] = stage
-        payload["pct"] = round(pct, 6)
-        payload["downloaded_bytes"] = downloaded_bytes
-        payload["total_bytes"] = total_bytes
-        payload["resume_used"] = resume_used
-        payload["resume_from_bytes"] = resume_from_bytes
-        payload["retry_count"] = retry_count
-        payload["stall_detection_count"] = stall_detection_count
-        payload["stall_reason"] = stall_reason
-        payload["metrics"] = {
-            "download.resume_success_rate": 1.0 if resume_used and terminal_state == "completed" else 0.0,
-            "download.retry_count": retry_count,
-            "download.stall_detection_count": stall_detection_count,
-        }
+        payload.update(
+            {
+                "status": status,
+                "terminal_state": terminal_state,
+                "stage": stage,
+                "pct": round(pct, 6),
+                "downloaded_bytes": downloaded_bytes,
+                "total_bytes": total_bytes,
+                "resume_used": resume_used,
+                "resume_from_bytes": resume_from_bytes,
+                "retry_count": retry_count,
+                "stall_detection_count": stall_detection_count,
+                "stall_reason": stall_reason,
+                "metrics": {
+                    "download.resume_success_rate": 1.0 if resume_used and terminal_state == "completed" else 0.0,
+                    "download.retry_count": retry_count,
+                    "download.stall_detection_count": stall_detection_count,
+                },
+            }
+        )
         if manifest_context.pending_artifact_integrity is not None:
             payload["attempts"] = retry_count + 1
             payload["artifact_integrity"] = (
