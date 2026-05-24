@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -111,6 +112,39 @@ def test_run_reuses_public_ext_across_many_snapshots(
     assert payload["terminal_state"] == "completed"
 
 
+def test_run_plain_download_does_not_build_operation_receipts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pipeline = DownloadPipeline()
+    source_path = tmp_path / "source.bin"
+    source_path.write_bytes(b"abcdef")
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo",
+        ext={
+            "source_path": str(source_path),
+            "chunk_bytes": "1",
+        },
+    )
+
+    artifact_integrity_receipt = Mock(
+        side_effect=AssertionError("plain downloads should not build operation receipt payloads")
+    )
+    monkeypatch.setattr(
+        DownloadPipeline,
+        "_artifact_integrity_receipt",
+        staticmethod(artifact_integrity_receipt),
+    )
+
+    result = pipeline.run(request, job_id="job-plain", output_dir=tmp_path / "output")
+
+    artifact_integrity_receipt.assert_not_called()
+    assert result.output_path.read_bytes() == b"abcdef"
+    payload = json.loads(result.snapshots[-1].manifest_json)
+    assert "artifact_integrity" not in payload
+    assert "operation_id" not in payload
+
+
 def test_run_retry_exhausted_path_does_not_reparse_manifest_json(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -195,3 +229,129 @@ def test_run_resumes_named_artifact_from_preserved_partial(tmp_path: Path) -> No
     payload = json.loads(result.snapshots[-1].manifest_json)
     assert payload["resume_used"] is True
     assert payload["resume_from_bytes"] == 4
+
+
+def test_managed_download_manifest_records_operation_receipt_fields(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_path = tmp_path / "source.bin"
+    source_path.write_bytes(b"abcdef")
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo",
+        ext={
+            "source_path": str(source_path),
+            "chunk_bytes": "2",
+            "melix.target_scope": "hub:mlx-community/demo@main",
+            "melix.operation_kind": "managed_model_install",
+            "test_request_deadline_ms": "250",
+            "test_slow_in_progress_ms": "500",
+        },
+    )
+
+    result = pipeline.run(request, job_id="job-receipt", output_dir=tmp_path / "output")
+
+    in_progress_payload = json.loads(result.snapshots[1].manifest_json)
+    completed_payload = json.loads(result.snapshots[-1].manifest_json)
+    assert in_progress_payload["status"] == "in_progress"
+    assert in_progress_payload["terminal_state"] == "in_progress"
+    assert in_progress_payload["timeout_ms"] == 250
+    assert in_progress_payload["retry_after_ms"] == 250
+    assert in_progress_payload["last_error"] == ""
+    assert completed_payload["status"] == "completed"
+    assert completed_payload["operation_kind"] == "managed_model_install"
+    assert completed_payload["target_scope"] == "hub:mlx-community/demo@main"
+    assert completed_payload["operation_id"].startswith("managed_model_install:")
+    assert completed_payload["attempts"] == 1
+    assert completed_payload["artifact_integrity"] == {
+        "verification_mode": "receipt_fixture",
+        "policy_present": True,
+        "digest": "",
+        "checked_at": "not_recorded",
+        "failure_reason": "",
+        "status": "passed",
+    }
+
+
+def test_operation_identity_respects_explicit_id_and_local_source_fallback(tmp_path: Path) -> None:
+    source_path = tmp_path / "source.bin"
+    source_path.write_bytes(b"local")
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="",
+        ext={
+            "source_path": str(source_path),
+            "melix.operation_id": "op-explicit",
+            "melix.operation_kind": "artifact_import",
+        },
+    )
+
+    assert DownloadPipeline.operation_identity(request) == (
+        "op-explicit",
+        f"local:{source_path}",
+        "artifact_import",
+    )
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlink support unavailable")
+def test_operation_identity_canonicalizes_local_source_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source_path = tmp_path / "source.bin"
+    source_path.write_bytes(b"local")
+    link_path = tmp_path / "source-link.bin"
+    os.symlink(source_path, link_path)
+    monkeypatch.chdir(tmp_path)
+
+    relative_request = maintenance_pb2.ConvertModelRequest(
+        source_model="",
+        ext={
+            "source_path": "./source.bin",
+            "melix.operation_kind": "artifact_import",
+        },
+    )
+    symlink_request = maintenance_pb2.ConvertModelRequest(
+        source_model="",
+        ext={
+            "source_path": str(link_path),
+            "melix.operation_kind": "artifact_import",
+        },
+    )
+
+    assert DownloadPipeline.operation_identity(relative_request) == DownloadPipeline.operation_identity(
+        symlink_request
+    )
+    assert DownloadPipeline.operation_identity(relative_request)[1] == f"local:{source_path.resolve()}"
+
+
+def test_receipt_eligibility_includes_all_operation_receipt_triggers() -> None:
+    for ext in (
+        {"melix.managed_import": "true"},
+        {"melix.operation_id": "op-explicit"},
+        {"melix.operation_kind": "artifact_import"},
+        {"melix.target_scope": "scope-a"},
+        {"melix.artifact_digest": "sha256:abc"},
+        {"artifact_digest": "sha256:abc"},
+        {"sha256": "abc"},
+        {"test_request_deadline_ms": "250"},
+    ):
+        assert DownloadPipeline.uses_operation_receipt(ext) is True
+
+    assert DownloadPipeline.uses_operation_receipt({}) is False
+
+
+def test_terminal_receipts_record_stalled_and_cancelled_integrity_failures(tmp_path: Path) -> None:
+    state_path = tmp_path / "download.state.json"
+    base_payload = {
+        "state_path": str(state_path),
+        "ext": {"melix.artifact_digest": "sha256:abc"},
+        "stall_reason": "no_progress_timeout",
+    }
+
+    stalled = json.loads(
+        DownloadPipeline._terminal_manifest_json(dict(base_payload), status="stalled")
+    )
+    cancelled = json.loads(
+        DownloadPipeline._terminal_manifest_json(dict(base_payload), status="cancelled")
+    )
+
+    assert stalled["last_error"] == "no_progress_timeout"
+    assert stalled["artifact_integrity"]["status"] == "failed"
+    assert stalled["artifact_integrity"]["digest"] == "sha256:abc"
+    assert cancelled["last_error"] == "download_cancelled"
+    assert cancelled["artifact_integrity"]["failure_reason"] == "download_cancelled"

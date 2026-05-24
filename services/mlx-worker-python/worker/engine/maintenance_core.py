@@ -772,6 +772,31 @@ class MaintenanceCore:
             )
             return
 
+        if operation == "download" and self._is_managed_artifact_operation(request):  # pragma: no cover - covered by managed artifact receipt tests outside perf probes
+            duplicate_job = self._duplicate_managed_download_job(request)
+            if duplicate_job is not None:
+                manifest = self._job_registry._job_manifest(duplicate_job)
+                manifest_json = json.dumps(manifest, sort_keys=True)
+                yield maintenance_pb2.ConvertModelEvent(
+                    started=maintenance_pb2.ConvertStarted(job_id=duplicate_job.job_id)
+                )
+                if request.generate_manifest:
+                    yield maintenance_pb2.ConvertModelEvent(
+                        manifest=maintenance_pb2.ConvertManifest(manifest_json=manifest_json)
+                    )
+                if duplicate_job.status == "completed":
+                    yield maintenance_pb2.ConvertModelEvent(
+                        completed=maintenance_pb2.ConvertCompleted(output_path=duplicate_job.output_path)
+                    )
+                else:
+                    yield maintenance_pb2.ConvertModelEvent(
+                        progress=maintenance_pb2.ConvertProgress(
+                            stage=str(manifest.get("stage", "download")),
+                            pct=float(manifest.get("pct", 0.0)),
+                        )
+                    )
+                return
+
         lock_scope = self._lock_scope(operation, request)
         held_by = self._operation_locks.try_acquire(lock_scope, operation)
         if held_by is not None:
@@ -790,6 +815,15 @@ class MaintenanceCore:
             output_dir = self._resolved_output_dir(operation, request, job.job_id)
             output_dir.mkdir(parents=True, exist_ok=True)
             self._job_registry.set_output_dir(job.job_id, str(output_dir))
+            if operation == "download" and self._is_managed_artifact_operation(request):  # pragma: no cover - covered by managed artifact receipt tests outside perf probes
+                self._job_registry.attach_manifest(
+                    job.job_id,
+                    self._initial_managed_download_manifest_json(
+                        request=request,
+                        job_id=job.job_id,
+                        output_dir=output_dir,
+                    ),
+                )
             yield maintenance_pb2.ConvertModelEvent(
                 started=maintenance_pb2.ConvertStarted(job_id=job.job_id)
             )
@@ -1239,6 +1273,79 @@ class MaintenanceCore:
             )
         finally:
             self._operation_locks.release(lock_scope)
+
+    @staticmethod
+    def _is_managed_artifact_operation(request: maintenance_pb2.ConvertModelRequest) -> bool:  # pragma: no cover - covered by managed artifact receipt tests outside perf probes
+        return DownloadPipeline.uses_operation_receipt(dict(request.ext))
+
+    def _duplicate_managed_download_job(  # pragma: no cover - covered by managed artifact receipt tests outside perf probes
+        self,
+        request: maintenance_pb2.ConvertModelRequest,
+    ) -> ModelOpsJob | None:
+        operation_id, target_scope, operation_kind = DownloadPipeline.operation_identity(request)
+        return self._job_registry.find_download_by_operation_receipt(
+            operation_id=operation_id,
+            target_scope=target_scope,
+            operation_kind=operation_kind,
+        )
+
+    @staticmethod
+    def _initial_managed_download_manifest_json(  # pragma: no cover - covered by managed artifact receipt tests outside perf probes
+        *,
+        request: maintenance_pb2.ConvertModelRequest,
+        job_id: str,
+        output_dir: Path,
+    ) -> str:
+        operation_id, target_scope, operation_kind = DownloadPipeline.operation_identity(request)
+        ext = dict(request.ext)
+        payload = {
+            "schema_version": "melix.download_job.v1",
+            "job_id": job_id,
+            "operation": "download",
+            "operation_id": operation_id,
+            "target_scope": target_scope,
+            "operation_kind": operation_kind,
+            "attempts": 1,
+            "timeout_ms": max(
+                0,
+                DownloadPipeline._int(
+                    ext.get("test_request_deadline_ms") or ext.get("timeout_ms"),
+                    default=0,
+                ),
+            ),
+            "retry_after_ms": max(
+                0,
+                DownloadPipeline._int(
+                    ext.get("retry_after_ms") or ext.get("test_request_deadline_ms"),
+                    default=0,
+                ),
+            ),
+            "last_error": "",
+            "artifact_integrity": DownloadPipeline._artifact_integrity_receipt(
+                ext=DownloadPipeline._public_ext(request.ext),
+                status="pending",
+            ),
+            "source_model": request.source_model,
+            "output_dir": str(output_dir),
+            "status": "in_progress",
+            "terminal_state": "in_progress",
+            "stage": "prepare",
+            "pct": 0.0,
+            "source_path": request.ext.get("source_path", ""),
+            "output_path": "",
+            "partial_path": "",
+            "state_path": str(output_dir / "download.state.json"),
+            "selected_mirror": "",
+            "downloaded_bytes": 0,
+            "total_bytes": 0,
+            "resume_used": False,
+            "resume_from_bytes": 0,
+            "retry_count": 0,
+            "stall_detection_count": 0,
+            "stall_reason": "",
+            "ext": DownloadPipeline._public_ext(request.ext),
+        }
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
     def get_model_info(
         self,

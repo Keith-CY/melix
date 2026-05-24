@@ -2669,6 +2669,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     }
     registry_probe = None
     maintenance_probe = None
+    job_registry_probe = None
     integration_helper_probe = None
     video_preprocessing_probe = None
     gemma4_weight_presence_probe = None
@@ -2688,6 +2689,8 @@ def test_registered_probes_expose_focused_commands() -> None:
             registry_probe = probe
         if probe.probe_id == "maintenance-percentile-vector-reuse":
             maintenance_probe = probe
+        if probe.probe_id == "job-registry-derived-model-single-pass":
+            job_registry_probe = probe
         if probe.probe_id == "integration-swift-binary-resolution-scandir":
             integration_helper_probe = probe
         if probe.probe_id == "video-preprocessing-uri-byte-length-reuse":
@@ -2726,6 +2729,14 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert "test_image_latency_metrics_reuse_single_sorted_job_latency_vector" in maintenance_probe.test_command
     assert "test_measure_vlm_latency_metrics_reuse_single_sorted_total_latency_vector" in maintenance_probe.coverage_command
     assert "test_image_latency_metrics_reuse_single_sorted_job_latency_vector" in maintenance_probe.coverage_command
+
+    assert job_registry_probe is not None
+    job_registry_metrics = {
+        metric.key: metric for metric in job_registry_probe.metrics
+    }
+    assert job_registry_metrics["active_manifest_elapsed_ms_mean"].warn_abs == 0.01
+    assert job_registry_metrics["resolve_target_elapsed_ms_mean"].warn_abs == 0.01
+    assert job_registry_metrics["manifest_path_elapsed_ms_mean"].warn_abs == 0.01
 
     assert integration_helper_probe is not None
     integration_helper_metrics = {
