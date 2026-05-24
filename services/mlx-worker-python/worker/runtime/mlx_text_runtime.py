@@ -28,6 +28,23 @@ class RuntimeUnavailableError(RuntimeError):
 
 
 @dataclass(slots=True)
+class NativeMTPBatchTimings:
+    """MTP-specific timing and counter metrics — only populated on terminal events."""
+
+    cycle_count: int | None
+    mtp_head_ms: float | None
+    sample_ms: float | None
+    cache_ops_ms: float | None
+    insert_ms: float | None
+    prepare_ms: float | None
+    prompt_encode_ms: float | None
+    prefill_ms: float | None
+    batch_insert_ms: float | None
+    first_response_ms: float | None
+    first_visible_ms: float | None
+
+
+@dataclass(slots=True)
 class RuntimeTokenEvent:
     text: str
     raw_text: str | None = None
@@ -48,19 +65,9 @@ class RuntimeTokenEvent:
     speculative_fallback_count: int | None = None
     speculative_num_draft_tokens: int | None = None
     speculative_draft_model_configured: bool | None = None
-    speculative_cycle_count: int | None = None
     speculative_draft_propose_ms: float | None = None
     speculative_target_verify_ms: float | None = None
-    speculative_mtp_head_ms: float | None = None
-    speculative_sample_ms: float | None = None
-    speculative_cache_ops_ms: float | None = None
-    text_batch_generator_insert_ms: float | None = None
-    text_batch_generator_prepare_ms: float | None = None
-    text_batch_generator_prompt_encode_ms: float | None = None
-    text_batch_generator_prefill_ms: float | None = None
-    text_batch_generator_batch_insert_ms: float | None = None
-    text_batch_generator_first_response_ms: float | None = None
-    text_batch_generator_first_visible_ms: float | None = None
+    native_mtp_timings: NativeMTPBatchTimings | None = None
     dflash_enabled: bool | None = None
     dflash_block_size: int | None = None
     dflash_rollback_count: int | None = None
@@ -1119,12 +1126,8 @@ class AutoMLXBackend:
                     "speculative_draft_model_configured",
                     None,
                 ),
-                speculative_cycle_count=getattr(response, "speculative_cycle_count", None),
                 speculative_draft_propose_ms=getattr(response, "speculative_draft_propose_ms", None),
                 speculative_target_verify_ms=getattr(response, "speculative_target_verify_ms", None),
-                speculative_mtp_head_ms=getattr(response, "speculative_mtp_head_ms", None),
-                speculative_sample_ms=getattr(response, "speculative_sample_ms", None),
-                speculative_cache_ops_ms=getattr(response, "speculative_cache_ops_ms", None),
                 dflash_enabled=getattr(response, "dflash_enabled", None),
                 dflash_block_size=getattr(response, "dflash_block_size", None),
                 dflash_rollback_count=getattr(response, "dflash_rollback_count", None),
@@ -1264,28 +1267,20 @@ class AutoMLXBackend:
                             "speculative_draft_model_configured",
                             None,
                         ),
-                        speculative_cycle_count=getattr(response, "speculative_cycle_count", None),
                         speculative_target_verify_ms=getattr(response, "speculative_backbone_ms", None),
-                        speculative_mtp_head_ms=getattr(response, "speculative_mtp_head_ms", None),
-                        speculative_sample_ms=getattr(response, "speculative_sample_ms", None),
-                        speculative_cache_ops_ms=getattr(response, "speculative_cache_ops_ms", None),
-                        text_batch_generator_insert_ms=insert_ms if finish_reason is not None else None,
-                        text_batch_generator_prepare_ms=prepare_ms
-                        if finish_reason is not None
-                        else None,
-                        text_batch_generator_prompt_encode_ms=prompt_encode_ms
-                        if finish_reason is not None
-                        else None,
-                        text_batch_generator_prefill_ms=prefill_ms
-                        if finish_reason is not None
-                        else None,
-                        text_batch_generator_batch_insert_ms=batch_insert_ms
-                        if finish_reason is not None
-                        else None,
-                        text_batch_generator_first_response_ms=first_response_ms
-                        if finish_reason is not None
-                        else None,
-                        text_batch_generator_first_visible_ms=first_visible_ms
+                        native_mtp_timings=NativeMTPBatchTimings(
+                            cycle_count=getattr(response, "speculative_cycle_count", None),
+                            mtp_head_ms=getattr(response, "speculative_mtp_head_ms", None),
+                            sample_ms=getattr(response, "speculative_sample_ms", None),
+                            cache_ops_ms=getattr(response, "speculative_cache_ops_ms", None),
+                            insert_ms=insert_ms,
+                            prepare_ms=prepare_ms,
+                            prompt_encode_ms=prompt_encode_ms,
+                            prefill_ms=prefill_ms,
+                            batch_insert_ms=batch_insert_ms,
+                            first_response_ms=first_response_ms,
+                            first_visible_ms=first_visible_ms,
+                        )
                         if finish_reason is not None
                         else None,
                     )

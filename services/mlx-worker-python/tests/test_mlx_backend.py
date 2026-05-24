@@ -561,20 +561,15 @@ def test_auto_backend_uses_batch_generator_for_native_mtp_text_models(monkeypatc
     assert events[-1].speculative_num_draft_tokens == 1
     assert events[-1].speculative_draft_model_configured is True
     assert events[-1].speculative_target_verify_ms == 12.5
-    assert events[0].text_batch_generator_insert_ms is None
-    assert events[0].text_batch_generator_prepare_ms is None
-    assert events[0].text_batch_generator_prompt_encode_ms is None
-    assert events[0].text_batch_generator_prefill_ms is None
-    assert events[0].text_batch_generator_batch_insert_ms is None
-    assert events[0].text_batch_generator_first_response_ms is None
-    assert events[0].text_batch_generator_first_visible_ms is None
-    assert events[-1].text_batch_generator_insert_ms is not None
-    assert events[-1].text_batch_generator_prepare_ms is not None
-    assert events[-1].text_batch_generator_prompt_encode_ms is not None
-    assert events[-1].text_batch_generator_prefill_ms is not None
-    assert events[-1].text_batch_generator_batch_insert_ms is not None
-    assert events[-1].text_batch_generator_first_response_ms is not None
-    assert events[-1].text_batch_generator_first_visible_ms is not None
+    assert events[0].native_mtp_timings is None
+    assert events[-1].native_mtp_timings is not None
+    assert events[-1].native_mtp_timings.insert_ms is not None
+    assert events[-1].native_mtp_timings.prepare_ms is not None
+    assert events[-1].native_mtp_timings.prompt_encode_ms is not None
+    assert events[-1].native_mtp_timings.prefill_ms is not None
+    assert events[-1].native_mtp_timings.batch_insert_ms is not None
+    assert events[-1].native_mtp_timings.first_response_ms is not None
+    assert events[-1].native_mtp_timings.first_visible_ms is not None
 
     backend.close_loaded_model(loaded_model)
     assert seen["closed"] == 1

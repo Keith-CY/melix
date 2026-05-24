@@ -35,7 +35,7 @@ from worker.productization.benchmark_suites import BenchmarkSuiteCatalog
 from worker.registry import LoadedModel, MemoryBudgetExceeded, WorkerRegistry
 from worker.runtime.audio_runtime_protocols import AudioBackendUnavailableError
 from worker.runtime.deterministic_delay import configured_delay_ms
-from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, RuntimeTokenEvent, RuntimeUnavailableError
+from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, NativeMTPBatchTimings, RuntimeTokenEvent, RuntimeUnavailableError
 
 
 class FakeBackend:
@@ -85,11 +85,7 @@ class SpeculativeBackend(FakeBackend):
             speculative_rejected_tokens=1,
             speculative_num_draft_tokens=1,
             speculative_draft_model_configured=True,
-            speculative_cycle_count=2,
             speculative_target_verify_ms=100.25,
-            speculative_mtp_head_ms=10.5,
-            speculative_sample_ms=2.25,
-            speculative_cache_ops_ms=3.5,
         )
         if cancel_event.is_set():
             return
@@ -104,18 +100,20 @@ class SpeculativeBackend(FakeBackend):
             speculative_rejected_tokens=1,
             speculative_num_draft_tokens=1,
             speculative_draft_model_configured=True,
-            speculative_cycle_count=4,
             speculative_target_verify_ms=210.5,
-            speculative_mtp_head_ms=20.25,
-            speculative_sample_ms=3.75,
-            speculative_cache_ops_ms=5.5,
-            text_batch_generator_insert_ms=1.25,
-            text_batch_generator_prepare_ms=2.5,
-            text_batch_generator_prompt_encode_ms=0.75,
-            text_batch_generator_prefill_ms=8.25,
-            text_batch_generator_batch_insert_ms=0.5,
-            text_batch_generator_first_response_ms=9.5,
-            text_batch_generator_first_visible_ms=10.75,
+            native_mtp_timings=NativeMTPBatchTimings(
+                cycle_count=4,
+                mtp_head_ms=20.25,
+                sample_ms=3.75,
+                cache_ops_ms=5.5,
+                insert_ms=1.25,
+                prepare_ms=2.5,
+                prompt_encode_ms=0.75,
+                prefill_ms=8.25,
+                batch_insert_ms=0.5,
+                first_response_ms=9.5,
+                first_visible_ms=10.75,
+            ),
         )
 
 
