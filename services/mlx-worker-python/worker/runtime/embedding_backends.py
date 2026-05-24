@@ -7,6 +7,7 @@ import struct
 import unicodedata
 
 _UNPACK_DIGEST_UINT32 = struct.Struct("<8I").unpack
+_DIGEST_UINT32_SCALE = 2.0 / 0xFFFFFFFF
 
 
 @dataclass(frozen=True)
@@ -44,16 +45,12 @@ class DeterministicEmbeddingBackend:
         raise NotImplementedError
 
     def _project_digest(self, seed_text: str, dimensions: int) -> list[float]:
-        digest = hashlib.sha256(seed_text.encode("utf-8")).digest()
-        base_values: list[float] = []
-        base_squared_sum = 0.0
-        for raw in _UNPACK_DIGEST_UINT32(digest):
-            value = (raw / 0xFFFFFFFF) * 2.0 - 1.0
-            base_values.append(value)
-            base_squared_sum += value * value
-        base_count = len(base_values)
-        full_repeats, remainder = divmod(dimensions, base_count)
-        squared_sum = base_squared_sum * full_repeats
+        base_values = [
+            raw * _DIGEST_UINT32_SCALE - 1.0
+            for raw in _UNPACK_DIGEST_UINT32(hashlib.sha256(seed_text.encode("utf-8")).digest())
+        ]
+        full_repeats, remainder = divmod(dimensions, 8)
+        squared_sum = sum(value * value for value in base_values) * full_repeats
         for value in base_values[:remainder]:
             squared_sum += value * value
 
