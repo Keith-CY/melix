@@ -9,6 +9,19 @@ from typing import Any
 
 _RUN_SCHEMA_VERSION = "melix.lora_experiment_run.v1"
 _INDEX_SCHEMA_VERSION = "melix.lora_experiment_index.v1"
+_LORA_CANARY_RECEIPT_KEYS = (
+    "source_eos_token",
+    "saved_eos_token",
+    "tokenizer_config_path",
+    "base_config_present",
+    "processor_resume_mode",
+    "aux_modules_restored",
+    "merge_export_canary_result",
+    "callback_api_drift_result",
+    "completion_loss",
+    "round_trip_passed",
+    "grad_norm",
+)
 
 
 def _iter_lora_run_dirs(train_root: Path) -> tuple[Path, ...]:
@@ -200,7 +213,7 @@ class LoraExperimentStore:
         else:
             created_at_unix_ms = int(manifest_path.stat().st_mtime * 1000)
         updated_at_unix_ms = int(manifest.get("updated_at_unix_ms", created_at_unix_ms))
-        return {
+        payload = {
             "schema_version": _RUN_SCHEMA_VERSION,
             "run_id": manifest_job_id,
             "group_id": group_id,
@@ -241,6 +254,10 @@ class LoraExperimentStore:
             "created_at_unix_ms": created_at_unix_ms,
             "updated_at_unix_ms": updated_at_unix_ms,
         }
+        for key in _LORA_CANARY_RECEIPT_KEYS:
+            if key in manifest:
+                payload[key] = manifest[key]
+        return payload
 
     @staticmethod
     def _checkpoint_lineage_entry(run: dict[str, Any]) -> dict[str, Any]:

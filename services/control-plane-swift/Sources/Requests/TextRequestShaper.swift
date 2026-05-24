@@ -267,10 +267,12 @@ public struct TextRequestShaper: Sendable {
             ?? gatewayServingDefaults?.maxTokens
         let temperature = request.temperature ?? preset?.temperature ?? fallbackTemperature ?? 0.7
         let topP = request.topP ?? preset?.topP ?? fallbackTopP ?? 1.0
-        let maxTokens = request.maxTokens
-            ?? preset?.maxTokens
-            ?? fallbackMaxTokens
-            ?? GatewayServingDefaultsStore.defaultMaxTokens
+        let outputCap = resolvedOutputCap(
+            request: request,
+            presetMaxTokens: preset?.maxTokens,
+            fallbackMaxTokens: fallbackMaxTokens
+        )
+        let maxTokens = outputCap.value
         let streamIntervalTokens = gatewayServingDefaults?.streamIntervalTokens ?? 1
         let maxConcurrentRequests = gatewayServingDefaults?.maxConcurrentRequests ?? 4
         let concurrentProcessingEnabled = gatewayServingDefaults?.concurrentProcessingEnabled ?? true
@@ -335,6 +337,14 @@ public struct TextRequestShaper: Sendable {
             temperature: temperature,
             topP: topP,
             maxTokens: maxTokens,
+            requestedMaxTokens: request.maxTokens,
+            requestedMaxCompletionTokens: request.maxCompletionTokens,
+            outputCapSource: outputCap.source,
+            topK: request.topK,
+            minP: request.minP,
+            repeatPenalty: request.repeatPenalty,
+            presencePenalty: request.presencePenalty,
+            seed: request.seed,
             streamIntervalTokens: streamIntervalTokens,
             maxConcurrentRequests: maxConcurrentRequests,
             concurrentProcessingEnabled: concurrentProcessingEnabled,
@@ -360,6 +370,8 @@ public struct TextRequestShaper: Sendable {
             admissionPolicy: workflow.admissionPolicy,
             cachePolicy: cachePolicy,
             stopSequences: resolvedOCRPolicy?.stopSequences ?? request.stopSequences,
+            requestedStopSequences: request.stopSequences,
+            stopSource: resolvedOCRPolicy?.stopSequences.isEmpty == false && request.stopSequences.isEmpty ? "model" : (request.stopSequences.isEmpty ? "none" : "request"),
             userID: request.userID?.nilIfEmpty,
             thinking: resolvedThinking.config,
             reasoningMode: resolvedThinking.mode,
@@ -379,6 +391,33 @@ public struct TextRequestShaper: Sendable {
             partialMode: partialMode.mode,
             assistantPrefill: partialMode.assistantPrefill
         )
+    }
+
+    private func resolvedOutputCap(
+        request: NormalizedTextRequest,
+        presetMaxTokens: UInt32?,
+        fallbackMaxTokens: UInt32?
+    ) -> (value: UInt32, source: String) {
+        if let maxTokens = request.maxTokens,
+           let maxCompletionTokens = request.maxCompletionTokens {
+            return (
+                maxTokens,
+                maxTokens == maxCompletionTokens ? "request_both_equal" : "request_conflict"
+            )
+        }
+        if let maxCompletionTokens = request.maxCompletionTokens {
+            return (maxCompletionTokens, "request_max_completion_tokens")
+        }
+        if let maxTokens = request.maxTokens {
+            return (maxTokens, "request_max_tokens")
+        }
+        if let presetMaxTokens {
+            return (presetMaxTokens, "preset")
+        }
+        if let fallbackMaxTokens {
+            return (fallbackMaxTokens, "policy")
+        }
+        return (GatewayServingDefaultsStore.defaultMaxTokens, "gateway_default")
     }
 
     private func resolveOCRPolicy(

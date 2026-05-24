@@ -23,6 +23,13 @@ QUANTIZED_BASE_EVIDENCE_SOURCE = "quantized_base_evidence_source"
 QLORA_COMPATIBILITY_STATUS = "qlora_compatibility_status"
 QUANTIZED_TARGET_MODULE_GUARD = "quantized_target_module_guard"
 
+_AUXILIARY_MODULE_PATTERNS = (
+    "modeling_*.py",
+    "configuration_*.py",
+    "tokenization_*.py",
+    "processing_*.py",
+)
+
 _QUANTIZED_KIND_ORDER = ("4bit", "8bit", "q4", "q8", "optiq")
 
 
@@ -174,6 +181,72 @@ def build_quantized_lora_manifest_fields(
     }
 
 
+def build_lora_canary_receipt_fields(
+    *,
+    source_model: common_pb2.ModelSpec,
+    adapter_output_dir: str | Path,
+    adapter_config_path: str | Path,
+    weights_path: str | Path,
+    training_metrics: Any,
+) -> dict[str, object]:
+    base_model_dir = Path(source_model.model_path).expanduser()
+    adapter_dir = Path(adapter_output_dir)
+    adapter_config = _load_json_mapping(Path(adapter_config_path))
+    tokenizer_config_path = base_model_dir / "tokenizer_config.json"
+    source_tokenizer_config = _load_json_mapping(tokenizer_config_path)
+    saved_tokenizer_config = _saved_tokenizer_config(adapter_config, adapter_dir)
+    source_eos_token = _str_value(source_tokenizer_config.get("eos_token"))
+    saved_eos_token = _str_value(saved_tokenizer_config.get("eos_token"))
+    base_config_present = (base_model_dir / "config.json").is_file()
+    source_tokenizer_present = tokenizer_config_path.is_file()
+    processor_resume_mode = _processor_resume_mode(base_model_dir)
+    aux_modules_restored = _aux_modules_restored(base_model_dir)
+    merge_export_canary_failures: list[str] = []
+    if not base_config_present:
+        merge_export_canary_failures.append("missing_base_config")
+    if not source_tokenizer_present:
+        merge_export_canary_failures.append("missing_tokenizer_config")
+    if not Path(weights_path).is_file():
+        merge_export_canary_failures.append("missing_adapter_weights")
+    if source_eos_token and saved_eos_token and source_eos_token != saved_eos_token:
+        merge_export_canary_failures.append("eos_token_mismatch")
+
+    callback_api_drift_result = "pass"
+    callback_arity = _optional_int(adapter_config.get("callback_arity"))
+    expected_callback_arity = _optional_int(adapter_config.get("expected_callback_arity"))
+    if (
+        callback_arity is not None
+        and expected_callback_arity is not None
+        and callback_arity != expected_callback_arity
+    ):
+        callback_api_drift_result = "fail:callback_arity_mismatch"
+
+    return {
+        "source_eos_token": source_eos_token,
+        "saved_eos_token": saved_eos_token,
+        "tokenizer_config_path": str(tokenizer_config_path) if source_tokenizer_present else "",
+        "base_config_present": base_config_present,
+        "processor_resume_mode": processor_resume_mode,
+        "aux_modules_restored": aux_modules_restored,
+        "merge_export_canary_result": _canary_result(merge_export_canary_failures),
+        "callback_api_drift_result": callback_api_drift_result,
+        "completion_loss": _optional_float(
+            getattr(training_metrics, "completion_loss", None),
+            adapter_config.get("completion_loss"),
+            getattr(training_metrics, "loss_final", None),
+        ),
+        "round_trip_passed": bool(
+            getattr(training_metrics, "round_trip_passed", False)
+            or adapter_config.get("round_trip_passed", False)
+        ),
+        "grad_norm": _optional_float(
+            getattr(training_metrics, "grad_norm", None),
+            adapter_config.get("grad_norm"),
+        )
+        or 0.0,
+    }
+
+
 def detect_quantized_base(source_model: common_pb2.ModelSpec) -> dict[str, object]:
     profile_id = source_model.quant_profile_id.strip()
     if profile_id:
@@ -220,6 +293,66 @@ def detect_quantized_base(source_model: common_pb2.ModelSpec) -> dict[str, objec
         QUANTIZATION_PROFILE_ID: "",
         QUANTIZED_BASE_EVIDENCE_SOURCE: "model_identity" if kind != "unknown" else "",
     }
+
+
+def _saved_tokenizer_config(
+    adapter_config: Mapping[str, Any],
+    adapter_dir: Path,
+) -> Mapping[str, Any]:
+    embedded = adapter_config.get("tokenizer_config")
+    if isinstance(embedded, Mapping):
+        return embedded
+    saved_path = adapter_dir / "tokenizer_config.json"
+    return _load_json_mapping(saved_path)
+
+
+def _processor_resume_mode(base_model_dir: Path) -> str:
+    if (base_model_dir / "processor_config.json").is_file():
+        return "processor_config"
+    if (base_model_dir / "preprocessor_config.json").is_file():
+        return "preprocessor_config"
+    if (base_model_dir / "tokenizer_config.json").is_file():
+        return "tokenizer_only"
+    return "missing"
+
+
+def _aux_modules_restored(base_model_dir: Path) -> bool:
+    return any(
+        any(base_model_dir.glob(pattern))
+        for pattern in _AUXILIARY_MODULE_PATTERNS
+    )
+
+
+def _canary_result(failures: list[str]) -> str:
+    return "pass" if not failures else "fail:" + ",".join(failures)
+
+
+def _load_json_mapping(path: Path) -> Mapping[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, Mapping) else {}
+
+
+def _optional_int(raw_value: Any) -> int | None:
+    if raw_value is None:
+        return None
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_float(*raw_values: Any) -> float | None:
+    for raw_value in raw_values:
+        if raw_value is None:
+            continue
+        try:
+            return float(raw_value)
+        except (TypeError, ValueError):
+            continue
+    return None
 
 
 def _not_quantized_detection(*, quantization_profile_id: str = "") -> dict[str, object]:
