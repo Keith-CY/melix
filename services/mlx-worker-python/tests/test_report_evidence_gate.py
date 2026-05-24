@@ -147,6 +147,23 @@ def _write_report(
     return outputs["json"]
 
 
+def test_report_evidence_gate_run_kind_rules_accept_non_tuple_iterables() -> None:
+    assert report_evidence_gate_module._rule_matches_report(
+        rule={"run_kinds": {"evaluation", "serving_benchmark"}},
+        runs=[{"run_kind": "serving_benchmark"}],
+        targets=[],
+        metrics=[],
+        probe_phases=set(),
+    )
+    assert not report_evidence_gate_module._rule_matches_report(
+        rule={"run_kinds": {"evaluation"}},
+        runs=[{"run_kind": "serving_benchmark"}],
+        targets=[],
+        metrics=[],
+        probe_phases=set(),
+    )
+
+
 def test_report_evidence_gate_passes_complete_release_matrix(tmp_path: Path) -> None:
     serving_report = _write_report(tmp_path, "serving", run_kind="serving_benchmark")
     evaluation_report = _write_report(tmp_path, "evaluation", run_kind="evaluation")
