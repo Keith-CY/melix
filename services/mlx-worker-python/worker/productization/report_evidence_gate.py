@@ -286,9 +286,11 @@ def _rule_matches_report(
     metrics: list[dict[str, object]],
     probe_phases: set[str],
 ) -> bool:
-    run_kinds = tuple(str(item) for item in rule.get("run_kinds", ()))
-    if run_kinds and any(str(run.get("run_kind", "")) in run_kinds for run in runs):
-        return True
+    run_kinds = rule.get("run_kinds", ())
+    if run_kinds:
+        run_kind_set = frozenset(str(item) for item in run_kinds)
+        if any(str(run.get("run_kind", "")) in run_kind_set for run in runs):
+            return True
     metric_prefixes = tuple(str(item) for item in rule.get("metric_prefixes", ()))
     if metric_prefixes and any(
         str(metric.get("metric", "")).startswith(metric_prefixes) for metric in metrics
