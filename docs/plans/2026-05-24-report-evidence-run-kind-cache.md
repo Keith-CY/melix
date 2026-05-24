@@ -5,7 +5,10 @@
 This Python-only performance slice is limited to report evidence gate run-kind
 rule matching in `services/mlx-worker-python/worker/productization/report_evidence_gate.py`.
 It keeps release evidence matrix behavior unchanged while avoiding repeated
-`frozenset` construction for immutable tuple-backed `run_kinds` rules.
+`frozenset` construction for immutable tuple-backed `run_kinds` rules. This
+follow-up slice keeps the same cached tuple-backed rule set and replaces the
+hot-path `any(...)` generator with an explicit loop so a matching run can return
+without per-call generator frame overhead.
 
 ## Registered Probe
 
