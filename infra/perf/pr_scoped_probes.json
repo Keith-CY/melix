@@ -1925,6 +1925,13 @@
         "unit": "bytes",
         "direction": "lower_is_better",
         "warn_pct": 10.0
+      },
+      {
+        "key": "request_elapsed_ms",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0,
+        "warn_abs": 1.0
       }
     ]
   },
