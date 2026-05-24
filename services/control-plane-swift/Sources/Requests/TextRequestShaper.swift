@@ -389,7 +389,8 @@ public struct TextRequestShaper: Sendable {
             chatTemplate: resolvedChatTemplate,
             ocrPolicy: resolvedOCRPolicy,
             partialMode: partialMode.mode,
-            assistantPrefill: partialMode.assistantPrefill
+            assistantPrefill: partialMode.assistantPrefill,
+            openAICompatibilityReceipts: request.openAICompatibilityReceipts
         )
     }
 
