@@ -365,6 +365,10 @@ Executable unit issues:
   `disabled_reason=unsupported_route`. `speculative_route_policy=off`
   preserves stale speculative operator input but launches with baseline
   speculative mode and `operator_disabled` receipt metadata.
+- Unit 1.2.3 follow-up review coverage keeps route identifiers separate from
+  route-policy tokens in override receipts, treats transcription, speech, and
+  image routes as media-aware before model-modality admission, and avoids
+  injecting legacy top-level image fallbacks into assistant-only histories.
 
 ## Verification Policy
 

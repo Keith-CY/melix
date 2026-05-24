@@ -392,7 +392,8 @@ public struct TextRequestShaper: Sendable {
             assistantPrefill: partialMode.assistantPrefill,
             mediaPartsSummary: request.mediaPartsSummary,
             orderedMessagePartsRequired: request.orderedMessagePartsRequired,
-            legacyImageFallbackInjected: request.legacyImageFallbackInjected
+            legacyImageFallbackInjected: request.legacyImageFallbackInjected,
+            openAICompatibilityReceipts: request.openAICompatibilityReceipts
         )
     }
 

@@ -271,6 +271,7 @@ public struct GatewayServingDefaultsPolicy: Sendable, Equatable {
         guard concurrentProcessingEnabled else {
             return (false, 1, 1, 1)
         }
+        // The effective batch width is bounded by the smallest requested lane.
         let effectiveBatchCapacity = min(
             max(maxConcurrentRequests, 1),
             max(prefillBatchSize, 1),
@@ -970,6 +971,7 @@ public actor GatewayServingDefaultsStore {
         let normalizedMaxConcurrentRequests = max(maxConcurrentRequests, 1)
         let normalizedPrefillBatchSize = max(prefillBatchSize, 1)
         let normalizedCompletionBatchSize = max(completionBatchSize, 1)
+        // The effective batch width is bounded by the smallest requested lane.
         let effectiveBatchCapacity = min(
             normalizedMaxConcurrentRequests,
             normalizedPrefillBatchSize,
@@ -1037,7 +1039,7 @@ public actor GatewayServingDefaultsStore {
         let normalizedRequestedAccelerationMode = normalizeRequestedAccelerationMode(requestedAccelerationMode)
         let normalizedMultimodalRoutePolicy = normalizedRoutePolicy(multimodalRoutePolicy)
         let normalizedSpeculativeRoutePolicy = normalizedRoutePolicy(speculativeRoutePolicy)
-        let normalizedEffectiveMultimodalRoute = normalizedRoutePolicy(effectiveMultimodalRoute)
+        let normalizedEffectiveMultimodalRoute = normalizedRouteIdentifier(effectiveMultimodalRoute)
         let normalizedEffectiveAccelerationMode = normalizedSpeculativeRoutePolicy == "off"
             ? Melix_Controlplane_V1_AccelerationMode.baseline
             : normalizeRequestedAccelerationMode(effectiveAccelerationMode)
@@ -1128,6 +1130,11 @@ public actor GatewayServingDefaultsStore {
     private static func normalizedRoutePolicy(_ rawValue: String) -> String {
         let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return normalized.isEmpty ? "auto" : normalized
+    }
+
+    private static func normalizedRouteIdentifier(_ rawValue: String) -> String {
+        let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.isEmpty ? WorkerRouteKind.swiftText.metadataIdentifier : normalized
     }
 
     private static func isKnownRoutePolicy(_ rawValue: String) -> Bool {

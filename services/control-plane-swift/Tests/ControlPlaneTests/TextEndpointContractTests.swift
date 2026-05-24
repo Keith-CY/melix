@@ -1767,6 +1767,37 @@ struct TextEndpointContractTests {
         #expect(mixedTranslated.workerRequest.execution.ext["melix.legacy_image_fallback"] == nil)
     }
 
+    @Test("legacy top-level chat images are not injected into assistant-only history")
+    func legacyTopLevelChatImagesAreNotInjectedIntoAssistantOnlyHistory() throws {
+        let decoder = JSONDecoder()
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-legacy-image-no-user" })
+        let assistantOnly = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-vlm",
+                  "stream": false,
+                  "image_url": "file:///tmp/legacy.png",
+                  "messages": [
+                    { "role": "system", "content": "Continue the answer." },
+                    { "role": "assistant", "content": "Draft answer." }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        let translated = try translator.translate(assistantOnly, modelHandle: "worker-vlm")
+
+        #expect(translated.workerRequest.messages.count == 2)
+        #expect(translated.workerRequest.messages[1].role == "assistant")
+        #expect(translated.workerRequest.messages[1].parts.count == 1)
+        #expect(translated.workerRequest.messages[1].parts[0].text == "Draft answer.")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.count"] == nil)
+        #expect(translated.workerRequest.execution.ext["melix.legacy_image_fallback"] == nil)
+    }
+
     @Test("text-only chat content arrays preserve ordered parts and allow legacy image fallback")
     func textOnlyChatContentArraysPreserveOrderedPartsAndAllowLegacyImageFallback() throws {
         let decoder = JSONDecoder()

@@ -565,6 +565,32 @@ struct GatewayServingDefaultsStoreTests {
         #expect(session.effectiveMultimodalRoute == "python_vlm")
     }
 
+    @Test("summary does not serialize route identifiers as policy tokens")
+    func summaryDoesNotSerializeRouteIdentifiersAsPolicyTokens() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-serving-defaults-route-id-receipts-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let store = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:]
+        )
+
+        var modelSettings = Melix_Controlplane_V1_ModelSettings()
+        modelSettings.ext["melix.capability.route_kind"] = "   "
+        let summary = await store.summary(
+            serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
+            defaultModelIDs: [ServerSessionRuntimeStore.defaultServerSessionID: "melix-route-missing"],
+            modelSettingsByModelID: ["melix-route-missing": modelSettings]
+        )
+        let session = try #require(summary.sessions.first)
+
+        #expect(session.multimodalRoutePolicy == "auto")
+        #expect(session.effectiveMultimodalRoute == "swift_text")
+        #expect(session.effectiveMultimodalRoute != "auto")
+    }
+
     @Test("summary loads legacy serving default records without route policies")
     func summaryLoadsLegacyServingDefaultRecordsWithoutRoutePolicies() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory

@@ -11249,6 +11249,82 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"code\":\"worker_unavailable\""))
     }
 
+    @Test("POST /v1/chat/completions does not text-route reject audio-capable media routes")
+    func postChatCompletionsDoesNotTextRouteRejectAudioCapableMediaRoutes() async throws {
+        var speechModel = ModelCatalog.devSpeechModel()
+        speechModel.state = .modelWarm
+        speechModel.supportedTasks = ["generate", "speak"]
+        speechModel.settings.ext["melix.capability.supported_tasks"] = "generate,speak"
+        let catalog = ModelCatalog(seedModels: [speechModel])
+        let audioClient = ScriptedWorkerClient(
+            events: [
+                makeCompletedEvent(
+                    requestID: "req-chat-audio-route",
+                    seq: 1,
+                    finishReason: "stop",
+                    assistantText: "audio admitted"
+                ),
+            ],
+            loadModelHandle: "melix-dev-speech::python"
+        )
+        let workerRegistry = WorkerRegistry(
+            defaultTextClient: ScriptedWorkerClient(events: []),
+            pythonCompatibilityClient: audioClient,
+            modelCatalog: catalog
+        )
+        let handler = OpenAIHandler(
+            modelCatalog: catalog,
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: workerRegistry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
+            ),
+            workerRegistry: workerRegistry,
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-chat-audio-route" })
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-speech",
+              "stream": true,
+              "messages": [
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "text", "text": "Use this audio context." },
+                    {
+                      "type": "input_audio",
+                      "input_audio": {
+                        "data": "YXVkaW8=",
+                        "format": "wav",
+                        "mime_type": "audio/wav"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        let payload = try await collectBody(response.body)
+        let request = try #require(await audioClient.lastGenerateRequest)
+
+        #expect(response.statusCode == 200, Comment(rawValue: payload))
+        #expect(!payload.contains("text_only_runtime"))
+        #expect(request.execution.modelHandle == "melix-dev-speech::local")
+        #expect(request.execution.ext["melix.media_parts.count"] == "1")
+        #expect(request.execution.ext["melix.media_parts.0.kind"] == "audio")
+    }
+
     @Test("second chat request waits in queue until the active request is cancelled")
     func secondRequestQueuesUntilTheActiveRequestIsCancelled() async throws {
         let workerClient = BlockingOpenAIWorkerClient()

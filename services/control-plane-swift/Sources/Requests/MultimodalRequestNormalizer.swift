@@ -912,6 +912,7 @@ public struct MultimodalRequestNormalizer: Sendable {
     }
 
     private static func sha256Hex(_ data: Data) -> String {
+        // TODO(issue-42): Move large inline-media hashing off the request hot path.
         SHA256.hash(data: data)
             .map { String(format: "%02x", $0) }
             .joined()

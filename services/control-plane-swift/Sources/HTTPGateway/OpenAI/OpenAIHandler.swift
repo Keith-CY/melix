@@ -2329,7 +2329,7 @@ public struct OpenAIHandler: Sendable {
 
     private func mediaServingRouteSupportsTextMedia(_ routeKind: WorkerRouteKind?) -> Bool {
         switch routeKind {
-        case .pythonOCR, .pythonVLM:
+        case .pythonOCR, .pythonVLM, .pythonTranscription, .pythonSpeech, .pythonImage:
             return true
         default:
             return false
