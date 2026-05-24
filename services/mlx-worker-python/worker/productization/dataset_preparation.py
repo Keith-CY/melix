@@ -124,7 +124,7 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
                 "workspace_preflight_status": workspace_preflight_receipt.get("status", "unknown"),
             },
         }
-        receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        _write_json(receipt_path, receipt)
         return receipt
 
     operator_failures: list[dict[str, Any]] = []
@@ -211,7 +211,7 @@ def prepare_dataset_ingest(request: DatasetIngestRequest) -> dict[str, Any]:
         "operator_failures": operator_failures,
         "metrics": metrics,
     }
-    receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _write_json(receipt_path, receipt)
     return receipt
 
 
@@ -310,9 +310,9 @@ def _raise_if_ingest_receipt_blocked(ingest_receipt: dict[str, Any]) -> None:
         return
     failures = ingest_receipt.get("operator_failures")
     failure_codes = [
-        str(failure.get("code") or "")
+        code
         for failure in failures
-        if isinstance(failure, dict) and str(failure.get("code") or "").strip()
+        if isinstance(failure, dict) and (code := str(failure.get("code") or "").strip())
     ] if isinstance(failures, list) else []
     code_suffix = ",".join(failure_codes) if failure_codes else "unknown"
     raise ValueError(f"DATASET_VERSION_SOURCE_RECEIPT_BLOCKED: {code_suffix}")
