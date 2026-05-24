@@ -596,6 +596,37 @@ def test_find_download_by_operation_receipt_rebuilds_stale_index_entry() -> None
     ) is current_download
 
 
+def test_find_download_by_operation_receipt_cache_miss_avoids_sorting_all_jobs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = ModelOpsJobRegistry()
+    for index in range(5):
+        registry.start("train_lora", "melix-dev-text", f"/runtime/train-{index}")
+    download = registry.start("download", "mlx-community/demo", "/runtime/download")
+    registry.attach_manifest(
+        download.job_id,
+        json.dumps(
+            {
+                "operation_id": "managed_model_install:abc",
+                "target_scope": "scope-a",
+                "operation_kind": "managed_model_install",
+                "terminal_state": "in_progress",
+            }
+        ),
+    )
+    registry._download_operation_receipt_index.clear()
+
+    sort_key = Mock(side_effect=AssertionError("download receipt cache misses should not sort registry jobs"))
+    monkeypatch.setattr(ModelOpsJobRegistry, "_job_sort_key", sort_key)
+
+    assert registry.find_download_by_operation_receipt(
+        operation_id="managed_model_install:abc",
+        target_scope="scope-a",
+        operation_kind="managed_model_install",
+    ) is download
+    sort_key.assert_not_called()
+
+
 def test_download_operation_receipt_key_rejects_missing_fields() -> None:
     job = ModelOpsJob(
         job_id="model-ops-0001",

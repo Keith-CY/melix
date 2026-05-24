@@ -156,7 +156,7 @@ class ModelOpsJobRegistry:
                     and self._download_operation_receipt_key(indexed_job, self._job_manifest(indexed_job)) == key
                 ):
                     return indexed_job
-            for job in sorted(self._jobs.values(), key=self._job_sort_key, reverse=True):
+            for job in reversed(tuple(self._jobs.values())):
                 if job.operation != "download":
                     continue
                 manifest = self._job_manifest(job)
