@@ -53,6 +53,7 @@ class TrainingMetrics:
     resume_source_path: str = ""
     tokens_per_second: float = 0.0
     peak_memory_gb: float = 0.0
+    profile_artifact_path: str = ""
     # Milestone #43 Phase 2: template-aware response-only boundary observability.
     # Populated for chat_messages datasets when response_only is requested. Zero
     # when the sample format doesn't support response-only masking.

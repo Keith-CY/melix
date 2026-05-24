@@ -3,10 +3,21 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from packages.protocol.python.worker.v1 import common_pb2
 
 from worker.model_ops import training_config as training_config_module
+from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.lora_training_pipeline import LoRATrainingPipeline
+from worker.model_ops.training_receipts import (
+    eval_batch_size_receipt,
+    expected_peak_memory_class,
+    format_bound_value,
+    grad_clip_policy_receipt,
+    scheduler_kwargs_omitted_receipt,
+    typed_validation_details,
+)
 from worker.model_ops.mlx_lm_runner import (
     MLXLMRunner,
     TrainingMetrics,
@@ -114,7 +125,7 @@ def test_training_planner_receipt_covers_qlora_chunked_token_budget_and_refused_
             "chunk_size": "1024",
             "packing_mode": "none",
             "attention_backend": "flash_attention_2",
-            "generation_mode": "train",
+            "generation_mode": "teacher_forced",
             "final_logit_softcapping": "off",
         },
         dataset_format="chat_messages",
@@ -140,8 +151,45 @@ def test_training_planner_receipt_covers_qlora_chunked_token_budget_and_refused_
         "reason": "unsupported_training_attention_backend",
     }
     assert receipt["metric_for_best_model_resolved"] == "loss_best"
-    assert receipt["generation_mode"] == "train"
+    assert receipt["generation_mode"] == "teacher_forced"
     assert receipt["final_logit_softcapping"] is None
+
+
+def test_training_planner_receipt_rejects_unsafe_generation_mode() -> None:
+    with pytest.raises(ModelOperationError) as exc:
+        training_config_module.normalize_training_config(
+            source_model=_text_model(),
+            ext={
+                "training_mode": "lora",
+                "generation_mode": "runtime_generate",
+            },
+            dataset_format="chat_messages",
+            response_only_supported=True,
+            sample_count=2,
+        )
+
+    assert exc.value.code == "invalid_argument"
+    assert exc.value.details == {
+        "field": "generation_mode",
+        "reason": "unsupported_generation_mode",
+        "received": "runtime_generate",
+        "supported_generation_modes": "disabled,teacher_forced",
+    }
+
+
+def test_training_planner_receipt_accepts_chunked_logits_softcap_alias() -> None:
+    config = training_config_module.normalize_training_config(
+        source_model=_text_model(),
+        ext={
+            "training_mode": "lora",
+            "chunked_logits_softcap": "18.5",
+        },
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+
+    assert config.training_planner_receipt["final_logit_softcapping"] == 18.5
 
 
 def test_training_planner_receipt_accounts_for_source_model_size() -> None:
@@ -225,6 +273,64 @@ def test_training_planner_receipt_uses_model_size_aliases_and_ignores_malformed_
     assert config.training_planner_receipt["expected_peak_memory_class"] == "high"
 
 
+def test_training_planner_receipt_classifies_high_token_budget_without_model_size() -> None:
+    assert (
+        expected_peak_memory_class(
+            source_model=_text_model(),
+            batch_size=3,
+            gradient_accumulation=2,
+            token_budget_unit=4096,
+            training_mode="lora",
+        )
+        == "high"
+    )
+
+
+def test_training_receipt_helpers_cover_request_overrides() -> None:
+    assert typed_validation_details(
+        field_name="learning_rate",
+        reason="below_minimum",
+        received="-1.0",
+        minimum=0.0,
+        include_raw_value=True,
+    ) == {
+        "field": "learning_rate",
+        "reason": "below_minimum",
+        "received": "-1.0",
+        "minimum": "0.0",
+        "allowed_bounds": ">=0.0",
+        "http_status": "422",
+        "raw_value": "-1.0",
+    }
+    assert format_bound_value(2.25) == "2.25"
+    assert grad_clip_policy_receipt(
+        {"gradient_clip_norm": "0.75"},
+        float_value=lambda raw, default, minimum, field_name: float(raw),
+    ) == {
+        "requested": "0.75",
+        "resolved": 0.75,
+        "enabled": True,
+        "source": "request",
+    }
+    assert eval_batch_size_receipt(
+        {"eval_batch_size": "4"},
+        validation_sample_count=8,
+        int_value=lambda raw, default, minimum, field_name: int(raw),
+    ) == {
+        "requested": "4",
+        "resolved": 4,
+        "source": "request",
+        "validation_sample_count": 8,
+    }
+    assert scheduler_kwargs_omitted_receipt(
+        {"scheduler_kwargs_json": '{"warmup": 5}', "scheduler": "cosine"}
+    ) == {
+        "omitted": True,
+        "reason": "mlx_lm_lora_runner_does_not_accept_scheduler_kwargs",
+        "keys": ["scheduler", "scheduler_kwargs_json"],
+    }
+
+
 def test_training_planner_receipt_is_persisted_in_adapter_manifest(tmp_path: Path) -> None:
     dataset_dir = _write_dataset_package(tmp_path / "dataset")
     output_dir = tmp_path / "train-output"
@@ -261,10 +367,34 @@ def test_training_planner_receipt_is_persisted_in_adapter_manifest(tmp_path: Pat
     assert manifest["final_logit_softcapping"] == 25.5
 
 
+def test_training_profiler_artifact_from_runner_metrics_is_linked_in_manifest(tmp_path: Path) -> None:
+    dataset_dir = _write_dataset_package(tmp_path / "dataset")
+    output_dir = tmp_path / "train-output"
+    runner = _ReceiptRunner(profile_artifact_path=tmp_path / "profiles" / "train-profile.json")
+
+    result = LoRATrainingPipeline(runner=runner).run(
+        job_id="planner-profiler-receipt-test",
+        request_ext={
+            "training_mode": "lora",
+            "dataset_uri": str(dataset_dir),
+            "metric_for_best_model": "loss_best",
+        },
+        source_model=_text_model(),
+        output_dir=output_dir,
+        jobs_root=tmp_path / "jobs",
+    )
+
+    assert result.manifest["profile_artifact_path"] == str(
+        tmp_path / "profiles" / "train-profile.json"
+    )
+    assert result.manifest["metric_for_best_model_resolved"] == "loss_best"
+
+
 class _ReceiptRunner(MLXLMRunner):
-    def __init__(self) -> None:
+    def __init__(self, *, profile_artifact_path: Path | None = None) -> None:
         super().__init__()
         self.last_train_request: TrainingRequest | None = None
+        self.profile_artifact_path = profile_artifact_path
 
     def train_native(self, request: TrainingRequest) -> TrainingResult:
         self.last_train_request = request
@@ -285,6 +415,9 @@ class _ReceiptRunner(MLXLMRunner):
                 learning_rate_final=1e-4,
                 tokens_per_second=64.0,
                 peak_memory_gb=2.0,
+                profile_artifact_path=(
+                    str(self.profile_artifact_path) if self.profile_artifact_path else ""
+                ),
             ),
             execution_backend="native",
         )

@@ -326,7 +326,13 @@ class LoRATrainingPipeline:
             "optimizer_steps": config.iters // config.gradient_accumulation,
             "mask_prompt": config.mask_prompt,
             "max_seq_length": config.max_seq_length,
-            **config.training_planner_receipt,
+            **{
+                **config.training_planner_receipt,
+                "profile_artifact_path": (
+                    training_result.metrics.profile_artifact_path
+                    or str(config.training_planner_receipt.get("profile_artifact_path", ""))
+                ),
+            },
             "training.max_steps": config.max_steps,
             "training_duration_ms": training_result.metrics.job_duration_ms,
             "training.job_duration_ms": training_result.metrics.job_duration_ms,
