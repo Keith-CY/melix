@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 from typing import Any, Mapping
@@ -28,6 +29,9 @@ _AUXILIARY_MODULE_PATTERNS = (
     "configuration_*.py",
     "tokenization_*.py",
     "processing_*.py",
+)
+_AUXILIARY_MODULE_PREFIXES = tuple(
+    pattern.removesuffix("*.py") for pattern in _AUXILIARY_MODULE_PATTERNS
 )
 
 _QUANTIZED_KIND_ORDER = ("4bit", "8bit", "q4", "q8", "optiq")
@@ -317,10 +321,15 @@ def _processor_resume_mode(base_model_dir: Path) -> str:
 
 
 def _aux_modules_restored(base_model_dir: Path) -> bool:
-    return any(
-        any(base_model_dir.glob(pattern))
-        for pattern in _AUXILIARY_MODULE_PATTERNS
-    )
+    try:
+        with os.scandir(base_model_dir) as entries:
+            for entry in entries:
+                name = entry.name
+                if name.endswith(".py") and name.startswith(_AUXILIARY_MODULE_PREFIXES):
+                    return True
+    except OSError:
+        return False
+    return False
 
 
 def _canary_result(failures: list[str]) -> str:
