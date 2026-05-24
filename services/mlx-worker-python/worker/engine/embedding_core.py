@@ -10,7 +10,8 @@ class EmbeddingCore:
         self._registry = registry
 
     def embed(self, request: inference_pb2.EmbedRequest) -> inference_pb2.EmbedResponse:
-        loaded_model = self._registry.get_loaded_model(request.model_handle)
+        registry = self._registry
+        loaded_model = registry.get_loaded_model(request.model_handle)
         if loaded_model is None:
             return inference_pb2.EmbedResponse(
                 error=common_pb2.ErrorStatus(code="not_found", message="Unknown model handle.")
@@ -25,7 +26,7 @@ class EmbeddingCore:
             )
 
         try:
-            vectors = self._registry.embedding_runtime.embed_inputs(
+            vectors = registry.embedding_runtime.embed_inputs(
                 loaded_model.runtime_model,
                 request.inputs,
             )

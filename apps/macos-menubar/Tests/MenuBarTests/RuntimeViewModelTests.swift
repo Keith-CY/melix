@@ -5227,7 +5227,10 @@ struct RuntimeViewModelTests {
         for index in 0..<45 {
             await client.sendLog(level: "info", message: "log-\(index)")
         }
-        try await Task.sleep(for: .milliseconds(30))
+        try await waitForRuntimeViewModelCondition("recent logs should include the latest forty entries") {
+            let logs = viewModel.desktopFoundationState.logs
+            return logs.count == 40 && logs.first?.message == "log-44"
+        }
 
         let foundation = viewModel.desktopFoundationState
         #expect(foundation.logs.count == 40)

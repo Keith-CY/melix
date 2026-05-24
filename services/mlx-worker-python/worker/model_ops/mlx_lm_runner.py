@@ -118,6 +118,9 @@ class TrainingMetrics:
     unexpected_frozen_param_count: int = 0
     adapter_checkpoint_bytes: int = 0
     adapter_freeze_audit: dict[str, Any] | None = None
+    completion_loss: float | None = None
+    round_trip_passed: bool = False
+    grad_norm: float = 0.0
 
 
 @dataclass(frozen=True)

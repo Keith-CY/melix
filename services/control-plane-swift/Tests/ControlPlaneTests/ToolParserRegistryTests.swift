@@ -5,6 +5,92 @@ import Testing
 import MelixControlPlaneProtocol
 
 struct ToolParserRegistryTests {
+    @Test("registered parsers declare audit receipts for wire formats and selector surfaces")
+    func registeredParsersDeclareAuditReceiptsForWireFormatsAndSelectorSurfaces() throws {
+        let registry = ToolParserRegistry()
+        let receipts = registry.auditReceipts()
+        let registeredIDs = Set(registry.supportedModes().map(\.rawValue))
+
+        #expect(Set(receipts.map(\.parserID)) == registeredIDs)
+        #expect(receipts.allSatisfy { !$0.parserID.isEmpty })
+        #expect(receipts.allSatisfy { !$0.parserKind.rawValue.isEmpty })
+        #expect(receipts.allSatisfy { !$0.acceptedWireFormats.isEmpty })
+        #expect(receipts.allSatisfy { !$0.selectorSurface.rawValue.isEmpty })
+        #expect(receipts.allSatisfy { !$0.selectorSource.isEmpty })
+        #expect(receipts.allSatisfy { !$0.requestContextMode.rawValue.isEmpty })
+        #expect(receipts.allSatisfy { receipt in
+            receipt.selectorSurface == .cli ? !receipt.exemptionReason.isEmpty : receipt.exemptionReason.isEmpty
+        })
+
+        let json = try #require(receipts.first { $0.parserID == "json" && $0.requestContextMode == .structuredJSON })
+        #expect(json.parserKind == .structuredOutput)
+        #expect(json.acceptedWireFormats == ["json_object"])
+
+        let qwenTool = try #require(receipts.first { $0.parserID == "qwen" && $0.requestContextMode == .toolParser })
+        #expect(qwenTool.parserKind == .toolCall)
+        #expect(qwenTool.acceptedWireFormats == ["qwen_xml_tool_call"])
+
+        let qwenReasoning = try #require(receipts.first { $0.parserID == "qwen" && $0.requestContextMode == .reasoning })
+        #expect(qwenReasoning.acceptedWireFormats.contains("qwen_xml_tool_call"))
+        #expect(qwenReasoning.acceptedWireFormats.contains("reasoning_channel_tags"))
+
+        let plain = try #require(receipts.first { $0.parserID == "text" && $0.requestContextMode == .plain })
+        #expect(plain.parserKind == .plainText)
+        #expect(plain.acceptedWireFormats == ["raw_text"])
+
+        let encoded = try JSONEncoder().encode(qwenTool)
+        let jsonObject = try #require(
+            try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        #expect(Set(jsonObject.keys) == [
+            "parser_id",
+            "parser_kind",
+            "accepted_wire_formats",
+            "selector_surface",
+            "selector_source",
+            "request_context_mode",
+            "exemption_reason",
+        ])
+    }
+
+    @Test("API desktop and CLI selector declarations are parity audited")
+    func apiDesktopAndCLISelectorDeclarationsAreParityAudited() {
+        let registry = ToolParserRegistry()
+        let selectorReceipts = registry.selectorAuditReceipts()
+        let parserIDs = registry.supportedModes().map(\.rawValue)
+
+        let api = selectorReceipts.filter { $0.selectorSurface == .api }
+        let desktop = selectorReceipts.filter { $0.selectorSurface == .desktop }
+        let cli = selectorReceipts.filter { $0.selectorSurface == .cli }
+
+        #expect(api.map(\.parserID) == parserIDs)
+        #expect(desktop.map(\.parserID) == parserIDs)
+        #expect(cli.map(\.parserID) == parserIDs)
+        #expect(api.allSatisfy { $0.selectorSource == "request.tool_parser" })
+        #expect(desktop.allSatisfy { $0.selectorSource == "tooling_settings.builtin_tool_parser_modes" })
+        #expect(cli.allSatisfy { $0.selectorSource == "none" })
+        #expect(cli.allSatisfy {
+            $0.exemptionReason == "CLI has no request-construction surface for tool parser selection; it reports remote model supported_parsers only."
+        })
+        #expect(api.allSatisfy { $0.exemptionReason.isEmpty })
+        #expect(desktop.allSatisfy { $0.exemptionReason.isEmpty })
+    }
+
+    @Test("fixture request contexts cover JSON tool reasoning and plain parsers")
+    func fixtureRequestContextsCoverJSONToolReasoningAndPlainParsers() {
+        let contexts = ToolParserRegistry().requestContextFixtures()
+
+        #expect(Set(contexts.map(\.requestContextMode)) == [.structuredJSON, .toolParser, .reasoning, .plain])
+        #expect(contexts.contains { $0.parserID == "json" && $0.acceptedWireFormats == ["json_object"] })
+        #expect(contexts.contains { $0.parserID == "qwen" && $0.acceptedWireFormats.contains("qwen_xml_tool_call") })
+        #expect(contexts.contains {
+            $0.parserID == "qwen"
+                && $0.requestContextMode == .reasoning
+                && $0.acceptedWireFormats.contains("reasoning_channel_tags")
+        })
+        #expect(contexts.contains { $0.parserID == "text" && $0.acceptedWireFormats == ["raw_text"] })
+    }
+
     @Test("tool parser request contracts decode across endpoint variants")
     func toolParserRequestContractsDecodeAcrossEndpointVariants() throws {
         let decoder = JSONDecoder()
@@ -100,6 +186,62 @@ struct ToolParserRegistryTests {
         #expect(translated.workerRequest.execution.ext["melix.tool_parser.source"] == "request")
         #expect(translated.workerRequest.execution.ext["melix.tool_parser.namespaces"] == "tools.search,tools.math")
         #expect(translated.workerRequest.execution.ext["melix.tool_parser.fallback_mode"] == "xml")
+    }
+
+    @Test("translated text requests attach request-local compatibility policy receipts")
+    func translatedTextRequestsAttachRequestLocalCompatibilityPolicyReceipts() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-compat-policy" })
+        let request = OpenAIChatCompletionsRequest(
+            model: "melix-dev-text",
+            messages: [.init(role: "user", content: "Call a tool and answer as JSON.")],
+            enableThinking: true,
+            reasoningEffort: "low",
+            stream: true,
+            responseFormat: StructuredOutputRequestFormat(
+                type: .jsonSchema,
+                jsonSchema: StructuredOutputJSONSchemaDefinition(
+                    name: "answer",
+                    schema: .object(["type": .string("object")]),
+                    strict: true
+                )
+            ),
+            toolParser: ToolParserRequestConfiguration(
+                mode: .qwen,
+                namespaces: ["tools.search"]
+            ),
+            tools: [
+                OpenAIChatTool(
+                    type: "function",
+                    function: OpenAIChatTool.FunctionDefinition(
+                        name: "search",
+                        description: "Search documents",
+                        parameters: .object(["type": .string("object")])
+                    )
+                ),
+            ],
+            toolChoice: .mode("required")
+        )
+
+        let translated = try translator.translate(request, modelHandle: "worker-text")
+        let ext = translated.workerRequest.execution.ext
+        let receipt = try #require(ext["melix.compat.policy_receipt_json"])
+
+        #expect(ext["melix.compat.compat_surface"] == "openai.chat.completions")
+        #expect(ext["melix.compat.stream_mode"] == "stream")
+        #expect(ext["melix.compat.reasoning_mode"] == "enabled")
+        #expect(ext["melix.compat.reasoning_source"] == "request")
+        #expect(ext["melix.compat.reasoning_effort"] == "low")
+        #expect(ext["melix.compat.tool_parser_mode"] == "qwen")
+        #expect(ext["melix.compat.tool_parser_source"] == "request")
+        #expect(ext["melix.compat.tool_namespaces"] == "tools.search")
+        #expect(ext["melix.compat.tool_choice_requested"] == "required")
+        #expect(ext["melix.compat.tool_choice_resolved"] == "required")
+        #expect(ext["melix.compat.structured_output_mode"] == "json_schema")
+        #expect(ext["melix.compat.output_modalities"] == "text")
+        #expect(ext["melix.compat.effective_config_hash"]?.isEmpty == false)
+        #expect(receipt.contains(#""compat_surface":"openai.chat.completions""#))
+        #expect(receipt.contains(#""tool_namespaces":["tools.search"]"#))
+        #expect(receipt.contains(#""effective_config_hash":"\#(ext["melix.compat.effective_config_hash"] ?? "")""#))
     }
 
     @Test("multimodal tool parser requests preserve image parts and execution metadata")
