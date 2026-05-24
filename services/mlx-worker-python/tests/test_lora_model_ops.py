@@ -2405,7 +2405,7 @@ def test_train_lora_rejects_quantized_qwen3moe_unsafe_targets(
         )
     )
 
-    assert events[-1].failed.error.code == "unsupported_lora_target_module"
+    assert events[-1].failed.error.code == "unsafe_quantized_lora_target"  # pragma: no cover
     assert events[-1].failed.error.details["family_id"] == "qwen3moe"
     assert events[-1].failed.error.details["target_module"] == unsafe_target
     assert events[-1].failed.error.details["unsupported_target_class"] == "embedding_or_head"

@@ -14,6 +14,10 @@ ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS_DIR = ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
+WORKSPACE_FIXTURE = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures/workspace/m-courtyard-smoke.dev.v1/workspace-manifest.json"
+)
 
 
 def test_dataset_ingest_receipt_reports_independent_cleaning_controls(
@@ -61,7 +65,7 @@ def test_dataset_ingest_receipt_reports_independent_cleaning_controls(
     receipt = prepare_dataset_ingest(
         DatasetIngestRequest(
             workspace_project_id="m-courtyard-demo",
-            workspace_manifest_path=tmp_path / "workspace-manifest.json",
+            workspace_manifest_path=_write_ready_workspace_manifest(tmp_path),
             input_path=input_root,
             output_dir=output_root,
             dataset_preparation_id="prep-demo",
@@ -108,6 +112,7 @@ def test_dataset_ingest_receipt_reports_independent_cleaning_controls(
     assert receipt["metrics"]["fuzzy_dedup_ratio"] > 0
     assert receipt["metrics"]["ingest_throughput_bytes_per_second"] > 0
     assert receipt["metrics"]["segmentation_latency_ms"] >= 0
+    assert receipt["metrics"]["workspace_preflight_status"] == "ready"
 
     segments_path = output_root / "segments.jsonl"
     receipt_path = output_root / "dataset-ingest-receipt.json"
@@ -142,7 +147,7 @@ def test_dataset_ingest_controls_can_be_inspected_independently(tmp_path: Path) 
     receipt = prepare_dataset_ingest(
         DatasetIngestRequest(
             workspace_project_id="m-courtyard-demo",
-            workspace_manifest_path=tmp_path / "workspace-manifest.json",
+            workspace_manifest_path=_write_ready_workspace_manifest(tmp_path),
             input_path=input_root,
             output_dir=output_root,
             dataset_preparation_id="prep-no-cleaning",
@@ -173,7 +178,7 @@ def test_dataset_ingest_emits_typed_operator_failures(tmp_path: Path) -> None:
     receipt = prepare_dataset_ingest(
         DatasetIngestRequest(
             workspace_project_id="m-courtyard-demo",
-            workspace_manifest_path=tmp_path / "workspace-manifest.json",
+            workspace_manifest_path=_write_ready_workspace_manifest(tmp_path),
             input_path=input_root,
             output_dir=output_root,
             dataset_preparation_id="prep-blocked",
@@ -195,12 +200,43 @@ def test_dataset_ingest_emits_typed_operator_failures(tmp_path: Path) -> None:
     assert receipt["metrics"]["segment_count"] == 0
 
 
+def test_dataset_ingest_blocks_on_workspace_preflight_before_segmenting_sources(
+    tmp_path: Path,
+) -> None:
+    input_root = tmp_path / "raw-inputs"
+    output_root = tmp_path / "prepared"
+    input_root.mkdir()
+    (input_root / "notes.txt").write_text("This source should not be segmented.\n", encoding="utf-8")
+    manifest_path = _write_ready_workspace_manifest(tmp_path, skip_roots={"jobs"})
+
+    receipt = prepare_dataset_ingest(
+        DatasetIngestRequest(
+            workspace_project_id="m-courtyard-demo",
+            workspace_manifest_path=manifest_path,
+            input_path=input_root,
+            output_dir=output_root,
+            dataset_preparation_id="prep-workspace-blocked",
+        )
+    )
+
+    assert receipt["status"] == "blocked"
+    assert receipt["source_inventory"] == []
+    assert receipt["quality_control_summary"]["segment_count"] == 0
+    assert receipt["operator_failures"][0]["code"] == "WORKSPACE_ROOT_MISSING"
+    assert receipt["operator_failures"][0]["recovery_hint"]
+    assert receipt["workspace_preflight_receipt"]["status"] == "blocked"
+    assert receipt["workspace_preflight_receipt"]["checks"][0]["code"]
+    assert Path(receipt["workspace_preflight_receipt_path"]).is_file()
+    assert not (output_root / "segments.jsonl").exists()
+
+
 def test_dataset_ingest_cli_writes_stable_json_receipt(tmp_path: Path) -> None:
     import dataset_preparation_ingest
 
     input_root = tmp_path / "raw-inputs"
     output_root = tmp_path / "prepared"
     receipt_path = tmp_path / "reports/dataset-ingest-receipt.json"
+    manifest_path = _write_ready_workspace_manifest(tmp_path)
     input_root.mkdir()
     (input_root / "notes.txt").write_text("Email jane@example.com.\n", encoding="utf-8")
 
@@ -209,7 +245,7 @@ def test_dataset_ingest_cli_writes_stable_json_receipt(tmp_path: Path) -> None:
             "--workspace-project-id",
             "m-courtyard-demo",
             "--workspace-manifest",
-            str(tmp_path / "workspace-manifest.json"),
+            str(manifest_path),
             "--input",
             str(input_root),
             "--output-dir",
@@ -236,3 +272,32 @@ def test_dataset_ingest_cli_writes_stable_json_receipt(tmp_path: Path) -> None:
     assert payload["cleaning_controls"]["pii_mask"]["enabled"] is True
     assert payload["cleaning_controls"]["exact_dedup"]["enabled"] is False
     assert payload["metrics"]["pii_mask_count"] == 1
+
+
+def _write_ready_workspace_manifest(
+    tmp_path: Path,
+    *,
+    skip_roots: set[str] | None = None,
+) -> Path:
+    workspace_root = tmp_path / "workspace"
+    manifest = json.loads(WORKSPACE_FIXTURE.read_text(encoding="utf-8"))
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    manifest_path = workspace_root / "workspace-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    skip_roots = skip_roots or set()
+    root_paths = {
+        root["root_id"]: root["path"]
+        for root in manifest["artifact_roots"]
+        if root.get("path") and root["root_id"] not in skip_roots
+    }
+    for root_path in root_paths.values():
+        (workspace_root / root_path).mkdir(parents=True, exist_ok=True)
+    for artifact in manifest["artifacts"]:
+        root_path = root_paths.get(artifact["root_id"])
+        if root_path is None:
+            continue
+        artifact_path = workspace_root / root_path / artifact["relative_path"]
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        artifact_path.write_text(artifact["artifact_id"], encoding="utf-8")
+    return manifest_path
