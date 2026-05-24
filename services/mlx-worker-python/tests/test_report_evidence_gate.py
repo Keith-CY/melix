@@ -164,6 +164,51 @@ def test_report_evidence_gate_run_kind_rules_accept_non_tuple_iterables() -> Non
     )
 
 
+def test_report_evidence_gate_run_kind_tuple_rules_reuse_normalized_set() -> None:
+    report_evidence_gate_module._string_frozenset_from_tuple.cache_clear()
+    rule = {"run_kinds": ("evaluation", "serving_benchmark")}
+
+    assert report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[{"run_kind": "serving_benchmark"}],
+        targets=[],
+        metrics=[],
+        probe_phases=set(),
+    )
+    assert report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[{"run_kind": "evaluation"}],
+        targets=[],
+        metrics=[],
+        probe_phases=set(),
+    )
+
+    cache_info = report_evidence_gate_module._string_frozenset_from_tuple.cache_info()
+    assert cache_info.hits >= 1
+    assert cache_info.misses == 1
+
+
+def test_report_evidence_gate_run_kind_list_rules_reflect_mutation() -> None:
+    run_kinds = ["evaluation"]
+    rule = {"run_kinds": run_kinds}
+
+    assert not report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[{"run_kind": "serving_benchmark"}],
+        targets=[],
+        metrics=[],
+        probe_phases=set(),
+    )
+    run_kinds.append("serving_benchmark")
+    assert report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[{"run_kind": "serving_benchmark"}],
+        targets=[],
+        metrics=[],
+        probe_phases=set(),
+    )
+
+
 def test_report_evidence_gate_passes_complete_release_matrix(tmp_path: Path) -> None:
     serving_report = _write_report(tmp_path, "serving", run_kind="serving_benchmark")
     evaluation_report = _write_report(tmp_path, "evaluation", run_kind="evaluation")
