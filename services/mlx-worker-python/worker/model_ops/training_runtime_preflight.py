@@ -107,7 +107,7 @@ def runtime_preflight_failure_details(fields: dict[str, Any]) -> dict[str, str]:
     dependency = fields.get("media_decoder_dependency", {})
     if not isinstance(dependency, dict):
         dependency = {}
-    disabled_decoder_paths = fields.get("disabled_decoder_paths", [])
+    disabled_decoder_paths = fields.get("disabled_decoder_paths") or []
     if isinstance(disabled_decoder_paths, list):
         disabled_paths = ",".join(str(path) for path in disabled_decoder_paths)
     else:

@@ -604,6 +604,32 @@ def test_lora_canary_receipt_records_tokenizer_resume_and_drift_status(
     assert fields["round_trip_passed"] is True
     assert fields["grad_norm"] == 0.75
 
+    with pytest.raises(ModelOperationError) as exc:
+        training_config_module.normalize_training_config(
+            source_model=_text_model(family_id="qwen"),
+            ext={"learning_rate": "-inf"},
+            dataset_format="chat_messages",
+            response_only_supported=True,
+            sample_count=1,
+        )
+    assert exc.value.code == "invalid_argument"
+    assert exc.value.details == {
+        "field": "learning_rate",
+        "reason": "below_minimum",
+        "received": "-inf",
+        "minimum": "0.0",
+        "allowed_bounds": "finite >=0.0",
+        "http_status": "422",
+    }
+
+    details = runtime_preflight_failure_details(
+        {
+            "runtime_gate": "ready",
+            "disabled_decoder_paths": None,
+        }
+    )
+    assert details["disabled_decoder_paths"] == ""
+
 
 def test_lora_canary_aux_module_detection_uses_single_scandir(
     monkeypatch: pytest.MonkeyPatch,

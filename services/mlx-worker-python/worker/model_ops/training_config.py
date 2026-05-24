@@ -28,6 +28,7 @@ from worker.model_ops.training_receipts import (
     resolved_bounds_receipt,
     scheduler_kwargs_omitted_receipt,
     typed_validation_details,
+    format_bound_value,
 )
 
 
@@ -1411,8 +1412,8 @@ def _float_value(raw_value: str, *, default: float, minimum: float, field_name: 
         ) from exc
     finite_value = math.isfinite(value)
     if value < minimum or not finite_value:
-        reason = "below_minimum" if finite_value else "not_finite"
-        minimum_text = "0.0" if isinstance(minimum, float) and minimum == 0.0 else str(minimum)
+        reason = "not_finite" if math.isnan(value) else "below_minimum"
+        minimum_text = format_bound_value(minimum)
         raise ModelOperationError(
             code="invalid_argument",
             message=f"{field_name} must be at least {minimum}." if finite_value else f"{field_name} must be finite.",

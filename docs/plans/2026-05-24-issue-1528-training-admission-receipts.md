@@ -23,6 +23,8 @@ separate follow-up issues.
   received value, and allowed bounds.
 - Reject non-finite floating-point hyperparameters such as `nan` and `inf`
   before they can reach backend runner arguments.
+- Classify `-inf` as a bounds violation (`below_minimum`) rather than only a
+  non-finite value, so range-handling consumers do not miss the failure mode.
 - Record resolved defaults and capability gates in the adapter manifest before
   backend-dependent metrics are interpreted.
 - Record dataset file resolution from the resolved package and normalized
