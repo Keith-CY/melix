@@ -28,6 +28,7 @@ def _iter_lora_run_dirs(train_root: Path) -> tuple[Path, ...]:
     try:
         with os.scandir(train_root) as entries:
             run_dir_names = []
+            append_run_dir_name = run_dir_names.append
             for entry in entries:
                 if not entry.name.startswith("model-ops-"):
                     continue
@@ -36,7 +37,7 @@ def _iter_lora_run_dirs(train_root: Path) -> tuple[Path, ...]:
                         continue
                 except OSError:
                     continue
-                run_dir_names.append(entry.name)
+                append_run_dir_name(entry.name)
     except OSError:
         return ()
 
