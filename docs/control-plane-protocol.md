@@ -517,6 +517,18 @@ Workers preserve raw generation text separately from public content. Stream asse
 - `ReasoningDelta` for hidden reasoning stream material
 - `ToolCallDelta` for parsed tool-call fragments
 
+The worker also emits a request-local token route receipt in completed parser
+metrics. The receipt records `router_id`, `router_version`, `token_id`,
+`channel`, `channel_source`, `tool_choice_policy`, `reasoning_mode`,
+`visible_text_tokens`, `hidden_reasoning_tokens`, and
+`fallback_raw_text_used`, with route records for visible text, hidden
+reasoning, and tool-call spans. Detailed route sampling is enabled for
+reasoning, tool, structured-output, and compatibility-policy routed output.
+Plain visible-text-only requests may report `route_tracking_enabled=false` with
+empty sampled routes so the default text path avoids per-token routing work.
+When token identifiers are unavailable on tracked routes, the worker may fall
+back to raw-text span routing but must mark the fallback in the receipt.
+
 Malformed or truncated tool fragments are recoverable parser observations. They should increment parser metrics and be skipped rather than fail the request. Display cleanup is not structural parsing; cleanup must not collapse meaningful leading or trailing content whitespace and must not re-emit generation-prefix control tokens.
 
 JSON-only structured-output requests without explicit tools suppress generic model-default tool parsing. The worker must not validate or output reasoning preambles as JSON content; any reasoning prefix is stripped before structured-output validation.

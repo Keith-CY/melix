@@ -52,6 +52,158 @@ public struct DiscoveryJSONOptions: Equatable, Sendable {
     }
 }
 
+public struct WorkspacePreflightOptions: Equatable, Sendable {
+    public let manifestPath: String
+    public let outputPath: String
+    public let json: Bool
+
+    public init(
+        manifestPath: String,
+        outputPath: String = "",
+        json: Bool = false
+    ) {
+        self.manifestPath = manifestPath
+        self.outputPath = outputPath
+        self.json = json
+    }
+}
+
+public struct DatasetPrepareIngestOptions: Equatable, Sendable {
+    public let workspaceProjectID: String
+    public let workspaceManifestPath: String
+    public let inputPath: String
+    public let outputDir: String
+    public let datasetPreparationID: String
+    public let receiptOutputPath: String
+    public let piiMask: Bool
+    public let exactDedup: Bool
+    public let fuzzyDedup: Bool
+    public let segmentation: Bool
+    public let segmentationStrategy: String
+    public let json: Bool
+
+    public init(
+        workspaceProjectID: String,
+        workspaceManifestPath: String,
+        inputPath: String,
+        outputDir: String,
+        datasetPreparationID: String,
+        receiptOutputPath: String = "",
+        piiMask: Bool = true,
+        exactDedup: Bool = true,
+        fuzzyDedup: Bool = true,
+        segmentation: Bool = true,
+        segmentationStrategy: String = "paragraph",
+        json: Bool = false
+    ) {
+        self.workspaceProjectID = workspaceProjectID
+        self.workspaceManifestPath = workspaceManifestPath
+        self.inputPath = inputPath
+        self.outputDir = outputDir
+        self.datasetPreparationID = datasetPreparationID
+        self.receiptOutputPath = receiptOutputPath
+        self.piiMask = piiMask
+        self.exactDedup = exactDedup
+        self.fuzzyDedup = fuzzyDedup
+        self.segmentation = segmentation
+        self.segmentationStrategy = segmentationStrategy
+        self.json = json
+    }
+}
+
+public struct DatasetPrepareVersionOptions: Equatable, Sendable {
+    public let workspaceManifestPath: String
+    public let ingestReceiptPath: String
+    public let outputRoot: String
+    public let datasetID: String
+    public let versionID: String
+    public let createdAt: String
+    public let mode: String
+    public let generatorModel: String
+    public let outputKind: String
+    public let outputFormat: String
+    public let validationRatio: String
+    public let failSegmentIDs: [String]
+    public let json: Bool
+
+    public init(
+        workspaceManifestPath: String,
+        ingestReceiptPath: String,
+        outputRoot: String,
+        datasetID: String,
+        versionID: String = "",
+        createdAt: String = "",
+        mode: String = "chat",
+        generatorModel: String = "melix.local.dataset-versioner.v1",
+        outputKind: String = "training",
+        outputFormat: String = "prompt_completion",
+        validationRatio: String = "",
+        failSegmentIDs: [String] = [],
+        json: Bool = false
+    ) {
+        self.workspaceManifestPath = workspaceManifestPath
+        self.ingestReceiptPath = ingestReceiptPath
+        self.outputRoot = outputRoot
+        self.datasetID = datasetID
+        self.versionID = versionID
+        self.createdAt = createdAt
+        self.mode = mode
+        self.generatorModel = generatorModel
+        self.outputKind = outputKind
+        self.outputFormat = outputFormat
+        self.validationRatio = validationRatio
+        self.failSegmentIDs = failSegmentIDs
+        self.json = json
+    }
+}
+
+public struct DatasetPrepareRetryFailedOptions: Equatable, Sendable {
+    public let workspaceManifestPath: String
+    public let datasetVersionPath: String
+    public let outputRoot: String
+    public let versionID: String
+    public let createdAt: String
+    public let generatorModel: String
+    public let json: Bool
+
+    public init(
+        workspaceManifestPath: String,
+        datasetVersionPath: String,
+        outputRoot: String,
+        versionID: String = "",
+        createdAt: String = "",
+        generatorModel: String = "",
+        json: Bool = false
+    ) {
+        self.workspaceManifestPath = workspaceManifestPath
+        self.datasetVersionPath = datasetVersionPath
+        self.outputRoot = outputRoot
+        self.versionID = versionID
+        self.createdAt = createdAt
+        self.generatorModel = generatorModel
+        self.json = json
+    }
+}
+
+public struct DatasetPrepareListVersionsOptions: Equatable, Sendable {
+    public let workspaceManifestPath: String
+    public let outputRoot: String
+    public let datasetID: String
+    public let json: Bool
+
+    public init(
+        workspaceManifestPath: String,
+        outputRoot: String,
+        datasetID: String,
+        json: Bool = false
+    ) {
+        self.workspaceManifestPath = workspaceManifestPath
+        self.outputRoot = outputRoot
+        self.datasetID = datasetID
+        self.json = json
+    }
+}
+
 public struct CapabilitiesOptions: Equatable, Sendable {
     public let json: Bool
     public let modelQuery: String
@@ -2105,6 +2257,7 @@ public enum MelixCLICommand: Equatable, Sendable {
     case instructions(DiscoveryJSONOptions)
     case schema(DiscoveryJSONOptions)
     case configMetadata(DiscoveryJSONOptions)
+    case workspacePreflight(WorkspacePreflightOptions)
     case doctor(DoctorOptions)
     case system(SystemOptions)
     case monitor(MonitorOptions)
@@ -2131,6 +2284,10 @@ public enum MelixCLICommand: Equatable, Sendable {
     case datasetList(DatasetListOptions)
     case datasetHubDownload(DatasetHubDownloadOptions)
     case datasetRemove(DatasetRemoveOptions)
+    case datasetPrepareIngest(DatasetPrepareIngestOptions)
+    case datasetPrepareVersion(DatasetPrepareVersionOptions)
+    case datasetPrepareRetryFailed(DatasetPrepareRetryFailedOptions)
+    case datasetPrepareListVersions(DatasetPrepareListVersionsOptions)
     case datasetSynthetic(DatasetSyntheticOptions)
     case uriInspect(URIInspectOptions)
     case uriImport(URIImportOptions)
@@ -2281,6 +2438,8 @@ public enum MelixCLIParser {
             return try parseSchema(tail)
         case "config":
             return try parseConfig(tail)
+        case "workspace":
+            return try parseWorkspace(tail)
         case "doctor":
             return try parseDoctor(tail)
         case "system":
@@ -2345,6 +2504,7 @@ public enum MelixCLIParser {
       melix instructions --json
       melix schema --json
       melix config metadata --json
+      melix workspace preflight --manifest PATH [--output PATH] [--json]
       melix doctor [--json]
       melix system --json
       melix monitor [--from PATH] [--json]
@@ -2378,6 +2538,10 @@ public enum MelixCLIParser {
       melix dataset list [--json]
       melix dataset hub download --repo-id HF_DATASET [--revision REV] [--hf-token TOKEN] [--json]
       melix dataset remove --repo-id HF_DATASET [--revision REV | --snapshot-id SHA] [--json]
+      melix dataset prepare ingest --workspace-project-id ID --workspace-manifest PATH --input PATH --output-dir PATH --dataset-preparation-id ID [--output PATH] [--pii-mask true|false] [--exact-dedup true|false] [--fuzzy-dedup true|false] [--segmentation true|false] [--segmentation-strategy STRATEGY] [--json]
+      melix dataset prepare version --workspace-manifest PATH --ingest-receipt PATH --output-root PATH --dataset-id ID [--version-id ID] [--created-at ISO8601] [--mode MODE] [--generator-model MODEL] [--output-kind KIND] [--output-format FORMAT] [--validation-ratio N] [--fail-segment-id ID ...] [--json]
+      melix dataset prepare retry-failed --workspace-manifest PATH --dataset-version PATH --output-root PATH [--version-id ID] [--created-at ISO8601] [--generator-model MODEL] [--json]
+      melix dataset prepare list-versions --workspace-manifest PATH --output-root PATH --dataset-id ID [--json]
       melix dataset synthetic preview --dataset-id ID --dataset-name NAME --num-records N --output-kind KIND --output-format FORMAT --output-dir PATH --provider-endpoint URL --model MODEL --column NAME:TYPE:JSON [--model-alias ALIAS] [--api-key TOKEN] [--header KEY=VALUE ...] [--json]
       melix dataset synthetic create --dataset-id ID --dataset-name NAME --num-records N --output-kind KIND --output-format FORMAT --output-dir PATH --provider-endpoint URL --model MODEL --column NAME:TYPE:JSON [--model-alias ALIAS] [--validation-ratio N] [--resume MODE] [--json]
       melix uri inspect URI [--json]
@@ -2621,6 +2785,24 @@ public enum MelixCLIParser {
             throw MelixCLIError.usage("melix config metadata requires --json.")
         }
         return .configMetadata(.init(json: true))
+    }
+
+    private static func parseWorkspace(_ arguments: [String]) throws -> MelixCLICommand {
+        guard arguments.first == "preflight" else {
+            throw MelixCLIError.usage(Self.usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        let manifestPath = values.single["--manifest"] ?? ""
+        guard manifestPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            throw MelixCLIError.missingRequired("--manifest is required for melix workspace preflight.")
+        }
+        return .workspacePreflight(
+            .init(
+                manifestPath: manifestPath,
+                outputPath: values.single["--output"] ?? "",
+                json: values.flags.contains("--json")
+            )
+        )
     }
 
     private static func parseDoctor(_ arguments: [String]) throws -> MelixCLICommand {
@@ -3053,11 +3235,141 @@ public enum MelixCLIParser {
                     json: values.flags.contains("--json")
                 )
             )
+        case "prepare":
+            return try parseDatasetPrepare(Array(arguments.dropFirst()))
         case "synthetic":
             return try parseDatasetSynthetic(Array(arguments.dropFirst()))
         default:
             throw MelixCLIError.usage(usageText)
         }
+    }
+
+    private static func parseDatasetPrepare(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        if action == "version" {
+            return try parseDatasetPrepareVersion(Array(arguments.dropFirst()))
+        }
+        if action == "retry-failed" {
+            return try parseDatasetPrepareRetryFailed(Array(arguments.dropFirst()))
+        }
+        if action == "list-versions" {
+            return try parseDatasetPrepareListVersions(Array(arguments.dropFirst()))
+        }
+        guard action == "ingest" else {
+            throw MelixCLIError.usage(usageText)
+        }
+        let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse()
+        guard let workspaceProjectID = nonEmpty(values.single["--workspace-project-id"]) else {
+            throw MelixCLIError.missingRequired("--workspace-project-id is required for melix dataset prepare ingest.")
+        }
+        guard let workspaceManifestPath = nonEmpty(values.single["--workspace-manifest"]) else {
+            throw MelixCLIError.missingRequired("--workspace-manifest is required for melix dataset prepare ingest.")
+        }
+        guard let inputPath = nonEmpty(values.single["--input"]) else {
+            throw MelixCLIError.missingRequired("--input is required for melix dataset prepare ingest.")
+        }
+        guard let outputDir = nonEmpty(values.single["--output-dir"]) else {
+            throw MelixCLIError.missingRequired("--output-dir is required for melix dataset prepare ingest.")
+        }
+        guard let datasetPreparationID = nonEmpty(values.single["--dataset-preparation-id"]) else {
+            throw MelixCLIError.missingRequired("--dataset-preparation-id is required for melix dataset prepare ingest.")
+        }
+        return .datasetPrepareIngest(
+            .init(
+                workspaceProjectID: workspaceProjectID,
+                workspaceManifestPath: workspaceManifestPath,
+                inputPath: inputPath,
+                outputDir: outputDir,
+                datasetPreparationID: datasetPreparationID,
+                receiptOutputPath: values.single["--output"] ?? "",
+                piiMask: try parseRequiredBooleanValue(values.single["--pii-mask"], option: "--pii-mask", defaultValue: true),
+                exactDedup: try parseRequiredBooleanValue(values.single["--exact-dedup"], option: "--exact-dedup", defaultValue: true),
+                fuzzyDedup: try parseRequiredBooleanValue(values.single["--fuzzy-dedup"], option: "--fuzzy-dedup", defaultValue: true),
+                segmentation: try parseRequiredBooleanValue(values.single["--segmentation"], option: "--segmentation", defaultValue: true),
+                segmentationStrategy: values.single["--segmentation-strategy"] ?? "paragraph",
+                json: values.flags.contains("--json")
+            )
+        )
+    }
+
+    private static func parseDatasetPrepareVersion(_ arguments: [String]) throws -> MelixCLICommand {
+        let values = try ArgumentCursor(arguments: arguments).parse(multiValueOptions: ["--fail-segment-id"])
+        guard let workspaceManifestPath = nonEmpty(values.single["--workspace-manifest"]) else {
+            throw MelixCLIError.missingRequired("--workspace-manifest is required for melix dataset prepare version.")
+        }
+        guard let ingestReceiptPath = nonEmpty(values.single["--ingest-receipt"]) else {
+            throw MelixCLIError.missingRequired("--ingest-receipt is required for melix dataset prepare version.")
+        }
+        guard let outputRoot = nonEmpty(values.single["--output-root"]) else {
+            throw MelixCLIError.missingRequired("--output-root is required for melix dataset prepare version.")
+        }
+        guard let datasetID = nonEmpty(values.single["--dataset-id"]) else {
+            throw MelixCLIError.missingRequired("--dataset-id is required for melix dataset prepare version.")
+        }
+        return .datasetPrepareVersion(
+            .init(
+                workspaceManifestPath: workspaceManifestPath,
+                ingestReceiptPath: ingestReceiptPath,
+                outputRoot: outputRoot,
+                datasetID: datasetID,
+                versionID: values.single["--version-id"] ?? "",
+                createdAt: values.single["--created-at"] ?? "",
+                mode: values.single["--mode"] ?? "chat",
+                generatorModel: values.single["--generator-model"] ?? "melix.local.dataset-versioner.v1",
+                outputKind: values.single["--output-kind"] ?? "training",
+                outputFormat: values.single["--output-format"] ?? "prompt_completion",
+                validationRatio: values.single["--validation-ratio"] ?? "",
+                failSegmentIDs: values.multi["--fail-segment-id"] ?? [],
+                json: values.flags.contains("--json")
+            )
+        )
+    }
+
+    private static func parseDatasetPrepareRetryFailed(_ arguments: [String]) throws -> MelixCLICommand {
+        let values = try ArgumentCursor(arguments: arguments).parse()
+        guard let workspaceManifestPath = nonEmpty(values.single["--workspace-manifest"]) else {
+            throw MelixCLIError.missingRequired("--workspace-manifest is required for melix dataset prepare retry-failed.")
+        }
+        guard let datasetVersionPath = nonEmpty(values.single["--dataset-version"]) else {
+            throw MelixCLIError.missingRequired("--dataset-version is required for melix dataset prepare retry-failed.")
+        }
+        guard let outputRoot = nonEmpty(values.single["--output-root"]) else {
+            throw MelixCLIError.missingRequired("--output-root is required for melix dataset prepare retry-failed.")
+        }
+        return .datasetPrepareRetryFailed(
+            .init(
+                workspaceManifestPath: workspaceManifestPath,
+                datasetVersionPath: datasetVersionPath,
+                outputRoot: outputRoot,
+                versionID: values.single["--version-id"] ?? "",
+                createdAt: values.single["--created-at"] ?? "",
+                generatorModel: values.single["--generator-model"] ?? "",
+                json: values.flags.contains("--json")
+            )
+        )
+    }
+
+    private static func parseDatasetPrepareListVersions(_ arguments: [String]) throws -> MelixCLICommand {
+        let values = try ArgumentCursor(arguments: arguments).parse()
+        guard let workspaceManifestPath = nonEmpty(values.single["--workspace-manifest"]) else {
+            throw MelixCLIError.missingRequired("--workspace-manifest is required for melix dataset prepare list-versions.")
+        }
+        guard let outputRoot = nonEmpty(values.single["--output-root"]) else {
+            throw MelixCLIError.missingRequired("--output-root is required for melix dataset prepare list-versions.")
+        }
+        guard let datasetID = nonEmpty(values.single["--dataset-id"]) else {
+            throw MelixCLIError.missingRequired("--dataset-id is required for melix dataset prepare list-versions.")
+        }
+        return .datasetPrepareListVersions(
+            .init(
+                workspaceManifestPath: workspaceManifestPath,
+                outputRoot: outputRoot,
+                datasetID: datasetID,
+                json: values.flags.contains("--json")
+            )
+        )
     }
 
     private static func parseDatasetSynthetic(_ arguments: [String]) throws -> MelixCLICommand {
@@ -5691,8 +6003,13 @@ public struct MelixCLIProcessExecutor: Sendable {
             throw MelixCLIError.runtime("The melix subprocess command is not configured.")
         }
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = Array(baseCommand.dropFirst()) + arguments
+        if executable.contains("/") {
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = Array(baseCommand.dropFirst()) + arguments
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = [executable] + Array(baseCommand.dropFirst()) + arguments
+        }
         process.environment = environment
         process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
 
@@ -5791,6 +6108,254 @@ public actor MelixCLIRunner {
         try await client.modelInfo(modelID: modelID)
     }
 
+    private func runWorkspacePreflight(_ options: WorkspacePreflightOptions) async throws -> String {
+        let manifestPath = options.manifestPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard manifestPath.isEmpty == false else {
+            throw MelixCLIError.missingRequired("--manifest is required for melix workspace preflight.")
+        }
+        let arguments = Self.workspacePreflightScriptArguments(options)
+        let output: String
+        if let commandExecutor {
+            output = try await commandExecutor(arguments)
+        } else {
+            let uvExecutable = environment["MELIX_UV"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let executor = MelixCLIProcessExecutor(
+                baseCommand: [uvExecutable?.isEmpty == false ? uvExecutable! : "uv"],
+                environment: ProcessInfo.processInfo.environment.merging(environment) { _, new in new },
+                workingDirectory: Self.workspacePreflightWorkingDirectory(environment: environment)
+            )
+            let result = try await executor.runDetailed(arguments: arguments)
+            guard result.exitCode == 0 || result.exitCode == 1 else {
+                throw MelixCLIError.runtime(
+                    MelixCLIProcessFailureMessage.make(
+                        stdout: result.stdout,
+                        stderr: result.stderr,
+                        exitCode: result.exitCode
+                    )
+                )
+            }
+            output = result.stdout
+        }
+        return options.json ? output.trimmingCharacters(in: .whitespacesAndNewlines) : Self.renderWorkspacePreflightReceipt(output)
+    }
+
+    private static func workspacePreflightScriptArguments(_ options: WorkspacePreflightOptions) -> [String] {
+        var arguments = [
+            "run",
+            "--project",
+            "services/mlx-worker-python",
+            "--extra",
+            "mlx",
+            "python",
+            "scripts/workspace_manifest_preflight.py",
+            "--manifest",
+            options.manifestPath,
+        ]
+        appendOption("--output", value: options.outputPath, into: &arguments)
+        return arguments
+    }
+
+    private static func workspacePreflightWorkingDirectory(environment: [String: String]) -> String {
+        let explicit = environment["MELIX_REPO_ROOT"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return explicit.isEmpty ? FileManager.default.currentDirectoryPath : explicit
+    }
+
+    private func runDatasetPrepareIngest(_ options: DatasetPrepareIngestOptions) async throws -> String {
+        guard options.workspaceProjectID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            throw MelixCLIError.missingRequired("--workspace-project-id is required for melix dataset prepare ingest.")
+        }
+        let arguments = Self.datasetPrepareIngestScriptArguments(options)
+        let output: String
+        if let commandExecutor {
+            output = try await commandExecutor(arguments)
+        } else {
+            let uvExecutable = environment["MELIX_UV"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let executor = MelixCLIProcessExecutor(
+                baseCommand: [uvExecutable?.isEmpty == false ? uvExecutable! : "uv"],
+                environment: ProcessInfo.processInfo.environment.merging(environment) { _, new in new },
+                workingDirectory: Self.workspacePreflightWorkingDirectory(environment: environment)
+            )
+            let result = try await executor.runDetailed(arguments: arguments)
+            guard result.exitCode == 0 || result.exitCode == 1 else {
+                throw MelixCLIError.runtime(
+                    MelixCLIProcessFailureMessage.make(
+                        stdout: result.stdout,
+                        stderr: result.stderr,
+                        exitCode: result.exitCode
+                    )
+                )
+            }
+            output = result.stdout
+        }
+        return options.json ? output.trimmingCharacters(in: .whitespacesAndNewlines) : Self.renderDatasetIngestReceipt(output)
+    }
+
+    private func runDatasetPrepareVersion(_ options: DatasetPrepareVersionOptions) async throws -> String {
+        let output = try await runDatasetPreparationVersionScript(
+            Self.datasetPrepareVersionScriptArguments(options)
+        )
+        return options.json ? output.trimmingCharacters(in: .whitespacesAndNewlines) : Self.renderDatasetVersionReceipt(output)
+    }
+
+    private func runDatasetPrepareRetryFailed(_ options: DatasetPrepareRetryFailedOptions) async throws -> String {
+        let output = try await runDatasetPreparationVersionScript(
+            Self.datasetPrepareRetryFailedScriptArguments(options)
+        )
+        return options.json ? output.trimmingCharacters(in: .whitespacesAndNewlines) : Self.renderDatasetRetryReceipt(output)
+    }
+
+    private func runDatasetPrepareListVersions(_ options: DatasetPrepareListVersionsOptions) async throws -> String {
+        let output = try await runDatasetPreparationVersionScript(
+            Self.datasetPrepareListVersionsScriptArguments(options)
+        )
+        return options.json ? output.trimmingCharacters(in: .whitespacesAndNewlines) : Self.renderDatasetVersionList(output)
+    }
+
+    private func runDatasetPreparationVersionScript(_ arguments: [String]) async throws -> String {
+        if let commandExecutor {
+            return try await commandExecutor(arguments)
+        }
+        let uvExecutable = environment["MELIX_UV"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let executor = MelixCLIProcessExecutor(
+            baseCommand: [uvExecutable?.isEmpty == false ? uvExecutable! : "uv"],
+            environment: ProcessInfo.processInfo.environment.merging(environment) { _, new in new },
+            workingDirectory: Self.workspacePreflightWorkingDirectory(environment: environment)
+        )
+        let result = try await executor.runDetailed(arguments: arguments)
+        guard result.exitCode == 0 || result.exitCode == 1 else {
+            throw MelixCLIError.runtime(
+                MelixCLIProcessFailureMessage.make(
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                    exitCode: result.exitCode
+                )
+            )
+        }
+        return result.stdout
+    }
+
+    private static func datasetPrepareIngestScriptArguments(_ options: DatasetPrepareIngestOptions) -> [String] {
+        var arguments = [
+            "run",
+            "--project",
+            "services/mlx-worker-python",
+            "--extra",
+            "mlx",
+            "python",
+            "scripts/dataset_preparation_ingest.py",
+            "--workspace-project-id",
+            options.workspaceProjectID,
+            "--workspace-manifest",
+            options.workspaceManifestPath,
+            "--input",
+            options.inputPath,
+            "--output-dir",
+            options.outputDir,
+            "--dataset-preparation-id",
+            options.datasetPreparationID,
+        ]
+        appendOption("--output", value: options.receiptOutputPath, into: &arguments)
+        arguments.append(contentsOf: ["--pii-mask", options.piiMask ? "true" : "false"])
+        arguments.append(contentsOf: ["--exact-dedup", options.exactDedup ? "true" : "false"])
+        arguments.append(contentsOf: ["--fuzzy-dedup", options.fuzzyDedup ? "true" : "false"])
+        arguments.append(contentsOf: ["--segmentation", options.segmentation ? "true" : "false"])
+        appendOption("--segmentation-strategy", value: options.segmentationStrategy, into: &arguments)
+        return arguments
+    }
+
+    private static func datasetPrepareVersionScriptArguments(_ options: DatasetPrepareVersionOptions) -> [String] {
+        var arguments = datasetPreparationVersionScriptPrefix(command: "version")
+        appendOption("--workspace-manifest", value: options.workspaceManifestPath, into: &arguments)
+        appendOption("--ingest-receipt", value: options.ingestReceiptPath, into: &arguments)
+        appendOption("--output-root", value: options.outputRoot, into: &arguments)
+        appendOption("--dataset-id", value: options.datasetID, into: &arguments)
+        appendOption("--version-id", value: options.versionID, into: &arguments)
+        appendOption("--created-at", value: options.createdAt, into: &arguments)
+        appendOption("--mode", value: options.mode, into: &arguments)
+        appendOption("--generator-model", value: options.generatorModel, into: &arguments)
+        appendOption("--output-kind", value: options.outputKind, into: &arguments)
+        appendOption("--output-format", value: options.outputFormat, into: &arguments)
+        appendOption("--validation-ratio", value: options.validationRatio, into: &arguments)
+        appendMultiOption("--fail-segment-id", values: options.failSegmentIDs, into: &arguments)
+        return arguments
+    }
+
+    private static func datasetPrepareRetryFailedScriptArguments(_ options: DatasetPrepareRetryFailedOptions) -> [String] {
+        var arguments = datasetPreparationVersionScriptPrefix(command: "retry-failed")
+        appendOption("--workspace-manifest", value: options.workspaceManifestPath, into: &arguments)
+        appendOption("--dataset-version", value: options.datasetVersionPath, into: &arguments)
+        appendOption("--output-root", value: options.outputRoot, into: &arguments)
+        appendOption("--version-id", value: options.versionID, into: &arguments)
+        appendOption("--created-at", value: options.createdAt, into: &arguments)
+        appendOption("--generator-model", value: options.generatorModel, into: &arguments)
+        return arguments
+    }
+
+    private static func datasetPrepareListVersionsScriptArguments(_ options: DatasetPrepareListVersionsOptions) -> [String] {
+        var arguments = datasetPreparationVersionScriptPrefix(command: "list-versions")
+        appendOption("--workspace-manifest", value: options.workspaceManifestPath, into: &arguments)
+        appendOption("--output-root", value: options.outputRoot, into: &arguments)
+        appendOption("--dataset-id", value: options.datasetID, into: &arguments)
+        return arguments
+    }
+
+    private static func datasetPreparationVersionScriptPrefix(command: String) -> [String] {
+        [
+            "run",
+            "--project",
+            "services/mlx-worker-python",
+            "--extra",
+            "mlx",
+            "python",
+            "scripts/dataset_preparation_version.py",
+            command,
+        ]
+    }
+
+    private static func renderDatasetIngestReceipt(_ output: String) -> String {
+        guard let payload = jsonObject(from: output) else {
+            return output.hasSuffix("\n") ? output : output + "\n"
+        }
+        let status = stringValue("status", from: payload)
+        let projectID = stringValue("workspace_project_id", from: payload)
+        let metrics = payload["metrics"] as? [String: Any] ?? [:]
+        let sourceFiles = metrics["source_file_count"] as? NSNumber
+        let segments = metrics["segment_count"] as? NSNumber
+        var lines = [
+            "Dataset ingest \(status.isEmpty ? "unknown" : status)\(projectID.isEmpty ? "" : " for \(projectID)")",
+        ]
+        if let sourceFiles, let segments {
+            lines.append("Sources: \(sourceFiles.intValue), segments: \(segments.intValue)")
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    private static func renderWorkspacePreflightReceipt(_ output: String) -> String {
+        guard let payload = jsonObject(from: output) else {
+            return output.hasSuffix("\n") ? output : output + "\n"
+        }
+        let status = stringValue("status", from: payload)
+        let projectID = stringValue("project_id", from: payload)
+        let checks = payload["checks"] as? [[String: Any]] ?? []
+        let blocking = checks.filter { check in
+            let checkStatus = (check["status"] as? String ?? "").lowercased()
+            return checkStatus == "error" || checkStatus == "blocked"
+        }
+        var lines = [
+            "Workspace preflight \(status.isEmpty ? "unknown" : status)\(projectID.isEmpty ? "" : " for \(projectID)")",
+        ]
+        for check in blocking {
+            let code = check["code"] as? String ?? "WORKSPACE_PREFLIGHT_CHECK"
+            let title = check["title"] as? String ?? code
+            let detail = check["detail"] as? String ?? ""
+            lines.append("- \(code): \(title)")
+            if detail.isEmpty == false {
+                lines.append("  \(detail)")
+            }
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
     public func loadModel(
         modelID: String,
         memoryBudgetBytes: UInt64 = 0
@@ -5814,6 +6379,49 @@ public actor MelixCLIRunner {
             cursor: cursor,
             mlxOnly: mlxOnly
         )
+    }
+
+    private static func renderDatasetVersionReceipt(_ output: String) -> String {
+        guard let payload = jsonObject(from: output) else {
+            return output.hasSuffix("\n") ? output : output + "\n"
+        }
+        let datasetID = stringValue("dataset_id", from: payload)
+        let versionID = stringValue("version_id", from: payload)
+        let trainCount = intValue("train_count", from: payload)
+        let validationCount = intValue("validation_count", from: payload)
+        let failedCount = intValue("failed_count", from: payload)
+        return "Dataset version \(versionID) for \(datasetID)\nSamples: train \(trainCount), validation \(validationCount), failed \(failedCount)\n"
+    }
+
+    private static func renderDatasetRetryReceipt(_ output: String) -> String {
+        guard let payload = jsonObject(from: output) else {
+            return output.hasSuffix("\n") ? output : output + "\n"
+        }
+        let baseVersionID = stringValue("base_version_id", from: payload)
+        let retryVersionID = stringValue("retry_version_id", from: payload)
+        let retrySuccessCount = intValue("retry_success_count", from: payload)
+        let retryFailedCount = intValue("retry_failed_count", from: payload)
+        let rewrittenCount = intValue("rewritten_successful_sample_count", from: payload)
+        return "Dataset retry \(baseVersionID) -> \(retryVersionID)\nRetry success: \(retrySuccessCount), failed: \(retryFailedCount), rewritten successful samples: \(rewrittenCount)\n"
+    }
+
+    private static func renderDatasetVersionList(_ output: String) -> String {
+        guard let payload = jsonObject(from: output) else {
+            return output.hasSuffix("\n") ? output : output + "\n"
+        }
+        let versions = payload["versions"] as? [[String: Any]] ?? []
+        var lines = ["dataset_id\tversion_id\tcreated_at\ttrain_count\tvalidation_count\tfailed_count"]
+        for version in versions {
+            lines.append([
+                stringValue("dataset_id", from: payload),
+                stringValue("version_id", from: version),
+                stringValue("created_at", from: version),
+                String(intValue("train_count", from: version)),
+                String(intValue("validation_count", from: version)),
+                String(intValue("failed_count", from: version)),
+            ].joined(separator: "\t"))
+        }
+        return lines.joined(separator: "\n") + "\n"
     }
 
     public func getHubModelCard(repoID: String) async throws -> Melix_Controlplane_V1_HubModelCard {
@@ -6395,12 +7003,45 @@ public actor MelixCLIRunner {
         if !trainingMode.isEmpty {
             ext["training_mode"] = trainingMode
         }
-        return try await performModelOperation(
-            modelID: options.modelID,
-            operation: "train_lora",
-            outputDir: outputDir,
-            ext: ext
+        let queue = localTrainingQueueStore()
+        let admitted = try queue.admit(
+            LocalTrainingQueueAdmissionRequest(
+                modelID: options.modelID,
+                datasetURI: options.datasetURI,
+                adapterName: options.adapterName,
+                trainingMode: trainingMode,
+                runDirectory: outputDir,
+                parameters: ext
+            )
         )
+        ext["training_queue_job_id"] = admitted.jobID
+        ext["training_queue_schema_version"] = LocalTrainingQueueStore.schemaVersion
+        ext["training_queue_path"] = MelixHome(environment: environment).localTrainingQueueFileURL.path
+        do {
+            _ = try queue.markRunning(jobID: admitted.jobID)
+            let result = try await performModelOperation(
+                modelID: options.modelID,
+                operation: "train_lora",
+                outputDir: outputDir,
+                ext: ext
+            )
+            _ = try? queue.markSucceeded(jobID: admitted.jobID)
+            return result
+        } catch let error as MelixCLIError {
+            _ = try? queue.markFailed(
+                jobID: admitted.jobID,
+                code: queueErrorCode(for: error),
+                message: error.errorDescription ?? "\(error)"
+            )
+            throw error
+        } catch {
+            _ = try? queue.markFailed(
+                jobID: admitted.jobID,
+                code: "training_queue_worker_failed",
+                message: "\(error)"
+            )
+            throw error
+        }
     }
 
     private func runLoraActivateOperation(
@@ -6888,7 +7529,7 @@ public actor MelixCLIRunner {
     }
 
     public func run(_ command: MelixCLICommand) async throws -> String {
-        if commandRequiresConfiguredRegistryRootPriming(command) {
+        if commandExecutor == nil, commandRequiresConfiguredRegistryRootPriming(command) {
             try await primeConfiguredRegistryRootsIfNeeded()
         }
         switch command {
@@ -6936,6 +7577,8 @@ public actor MelixCLIRunner {
         case .configMetadata:
             let payload = MelixRuntimeDiscoveryBuilder(environment: environment).configMetadataPayload()
             return try prettyJSON(payload)
+        case .workspacePreflight(let options):
+            return try await runWorkspacePreflight(options)
         case .uriInspect(let options):
             return try runURIInspect(options)
         case .uriImport(let options):
@@ -7217,6 +7860,14 @@ public actor MelixCLIRunner {
                 snapshotID: options.snapshotID
             )
             return options.json ? result.manifestJson : renderDatasetRemoveResult(result)
+        case .datasetPrepareIngest(let options):
+            return try await runDatasetPrepareIngest(options)
+        case .datasetPrepareVersion(let options):
+            return try await runDatasetPrepareVersion(options)
+        case .datasetPrepareRetryFailed(let options):
+            return try await runDatasetPrepareRetryFailed(options)
+        case .datasetPrepareListVersions(let options):
+            return try await runDatasetPrepareListVersions(options)
         case .datasetSynthetic(let options):
             let result = try await generateSyntheticDataset(options: options)
             return options.json ? result.manifestJson : renderSyntheticDatasetResult(result)
@@ -8723,6 +9374,23 @@ public actor MelixCLIRunner {
             diagnosticsStore: diagnosticsStore(),
             melixHome: melixHome
         )
+    }
+
+    private func localTrainingQueueStore() -> LocalTrainingQueueStore {
+        LocalTrainingQueueStore(melixHome: MelixHome(environment: environment))
+    }
+
+    private func queueErrorCode(for error: MelixCLIError) -> String {
+        switch error {
+        case .requestFailed(let code, _):
+            return code.isEmpty ? "training_queue_worker_failed" : code
+        case .usage:
+            return "training_queue_invalid_options"
+        case .missingValue, .missingRequired:
+            return "training_queue_missing_options"
+        case .runtime:
+            return "training_queue_worker_failed"
+        }
     }
 
     private func renderRunReport(kind: String, options: RunReportOptions) throws -> String {

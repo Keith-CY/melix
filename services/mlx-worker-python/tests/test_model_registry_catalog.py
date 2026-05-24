@@ -1109,6 +1109,8 @@ def test_registry_snapshot_reuses_plain_local_tree_scan_and_config_payload(
     assert [model.model_id for model in snapshot.models] == ["plain-model"]
     assert scandir_calls.count(os.fspath(model_dir.resolve())) == 1
     assert config_load_count == 1
+    dev_vlm = WorkerModelCatalog.dev_vlm_model()
+    assert dev_vlm.ext["melix.capability.supported_modalities"] == "text,image,video"
 
     tensor_cases_root = tmp_path / "tensor-index-cases"
     test_registry_snapshot_promotes_gemma4_text_manifest_to_vlm_text_backed(tensor_cases_root / "text-manifest")
@@ -1330,7 +1332,6 @@ def test_registry_snapshot_imports_plain_local_generation_config_when_seen_durin
     assert model.ext["melix.generation_config.top_p"] == "0.9"
     assert model.ext["melix.generation_config.max_tokens"] == "128"
     assert model.ext["melix.generation_config.source"].endswith("generation_config.json")
-
 
 
 def test_registry_snapshot_skips_invalid_depth_manifests_without_parsing(

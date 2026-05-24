@@ -278,6 +278,61 @@ extension MelixCLIWorkflowRunning {
         }
     }
 
+    func prepareDatasetIngest(options: DatasetPrepareIngestOptions) async throws -> RuntimeDatasetIngestReceiptState {
+        let command = MelixCLICommand.datasetPrepareIngest(options)
+        let output = try await run(command)
+        do {
+            return try RuntimeDatasetIngestReceiptDecoder.decode(output)
+        } catch {
+            throw MelixCLIWorkflowError.invalidJSON(commandID: command.workflowCommandID, surface: surface, output: output)
+        }
+    }
+
+    func prepareDatasetVersion(options: DatasetPrepareVersionOptions) async throws -> RuntimeDatasetVersionReceiptState {
+        let command = MelixCLICommand.datasetPrepareVersion(options)
+        let output = try await run(command)
+        do {
+            return try RuntimeDatasetVersionReceiptDecoder.decode(output)
+        } catch {
+            throw MelixCLIWorkflowError.invalidJSON(commandID: command.workflowCommandID, surface: surface, output: output)
+        }
+    }
+
+    func retryFailedDatasetVersion(options: DatasetPrepareRetryFailedOptions) async throws -> RuntimeDatasetRetryReceiptState {
+        let command = MelixCLICommand.datasetPrepareRetryFailed(options)
+        let output = try await run(command)
+        do {
+            return try RuntimeDatasetRetryReceiptDecoder.decode(output)
+        } catch {
+            throw MelixCLIWorkflowError.invalidJSON(commandID: command.workflowCommandID, surface: surface, output: output)
+        }
+    }
+
+    func listDatasetVersions(options: DatasetPrepareListVersionsOptions) async throws -> RuntimeDatasetVersionListState {
+        let command = MelixCLICommand.datasetPrepareListVersions(options)
+        let output = try await run(command)
+        do {
+            return try RuntimeDatasetVersionListDecoder.decode(output)
+        } catch {
+            throw MelixCLIWorkflowError.invalidJSON(commandID: command.workflowCommandID, surface: surface, output: output)
+        }
+    }
+
+    func preflightWorkspace(
+        manifestPath: String,
+        outputPath: String = ""
+    ) async throws -> RuntimeWorkspacePreflightReceiptState {
+        let command = MelixCLICommand.workspacePreflight(
+            .init(manifestPath: manifestPath, outputPath: outputPath, json: true)
+        )
+        let output = try await run(command)
+        do {
+            return try RuntimeWorkspacePreflightReceiptDecoder.decode(output)
+        } catch {
+            throw MelixCLIWorkflowError.invalidJSON(commandID: command.workflowCommandID, surface: surface, output: output)
+        }
+    }
+
     func listWorkflowRecipes(task: String) async throws -> RuntimeWorkflowRecipeCatalogState {
         let command = MelixCLICommand.recipesList(.init(task: task, json: true))
         let output = try await run(command)

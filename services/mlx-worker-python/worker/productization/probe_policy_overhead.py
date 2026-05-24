@@ -195,11 +195,15 @@ def measure_no_op_probe_policy_overhead(
 
 def _sample_call_ms(call: Callable[[], object], *, iterations: int, samples: int) -> list[float]:
     measurements: list[float] = []
-    for _ in range(samples):
-        started = time.perf_counter()
-        for _ in range(iterations):
-            call()
-        measurements.append(((time.perf_counter() - started) * 1000.0) / iterations)
+    append_measurement = measurements.append
+    perf_counter = time.perf_counter
+    range_ = range
+    measured_call = call
+    for _ in range_(samples):
+        started = perf_counter()
+        for _ in range_(iterations):
+            measured_call()
+        append_measurement(((perf_counter() - started) * 1000.0) / iterations)
     return measurements
 
 

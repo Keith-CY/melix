@@ -58,6 +58,7 @@ def _write_manifest(
     group_id: str = "nightly-qwen",
     updated_at_unix_ms: int = 0,
     created_at_unix_ms: int | None = None,
+    extra: dict[str, object] | None = None,
 ) -> Path:
     manifest_dir = jobs_root / "train_lora" / run_id
     manifest_dir.mkdir(parents=True, exist_ok=True)
@@ -72,6 +73,8 @@ def _write_manifest(
     }
     if created_at_unix_ms is not None:
         payload["created_at_unix_ms"] = created_at_unix_ms
+    if extra is not None:
+        payload.update(extra)
     manifest_path.write_text(
         json.dumps(payload, indent=2) + "\n",
         encoding="utf-8",
@@ -223,6 +226,28 @@ def test_rebuild_index_prefers_run_record_over_manifest_when_both_exist(tmp_path
     assert payload["runs"][0]["manifest_path"] == "/tmp/model-ops-0001/from-run-record.json"
     assert payload["runs"][0]["checkpoint_count"] == 2
     assert payload["runs"][0]["adapter_name"] == "demo-adapter"
+
+    _write_manifest(
+        jobs_root,
+        run_id="model-ops-0002",
+        adapter_name="manifest-only-adapter",
+        updated_at_unix_ms=1_500,
+        extra={
+            "source_eos_token": "<eos>",
+            "saved_eos_token": "<eos>",
+            "merge_export_canary_result": "passed",
+            "round_trip_passed": True,
+        },
+    )
+
+    payload = LoraExperimentStore().rebuild_index(jobs_root)
+    manifest_only_run = next(run for run in payload["runs"] if run["run_id"] == "model-ops-0002")
+
+    assert manifest_only_run["adapter_name"] == "manifest-only-adapter"
+    assert manifest_only_run["source_eos_token"] == "<eos>"
+    assert manifest_only_run["saved_eos_token"] == "<eos>"
+    assert manifest_only_run["merge_export_canary_result"] == "passed"
+    assert manifest_only_run["round_trip_passed"] is True
 
 
 def test_rebuild_index_skips_manifest_parse_when_run_record_exists(tmp_path: Path, monkeypatch) -> None:

@@ -15,7 +15,10 @@ from worker.model_ops.alignment_rollout_manifest import (
     build_alignment_rollout_manifest_fields_from_training_metrics,
 )
 from worker.model_ops.errors import ModelOperationError
-from worker.model_ops.lora_runtime_metadata import build_quantized_lora_manifest_fields
+from worker.model_ops.lora_runtime_metadata import (
+    build_lora_canary_receipt_fields,
+    build_quantized_lora_manifest_fields,
+)
 from worker.model_ops.multimodal_lora_contracts import (
     audit_adapter_checkpoint,
     audit_manifest_fields,
@@ -24,12 +27,26 @@ from worker.model_ops.multimodal_lora_contracts import (
 from worker.model_ops.response_only_boundary import ResponseOnlyBoundaryAggregate
 from worker.model_ops.mlx_lm_runner import MLXLMRunner, TrainingRequest, TrainingResult
 from worker.model_ops.training_config import LoRATrainingConfig, normalize_training_config
+from worker.model_ops.training_receipts import (
+    capability_gate_receipt,
+    dataset_files_resolved_receipt,
+)
+from worker.model_ops.training_runtime_preflight import (
+    call_with_training_failure_cleanup,
+    training_runtime_preflight_fields,
+    truthy,
+)
 from worker.model_ops.training_dataset import (
     HFDatasetFetcher,
     ResolvedTrainingDatasetPackage,
     resolve_training_dataset_package,
     trainer_sample_counts,
     write_normalized_dataset_snapshot,
+)
+from worker.model_ops.training_preflight import (
+    evaluate_trainability_preflight,
+    require_trainability_preflight_ready,
+    write_trainability_preflight_receipt,
 )
 from worker.productization.lora_experiment_store import LoraExperimentStore
 from worker.trajectory_provenance import (
@@ -97,13 +114,21 @@ class LoRATrainingPipeline:
         )
 
         emit("normalize_config", 0.35)
-        config = normalize_training_config(
+        preflight = evaluate_trainability_preflight(
             source_model=source_model,
-            ext=request_ext,
+            request_ext=request_ext,
             dataset_format=dataset.package.format,
             response_only_supported=dataset.package.response_only_supported,
             sample_count=trainer_sample_count,
             validation_sample_count=trainer_validation_sample_count,
+        )
+        preflight_receipt_path = write_trainability_preflight_receipt(
+            receipt=preflight.receipt,
+            output_dir=output_dir,
+        )
+        config = require_trainability_preflight_ready(
+            result=preflight,
+            receipt_path=preflight_receipt_path,
         )
         _validate_alignment_inputs(
             config=config,
@@ -133,36 +158,45 @@ class LoRATrainingPipeline:
         resume_context = _resolve_resume_context(request_ext)
         adapter_scope = _resolve_adapter_scope_metadata(source_model)
         training_model_path = Path(adapter_scope["component_model_path"]).expanduser()
+        runtime_preflight_fields = training_runtime_preflight_fields(
+            source_model=source_model,
+            adapter_scope=adapter_scope,
+            inspection_only=truthy(request_ext.get("inspect_only_import", "")),
+        )
 
         emit("train", 0.8)
-        training_result = self._runner.train(
-            TrainingRequest(
-                job_id=job_id,
-                base_model_id=source_model.model_id,
-                model_path=training_model_path,
-                model_revision=source_model.revision,
-                adapter_output_dir=adapter_output_dir,
-                normalized_dataset_dir=normalized_snapshot.dataset_dir,
-                config=config,
-                dataset_format=trainer_dataset_format,
-                resume_source_path=resume_context["resume_source_path"],
-                source_model_kind=source_model.model_kind,
-                source_model_ext=dict(source_model.ext),
+        training_result = call_with_training_failure_cleanup(
+            lambda: self._runner.train(
+                TrainingRequest(
+                    job_id=job_id,
+                    base_model_id=source_model.model_id,
+                    model_path=training_model_path,
+                    model_revision=source_model.revision,
+                    adapter_output_dir=adapter_output_dir,
+                    normalized_dataset_dir=normalized_snapshot.dataset_dir,
+                    config=config,
+                    dataset_format=trainer_dataset_format,
+                    resume_source_path=resume_context["resume_source_path"],
+                    source_model_kind=source_model.model_kind,
+                    source_model_ext=dict(source_model.ext),
+                )
             )
         )
 
         emit("write_adapter", 0.9)
-        adapter_audit = audit_adapter_checkpoint(
-            weights_path=training_result.weights_path,
-            allowed_target_modules=config.expanded_target_modules,
-            source_model_kind=source_model.model_kind,
-            source_model_ext=dict(source_model.ext),
-            live_audit=training_result.metrics.adapter_freeze_audit,
-            multimodal_lora_nan_guard_triggered=(
-                training_result.metrics.multimodal_lora_nan_guard_triggered
-            ),
+        adapter_audit = call_with_training_failure_cleanup(
+            lambda: audit_adapter_checkpoint(
+                weights_path=training_result.weights_path,
+                allowed_target_modules=config.expanded_target_modules,
+                source_model_kind=source_model.model_kind,
+                source_model_ext=dict(source_model.ext),
+                live_audit=training_result.metrics.adapter_freeze_audit,
+                multimodal_lora_nan_guard_triggered=(
+                    training_result.metrics.multimodal_lora_nan_guard_triggered
+                ),
+            )
         )
-        raise_for_adapter_freeze_audit(adapter_audit)
+        call_with_training_failure_cleanup(lambda: raise_for_adapter_freeze_audit(adapter_audit))
         adapter_audit_fields = audit_manifest_fields(adapter_audit)
         adapter_artifact_bytes = adapter_audit.adapter_checkpoint_bytes
         adapter_set_hash = _content_hash(training_result.weights_path, training_result.adapter_config_path)
@@ -190,6 +224,13 @@ class LoRATrainingPipeline:
             training_mode=config.training_mode,
             quantization_mode=config.quantization_mode,
             target_modules=config.expanded_target_modules,
+        )
+        lora_canary_receipt_fields = build_lora_canary_receipt_fields(
+            source_model=source_model,
+            adapter_output_dir=adapter_output_dir,
+            adapter_config_path=training_result.adapter_config_path,
+            weights_path=training_result.weights_path,
+            training_metrics=training_result.metrics,
         )
 
         emit("write_manifest", 0.97)
@@ -225,12 +266,32 @@ class LoRATrainingPipeline:
             "dataset_materialized_package_path": str(dataset.materialized_package_path),
             "dataset_cache_key": dataset.cache_key,
             "dataset_cache_hit": dataset.cache_hit,
+            "trainability_preflight_receipt_path": str(preflight_receipt_path),
+            "trainability_preflight_status": preflight.receipt["status"],
+            "trainability_preflight_operator_errors": list(
+                preflight.receipt.get("operator_errors", [])
+            ),
+            "validation_errors": [],
+            "resolved_bounds": dict(config.resolved_bounds),
+            "capability_gate": capability_gate_receipt(
+                config=config,
+                dataset=dataset,
+                source_model=source_model,
+            ),
+            "dataset_files_resolved": dataset_files_resolved_receipt(
+                dataset=dataset,
+                normalized_snapshot=normalized_snapshot,
+            ),
+            "grad_clip_policy": dict(config.grad_clip_policy),
+            "eval_batch_size": dict(config.eval_batch_size),
+            "scheduler_kwargs_omitted": dict(config.scheduler_kwargs_omitted),
             "training_mode": config.training_mode,
             "training_objective": config.training_objective,
             "adapter_algorithm": config.adapter_algorithm,
             "adapter_family": config.adapter_family,
             "adapter_capabilities": dict(config.adapter_capabilities),
             "backend_supported": config.backend_supported,
+            **runtime_preflight_fields,
             "unsupported_reason": config.unsupported_reason,
             "preference_loss": config.preference_loss,
             "dataset_contract": config.dataset_contract,
@@ -238,6 +299,7 @@ class LoRATrainingPipeline:
             "quantization_mode": config.quantization_mode,
             "base_quantization_method": config.base_quantization_method,
             **quantized_lora_fields,
+            **lora_canary_receipt_fields,
             "training_backend": training_result.execution_backend,
             "adapter_set_hash": adapter_set_hash,
             "weights_path": str(training_result.weights_path),
@@ -257,6 +319,7 @@ class LoRATrainingPipeline:
             "optimizer_steps": config.iters // config.gradient_accumulation,
             "mask_prompt": config.mask_prompt,
             "max_seq_length": config.max_seq_length,
+            **config.training_planner_receipt,
             "training.max_steps": config.max_steps,
             "training_duration_ms": training_result.metrics.job_duration_ms,
             "training.job_duration_ms": training_result.metrics.job_duration_ms,

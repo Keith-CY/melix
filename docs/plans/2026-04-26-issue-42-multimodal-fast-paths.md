@@ -56,10 +56,18 @@ Not yet proven:
 - Media-bearing speculative decode. Current MTP speculative support is
   text-backed/prompt-only and explicitly rejects media inputs.
 
+This PR is a narrow fail-closed unit for issue 42. It prioritizes correctness
+and operator trust before generation: media-bearing chat requests must either be
+admitted to a model that advertises the requested media modality, reject with a
+typed 4xx response, or disable incompatible speculative defaults before worker
+dispatch. This unit does not claim throughput or latency speedups.
+
 ## Public Interface Boundary
 
-- No public HTTP request or response shape changes are required.
-- No chat payload shape changes are required.
+- Successful HTTP request and response shapes remain unchanged.
+- Unsupported multimodal admission paths return the existing OpenAI-style error
+  envelope with typed Melix fields (`reason`, `media_types`, and `model_id`) so
+  operators can distinguish capability, tool-routing, and acceleration refusals.
 - Protobuf changes are allowed only when a receipt or diagnostic surface needs a
   typed field that cannot be represented safely through existing metadata.
 - Externally visible additions are limited to health/status payloads,

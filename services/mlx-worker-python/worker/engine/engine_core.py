@@ -6,13 +6,26 @@ import json
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2
 
 from worker.registry import WorkerRegistry
+from worker.engine.text_finalizer import apply_text_response_metrics
 from worker.runtime.mlx_text_runtime import RuntimeToolCallEvent, RuntimeTokenEvent
 from worker.runtime.mlx_text_runtime import resolve_text_stop_contract
 from worker.runtime.runtime_utils import callable_accepts_kwarg as _callable_accepts_kwarg
 from worker.runtime.stream_assembler import RequestStreamAssembler, StreamFragment
+from worker.runtime.token_route_receipt import (
+    TokenRouteReceipt,
+    inactive_token_route_receipt_json,
+)
 from worker.runtime.token_counting import whitespace_token_count as _whitespace_token_count
 
 _ENGINE_STOP_CONTRACT_CACHE_FIELD = "_melix.engine.resolved_text_stop_contract_cache"
+_TOKEN_ROUTER_ID = "melix.worker.token_router"
+_TOKEN_ROUTER_VERSION = "1"
+_DEFAULT_INACTIVE_TOKEN_ROUTE_RECEIPT_JSON = inactive_token_route_receipt_json(
+    _TOKEN_ROUTER_ID,
+    _TOKEN_ROUTER_VERSION,
+    "disabled",
+    "auto",
+)
 
 
 def _resolve_generate_stop_contract(
@@ -37,6 +50,18 @@ def _resolve_generate_stop_contract(
     return contract
 
 
+def _runtime_accepts_acceleration_policy(runtime: object, generate_tokens: object) -> bool:
+    cached = getattr(runtime, "_melix_accepts_acceleration_policy", None)
+    if cached is not None:
+        return bool(cached)
+    accepts = _callable_accepts_kwarg(generate_tokens, "acceleration_policy")
+    try:
+        setattr(runtime, "_melix_accepts_acceleration_policy", accepts)
+    except Exception:
+        pass
+    return accepts
+
+
 class EngineCore:
     def __init__(self, registry: WorkerRegistry) -> None:
         self._registry = registry
@@ -53,9 +78,16 @@ class EngineCore:
             return
 
         runtime = self._registry.runtime_for_loaded_model(loaded_model)
+        generate_tokens = runtime.generate_tokens
         state = self._registry.start_request(request_id, runtime_kind=loaded_model.runtime_kind)
         allocate_seq = state.allocate_seq
-        assembler = self._stream_assembler(request)
+        plain_text_fast_path = self._plain_text_fast_path(request)
+        compat_receipt = None if plain_text_fast_path else self._compat_policy_receipt(execution_ext)
+        assembler = (
+            self._plain_stream_assembler(request)
+            if plain_text_fast_path
+            else self._stream_assembler(request, compat_receipt)
+        )
         stop_contract = _resolve_generate_stop_contract(
             loaded_model.runtime_model,
             sampling,
@@ -65,10 +97,37 @@ class EngineCore:
         prompt_tokens_default: int | None = None
         track_usage = bool(request.return_usage)
         completion_token_count = 0
+        finalized_prompt_tokens = 0
+        finalized_completion_tokens = 0
+        usage_trailer_emitted = False
         last_token_event: RuntimeTokenEvent | None = None
         last_finish_reason = ""
         turn_boundary_stop_reason = ""
+        generated_reasoning_delta_count = 0
+        generated_tool_call_delta_count = 0
         accept_stream_fragment = assembler.accept
+        token_route_receipt: TokenRouteReceipt | None = None
+        if plain_text_fast_path:
+            token_route_receipt_json = _DEFAULT_INACTIVE_TOKEN_ROUTE_RECEIPT_JSON
+        else:
+            reasoning_mode, tool_choice_policy, route_tracking_enabled = self._token_route_config(
+                request,
+                compat_receipt,
+            )
+            if not route_tracking_enabled:
+                token_route_receipt_json = inactive_token_route_receipt_json(
+                    _TOKEN_ROUTER_ID,
+                    _TOKEN_ROUTER_VERSION,
+                    (reasoning_mode or "disabled").strip().lower(),
+                    (tool_choice_policy or "auto").strip().lower(),
+                )
+            else:
+                token_route_receipt_json = ""
+                token_route_receipt = self._active_token_route_receipt(
+                    request,
+                    reasoning_mode=reasoning_mode,
+                    tool_choice_policy=tool_choice_policy,
+                )
 
         try:
             template_kwargs = self._chat_template_kwargs(request) if execution_ext else None
@@ -81,19 +140,31 @@ class EngineCore:
                 execution_ext=execution_ext,
             )
 
-            generate_kwargs: dict[str, object] = {"execution_ext": execution_ext}
-            if _callable_accepts_kwarg(runtime.generate_tokens, "acceleration_policy"):
-                generate_kwargs["acceleration_policy"] = execution.acceleration
-            for runtime_event in runtime.generate_tokens(
-                loaded_model.runtime_model,
-                prompt,
-                effective_sampling,
-                state.cancel_event,
-                **generate_kwargs,
-            ):
+            if _runtime_accepts_acceleration_policy(runtime, generate_tokens):
+                runtime_events = generate_tokens(
+                    loaded_model.runtime_model,
+                    prompt,
+                    effective_sampling,
+                    state.cancel_event,
+                    execution_ext=execution_ext,
+                    acceleration_policy=execution.acceleration,
+                )
+            else:
+                runtime_events = generate_tokens(
+                    loaded_model.runtime_model,
+                    prompt,
+                    effective_sampling,
+                    state.cancel_event,
+                    execution_ext=execution_ext,
+                )
+            for runtime_event in runtime_events:
                 if state.cancel_event.is_set():
                     break
                 if isinstance(runtime_event, RuntimeToolCallEvent):
+                    generated_tool_call_delta_count += 1
+                    if token_route_receipt is None:
+                        token_route_receipt = self._active_token_route_receipt(request, compat_receipt)
+                    token_route_receipt.activate()
                     yield inference_pb2.ExecuteEvent(
                         request_id=request_id,
                         execution_kind="generate",
@@ -139,6 +210,13 @@ class EngineCore:
                     stream_fragment = StreamFragment(runtime_event.text, runtime_event.raw_text)
                 for delta in accept_stream_fragment(stream_fragment):
                     if delta.reasoning_text:
+                        generated_reasoning_delta_count += 1
+                        if token_route_receipt is not None:
+                            token_route_receipt.activate()
+                            token_route_receipt.record_span(
+                                channel="hidden_reasoning",
+                                channel_source="reasoning_tag",
+                            )
                         yield inference_pb2.ExecuteEvent(
                             request_id=request_id,
                             execution_kind="generate",
@@ -150,6 +228,13 @@ class EngineCore:
                             ),
                         )
                     if delta.tool_call is not None:
+                        generated_tool_call_delta_count += 1
+                        if token_route_receipt is not None:
+                            token_route_receipt.activate()
+                            token_route_receipt.record_span(
+                                channel="tool_call",
+                                channel_source="tool_call_tag",
+                            )
                         yield inference_pb2.ExecuteEvent(
                             request_id=request_id,
                             execution_kind="generate",
@@ -164,6 +249,11 @@ class EngineCore:
                             ),
                         )
                     if delta.content_text:
+                        if token_route_receipt is not None:
+                            token_route_receipt.record_span(
+                                channel="visible_text",
+                                channel_source="raw_text",
+                            )
                         if track_usage:
                             completion_token_count += 1
                         yield inference_pb2.ExecuteEvent(
@@ -191,6 +281,9 @@ class EngineCore:
                     prompt_tokens = prompt_tokens_default
                 if last_token_event is not None:
                     completion_tokens = int(last_token_event.completion_tokens or completion_tokens)
+                finalized_prompt_tokens = prompt_tokens
+                finalized_completion_tokens = completion_tokens
+                usage_trailer_emitted = bool(request.stream)
                 yield inference_pb2.ExecuteEvent(
                     request_id=request_id,
                     execution_kind="generate",
@@ -209,21 +302,107 @@ class EngineCore:
 
             assembled = assembler.completed()
             parser_metrics = {key: str(value) for key, value in assembled.metrics.items()}
-            parser_metrics["response_history_normalized_count"] = execution_ext.get(
-                "melix.response_history.normalized_count",
-                "0",
-            )
-            parser_metrics["native_tool_exemplar_injected_count"] = (
-                "1" if execution_ext.get("melix.tool_config.native_template_tools") == "injected" else "0"
-            )
-            parser_metrics["resolved_stop_token_count"] = str(stop_contract.resolved_stop_token_count)
-            parser_metrics["reasoning_flag_source"] = (
-                reasoning.mode_source
-                or execution_ext.get("melix.reasoning.mode_source", "")
-                or execution_ext.get("melix.reasoning.source", "")
-                or "unspecified"
-            )
-            parser_metrics["turn_boundary_stop_reason"] = turn_boundary_stop_reason or finish_reason
+            resolved_stop_token_count = str(stop_contract.resolved_stop_token_count)
+            if plain_text_fast_path:
+                stream_mode_text = "true" if request.stream else "false"
+                usage_trailer_text = stream_mode_text if usage_trailer_emitted else "false"
+                response_history_normalized_count = execution_ext.get(
+                    "melix.response_history.normalized_count",
+                    "0",
+                )
+                compat_policy_receipt_json = execution_ext.get(
+                    "melix.compat.policy_receipt_json",
+                    "",
+                )
+                compat_effective_config_hash = execution_ext.get(
+                    "melix.compat.effective_config_hash",
+                    "",
+                )
+                created = execution_ext.get("melix.response.created", "")
+                generated_tool_call_delta_count_text = str(generated_tool_call_delta_count)
+                if token_route_receipt is not None:
+                    token_route_receipt_json = token_route_receipt.to_json()
+                tool_calls_finalized_text = "true" if generated_tool_call_delta_count else "false"
+                parser_metrics.update(
+                    {
+                        "resolved_stop_token_count": resolved_stop_token_count,
+                        "response_history_normalized_count": response_history_normalized_count,
+                        "native_tool_exemplar_injected_count": "0",
+                        "reasoning_flag_source": reasoning.mode_source or "unspecified",
+                        "compat_policy_receipt_json": compat_policy_receipt_json,
+                        "compat_effective_config_hash": compat_effective_config_hash,
+                        "turn_boundary_stop_reason": turn_boundary_stop_reason or finish_reason,
+                        "generated_reasoning_delta_count": "0",
+                        "generated_tool_call_delta_count": generated_tool_call_delta_count_text,
+                        "token_route_receipt_json": token_route_receipt_json,
+                        "response_id": request_id,
+                        "created": created,
+                        "stream_mode": stream_mode_text,
+                        "finish_reason": finish_reason,
+                        "usage_prompt_tokens": str(finalized_prompt_tokens),
+                        "usage_completion_tokens": str(finalized_completion_tokens),
+                        "usage_total_tokens": str(finalized_prompt_tokens + finalized_completion_tokens),
+                        "usage_trailer_emitted": usage_trailer_text,
+                        "reasoning_finalized": "false",
+                        "tool_calls_finalized": tool_calls_finalized_text,
+                        "malformed_channel_recovered": "false",
+                        "finalizer_path": "stream" if request.stream else "non_stream",
+                    }
+                )
+            else:
+                parser_metrics["resolved_stop_token_count"] = resolved_stop_token_count
+                parser_metrics["response_history_normalized_count"] = execution_ext.get(
+                    "melix.response_history.normalized_count",
+                    "0",
+                )
+                parser_metrics["native_tool_exemplar_injected_count"] = (
+                    "1" if execution_ext.get("melix.tool_config.native_template_tools") == "injected" else "0"
+                )
+                parser_metrics["reasoning_flag_source"] = self._reasoning_flag_source(request)
+                parser_metrics["compat_policy_receipt_json"] = execution_ext.get(
+                    "melix.compat.policy_receipt_json",
+                    "",
+                )
+                parser_metrics["compat_effective_config_hash"] = execution_ext.get(
+                    "melix.compat.effective_config_hash",
+                    "",
+                )
+                created = execution_ext.get("melix.response.created", "")
+                parser_metrics["turn_boundary_stop_reason"] = turn_boundary_stop_reason or finish_reason
+                parser_metrics["generated_reasoning_delta_count"] = str(generated_reasoning_delta_count)
+                parser_metrics["generated_tool_call_delta_count"] = str(generated_tool_call_delta_count)
+                if token_route_receipt is not None:
+                    token_route_receipt_json = token_route_receipt.to_json()
+                parser_metrics["token_route_receipt_json"] = token_route_receipt_json
+                malformed_tool_fragment_count = int(
+                    parser_metrics.get("malformed_tool_fragment_count", "0") or "0"
+                )
+                reasoning_finalized = (
+                    bool(assembled.reasoning_text)
+                    or generated_reasoning_delta_count > 0
+                    or int(parser_metrics.get("harmony_channel_hidden_count", "0") or "0") > 0
+                )
+                tool_calls_finalized = (
+                    generated_tool_call_delta_count > 0
+                    or malformed_tool_fragment_count > 0
+                )
+                malformed_channel_recovered = (
+                    int(parser_metrics.get("reasoning_channel_recovery_count", "0") or "0") > 0
+                    or malformed_tool_fragment_count > 0
+                )
+                apply_text_response_metrics(
+                    parser_metrics,
+                    response_id=request_id,
+                    created=created,
+                    stream_mode=bool(request.stream),
+                    finish_reason=finish_reason,
+                    prompt_tokens=finalized_prompt_tokens,
+                    completion_tokens=finalized_completion_tokens,
+                    usage_trailer_emitted=usage_trailer_emitted,
+                    reasoning_finalized=reasoning_finalized,
+                    tool_calls_finalized=tool_calls_finalized,
+                    malformed_channel_recovered=malformed_channel_recovered,
+                )
             yield inference_pb2.ExecuteEvent(
                 request_id=request_id,
                 execution_kind="generate",
@@ -470,10 +649,36 @@ class EngineCore:
         )
 
     @staticmethod
-    def _stream_assembler(request: inference_pb2.GenerateRequest) -> RequestStreamAssembler:
+    def _plain_text_fast_path(request: inference_pb2.GenerateRequest) -> bool:
+        execution = request.execution
+        return (
+            not EngineCore._ext_requires_token_route_tracking(execution.ext)
+            and not execution.reasoning.enabled
+            and not execution.reasoning.mode
+            and not execution.tool_config.tools
+            and not execution.tool_config.tool_choice
+        )
+
+    @staticmethod
+    def _plain_stream_assembler(request: inference_pb2.GenerateRequest) -> RequestStreamAssembler:
+        return RequestStreamAssembler(
+            request_id=request.execution.id.request_id,
+            reasoning_enabled=False,
+        )
+
+    @staticmethod
+    def _stream_assembler(
+        request: inference_pb2.GenerateRequest,
+        compat_receipt: dict[str, object] | None = None,
+    ) -> RequestStreamAssembler:
         ext = request.execution.ext
         reasoning_mode = ext.get("melix.reasoning.mode", "").strip().lower()
+        compat_receipt = compat_receipt if compat_receipt is not None else EngineCore._compat_policy_receipt(ext)
+        compat_reasoning_mode = str(compat_receipt.get("reasoning_mode", "")).strip().lower()
         reasoning_enabled = bool(request.execution.reasoning.enabled) or reasoning_mode in {
+            "enabled",
+            "adaptive",
+        } or compat_reasoning_mode in {
             "enabled",
             "adaptive",
         }
@@ -487,6 +692,133 @@ class EngineCore:
                 if request.execution.tool_config.tools else None
             ),
         )
+
+    @staticmethod
+    def _token_route_config(
+        request: inference_pb2.GenerateRequest,
+        compat_receipt: dict[str, object] | None = None,
+    ) -> tuple[str, str, bool]:
+        ext = request.execution.ext
+        compat_receipt = compat_receipt if compat_receipt is not None else EngineCore._compat_policy_receipt(ext)
+        compat_reasoning_mode = str(compat_receipt.get("reasoning_mode", "")).strip().lower()
+        compat_tool_choice = str(compat_receipt.get("tool_choice_resolved", "")).strip().lower()
+        reasoning_mode = (
+            ext.get("melix.reasoning.mode", "").strip().lower()
+            or request.execution.reasoning.mode
+            or compat_reasoning_mode
+        )
+        tool_choice_policy = (
+            ext.get("melix.compat.tool_choice_resolved", "")
+            or request.execution.tool_config.tool_choice
+            or compat_tool_choice
+        )
+        route_tracking_enabled = (
+            bool(request.execution.reasoning.enabled)
+            or bool(reasoning_mode and reasoning_mode != "disabled")
+            or EngineCore._ext_requires_token_route_tracking(ext, compat_receipt)
+            or bool(request.execution.tool_config.tools)
+            or bool(tool_choice_policy and tool_choice_policy != "auto")
+        )
+        return reasoning_mode, tool_choice_policy, route_tracking_enabled
+
+    @staticmethod
+    def _ext_requires_token_route_tracking(
+        ext: object,
+        compat_receipt: dict[str, object] | None = None,
+    ) -> bool:
+        if not ext and not compat_receipt:
+            return False
+        getter = getattr(ext, "get", lambda _key, _default="": "")
+        if str(getter("melix.tool_parser.mode", "")).strip():
+            return True
+        if str(getter("melix.structured_output.mode", "")).strip():
+            return True
+        reasoning_mode = str(getter("melix.reasoning.mode", "")).strip().lower()
+        if reasoning_mode and reasoning_mode != "disabled":
+            return True
+        tool_choice = str(getter("melix.compat.tool_choice_resolved", "")).strip().lower()
+        if tool_choice and tool_choice != "auto":
+            return True
+        compat_receipt = compat_receipt if compat_receipt is not None else EngineCore._compat_policy_receipt(ext)
+        compat_reasoning_mode = str(compat_receipt.get("reasoning_mode", "")).strip().lower()
+        if compat_reasoning_mode and compat_reasoning_mode != "disabled":
+            return True
+        compat_tool_choice = str(compat_receipt.get("tool_choice_resolved", "")).strip().lower()
+        return bool(compat_tool_choice and compat_tool_choice != "auto")
+
+    @staticmethod
+    def _token_route_receipt(
+        request: inference_pb2.GenerateRequest,
+        compat_receipt: dict[str, object] | None = None,
+    ) -> TokenRouteReceipt | None:
+        reasoning_mode, tool_choice_policy, route_tracking_enabled = EngineCore._token_route_config(
+            request,
+            compat_receipt,
+        )
+        if not route_tracking_enabled:
+            return None
+        return EngineCore._active_token_route_receipt(
+            request,
+            compat_receipt,
+            reasoning_mode=reasoning_mode,
+            tool_choice_policy=tool_choice_policy,
+        )
+
+    @staticmethod
+    def _active_token_route_receipt(
+        request: inference_pb2.GenerateRequest,
+        compat_receipt: dict[str, object] | None = None,
+        *,
+        reasoning_mode: str = "",
+        tool_choice_policy: str = "",
+    ) -> TokenRouteReceipt:
+        if not reasoning_mode and not tool_choice_policy:
+            reasoning_mode, tool_choice_policy, _ = EngineCore._token_route_config(
+                request,
+                compat_receipt,
+            )
+        return TokenRouteReceipt(
+            router_id=_TOKEN_ROUTER_ID,
+            router_version=_TOKEN_ROUTER_VERSION,
+            reasoning_enabled=bool(request.execution.reasoning.enabled),
+            reasoning_mode=reasoning_mode,
+            tool_choice_policy=tool_choice_policy,
+            enabled=True,
+        )
+
+    @staticmethod
+    def _inactive_token_route_receipt_json(
+        request: inference_pb2.GenerateRequest,
+        compat_receipt: dict[str, object] | None = None,
+    ) -> str:
+        reasoning_mode, tool_choice_policy, _ = EngineCore._token_route_config(
+            request,
+            compat_receipt,
+        )
+        return inactive_token_route_receipt_json(
+            _TOKEN_ROUTER_ID,
+            _TOKEN_ROUTER_VERSION,
+            (reasoning_mode or "disabled").strip().lower(),
+            (tool_choice_policy or "auto").strip().lower(),
+        )
+
+    @staticmethod
+    def _compat_policy_receipt(execution_ext: object) -> dict[str, object]:
+        if not execution_ext:
+            return {}
+        raw_receipt = str(
+            getattr(execution_ext, "get", lambda _key, _default="": "")(
+                "melix.compat.policy_receipt_json",
+                "",
+            )
+        ).strip()
+        if not raw_receipt:
+            return {}
+        try:
+            payload = json.loads(raw_receipt)
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
 
     @staticmethod
     def _sampling_with_resolved_stop(

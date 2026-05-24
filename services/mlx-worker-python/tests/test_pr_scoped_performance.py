@@ -175,6 +175,32 @@ def test_scope_report_selects_engine_generate_usage_probe() -> None:
     assert _selected_probe_ids(scope) == ["engine-generate-usage-token-elision"]
 
 
+def test_scope_report_selects_report_evidence_gate_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/report_evidence_gate.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert _selected_probe_ids(scope) == ["report-evidence-gate-run-kind-set-membership"]
+
+
+def test_report_evidence_gate_run_kind_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_REPORT_EVIDENCE_RUN_KIND_ITERATIONS", "20")
+    monkeypatch.setenv("MELIX_REPORT_EVIDENCE_RUN_KIND_SAMPLES", "1")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/report_evidence_gate_run_kind_probe.py"))
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["match_count"] == metrics["iterations"] * metrics["sample_count"]
+    assert metrics["run_kind_count"] == 65.0
+
+
 def test_scope_report_selects_tool_registry_schema_bytes_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -1230,8 +1256,22 @@ def test_scope_report_selects_deterministic_embedding_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/runtime/deterministic_embedding_runtime.py"],
     )
 
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert scope["selected_count"] == 2
+    assert probe_ids == {
+        "deterministic-embedding-duplicate-input-cache",
+        "embedding-core-inputs-view",
+    }
+
+
+def test_scope_report_selects_embedding_core_inputs_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/engine/embedding_core.py"],
+    )
+
     assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "deterministic-embedding-duplicate-input-cache"
+    assert scope["selected_probes"][0]["id"] == "embedding-core-inputs-view"
 
 
 def test_scope_report_selects_benchmark_export_probe() -> None:
@@ -2046,6 +2086,30 @@ def test_deterministic_embedding_duplicate_probe_script_emits_metrics(
     assert metrics["checksum"] > 0
 
 
+def test_embedding_core_inputs_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_EMBEDDING_CORE_INPUTS_ITERATIONS", "2")
+    monkeypatch.setenv("MELIX_EMBEDDING_CORE_INPUTS_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_EMBEDDING_CORE_INPUTS_COUNT", "8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        runpy.run_path(
+            str(REPO_ROOT / "scripts/embedding_core_inputs_probe.py"),
+            run_name="__main__",
+        )
+
+    assert exc_info.value.code == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["input_count"] == 8.0
+    assert metrics["iterations"] == 2.0
+    assert metrics["runtime_input_is_list"] == 0.0
+    assert metrics["runtime_input_is_view"] == 1.0
+    assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
+
+
 def test_stream_assembler_parser_mode_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -2547,6 +2611,8 @@ def test_registered_probes_expose_focused_commands() -> None:
         "evaluation-compare-target-lookup-early-stop",
         "evaluation-store-samples-csv-streaming",
         "engine-generate-usage-token-elision",
+        "report-evidence-gate-run-kind-set-membership",
+        "embedding-core-inputs-view",
         "job-registry-derived-model-single-pass",
         "job-registry-restore-sort-elision",
         "lora-experiment-run-dir-name-scan",
@@ -2603,6 +2669,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     }
     registry_probe = None
     maintenance_probe = None
+    job_registry_probe = None
     integration_helper_probe = None
     video_preprocessing_probe = None
     gemma4_weight_presence_probe = None
@@ -2622,6 +2689,8 @@ def test_registered_probes_expose_focused_commands() -> None:
             registry_probe = probe
         if probe.probe_id == "maintenance-percentile-vector-reuse":
             maintenance_probe = probe
+        if probe.probe_id == "job-registry-derived-model-single-pass":
+            job_registry_probe = probe
         if probe.probe_id == "integration-swift-binary-resolution-scandir":
             integration_helper_probe = probe
         if probe.probe_id == "video-preprocessing-uri-byte-length-reuse":
@@ -2660,6 +2729,14 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert "test_image_latency_metrics_reuse_single_sorted_job_latency_vector" in maintenance_probe.test_command
     assert "test_measure_vlm_latency_metrics_reuse_single_sorted_total_latency_vector" in maintenance_probe.coverage_command
     assert "test_image_latency_metrics_reuse_single_sorted_job_latency_vector" in maintenance_probe.coverage_command
+
+    assert job_registry_probe is not None
+    job_registry_metrics = {
+        metric.key: metric for metric in job_registry_probe.metrics
+    }
+    assert job_registry_metrics["active_manifest_elapsed_ms_mean"].warn_abs == 0.01
+    assert job_registry_metrics["resolve_target_elapsed_ms_mean"].warn_abs == 0.01
+    assert job_registry_metrics["manifest_path_elapsed_ms_mean"].warn_abs == 0.01
 
     assert integration_helper_probe is not None
     integration_helper_metrics = {

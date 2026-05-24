@@ -856,6 +856,9 @@ public struct OpenAIHandler: Sendable {
     private func handleChatCompletions(_ request: HTTPRequest) async throws -> HTTPResponse {
         let requestStartedAt = now()
         do {
+            if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
+                return invalidGenerationBoundsResponse(boundsFailure)
+            }
             let chatRequest = try decoder.decode(OpenAIChatCompletionsRequest.self, from: request.body)
             if let resumeRequestID = chatRequest.resumeRequestID?.trimmingCharacters(in: .whitespacesAndNewlines),
                !resumeRequestID.isEmpty {
@@ -888,6 +891,8 @@ public struct OpenAIHandler: Sendable {
             )
         } catch let error as MultimodalRequestNormalizationError {
             return mediaNormalizationErrorResponse(error)
+        } catch is DecodingError {
+            return invalidArgumentResponse(message: "Malformed multimodal chat payload.")
         } catch let error as StructuredOutputFormatError {
             return invalidArgumentResponse(message: error.operatorMessage)
         } catch let error as ToolParserConfigurationError {
@@ -902,6 +907,9 @@ public struct OpenAIHandler: Sendable {
     private func handleCompletions(_ request: HTTPRequest) async throws -> HTTPResponse {
         let requestStartedAt = Date()
         do {
+            if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
+                return invalidGenerationBoundsResponse(boundsFailure)
+            }
             let completionsRequest = try decoder.decode(OpenAICompletionsRequest.self, from: request.body)
             let normalized = try translator.normalize(completionsRequest)
             return try await streamNormalizedTextRequest(
@@ -923,6 +931,9 @@ public struct OpenAIHandler: Sendable {
     private func handleResponses(_ request: HTTPRequest) async throws -> HTTPResponse {
         let requestStartedAt = Date()
         do {
+            if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
+                return invalidGenerationBoundsResponse(boundsFailure)
+            }
             let responsesRequest = try decoder.decode(OpenAIResponsesRequest.self, from: request.body)
             let normalized = try translator.normalize(responsesRequest)
             return try await streamNormalizedTextRequest(
@@ -944,6 +955,9 @@ public struct OpenAIHandler: Sendable {
     private func handleMessages(_ request: HTTPRequest) async throws -> HTTPResponse {
         let requestStartedAt = Date()
         do {
+            if let boundsFailure = generationBoundsValidationFailure(in: request.body) {
+                return invalidGenerationBoundsResponse(boundsFailure)
+            }
             let messagesRequest = try decoder.decode(MelixMessagesRequest.self, from: request.body)
             let normalized = try translator.normalize(messagesRequest)
             return try await streamNormalizedTextRequest(
@@ -1990,11 +2004,6 @@ public struct OpenAIHandler: Sendable {
         )
         let routed = normalized.replacingModel(resolved.modelID)
         let originalModelID = routed.model
-        let executionModelID = await textExecutionModelID(
-            for: routed,
-            servedModelID: originalModelID
-        )
-        let executionRequest = routed.replacingModel(executionModelID)
         if await shouldRefreshRegistryBeforeTextRequest(modelID: routed.model) {
             await RegistrySnapshotSync.syncModelsIfAvailable(
                 modelCatalog: modelCatalog,
@@ -2003,25 +2012,49 @@ public struct OpenAIHandler: Sendable {
                 rescan: true
             )
         }
+        let originalModel = await modelCatalog.model(id: originalModelID)
+        if let unsupportedMediaResponse = await unsupportedMultimodalRequestResponse(
+            routed,
+            model: originalModel
+        ) {
+            throw HTTPRequestHandlingError.gatewayResponse(unsupportedMediaResponse)
+        }
+        let executionModelID = await textExecutionModelID(
+            for: routed,
+            servedModelID: originalModelID
+        )
+        let executionRequest = routed.replacingModel(executionModelID)
+        let resolvedModel = executionModelID == originalModelID
+            ? originalModel
+            : await modelCatalog.model(id: executionModelID)
+        let servingDefaults = await gatewayServingDefaultsStore.requestedDefaults(
+            serverSessionID: gatewayRuntimeBinding.activeServerSessionID
+        ).resolvingAccelerationCompatibility(for: resolvedModel)
+        if let unsupportedMediaResponse = await unsupportedMultimodalAccelerationResponse(
+            routed,
+            gatewayServingDefaults: servingDefaults
+        ) {
+            throw HTTPRequestHandlingError.gatewayResponse(unsupportedMediaResponse)
+        }
         if let validationFailure = await endpointCompatibilityFailureResponse(
             modelID: routed.model,
             endpoint: .textGeneration
         ) {
             throw HTTPRequestHandlingError.gatewayResponse(validationFailure)
         }
-        let originalModel = await modelCatalog.model(id: originalModelID)
-        let requestedServingDefaults = await gatewayServingDefaultsStore.requestedDefaults(
-            serverSessionID: gatewayRuntimeBinding.activeServerSessionID
-        )
-        if let mediaAdmissionFailure = mediaAdmissionFailure(
-            for: routed,
-            model: originalModel,
-            requestedSpeculativeDecode: requestedServingDefaults.accelerationMode == .speculativeDecode
-        ) {
-            await recordMediaAdmissionFailure(mediaAdmissionFailure)
-            throw HTTPRequestHandlingError.gatewayResponse(mediaAdmissionFailureResponse(mediaAdmissionFailure))
+        let modelSamplingPolicy: ModelSamplingPolicy? = if let resolvedModel {
+            ModelSamplingPolicy(modelSettings: resolvedModel.settings)
+        } else {
+            nil
         }
-
+        if let admissionFailure = promptBudgetAdmissionFailureResponse(
+            normalized: executionRequest,
+            model: resolvedModel,
+            modelSamplingPolicy: modelSamplingPolicy,
+            gatewayServingDefaults: servingDefaults
+        ) {
+            throw HTTPRequestHandlingError.gatewayResponse(admissionFailure)
+        }
         let modelHandle: String
         do {
             modelHandle = try await OnDemandModelLoader.ensureTextModelReady(
@@ -2041,14 +2074,15 @@ public struct OpenAIHandler: Sendable {
         } catch {
             throw HTTPRequestHandlingError.workerUnavailable
         }
-        let executionModel = await modelCatalog.model(id: executionModelID)
-        let modelToolParser: ToolParserSelection? = if let executionModel {
-            ToolParserSelection(modelSettings: executionModel.settings)
+        let executionModel = resolvedModel
+        let modelToolParser: ToolParserSelection? = if let resolvedModel {
+            ToolParserSelection(modelSettings: resolvedModel.settings)
         } else {
             nil
         }
-        let modelChatTemplatePolicy: ModelChatTemplatePolicy? = if let executionModel {
-            try ModelChatTemplatePolicy(modelSettings: executionModel.settings)
+        let shapingModelToolParser = executionRequest.mediaTypes.isEmpty ? modelToolParser : nil
+        let modelChatTemplatePolicy: ModelChatTemplatePolicy? = if let resolvedModel {
+            try ModelChatTemplatePolicy(modelSettings: resolvedModel.settings)
         } else {
             nil
         }
@@ -2057,20 +2091,15 @@ public struct OpenAIHandler: Sendable {
         } else {
             nil
         }
-        let modelSamplingPolicy: ModelSamplingPolicy? = if let executionModel {
-            ModelSamplingPolicy(modelSettings: executionModel.settings)
-        } else {
-            nil
-        }
         let shapingStartedAt = Date()
         let translated = try translator.translate(
             executionRequest,
             modelHandle: modelHandle,
-            modelToolParser: modelToolParser,
+            modelToolParser: shapingModelToolParser,
             modelChatTemplatePolicy: modelChatTemplatePolicy,
             modelOCRPolicy: modelOCRPolicy,
             modelSamplingPolicy: modelSamplingPolicy,
-            gatewayServingDefaults: requestedServingDefaults.resolvingAccelerationCompatibility(for: executionModel),
+            gatewayServingDefaults: servingDefaults,
             mcpToolCatalog: mcpToolCatalog
         )
         await recordShapingMetrics(for: translated, startedAt: shapingStartedAt)
@@ -2085,7 +2114,7 @@ public struct OpenAIHandler: Sendable {
         var finalTranslated = if executionModelID == originalModelID {
             requestWithVLMTextOnlyBatchingMetadata(
                 responseTranslated,
-                model: originalModel ?? executionModel,
+                model: originalModel ?? resolvedModel,
                 normalizedRequest: routed
             )
         } else {
@@ -2093,8 +2122,8 @@ public struct OpenAIHandler: Sendable {
         }
         let mediaAdmissionFailure = mediaAdmissionFailure(
             for: finalTranslated,
-            model: originalModel ?? executionModel,
-            requestedSpeculativeDecode: requestedServingDefaults.accelerationMode == .speculativeDecode
+            model: originalModel ?? resolvedModel,
+            requestedSpeculativeDecode: servingDefaults.accelerationMode == .speculativeDecode
         )
         if let mediaAdmissionFailure {
             finalTranslated = translatedRequest(
@@ -2368,6 +2397,119 @@ public struct OpenAIHandler: Sendable {
         return companionID
     }
 
+    private func unsupportedMultimodalRequestResponse(
+        _ request: NormalizedTextRequest,
+        model: Melix_Controlplane_V1_ModelSummary?
+    ) async -> HTTPResponse? {
+        let mediaTypes = request.mediaTypes
+        guard mediaTypes.isEmpty == false else {
+            return nil
+        }
+        if mediaRequestHasToolPath(request) {
+            return await unsupportedMultimodalRequestResponse(
+                modelID: request.model,
+                reason: "media_tools_unsupported",
+                message: "Media-bearing chat requests cannot use tools until multimodal tool routing is supported.",
+                mediaTypes: mediaTypes
+            )
+        }
+        guard let model else {
+            let mediaList = mediaTypes.sorted().joined(separator: ", ")
+            return await unsupportedMultimodalRequestResponse(
+                modelID: request.model,
+                reason: "model_does_not_support_media",
+                message: "Model \(request.model) does not advertise support for \(mediaList) media.",
+                mediaTypes: mediaTypes
+            )
+        }
+        let unsupportedTypes = mediaTypes.subtracting(supportedMediaTypes(for: model))
+        guard unsupportedTypes.isEmpty == false else {
+            return nil
+        }
+        let unsupportedList = unsupportedTypes.sorted().joined(separator: ", ")
+        return await unsupportedMultimodalRequestResponse(
+            modelID: request.model,
+            reason: "model_does_not_support_media",
+            message: "Model \(request.model) does not advertise support for \(unsupportedList) media.",
+            mediaTypes: mediaTypes
+        )
+    }
+
+    private func mediaRequestHasToolPath(_ request: NormalizedTextRequest) -> Bool {
+        if request.tools.isEmpty == false || request.toolParser?.isExplicit == true {
+            return true
+        }
+        return !mcpToolCatalog.resolvedNamespaces.isEmpty
+    }
+
+    private func unsupportedMultimodalAccelerationResponse(
+        _ request: NormalizedTextRequest,
+        gatewayServingDefaults: GatewayServingDefaultsPolicy
+    ) async -> HTTPResponse? {
+        let mediaTypes = request.mediaTypes
+        guard mediaTypes.isEmpty == false else {
+            return nil
+        }
+        guard gatewayServingDefaults.accelerationMode == .speculativeDecode else {
+            return nil
+        }
+        return await unsupportedMultimodalRequestResponse(
+            modelID: request.model,
+            reason: "media_speculative_decode_unsupported",
+            message: "Media-bearing chat requests cannot use speculative decoding until multimodal drafter routing is supported.",
+            mediaTypes: mediaTypes
+        )
+    }
+
+    private func unsupportedMultimodalRequestResponse(
+        modelID: String,
+        reason: String,
+        message: String,
+        mediaTypes: Set<String>
+    ) async -> HTTPResponse {
+        await metricsStore.increment("http.multimodal_admission_rejection_count")
+        await metricsStore.increment("http.multimodal_admission_rejection.\(reason)")
+        return jsonResponse(
+            statusCode: 400,
+            payload: [
+                "error": [
+                    "code": "unsupported_multimodal_request",
+                    "message": message,
+                    "model_id": modelID,
+                    "reason": reason,
+                    "media_types": mediaTypes.sorted(),
+                ],
+            ]
+        )
+    }
+
+    private func supportedMediaTypes(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> Set<String> {
+        let configured = normalizedIdentifierList(
+            model.supportedModalities,
+            fallback: model.settings.ext["melix.capability.supported_modalities"]
+        )
+        var supported = Set(configured)
+        if !supported.isEmpty {
+            return supported
+        }
+        let capabilityIdentifier = ModelCatalogPresentation.capabilityIdentifier(for: model)
+        switch capabilityIdentifier {
+        case "vlm":
+            supported.insert("image")
+        case "ocr", "image_generation":
+            supported.formUnion(["image"])
+        case "transcription":
+            supported.formUnion(["audio"])
+        case "speech":
+            supported.formUnion(["audio", "text"])
+        default:
+            break
+        }
+        return supported
+    }
+
     private func shouldRouteTextOnlyRequestToCompanion(
         model: Melix_Controlplane_V1_ModelSummary,
         normalizedRequest: NormalizedTextRequest
@@ -2619,6 +2761,110 @@ public struct OpenAIHandler: Sendable {
             servedModelIDs: request.servedModelIDs,
             idleTimeoutSeconds: request.idleTimeoutSeconds
         )
+    }
+
+    private func promptBudgetAdmissionFailureResponse(
+        normalized: NormalizedTextRequest,
+        model: Melix_Controlplane_V1_ModelSummary?,
+        modelSamplingPolicy: ModelSamplingPolicy?,
+        gatewayServingDefaults: GatewayServingDefaultsPolicy?
+    ) -> HTTPResponse? {
+        let contextWindowTokens = model?.maxContext ?? 0
+        guard contextWindowTokens > 0 else {
+            return nil
+        }
+        let outputCapTokens = promptBudgetOutputCapTokens(
+            normalized: normalized,
+            modelSamplingPolicy: modelSamplingPolicy,
+            gatewayServingDefaults: gatewayServingDefaults,
+            contextWindowTokens: contextWindowTokens
+        )
+        let maxPromptTokens = contextWindowTokens > outputCapTokens
+            ? contextWindowTokens - outputCapTokens
+            : 0
+        let promptTokensEstimated = estimatedPromptTokens(for: normalized.messages)
+        guard promptTokensEstimated > maxPromptTokens else {
+            return nil
+        }
+        let metadata: [String: Any] = [
+            "max_prompt_tokens_requested": Int(maxPromptTokens),
+            "max_prompt_tokens_effective": Int(maxPromptTokens),
+            "prompt_tokens_estimated": Int(promptTokensEstimated),
+            "context_window_tokens": Int(contextWindowTokens),
+            "output_cap_tokens": Int(outputCapTokens),
+            "admission_phase": "prompt_budget",
+            "prefill_started": false,
+        ]
+        return jsonResponse(
+            statusCode: 400,
+            payload: [
+                "error": [
+                    "code": "prompt_budget_exceeded",
+                    "status": "invalid_request_error",
+                    "message": "Prompt token estimate exceeds the local prompt budget for this request.",
+                    "prompt_token_metadata": metadata,
+                ],
+            ]
+        )
+    }
+
+    private func promptBudgetOutputCapTokens(
+        normalized: NormalizedTextRequest,
+        modelSamplingPolicy: ModelSamplingPolicy?,
+        gatewayServingDefaults: GatewayServingDefaultsPolicy?,
+        contextWindowTokens: UInt32
+    ) -> UInt32 {
+        if let maxTokens = normalized.maxTokens,
+           let maxCompletionTokens = normalized.maxCompletionTokens {
+            return maxTokens == maxCompletionTokens ? maxTokens : max(maxTokens, maxCompletionTokens)
+        }
+        if let maxCompletionTokens = normalized.maxCompletionTokens {
+            return maxCompletionTokens
+        }
+        if let maxTokens = normalized.maxTokens {
+            return maxTokens
+        }
+        let fallbackOutputCapTokens = modelSamplingPolicy?.maxTokens
+            ?? gatewayServingDefaults?.maxTokens
+            ?? GatewayServingDefaultsStore.defaultMaxTokens
+        return fallbackOutputCapTokens >= contextWindowTokens ? 0 : fallbackOutputCapTokens
+    }
+
+    private func estimatedPromptTokens(
+        for messages: [NormalizedTextMessage]
+    ) -> UInt32 {
+        let total = messages.reduce(UInt32(0)) { partial, message in
+            partial + estimatedPromptTokens(for: message)
+        }
+        if total > 0 {
+            return total
+        }
+        return messages.isEmpty ? 0 : 1
+    }
+
+    private func estimatedPromptTokens(for message: NormalizedTextMessage) -> UInt32 {
+        message.parts.reduce(tokenCount(in: message.name ?? "")) { partial, part in
+            switch part.part {
+            case .text(let text):
+                return partial + tokenCount(in: text)
+            case .imageUri, .imageBytes, .audioUri, .audioBytes:
+                return partial + 256
+            case .videoUri, .videoBytes:
+                return partial + 1_024
+            case nil:
+                return partial
+            }
+        }
+    }
+
+    private func tokenCount(in text: String) -> UInt32 {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return 0
+        }
+        let whitespaceEstimate = trimmed.split(whereSeparator: \.isWhitespace).count
+        let byteEstimate = max(1, (trimmed.utf8.count + 3) / 4)
+        return UInt32(min(Int(UInt32.max), max(whitespaceEstimate, byteEstimate)))
     }
 
     private func defaultServedModelIDs(
@@ -3134,6 +3380,230 @@ public struct OpenAIHandler: Sendable {
             statusCode: 400,
             payload: ["error": ["code": "invalid_argument", "message": message]]
         )
+    }
+
+    private func invalidGenerationBoundsResponse(_ failure: GenerationBoundsValidationFailure) -> HTTPResponse {
+        jsonResponse(
+            statusCode: 400,
+            payload: [
+                "error": [
+                    "code": "invalid_generation_bounds",
+                    "message": failure.message,
+                    "bounds_rejection_reason": failure.reason,
+                ],
+            ]
+        )
+    }
+
+    private func generationBoundsValidationFailure(in body: Data) -> GenerationBoundsValidationFailure? {
+        guard
+            let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+        else {
+            return rawGenerationBoundsValidationFailure(in: body)
+        }
+        let maxTokens = parsedGenerationBound(named: "max_tokens", in: object)
+        if let failure = maxTokens.failure {
+            return failure
+        }
+        let maxCompletionTokens = parsedGenerationBound(named: "max_completion_tokens", in: object)
+        if let failure = maxCompletionTokens.failure {
+            return failure
+        }
+        if let maxTokens = maxTokens.value,
+           let maxCompletionTokens = maxCompletionTokens.value,
+           maxTokens != maxCompletionTokens {
+            return GenerationBoundsValidationFailure(
+                reason: "output_cap_conflict",
+                message: "max_tokens and max_completion_tokens must match when both are provided."
+            )
+        }
+        return nil
+    }
+
+    private func rawGenerationBoundsValidationFailure(in body: Data) -> GenerationBoundsValidationFailure? {
+        guard let rawJSON = String(data: body, encoding: .utf8) else {
+            return nil
+        }
+        let maxTokens = parsedRawGenerationBound(named: "max_tokens", in: rawJSON)
+        if let failure = maxTokens.failure {
+            return failure
+        }
+        let maxCompletionTokens = parsedRawGenerationBound(named: "max_completion_tokens", in: rawJSON)
+        if let failure = maxCompletionTokens.failure {
+            return failure
+        }
+        if let maxTokens = maxTokens.value,
+           let maxCompletionTokens = maxCompletionTokens.value,
+           maxTokens != maxCompletionTokens {
+            return GenerationBoundsValidationFailure(
+                reason: "output_cap_conflict",
+                message: "max_tokens and max_completion_tokens must match when both are provided."
+            )
+        }
+        return nil
+    }
+
+    private func parsedRawGenerationBound(
+        named fieldName: String,
+        in rawJSON: String
+    ) -> (value: UInt32?, failure: GenerationBoundsValidationFailure?) {
+        guard let token = rawJSONValueToken(named: fieldName, in: rawJSON) else {
+            return (nil, nil)
+        }
+        guard let doubleValue = Double(token) else {
+            return (nil, GenerationBoundsValidationFailure(
+                reason: "\(fieldName)_malformed",
+                message: "\(fieldName) must be a finite positive integer."
+            ))
+        }
+        guard doubleValue.isFinite else {
+            return (nil, GenerationBoundsValidationFailure(
+                reason: "\(fieldName)_non_finite",
+                message: "\(fieldName) must be finite."
+            ))
+        }
+        guard doubleValue > 0 else {
+            return (nil, GenerationBoundsValidationFailure(
+                reason: "\(fieldName)_non_positive",
+                message: "\(fieldName) must be greater than zero."
+            ))
+        }
+        guard doubleValue.rounded(.towardZero) == doubleValue,
+              doubleValue <= Double(UInt32.max)
+        else {
+            return (nil, GenerationBoundsValidationFailure(
+                reason: "\(fieldName)_malformed",
+                message: "\(fieldName) must be a positive integer no greater than \(UInt32.max)."
+            ))
+        }
+        return (UInt32(doubleValue), nil)
+    }
+
+    private func rawJSONValueToken(named fieldName: String, in rawJSON: String) -> String? {
+        var cursor = rawJSON.startIndex
+        var objectDepth = 0
+        var arrayDepth = 0
+
+        while cursor < rawJSON.endIndex {
+            let character = rawJSON[cursor]
+            switch character {
+            case "{":
+                objectDepth += 1
+                cursor = rawJSON.index(after: cursor)
+            case "}":
+                objectDepth = max(0, objectDepth - 1)
+                cursor = rawJSON.index(after: cursor)
+            case "[":
+                arrayDepth += 1
+                cursor = rawJSON.index(after: cursor)
+            case "]":
+                arrayDepth = max(0, arrayDepth - 1)
+                cursor = rawJSON.index(after: cursor)
+            case "\"":
+                let keyStart = rawJSON.index(after: cursor)
+                guard let stringEnd = endOfRawJSONString(in: rawJSON, startingAt: keyStart) else {
+                    return nil
+                }
+                let afterString = rawJSON.index(after: stringEnd)
+                if objectDepth == 1, arrayDepth == 0 {
+                    var lookahead = afterString
+                    while lookahead < rawJSON.endIndex, rawJSON[lookahead].isWhitespace {
+                        lookahead = rawJSON.index(after: lookahead)
+                    }
+                    if lookahead < rawJSON.endIndex, rawJSON[lookahead] == ":" {
+                        let key = String(rawJSON[keyStart..<stringEnd])
+                        if key == fieldName {
+                            return rawJSONScalarToken(afterColon: lookahead, in: rawJSON)
+                        }
+                    }
+                }
+                cursor = afterString
+            default:
+                cursor = rawJSON.index(after: cursor)
+            }
+        }
+        return nil
+    }
+
+    private func endOfRawJSONString(in rawJSON: String, startingAt start: String.Index) -> String.Index? {
+        var cursor = start
+        var escaping = false
+        while cursor < rawJSON.endIndex {
+            let character = rawJSON[cursor]
+            if escaping {
+                escaping = false
+            } else if character == "\\" {
+                escaping = true
+            } else if character == "\"" {
+                return cursor
+            }
+            cursor = rawJSON.index(after: cursor)
+        }
+        return nil
+    }
+
+    private func rawJSONScalarToken(afterColon colon: String.Index, in rawJSON: String) -> String? {
+        var cursor = rawJSON.index(after: colon)
+        while cursor < rawJSON.endIndex, rawJSON[cursor].isWhitespace {
+            cursor = rawJSON.index(after: cursor)
+        }
+        guard cursor < rawJSON.endIndex else {
+            return nil
+        }
+        if rawJSON[cursor] == "\"" || rawJSON[cursor] == "{" || rawJSON[cursor] == "[" {
+            return ""
+        }
+        let tokenStart = cursor
+        while cursor < rawJSON.endIndex {
+            let character = rawJSON[cursor]
+            if character == "," || character == "}" || character == "]" || character.isWhitespace {
+                break
+            }
+            cursor = rawJSON.index(after: cursor)
+        }
+        return tokenStart < cursor ? String(rawJSON[tokenStart..<cursor]) : nil
+    }
+
+    private func parsedGenerationBound(
+        named fieldName: String,
+        in object: [String: Any]
+    ) -> (value: UInt32?, failure: GenerationBoundsValidationFailure?) {
+        guard let rawValue = object[fieldName],
+              !(rawValue is NSNull)
+        else {
+            return (nil, nil)
+        }
+        let reasonPrefix = fieldName
+        guard let number = rawValue as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID()
+        else {
+            return (nil, GenerationBoundsValidationFailure(
+                reason: "\(reasonPrefix)_malformed",
+                message: "\(fieldName) must be a finite positive integer."
+            ))
+        }
+        let doubleValue = number.doubleValue
+        guard doubleValue.isFinite else {
+            return (nil, GenerationBoundsValidationFailure(
+                reason: "\(reasonPrefix)_non_finite",
+                message: "\(fieldName) must be finite."
+            ))
+        }
+        guard doubleValue > 0 else {
+            return (nil, GenerationBoundsValidationFailure(
+                reason: "\(reasonPrefix)_non_positive",
+                message: "\(fieldName) must be greater than zero."
+            ))
+        }
+        guard doubleValue.rounded(.towardZero) == doubleValue,
+              doubleValue <= Double(UInt32.max)
+        else {
+            return (nil, GenerationBoundsValidationFailure(
+                reason: "\(reasonPrefix)_malformed",
+                message: "\(fieldName) must be a positive integer no greater than \(UInt32.max)."
+            ))
+        }
+        return (UInt32(doubleValue), nil)
     }
 
     private enum ExternalMediaAdmissionOutcome {
@@ -4334,6 +4804,11 @@ private enum HTTPRequestHandlingError: Error {
     case workerUnavailable
     case workerRejected(Melix_Worker_V1_ErrorStatus)
     case gatewayResponse(HTTPResponse)
+}
+
+private struct GenerationBoundsValidationFailure {
+    let reason: String
+    let message: String
 }
 
 private enum HTTPGatewayEndpointFamily: String {

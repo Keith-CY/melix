@@ -26,6 +26,7 @@ from worker.runtime.mlx_text_runtime import (
     _int_tuple,
 )
 from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
+from worker.runtime.multimodal_position_receipts import build_position_metadata_receipt
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request, rebuild_multimodal_hash
 from worker.runtime.runtime_utils import (
     callable_accepts_kwarg as _callable_accepts_kwarg,
@@ -2276,13 +2277,16 @@ class MLXVLMRuntime:
         prepared_request: PreparedVisionRequest,
         *,
         signature: tuple[str, ...] | None = None,
+        seq_len: int | None = None,
     ) -> None:
         signature = signature or fast_path_probe_signature(
             loaded_model,
             prepared_request,
         )
         if self._last_fast_path_signature == signature and not prepared_request.images and not prepared_request.videos:
-            return
+            receipt = self._last_probe.position_metadata_receipt or {}
+            if int(receipt.get("media_position_count", 0) or 0) == 0:
+                return
         fast_path = self._fast_path_controller.plan(loaded_model, prepared_request)
         self._last_fast_path_signature = signature
         self._last_probe = VisionProbeSnapshot(
@@ -2304,6 +2308,28 @@ class MLXVLMRuntime:
             multi_image_scatter_mode=fast_path.multi_image_scatter_mode,
             quantized_load_mode=fast_path.quantized_load_mode,
             quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
+            position_metadata_receipt=self._position_metadata_receipt(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+                fallback_reason=fast_path.multimodal_fallback_reason,
+                seq_len=seq_len,
+            ),
+        )
+
+    def _position_metadata_receipt(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        fallback_reason: str,
+        seq_len: int | None = None,
+    ) -> dict[str, object]:
+        if seq_len is None:
+            seq_len = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
+        return build_position_metadata_receipt(
+            prepared_request=prepared_request,
+            seq_len=seq_len,
+            fallback_reason=fallback_reason,
         )
 
     @staticmethod

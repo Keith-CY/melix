@@ -732,7 +732,7 @@ public actor ModelCatalog {
                 adapterSetHash: "vision-family-llava-v1",
                 routeKind: .pythonVLM,
                 capabilityIdentifier: "vlm",
-                supportedModalities: ["text", "image"],
+                supportedModalities: ["text", "image", "video"],
                 supportedTasks: ["vlm", "generate"],
                 supportedParsers: ["text", "qwen"],
                 toolParserMode: .qwen,

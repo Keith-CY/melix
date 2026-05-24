@@ -931,7 +931,7 @@ def _vision_capability_metadata(family_id: str) -> dict[str, str]:
         adapter_set_hash=f"vision-family-{family_id}",
         route_kind="python_vlm",
         capability_class="vlm",
-        supported_modalities=("text", "image"),
+        supported_modalities=("text", "image", "video"),
         supported_tasks=("vlm", "generate"),
         supported_parsers=("text", "qwen"),
         tool_parser_mode="qwen",

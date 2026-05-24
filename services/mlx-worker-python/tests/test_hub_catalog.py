@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from unittest.mock import Mock
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
@@ -446,12 +447,22 @@ def test_next_cursor_from_link_accepts_cursor_at_query_start() -> None:
     assert hub_catalog_module._next_cursor_from_link(link_header) == "page/start"
 
 
+def test_next_cursor_from_link_ignores_rel_marker_inside_previous_url() -> None:
+    link_header = (
+        '<https://huggingface.co/api/models?cursor=prev&note=rel%3D%22next%22>; rel="prev", '
+        '<https://huggingface.co/api/models?limit=10&cursor=real%2Fnext>; rel="next"'
+    )
+
+    assert hub_catalog_module._next_cursor_from_link(link_header) == "real/next"
+
+
 def test_next_cursor_from_link_returns_empty_for_missing_or_malformed_next_cursor() -> None:
     assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models?cursor=prev>; rel="prev"') == ""
     assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models>; rel="next"') == ""
     assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models?limit=10>; rel="next"') == ""
     assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models?cursor>; rel="next"') == ""
     assert hub_catalog_module._next_cursor_from_link('https://huggingface.co/api/models?cursor=broken; rel="next"') == ""
+    assert hub_catalog_module._next_cursor_from_link('https://huggingface.co/api/models?cursor=broken>; rel="next"') == ""
 
 
 def test_next_cursor_from_link_requires_cursor_parameter_boundary() -> None:
@@ -625,6 +636,159 @@ def test_search_models_marks_large_mlx_model_as_heavy_not_blocked() -> None:
     assert model.recommended_action == "review_risk"
     assert model.estimated_resident_bytes > int(64 * 1024 * 1024 * 1024 * 0.60)
     assert any("memory comfort budget" in reason for reason in model.local_fit_reasons)
+
+
+def test_search_models_includes_kv_cache_in_local_fit_for_long_context_configs() -> None:
+    payload = [
+        {
+            "id": "mlx-community/long-context-4bit",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["mlx", "4-bit"],
+            "library_name": "mlx",
+            "usedStorage": 512 * MB,
+            "config": {
+                "hidden_size": 4096,
+                "num_attention_heads": 32,
+                "num_key_value_heads": 32,
+                "num_hidden_layers": 64,
+                "max_position_embeddings": 131_072,
+                "torch_dtype": "bfloat16",
+            },
+            "siblings": [{"rfilename": "model.safetensors", "size": 512 * MB}],
+            "cardData": {},
+        }
+    ]
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="long-context", page_size=10, cursor="", mlx_only=True)
+
+    model = page.items[0]
+    expected_kv_bytes = 131_072 * 64 * 32 * 128 * 2 * 2
+    assert model.local_fit_status == "heavy"
+    assert model.recommended_action == "review_risk"
+    assert model.estimated_resident_bytes >= expected_kv_bytes
+    assert any("Estimated KV cache bytes" in reason for reason in model.local_fit_reasons)
+
+
+def test_search_models_uses_text_config_string_values_and_gqa_heads_for_kv_cache() -> None:
+    payload = [
+        {
+            "id": "mlx-community/gqa-string-config-4bit",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["mlx", "4-bit"],
+            "library_name": "mlx",
+            "usedStorage": 256 * MB,
+            "config": {
+                "max_position_embeddings": 2048,
+                "text_config": {
+                    "hidden_size": "4096",
+                    "num_attention_heads": "32",
+                    "num_key_value_heads": "8",
+                    "num_hidden_layers": "4",
+                    "torch_dtype": "float32",
+                },
+            },
+            "siblings": [{"rfilename": "model.safetensors", "size": 256 * MB}],
+            "cardData": {},
+        }
+    ]
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="gqa-string-config", page_size=10, cursor="", mlx_only=True)
+
+    model = page.items[0]
+    expected_kv_bytes = 2048 * 4 * 8 * 128 * 4 * 2
+    expected_weight_bytes = math.ceil((256 * MB) * hub_catalog_module.RESIDENT_MEMORY_OVERHEAD_FACTOR)
+    assert model.estimated_resident_bytes == expected_weight_bytes + expected_kv_bytes
+    assert any(str(expected_kv_bytes) in reason for reason in model.local_fit_reasons)
+
+
+def test_search_models_resolves_text_config_once_for_kv_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = [
+        {
+            "id": "mlx-community/single-config-parse-4bit",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["mlx", "4-bit"],
+            "library_name": "mlx",
+            "usedStorage": 256 * MB,
+            "config": {
+                "hidden_size": 1024,
+                "num_attention_heads": 16,
+                "num_key_value_heads": 4,
+                "num_hidden_layers": 2,
+                "max_position_embeddings": 1024,
+                "torch_dtype": "bfloat16",
+            },
+            "siblings": [{"rfilename": "model.safetensors", "size": 256 * MB}],
+            "cardData": {},
+        }
+    ]
+    text_config = Mock(wraps=hub_catalog_module._text_config)
+    monkeypatch.setattr(hub_catalog_module, "_text_config", text_config)
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="single-config-parse", page_size=10, cursor="", mlx_only=True)
+
+    assert page.items[0].local_fit_status == "good"
+    text_config.assert_called_once_with(payload[0])
+
+
+def test_search_models_skips_kv_cache_estimate_for_incompatible_records(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = [
+        {
+            "id": "plain-community/plain-transformer",
+            "author": "plain-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["transformers", "4-bit"],
+            "library_name": "transformers",
+            "safetensors": {"total": 2_000_000_000},
+            "config": {
+                "hidden_size": 4096,
+                "num_attention_heads": 32,
+                "num_key_value_heads": 32,
+                "num_hidden_layers": 64,
+                "max_position_embeddings": 131_072,
+            },
+            "siblings": [{"rfilename": "config.json"}],
+            "cardData": {},
+        }
+    ]
+    estimate_kv_cache = Mock(return_value=123)
+    monkeypatch.setattr(hub_catalog_module, "_estimated_kv_cache_bytes", estimate_kv_cache)
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=64.0)
+    page = catalog.search_models(query="plain-transformer", page_size=10, cursor="", mlx_only=False)
+
+    model = page.items[0]
+    assert model.local_fit_status == "blocked"
+    assert model.estimated_resident_bytes > 0
+    estimate_kv_cache.assert_not_called()
+
+
+def test_positive_config_int_continues_to_next_key_when_string_value_is_zero() -> None:
+    # "0" passes isdecimal() but is not positive; the loop must continue to the fallback key
+    config = {"primary_key": "0", "fallback_key": 8}
+    result = hub_catalog_module._positive_config_int(config, "primary_key", "fallback_key")
+    assert result == 8
 
 
 def test_size_hint_from_empty_text_skips_regex_search(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -192,6 +192,64 @@ def imported_gemma4_vlm_model() -> common_pb2.ModelSpec:
     )
 
 
+def _assert_text_only_follow_up_replaces_media_probe_when_signature_repeats() -> None:
+    runtime = MLXVLMRuntime()
+    loaded_model = {
+        "metadata": {
+            "vision_family_id": "gemma4-v1",
+            "melix.vlm.execution_mode": "multimodal",
+        },
+        "model": SimpleNamespace(config=SimpleNamespace(model_type="gemma4")),
+    }
+    media_request = PreparedVisionRequest(
+        prompt_text="Describe.",
+        images=[
+            PreparedImageInput(
+                bytes_data=b"image",
+                source_kind="inline",
+                reference="inline:image",
+                mime_type="image/jpeg",
+                format="jpg",
+                filename="image.jpg",
+                sha256_hex="deadbeef",
+            )
+        ],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=len(b"image"),
+        preprocess_peak_memory_bytes=len(b"image"),
+        prompt_hash_hex="1" * 64,
+        multimodal_hash_hex="shared-probe-signature",
+    )
+    prompt_only_request = PreparedVisionRequest(
+        prompt_text="Now answer in text.",
+        images=[],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=len(b"Now answer in text."),
+        preprocess_peak_memory_bytes=0,
+        prompt_hash_hex="2" * 64,
+        multimodal_hash_hex="shared-probe-signature",
+    )
+
+    runtime._record_fast_path_probe(loaded_model, media_request)
+    runtime._record_fast_path_probe(loaded_model, prompt_only_request)
+    text_probe = runtime.last_probe_snapshot()
+    receipt = text_probe.position_metadata_receipt
+
+    assert receipt["media_position_count"] == 0
+    assert receipt["vision_metadata_guard"] == "no_media"
+    assert receipt["vision_metadata_reuse_allowed"] is True
+    assert receipt["stale_metadata_fallback_count"] == 0
+    assert receipt["companion_rederive_skip_reason"] == ""
+
+    runtime._record_fast_path_probe(loaded_model, prompt_only_request)
+
+    assert runtime.last_probe_snapshot() is text_probe
+
+
 def test_registry_routes_imported_vlm_models_to_mlx_vlm_runtime() -> None:
     fake_runtime = object()
     registry = WorkerRegistry(mlx_vlm_runtime=fake_runtime)  # type: ignore[arg-type]
@@ -702,6 +760,7 @@ def _run_text_only_step_with_buffered_detokenizer(
 def test_mlx_vlm_runtime_text_only_step_flushes_buffer_before_stop_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _assert_text_only_follow_up_replaces_media_probe_when_signature_repeats()
     events = _run_text_only_step_with_buffered_detokenizer(monkeypatch, [101, 102, 106])
 
     assert [event.text for event in events] == ["Hello!"]
