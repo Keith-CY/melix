@@ -24,6 +24,15 @@ from worker.runtime.mlx_text_runtime import (
     _float_tuple,
     _int_tuple,
 )
+from worker.runtime.multimodal_attention_policy import (
+    AttentionPrefillPolicyDecision,
+    MultimodalPrefillAttentionBudgetExceeded,
+    attention_budget_configured,
+    build_attention_budget_receipt,
+    choose_attention_prefill_policy,
+    enforce_attention_prefill_policy,
+    int_metadata as _attention_int_metadata,
+)
 from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
 from worker.runtime.multimodal_position_receipts import build_position_metadata_receipt
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request, rebuild_multimodal_hash
@@ -578,6 +587,9 @@ def _tokenizer_stop_token_ids(tokenizer: Any) -> list[int]:
         elif str(value).strip():
             token_ids.append(int(value))
     return list(dict.fromkeys(token_ids))
+
+
+_int_metadata = _attention_int_metadata
 
 
 def _gemma4_multimodal_weight_presence(weight_names: Iterable[str]) -> tuple[bool, bool]:
@@ -1340,10 +1352,20 @@ class MLXVLMRuntime:
                 "The loaded Gemma 4 MLX package does not include vision weights, so image inputs are unavailable."
             )
         self._ensure_fast_path_probe(loaded_model, prepared_request)
+        attention_policy = self._attention_prefill_policy(
+            loaded_model=loaded_model,
+            prepared_request=prepared_request,
+        )
+        enforce_attention_prefill_policy(attention_policy)
         if cancel_event.is_set():
             return
 
         prompt_tokens = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
+        selected_prefill_step_size = (
+            attention_policy.selected_prefill_step_size
+            if attention_policy is not None and attention_policy.prefill_chunk_mode == "auto_chunk"
+            else None
+        )
         text_only_batch_generator_unsupported_reason = (
             self._text_only_batch_generator_unsupported_reason(
                 loaded_model=loaded_model,
@@ -1384,6 +1406,7 @@ class MLXVLMRuntime:
                     sampling=sampling,
                     cancel_event=cancel_event,
                     prompt_tokens=prompt_tokens,
+                    prefill_step_size=selected_prefill_step_size,
                     speculative_fallback_reason=speculative_fallback_reason,
                     text_only_batch_generator_unsupported_reason=(
                         text_only_batch_generator_unsupported_reason
@@ -1443,6 +1466,11 @@ class MLXVLMRuntime:
                             multimodal_decode_mode="fallback",
                             multimodal_fallback_reason="backend_video_kwarg_unsupported",
                         )
+                if selected_prefill_step_size is not None and _callable_accepts_kwarg(
+                    self._backend.stream_generate_fn,
+                    "prefill_step_size",
+                ):
+                    stream_kwargs["prefill_step_size"] = selected_prefill_step_size
 
                 started_at = time.perf_counter()
                 first_token_at: float | None = None
@@ -1544,6 +1572,17 @@ class MLXVLMRuntime:
         prompt_tokens = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
         draft_model_id = str(getattr(acceleration_policy, "draft_model_id", "") or "").strip()
         draft_block_size = self._mtp_draft_block_size(acceleration_policy)
+        attention_policy = self._attention_prefill_policy(
+            loaded_model=loaded_model,
+            prepared_request=prepared_request,
+            seq_len=prompt_tokens,
+        )
+        enforce_attention_prefill_policy(attention_policy)
+        selected_prefill_step_size = (
+            attention_policy.selected_prefill_step_size
+            if attention_policy is not None and attention_policy.prefill_chunk_mode == "auto_chunk"
+            else None
+        )
 
         def backend_events():
             self._backend._ensure_runtime()
@@ -1559,6 +1598,7 @@ class MLXVLMRuntime:
                     drafter=drafter,
                     draft_block_size=draft_block_size,
                     prompt_tokens=prompt_tokens,
+                    prefill_step_size=selected_prefill_step_size,
                 )
                 return
 
@@ -1569,6 +1609,11 @@ class MLXVLMRuntime:
                 "draft_kind": "mtp",
                 "draft_block_size": draft_block_size,
             }
+            if selected_prefill_step_size is not None and _callable_accepts_kwarg(
+                self._backend.batch_generate_fn,
+                "prefill_step_size",
+            ):
+                batch_kwargs["prefill_step_size"] = selected_prefill_step_size
 
             started_at = time.perf_counter()
             response_batch = self._backend.batch_generate_fn(
@@ -1635,6 +1680,7 @@ class MLXVLMRuntime:
         drafter: Any,
         draft_block_size: int,
         prompt_tokens: int,
+        prefill_step_size: int | None,
     ):
         import mlx.core as mx
         from mlx_vlm.utils import prepare_inputs
@@ -1676,7 +1722,7 @@ class MLXVLMRuntime:
             draft_model=drafter,
             draft_kind="mtp",
             draft_block_size=draft_block_size,
-            prefill_step_size=None,
+            prefill_step_size=prefill_step_size,
         ):
             if cancel_event.is_set():
                 return
@@ -1731,6 +1777,7 @@ class MLXVLMRuntime:
         sampling,
         cancel_event: Event,
         prompt_tokens: int,
+        prefill_step_size: int | None,
         speculative_fallback_reason: str,
         text_only_batch_generator_unsupported_reason: str = "",
     ):
@@ -1811,7 +1858,7 @@ class MLXVLMRuntime:
             temperature=float(getattr(sampling, "temperature", 0.0)),
             top_p=float(getattr(sampling, "top_p", 1.0)),
             top_k=int(getattr(sampling, "top_k", 0)),
-            prefill_step_size=None,
+            prefill_step_size=prefill_step_size,
         ):
             if cancel_event.is_set():
                 return
@@ -2270,6 +2317,13 @@ class MLXVLMRuntime:
             multi_image_scatter_mode=fast_path.multi_image_scatter_mode,
             quantized_load_mode=fast_path.quantized_load_mode,
             quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
+            attention_budget_receipt=build_attention_budget_receipt(
+                self._attention_prefill_policy(
+                    loaded_model=loaded_model,
+                    prepared_request=prepared_request,
+                    seq_len=seq_len,
+                )
+            ),
             position_metadata_receipt=self._position_metadata_receipt(
                 loaded_model=loaded_model,
                 prepared_request=prepared_request,
@@ -2292,6 +2346,41 @@ class MLXVLMRuntime:
             prepared_request=prepared_request,
             seq_len=seq_len,
             fallback_reason=fallback_reason,
+        )
+
+    def _attention_prefill_policy(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        seq_len: int | None = None,
+    ) -> AttentionPrefillPolicyDecision | None:
+        if not attention_budget_configured(loaded_model):
+            return None
+        metadata = loaded_model.get("metadata", {}) if isinstance(loaded_model, dict) else {}
+        family_config = self._family_config(loaded_model)
+        if seq_len is None:
+            seq_len = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
+        return choose_attention_prefill_policy(
+            family_id=str(getattr(family_config, "family_id", "") or metadata.get("vision_family_id", "")),
+            prompt_tokens=seq_len,
+            budget_bytes=_attention_int_metadata(
+                metadata,
+                "melix.vlm.attention_cost_budget_bytes",
+                "melix.vlm.prefill_attention_budget_bytes",
+            ),
+            hidden_size=_attention_int_metadata(metadata, "melix.vlm.hidden_size", "hidden_size"),
+            num_hidden_layers=_attention_int_metadata(
+                metadata,
+                "melix.vlm.num_hidden_layers",
+                "melix.vlm.layer_count",
+                "num_hidden_layers",
+            ),
+            dtype_bytes=_attention_int_metadata(
+                metadata,
+                "melix.vlm.attention_dtype_bytes",
+                "attention_dtype_bytes",
+            ),
         )
 
     @staticmethod

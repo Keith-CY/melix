@@ -24,6 +24,7 @@ from worker.runtime import runtime_utils
 from worker.runtime.mlx_vlm_runtime import (
     AutoMLXVLMBackend,
     MLXVLMRuntime,
+    MultimodalPrefillAttentionBudgetExceeded,
     RuntimeUnavailableError,
     _CallableTokenizerProcessor,
     _Gemma4TextBackedModelShim,
@@ -391,7 +392,6 @@ def test_mlx_vlm_runtime_streams_backend_tokens_and_records_probe() -> None:
     assert probe.multimodal_decode_mode == "native_quantized"
     assert probe.multimodal_decode_sync_mode == "executor_stream"
     assert probe.multi_image_scatter_mode == "none"
-
 
 def test_mlx_vlm_runtime_forwards_trust_remote_code_when_loader_supports_it() -> None:
     seen: dict[str, object] = {}
@@ -2868,6 +2868,8 @@ def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
     _install_fake_mlx_vlm_prepare_inputs(monkeypatch)
     apply_calls: list[str] = []
     generate_step_calls: list[dict[str, object]] = []
+    stream_generate_calls: list[dict[str, object]] = []
+    batch_generate_calls: list[dict[str, object]] = []
 
     class FakeDetokenizer:
         def __init__(self) -> None:
@@ -2947,18 +2949,86 @@ def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
         yield 101, None
         yield 102, None
 
+    def fake_stream_generate(*_args, **kwargs):
+        stream_generate_calls.append(dict(kwargs))
+        yield SimpleNamespace(text="stream", prompt_tokens=3, generation_tokens=1)
+
+    def fake_batch_generate(
+        _model,
+        _processor,
+        *,
+        prompts,
+        max_tokens: int,
+        draft_model,
+        draft_kind: str,
+        draft_block_size: int,
+        prefill_step_size=None,
+    ):
+        batch_generate_calls.append(
+            {
+                "prompts": prompts,
+                "max_tokens": max_tokens,
+                "draft_model": draft_model,
+                "draft_kind": draft_kind,
+                "draft_block_size": draft_block_size,
+                "prefill_step_size": prefill_step_size,
+            }
+        )
+        return [SimpleNamespace(text="batch", prompt_tokens=3, generation_tokens=1)]
+
     runtime = MLXVLMRuntime(
         backend=AutoMLXVLMBackend(
             load_fn=fake_load,
-            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            stream_generate_fn=fake_stream_generate,
             apply_chat_template_fn=lambda _processor, _config, prompt, **kwargs: (
                 apply_calls.append(prompt) or f"formatted::{prompt}"
             ),
             load_drafter_fn=fake_load_drafter,
             generate_step_fn=fake_generate_step,
+            batch_generate_fn=fake_batch_generate,
         )
     )
-    loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    no_budget_loaded_model = runtime.load_model(imported_gemma4_vlm_model())
+    no_budget_prepared = runtime.render_prompt(
+        [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="No budget.")])],
+        loaded_model=no_budget_loaded_model,
+    )
+    assert runtime.last_probe_snapshot().attention_budget_receipt == {}
+    assert runtime.prompt_token_count(no_budget_prepared, loaded_model=no_budget_loaded_model) == 3
+
+    model = imported_gemma4_vlm_model()
+    model.ext["melix.vlm.attention_cost_budget_bytes"] = "1000000"
+    loaded_model = runtime.load_model(model)
+    loaded_model["metadata"]["melix.vlm.execution_mode"] = "multimodal"
+    media_prepared = runtime.render_prompt(
+        [
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[
+                    common_pb2.MessagePart(text="Describe."),
+                    common_pb2.MessagePart(
+                        image_bytes=b"fake-image-payload",
+                        media=common_pb2.MediaMetadata(
+                            media_type=common_pb2.MEDIA_TYPE_IMAGE,
+                            source_kind=common_pb2.MEDIA_SOURCE_INLINE_BYTES,
+                            filename="sample.jpg",
+                        ),
+                    ),
+                ],
+            )
+        ],
+        loaded_model=loaded_model,
+    )
+
+    stream_events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            media_prepared,
+            common_pb2.SamplingConfig(max_output_tokens=4),
+            Event(),
+        )
+    )
+    stream_attention_receipt = runtime.last_probe_snapshot().attention_budget_receipt
     loaded_model["metadata"]["melix.vlm.execution_mode"] = "text_backed"
     prepared = runtime.render_prompt(
         [common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="Say hello.")])],
@@ -2985,7 +3055,9 @@ def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
         )
     )
 
-    assert apply_calls == ["Say hello."]
+    assert apply_calls == ["Describe.", "Say hello."]
+    assert [event.text for event in stream_events] == ["stream"]
+    assert stream_generate_calls[0]["prefill_step_size"] == stream_attention_receipt["selected_prefill_step_size"]
     assert events[-1].text == "MTP step"
     assert events[-1].prompt_tokens == 3
     assert events[-1].completion_tokens == 2
@@ -3006,9 +3078,56 @@ def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
             "draft_model": drafter,
             "draft_kind": "mtp",
             "draft_block_size": 6,
-            "prefill_step_size": None,
+            "prefill_step_size": runtime.last_probe_snapshot().attention_budget_receipt["selected_prefill_step_size"],
         }
     ]
+
+    loaded_model["metadata"]["melix.vlm.attention_cost_budget_bytes"] = "1"
+    with pytest.raises(MultimodalPrefillAttentionBudgetExceeded):
+        list(
+            runtime.generate_tokens(
+                loaded_model,
+                prepared,
+                common_pb2.SamplingConfig(
+                    temperature=0.0,
+                    top_p=1.0,
+                    top_k=0,
+                    max_output_tokens=16,
+                ),
+                Event(),
+                acceleration_policy=common_pb2.AccelerationPolicy(
+                    mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+                    draft_model_id="draft-model",
+                    num_draft_tokens=6,
+                    allow_baseline_fallback=False,
+                ),
+            )
+        )
+
+    loaded_model["metadata"]["melix.vlm.attention_cost_budget_bytes"] = "1000000"
+    runtime._backend.generate_step_fn = None
+    batch_events = list(
+        runtime.generate_tokens(
+            loaded_model,
+            prepared,
+            common_pb2.SamplingConfig(
+                temperature=0.0,
+                top_p=1.0,
+                top_k=0,
+                max_output_tokens=16,
+            ),
+            Event(),
+            acceleration_policy=common_pb2.AccelerationPolicy(
+                mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+                draft_model_id="draft-model",
+                num_draft_tokens=6,
+                allow_baseline_fallback=False,
+            ),
+        )
+    )
+    batch_attention_receipt = runtime.last_probe_snapshot().attention_budget_receipt
+    assert [event.text for event in batch_events] == ["batch"]
+    assert batch_generate_calls[0]["prefill_step_size"] == batch_attention_receipt["selected_prefill_step_size"]
 
 
 @pytest.mark.parametrize(

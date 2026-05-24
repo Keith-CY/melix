@@ -9,6 +9,7 @@ from worker.registry import WorkerRegistry
 from worker.engine.text_finalizer import apply_text_response_metrics
 from worker.runtime.mlx_text_runtime import RuntimeToolCallEvent, RuntimeTokenEvent
 from worker.runtime.mlx_text_runtime import resolve_text_stop_contract
+from worker.runtime.multimodal_attention_policy import MultimodalPrefillAttentionBudgetExceeded
 from worker.runtime.runtime_utils import callable_accepts_kwarg as _callable_accepts_kwarg
 from worker.runtime.stream_assembler import RequestStreamAssembler, StreamFragment
 from worker.runtime.token_route_receipt import (
@@ -418,6 +419,14 @@ class EngineCore:
                     parser_metrics=parser_metrics,
                 ),
             )
+        except MultimodalPrefillAttentionBudgetExceeded as exc:
+            yield self._error_event(
+                request_id,
+                allocate_seq(),
+                exc.code,
+                str(exc),
+                details=exc.details,
+            )
         except Exception as exc:  # pragma: no cover - defensive branch
             yield self._error_event(request_id, allocate_seq(), "runtime_error", str(exc))
         finally:
@@ -448,12 +457,15 @@ class EngineCore:
         self._registry.set_request_phase(request_id, "prefill")
 
         try:
-            session = runtime.prefill(
-                request_id=request_id,
-                loaded_model=loaded_model.runtime_model,
-                messages=request.messages,
-                execution_ext=request.execution.ext,
-            )
+            prefill_kwargs = {
+                "request_id": request_id,
+                "loaded_model": loaded_model.runtime_model,
+                "messages": request.messages,
+                "execution_ext": request.execution.ext,
+            }
+            if _callable_accepts_kwarg(runtime.prefill, "prefill_step_size"):
+                prefill_kwargs["prefill_step_size"] = request.prefill_step_size
+            session = runtime.prefill(**prefill_kwargs)
             response = inference_pb2.PrefillResponse(
                 ok=True,
                 decode_handle=session.decode_handle if request.return_decode_handle else "",
@@ -468,6 +480,18 @@ class EngineCore:
             )
             self._registry.record_vision_probe(loaded_model.runtime_kind, runtime.last_probe_snapshot())
             return response
+        except MultimodalPrefillAttentionBudgetExceeded as exc:
+            self._registry.record_vision_probe(loaded_model.runtime_kind, runtime.last_probe_snapshot())
+            self._registry.finish_request(request_id)
+            return inference_pb2.PrefillResponse(
+                ok=False,
+                admission_state=common_pb2.ADMISSION_REJECTED,
+                error=common_pb2.ErrorStatus(
+                    code=exc.code,
+                    message=str(exc),
+                    details=exc.details,
+                ),
+            )
         except Exception as exc:  # pragma: no cover - defensive branch
             self._registry.finish_request(request_id)
             return inference_pb2.PrefillResponse(
@@ -638,13 +662,14 @@ class EngineCore:
         code: str,
         message: str,
         execution_kind: str = "generate",
+        details: dict[str, str] | None = None,
     ) -> inference_pb2.ExecuteEvent:
         return inference_pb2.ExecuteEvent(
             request_id=request_id,
             execution_kind=execution_kind,
             seq=seq,
             error=inference_pb2.ErrorEvent(
-                error=common_pb2.ErrorStatus(code=code, message=message)
+                error=common_pb2.ErrorStatus(code=code, message=message, details=details or {})
             ),
         )
 
