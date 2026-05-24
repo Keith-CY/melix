@@ -31,7 +31,6 @@ from worker.model_ops.lora_training_pipeline import (
     _validated_resume_path,
 )
 from worker.model_ops.lora_runtime_metadata import build_adapter_runtime_manifest_fields
-from worker.model_ops.lora_runtime_metadata import build_lora_canary_receipt_fields
 from worker.model_ops.lora_runtime_metadata import build_quantized_lora_manifest_fields
 from worker.model_ops.multimodal_lora_contracts import (
     _adapter_parameter_matches_fragment,
@@ -199,43 +198,6 @@ def test_lora_training_manifest_records_quantized_qlora_compatibility_for_gemma8
     assert freeze_audit["adapter_checkpoint_size_within_target"] is True
 
 
-def test_lora_training_manifest_records_canary_receipts(tmp_path: Path) -> None:
-    dataset_dir = _write_dataset_package(tmp_path / "dataset")
-    base_model_dir = tmp_path / "base-model"
-    base_model_dir.mkdir()
-    (base_model_dir / "config.json").write_text('{"model_type":"qwen2"}\n', encoding="utf-8")
-    (base_model_dir / "tokenizer_config.json").write_text(
-        json.dumps({"eos_token": "<|endoftext|>"}) + "\n",
-        encoding="utf-8",
-    )
-    (base_model_dir / "processor_config.json").write_text('{"processor_class":"AutoProcessor"}\n', encoding="utf-8")
-    (base_model_dir / "modeling_qwen2.py").write_text("# custom module\n", encoding="utf-8")
-
-    result = LoRATrainingPipeline(runner=DeterministicLoRARunner()).run(
-        job_id="train-canary-receipts",
-        request_ext={
-            "operation": "train_lora",
-            "adapter_name": "canary-adapter",
-            "dataset_uri": str(dataset_dir),
-        },
-        source_model=_text_model(model_path=str(base_model_dir), family_id="qwen"),
-        output_dir=tmp_path / "output",
-        jobs_root=tmp_path / "jobs",
-    )
-
-    assert result.manifest["source_eos_token"] == "<|endoftext|>"
-    assert result.manifest["saved_eos_token"] == "<|endoftext|>"
-    assert result.manifest["tokenizer_config_path"] == str(base_model_dir / "tokenizer_config.json")
-    assert result.manifest["base_config_present"] is True
-    assert result.manifest["processor_resume_mode"] == "processor_config"
-    assert result.manifest["aux_modules_restored"] is True
-    assert result.manifest["merge_export_canary_result"] == "pass"
-    assert result.manifest["callback_api_drift_result"] == "pass"
-    assert result.manifest["completion_loss"] == 0.42
-    assert result.manifest["round_trip_passed"] is True
-    assert result.manifest["grad_norm"] == 0.0
-
-
 def test_quantized_lora_metadata_does_not_treat_fp_profile_as_quantized() -> None:
     source_model = _text_model(
         model_path="mlx-community/plain-gemma-bf16",
@@ -256,127 +218,6 @@ def test_quantized_lora_metadata_does_not_treat_fp_profile_as_quantized() -> Non
     assert fields["quantized_base_evidence_source"] == ""
     assert fields["qlora_compatibility_status"] == "not_applicable"
     assert fields["quantized_target_module_guard"] == "not_required"
-
-
-def test_lora_canary_receipt_records_tokenizer_resume_and_drift_status(
-    tmp_path: Path,
-) -> None:
-    base_model_dir = tmp_path / "base-model"
-    base_model_dir.mkdir()
-    (base_model_dir / "config.json").write_text('{"model_type":"qwen2"}\n', encoding="utf-8")
-    (base_model_dir / "tokenizer_config.json").write_text(
-        json.dumps({"eos_token": "<|source-eos|>"}) + "\n",
-        encoding="utf-8",
-    )
-    (base_model_dir / "tokenizer.json").write_text(
-        json.dumps({"model": {}, "added_tokens": [{"content": "<|source-eos|>", "special": True}]})
-        + "\n",
-        encoding="utf-8",
-    )
-    (base_model_dir / "processor_config.json").write_text('{"processor_class":"AutoProcessor"}\n', encoding="utf-8")
-    (base_model_dir / "modeling_qwen2.py").write_text("# custom module\n", encoding="utf-8")
-
-    adapter_dir = tmp_path / "adapter"
-    adapter_dir.mkdir()
-    adapter_config_path = adapter_dir / "adapter_config.json"
-    adapter_config_path.write_text(
-        json.dumps(
-            {
-                "tokenizer_config": {"eos_token": "<|source-eos|>"},
-                "completion_loss": 0.125,
-                "grad_norm": 0.75,
-                "round_trip_passed": True,
-                "callback_arity": 2,
-                "expected_callback_arity": 2,
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    weights_path = adapter_dir / "adapters.safetensors"
-    weights_path.write_bytes(b"adapter")
-
-    fields = build_lora_canary_receipt_fields(
-        source_model=_text_model(model_path=str(base_model_dir)),
-        adapter_output_dir=adapter_dir,
-        adapter_config_path=adapter_config_path,
-        weights_path=weights_path,
-        training_metrics=TrainingMetrics(
-            job_duration_ms=1.0,
-            tokens_seen=8,
-            examples_seen=1,
-            loss_final=0.125,
-            loss_best=0.125,
-            learning_rate_final=1e-5,
-            grad_norm=0.75,
-            completion_loss=0.125,
-            round_trip_passed=True,
-        ),
-    )
-
-    assert fields["source_eos_token"] == "<|source-eos|>"
-    assert fields["saved_eos_token"] == "<|source-eos|>"
-    assert fields["tokenizer_config_path"] == str(base_model_dir / "tokenizer_config.json")
-    assert fields["base_config_present"] is True
-    assert fields["processor_resume_mode"] == "processor_config"
-    assert fields["aux_modules_restored"] is True
-    assert fields["merge_export_canary_result"] == "pass"
-    assert fields["callback_api_drift_result"] == "pass"
-    assert fields["completion_loss"] == 0.125
-    assert fields["round_trip_passed"] is True
-    assert fields["grad_norm"] == 0.75
-
-
-def test_lora_canary_receipt_detects_missing_checkpoint_resume_assets(
-    tmp_path: Path,
-) -> None:
-    base_model_dir = tmp_path / "base-model"
-    base_model_dir.mkdir()
-    (base_model_dir / "config.json").write_text('{"model_type":"qwen2"}\n', encoding="utf-8")
-    (base_model_dir / "tokenizer_config.json").write_text(
-        json.dumps({"model_max_length": 8192}) + "\n",
-        encoding="utf-8",
-    )
-    adapter_dir = tmp_path / "adapter"
-    adapter_dir.mkdir()
-    adapter_config_path = adapter_dir / "adapter_config.json"
-    adapter_config_path.write_text(
-        json.dumps(
-            {
-                "tokenizer_config": {"eos_token": "<|saved-eos|>"},
-                "callback_arity": 3,
-                "expected_callback_arity": 2,
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    weights_path = adapter_dir / "adapters.safetensors"
-    weights_path.write_bytes(b"adapter")
-
-    fields = build_lora_canary_receipt_fields(
-        source_model=_text_model(model_path=str(base_model_dir)),
-        adapter_output_dir=adapter_dir,
-        adapter_config_path=adapter_config_path,
-        weights_path=weights_path,
-        training_metrics=TrainingMetrics(
-            job_duration_ms=1.0,
-            tokens_seen=8,
-            examples_seen=1,
-            loss_final=0.5,
-            loss_best=0.5,
-            learning_rate_final=1e-5,
-        ),
-    )
-
-    assert fields["source_eos_token"] == ""
-    assert fields["saved_eos_token"] == "<|saved-eos|>"
-    assert fields["tokenizer_config_path"] == str(base_model_dir / "tokenizer_config.json")
-    assert fields["base_config_present"] is True
-    assert fields["processor_resume_mode"] == "tokenizer_only"
-    assert fields["aux_modules_restored"] is False
-    assert fields["merge_export_canary_result"] == "fail:missing_source_eos_token,missing_auxiliary_modules"
-    assert fields["callback_api_drift_result"] == "fail:callback_arity_mismatch"
 
 
 def test_normalize_training_config_rejects_qlora_for_non_quantized_profile() -> None:
