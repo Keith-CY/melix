@@ -12,6 +12,7 @@ from packages.protocol.python.worker.v1 import common_pb2
 from worker.model_ops.deterministic_lora_runner import DeterministicLoRARunner
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops import training_config as training_config_module
+from worker.model_ops import lora_runtime_metadata as lora_runtime_metadata_module
 from worker.model_ops.lora_runtime_metadata import build_lora_canary_receipt_fields
 from worker.model_ops.lora_training_pipeline import (
     LoRATrainingPipeline,
@@ -509,6 +510,23 @@ def test_lora_canary_receipt_records_tokenizer_resume_and_drift_status(
     assert fields["completion_loss"] == 0.125
     assert fields["round_trip_passed"] is True
     assert fields["grad_norm"] == 0.75
+
+
+def test_lora_aux_module_detection_uses_scandir_without_path_glob(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_model_dir = tmp_path / "base-model"
+    base_model_dir.mkdir()
+    (base_model_dir / "configuration_qwen2.py").write_text("# custom config\n", encoding="utf-8")
+
+    def fail_glob(self: Path, pattern: str):  # pragma: no cover - exercised on regression
+        raise AssertionError("aux module detection should avoid Path.glob() scans")
+
+    monkeypatch.setattr(Path, "glob", fail_glob)
+
+    assert lora_runtime_metadata_module._aux_modules_restored(base_model_dir) is True
+    assert lora_runtime_metadata_module._aux_modules_restored(base_model_dir / "missing") is False
 
 
 def test_lora_canary_receipt_detects_missing_checkpoint_resume_assets(

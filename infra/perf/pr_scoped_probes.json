@@ -4006,6 +4006,30 @@
     ]
   },
   {
+    "id": "lora-aux-module-scan-scandir",
+    "name": "LoRA auxiliary module scan scandir",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/model_ops/lora_runtime_metadata.py",
+      "services/mlx-worker-python/tests/test_lora_training_receipts.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/lora_aux_module_scan_probe.py",
+      "infra/perf/pr_scoped_probes.json"
+    ],
+    "runner": "ubuntu-latest",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_canary_receipt_records_tokenizer_resume_and_drift_status services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_aux_module_detection_uses_scandir_without_path_glob services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_canary_receipt_detects_missing_checkpoint_resume_assets services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_lora_aux_module_scan_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_lora_aux_module_scan_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_canary_receipt_records_tokenizer_resume_and_drift_status services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_aux_module_detection_uses_scandir_without_path_glob services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_canary_receipt_detects_missing_checkpoint_resume_assets services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_lora_aux_module_scan_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_lora_aux_module_scan_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/model_ops/lora_runtime_metadata.py services/mlx-worker-python/tests/test_lora_training_receipts.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/lora_aux_module_scan_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 scripts/lora_aux_module_scan_probe.py",
+    "metrics": [
+      "elapsed_ms_mean",
+      "filler_file_count",
+      "hit_count_mean",
+      "iterations",
+      "sample_count"
+    ]
+  },
+  {
     "id": "tool-registry-names-snapshot-cache",
     "name": "Tool registry names snapshot cache",
     "runner": "ubuntu-latest",

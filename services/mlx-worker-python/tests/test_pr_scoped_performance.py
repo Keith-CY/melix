@@ -185,6 +185,33 @@ def test_scope_report_selects_report_evidence_gate_probe() -> None:
     assert _selected_probe_ids(scope) == ["report-evidence-gate-run-kind-set-membership"]
 
 
+def test_scope_report_selects_lora_aux_module_scan_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/model_ops/lora_runtime_metadata.py"],
+    )
+
+    assert "lora-aux-module-scan-scandir" in _selected_probe_ids(scope)
+
+
+def test_lora_aux_module_scan_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_LORA_AUX_MODULE_SCAN_ITERATIONS", "3")
+    monkeypatch.setenv("MELIX_LORA_AUX_MODULE_SCAN_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_LORA_AUX_MODULE_SCAN_FILLER_FILES", "2")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/lora_aux_module_scan_probe.py"))
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["filler_file_count"] == 2.0
+    assert metrics["hit_count_mean"] == metrics["iterations"]
+    assert metrics["sample_count"] == 1.0
+
+
 def test_report_evidence_gate_run_kind_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -2616,6 +2643,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "job-registry-derived-model-single-pass",
         "job-registry-restore-sort-elision",
         "lora-experiment-run-dir-name-scan",
+        "lora-aux-module-scan-scandir",
         "lora-reward-summary-candidate-minmax",
         "mlx-lm-structured-result-tail-parse",
         "mlx-audio-local-uri-zero-copy-preprocess",
