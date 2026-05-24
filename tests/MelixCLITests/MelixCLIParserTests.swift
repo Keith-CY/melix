@@ -239,6 +239,109 @@ struct MelixCLIParserTests {
         }
     }
 
+    @Test("rejects incomplete dataset prepare commands")
+    func rejectsIncompleteDatasetPrepareCommands() {
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            _ = try MelixCLIParser.parse(["dataset", "prepare"])
+        }
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            _ = try MelixCLIParser.parse(["dataset", "prepare", "unknown"])
+        }
+
+        #expect(throws: MelixCLIError.missingRequired("--workspace-project-id is required for melix dataset prepare ingest.")) {
+            _ = try MelixCLIParser.parse(["dataset", "prepare", "ingest"])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--workspace-manifest is required for melix dataset prepare ingest.")) {
+            _ = try MelixCLIParser.parse([
+                "dataset", "prepare", "ingest",
+                "--workspace-project-id", "m-courtyard-demo",
+            ])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--input is required for melix dataset prepare ingest.")) {
+            _ = try MelixCLIParser.parse([
+                "dataset", "prepare", "ingest",
+                "--workspace-project-id", "m-courtyard-demo",
+                "--workspace-manifest", "/tmp/workspace-manifest.json",
+            ])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--output-dir is required for melix dataset prepare ingest.")) {
+            _ = try MelixCLIParser.parse([
+                "dataset", "prepare", "ingest",
+                "--workspace-project-id", "m-courtyard-demo",
+                "--workspace-manifest", "/tmp/workspace-manifest.json",
+                "--input", "/tmp/raw",
+            ])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--dataset-preparation-id is required for melix dataset prepare ingest.")) {
+            _ = try MelixCLIParser.parse([
+                "dataset", "prepare", "ingest",
+                "--workspace-project-id", "m-courtyard-demo",
+                "--workspace-manifest", "/tmp/workspace-manifest.json",
+                "--input", "/tmp/raw",
+                "--output-dir", "/tmp/prepared",
+            ])
+        }
+
+        #expect(throws: MelixCLIError.missingRequired("--workspace-manifest is required for melix dataset prepare version.")) {
+            _ = try MelixCLIParser.parse(["dataset", "prepare", "version"])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--ingest-receipt is required for melix dataset prepare version.")) {
+            _ = try MelixCLIParser.parse([
+                "dataset", "prepare", "version",
+                "--workspace-manifest", "/tmp/workspace-manifest.json",
+            ])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--output-root is required for melix dataset prepare version.")) {
+            _ = try MelixCLIParser.parse([
+                "dataset", "prepare", "version",
+                "--workspace-manifest", "/tmp/workspace-manifest.json",
+                "--ingest-receipt", "/tmp/ingest-receipt.json",
+            ])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--dataset-id is required for melix dataset prepare version.")) {
+            _ = try MelixCLIParser.parse([
+                "dataset", "prepare", "version",
+                "--workspace-manifest", "/tmp/workspace-manifest.json",
+                "--ingest-receipt", "/tmp/ingest-receipt.json",
+                "--output-root", "/tmp/datasets",
+            ])
+        }
+
+        #expect(throws: MelixCLIError.missingRequired("--workspace-manifest is required for melix dataset prepare retry-failed.")) {
+            _ = try MelixCLIParser.parse(["dataset", "prepare", "retry-failed"])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--dataset-version is required for melix dataset prepare retry-failed.")) {
+            _ = try MelixCLIParser.parse([
+                "dataset", "prepare", "retry-failed",
+                "--workspace-manifest", "/tmp/workspace-manifest.json",
+            ])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--output-root is required for melix dataset prepare retry-failed.")) {
+            _ = try MelixCLIParser.parse([
+                "dataset", "prepare", "retry-failed",
+                "--workspace-manifest", "/tmp/workspace-manifest.json",
+                "--dataset-version", "/tmp/dataset-version.json",
+            ])
+        }
+
+        #expect(throws: MelixCLIError.missingRequired("--workspace-manifest is required for melix dataset prepare list-versions.")) {
+            _ = try MelixCLIParser.parse(["dataset", "prepare", "list-versions"])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--output-root is required for melix dataset prepare list-versions.")) {
+            _ = try MelixCLIParser.parse([
+                "dataset", "prepare", "list-versions",
+                "--workspace-manifest", "/tmp/workspace-manifest.json",
+            ])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--dataset-id is required for melix dataset prepare list-versions.")) {
+            _ = try MelixCLIParser.parse([
+                "dataset", "prepare", "list-versions",
+                "--workspace-manifest", "/tmp/workspace-manifest.json",
+                "--output-root", "/tmp/datasets",
+            ])
+        }
+    }
+
     @Test("documents and parses remote server direct target commands")
     func documentsAndParsesRemoteServerDirectTargetCommands() throws {
         #expect(MelixCLIParser.usageText.contains("melix remote-server add"))

@@ -9115,6 +9115,153 @@ struct MelixCLIRunnerTests {
         ])
     }
 
+    @Test("dataset prepare commands render readable receipts")
+    func datasetPrepareCommandsRenderReadableReceipts() async throws {
+        let client = StubControlPlaneXPCClient()
+        let executor = RecordingCLICommandExecutor(
+            responses: [
+                """
+                {
+                  "schema_version": "melix.dataset_ingest_receipt.v1",
+                  "status": "ready",
+                  "workspace_project_id": "m-courtyard-demo",
+                  "metrics": {
+                    "source_file_count": 2,
+                    "segment_count": 5
+                  }
+                }
+                """,
+                """
+                {
+                  "schema_version": "melix.workspace_preflight_receipt.v1",
+                  "status": "blocked",
+                  "project_id": "m-courtyard-demo",
+                  "checks": [
+                    {
+                      "code": "WORKSPACE_ROOT_MISSING",
+                      "status": "error",
+                      "title": "Workspace artifact root is missing",
+                      "detail": "Create the missing root before running the workspace."
+                    },
+                    {
+                      "code": "RAW_DATA_READY",
+                      "status": "ok",
+                      "title": "Raw data is readable."
+                    }
+                  ]
+                }
+                """,
+                """
+                {
+                  "schema_version": "melix.dataset_version.v1",
+                  "dataset_id": "support-chat",
+                  "version_id": "support-chat-v1",
+                  "train_count": 7,
+                  "validation_count": 2,
+                  "failed_count": 1
+                }
+                """,
+                """
+                {
+                  "schema_version": "melix.dataset_retry_receipt.v1",
+                  "base_version_id": "support-chat-v1",
+                  "retry_version_id": "support-chat-v2",
+                  "retry_success_count": 1,
+                  "retry_failed_count": 0,
+                  "rewritten_successful_sample_count": 3
+                }
+                """,
+                """
+                {
+                  "schema_version": "melix.dataset_version_list.v1",
+                  "dataset_id": "support-chat",
+                  "versions": [
+                    {
+                      "version_id": "support-chat-v1",
+                      "created_at": "2026-05-24T01:00:00Z",
+                      "train_count": 7,
+                      "validation_count": 2,
+                      "failed_count": 1
+                    }
+                  ]
+                }
+                """,
+                "plain ingest receipt",
+            ]
+        )
+        let runner = MelixCLIRunner(client: client, commandExecutor: executor.run)
+
+        let ingestOutput = try await runner.run(
+            .datasetPrepareIngest(
+                .init(
+                    workspaceProjectID: "m-courtyard-demo",
+                    workspaceManifestPath: "/tmp/melix-workspace/workspace-manifest.json",
+                    inputPath: "/tmp/melix-workspace/raw",
+                    outputDir: "/tmp/melix-workspace/datasets/prep",
+                    datasetPreparationID: "prep-1"
+                )
+            )
+        )
+        let preflightOutput = try await runner.run(
+            .workspacePreflight(
+                .init(manifestPath: "/tmp/melix-workspace/workspace-manifest.json")
+            )
+        )
+        let versionOutput = try await runner.run(
+            .datasetPrepareVersion(
+                .init(
+                    workspaceManifestPath: "/tmp/melix-workspace/workspace-manifest.json",
+                    ingestReceiptPath: "/tmp/melix-workspace/reports/dataset-ingest-receipt.json",
+                    outputRoot: "/tmp/melix-workspace/datasets",
+                    datasetID: "support-chat"
+                )
+            )
+        )
+        let retryOutput = try await runner.run(
+            .datasetPrepareRetryFailed(
+                .init(
+                    workspaceManifestPath: "/tmp/melix-workspace/workspace-manifest.json",
+                    datasetVersionPath: "/tmp/melix-workspace/datasets/support-chat/versions/support-chat-v1/dataset-version.json",
+                    outputRoot: "/tmp/melix-workspace/datasets"
+                )
+            )
+        )
+        let listOutput = try await runner.run(
+            .datasetPrepareListVersions(
+                .init(
+                    workspaceManifestPath: "/tmp/melix-workspace/workspace-manifest.json",
+                    outputRoot: "/tmp/melix-workspace/datasets",
+                    datasetID: "support-chat"
+                )
+            )
+        )
+        let fallbackOutput = try await runner.run(
+            .datasetPrepareIngest(
+                .init(
+                    workspaceProjectID: "m-courtyard-demo",
+                    workspaceManifestPath: "/tmp/melix-workspace/workspace-manifest.json",
+                    inputPath: "/tmp/melix-workspace/raw",
+                    outputDir: "/tmp/melix-workspace/datasets/prep",
+                    datasetPreparationID: "prep-2"
+                )
+            )
+        )
+
+        #expect(ingestOutput == "Dataset ingest ready for m-courtyard-demo\nSources: 2, segments: 5\n")
+        #expect(preflightOutput.contains("Workspace preflight blocked for m-courtyard-demo"))
+        #expect(preflightOutput.contains("- WORKSPACE_ROOT_MISSING: Workspace artifact root is missing"))
+        #expect(preflightOutput.contains("Create the missing root before running the workspace."))
+        #expect(preflightOutput.contains("RAW_DATA_READY") == false)
+        #expect(versionOutput == "Dataset version support-chat-v1 for support-chat\nSamples: train 7, validation 2, failed 1\n")
+        #expect(retryOutput == "Dataset retry support-chat-v1 -> support-chat-v2\nRetry success: 1, failed: 0, rewritten successful samples: 3\n")
+        #expect(listOutput == """
+        dataset_id\tversion_id\tcreated_at\ttrain_count\tvalidation_count\tfailed_count
+        support-chat\tsupport-chat-v1\t2026-05-24T01:00:00Z\t7\t2\t1
+
+        """)
+        #expect(fallbackOutput == "plain ingest receipt\n")
+    }
+
     @Test("workspace preflight rejects an empty manifest path before dispatch")
     func workspacePreflightRejectsEmptyManifestPathBeforeDispatch() async throws {
         let client = StubControlPlaneXPCClient()
