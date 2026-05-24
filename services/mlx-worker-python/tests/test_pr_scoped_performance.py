@@ -175,6 +175,32 @@ def test_scope_report_selects_engine_generate_usage_probe() -> None:
     assert _selected_probe_ids(scope) == ["engine-generate-usage-token-elision"]
 
 
+def test_scope_report_selects_report_evidence_gate_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/report_evidence_gate.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert _selected_probe_ids(scope) == ["report-evidence-gate-run-kind-set-membership"]
+
+
+def test_report_evidence_gate_run_kind_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_REPORT_EVIDENCE_RUN_KIND_ITERATIONS", "20")
+    monkeypatch.setenv("MELIX_REPORT_EVIDENCE_RUN_KIND_SAMPLES", "1")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/report_evidence_gate_run_kind_probe.py"))
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["match_count"] == metrics["iterations"] * metrics["sample_count"]
+    assert metrics["run_kind_count"] == 65.0
+
+
 def test_scope_report_selects_tool_registry_schema_bytes_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -2585,6 +2611,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "evaluation-compare-target-lookup-early-stop",
         "evaluation-store-samples-csv-streaming",
         "engine-generate-usage-token-elision",
+        "report-evidence-gate-run-kind-set-membership",
         "embedding-core-inputs-view",
         "job-registry-derived-model-single-pass",
         "job-registry-restore-sort-elision",
