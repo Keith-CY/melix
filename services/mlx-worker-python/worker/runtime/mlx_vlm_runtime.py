@@ -2246,7 +2246,9 @@ class MLXVLMRuntime:
             prepared_request,
         )
         if self._last_fast_path_signature == signature and not prepared_request.images and not prepared_request.videos:
-            return
+            receipt = self._last_probe.position_metadata_receipt or {}
+            if int(receipt.get("media_position_count", 0) or 0) == 0:
+                return
         fast_path = self._fast_path_controller.plan(loaded_model, prepared_request)
         self._last_fast_path_signature = signature
         self._last_probe = VisionProbeSnapshot(
