@@ -490,6 +490,11 @@ def test_metrics_snapshot_reports_text_batch_generator_http_gap() -> None:
             },
         },
         dry_run=False,
+        measurement_profile={
+            "profile": "cold",
+            "warmup_requests_per_endpoint": 0,
+            "operator_note": "",
+        },
     )
 
     assert "`http.stream_first_event_ms` | 1552.02" in markdown
@@ -517,7 +522,10 @@ def test_warmup_requests_mark_measurements_as_warm(tmp_path: Path, monkeypatch: 
         *,
         include_usage: bool,
         temperature: float,
+        top_p: float,
+        top_k: int,
         timeout_seconds: float,
+        run_key: str = "",
     ) -> list[bench.RequestObservation]:
         return [
             bench.RequestObservation(
