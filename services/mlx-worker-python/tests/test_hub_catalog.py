@@ -446,12 +446,22 @@ def test_next_cursor_from_link_accepts_cursor_at_query_start() -> None:
     assert hub_catalog_module._next_cursor_from_link(link_header) == "page/start"
 
 
+def test_next_cursor_from_link_ignores_rel_marker_inside_previous_url() -> None:
+    link_header = (
+        '<https://huggingface.co/api/models?cursor=prev&note=rel%3D%22next%22>; rel="prev", '
+        '<https://huggingface.co/api/models?limit=10&cursor=real%2Fnext>; rel="next"'
+    )
+
+    assert hub_catalog_module._next_cursor_from_link(link_header) == "real/next"
+
+
 def test_next_cursor_from_link_returns_empty_for_missing_or_malformed_next_cursor() -> None:
     assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models?cursor=prev>; rel="prev"') == ""
     assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models>; rel="next"') == ""
     assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models?limit=10>; rel="next"') == ""
     assert hub_catalog_module._next_cursor_from_link('<https://huggingface.co/api/models?cursor>; rel="next"') == ""
     assert hub_catalog_module._next_cursor_from_link('https://huggingface.co/api/models?cursor=broken; rel="next"') == ""
+    assert hub_catalog_module._next_cursor_from_link('https://huggingface.co/api/models?cursor=broken>; rel="next"') == ""
 
 
 def test_next_cursor_from_link_requires_cursor_parameter_boundary() -> None:
