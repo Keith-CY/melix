@@ -690,7 +690,9 @@ def test_lora_canary_receipt_detects_missing_checkpoint_resume_assets(
     assert fields["base_config_present"] is False
     assert fields["processor_resume_mode"] == "missing"
     assert fields["aux_modules_restored"] is False
-    assert fields["merge_export_canary_result"] == "fail:missing_base_config,missing_tokenizer_config"
+    assert fields["merge_export_canary_result"] == (
+        "fail:missing_base_config,missing_tokenizer_config,missing_auxiliary_modules"
+    )
     assert fields["callback_api_drift_result"] == "fail:callback_arity_mismatch"
 
 
