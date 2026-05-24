@@ -107,6 +107,10 @@ def test_position_metadata_receipt_counts_tensor_shapes_and_media_positions() ->
         "rebuild_count": 1,
         "mismatch_fallback_count": 1,
         "fallback_reason": "shape_mismatch",
+        "vision_metadata_guard": "aligned",
+        "vision_metadata_reuse_allowed": True,
+        "stale_metadata_fallback_count": 0,
+        "companion_rederive_skip_reason": "multimodal_companion_rederive_skipped_has_media",
     }
 
 
@@ -122,6 +126,10 @@ def test_position_metadata_receipt_defaults_to_shape_only_baseline() -> None:
         "rebuild_count": 0,
         "mismatch_fallback_count": 0,
         "fallback_reason": "",
+        "vision_metadata_guard": "no_media",
+        "vision_metadata_reuse_allowed": True,
+        "stale_metadata_fallback_count": 0,
+        "companion_rederive_skip_reason": "",
     }
 
 
@@ -134,6 +142,175 @@ def test_position_metadata_receipt_counts_flat_metadata_values() -> None:
 
     assert receipt["position_ids_count"] == 4
     assert receipt["rope_deltas_count"] == 2
+
+
+def test_position_metadata_receipt_blocks_media_reuse_when_position_metadata_is_missing() -> None:
+    request = PreparedVisionRequest(
+        prompt_text="Describe the image.",
+        images=[
+            PreparedImageInput(
+                bytes_data=b"image",
+                source_kind="inline",
+                reference="inline:image",
+                mime_type="image/jpeg",
+                format="jpg",
+                filename="image.jpg",
+                sha256_hex="abc123",
+            )
+        ],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=5,
+        preprocess_peak_memory_bytes=5,
+    )
+
+    receipt = build_position_metadata_receipt(
+        prepared_request=request,
+        seq_len=12,
+        fallback_reason="",
+    )
+
+    assert receipt["vision_metadata_guard"] == "missing_position_metadata"
+    assert receipt["vision_metadata_reuse_allowed"] is False
+    assert receipt["stale_metadata_fallback_count"] == 1
+    assert receipt["companion_rederive_skip_reason"] == (
+        "multimodal_companion_rederive_skipped_has_media"
+    )
+
+
+def test_position_metadata_receipt_allows_media_reuse_when_position_metadata_is_aligned() -> None:
+    request = PreparedVisionRequest(
+        prompt_text="Describe the image.",
+        images=[
+            PreparedImageInput(
+                bytes_data=b"image",
+                source_kind="inline",
+                reference="inline:image",
+                mime_type="image/jpeg",
+                format="jpg",
+                filename="image.jpg",
+                sha256_hex="abc123",
+            )
+        ],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=5,
+        preprocess_peak_memory_bytes=5,
+    )
+
+    receipt = build_position_metadata_receipt(
+        prepared_request=request,
+        seq_len=12,
+        position_ids=SimpleNamespace(shape=(1, 12)),
+        rope_deltas=SimpleNamespace(shape=(1, 3)),
+    )
+
+    assert receipt["vision_metadata_guard"] == "aligned"
+    assert receipt["vision_metadata_reuse_allowed"] is True
+    assert receipt["stale_metadata_fallback_count"] == 0
+    assert receipt["companion_rederive_skip_reason"] == (
+        "multimodal_companion_rederive_skipped_has_media"
+    )
+
+
+def test_position_metadata_receipt_blocks_stale_position_metadata_shapes() -> None:
+    request = PreparedVisionRequest(
+        prompt_text="Describe the image.",
+        images=[
+            PreparedImageInput(
+                bytes_data=b"image",
+                source_kind="inline",
+                reference="inline:image",
+                mime_type="image/jpeg",
+                format="jpg",
+                filename="image.jpg",
+                sha256_hex="abc123",
+            )
+        ],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=5,
+        preprocess_peak_memory_bytes=5,
+    )
+
+    receipt = build_position_metadata_receipt(
+        prepared_request=request,
+        seq_len=12,
+        position_ids=SimpleNamespace(shape=(1, 8)),
+        rope_deltas=SimpleNamespace(shape=(1, 3)),
+    )
+
+    assert receipt["vision_metadata_guard"] == "stale_position_metadata"
+    assert receipt["vision_metadata_reuse_allowed"] is False
+    assert receipt["stale_metadata_fallback_count"] == 1
+
+
+def test_position_metadata_receipt_allows_flat_media_metadata_without_shape() -> None:
+    request = PreparedVisionRequest(
+        prompt_text="Describe the image.",
+        images=[
+            PreparedImageInput(
+                bytes_data=b"image",
+                source_kind="inline",
+                reference="inline:image",
+                mime_type="image/jpeg",
+                format="jpg",
+                filename="image.jpg",
+                sha256_hex="abc123",
+            )
+        ],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=5,
+        preprocess_peak_memory_bytes=5,
+    )
+
+    receipt = build_position_metadata_receipt(
+        prepared_request=request,
+        seq_len=4,
+        position_ids=[0, 1, 2, 3],
+        rope_deltas={"row0": 0},
+    )
+
+    assert receipt["vision_metadata_guard"] == "aligned"
+    assert receipt["vision_metadata_reuse_allowed"] is True
+    assert receipt["stale_metadata_fallback_count"] == 0
+
+
+def test_position_metadata_receipt_allows_unknown_extent_when_seq_len_is_zero() -> None:
+    request = PreparedVisionRequest(
+        prompt_text="Describe the image.",
+        images=[
+            PreparedImageInput(
+                bytes_data=b"image",
+                source_kind="inline",
+                reference="inline:image",
+                mime_type="image/jpeg",
+                format="jpg",
+                filename="image.jpg",
+                sha256_hex="abc123",
+            )
+        ],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=5,
+        preprocess_peak_memory_bytes=5,
+    )
+
+    receipt = build_position_metadata_receipt(
+        prepared_request=request,
+        seq_len=0,
+        position_ids=object(),
+        rope_deltas={"row0": 0},
+    )
+
+    assert receipt["vision_metadata_guard"] == "aligned"
+    assert receipt["vision_metadata_reuse_allowed"] is True
 
 
 def test_position_metadata_receipt_counts_video_without_expanded_frame_policy() -> None:
@@ -170,6 +347,8 @@ def test_position_metadata_receipt_counts_video_without_expanded_frame_policy() 
 
     assert receipt["position_ids_count"] == 1
     assert receipt["media_position_count"] == 1
+    assert receipt["vision_metadata_guard"] == "missing_rope_metadata"
+    assert receipt["vision_metadata_reuse_allowed"] is False
 
 
 def test_deterministic_vlm_runtime_records_position_metadata_receipt() -> None:
@@ -205,7 +384,13 @@ def test_deterministic_vlm_runtime_records_position_metadata_receipt() -> None:
     assert receipt["media_position_count"] == 1
     assert receipt["seq_len"] > 1
     assert receipt["rebuild_count"] == 1
-    assert receipt["mismatch_fallback_count"] == 0
+    assert receipt["mismatch_fallback_count"] == 1
+    assert receipt["vision_metadata_guard"] == "missing_position_metadata"
+    assert receipt["vision_metadata_reuse_allowed"] is False
+    assert receipt["stale_metadata_fallback_count"] == 1
+    assert receipt["companion_rederive_skip_reason"] == (
+        "multimodal_companion_rederive_skipped_has_media"
+    )
 
 
 def test_mlx_vlm_runtime_records_position_metadata_receipt_for_media_requests() -> None:
@@ -283,8 +468,12 @@ def test_mlx_vlm_runtime_records_position_metadata_receipt_for_media_requests() 
         "cache_offset": 0,
         "seq_len": 5,
         "rebuild_count": 1,
-        "mismatch_fallback_count": 0,
+        "mismatch_fallback_count": 1,
         "fallback_reason": "",
+        "vision_metadata_guard": "missing_position_metadata",
+        "vision_metadata_reuse_allowed": False,
+        "stale_metadata_fallback_count": 1,
+        "companion_rederive_skip_reason": "multimodal_companion_rederive_skipped_has_media",
     }
 
 
@@ -326,6 +515,9 @@ def test_mlx_vlm_runtime_position_receipt_records_fallback_reason_for_text_backe
     assert receipt["seq_len"] == 3
     assert receipt["mismatch_fallback_count"] == 1
     assert receipt["fallback_reason"] == "text_backed_no_vision_weights"
+    assert receipt["vision_metadata_guard"] == "missing_position_metadata"
+    assert receipt["vision_metadata_reuse_allowed"] is False
+    assert receipt["stale_metadata_fallback_count"] == 1
 
 
 def test_mlx_vlm_runtime_position_receipt_records_baseline_for_prompt_only_turns() -> None:
@@ -363,4 +555,8 @@ def test_mlx_vlm_runtime_position_receipt_records_baseline_for_prompt_only_turns
         "rebuild_count": 0,
         "mismatch_fallback_count": 0,
         "fallback_reason": "no_media",
+        "vision_metadata_guard": "no_media",
+        "vision_metadata_reuse_allowed": True,
+        "stale_metadata_fallback_count": 0,
+        "companion_rederive_skip_reason": "",
     }
