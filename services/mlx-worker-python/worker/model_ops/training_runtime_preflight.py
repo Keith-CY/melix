@@ -68,29 +68,60 @@ def training_runtime_preflight_fields(
     }
 
 
-def call_with_training_failure_cleanup(callback: Callable[[], _T]) -> _T:
+def call_with_training_failure_cleanup(
+    callback: Callable[[], _T],
+    *,
+    details: dict[str, str] | None = None,
+) -> _T:
     try:
         return callback()
     except Exception as exc:
-        raise_with_training_failure_cleanup(exc)
+        raise_with_training_failure_cleanup(exc, details=details)
 
 
-def raise_with_training_failure_cleanup(exc: Exception) -> None:
+def raise_with_training_failure_cleanup(
+    exc: Exception,
+    *,
+    details: dict[str, str] | None = None,
+) -> None:
     cleanup = _cleanup_training_failure_exception(exc)
+    if details:
+        cleanup = {**details, **cleanup}
     if isinstance(exc, ModelOperationError):
-        details = dict(exc.details)
-        details.update(cleanup)
+        error_details = dict(exc.details)
+        error_details.update(cleanup)
         raise ModelOperationError(
             code=exc.code,
             message=exc.message,
             retriable=exc.retriable,
-            details=details,
+            details=error_details,
         ) from exc.__cause__
     raise ModelOperationError(
         code="backend_training_failure",
         message=str(exc),
         details=cleanup,
     ) from None
+
+
+def runtime_preflight_failure_details(fields: dict[str, Any]) -> dict[str, str]:
+    dependency = fields.get("media_decoder_dependency", {})
+    if not isinstance(dependency, dict):
+        dependency = {}
+    disabled_decoder_paths = fields.get("disabled_decoder_paths", [])
+    if isinstance(disabled_decoder_paths, list):
+        disabled_paths = ",".join(str(path) for path in disabled_decoder_paths)
+    else:
+        disabled_paths = str(disabled_decoder_paths)
+    return {
+        "runtime_gate": str(fields.get("runtime_gate", "")),
+        "inspection_only_import": str(fields.get("inspection_only_import", "")).lower(),
+        "native_load_status": str(fields.get("native_load_status", "")),
+        "disabled_decoder_paths": disabled_paths,
+        "fallback_reader": str(fields.get("fallback_reader", "")),
+        "unsupported_reason": str(fields.get("unsupported_reason", "")),
+        "media_decoder_dependency_state": str(dependency.get("state", "")),
+        "media_decoder_dependency_module": str(dependency.get("module", "")),
+    }
 
 
 def _module_spec_available(module_name: str) -> bool:

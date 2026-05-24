@@ -18,6 +18,7 @@ from worker.model_ops.lora_training_pipeline import (
     LoRATrainingPipeline,
 )
 from worker.model_ops.training_runtime_preflight import (
+    runtime_preflight_failure_details,
     training_runtime_preflight_fields as _training_runtime_preflight_fields,
 )
 from worker.model_ops.mlx_lm_runner import TrainingMetrics
@@ -441,6 +442,77 @@ def test_training_failure_cleanup_details_clear_nested_tracebacks_and_report_ret
     assert "inner tensor load failed" in exc.value.details["traceback_summary_before_cleanup"]
     assert captured["outer"].__traceback__ is None
     assert captured["inner"].__traceback__ is None
+
+
+def test_training_failure_cleanup_preserves_runtime_preflight_details(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def fake_find_spec(name: str):
+        if name in {"mlx", "mlx_lm"}:
+            return object()
+        if name == "PIL":
+            raise ValueError("corrupt decoder spec")
+        return object()
+
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
+    monkeypatch.setattr("importlib.util.find_spec", fake_find_spec)
+
+    class FailingRunner(DeterministicLoRARunner):
+        def train_native(self, request):  # noqa: ANN001
+            _ = request
+            raise RuntimeError("native trainer crashed before adapter output")
+
+    dataset_dir = _write_dataset_package(tmp_path / "dataset")
+
+    with pytest.raises(ModelOperationError) as exc:
+        LoRATrainingPipeline(runner=FailingRunner()).run(
+            job_id="train-runtime-preflight-failure",
+            request_ext={
+                "operation": "train_lora",
+                "adapter_name": "runtime-preflight-adapter",
+                "dataset_uri": str(dataset_dir),
+            },
+            source_model=_text_model(model_path=str(tmp_path / "base-model")),
+            output_dir=tmp_path / "output",
+            jobs_root=tmp_path / "jobs",
+        )
+
+    assert exc.value.code == "backend_training_failure"
+    assert exc.value.details["runtime_gate"] == "ready"
+    assert exc.value.details["native_load_status"] == "available"
+    assert exc.value.details["disabled_decoder_paths"] == "media"
+    assert exc.value.details["media_decoder_dependency_state"] == "broken"
+    assert exc.value.details["media_decoder_dependency_module"] == "PIL"
+    assert exc.value.details["unsupported_reason"] == ""
+    assert exc.value.details["traceback_cleanup_result"] == "cleared"
+    retained_bytes = int(exc.value.details["retained_tensor_bytes_after_failure"])
+    assert 0 <= retained_bytes < 1024 * 1024
+
+
+def test_runtime_preflight_failure_details_coerces_unexpected_receipt_shapes() -> None:
+    details = runtime_preflight_failure_details(
+        {
+            "runtime_gate": "unsupported",
+            "inspection_only_import": True,
+            "native_load_status": "disabled",
+            "disabled_decoder_paths": "media",
+            "fallback_reader": "metadata_only",
+            "unsupported_reason": "non_apple_host",
+            "media_decoder_dependency": "not-a-dict",
+        }
+    )
+
+    assert details == {
+        "runtime_gate": "unsupported",
+        "inspection_only_import": "true",
+        "native_load_status": "disabled",
+        "disabled_decoder_paths": "media",
+        "fallback_reader": "metadata_only",
+        "unsupported_reason": "non_apple_host",
+        "media_decoder_dependency_state": "",
+        "media_decoder_dependency_module": "",
+    }
 
 
 def test_lora_canary_receipt_records_tokenizer_resume_and_drift_status(
