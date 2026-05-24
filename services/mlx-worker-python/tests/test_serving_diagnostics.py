@@ -19,6 +19,22 @@ from worker.productization.serving_diagnostics import (
 )
 
 
+def profile_proof_request_summary() -> ServingDiagnosticsRequestSummary:
+    return ServingDiagnosticsRequestSummary(
+        request_id="req-profile-proof",
+        task_kind="text-generation",
+        model_id="melix-dev-text",
+        runtime_kind="deterministic",
+        acceleration_mode="baseline",
+        prompt_protocol_id="chat.completions.v1",
+        prompt_digest="sha256:prompt",
+        prompt_template_digest="sha256:template",
+        generation_config={},
+        status="completed",
+        finish_reason="stop",
+    )
+
+
 def test_serving_diagnostics_bundle_writes_stable_layout_and_prefill_fields(
     tmp_path: Path,
 ) -> None:
@@ -120,6 +136,197 @@ def test_serving_diagnostics_bundle_writes_stable_layout_and_prefill_fields(
             "attributes": {"cache_hit_tokens": 96, "prefill_chunk_size": 64},
         }
     ]
+
+
+def test_serving_diagnostics_effective_config_preserves_profile_proof_receipt(
+    tmp_path: Path,
+) -> None:
+    summary = profile_proof_request_summary()
+    profile_receipt = {
+        "requested_profile": "throughput",
+        "effective_profile": "balanced",
+        "profile_mode": "optimized",
+        "proof_matrix_id": "",
+        "verification_status": "missing",
+        "profile_admission_status": "experimental_unverified",
+        "fallback_reason": "experimental_unverified",
+        "recovery_hint": "Attach a passing proof matrix row before enabling this profile.",
+    }
+
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-profile-proof",
+        invocation={},
+        effective_config={
+            "serving_profile": profile_receipt,
+            "runtime": {"mode": "baseline"},
+        },
+        model_refs={"model_id": "melix-dev-text"},
+        request_summary=summary,
+        events=(),
+        diagnostics_mode="debug",
+    )
+
+    effective_config = json.loads(paths["effective_config"].read_text(encoding="utf-8"))
+    assert effective_config["serving_profile"] == profile_receipt
+
+
+def test_serving_diagnostics_effective_config_derives_profile_receipt_from_audit_metadata(
+    tmp_path: Path,
+) -> None:
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-profile-proof-audit",
+        invocation={},
+        effective_config={
+            "execution": {
+                "ext": {
+                    "melix.acceleration.profile.requested_profile": "throughput",
+                    "melix.acceleration.profile.effective_profile": "balanced",
+                    "melix.acceleration.profile.profile_mode": "optimized",
+                    "melix.acceleration.profile.proof_matrix_id": "",
+                    "melix.acceleration.profile.verification_status": "missing",
+                    "melix.acceleration.profile.profile_admission_status": "experimental_unverified",
+                    "melix.acceleration.profile.fallback_reason": "experimental_unverified",
+                    "melix.acceleration.profile.recovery_hint": (
+                        "Attach a passing proof matrix row before enabling this profile."
+                    ),
+                }
+            }
+        },
+        model_refs={"model_id": "melix-dev-text"},
+        request_summary=profile_proof_request_summary(),
+        events=(),
+        diagnostics_mode="debug",
+    )
+
+    effective_config = json.loads(paths["effective_config"].read_text(encoding="utf-8"))
+    assert effective_config["serving_profile"] == {
+        "requested_profile": "throughput",
+        "effective_profile": "balanced",
+        "profile_mode": "optimized",
+        "proof_matrix_id": "",
+        "verification_status": "missing",
+        "profile_admission_status": "experimental_unverified",
+        "fallback_reason": "experimental_unverified",
+        "recovery_hint": "Attach a passing proof matrix row before enabling this profile.",
+    }
+
+
+def test_serving_diagnostics_effective_config_derives_profile_receipt_from_worker_request_ext(
+    tmp_path: Path,
+) -> None:
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-profile-proof-worker-request",
+        invocation={},
+        effective_config={
+            "worker_request": {
+                "execution": {
+                    "ext": {
+                        "melix.acceleration.profile.requested_profile": "throughput",
+                        "melix.acceleration.profile.effective_profile": "throughput",
+                        "melix.acceleration.profile.profile_admission_status": "admitted",
+                    }
+                }
+            }
+        },
+        model_refs={"model_id": "melix-dev-text"},
+        request_summary=profile_proof_request_summary(),
+        events=(),
+        diagnostics_mode="debug",
+    )
+
+    effective_config = json.loads(paths["effective_config"].read_text(encoding="utf-8"))
+    assert effective_config["serving_profile"] == {
+        "requested_profile": "throughput",
+        "effective_profile": "throughput",
+        "profile_admission_status": "admitted",
+    }
+
+
+def test_serving_diagnostics_effective_config_skips_incomplete_profile_audit_metadata(
+    tmp_path: Path,
+) -> None:
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-profile-proof-incomplete",
+        invocation={},
+        effective_config={
+            "execution_ext": {
+                "melix.acceleration.profile.requested_profile": "throughput",
+                "melix.acceleration.profile.effective_profile": "balanced",
+            }
+        },
+        model_refs={"model_id": "melix-dev-text"},
+        request_summary=profile_proof_request_summary(),
+        events=(),
+        diagnostics_mode="debug",
+    )
+
+    effective_config = json.loads(paths["effective_config"].read_text(encoding="utf-8"))
+    assert "serving_profile" not in effective_config
+
+
+def test_serving_diagnostics_effective_config_keeps_explicit_serving_profile(
+    tmp_path: Path,
+) -> None:
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-profile-proof-explicit",
+        invocation={},
+        effective_config={
+            "serving_profile": {
+                "requested_profile": "balanced",
+                "effective_profile": "balanced",
+                "profile_admission_status": "admitted",
+            },
+            "execution_ext": {
+                "melix.acceleration.profile.requested_profile": "throughput",
+                "melix.acceleration.profile.effective_profile": "balanced",
+                "melix.acceleration.profile.profile_admission_status": "experimental_unverified",
+            },
+        },
+        model_refs={"model_id": "melix-dev-text"},
+        request_summary=profile_proof_request_summary(),
+        events=(),
+        diagnostics_mode="debug",
+    )
+
+    effective_config = json.loads(paths["effective_config"].read_text(encoding="utf-8"))
+    assert effective_config["serving_profile"] == {
+        "requested_profile": "balanced",
+        "effective_profile": "balanced",
+        "profile_admission_status": "admitted",
+    }
+
+
+def test_serving_diagnostics_empty_effective_config_skips_profile_receipt_scan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def fail_profile_scan(metadata: object) -> dict[str, object]:
+        raise AssertionError("empty effective_config should skip profile receipt scans")
+
+    monkeypatch.setattr(
+        serving_diagnostics_module,
+        "_serving_profile_receipt_from_audit_metadata",
+        fail_profile_scan,
+    )
+
+    paths = write_serving_diagnostics_bundle(
+        output_root=tmp_path,
+        bundle_id="diag-empty-profile-scan",
+        invocation={},
+        effective_config={},
+        model_refs={"model_id": "melix-dev-text"},
+        request_summary=profile_proof_request_summary(),
+        events=(),
+        diagnostics_mode="debug",
+    )
+
+    effective_config = json.loads(paths["effective_config"].read_text(encoding="utf-8"))
+    assert effective_config == {}
 
 
 def test_serving_diagnostics_event_empty_attributes_match_explicit_empty_mapping() -> None:

@@ -22,6 +22,11 @@ struct MelixCLIParserTests {
         #expect(MelixCLIParser.usageText.contains("melix info --json"))
         #expect(MelixCLIParser.usageText.contains("melix capabilities --json [--model-query MODEL]"))
         #expect(MelixCLIParser.usageText.contains("melix config metadata --json"))
+        #expect(MelixCLIParser.usageText.contains("melix workspace preflight --manifest PATH [--output PATH] [--json]"))
+        #expect(MelixCLIParser.usageText.contains("melix dataset prepare ingest --workspace-project-id ID --workspace-manifest PATH --input PATH --output-dir PATH --dataset-preparation-id ID"))
+        #expect(MelixCLIParser.usageText.contains("melix dataset prepare version --workspace-manifest PATH --ingest-receipt PATH --output-root PATH --dataset-id ID"))
+        #expect(MelixCLIParser.usageText.contains("melix dataset prepare retry-failed --workspace-manifest PATH --dataset-version PATH --output-root PATH"))
+        #expect(MelixCLIParser.usageText.contains("melix dataset prepare list-versions --workspace-manifest PATH --output-root PATH --dataset-id ID"))
         #expect(MelixCLIParser.usageText.contains("melix uri inspect URI [--json]"))
         #expect(MelixCLIParser.usageText.contains("melix recipes plan RECIPE_ID"))
     }
@@ -40,6 +45,97 @@ struct MelixCLIParserTests {
             (["instructions", "--json"], "instructions"),
             (["schema", "--json"], "schema"),
             (["config", "metadata", "--json"], "config.metadata"),
+            ([
+                "workspace",
+                "preflight",
+                "--manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--output",
+                "/tmp/melix-workspace/workspace-preflight-receipt.json",
+                "--json",
+            ], "workspace.preflight"),
+            ([
+                "dataset",
+                "prepare",
+                "ingest",
+                "--workspace-project-id",
+                "m-courtyard-demo",
+                "--workspace-manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--input",
+                "/tmp/melix-workspace/raw",
+                "--output-dir",
+                "/tmp/melix-workspace/datasets/prep",
+                "--dataset-preparation-id",
+                "prep-1",
+                "--pii-mask",
+                "true",
+                "--exact-dedup",
+                "false",
+                "--fuzzy-dedup",
+                "true",
+                "--segmentation",
+                "true",
+                "--segmentation-strategy",
+                "paragraph",
+                "--output",
+                "/tmp/melix-workspace/reports/dataset-ingest-receipt.json",
+                "--json",
+            ], "dataset.prepare.ingest"),
+            ([
+                "dataset",
+                "prepare",
+                "version",
+                "--workspace-manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--ingest-receipt",
+                "/tmp/melix-workspace/prepared/dataset-ingest-receipt.json",
+                "--output-root",
+                "/tmp/melix-workspace/datasets",
+                "--dataset-id",
+                "support-chat",
+                "--version-id",
+                "support-chat-v1",
+                "--mode",
+                "chat",
+                "--generator-model",
+                "melix.local.dataset-versioner.v1",
+                "--output-kind",
+                "training",
+                "--output-format",
+                "prompt_completion",
+                "--validation-ratio",
+                "0.2",
+                "--fail-segment-id",
+                "segment-1",
+                "--json",
+            ], "dataset.prepare.version"),
+            ([
+                "dataset",
+                "prepare",
+                "retry-failed",
+                "--workspace-manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--dataset-version",
+                "/tmp/melix-workspace/datasets/support-chat/versions/v1/dataset-version.json",
+                "--output-root",
+                "/tmp/melix-workspace/datasets",
+                "--version-id",
+                "support-chat-v2",
+                "--json",
+            ], "dataset.prepare.retry-failed"),
+            ([
+                "dataset",
+                "prepare",
+                "list-versions",
+                "--workspace-manifest",
+                "/tmp/melix-workspace/workspace-manifest.json",
+                "--output-root",
+                "/tmp/melix-workspace/datasets",
+                "--dataset-id",
+                "support-chat",
+                "--json",
+            ], "dataset.prepare.list-versions"),
             (["jobs", "list", "--json"], "jobs.list"),
             (["jobs", "show", "bench-1", "--from", "/tmp/runs", "--json"], "jobs.show"),
             (["jobs", "logs", "bench-1", "--follow", "--json"], "jobs.logs"),
@@ -68,6 +164,30 @@ struct MelixCLIParserTests {
         #expect(throws: MelixCLIError.self) {
             _ = try MelixCLIParser.parse(["config", "unknown", "--json"])
         }
+
+        let versionCommand = try MelixCLIParser.parse([
+            "dataset",
+            "prepare",
+            "version",
+            "--workspace-manifest",
+            "/tmp/melix-workspace/workspace-manifest.json",
+            "--ingest-receipt",
+            "/tmp/melix-workspace/prepared/dataset-ingest-receipt.json",
+            "--output-root",
+            "/tmp/melix-workspace/datasets",
+            "--dataset-id",
+            "support-chat",
+            "--fail-segment-id",
+            "segment-1",
+            "--fail-segment-id",
+            "segment-2",
+            "--json",
+        ])
+        guard case .datasetPrepareVersion(let versionOptions) = versionCommand else {
+            Issue.record("Expected datasetPrepareVersion command")
+            return
+        }
+        #expect(versionOptions.failSegmentIDs == ["segment-1", "segment-2"])
     }
 
     @Test("rejects malformed runtime settings and discovery commands")
@@ -103,6 +223,12 @@ struct MelixCLIParserTests {
             _ = try MelixCLIParser.parse(["config", "metadata"])
         }
         #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            _ = try MelixCLIParser.parse(["workspace", "unknown"])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--manifest is required for melix workspace preflight.")) {
+            _ = try MelixCLIParser.parse(["workspace", "preflight", "--json"])
+        }
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
             _ = try MelixCLIParser.parse(["jobs"])
         }
         #expect(throws: MelixCLIError.missingRequired("JOB_ID is required for melix jobs show.")) {
@@ -110,6 +236,109 @@ struct MelixCLIParserTests {
         }
         #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
             _ = try MelixCLIParser.parse(["jobs", "unknown", "--json"])
+        }
+    }
+
+    @Test("rejects incomplete dataset prepare commands")
+    func rejectsIncompleteDatasetPrepareCommands() {
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            _ = try MelixCLIParser.parse(["dataset", "prepare"])
+        }
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            _ = try MelixCLIParser.parse(["dataset", "prepare", "unknown"])
+        }
+
+        #expect(throws: MelixCLIError.missingRequired("--workspace-project-id is required for melix dataset prepare ingest.")) {
+            _ = try MelixCLIParser.parse(["dataset", "prepare", "ingest"])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--workspace-manifest is required for melix dataset prepare ingest.")) {
+            _ = try MelixCLIParser.parse([
+                "dataset", "prepare", "ingest",
+                "--workspace-project-id", "m-courtyard-demo",
+            ])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--input is required for melix dataset prepare ingest.")) {
+            _ = try MelixCLIParser.parse([
+                "dataset", "prepare", "ingest",
+                "--workspace-project-id", "m-courtyard-demo",
+                "--workspace-manifest", "/tmp/workspace-manifest.json",
+            ])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--output-dir is required for melix dataset prepare ingest.")) {
+            _ = try MelixCLIParser.parse([
+                "dataset", "prepare", "ingest",
+                "--workspace-project-id", "m-courtyard-demo",
+                "--workspace-manifest", "/tmp/workspace-manifest.json",
+                "--input", "/tmp/raw",
+            ])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--dataset-preparation-id is required for melix dataset prepare ingest.")) {
+            _ = try MelixCLIParser.parse([
+                "dataset", "prepare", "ingest",
+                "--workspace-project-id", "m-courtyard-demo",
+                "--workspace-manifest", "/tmp/workspace-manifest.json",
+                "--input", "/tmp/raw",
+                "--output-dir", "/tmp/prepared",
+            ])
+        }
+
+        #expect(throws: MelixCLIError.missingRequired("--workspace-manifest is required for melix dataset prepare version.")) {
+            _ = try MelixCLIParser.parse(["dataset", "prepare", "version"])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--ingest-receipt is required for melix dataset prepare version.")) {
+            _ = try MelixCLIParser.parse([
+                "dataset", "prepare", "version",
+                "--workspace-manifest", "/tmp/workspace-manifest.json",
+            ])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--output-root is required for melix dataset prepare version.")) {
+            _ = try MelixCLIParser.parse([
+                "dataset", "prepare", "version",
+                "--workspace-manifest", "/tmp/workspace-manifest.json",
+                "--ingest-receipt", "/tmp/ingest-receipt.json",
+            ])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--dataset-id is required for melix dataset prepare version.")) {
+            _ = try MelixCLIParser.parse([
+                "dataset", "prepare", "version",
+                "--workspace-manifest", "/tmp/workspace-manifest.json",
+                "--ingest-receipt", "/tmp/ingest-receipt.json",
+                "--output-root", "/tmp/datasets",
+            ])
+        }
+
+        #expect(throws: MelixCLIError.missingRequired("--workspace-manifest is required for melix dataset prepare retry-failed.")) {
+            _ = try MelixCLIParser.parse(["dataset", "prepare", "retry-failed"])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--dataset-version is required for melix dataset prepare retry-failed.")) {
+            _ = try MelixCLIParser.parse([
+                "dataset", "prepare", "retry-failed",
+                "--workspace-manifest", "/tmp/workspace-manifest.json",
+            ])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--output-root is required for melix dataset prepare retry-failed.")) {
+            _ = try MelixCLIParser.parse([
+                "dataset", "prepare", "retry-failed",
+                "--workspace-manifest", "/tmp/workspace-manifest.json",
+                "--dataset-version", "/tmp/dataset-version.json",
+            ])
+        }
+
+        #expect(throws: MelixCLIError.missingRequired("--workspace-manifest is required for melix dataset prepare list-versions.")) {
+            _ = try MelixCLIParser.parse(["dataset", "prepare", "list-versions"])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--output-root is required for melix dataset prepare list-versions.")) {
+            _ = try MelixCLIParser.parse([
+                "dataset", "prepare", "list-versions",
+                "--workspace-manifest", "/tmp/workspace-manifest.json",
+            ])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--dataset-id is required for melix dataset prepare list-versions.")) {
+            _ = try MelixCLIParser.parse([
+                "dataset", "prepare", "list-versions",
+                "--workspace-manifest", "/tmp/workspace-manifest.json",
+                "--output-root", "/tmp/datasets",
+            ])
         }
     }
 
@@ -1030,6 +1259,7 @@ struct MelixCLIParserTests {
             .remoteServerTest(.init(remoteServerID: "custom", remoteModelID: "remote-model", json: true)),
             .chatRun(.init(modelID: "model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)),
             .chatRun(.init(remoteServerID: "custom", remoteModelID: "remote-model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)),
+            .workspacePreflight(.init(manifestPath: "/tmp/workspace/workspace-manifest.json", outputPath: "/tmp/workspace/workspace-preflight-receipt.json", json: true)),
             .loraRun(.init(training: .init(modelID: "model-8bit", datasetSourceKind: "hf_dataset", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "auto", parameters: ["derived_model_alias": "derived", "response_only": "true"], preflightFitCheck: true, allowMemoryRisk: true), evaluation: .init(modelID: "model-8bit", suites: ["event_extraction"], datasetID: "top200", sampleSize: 4, parameters: ["dataset_root": "evaluation"], json: false), outputDir: "/tmp/lora-run", json: true)),
             .loraTrain(.init(modelID: "model", datasetSourceKind: "huggingface", datasetURI: "dataset/repo", adapterName: "adapter", targetRepo: "melix/adapter", trainingMode: "qlora", parameters: ["derived_model_alias": "derived", "response_only": "true"], json: true)),
             .alignmentTrain(.init(modelID: "model", datasetURI: "/tmp/preference.jsonl", adapterName: "aligned", algorithm: "dpo", json: true)),

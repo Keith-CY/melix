@@ -112,6 +112,61 @@ struct ModelCatalogTests {
         #expect(acceleration.speculativeHead.artifactAvailable)
     }
 
+    @Test("serving profile receipts admit balanced and require optimized proof rows")
+    func servingProfileReceiptsAdmitBalancedAndRequireOptimizedProofRows() async throws {
+        var model = ModelCatalog.devTextModel()
+        model.settings.ext["melix.acceleration.supported_modes"] = "baseline,speculative_decode"
+        model.settings.ext["melix.acceleration.valid_draft_model_ids"] = "melix-dev-draft"
+
+        let balanced = ModelCapabilityReceipts.validateAcceleration(
+            model: model,
+            requestedMode: .baseline,
+            draftModelID: "",
+            requestedProfileID: "balanced"
+        )
+        #expect(balanced.ok)
+        #expect(balanced.profileReceipt.requestedProfile == "balanced")
+        #expect(balanced.profileReceipt.effectiveProfile == "balanced")
+        #expect(balanced.profileReceipt.profileMode == "default")
+        #expect(balanced.profileReceipt.verificationStatus == "not_required")
+        #expect(balanced.profileReceipt.profileAdmissionStatus == "admitted")
+
+        let missingProof = ModelCapabilityReceipts.validateAcceleration(
+            model: model,
+            requestedMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft",
+            requestedProfileID: "throughput"
+        )
+        #expect(missingProof.ok == false)
+        #expect(missingProof.unsupportedReason == .unsupportedReasonExperimentalUnverified)
+        #expect(missingProof.profileReceipt.requestedProfile == "throughput")
+        #expect(missingProof.profileReceipt.effectiveProfile == "balanced")
+        #expect(missingProof.profileReceipt.profileMode == "optimized")
+        #expect(missingProof.profileReceipt.verificationStatus == "missing")
+        #expect(missingProof.profileReceipt.profileAdmissionStatus == "experimental_unverified")
+        #expect(missingProof.profileReceipt.fallbackReason == "experimental_unverified")
+        #expect(missingProof.profileReceipt.recoveryHint.contains("passing proof matrix row"))
+
+        model.settings.ext["melix.acceleration.profile.proof_matrix_id"] = "profile-proof-throughput-v1"
+        model.settings.ext["melix.acceleration.profile.verification_status"] = "passed"
+        let admitted = ModelCapabilityReceipts.validateAcceleration(
+            model: model,
+            requestedMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft",
+            requestedProfileID: "throughput"
+        )
+        let audit = ModelCapabilityReceipts.accelerationAuditMetadata(
+            admitted.receipt,
+            profileReceipt: admitted.profileReceipt
+        )
+        #expect(admitted.ok)
+        #expect(admitted.profileReceipt.proofMatrixID == "profile-proof-throughput-v1")
+        #expect(admitted.profileReceipt.verificationStatus == "passed")
+        #expect(admitted.profileReceipt.profileAdmissionStatus == "admitted")
+        #expect(audit["melix.acceleration.profile.requested_profile"] == "throughput")
+        #expect(audit["melix.acceleration.profile.proof_matrix_id"] == "profile-proof-throughput-v1")
+    }
+
     @Test("capability receipt validation refuses invalid drafts and inconsistent speculative metadata")
     func capabilityReceiptValidationRefusesInvalidDraftsAndInconsistentSpeculativeMetadata() async throws {
         var model = ModelCatalog.devTextModel()
@@ -517,7 +572,7 @@ struct ModelCatalogTests {
 
         #expect(model.routeClass == .workerRoutePythonVlm)
         #expect(model.capabilityClass == .modelCapabilityVlm)
-        #expect(model.supportedModalities == ["text", "image"])
+        #expect(model.supportedModalities == ["text", "image", "video"])
         #expect(model.supportedTasks == ["vlm", "generate"])
         #expect(model.settings.ext["vision_family_id"] == "llava-v1")
         #expect(model.settings.ext["melix.adapter_set_hash"] == "vision-family-llava-v1")

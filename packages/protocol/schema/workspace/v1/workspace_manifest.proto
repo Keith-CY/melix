@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+package melix.workspace.v1;
+
+message WorkspaceManifest {
+  string schema_version = 1;
+  ProjectIdentity project = 2;
+  repeated ArtifactRoot artifact_roots = 3;
+  repeated WorkspaceArtifact artifacts = 4;
+  repeated ProvenanceReference provenance = 5;
+  RedactionPolicy redaction_policy = 6;
+  map<string, string> ext = 7;
+}
+
+message ProjectIdentity {
+  string project_id = 1;
+  string display_name = 2;
+  string owner = 3;
+  string created_at = 4;
+  string updated_at = 5;
+  map<string, string> ext = 6;
+}
+
+enum ArtifactRootKind {
+  ARTIFACT_ROOT_KIND_UNSPECIFIED = 0;
+  ARTIFACT_ROOT_KIND_WORKSPACE = 1;
+  ARTIFACT_ROOT_KIND_JOBS = 2;
+  ARTIFACT_ROOT_KIND_RUNTIME = 3;
+  ARTIFACT_ROOT_KIND_EXTERNAL = 4;
+}
+
+message ArtifactRoot {
+  string root_id = 1;
+  ArtifactRootKind kind = 2;
+  string path = 3;
+  string uri = 4;
+  bool melix_owned = 5;
+  string redaction_scope = 6;
+  map<string, string> ext = 7;
+}
+
+enum WorkspaceArtifactType {
+  WORKSPACE_ARTIFACT_TYPE_UNSPECIFIED = 0;
+  WORKSPACE_ARTIFACT_TYPE_RAW_INPUTS = 1;
+  WORKSPACE_ARTIFACT_TYPE_CLEANED_DATA = 2;
+  WORKSPACE_ARTIFACT_TYPE_DATASET_VERSION = 3;
+  WORKSPACE_ARTIFACT_TYPE_ADAPTER = 4;
+  WORKSPACE_ARTIFACT_TYPE_LOG = 5;
+  WORKSPACE_ARTIFACT_TYPE_EXPORT = 6;
+  WORKSPACE_ARTIFACT_TYPE_REPORT = 7;
+  WORKSPACE_ARTIFACT_TYPE_EVIDENCE_BUNDLE = 8;
+}
+
+message WorkspaceArtifact {
+  string artifact_id = 1;
+  WorkspaceArtifactType artifact_type = 2;
+  string root_id = 3;
+  string relative_path = 4;
+  string schema_version = 5;
+  string media_type = 6;
+  uint64 byte_size = 7;
+  string digest = 8;
+  repeated string provenance_ref_ids = 9;
+  map<string, string> ext = 10;
+}
+
+message ProvenanceReference {
+  string provenance_ref_id = 1;
+  string kind = 2;
+  string uri = 3;
+  string digest = 4;
+  string created_by = 5;
+  string created_at = 6;
+  map<string, string> ext = 7;
+}
+
+enum RedactionMode {
+  REDACTION_MODE_UNSPECIFIED = 0;
+  REDACTION_MODE_NONE = 1;
+  REDACTION_MODE_LOCAL_PATHS = 2;
+  REDACTION_MODE_LOCAL_PATHS_AND_SECRETS = 3;
+}
+
+enum RedactionAction {
+  REDACTION_ACTION_UNSPECIFIED = 0;
+  REDACTION_ACTION_KEEP_RELATIVE = 1;
+  REDACTION_ACTION_HASH = 2;
+  REDACTION_ACTION_DROP = 3;
+  REDACTION_ACTION_REPLACE = 4;
+}
+
+message RedactionRule {
+  string rule_id = 1;
+  string field_selector = 2;
+  RedactionAction action = 3;
+  string replacement = 4;
+}
+
+message RedactionPolicy {
+  string policy_id = 1;
+  RedactionMode mode = 2;
+  string description = 3;
+  bool redact_absolute_paths = 4;
+  bool redact_operator_identity = 5;
+  repeated RedactionRule rules = 6;
+  map<string, string> ext = 7;
+}
+
+message WorkspaceManifestValidationReport {
+  bool ok = 1;
+  string schema_version = 2;
+  string project_id = 3;
+  string redaction_policy_id = 4;
+  RedactionMode redaction_mode = 5;
+  uint32 fixture_count = 6;
+  uint32 schema_error_count = 7;
+  uint64 manifest_byte_size = 8;
+  double manifest_validation_latency_ms = 9;
+  repeated string errors = 10;
+}

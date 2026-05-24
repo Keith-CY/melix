@@ -31,6 +31,12 @@ evidence artifact contains:
 - linked raw artifacts
 - failure and fallback state
 
+When run evidence is part of a project workspace, the report, raw artifact
+links, and evidence bundles must be representable through the
+[workspace manifest contract](workspace-manifest-contract.md). The evidence
+envelope remains the claim source of truth; `workspace-manifest.json` records
+where workspace consumers find the artifact and which redaction policy applies.
+
 Markdown and CSV exports are derived views. They must never become the only
 place where a metric, gate result, probe, or telemetry value exists.
 

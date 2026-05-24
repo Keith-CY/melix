@@ -17,6 +17,19 @@ SERVING_DIAGNOSTICS_MANIFEST_SCHEMA_VERSION = "melix.serving_diagnostics.manifes
 SERVING_DIAGNOSTICS_REQUEST_SCHEMA_VERSION = "melix.serving_diagnostics.request_summary.v1"
 SERVING_DIAGNOSTICS_EVENT_SCHEMA_VERSION = "melix.serving_diagnostics.event.v1"
 SERVING_DIAGNOSTICS_COMPARISON_SCHEMA_VERSION = "melix.serving_diagnostics.comparison.v1"
+_PROFILE_AUDIT_TO_RECEIPT_FIELDS = {
+    "melix.acceleration.profile.requested_profile": "requested_profile",
+    "melix.acceleration.profile.effective_profile": "effective_profile",
+    "melix.acceleration.profile.profile_mode": "profile_mode",
+    "melix.acceleration.profile.proof_matrix_id": "proof_matrix_id",
+    "melix.acceleration.profile.verification_status": "verification_status",
+    "melix.acceleration.profile.profile_admission_status": "profile_admission_status",
+    "melix.acceleration.profile.fallback_reason": "fallback_reason",
+    "melix.acceleration.profile.recovery_hint": "recovery_hint",
+}
+_PROFILE_RECEIPT_REQUIRED_FIELDS = frozenset(
+    ("requested_profile", "effective_profile", "profile_admission_status")
+)
 _EMPTY_EVENT_ATTRIBUTES: Mapping[str, object] = MappingProxyType({})
 _JSON_COMPACT_SEPARATORS = (",", ":")
 _JSONL_ENCODER = json.JSONEncoder(sort_keys=True, separators=_JSON_COMPACT_SEPARATORS)
@@ -326,7 +339,10 @@ def write_serving_diagnostics_bundle(
     }
 
     _write_json(manifest_path, manifest)
-    _write_json(effective_config_path, _stable_json_object(effective_config))
+    _write_json(
+        effective_config_path,
+        _effective_config_with_profile_receipt(effective_config),
+    )
     _write_json(request_summary_path, request_summary.to_dict())
     _write_jsonl(events_path, event_rows)
     return {
@@ -479,6 +495,61 @@ def _stable_json_object(payload: Mapping[str, object]) -> dict[str, object]:
         str(key): _stable_json_value(value)
         for key, value in sorted(payload.items(), key=lambda item: str(item[0]))
     }
+
+
+def _effective_config_with_profile_receipt(
+    effective_config: Mapping[str, object],
+) -> dict[str, object]:
+    if not effective_config:
+        return {}
+    stable_config = _stable_json_object(effective_config)
+    if "serving_profile" in stable_config:
+        return stable_config
+    for metadata in _effective_config_metadata_sources(stable_config):
+        receipt = _serving_profile_receipt_from_audit_metadata(metadata)
+        if receipt:
+            enriched_config = dict(stable_config)
+            enriched_config["serving_profile"] = receipt
+            return _stable_json_object(enriched_config)
+    return stable_config
+
+
+def _effective_config_metadata_sources(
+    effective_config: Mapping[str, object],
+) -> tuple[Mapping[str, object], ...]:
+    sources: list[Mapping[str, object]] = [effective_config]
+    for container_key in ("execution_ext", "execution_metadata", "request_metadata", "metadata"):
+        container = effective_config.get(container_key)
+        if isinstance(container, Mapping):
+            sources.append(container)
+    execution = effective_config.get("execution")
+    if isinstance(execution, Mapping):
+        sources.append(execution)
+        ext = execution.get("ext")
+        if isinstance(ext, Mapping):
+            sources.append(ext)
+    worker_request = effective_config.get("worker_request")
+    if isinstance(worker_request, Mapping):
+        execution = worker_request.get("execution")
+        if isinstance(execution, Mapping):
+            sources.append(execution)
+            ext = execution.get("ext")
+            if isinstance(ext, Mapping):
+                sources.append(ext)
+    return tuple(sources)
+
+
+def _serving_profile_receipt_from_audit_metadata(
+    metadata: Mapping[str, object],
+) -> dict[str, object]:
+    receipt = {
+        receipt_key: str(value)
+        for audit_key, receipt_key in _PROFILE_AUDIT_TO_RECEIPT_FIELDS.items()
+        if (value := metadata.get(audit_key)) is not None
+    }
+    if _PROFILE_RECEIPT_REQUIRED_FIELDS.issubset(receipt):
+        return receipt
+    return {}
 
 
 def _stable_json_value(value: object) -> object:
