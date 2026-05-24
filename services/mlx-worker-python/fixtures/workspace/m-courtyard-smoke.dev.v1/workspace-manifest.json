@@ -1,0 +1,155 @@
+{
+  "schema_version": "melix.workspace_manifest.v1",
+  "project": {
+    "project_id": "m-courtyard-smoke",
+    "display_name": "M-Courtyard Smoke Workspace",
+    "owner": "melix-local",
+    "created_at": "2026-05-24T00:00:00Z",
+    "updated_at": "2026-05-24T00:00:00Z"
+  },
+  "artifact_roots": [
+    {
+      "root_id": "workspace",
+      "kind": "ARTIFACT_ROOT_KIND_WORKSPACE",
+      "path": ".",
+      "uri": "melix-workspace://m-courtyard-smoke",
+      "melix_owned": true,
+      "redaction_scope": "relative_path_only"
+    },
+    {
+      "root_id": "jobs",
+      "kind": "ARTIFACT_ROOT_KIND_JOBS",
+      "path": "jobs",
+      "uri": "melix-workspace://m-courtyard-smoke/jobs",
+      "melix_owned": true,
+      "redaction_scope": "relative_path_only"
+    }
+  ],
+  "artifacts": [
+    {
+      "artifact_id": "raw-dialogues",
+      "artifact_type": "WORKSPACE_ARTIFACT_TYPE_RAW_INPUTS",
+      "root_id": "workspace",
+      "relative_path": "raw/dialogues.jsonl",
+      "media_type": "application/jsonl",
+      "provenance_ref_ids": ["operator-import"]
+    },
+    {
+      "artifact_id": "cleaned-dialogues",
+      "artifact_type": "WORKSPACE_ARTIFACT_TYPE_CLEANED_DATA",
+      "root_id": "workspace",
+      "relative_path": "cleaned/dialogues.clean.jsonl",
+      "media_type": "application/jsonl",
+      "provenance_ref_ids": ["operator-import"]
+    },
+    {
+      "artifact_id": "dataset-v1",
+      "artifact_type": "WORKSPACE_ARTIFACT_TYPE_DATASET_VERSION",
+      "root_id": "workspace",
+      "relative_path": "dataset/20260524T000000Z/manifest.json",
+      "schema_version": "melix.training_dataset_package.v1",
+      "media_type": "application/json",
+      "provenance_ref_ids": ["operator-import", "dataset-generation-v1"]
+    },
+    {
+      "artifact_id": "adapter-v1",
+      "artifact_type": "WORKSPACE_ARTIFACT_TYPE_ADAPTER",
+      "root_id": "jobs",
+      "relative_path": "train_lora/model-ops-0001/train_lora.adapter.json",
+      "schema_version": "melix.lora_adapter_package.v1",
+      "media_type": "application/json",
+      "provenance_ref_ids": ["dataset-generation-v1", "lora-train-v1"]
+    },
+    {
+      "artifact_id": "training-log",
+      "artifact_type": "WORKSPACE_ARTIFACT_TYPE_LOG",
+      "root_id": "jobs",
+      "relative_path": "train_lora/model-ops-0001/run.log",
+      "media_type": "text/plain",
+      "provenance_ref_ids": ["lora-train-v1"]
+    },
+    {
+      "artifact_id": "adapter-export",
+      "artifact_type": "WORKSPACE_ARTIFACT_TYPE_EXPORT",
+      "root_id": "workspace",
+      "relative_path": "exports/adapter-v1/export-manifest.json",
+      "media_type": "application/json",
+      "provenance_ref_ids": ["lora-train-v1"]
+    },
+    {
+      "artifact_id": "evaluation-report",
+      "artifact_type": "WORKSPACE_ARTIFACT_TYPE_REPORT",
+      "root_id": "workspace",
+      "relative_path": "reports/evaluation-summary.json",
+      "media_type": "application/json",
+      "provenance_ref_ids": ["eval-compare-v1"]
+    },
+    {
+      "artifact_id": "release-evidence",
+      "artifact_type": "WORKSPACE_ARTIFACT_TYPE_EVIDENCE_BUNDLE",
+      "root_id": "workspace",
+      "relative_path": "evidence/release-compare.bundle.json",
+      "schema_version": "melix.run_evidence_bundle.v1",
+      "media_type": "application/json",
+      "provenance_ref_ids": ["eval-compare-v1"]
+    }
+  ],
+  "provenance": [
+    {
+      "provenance_ref_id": "operator-import",
+      "kind": "operator_import",
+      "uri": "melix-workspace://m-courtyard-smoke/raw/dialogues.jsonl",
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "created_by": "operator",
+      "created_at": "2026-05-24T00:00:00Z"
+    },
+    {
+      "provenance_ref_id": "dataset-generation-v1",
+      "kind": "dataset_generation",
+      "uri": "melix-job://dataset-generation/jobs-0001",
+      "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "created_by": "melix",
+      "created_at": "2026-05-24T00:05:00Z"
+    },
+    {
+      "provenance_ref_id": "lora-train-v1",
+      "kind": "lora_training",
+      "uri": "melix-job://train_lora/model-ops-0001",
+      "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "created_by": "melix",
+      "created_at": "2026-05-24T00:10:00Z"
+    },
+    {
+      "provenance_ref_id": "eval-compare-v1",
+      "kind": "evaluation_compare",
+      "uri": "melix-job://evaluation/eval-compare-0001",
+      "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "created_by": "melix",
+      "created_at": "2026-05-24T00:20:00Z"
+    }
+  ],
+  "redaction_policy": {
+    "policy_id": "workspace-local-redacted-v1",
+    "mode": "REDACTION_MODE_LOCAL_PATHS_AND_SECRETS",
+    "description": "Keep workspace artifact paths relative and redact operator identity, absolute paths, credentials, prompts, responses, and dataset rows from exported summaries.",
+    "redact_absolute_paths": true,
+    "redact_operator_identity": true,
+    "rules": [
+      {
+        "rule_id": "relative-artifact-paths",
+        "field_selector": "artifacts.relative_path",
+        "action": "REDACTION_ACTION_KEEP_RELATIVE"
+      },
+      {
+        "rule_id": "operator-identity",
+        "field_selector": "project.owner",
+        "action": "REDACTION_ACTION_HASH"
+      },
+      {
+        "rule_id": "secrets",
+        "field_selector": "provenance.ext.credentials",
+        "action": "REDACTION_ACTION_DROP"
+      }
+    ]
+  }
+}

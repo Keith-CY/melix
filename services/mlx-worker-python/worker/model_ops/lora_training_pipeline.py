@@ -43,6 +43,11 @@ from worker.model_ops.training_dataset import (
     trainer_sample_counts,
     write_normalized_dataset_snapshot,
 )
+from worker.model_ops.training_preflight import (
+    evaluate_trainability_preflight,
+    require_trainability_preflight_ready,
+    write_trainability_preflight_receipt,
+)
 from worker.productization.lora_experiment_store import LoraExperimentStore
 from worker.trajectory_provenance import (
     adapter_manifest_trajectory_provenance,
@@ -109,13 +114,21 @@ class LoRATrainingPipeline:
         )
 
         emit("normalize_config", 0.35)
-        config = normalize_training_config(
+        preflight = evaluate_trainability_preflight(
             source_model=source_model,
-            ext=request_ext,
+            request_ext=request_ext,
             dataset_format=dataset.package.format,
             response_only_supported=dataset.package.response_only_supported,
             sample_count=trainer_sample_count,
             validation_sample_count=trainer_validation_sample_count,
+        )
+        preflight_receipt_path = write_trainability_preflight_receipt(
+            receipt=preflight.receipt,
+            output_dir=output_dir,
+        )
+        config = require_trainability_preflight_ready(
+            result=preflight,
+            receipt_path=preflight_receipt_path,
         )
         _validate_alignment_inputs(
             config=config,
@@ -253,6 +266,11 @@ class LoRATrainingPipeline:
             "dataset_materialized_package_path": str(dataset.materialized_package_path),
             "dataset_cache_key": dataset.cache_key,
             "dataset_cache_hit": dataset.cache_hit,
+            "trainability_preflight_receipt_path": str(preflight_receipt_path),
+            "trainability_preflight_status": preflight.receipt["status"],
+            "trainability_preflight_operator_errors": list(
+                preflight.receipt.get("operator_errors", [])
+            ),
             "validation_errors": [],
             "resolved_bounds": dict(config.resolved_bounds),
             "capability_gate": capability_gate_receipt(

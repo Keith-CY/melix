@@ -484,6 +484,9 @@ public struct RuntimeEvidenceReportState: Equatable, Sendable {
         }
         appendArtifact(&rows, kind: "Probe Timeline", path: artifacts.probeTimelinePath, detail: "Probe data")
         appendArtifact(&rows, kind: "Telemetry JSONL", path: artifacts.telemetryJSONLPath, detail: "Hardware samples")
+        appendArtifact(&rows, kind: "Dataset Version", path: artifacts.datasetVersionPath, detail: "Dataset version")
+        appendArtifact(&rows, kind: "Dataset Quality Summary", path: artifacts.datasetQualitySummaryPath, detail: "Dataset quality")
+        appendArtifact(&rows, kind: "Dataset Ingest Receipt", path: artifacts.datasetIngestReceiptPath, detail: "Dataset ingest")
         for (index, path) in artifacts.rawOutputPaths.enumerated() {
             appendArtifact(&rows, kind: "Raw Output \(index + 1)", path: path, detail: "Run artifact")
         }
@@ -1100,6 +1103,9 @@ private struct RuntimeEvidenceReportArtifactsPayload: Decodable {
     let csvExportPaths: [String: String]
     let probeTimelinePath: String
     let telemetryJSONLPath: String
+    let datasetVersionPath: String
+    let datasetQualitySummaryPath: String
+    let datasetIngestReceiptPath: String
     let rawOutputPaths: [String]
     let logsPath: String
     let coveragePath: String
@@ -1111,6 +1117,9 @@ private struct RuntimeEvidenceReportArtifactsPayload: Decodable {
         csvExportPaths: [:],
         probeTimelinePath: "",
         telemetryJSONLPath: "",
+        datasetVersionPath: "",
+        datasetQualitySummaryPath: "",
+        datasetIngestReceiptPath: "",
         rawOutputPaths: [],
         logsPath: "",
         coveragePath: ""
@@ -1123,6 +1132,9 @@ private struct RuntimeEvidenceReportArtifactsPayload: Decodable {
         case csvExportPaths = "csv_export_paths"
         case probeTimelinePath = "probe_timeline_path"
         case telemetryJSONLPath = "telemetry_jsonl_path"
+        case datasetVersionPath = "dataset_version_path"
+        case datasetQualitySummaryPath = "dataset_quality_summary_path"
+        case datasetIngestReceiptPath = "dataset_ingest_receipt_path"
         case rawOutputPaths = "raw_output_paths"
         case logsPath = "logs_path"
         case coveragePath = "coverage_path"
@@ -1135,6 +1147,9 @@ private struct RuntimeEvidenceReportArtifactsPayload: Decodable {
         csvExportPaths: [String: String],
         probeTimelinePath: String,
         telemetryJSONLPath: String,
+        datasetVersionPath: String,
+        datasetQualitySummaryPath: String,
+        datasetIngestReceiptPath: String,
         rawOutputPaths: [String],
         logsPath: String,
         coveragePath: String
@@ -1145,6 +1160,9 @@ private struct RuntimeEvidenceReportArtifactsPayload: Decodable {
         self.csvExportPaths = csvExportPaths
         self.probeTimelinePath = probeTimelinePath
         self.telemetryJSONLPath = telemetryJSONLPath
+        self.datasetVersionPath = datasetVersionPath
+        self.datasetQualitySummaryPath = datasetQualitySummaryPath
+        self.datasetIngestReceiptPath = datasetIngestReceiptPath
         self.rawOutputPaths = rawOutputPaths
         self.logsPath = logsPath
         self.coveragePath = coveragePath
@@ -1158,6 +1176,9 @@ private struct RuntimeEvidenceReportArtifactsPayload: Decodable {
         csvExportPaths = try container.decodeIfPresent([String: String].self, forKey: .csvExportPaths) ?? [:]
         probeTimelinePath = try container.decodeIfPresent(String.self, forKey: .probeTimelinePath) ?? ""
         telemetryJSONLPath = try container.decodeIfPresent(String.self, forKey: .telemetryJSONLPath) ?? ""
+        datasetVersionPath = try container.decodeIfPresent(String.self, forKey: .datasetVersionPath) ?? ""
+        datasetQualitySummaryPath = try container.decodeIfPresent(String.self, forKey: .datasetQualitySummaryPath) ?? ""
+        datasetIngestReceiptPath = try container.decodeIfPresent(String.self, forKey: .datasetIngestReceiptPath) ?? ""
         rawOutputPaths = try container.decodeIfPresent([String].self, forKey: .rawOutputPaths) ?? []
         logsPath = try container.decodeIfPresent(String.self, forKey: .logsPath) ?? ""
         coveragePath = try container.decodeIfPresent(String.self, forKey: .coveragePath) ?? ""

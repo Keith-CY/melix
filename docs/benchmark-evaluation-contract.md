@@ -58,6 +58,11 @@ The non-dry-run mode must execute one model at a time, update the manifest after
 each stage, export benchmark and evaluation artifacts as soon as their jobs
 complete, and keep an operator-visible bundle under `output_root` synchronized
 with the temporary run directory.
+When a batch run is associated with a project workspace, exported benchmark,
+evaluation, report, and evidence paths must also be representable in the
+[workspace manifest contract](workspace-manifest-contract.md). The batch
+`manifest.jsonl` remains the per-model execution ledger; `workspace-manifest.json`
+is the project-level artifact inventory.
 
 ### Model List Contract
 
@@ -174,6 +179,10 @@ that look like raw secret fields, such as `*_api_key`, `*_token`, `*_secret`, or
 Batch-run planning must write `manifest.jsonl` in both the temporary run
 directory and the operator output directory. Each selected model receives one
 JSONL record with `schema_version: melix.batch.manifest_entry.v1`.
+This execution manifest is separate from the project
+[`workspace-manifest.json`](workspace-manifest-contract.md), which records
+artifact roots, artifact types, provenance references, schema version, and
+redaction policy for workspace-level artifact consumers.
 
 The initial dry-run manifest entry status is `planned`. Per-step statuses start
 as `pending` for:
@@ -1132,6 +1141,9 @@ The canonical comparison extension fields are:
 `compare_target_model_ids` names registered catalog targets that are already
 loadable by the local runtime. `compare_target_adapter_manifest_paths` names
 LoRA adapter package manifests with schema `melix.lora_adapter_package.v1`.
+Workspace-aware evaluation flows may resolve those adapter manifests from
+`WORKSPACE_ARTIFACT_TYPE_ADAPTER` entries in
+[`workspace-manifest.json`](workspace-manifest-contract.md).
 During local compare execution, Melix resolves each adapter manifest into an
 ephemeral adapter-backed target using the manifest's source model, weights path,
 and adapter set hash. Those ephemeral targets are unloaded after compare
