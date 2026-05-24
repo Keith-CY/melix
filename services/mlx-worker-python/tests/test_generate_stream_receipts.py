@@ -4,6 +4,7 @@ import pytest
 
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2, runtime_pb2
 
+from worker.engine import engine_core as engine_core_module
 from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
@@ -138,6 +139,106 @@ def test_plain_compatibility_receipt_keeps_metadata_without_route_tracking() -> 
     assert completed.parser_metrics["compat_effective_config_hash"] == "plain123"
     assert completed.parser_metrics["created"] == "1716500000"
     assert token_route_receipt["route_tracking_enabled"] is False
+
+
+def test_plain_fast_path_finalizes_through_shared_text_receipt_state(monkeypatch) -> None:
+    receipts: list[object] = []
+    original_apply = engine_core_module.apply_text_response_metrics
+
+    def record_apply(parser_metrics: dict[str, str], *, receipt: object) -> None:
+        receipts.append(receipt)
+        original_apply(parser_metrics, receipt=receipt)
+
+    monkeypatch.setattr(engine_core_module, "apply_text_response_metrics", record_apply)
+    inference_service, model_handle = _build_services(
+        FinalizerParityBackend(raw_text="plain answer", prompt_tokens=7, completion_tokens=2)
+    )
+
+    for stream in (True, False):
+        request = inference_pb2.GenerateRequest(
+            execution=inference_pb2.ExecutionMetadata(
+                id=common_pb2.RequestIdentity(
+                    request_id=f"req-plain-finalizer-{'stream' if stream else 'non-stream'}"
+                ),
+                model_handle=model_handle,
+                ext={"melix.response.created": "1716500001"},
+            ),
+            messages=[
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[common_pb2.MessagePart(text="plain finalizer")],
+                )
+            ],
+            sampling=common_pb2.SamplingConfig(max_output_tokens=8),
+            stream=stream,
+            return_usage=True,
+        )
+        completed = next(
+            event.completed for event in inference_service.Generate(request, context=None)
+            if event.HasField("completed")
+        )
+        assert completed.parser_metrics["finalizer_path"] == (
+            "stream" if stream else "non_stream"
+        )
+
+    assert [receipt.stream_mode for receipt in receipts] == [True, False]
+    assert [receipt.usage_trailer_emitted for receipt in receipts] == [True, False]
+    assert all(receipt.usage.prompt_tokens == 7 for receipt in receipts)
+    assert all(receipt.usage.completion_tokens == 2 for receipt in receipts)
+
+
+def test_structured_tool_calls_finalize_through_shared_text_receipt_state(monkeypatch) -> None:
+    receipts: list[object] = []
+    original_apply = engine_core_module.apply_text_response_metrics
+
+    def record_apply(parser_metrics: dict[str, str], *, receipt: object) -> None:
+        receipts.append(receipt)
+        original_apply(parser_metrics, receipt=receipt)
+
+    monkeypatch.setattr(engine_core_module, "apply_text_response_metrics", record_apply)
+    inference_service, model_handle = _build_services(StructuredStreamingBackend())
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-structured-finalizer-tool-call"),
+            model_handle=model_handle,
+            ext={
+                "melix.reasoning.mode": "enabled",
+                "melix.response.created": "1716500002",
+                "melix.tool_parser.mode": "qwen",
+            },
+            reasoning=common_pb2.ReasoningConfig(
+                enabled=True,
+                mode_source="request_enable_thinking",
+            ),
+            tool_config=common_pb2.ToolConfig(
+                tools=[
+                    common_pb2.ToolDefinition(
+                        name="search",
+                        json_schema='{"type":"object"}',
+                    )
+                ],
+                tool_choice="required",
+            ),
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Use a tool")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+        return_usage=True,
+    )
+
+    completed = next(
+        event.completed for event in inference_service.Generate(request, context=None)
+        if event.HasField("completed")
+    )
+
+    assert [receipt.tool_calls_finalized for receipt in receipts] == [True]
+    assert completed.parser_metrics["tool_calls_finalized"] == "true"
+    assert completed.parser_metrics["reasoning_finalized"] == "true"
 
 
 def test_generate_token_route_receipt_uses_compat_policy_context_and_matches_stream_modes() -> None:

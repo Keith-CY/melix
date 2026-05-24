@@ -80,6 +80,7 @@ class AssemblyCompletion:
     assistant_text: str
     reasoning_text: str
     raw_text: str
+    tool_call_count: int
     metrics: dict[str, int | str]
 
 
@@ -311,6 +312,7 @@ class RequestStreamAssembler:
             assistant_text="".join(self._assistant_parts),
             reasoning_text="".join(self._reasoning_parts),
             raw_text=self._materialized_raw_seen(),
+            tool_call_count=self._tool_fragment_index,
             metrics=metrics,
         )
 
