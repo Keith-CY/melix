@@ -7,6 +7,7 @@ from pathlib import Path
 import types
 import sys
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -1283,6 +1284,55 @@ def test_stop_sequence_filter_reuses_max_prefix_length(monkeypatch: pytest.Monke
 
     assert calls == 1
     assert "".join(event.text for event in events) == "chunk" * 25
+
+    assert mlx_text_runtime_module._native_mtp_text_model_active(object()) is False
+    assert mlx_text_runtime_module._cached_native_mtp_text_model_active(object()) is False
+    active_model = SimpleNamespace(mtp=object(), mtp_forward=lambda *_args, **_kwargs: None)
+    assert mlx_text_runtime_module._native_mtp_text_model_active(
+        {"metadata": {"melix.native_mtp.active": "true"}, "model": active_model}
+    ) is True
+    uncached_loaded_model = {"metadata": {"melix.native_mtp.active": "false"}, "model": object()}
+    assert mlx_text_runtime_module._cached_native_mtp_text_model_active(uncached_loaded_model) is False
+    assert uncached_loaded_model[mlx_text_runtime_module._NATIVE_MTP_TEXT_ACTIVE_FIELD] is False
+
+    def fake_load(model_source: str, **kwargs):
+        _ = (model_source, kwargs)
+        return object(), FakeTokenizer()
+
+    def fake_sampler_factory(*, temp: float, top_p: float, top_k: int):
+        _ = (temp, top_p, top_k)
+        return "fake-sampler"
+
+    def fake_stream_generate(model, tokenizer, prompt: str, max_tokens: int, sampler, *, stop=None):
+        _ = (model, tokenizer, prompt, max_tokens, sampler, stop)
+        yield FakeGenerationResponse(text="ok", prompt_tokens=1, generation_tokens=1)
+
+    backend = AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=fake_stream_generate,
+        sampler_factory=fake_sampler_factory,
+    )
+    loaded_model = backend.load_model(
+        WorkerModelCatalog.dev_text_model(environment={"MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/test-model"})
+    )
+    assert loaded_model[mlx_text_runtime_module._NATIVE_MTP_TEXT_ACTIVE_FIELD] is False
+
+    native_mtp_active_check = Mock(side_effect=AssertionError("native MTP active state should be cached at load"))
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "_native_mtp_text_model_active",
+        native_mtp_active_check,
+    )
+    chunks = list(
+        backend.generate_tokens(
+            loaded_model,
+            "prompt",
+            common_pb2.SamplingConfig(max_output_tokens=1),
+            Event(),
+        )
+    )
+    assert [chunk.text for chunk in chunks] == ["ok"]
+    native_mtp_active_check.assert_not_called()
 
 
 def test_stop_sequence_filter_reuses_unmodified_token_events() -> None:

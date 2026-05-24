@@ -167,6 +167,7 @@ _STOP_KWARGS_CACHE_FIELD = "_melix.resolved_text_stop_kwargs_cache"
 _NATIVE_MTP_ENABLED_EXT_KEY = "melix.native_mtp.enabled"
 _NATIVE_MTP_TEXT_BATCH_PREFILL_STEP_SIZE_ENV = "MELIX_TEXT_NATIVE_MTP_PREFILL_STEP_SIZE"
 _NATIVE_MTP_TEXT_BATCH_DEFAULT_PREFILL_STEP_SIZE = 2048
+_NATIVE_MTP_TEXT_ACTIVE_FIELD = "_melix.native_mtp_text_active"
 _NATIVE_MTP_TEXT_BATCH_GENERATOR_FIELD = "_melix.native_mtp_text_batch_generator"
 _NATIVE_MTP_TEXT_BATCH_GENERATOR_CONFIG_FIELD = "_melix.native_mtp_text_batch_generator_config"
 _NATIVE_MTP_TEXT_DETOKENIZER_FIELD = "_melix.native_mtp_text_detokenizer"
@@ -281,17 +282,30 @@ def _load_mlx_batch_generator_class():
     return BatchGenerator
 
 
-def _native_mtp_text_model_active(loaded_model: Any) -> bool:
-    if not isinstance(loaded_model, dict):
-        return False
-    metadata = loaded_model.get("metadata")
+def _native_mtp_text_parts_active(metadata: Any, model: Any) -> bool:
     if not isinstance(metadata, dict) or not _truthy_string(metadata.get("melix.native_mtp.active")):
         return False
-    model = loaded_model.get("model")
     inner = getattr(model, "language_model", model)
     if not hasattr(model, "mtp_forward") and not hasattr(inner, "mtp_forward"):
         return False
     return bool(hasattr(inner, "mtp") and getattr(inner, "mtp", None) is not None)
+
+
+def _native_mtp_text_model_active(loaded_model: Any) -> bool:
+    if not isinstance(loaded_model, dict):
+        return False
+    return _native_mtp_text_parts_active(loaded_model.get("metadata"), loaded_model.get("model"))
+
+
+def _cached_native_mtp_text_model_active(loaded_model: Any) -> bool:
+    if not isinstance(loaded_model, dict):
+        return _native_mtp_text_model_active(loaded_model)
+    active = loaded_model.get(_NATIVE_MTP_TEXT_ACTIVE_FIELD)
+    if isinstance(active, bool):
+        return active
+    active = _native_mtp_text_model_active(loaded_model)
+    loaded_model[_NATIVE_MTP_TEXT_ACTIVE_FIELD] = active
+    return active
 
 
 def _native_mtp_text_prefill_step_size() -> int:
@@ -952,7 +966,7 @@ class AutoMLXBackend:
                 setattr(target, "_melix_native_mtp_active", native_mtp_active)
             except Exception:
                 pass
-        return {
+        loaded_model = {
             "model_id": model_spec.model_id,
             "model_path": model_spec.model_path,
             "model_ext": dict(metadata),
@@ -964,6 +978,11 @@ class AutoMLXBackend:
             **adapter_metadata,
             **family_config.runtime_metadata(),
         }
+        loaded_model[_NATIVE_MTP_TEXT_ACTIVE_FIELD] = _native_mtp_text_parts_active(
+            loaded_model["metadata"],
+            model,
+        )
+        return loaded_model
 
     def estimate_resident_bytes(self, model_spec) -> int:
         return _estimate_model_weight_resident_bytes(str(getattr(model_spec, "model_path", "") or ""))
@@ -1027,7 +1046,7 @@ class AutoMLXBackend:
             self._stream_stop_kwarg,
         )
 
-        if _native_mtp_text_model_active(loaded_model):
+        if loaded_model.get(_NATIVE_MTP_TEXT_ACTIVE_FIELD) is True:
             yield from self._generate_native_mtp_batch_tokens(
                 loaded_model,
                 prompt,
