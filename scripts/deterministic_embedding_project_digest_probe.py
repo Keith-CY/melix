@@ -21,7 +21,7 @@ def main() -> int:
     from worker.runtime.embedding_backends import BERTEmbeddingBackend
 
     backend = BERTEmbeddingBackend()
-    dimensions = 4096
+    dimensions = 4097
     vector_count = 500
     sample_count = 3
     seed_texts = [f"bert::synthetic projection row {index % 251}::{index}" for index in range(vector_count)]
