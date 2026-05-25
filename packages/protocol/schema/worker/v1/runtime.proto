@@ -137,6 +137,13 @@ message RuntimeStats {
   uint64 text_batch_generator_first_empty_segment_count = 67;
   double last_model_load_trust_policy_resolution_ms = 68;
   uint64 model_load_trust_blocked_count = 69;
+  uint64 text_batch_generator_speculative_cycle_count_total = 70;
+  uint64 text_batch_generator_speculative_accepted_count_total = 71;
+  uint64 text_batch_generator_speculative_rejected_count_total = 72;
+  double text_batch_generator_speculative_backbone_ms_total = 73;
+  double text_batch_generator_speculative_mtp_head_ms_total = 74;
+  double text_batch_generator_speculative_sample_ms_total = 75;
+  double text_batch_generator_speculative_cache_ops_ms_total = 76;
 }
 
 message GetRuntimeStatsRequest {}

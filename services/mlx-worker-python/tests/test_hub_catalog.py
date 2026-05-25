@@ -86,6 +86,7 @@ def test_quantization_summary_preserves_alias_order_from_lowered_tags() -> None:
 
 
 def test_bytes_per_parameter_preserves_quantization_priority_without_joining_tags() -> None:
+    assert _bytes_per_parameter([], lowered_tags={"family", "2bit", "float32"}) == 0.25
     assert _bytes_per_parameter([], lowered_tags={"family", "float32", "4-bit"}) == 0.5
     assert _bytes_per_parameter([], lowered_tags={"family", "8bit"}) == 1.0
     assert _bytes_per_parameter([], lowered_tags={"family", "3-bit", "8bit"}) == 0.375

@@ -21,6 +21,7 @@ SWIFT_TURBOQUANT_CANDIDATE_PROBE_ENV = "MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE"
 SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE_ENV = "MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE"
 SWIFT_DFLASH_PROBE_ENV = "MELIX_SWIFT_DFLASH_PROBE"
 SWIFT_DFLASH_PROBE_PATH_ENV = "MELIX_SWIFT_DFLASH_PROBE_PATH"
+MODEL_ROOTS_ENV = "MELIX_MODEL_ROOTS"
 SWIFT_OPTIONAL_PARENT_ENV = (
     SWIFT_TURBOQUANT_CANDIDATE_PROBE_ENV,
     SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE_ENV,
@@ -691,6 +692,7 @@ def write_runtime_environment(layout: RuntimeLayout) -> Path:
     }
     if layout.service_instance_name:
         exports["MELIX_SERVICE_INSTANCE_NAME"] = layout.service_instance_name
+    exports.update(optional_parent_environment_exports((MODEL_ROOTS_ENV,)))
     exports.update(optional_python_bridge_environment(layout))
     if os.environ.get(SWIFT_MLX_METALLIB_PATH_ENV, "").strip():
         exports[SWIFT_MLX_METALLIB_PATH_ENV] = os.fspath(resolve_configured_mlx_metallib())
@@ -750,6 +752,7 @@ def start_stack(options: DevUpOptions) -> None:
             "MELIX_PYTHON_WORKER_STARTUP_T0_NS": str(time.perf_counter_ns()),
             "MELIX_HOME": os.fspath(layout.melix_home_dir),
             "MELIX_MANAGED_MODEL_ROOT": os.fspath(layout.managed_models_dir),
+            **optional_parent_environment_exports((MODEL_ROOTS_ENV,)),
             "MELIX_AUDIO_RUNTIME_PACK_ROOT": os.fspath(layout.audio_runtime_packs_dir),
             "MELIX_MODEL_OPS_JOBS_ROOT": os.fspath(layout.model_ops_jobs_root),
             "MELIX_EVALUATION_JOBS_ROOT": os.fspath(layout.evaluation_jobs_root),
@@ -787,6 +790,7 @@ def start_stack(options: DevUpOptions) -> None:
             "MELIX_REPO_ROOT": os.fspath(repo_root),
             "MELIX_CONTROL_PLANE_METRICS_PATH": os.fspath(layout.control_plane_metrics_path),
             "MELIX_MANAGED_MODEL_ROOT": os.fspath(layout.managed_models_dir),
+            **optional_parent_environment_exports((MODEL_ROOTS_ENV,)),
             "MELIX_AUDIO_RUNTIME_PACK_ROOT": os.fspath(layout.audio_runtime_packs_dir),
             "MELIX_GATEWAY_CONFIG_STORE_PATH": os.fspath(layout.gateway_config_store_path),
             "MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH": os.fspath(layout.gateway_serving_defaults_store_path),

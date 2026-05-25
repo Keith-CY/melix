@@ -313,7 +313,8 @@ struct LoraTrainingJobStoreTests {
             jobID: first.jobID,
             code: "worker_failed",
             message: "worker crashed",
-            retriable: true
+            retriable: true,
+            remediation: "Rerun after freeing memory."
         )
 
         #expect(first.id == first.jobID)
@@ -324,7 +325,26 @@ struct LoraTrainingJobStoreTests {
         #expect(second.jobID == "training-queue-0002")
         #expect(failed.status == .failed)
         #expect(failed.operatorErrors == [
-            LocalTrainingQueueOperatorError(code: "worker_failed", message: "worker crashed", retriable: true),
+            LocalTrainingQueueOperatorError(
+                code: "worker_failed",
+                message: "worker crashed",
+                retriable: true,
+                remediation: "Rerun after freeing memory."
+            ),
+        ])
+
+        let guardrailFailed = try store.markFailed(
+            jobID: second.jobID,
+            code: "insufficient_training_samples",
+            message: "LoRA training requires at least one training sample."
+        )
+        #expect(guardrailFailed.operatorErrors == [
+            LocalTrainingQueueOperatorError(
+                code: "insufficient_training_samples",
+                message: "LoRA training requires at least one training sample.",
+                retriable: false,
+                remediation: "Add more accepted training samples before starting training."
+            ),
         ])
 
         #expect(throws: MelixCLIError.requestFailed(
@@ -351,6 +371,51 @@ struct LoraTrainingJobStoreTests {
         )) {
             _ = try store.requestCancel(jobID: first.jobID)
         }
+    }
+
+    @Test("local training queue restores legacy operator errors without remediation")
+    func localTrainingQueueRestoresLegacyOperatorErrorsWithoutRemediation() throws {
+        let home = temporaryMelixHome()
+        defer { try? FileManager.default.removeItem(at: home.rootURL) }
+        try FileManager.default.createDirectory(at: home.stateDirectoryURL, withIntermediateDirectories: true)
+
+        try """
+        {
+          "schema_version": "melix.local_training_queue.v1",
+          "queue_id": "local-training",
+          "updated_at_unix_ms": 1234,
+          "jobs": [
+            {
+              "schema_version": "melix.local_training_queue_job.v1",
+              "job_id": "training-queue-0001",
+              "model_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+              "adapter_name": "legacy-adapter",
+              "status": "failed",
+              "created_at_unix_ms": 1000,
+              "updated_at_unix_ms": 1234,
+              "operator_errors": [
+                {
+                  "code": "worker_failed",
+                  "message": "worker crashed",
+                  "retriable": true
+                }
+              ]
+            }
+          ]
+        }
+        """
+        .write(to: home.localTrainingQueueFileURL, atomically: true, encoding: .utf8)
+
+        let restored = try #require(try LocalTrainingQueueStore(melixHome: home).get(jobID: "training-queue-0001"))
+
+        #expect(restored.operatorErrors == [
+            LocalTrainingQueueOperatorError(
+                code: "worker_failed",
+                message: "worker crashed",
+                retriable: true,
+                remediation: ""
+            ),
+        ])
     }
 
     @Test("local training queue keeps status unchanged when cancel request cannot be written")
@@ -383,6 +448,43 @@ struct LoraTrainingJobStoreTests {
             #expect(message.contains("Failed to persist cancellation request for \(admitted.jobID):"))
         }
 
+        let restored = try store.get(jobID: admitted.jobID)
+
+        #expect(restored?.status == .running)
+        #expect(!FileManager.default.fileExists(atPath: admitted.cancellationRequestPath))
+    }
+
+    @Test("local training queue removes cancellation request when queue save fails")
+    func localTrainingQueueRemovesCancellationRequestWhenQueueSaveFails() throws {
+        let home = temporaryMelixHome()
+        defer { try? FileManager.default.removeItem(at: home.rootURL) }
+        let store = LocalTrainingQueueStore(melixHome: home)
+        let admitted = try store.admit(
+            LocalTrainingQueueAdmissionRequest(
+                modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+                datasetURI: "/tmp/datasets/alpaca.jsonl",
+                adapterName: "rollback-adapter"
+            )
+        )
+        _ = try store.markRunning(jobID: admitted.jobID)
+        try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: home.localTrainingQueueFileURL.path)
+        defer {
+            try? FileManager.default.setAttributes([.immutable: false], ofItemAtPath: home.localTrainingQueueFileURL.path)
+        }
+
+        do {
+            _ = try store.requestCancel(jobID: admitted.jobID)
+            Issue.record("Expected cancellation to roll back when queue save fails.")
+        } catch let error as MelixCLIError {
+            guard case .requestFailed(let code, let message) = error else {
+                Issue.record("Unexpected cancellation error: \(error).")
+                return
+            }
+            #expect(code == "training_queue_admission_failed")
+            #expect(message.contains("Failed to persist local training queue:"))
+        }
+
+        try FileManager.default.setAttributes([.immutable: false], ofItemAtPath: home.localTrainingQueueFileURL.path)
         let restored = try store.get(jobID: admitted.jobID)
 
         #expect(restored?.status == .running)

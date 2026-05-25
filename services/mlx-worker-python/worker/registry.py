@@ -178,6 +178,13 @@ class WorkerRegistry:
         self._text_batch_generator_first_visible_ms_total = 0.0
         self._text_batch_generator_first_visible_token_index_total = 0
         self._text_batch_generator_first_empty_segment_count = 0
+        self._text_batch_generator_speculative_cycle_count_total = 0
+        self._text_batch_generator_speculative_accepted_count_total = 0
+        self._text_batch_generator_speculative_rejected_count_total = 0
+        self._text_batch_generator_speculative_backbone_ms_total = 0.0
+        self._text_batch_generator_speculative_mtp_head_ms_total = 0.0
+        self._text_batch_generator_speculative_sample_ms_total = 0.0
+        self._text_batch_generator_speculative_cache_ops_ms_total = 0.0
         self._last_audio_model_load_latency_ms = 0.0
         self._last_audio_backend_unavailable_count = 0
         self._last_voice_fallback_count = 0
@@ -708,7 +715,38 @@ class WorkerRegistry:
     def runtime_for_loaded_model(self, loaded_model: LoadedModel) -> Any:
         return loaded_model.runtime
 
-    def _multimodal_decode_probe_locked(self) -> tuple[str, str, str, int, int, int, int, int, float, float, float, float, float, int, int, int, float, float, float, int, int]:
+    def _multimodal_decode_probe_locked(
+        self,
+    ) -> tuple[
+        str,
+        str,
+        str,
+        int,
+        int,
+        int,
+        int,
+        int,
+        float,
+        float,
+        float,
+        float,
+        float,
+        int,
+        int,
+        int,
+        float,
+        float,
+        float,
+        int,
+        int,
+        int,
+        int,
+        int,
+        float,
+        float,
+        float,
+        float,
+    ]:
         return (
             self._last_multimodal_decode_mode,
             self._last_multimodal_fallback_reason,
@@ -731,12 +769,48 @@ class WorkerRegistry:
             self._text_batch_generator_first_visible_ms_total,
             self._text_batch_generator_first_visible_token_index_total,
             self._text_batch_generator_first_empty_segment_count,
+            self._text_batch_generator_speculative_cycle_count_total,
+            self._text_batch_generator_speculative_accepted_count_total,
+            self._text_batch_generator_speculative_rejected_count_total,
+            self._text_batch_generator_speculative_backbone_ms_total,
+            self._text_batch_generator_speculative_mtp_head_ms_total,
+            self._text_batch_generator_speculative_sample_ms_total,
+            self._text_batch_generator_speculative_cache_ops_ms_total,
         )
 
     @staticmethod
     def _apply_multimodal_decode_probe(
         stats: runtime_pb2.RuntimeStats,
-        probe: tuple[str, str, str, int, int, int, int, int, float, float, float, float, float, int, int, int, float, float, float, int, int],
+        probe: tuple[
+            str,
+            str,
+            str,
+            int,
+            int,
+            int,
+            int,
+            int,
+            float,
+            float,
+            float,
+            float,
+            float,
+            int,
+            int,
+            int,
+            float,
+            float,
+            float,
+            int,
+            int,
+            int,
+            int,
+            int,
+            float,
+            float,
+            float,
+            float,
+        ],
     ) -> None:
         (
             stats.last_multimodal_decode_mode,
@@ -760,6 +834,13 @@ class WorkerRegistry:
             stats.text_batch_generator_first_visible_ms_total,
             stats.text_batch_generator_first_visible_token_index_total,
             stats.text_batch_generator_first_empty_segment_count,
+            stats.text_batch_generator_speculative_cycle_count_total,
+            stats.text_batch_generator_speculative_accepted_count_total,
+            stats.text_batch_generator_speculative_rejected_count_total,
+            stats.text_batch_generator_speculative_backbone_ms_total,
+            stats.text_batch_generator_speculative_mtp_head_ms_total,
+            stats.text_batch_generator_speculative_sample_ms_total,
+            stats.text_batch_generator_speculative_cache_ops_ms_total,
         ) = probe
 
     def _clear_text_batch_generator_probe_locked(self) -> None:
@@ -781,6 +862,13 @@ class WorkerRegistry:
         self._text_batch_generator_first_visible_ms_total = 0.0
         self._text_batch_generator_first_visible_token_index_total = 0
         self._text_batch_generator_first_empty_segment_count = 0
+        self._text_batch_generator_speculative_cycle_count_total = 0
+        self._text_batch_generator_speculative_accepted_count_total = 0
+        self._text_batch_generator_speculative_rejected_count_total = 0
+        self._text_batch_generator_speculative_backbone_ms_total = 0.0
+        self._text_batch_generator_speculative_mtp_head_ms_total = 0.0
+        self._text_batch_generator_speculative_sample_ms_total = 0.0
+        self._text_batch_generator_speculative_cache_ops_ms_total = 0.0
 
     def record_vision_probe(self, runtime_kind: str, probe: Any) -> None:
         with self._lock:
@@ -857,6 +945,27 @@ class WorkerRegistry:
             )
             self._text_batch_generator_first_empty_segment_count = int(
                 getattr(probe, "text_batch_generator_first_empty_segment_count", 0)
+            )
+            self._text_batch_generator_speculative_cycle_count_total = int(
+                getattr(probe, "text_batch_generator_speculative_cycle_count_total", 0)
+            )
+            self._text_batch_generator_speculative_accepted_count_total = int(
+                getattr(probe, "text_batch_generator_speculative_accepted_count_total", 0)
+            )
+            self._text_batch_generator_speculative_rejected_count_total = int(
+                getattr(probe, "text_batch_generator_speculative_rejected_count_total", 0)
+            )
+            self._text_batch_generator_speculative_backbone_ms_total = float(
+                getattr(probe, "text_batch_generator_speculative_backbone_ms_total", 0.0)
+            )
+            self._text_batch_generator_speculative_mtp_head_ms_total = float(
+                getattr(probe, "text_batch_generator_speculative_mtp_head_ms_total", 0.0)
+            )
+            self._text_batch_generator_speculative_sample_ms_total = float(
+                getattr(probe, "text_batch_generator_speculative_sample_ms_total", 0.0)
+            )
+            self._text_batch_generator_speculative_cache_ops_ms_total = float(
+                getattr(probe, "text_batch_generator_speculative_cache_ops_ms_total", 0.0)
             )
             self._has_multimodal_decode_probe = True
             self._last_video_effective_frame_count = int(getattr(probe, "video_effective_frame_count", 0))

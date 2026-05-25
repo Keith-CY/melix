@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from copy import copy
 from dataclasses import dataclass, field, replace
 import hashlib
 import importlib.util
+import json
 import logging
 import os
 from queue import Queue
@@ -53,8 +55,11 @@ _GEMMA4_PRESENCE_BOTH = (True, True)
 
 _TEXT_ONLY_BATCH_GENERATOR_EXT_KEY = "melix.vlm.text_only_batch_generator"
 _TEXT_ONLY_STEP_COOPERATIVE_EXT_KEY = "melix.vlm.text_only_step_cooperative"
+_NATIVE_MTP_ENABLED_EXT_KEY = "melix.native_mtp.enabled"
 _TEXT_ONLY_BATCH_PREFILL_STEP_SIZE_ENV = "MELIX_VLM_TEXT_BATCH_PREFILL_STEP_SIZE"
 _TEXT_ONLY_BATCH_DEFAULT_PREFILL_STEP_SIZE = 512
+_TEXT_ONLY_BATCH_MAX_BATCH_SIZE_ENV = "MELIX_VLM_TEXT_BATCH_MAX_BATCH_SIZE"
+_TEXT_ONLY_BATCH_DEFAULT_MAX_BATCH_SIZE = 8
 _TEXT_ONLY_BATCH_DONE = object()
 _GEMMA4_OPEN_MARKER = "<|channel>thought\n"
 _GEMMA4_OPEN_MARKER_BARE = "<|channel>"
@@ -167,6 +172,110 @@ class RuntimeUnavailableError(RuntimeError):
     pass
 
 
+def maybe_apply_native_mtp_preload_patches(
+    model_path: str,
+    *,
+    metadata: dict[str, str],
+) -> dict[str, str]:
+    enabled = _truthy_string(metadata.get(_NATIVE_MTP_ENABLED_EXT_KEY, ""))
+    model_dir = Path(model_path)
+    config_payload = _load_json_payload(model_dir / "config.json")
+    model_type = _native_mtp_model_type(config_payload)
+    mtp_layers = _native_mtp_layer_count(config_payload)
+    compatible = model_type in {"qwen3_5", "qwen3_5_text"} and mtp_layers > 0
+    weights_present, weight_count = _native_mtp_weight_presence(model_dir)
+
+    active = False
+    patch_applied = False
+    reason = "disabled"
+    try:
+        from worker.runtime import native_mtp
+
+        native_mtp.set_mtp_active(False)
+        native_mtp.set_mtp_weight_attachment(False)
+        if compatible:
+            native_mtp.set_mtp_weight_attachment(weights_present)
+            patch_applied = native_mtp.apply_native_mtp_patches()
+            if not patch_applied:
+                reason = "patch_failed"
+            elif not enabled:
+                reason = "disabled"
+            elif not weights_present:
+                reason = "missing_mtp_weights"
+            else:
+                active = True
+                reason = ""
+        elif enabled:
+            reason = "unsupported_model"
+        native_mtp.set_mtp_active(active)
+    except Exception as exc:  # pragma: no cover - defensive runtime guard.
+        logger.warning("Native MTP preload patch failed for %s: %s", model_path, exc)
+        reason = "patch_error"
+        try:
+            native_mtp.set_mtp_active(False)
+            native_mtp.set_mtp_weight_attachment(False)
+        except Exception:
+            pass
+
+    return {
+        "melix.native_mtp.enabled": "true" if enabled else "false",
+        "melix.native_mtp.compatible": "true" if compatible else "false",
+        "melix.native_mtp.weights_present": "true" if weights_present else "false",
+        "melix.native_mtp.weight_count": str(weight_count),
+        "melix.native_mtp.patch_applied": "true" if patch_applied else "false",
+        "melix.native_mtp.active": "true" if active else "false",
+        "melix.native_mtp.reason": reason,
+    }
+
+
+def _load_json_payload(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _native_mtp_model_type(config_payload: dict[str, Any]) -> str:
+    text_config = config_payload.get("text_config")
+    if isinstance(text_config, dict):
+        value = text_config.get("model_type") or config_payload.get("model_type")
+    else:
+        value = config_payload.get("model_type")
+    return str(value or "").strip().lower()
+
+
+def _native_mtp_layer_count(config_payload: dict[str, Any]) -> int:
+    candidates: list[Any] = []
+    text_config = config_payload.get("text_config")
+    if isinstance(text_config, dict):
+        candidates.append(text_config.get("mtp_num_hidden_layers"))
+    candidates.append(config_payload.get("mtp_num_hidden_layers"))
+    for value in candidates:
+        try:
+            return max(0, int(value or 0))
+        except (TypeError, ValueError):
+            continue
+    return 0
+
+
+def _native_mtp_weight_presence(model_dir: Path) -> tuple[bool, int]:
+    index_payload = _load_json_payload(model_dir / "model.safetensors.index.json")
+    weight_map = index_payload.get("weight_map")
+    if not isinstance(weight_map, dict):
+        return False, 0
+    count = sum(
+        1
+        for key in weight_map
+        if str(key).startswith("language_model.mtp.") or str(key).startswith("mtp.")
+    )
+    return count > 0, count
+
+
+def _truthy_string(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on", "enabled"}
+
+
 @dataclass(frozen=True)
 class MaterializedMediaPaths:
     image_paths: tuple[str, ...]
@@ -202,6 +311,18 @@ class _TextOnlyVLMDecodeAdapter:
     def __init__(self, vlm_model: Any) -> None:
         self._vlm_model = vlm_model
         self._language_model = getattr(vlm_model, "language_model", vlm_model)
+        self._melix_native_mtp_active = bool(
+            getattr(self._language_model, "_melix_native_mtp_active", False)
+        )
+        self._uses_mrope = self._detect_mrope(vlm_model)
+
+    @property
+    def language_model(self):
+        return self._language_model
+
+    @property
+    def mtp(self):
+        return getattr(self._language_model, "mtp", None)
 
     @property
     def layers(self):
@@ -225,10 +346,95 @@ class _TextOnlyVLMDecodeAdapter:
 
         return [KVCache() for _ in range(len(self.layers))]
 
+    def make_mtp_cache(self):
+        if hasattr(self._language_model, "make_mtp_cache"):
+            return self._language_model.make_mtp_cache()
+        return []
+
+    def mtp_forward(self, hidden_states, next_token_ids, mtp_cache):
+        return self._language_model.mtp_forward(hidden_states, next_token_ids, mtp_cache)
+
+    def rollback_speculative_cache(self, caches, gdn_states, accepted, block_size):
+        return self._language_model.rollback_speculative_cache(
+            caches,
+            gdn_states,
+            accepted,
+            block_size,
+        )
+
+    def _force_text_only_rope_context(self):
+        context_factory = getattr(
+            self._language_model,
+            "_melix_force_text_only_rope_context",
+            None,
+        )
+        if callable(context_factory):
+            return context_factory()
+        return nullcontext()
+
+    def _has_force_text_only_rope_context(self) -> bool:
+        return callable(
+            getattr(
+                self._language_model,
+                "_melix_force_text_only_rope_context",
+                None,
+            )
+        )
+
+    @staticmethod
+    def _detect_mrope(vlm_model: Any) -> bool:
+        config = getattr(vlm_model, "config", None)
+        text_config = getattr(config, "text_config", None)
+        rope_cfg = None
+        if text_config is not None:
+            rope_cfg = getattr(text_config, "rope_scaling", None) or getattr(
+                text_config,
+                "rope_parameters",
+                None,
+            )
+        if isinstance(rope_cfg, dict):
+            return "mrope_section" in rope_cfg
+        return False
+
+    def _text_only_position_ids(self, input_ids: Any, cache: Any) -> Any | None:
+        if not self._uses_mrope or cache is None or not hasattr(input_ids, "shape"):
+            return None
+        try:
+            import mlx.core as mx
+        except Exception:
+            return None
+        batch_size, seq_len = input_ids.shape[:2]
+        offset = None
+        for c in cache:
+            candidate = getattr(c, "offset", None)
+            if candidate is not None:
+                offset = candidate
+                break
+        if offset is None:
+            return None
+        if isinstance(offset, mx.array) and offset.ndim > 0:
+            positions = offset[:batch_size][:, None] + mx.arange(seq_len)[None, :]
+        else:
+            positions = mx.arange(seq_len).reshape(1, -1) + offset
+            positions = mx.broadcast_to(positions, (batch_size, seq_len))
+        return mx.broadcast_to(positions[None, :, :], (3, batch_size, seq_len))
+
     def __call__(self, input_ids, cache=None, **kwargs):
-        if hasattr(self._vlm_model, "_set_position_state"):
+        has_position_ids = "position_ids" in kwargs
+        force_plain_rope = self._has_force_text_only_rope_context()
+        if not has_position_ids and not force_plain_rope:
+            position_ids = self._text_only_position_ids(input_ids, cache)
+            if position_ids is not None:
+                kwargs["position_ids"] = position_ids
+                has_position_ids = True
+        if (
+            not has_position_ids
+            and not force_plain_rope
+            and hasattr(self._vlm_model, "_set_position_state")
+        ):
             self._vlm_model._set_position_state(input_ids)
-        result = self._language_model(input_ids, cache=cache, **kwargs)
+        with self._force_text_only_rope_context():
+            result = self._language_model(input_ids, cache=cache, **kwargs)
         return result.logits if hasattr(result, "logits") else result
 
 
@@ -323,6 +529,13 @@ class _TextOnlyBatchRequest:
         self.empty_text_token_count_before_first_visible = 0
         self.completion_tokens = 0
         self.cumulative_raw_text = ""
+        self.last_speculative_cycle_count = 0
+        self.last_speculative_accepted_tokens = 0
+        self.last_speculative_rejected_tokens = 0
+        self.last_speculative_backbone_ms = 0.0
+        self.last_speculative_mtp_head_ms = 0.0
+        self.last_speculative_sample_ms = 0.0
+        self.last_speculative_cache_ops_ms = 0.0
         self.prefill_step_size = prefill_step_size
 
 
@@ -352,6 +565,13 @@ class _TextOnlyBatchGeneratorStats:
     prefill_total_token_count: int = 0
     prefill_completed_request_count: int = 0
     prefill_step_size: int = _TEXT_ONLY_BATCH_DEFAULT_PREFILL_STEP_SIZE
+    speculative_cycle_count_total: int = 0
+    speculative_accepted_count_total: int = 0
+    speculative_rejected_count_total: int = 0
+    speculative_backbone_ms_total: float = 0.0
+    speculative_mtp_head_ms_total: float = 0.0
+    speculative_sample_ms_total: float = 0.0
+    speculative_cache_ops_ms_total: float = 0.0
 
     def snapshot(self) -> "_TextOnlyBatchGeneratorStats":
         return replace(self)
@@ -391,6 +611,13 @@ def _text_batch_generator_probe_kwargs(stats: _TextOnlyBatchGeneratorStats) -> d
         "text_batch_generator_prefill_total_token_count": stats.prefill_total_token_count,
         "text_batch_generator_prefill_completed_request_count": stats.prefill_completed_request_count,
         "text_batch_generator_prefill_step_size": stats.prefill_step_size,
+        "text_batch_generator_speculative_cycle_count_total": stats.speculative_cycle_count_total,
+        "text_batch_generator_speculative_accepted_count_total": stats.speculative_accepted_count_total,
+        "text_batch_generator_speculative_rejected_count_total": stats.speculative_rejected_count_total,
+        "text_batch_generator_speculative_backbone_ms_total": stats.speculative_backbone_ms_total,
+        "text_batch_generator_speculative_mtp_head_ms_total": stats.speculative_mtp_head_ms_total,
+        "text_batch_generator_speculative_sample_ms_total": stats.speculative_sample_ms_total,
+        "text_batch_generator_speculative_cache_ops_ms_total": stats.speculative_cache_ops_ms_total,
     }
 
 
@@ -411,6 +638,23 @@ def _text_only_batch_prefill_step_size(value: object | None = None) -> int:
     return min(8192, max(1, parsed))
 
 
+def _text_only_batch_max_batch_size(value: object | None = None) -> int:
+    raw_value = os.environ.get(_TEXT_ONLY_BATCH_MAX_BATCH_SIZE_ENV) if value is None else value
+    if raw_value is None or str(raw_value).strip() == "":
+        return _TEXT_ONLY_BATCH_DEFAULT_MAX_BATCH_SIZE
+    try:
+        parsed = int(str(raw_value).strip())
+    except ValueError:
+        logger.warning(
+            "Ignoring invalid %s=%r; using %d.",
+            _TEXT_ONLY_BATCH_MAX_BATCH_SIZE_ENV,
+            raw_value,
+            _TEXT_ONLY_BATCH_DEFAULT_MAX_BATCH_SIZE,
+        )
+        return _TEXT_ONLY_BATCH_DEFAULT_MAX_BATCH_SIZE
+    return min(256, max(1, parsed))
+
+
 class _TextOnlyBatchGeneratorScheduler:
     def __init__(
         self,
@@ -419,7 +663,7 @@ class _TextOnlyBatchGeneratorScheduler:
         processor: Any,
         adapter: _TextOnlyVLMDecodeAdapter,
         executor: MLXRuntimeExecutor | None = None,
-        max_batch_size: int = 8,
+        max_batch_size: int | None = None,
         wait_ms: float = 2.0,
         prefill_step_size: int | None = None,
     ) -> None:
@@ -427,7 +671,7 @@ class _TextOnlyBatchGeneratorScheduler:
         self._processor = processor
         self._adapter = adapter
         self._executor = executor
-        self._max_batch_size = max(1, int(max_batch_size))
+        self._max_batch_size = _text_only_batch_max_batch_size(max_batch_size)
         self._wait_seconds = max(0.0, float(wait_ms) / 1000.0)
         self._prefill_step_size = _text_only_batch_prefill_step_size(prefill_step_size)
         self._condition = Condition()
@@ -487,14 +731,9 @@ class _TextOnlyBatchGeneratorScheduler:
                         self._condition.wait(timeout=self._wait_seconds)
                     pending = self._take_pending_locked()
                 try:
-                    insert_started_at = time.perf_counter()
-                    self._run_on_executor(lambda: self._insert_pending(pending))
-                    insert_elapsed_ms = (time.perf_counter() - insert_started_at) * 1000.0
-                    step_started_at = time.perf_counter()
-                    self._run_on_executor(self._remove_cancelled_active_requests)
-                    self._run_on_executor(self._step)
-                    self._run_on_executor(self._remove_cancelled_active_requests)
-                    step_elapsed_ms = (time.perf_counter() - step_started_at) * 1000.0
+                    insert_elapsed_ms, step_elapsed_ms = self._run_on_executor(
+                        lambda: self._executor_tick(pending)
+                    )
                 except BaseException as exc:
                     self._fail_requests([request for request in pending if request.uid is None], exc)
                     raise
@@ -503,6 +742,17 @@ class _TextOnlyBatchGeneratorScheduler:
                     self._stats.executor_step_ms_total += step_elapsed_ms
         except BaseException as exc:  # pragma: no cover - defensive batch worker cleanup
             self._fail_all(exc)
+
+    def _executor_tick(self, pending: list[_TextOnlyBatchRequest]) -> tuple[float, float]:
+        insert_started_at = time.perf_counter()
+        self._insert_pending(pending)
+        insert_elapsed_ms = (time.perf_counter() - insert_started_at) * 1000.0
+        step_started_at = time.perf_counter()
+        self._remove_cancelled_active_requests()
+        self._step()
+        self._remove_cancelled_active_requests()
+        step_elapsed_ms = (time.perf_counter() - step_started_at) * 1000.0
+        return insert_elapsed_ms, step_elapsed_ms
 
     def _take_pending_locked(self) -> list[_TextOnlyBatchRequest]:
         available_slots = self._max_batch_size - len(self._active_by_uid)
@@ -611,6 +861,7 @@ class _TextOnlyBatchGeneratorScheduler:
         request.detokenizer.add_token(token_id)
         request.completion_tokens += 1
         self._stats.generated_token_count += 1
+        self._record_speculative_response_stats(request, response)
         text = str(getattr(request.detokenizer, "last_segment", "") or "")
         if not text:
             if request.first_visible_text_at is None:
@@ -636,8 +887,122 @@ class _TextOnlyBatchGeneratorScheduler:
                 generation_tps=(request.completion_tokens / generation_elapsed) if generation_elapsed > 0 else 0.0,
                 peak_memory=float(getattr(response, "peak_memory", 0.0) or 0.0),
                 finish_reason=str(getattr(response, "finish_reason", "") or "") or None,
+                speculative_acceptance_rate=getattr(response, "speculative_acceptance_rate", None),
+                speculative_rollback_rate=getattr(response, "speculative_rollback_rate", None),
+                speculative_accepted_tokens=getattr(response, "speculative_accepted_tokens", None),
+                speculative_rejected_tokens=getattr(response, "speculative_rejected_tokens", None),
+                speculative_num_draft_tokens=getattr(response, "speculative_num_draft_tokens", None),
+                speculative_draft_model_configured=getattr(
+                    response,
+                    "speculative_draft_model_configured",
+                    None,
+                ),
             )
         )
+
+    def _record_speculative_response_stats(
+        self,
+        request: _TextOnlyBatchRequest,
+        response: Any,
+    ) -> None:
+        cycle_count = self._response_nonnegative_int(
+            response,
+            "speculative_cycle_count",
+            request.last_speculative_cycle_count,
+        )
+        accepted_tokens = self._response_nonnegative_int(
+            response,
+            "speculative_accepted_tokens",
+            request.last_speculative_accepted_tokens,
+        )
+        rejected_tokens = self._response_nonnegative_int(
+            response,
+            "speculative_rejected_tokens",
+            request.last_speculative_rejected_tokens,
+        )
+        backbone_ms = self._response_nonnegative_float(
+            response,
+            "speculative_backbone_ms",
+            request.last_speculative_backbone_ms,
+        )
+        mtp_head_ms = self._response_nonnegative_float(
+            response,
+            "speculative_mtp_head_ms",
+            request.last_speculative_mtp_head_ms,
+        )
+        sample_ms = self._response_nonnegative_float(
+            response,
+            "speculative_sample_ms",
+            request.last_speculative_sample_ms,
+        )
+        cache_ops_ms = self._response_nonnegative_float(
+            response,
+            "speculative_cache_ops_ms",
+            request.last_speculative_cache_ops_ms,
+        )
+
+        self._stats.speculative_cycle_count_total += max(
+            0,
+            cycle_count - request.last_speculative_cycle_count,
+        )
+        self._stats.speculative_accepted_count_total += max(
+            0,
+            accepted_tokens - request.last_speculative_accepted_tokens,
+        )
+        self._stats.speculative_rejected_count_total += max(
+            0,
+            rejected_tokens - request.last_speculative_rejected_tokens,
+        )
+        self._stats.speculative_backbone_ms_total += max(
+            0.0,
+            backbone_ms - request.last_speculative_backbone_ms,
+        )
+        self._stats.speculative_mtp_head_ms_total += max(
+            0.0,
+            mtp_head_ms - request.last_speculative_mtp_head_ms,
+        )
+        self._stats.speculative_sample_ms_total += max(
+            0.0,
+            sample_ms - request.last_speculative_sample_ms,
+        )
+        self._stats.speculative_cache_ops_ms_total += max(
+            0.0,
+            cache_ops_ms - request.last_speculative_cache_ops_ms,
+        )
+
+        request.last_speculative_cycle_count = cycle_count
+        request.last_speculative_accepted_tokens = accepted_tokens
+        request.last_speculative_rejected_tokens = rejected_tokens
+        request.last_speculative_backbone_ms = backbone_ms
+        request.last_speculative_mtp_head_ms = mtp_head_ms
+        request.last_speculative_sample_ms = sample_ms
+        request.last_speculative_cache_ops_ms = cache_ops_ms
+
+    @staticmethod
+    def _response_nonnegative_int(response: Any, attr_name: str, default: int) -> int:
+        try:
+            value = getattr(response, attr_name)
+        except Exception:
+            return default
+        if value is None:
+            return default
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _response_nonnegative_float(response: Any, attr_name: str, default: float) -> float:
+        try:
+            value = getattr(response, attr_name)
+        except Exception:
+            return default
+        if value is None:
+            return default
+        try:
+            return max(0.0, float(value))
+        except (TypeError, ValueError):
+            return default
 
     def _finish_request(self, request: _TextOnlyBatchRequest) -> None:
         if request.uid is not None:
@@ -1132,6 +1497,11 @@ class AutoMLXVLMBackend:
         metadata["mlx_lm_version"] = _installed_package_version("mlx-lm")
         metadata["mlx_vlm_version"] = _installed_package_version("mlx-vlm")
         execution_mode = metadata.get("melix.vlm.execution_mode", "").strip() or "multimodal"
+        native_mtp_metadata = maybe_apply_native_mtp_preload_patches(
+            model_spec.model_path,
+            metadata=metadata,
+        )
+        metadata.update(native_mtp_metadata)
         try:
             load_kwargs: dict[str, Any] = {"revision": model_spec.revision or "main"}
             if trust_remote_code:
@@ -1146,13 +1516,24 @@ class AutoMLXVLMBackend:
                 model_spec=model_spec,
                 original_error=exc,
             )
+        language_model = getattr(model, "language_model", model)
+        native_mtp_active = _truthy_string(metadata.get("melix.native_mtp.active"))
+        try:
+            setattr(language_model, "_melix_native_mtp_active", native_mtp_active)
+        except Exception:
+            pass
         metadata["melix.vlm.execution_mode"] = execution_mode
         metadata["melix.vlm.text_only_step_cooperative"] = (
             "true"
             if self.generate_step_fn is not None and _supports_isolated_streaming_detokenizer(processor)
             else "false"
         )
-        metadata[_TEXT_ONLY_BATCH_GENERATOR_EXT_KEY] = "false"
+        metadata[_TEXT_ONLY_BATCH_GENERATOR_EXT_KEY] = (
+            "true"
+            if _truthy_string(metadata.get(_TEXT_ONLY_BATCH_GENERATOR_EXT_KEY))
+            or _truthy_string(metadata.get("melix.native_mtp.active"))
+            else "false"
+        )
         family_config = resolve_vision_family_config(dict(model_spec.ext))
         capability_metadata = family_config.capability_metadata()
         capability_metadata["melix.vlm.text_only_step_cooperative"] = metadata[
@@ -2302,7 +2683,7 @@ class MLXVLMRuntime:
             processor=loaded_model["processor"],
             adapter=adapter,
             executor=self._executor,
-            max_batch_size=8,
+            max_batch_size=None,
             wait_ms=2.0,
             prefill_step_size=requested_prefill_step_size,
         )

@@ -136,11 +136,21 @@ ambiguous duplicate job or incrementing attempts. Requests with different
 When a request deadline is exceeded while bytes are still progressing, the
 receipt status is `in_progress` rather than `failed`. Failed, stalled, and
 cancelled terminal paths still set `last_error` and a failed
-`artifact_integrity` receipt. The current strict activation gate is a
-worker-side fixture helper for receipts: activation is eligible only when the
-receipt is completed and `artifact_integrity.status` is `passed`. This is not
-a full signature system, release publish-token flow, asynchronous installer, or
-desktop UI contract.
+`artifact_integrity` receipt.
+
+Managed artifact requests can opt into the current strict install preflight
+with `melix.strict_install_mode=true` or `melix.install_mode=strict`. Strict
+mode refuses the worker-owned download/import boundary before any bytes are
+materialized when the request lacks immutable digest metadata in
+`melix.artifact_digest`, `artifact_digest`, or `sha256`. The refusal uses
+`artifact_integrity_required`, writes `download.state.json`, sets
+`last_error=missing_artifact_digest`, and records a failed `artifact_integrity`
+receipt with `policy_present=false`.
+
+The current strict activation gate is a worker-side fixture helper for
+receipts: activation is eligible only when the receipt is completed and
+`artifact_integrity.status` is `passed`. This is not a full signature system,
+release publish-token flow, asynchronous installer, or desktop UI contract.
 
 ## Bootstrap
 

@@ -42,6 +42,7 @@ from worker.registry import WorkerRegistry
 from worker.runtime.deterministic_backend import DeterministicTextBackend
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 from worker.trajectory_provenance import (
+    _copy_trajectory_provenance_value,
     adapter_manifest_trajectory_provenance,
     alignment_metrics_trajectory_provenance,
     append_trajectory_provenance,
@@ -230,6 +231,45 @@ def test_trajectory_provenance_helpers_ignore_empty_or_unrelated_inputs(
     assert load_trajectory_provenance_from_snapshot_dir(tmp_path / "missing-snapshot") == {}
     assert adapter_manifest_trajectory_provenance(None) == {}
     assert alignment_metrics_trajectory_provenance(None) == {}
+
+
+def test_normalize_trajectory_provenance_copies_nested_json_containers() -> None:
+    source = {
+        "trajectory_quality_metrics": {
+            "reward_coverage_count": 1,
+            "components": [{"name": "format", "score": 1.0}],
+        },
+        "agentic_sft_token_metrics": {"trace_tokens": 12},
+    }
+
+    normalized = normalize_trajectory_provenance(source)
+    copied_quality = normalized["trajectory_quality_metrics"]
+
+    assert copied_quality == source["trajectory_quality_metrics"]
+    assert copied_quality is not source["trajectory_quality_metrics"]
+    assert copied_quality["components"] is not source["trajectory_quality_metrics"]["components"]
+    assert copied_quality["components"][0] is not source["trajectory_quality_metrics"]["components"][0]
+
+    source["trajectory_quality_metrics"]["components"][0]["score"] = 0.0
+    assert copied_quality["components"][0]["score"] == 1.0
+
+
+def test_copy_trajectory_provenance_value_falls_back_for_custom_mutables() -> None:
+    class CustomMutable:
+        def __init__(self, value: int) -> None:
+            self.value = value
+
+    original = {"items": [CustomMutable(1)], "tuple": (CustomMutable(2),)}
+
+    copied = _copy_trajectory_provenance_value(original)
+
+    assert copied is not original
+    assert copied["items"] is not original["items"]
+    assert copied["items"][0] is not original["items"][0]
+    assert copied["items"][0].value == 1
+    assert copied["tuple"] is not original["tuple"]
+    assert copied["tuple"][0] is not original["tuple"][0]
+    assert copied["tuple"][0].value == 2
 
 
 def test_train_lora_records_agentic_trajectory_provenance_in_adapter_manifest(

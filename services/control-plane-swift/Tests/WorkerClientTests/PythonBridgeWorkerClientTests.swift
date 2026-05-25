@@ -80,6 +80,102 @@ struct PythonBridgeWorkerClientTests {
         await fixture.stop()
     }
 
+    @Test("grpc python runner reuses its event loop group across RPCs")
+    func grpcPythonRunnerReusesItsEventLoopGroupAcrossRPCs() async throws {
+        let fixture = try await LivePythonWorkerFixture.start(
+            handshakeResponse: {
+                var response = Melix_Worker_V1_HandshakeResponse()
+                response.protocolVersion = "melix.worker.v1"
+                response.runtimeVersion = "python-worker/test"
+                return response
+            }(),
+            runtimeStatsResponse: {
+                var response = Melix_Worker_V1_GetRuntimeStatsResponse()
+                response.stats.residentBytes = 12_288
+                return response
+            }(),
+            cacheStatsResponse: {
+                var response = Melix_Worker_V1_GetCacheStatsResponse()
+                response.stats.l1Bytes = 4_096
+                return response
+            }(),
+            generateEvents: []
+        )
+        let tracker = EventLoopGroupCreationTracker()
+        let runner = GRPCPythonWorkerRunner(
+            makeEventLoopGroup: {
+                tracker.recordCreation()
+                return MultiThreadedEventLoopGroup(numberOfThreads: 1)
+            },
+            shutdownEventLoopGroup: { group in
+                try await group.shutdownGracefully()
+            }
+        )
+
+        do {
+            let client = PythonBridgeWorkerClient(socketPath: fixture.socketPath, rpcRunner: runner)
+
+            #expect(await client.canDispatchRequests())
+            #expect(try await client.runtimeStats().stats.residentBytes == 12_288)
+            #expect(try await client.cacheStats().stats.l1Bytes == 4_096)
+            #expect(tracker.creationCount == 1)
+        } catch {
+            await fixture.stop()
+            throw error
+        }
+
+        await fixture.stop()
+    }
+
+    @Test("grpc python runner reuses its client session across RPCs")
+    func grpcPythonRunnerReusesItsClientSessionAcrossRPCs() async throws {
+        let fixture = try await LivePythonWorkerFixture.start(
+            handshakeResponse: {
+                var response = Melix_Worker_V1_HandshakeResponse()
+                response.protocolVersion = "melix.worker.v1"
+                response.runtimeVersion = "python-worker/test"
+                return response
+            }(),
+            runtimeStatsResponse: {
+                var response = Melix_Worker_V1_GetRuntimeStatsResponse()
+                response.stats.residentBytes = 12_288
+                return response
+            }(),
+            cacheStatsResponse: {
+                var response = Melix_Worker_V1_GetCacheStatsResponse()
+                response.stats.l1Bytes = 4_096
+                return response
+            }(),
+            generateEvents: []
+        )
+        let tracker = EventLoopGroupCreationTracker()
+        let runner = GRPCPythonWorkerRunner(
+            makeEventLoopGroup: {
+                MultiThreadedEventLoopGroup(numberOfThreads: 1)
+            },
+            shutdownEventLoopGroup: { group in
+                try await group.shutdownGracefully()
+            },
+            onClientSessionCreated: {
+                tracker.recordCreation()
+            }
+        )
+
+        do {
+            let client = PythonBridgeWorkerClient(socketPath: fixture.socketPath, rpcRunner: runner)
+
+            #expect(await client.canDispatchRequests())
+            #expect(try await client.runtimeStats().stats.residentBytes == 12_288)
+            #expect(try await client.cacheStats().stats.l1Bytes == 4_096)
+            #expect(tracker.creationCount == 1)
+        } catch {
+            await fixture.stop()
+            throw error
+        }
+
+        await fixture.stop()
+    }
+
     @Test("bootstrap worker preparation returns nil for unknown model summaries")
     func bootstrapWorkerPreparationReturnsNilForUnknownModelSummaries() {
         var summary = Melix_Controlplane_V1_ModelSummary()
@@ -1867,6 +1963,23 @@ private actor ScriptedBridgeRunner: WorkerBridgeRunning {
         try recordedCommands[.loadModel, default: []].map {
             try Melix_Worker_V1_LoadModelRequest(serializedBytes: $0.requestData)
         }
+    }
+}
+
+private final class EventLoopGroupCreationTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    var creationCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func recordCreation() {
+        lock.lock()
+        value += 1
+        lock.unlock()
     }
 }
 

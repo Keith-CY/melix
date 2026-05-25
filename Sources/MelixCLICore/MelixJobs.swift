@@ -390,6 +390,9 @@ final class MelixJobStatusStore {
             "dataset_version_id": job.datasetVersionID,
             "preflight_receipt_path": job.preflightReceiptPath,
         ]
+        if let trainabilityPreflight = localTrainingQueueTrainabilityPreflightPayload(job) {
+            payload["trainability_preflight"] = trainabilityPreflight
+        }
         return payload
     }
 
@@ -640,10 +643,30 @@ final class MelixJobStatusStore {
         guard let first = job.operatorErrors.first else {
             return NSNull()
         }
-        return [
+        var payload: [String: Any] = [
             "code": first.code,
             "message": first.message,
+            "retriable": first.retriable,
         ]
+        if !first.remediation.isEmpty {
+            payload["remediation"] = first.remediation
+        }
+        return payload
+    }
+
+    private func localTrainingQueueTrainabilityPreflightPayload(_ job: LocalTrainingQueueJob) -> [String: Any]? {
+        let trimmedPath = job.preflightReceiptPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else {
+            return nil
+        }
+        let url = URL(fileURLWithPath: (trimmedPath as NSString).expandingTildeInPath)
+        guard var payload = loadJSONPayload(at: url),
+              stringField(payload, "schema_version") == "melix.trainability_preflight.v1"
+        else {
+            return nil
+        }
+        payload["receipt_path"] = url.path
+        return payload
     }
 
     private func modelOpsThroughputMetrics(_ record: MelixModelOpsJobRecord) -> [[String: Any]] {
@@ -852,6 +875,10 @@ final class MelixJobStatusStore {
     }
 
     private func loadCancelRequest(at url: URL) -> [String: Any]? {
+        loadJSONPayload(at: url)
+    }
+
+    private func loadJSONPayload(at url: URL) -> [String: Any]? {
         guard let data = try? Data(contentsOf: url),
               let object = try? JSONSerialization.jsonObject(with: data),
               let payload = object as? [String: Any]
@@ -1125,6 +1152,47 @@ func renderJobStatus(_ payload: [String: Any]) -> String {
         "Started: \(stringField(payload, "started_at_unix_ms"))",
         "Record: \(stringField(payload, "record_path"))",
     ]
+    if let error = payload["error"] as? [String: Any] {
+        let code = stringField(error, "code")
+        let message = stringField(error, "message")
+        let errorText = [code, message].filter { !$0.isEmpty }.joined(separator: ": ")
+        if !errorText.isEmpty {
+            lines.append("Error: \(errorText)")
+        }
+        let remediation = stringField(error, "remediation")
+        if !remediation.isEmpty {
+            lines.append("Remediation: \(remediation)")
+        }
+    }
+    if let trainingQueue = payload["training_queue"] as? [String: Any] {
+        let recoveryPolicy = stringField(trainingQueue, "recovery_policy")
+        if !recoveryPolicy.isEmpty {
+            lines.append("Recovery: \(recoveryPolicy)")
+        }
+        let preflightReceiptPath = stringField(trainingQueue, "preflight_receipt_path")
+        if !preflightReceiptPath.isEmpty {
+            lines.append("Preflight: \(preflightReceiptPath)")
+        }
+    }
+    if let preflight = payload["trainability_preflight"] as? [String: Any],
+       let checks = preflight["checks"] as? [[String: Any]] {
+        for check in checks {
+            let status = stringField(check, "status").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard status == "blocked" || status == "error" else {
+                continue
+            }
+            let code = stringField(check, "code")
+            let message = stringField(check, "operator_message")
+            let checkText = [code, message].filter { !$0.isEmpty }.joined(separator: ": ")
+            if !checkText.isEmpty {
+                lines.append("Preflight Check: \(checkText)")
+            }
+            let remediation = stringField(check, "remediation")
+            if !remediation.isEmpty {
+                lines.append("Preflight Remediation: \(remediation)")
+            }
+        }
+    }
     if let logs = payload["logs"] as? [String: Any],
        !stringField(logs, "path").isEmpty {
         lines.append("Logs: \(stringField(logs, "path"))")
