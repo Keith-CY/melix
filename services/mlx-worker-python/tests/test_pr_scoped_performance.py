@@ -863,8 +863,8 @@ def test_evaluation_answer_normalization_probe_command_emits_metrics() -> None:
     metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
 
     assert metrics["elapsed_ms_mean"] > 0
-    assert metrics["numeric_extract_calls_mean"] == 300.0
-    assert metrics["option_extract_calls_mean"] == 300.0
+    assert metrics["numeric_extract_calls_mean"] == 0.0
+    assert metrics["option_extract_calls_mean"] == 0.0
     assert metrics["answer_count"] == 3000.0
     assert metrics["free_text_answer_count"] == 2400.0
     assert metrics["normalization_checksum"] > 0
