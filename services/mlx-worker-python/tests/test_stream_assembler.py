@@ -314,6 +314,24 @@ def test_token_byte_raw_parts_materialize_before_raw_text_delta() -> None:
     assert completed.metrics["non_monotonic_stream_count"] == 0
 
 
+def test_text_fragments_without_raw_text_are_treated_as_deltas() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-text-deltas",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+
+    first = assembler.accept(StreamFragment(text="Hel"))
+    second = assembler.accept(StreamFragment(text="lo"))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in first + second] == ["Hel", "lo"]
+    assert completed.assistant_text == "Hello"
+    assert completed.raw_text == "Hello"
+    assert completed.metrics["non_monotonic_stream_count"] == 0
+
+
 def test_plain_buffer_with_marker_still_holds_partial_structural_prefix() -> None:
     assembler = RequestStreamAssembler(
         request_id="req-marker-still-held",

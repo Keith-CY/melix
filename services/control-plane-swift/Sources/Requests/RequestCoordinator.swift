@@ -916,6 +916,7 @@ public actor RequestCoordinator {
             Task {
                 var firstDeltaRecorded = false
                 var firstSemanticEventRecorded = false
+                var decodingPhasePublished = false
                 var eventCount = 0.0
                 var reasoningBudget = initialReasoningBudget
 
@@ -956,6 +957,7 @@ public actor RequestCoordinator {
                                 firstSemanticEventRecorded = true
                                 firstSemanticEventMs = now().timeIntervalSince(dispatchStartedAt) * 1000
                             }
+                            let shouldYieldBeforeObservability = self.isSemanticStreamEvent(outputEvent)
 
                             var firstTokenMetrics: (
                                 metricKey: String,
@@ -974,6 +976,8 @@ public actor RequestCoordinator {
                                     followupTTFTMs: observedAt.timeIntervalSince(requestMetricStartedAt) * 1000,
                                     shouldRecordFollowup: !isBufferedChatCompletionsResponse
                                 )
+                            }
+                            if shouldYieldBeforeObservability {
                                 await hub.yield(outputEvent)
                             }
 
@@ -983,8 +987,12 @@ public actor RequestCoordinator {
                                 requestIdentity: request.workerRequest.execution.id,
                                 routeKind: plan.routeKind,
                                 accelerationProfileID: requestAccelerationProfileID,
-                                event: outputEvent
+                                event: outputEvent,
+                                shouldPublishTokenPhase: !decodingPhasePublished
                             )
+                            if self.publishesDecodingPhase(outputEvent) {
+                                decodingPhasePublished = true
+                            }
                             if let firstSemanticEventMs {
                                 await metricsStore.set(
                                     firstSemanticEventMs,
@@ -1026,7 +1034,7 @@ public actor RequestCoordinator {
                             }
                             eventCount += 1
                             await metricsStore.set(eventCount, forKey: "http.stream_event_count")
-                            if firstTokenMetrics == nil {
+                            if !shouldYieldBeforeObservability {
                                 await hub.yield(outputEvent)
                             }
                         }
@@ -1036,30 +1044,58 @@ public actor RequestCoordinator {
                         }
                     }
                     await metricsStore.decrement("requests.inflight")
-                    _ = await self.refreshWorkerCacheObservability(using: workerClient)
-                    await self.refreshWorkerRuntimeObservability(
-                        using: workerClient,
-                        routeKind: plan.routeKind
-                    )
-                    await metricsStore.flushExport()
                     let terminalPhase = await self.terminalPhase(
                         requestID: requestID,
                         fallback: .requestCompleted
                     )
-                    await hub.emitLifecycle(.completed)
-                    await hub.finish()
-                    await self.finishRequestTracking(requestID: requestID, phase: terminalPhase)
+                    if plan.routeKind.isMultimodalBackgroundRoute {
+                        _ = await self.refreshWorkerCacheObservability(using: workerClient)
+                        await self.refreshWorkerRuntimeObservability(
+                            using: workerClient,
+                            routeKind: plan.routeKind
+                        )
+                        await metricsStore.flushExport()
+                        await hub.emitLifecycle(.completed)
+                        await hub.finish()
+                        await self.finishRequestTracking(requestID: requestID, phase: terminalPhase)
+                    } else {
+                        await hub.emitLifecycle(.completed)
+                        await hub.finish()
+                        await self.finishRequestTracking(requestID: requestID, phase: terminalPhase)
+                        Task {
+                            _ = await self.refreshWorkerCacheObservability(using: workerClient)
+                            await self.refreshWorkerRuntimeObservability(
+                                using: workerClient,
+                                routeKind: plan.routeKind
+                            )
+                            await metricsStore.flushExport()
+                        }
+                    }
                 } catch {
                     await metricsStore.decrement("requests.inflight")
-                    _ = await self.refreshWorkerCacheObservability(using: workerClient)
-                    await self.refreshWorkerRuntimeObservability(
-                        using: workerClient,
-                        routeKind: plan.routeKind
-                    )
-                    await metricsStore.flushExport()
-                    await hub.emitLifecycle(.terminalFailure(code: "transport_error", message: error.localizedDescription))
-                    await self.finishRequestTracking(requestID: requestID, phase: .requestFailed)
-                    await hub.finish(throwing: error)
+                    if plan.routeKind.isMultimodalBackgroundRoute {
+                        _ = await self.refreshWorkerCacheObservability(using: workerClient)
+                        await self.refreshWorkerRuntimeObservability(
+                            using: workerClient,
+                            routeKind: plan.routeKind
+                        )
+                        await metricsStore.flushExport()
+                        await hub.emitLifecycle(.terminalFailure(code: "transport_error", message: error.localizedDescription))
+                        await self.finishRequestTracking(requestID: requestID, phase: .requestFailed)
+                        await hub.finish(throwing: error)
+                    } else {
+                        await hub.emitLifecycle(.terminalFailure(code: "transport_error", message: error.localizedDescription))
+                        await self.finishRequestTracking(requestID: requestID, phase: .requestFailed)
+                        await hub.finish(throwing: error)
+                        Task {
+                            _ = await self.refreshWorkerCacheObservability(using: workerClient)
+                            await self.refreshWorkerRuntimeObservability(
+                                using: workerClient,
+                                routeKind: plan.routeKind
+                            )
+                            await metricsStore.flushExport()
+                        }
+                    }
                 }
             }
 
@@ -1088,6 +1124,15 @@ public actor RequestCoordinator {
     private func isSemanticStreamEvent(_ event: Melix_Worker_V1_ExecuteEvent) -> Bool {
         switch event.payload {
         case .tokenDelta, .reasoningDelta, .toolCallDelta:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func publishesDecodingPhase(_ event: Melix_Worker_V1_ExecuteEvent) -> Bool {
+        switch event.payload {
+        case .decodeStarted, .tokenDelta, .reasoningDelta, .toolCallDelta, .usageDelta:
             return true
         default:
             return false
@@ -1248,7 +1293,8 @@ public actor RequestCoordinator {
         requestIdentity: Melix_Worker_V1_RequestIdentity,
         routeKind: WorkerRouteKind,
         accelerationProfileID: String,
-        event: Melix_Worker_V1_ExecuteEvent
+        event: Melix_Worker_V1_ExecuteEvent,
+        shouldPublishTokenPhase: Bool = true
     ) async {
         let workerSource = routeKind.workerSourceID
         let observedLane = observabilityLane(
@@ -1281,15 +1327,17 @@ public actor RequestCoordinator {
                 source: workerSource
             )
         case .tokenDelta, .reasoningDelta, .toolCallDelta, .usageDelta:
-            await schedulerReadModel.recordPhaseTransition(
-                requestID: requestID,
-                phase: .requestDecoding,
-                laneHint: observedLane,
-                workerID: workerSource,
-                accelerationMode: controlPlaneAccelerationMode(from: event.accelerationMode),
-                accelerationProfileID: accelerationProfileID,
-                source: workerSource
-            )
+            if shouldPublishTokenPhase {
+                await schedulerReadModel.recordPhaseTransition(
+                    requestID: requestID,
+                    phase: .requestDecoding,
+                    laneHint: observedLane,
+                    workerID: workerSource,
+                    accelerationMode: controlPlaneAccelerationMode(from: event.accelerationMode),
+                    accelerationProfileID: accelerationProfileID,
+                    source: workerSource
+                )
+            }
             if case .toolCallDelta(let toolCallDelta) = event.payload {
                 await hydrateToolResult(
                     requestIdentity: requestIdentity,

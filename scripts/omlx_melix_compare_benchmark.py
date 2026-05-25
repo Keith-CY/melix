@@ -29,6 +29,8 @@ DEFAULT_WARMUP_MAX_TOKENS = 8
 DEFAULT_WARMUP_PROMPT_TOKEN_TARGET = 128
 DEFAULT_PREFLIGHT_WAIT_SECONDS = 0.0
 DEFAULT_PREFLIGHT_RETRY_INTERVAL_SECONDS = 2.0
+DEFAULT_TOP_P = 1.0
+DEFAULT_TOP_K = 0
 PROMPT_STYLES = ("concise", "saturating")
 MEASUREMENT_PROFILES = ("auto", "cold", "warm", "mixed")
 REPORT_SCHEMA_VERSION = 1
@@ -171,6 +173,20 @@ def build_prompt(
     target_chars = max(128, prompt_token_target * 4)
     body = (sentence * ((target_chars // len(sentence)) + 2))[:target_chars]
     return f"{prefix}\n\n{body}\n\n{instruction}"
+
+
+def request_key_for_scenario(
+    scenario: BenchmarkScenario,
+    *,
+    request_index: int,
+    run_key: str = "",
+) -> str:
+    parts = []
+    if scenario.cache_profile == "cold_unique" and run_key:
+        parts.append(run_key)
+    parts.append(scenario.scenario_id)
+    parts.append(f"req{request_index}")
+    return "-".join(parts)
 
 
 def parse_sse_data_lines(lines: Iterable[bytes]) -> tuple[str, int, dict[str, Any] | None, bool]:
@@ -319,13 +335,15 @@ def stream_chat_completion(
     scenario: BenchmarkScenario,
     *,
     request_index: int,
+    request_key: str,
     include_usage: bool,
     temperature: float,
+    top_p: float,
+    top_k: int,
     timeout_seconds: float,
     group_id: str,
     group_elapsed_ms: float,
 ) -> RequestObservation:
-    request_key = f"{scenario.scenario_id}-{endpoint.name}-{request_index}-{uuid.uuid4().hex[:8]}"
     prompt = build_prompt(
         scenario.prompt_token_target,
         cache_profile=scenario.cache_profile,
@@ -336,6 +354,8 @@ def stream_chat_completion(
         "model": endpoint.model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
+        "top_p": top_p,
+        "top_k": top_k,
         "max_tokens": scenario.max_tokens,
         "stream": True,
     }
@@ -457,7 +477,10 @@ def run_group(
     *,
     include_usage: bool,
     temperature: float,
+    top_p: float,
+    top_k: int,
     timeout_seconds: float,
+    run_key: str = "",
 ) -> list[RequestObservation]:
     group_id = f"{endpoint.name}-{scenario.scenario_id}-{uuid.uuid4().hex[:8]}"
     started_at = time.perf_counter()
@@ -468,8 +491,15 @@ def run_group(
             endpoint,
             scenario,
             request_index=request_index,
+            request_key=request_key_for_scenario(
+                scenario,
+                request_index=request_index,
+                run_key=run_key,
+            ),
             include_usage=include_usage,
             temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
             timeout_seconds=timeout_seconds,
             group_id=group_id,
             group_elapsed_ms=0.0,
@@ -514,6 +544,17 @@ def build_scenarios(
                     )
                 )
     return scenarios
+
+
+def endpoints_for_scenario(
+    endpoints: list[EndpointConfig],
+    scenario: BenchmarkScenario,
+    *,
+    endpoint_order: str,
+) -> list[EndpointConfig]:
+    if endpoint_order == "alternate" and scenario.repeat_index % 2 == 1:
+        return list(reversed(endpoints))
+    return list(endpoints)
 
 
 def summarize_observations(observations: list[RequestObservation]) -> list[ScenarioSummary]:
@@ -1083,12 +1124,48 @@ def render_markdown_summary(
                 "vision.text_batch_generator.executor_step_ms_total",
                 "vision.text_batch_generator.next_ms_total",
                 "vision.text_batch_generator.emit_ms_total",
+                "vision.text_batch_generator.speculative_cycle_count_total",
+                "vision.text_batch_generator.speculative_accepted_count_total",
+                "vision.text_batch_generator.speculative_rejected_count_total",
+                "vision.text_batch_generator.speculative_backbone_ms_total",
+                "vision.text_batch_generator.speculative_mtp_head_ms_total",
+                "vision.text_batch_generator.speculative_sample_ms_total",
+                "vision.text_batch_generator.speculative_cache_ops_ms_total",
+                "http.parser.text_batch_generator_speculative_cycle_count_total",
+                "http.parser.text_batch_generator_speculative_accepted_count_total",
+                "http.parser.text_batch_generator_speculative_rejected_count_total",
+                "http.parser.text_batch_generator_speculative_backbone_ms_total",
+                "http.parser.text_batch_generator_speculative_mtp_head_ms_total",
+                "http.parser.text_batch_generator_speculative_sample_ms_total",
+                "http.parser.text_batch_generator_speculative_cache_ops_ms_total",
+                "http.parser.text_batch_generator_prepare_ms",
+                "http.parser.text_batch_generator_prompt_encode_ms",
+                "http.parser.text_batch_generator_prefill_ms",
+                "http.parser.text_batch_generator_batch_insert_ms",
+                "http.parser.text_batch_generator_insert_ms",
+                "http.parser.text_batch_generator_first_response_ms",
+                "http.parser.text_batch_generator_first_visible_ms",
+                "http.stream_first_event_ms",
+                "http.text_batch_generator_first_visible_to_stream_first_event_ms",
                 "vision.text_batch_generator.active_batch_size",
                 "vision.text_batch_generator.generated_response_count",
                 "vision.text_batch_generator.failed_request_count",
                 "http.ttfd_ms",
             ):
-                lines.append(f"| `{key}` | {_fmt_metric(values.get(key) if isinstance(values, dict) else None)} |")
+                value = values.get(key) if isinstance(values, dict) else None
+                if (
+                    key == "http.text_batch_generator_first_visible_to_stream_first_event_ms"
+                    and value is None
+                    and isinstance(values, dict)
+                ):
+                    stream_first = _numeric_metric(values, "http.stream_first_event_ms")
+                    first_visible = _numeric_metric(
+                        values,
+                        "http.parser.text_batch_generator_first_visible_ms",
+                    )
+                    if stream_first is not None and first_visible is not None:
+                        value = stream_first - first_visible
+                lines.append(f"| `{key}` | {_fmt_metric(value)} |")
         else:
             lines.append(f"Metrics snapshot unavailable: `{metrics_snapshot.get('error', 'unknown')}`")
     lines.append("")
@@ -1170,6 +1247,8 @@ def run_warmups(
     prompt_style: str,
     include_usage: bool,
     temperature: float,
+    top_p: float,
+    top_k: int,
     timeout_seconds: float,
 ) -> list[RequestObservation]:
     observations: list[RequestObservation] = []
@@ -1192,7 +1271,10 @@ def run_warmups(
                     scenario,
                     include_usage=include_usage,
                     temperature=temperature,
+                    top_p=top_p,
+                    top_k=top_k,
                     timeout_seconds=timeout_seconds,
+                    run_key="warmup",
                 )
             )
     return observations
@@ -1276,18 +1358,27 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                 prompt_style=args.prompt_style,
                 include_usage=args.include_usage,
                 temperature=args.temperature,
+                top_p=args.top_p,
+                top_k=args.top_k,
                 timeout_seconds=args.timeout_seconds,
             )
             observations = []
             for scenario in scenarios:
-                for endpoint in endpoints:
+                for endpoint in endpoints_for_scenario(
+                    endpoints,
+                    scenario,
+                    endpoint_order=args.endpoint_order,
+                ):
                     observations.extend(
                         run_group(
                             endpoint,
                             scenario,
                             include_usage=args.include_usage,
                             temperature=args.temperature,
+                            top_p=args.top_p,
+                            top_k=args.top_k,
                             timeout_seconds=args.timeout_seconds,
+                            run_key=run_id,
                         )
                     )
 
@@ -1381,7 +1472,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="concise",
         help="Use 'saturating' when measuring long decode throughput and avoiding early natural stops.",
     )
+    parser.add_argument(
+        "--endpoint-order",
+        choices=["fixed", "alternate"],
+        default="fixed",
+        help="Use 'alternate' to reverse Melix/OMLX order on odd repeats and reduce time-drift bias.",
+    )
     parser.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE)
+    parser.add_argument("--top-p", type=float, default=DEFAULT_TOP_P)
+    parser.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
     parser.add_argument("--include-usage", action="store_true", help="Request streaming usage chunks.")
     parser.add_argument("--timeout-seconds", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--preflight-timeout-seconds", type=float, default=10.0)

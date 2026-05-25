@@ -29,6 +29,30 @@ _DEFAULT_INACTIVE_TOKEN_ROUTE_RECEIPT_JSON = inactive_token_route_receipt_json(
 )
 
 
+def _text_native_mtp_parser_metrics(event: RuntimeTokenEvent | None) -> dict[str, str]:
+    if event is None:
+        return {}
+
+    t = event.native_mtp_timings
+    metric_fields = {
+        "text_batch_generator_speculative_cycle_count_total": t.cycle_count if t else None,
+        "text_batch_generator_speculative_accepted_count_total": event.speculative_accepted_tokens,
+        "text_batch_generator_speculative_rejected_count_total": event.speculative_rejected_tokens,
+        "text_batch_generator_speculative_backbone_ms_total": event.speculative_target_verify_ms,
+        "text_batch_generator_speculative_mtp_head_ms_total": t.mtp_head_ms if t else None,
+        "text_batch_generator_speculative_sample_ms_total": t.sample_ms if t else None,
+        "text_batch_generator_speculative_cache_ops_ms_total": t.cache_ops_ms if t else None,
+        "text_batch_generator_insert_ms": t.insert_ms if t else None,
+        "text_batch_generator_prepare_ms": t.prepare_ms if t else None,
+        "text_batch_generator_prompt_encode_ms": t.prompt_encode_ms if t else None,
+        "text_batch_generator_prefill_ms": t.prefill_ms if t else None,
+        "text_batch_generator_batch_insert_ms": t.batch_insert_ms if t else None,
+        "text_batch_generator_first_response_ms": t.first_response_ms if t else None,
+        "text_batch_generator_first_visible_ms": t.first_visible_ms if t else None,
+    }
+    return {key: str(value) for key, value in metric_fields.items() if value is not None}
+
+
 def _resolve_generate_stop_contract(
     loaded_model: object,
     sampling: common_pb2.SamplingConfig,
@@ -315,6 +339,7 @@ class EngineCore:
 
             assembled = assembler.completed()
             parser_metrics = {key: str(value) for key, value in assembled.metrics.items()}
+            parser_metrics.update(_text_native_mtp_parser_metrics(last_token_event))
             resolved_stop_token_count = str(stop_contract.resolved_stop_token_count)
             if plain_text_fast_path:
                 stream_mode_text = "true" if request.stream else "false"

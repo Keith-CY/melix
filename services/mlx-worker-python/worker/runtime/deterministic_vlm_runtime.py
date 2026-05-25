@@ -77,6 +77,13 @@ class VisionProbeSnapshot:
     text_batch_generator_prefill_total_token_count: int = 0
     text_batch_generator_prefill_completed_request_count: int = 0
     text_batch_generator_prefill_step_size: int = 0
+    text_batch_generator_speculative_cycle_count_total: int = 0
+    text_batch_generator_speculative_accepted_count_total: int = 0
+    text_batch_generator_speculative_rejected_count_total: int = 0
+    text_batch_generator_speculative_backbone_ms_total: float = 0.0
+    text_batch_generator_speculative_mtp_head_ms_total: float = 0.0
+    text_batch_generator_speculative_sample_ms_total: float = 0.0
+    text_batch_generator_speculative_cache_ops_ms_total: float = 0.0
 
 
 @dataclass(frozen=True)
