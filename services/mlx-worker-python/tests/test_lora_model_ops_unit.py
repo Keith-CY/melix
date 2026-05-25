@@ -2759,14 +2759,28 @@ def test_extract_structured_result_payload_accepts_carriage_return_line_end() ->
         f"{mlx_lm_runner_module._RESULT_PREFIX}{json.dumps(payload)}\r\n"
         "tail noise"
     )
+    carriage_only_stdout = (
+        "leading noise\r"
+        f"{mlx_lm_runner_module._RESULT_PREFIX}{json.dumps(payload)}\r"
+        "tail noise"
+    )
 
     assert mlx_lm_runner_module._extract_structured_result_payload(stdout) == payload
-
+    assert mlx_lm_runner_module._extract_structured_result_payload(carriage_only_stdout) == payload
 
 
 def test_extract_structured_result_payload_skips_embedded_prefix_and_finds_prior_line() -> None:
     payload = {"value": 7}
-    stdout = (
+
+    class NoCarriageFindStr(str):
+        def find(self, sub: str, *args: object) -> int:  # type: ignore[override]
+            if sub == "\r":
+                raise AssertionError(  # pragma: no cover - assertion path must stay unreachable.
+                    "newline-terminated result should not scan for carriage returns"
+                )
+            return super().find(sub, *args)
+
+    stdout = NoCarriageFindStr(
         f"{mlx_lm_runner_module._RESULT_PREFIX}{json.dumps(payload)}\n"
         "trailing log __MELIX_MLX_RESULT__=not-a-result-line"
     )

@@ -4415,7 +4415,7 @@ struct ControlPlaneServiceTests {
                 reasoningModes: ["enabled", "disabled"],
                 structuredOutputModes: ["json_schema", "plain_text"],
                 concurrencyLevels: [8, 1],
-                repeats: 0,
+                repeats: 1,
                 requests: 0,
                 durationSeconds: 30,
                 allowLargeMatrix: true
@@ -4457,6 +4457,29 @@ struct ControlPlaneServiceTests {
         #expect(response.ok == false)
         #expect(response.error.code == "invalid_argument")
         #expect(response.error.message.contains("Exactly one of requests or duration_seconds"))
+        #expect(await modelOpsClient.lastBenchMatrixRequest == nil)
+    }
+
+    @Test("execute rejects ops.run_bench_matrix when repeats fall below the product limit")
+    func executeRejectsOpsRunBenchMatrixWhenRepeatsFallBelowTheProductLimit() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunBenchMatrixRequest(repeats: 0, requests: 4)
+        )
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message.contains("Benchmark repeats"))
         #expect(await modelOpsClient.lastBenchMatrixRequest == nil)
     }
 

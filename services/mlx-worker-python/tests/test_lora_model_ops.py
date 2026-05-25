@@ -319,6 +319,47 @@ class SuccessfulRunner(MLXLMRunner):
         return self.activate_native(request)
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _lora_manifest_reason_receipt_probe(tmp_path_factory: pytest.TempPathFactory) -> None:
+    tmp_path = tmp_path_factory.mktemp("lora-runtime-reason-receipt")
+    dataset_dir = _write_dataset_package(
+        tmp_path / "dataset",
+        samples=[
+            {
+                "messages": [
+                    {"role": "user", "content": "hello"},
+                    {"role": "assistant", "content": "world"},
+                ]
+            }
+        ],
+    )
+    result = LoRATrainingPipeline(runner=SuccessfulRunner()).run(
+        job_id="train-runtime-reason-receipt",
+        request_ext={
+            "operation": "train_lora",
+            "adapter_name": "text-adapter",
+            "dataset_uri": str(dataset_dir),
+        },
+        source_model=common_pb2.ModelSpec(
+            model_id="melix-runtime-reason-text",
+            model_path=str(tmp_path / "qwen-base"),
+            model_kind="text",
+            revision="dev",
+            max_context=2048,
+            ext={"text_family_id": "qwen", "text_layer_count": "2"},
+        ),
+        output_dir=tmp_path / "output",
+        jobs_root=tmp_path / "jobs",
+    )
+
+    manifest = result.manifest
+    assert manifest["runtime_unsupported_reason"] == (
+        manifest["training_runtime_preflight"]["unsupported_reason"]
+    )
+    assert manifest["adapter_unsupported_reason"] == manifest["capability_gate"]["unsupported_reason"]
+    assert manifest["unsupported_reason"] == manifest["adapter_unsupported_reason"]
+
+
 class NativeUnavailableRunner(SuccessfulRunner):
     def train_native(self, request: TrainingRequest) -> TrainingResult:
         self.native_train_calls += 1
@@ -833,7 +874,6 @@ def test_train_lora_supports_qlora_with_hf_valid_split_and_persists_desired_alia
         "train",
         "validation",
     ]
-
 
 def test_train_lora_supports_dora_mode_contract_and_manifest(tmp_path: Path) -> None:
     dataset_dir = _write_dataset_package(

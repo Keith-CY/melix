@@ -597,8 +597,48 @@ def test_lora_canary_receipt_detects_missing_checkpoint_resume_assets(
     assert fields["base_config_present"] is False
     assert fields["processor_resume_mode"] == "missing"
     assert fields["aux_modules_restored"] is False
-    assert fields["merge_export_canary_result"] == "fail:missing_base_config,missing_tokenizer_config"
+    assert fields["merge_export_canary_result"] == (
+        "fail:missing_base_config,missing_tokenizer_config,missing_auxiliary_modules"
+    )
     assert fields["callback_api_drift_result"] == "fail:callback_arity_mismatch"
+
+    missing_eos_base_dir = tmp_path / "base-model-missing-eos"
+    missing_eos_base_dir.mkdir()
+    (missing_eos_base_dir / "config.json").write_text('{"model_type":"qwen2"}\n', encoding="utf-8")
+    (missing_eos_base_dir / "tokenizer_config.json").write_text(
+        json.dumps({"tokenizer_class": "Qwen2Tokenizer"}) + "\n",
+        encoding="utf-8",
+    )
+    missing_eos_adapter_dir = tmp_path / "adapter-missing-eos"
+    missing_eos_adapter_dir.mkdir()
+    missing_eos_adapter_config_path = missing_eos_adapter_dir / "adapter_config.json"
+    missing_eos_adapter_config_path.write_text(
+        json.dumps({"tokenizer_config": {"tokenizer_class": "Qwen2Tokenizer"}}) + "\n",
+        encoding="utf-8",
+    )
+    missing_eos_weights_path = missing_eos_adapter_dir / "adapters.safetensors"
+    missing_eos_weights_path.write_bytes(b"adapter")
+
+    missing_eos_fields = build_lora_canary_receipt_fields(
+        source_model=_text_model(model_path=str(missing_eos_base_dir)),
+        adapter_output_dir=missing_eos_adapter_dir,
+        adapter_config_path=missing_eos_adapter_config_path,
+        weights_path=missing_eos_weights_path,
+        training_metrics=TrainingMetrics(
+            job_duration_ms=1.0,
+            tokens_seen=8,
+            examples_seen=1,
+            loss_final=0.5,
+            loss_best=0.5,
+            learning_rate_final=1e-5,
+        ),
+    )
+
+    assert missing_eos_fields["source_eos_token"] == ""
+    assert missing_eos_fields["saved_eos_token"] == ""
+    assert missing_eos_fields["merge_export_canary_result"] == (
+        "fail:missing_source_eos_token,missing_saved_eos_token,missing_auxiliary_modules"
+    )
 
 
 def test_training_config_records_scheduler_kwargs_omission_receipt() -> None:
