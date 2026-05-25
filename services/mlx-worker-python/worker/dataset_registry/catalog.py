@@ -642,19 +642,19 @@ def _limit_rows(rows: list[dict[str, Any]], limit: int | None) -> list[dict[str,
 def _limited_rows_from_json_file(path: Path, *, limit: int) -> list[dict[str, Any]] | None:
     if limit <= 0:
         return []
-    chunks: list[str] = []
+    json_text = ""
     with path.open("r", encoding="utf-8") as handle:
         while True:
             chunk = handle.read(_JSON_LIMITED_PREVIEW_CHUNK_CHARS)
             if not chunk:
                 break
-            chunks.append(chunk)
-            limited_rows = _limited_rows_from_json_text("".join(chunks), limit=limit)
+            json_text = chunk if not json_text else json_text + chunk
+            limited_rows = _limited_rows_from_json_text(json_text, limit=limit)
             if limited_rows is not None and len(limited_rows) >= limit:
                 return limited_rows
-    if not chunks:
+    if not json_text:
         return None
-    return _limited_rows_from_json_text("".join(chunks), limit=limit)
+    return _limited_rows_from_json_text(json_text, limit=limit)
 
 
 def _limited_rows_from_json_text(json_text: str, *, limit: int) -> list[dict[str, Any]] | None:
@@ -677,6 +677,8 @@ def _limited_rows_from_json_text(json_text: str, *, limit: int) -> list[dict[str
         except json.JSONDecodeError:
             return None
         if isinstance(value, dict):
+            if limit == 1:
+                return [value]
             rows.append(value)
             if len(rows) >= limit:
                 return rows
