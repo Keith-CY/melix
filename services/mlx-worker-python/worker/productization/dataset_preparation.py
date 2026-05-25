@@ -558,13 +558,15 @@ def _iter_source_file_paths(input_path: Path) -> list[Path]:
 
 
 def _source_kind(path: Path) -> str | None:
-    suffixes = [suffix.lower() for suffix in path.suffixes]
-    if suffixes[-2:] == [".pdf", ".txt"]:
-        return "pdf"
-    if suffixes[-2:] == [".docx", ".txt"]:
-        return "docx"
-    suffix = suffixes[-1] if suffixes else ""
-    if suffix in {".txt", ".text"}:
+    suffix = path.suffix.lower()
+    if suffix == ".txt":
+        name = path.name.lower()
+        if name.endswith(".pdf.txt"):
+            return "pdf"
+        if name.endswith(".docx.txt"):
+            return "docx"
+        return "text"
+    if suffix == ".text":
         return "text"
     if suffix in {".md", ".markdown"}:
         return "markdown"

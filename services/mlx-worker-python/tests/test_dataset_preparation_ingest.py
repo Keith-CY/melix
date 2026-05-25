@@ -10,6 +10,7 @@ import pytest
 from worker.productization.dataset_preparation import (
     DatasetIngestRequest,
     _iter_source_file_paths,
+    _source_kind,
     prepare_dataset_ingest,
 )
 
@@ -45,6 +46,15 @@ def test_dataset_ingest_source_file_paths_use_scandir_without_rglob(
         "b/b.txt",
         "z.txt",
     ]
+
+
+def test_dataset_ingest_source_kind_uses_single_suffix_fast_path() -> None:
+    assert _source_kind(Path("paper.PDF.TXT")) == "pdf"
+    assert _source_kind(Path("brief.DOCX.txt")) == "docx"
+    assert _source_kind(Path("notes.text")) == "text"
+    assert _source_kind(Path("script.PY")) == "code"
+    assert _source_kind(Path("records.JSONL")) == "structured_data"
+    assert _source_kind(Path("archive.tar.gz")) is None
 
 
 def test_dataset_ingest_source_file_paths_skips_scandir_errors(
