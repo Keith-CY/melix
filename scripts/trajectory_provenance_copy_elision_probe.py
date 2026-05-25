@@ -12,15 +12,18 @@ from typing import Any, Callable
 
 import sys
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path.cwd()
 WORKER_ROOT = REPO_ROOT / "services" / "mlx-worker-python"
 if str(WORKER_ROOT) not in sys.path:
     sys.path.insert(0, str(WORKER_ROOT))
 
-from worker.trajectory_provenance import (  # noqa: E402
-    _copy_trajectory_provenance_value,
-    normalize_trajectory_provenance,
-)
+from worker.trajectory_provenance import normalize_trajectory_provenance  # noqa: E402
+
+try:  # noqa: E402
+    from worker.trajectory_provenance import _copy_trajectory_provenance_value
+except ImportError:  # base checkout before this slice added the helper
+    def _copy_trajectory_provenance_value(value: Any) -> Any:
+        return copy.deepcopy(value)
 
 
 def _int_env(name: str, default: int) -> int:
