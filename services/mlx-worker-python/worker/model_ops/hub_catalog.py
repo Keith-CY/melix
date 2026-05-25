@@ -803,6 +803,20 @@ def _kv_cache_bytes_per_element(config: dict[str, Any]) -> int:
 
 def _bytes_per_parameter(tags: list[str], *, lowered_tags: set[str] | None = None) -> float:
     lowered = _normalized_lowered_tags(tags, lowered_tags)
+    if "2bit" in lowered or "2-bit" in lowered:
+        return 0.25
+    if "3bit" in lowered or "3-bit" in lowered:
+        return 0.375
+    if "4bit" in lowered or "4-bit" in lowered:
+        return 0.5
+    if "8bit" in lowered or "8-bit" in lowered:
+        return 1.0
+    if "fp32" in lowered or "float32" in lowered or "f32" in lowered:
+        return 4.0
+    return _bytes_per_parameter_from_tag_substrings(lowered)
+
+
+def _bytes_per_parameter_from_tag_substrings(lowered: set[str]) -> float:
     has_3bit = False
     has_4bit = False
     has_8bit = False
