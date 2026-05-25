@@ -208,6 +208,37 @@ def test_load_trajectory_provenance_from_snapshot_manifest_uses_stable_field_nam
     }
 
 
+def test_load_trajectory_provenance_from_snapshot_manifest_reads_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(
+        json.dumps(
+            {
+                "format": "agentic_tool_trace",
+                "source_dataset_id": "agentic-snapshot",
+                "version": "2026-05-25",
+                "trajectory_trace_digest": "abc123",
+            }
+        ).encode("utf-8")
+    )
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        raise AssertionError("manifest loading should avoid Path.read_text()")
+
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+
+    assert load_trajectory_provenance_from_snapshot_manifest(manifest_path) == {
+        "trajectory_dataset_id": "agentic-snapshot",
+        "trajectory_dataset_version": "2026-05-25",
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_snapshot_manifest_path": str(manifest_path),
+        "trajectory_split": "train",
+        "trajectory_trace_digest": "abc123",
+    }
+
+
 def test_trajectory_provenance_helpers_ignore_empty_or_unrelated_inputs(
     tmp_path: Path,
 ) -> None:

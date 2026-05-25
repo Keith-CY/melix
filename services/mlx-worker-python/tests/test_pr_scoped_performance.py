@@ -236,7 +236,10 @@ def test_scope_report_selects_trajectory_provenance_copy_elision_probe() -> None
         changed_files=["services/mlx-worker-python/worker/trajectory_provenance.py"],
     )
 
-    assert _selected_probe_ids(scope) == ["trajectory-provenance-copy-elision"]
+    assert _selected_probe_ids(scope) == [
+        "trajectory-provenance-copy-elision",
+        "trajectory-manifest-json-load",
+    ]
 
 
 def test_scope_report_selects_native_mtp_loader_probe() -> None:
@@ -279,6 +282,24 @@ def test_trajectory_provenance_copy_elision_probe_script_emits_metrics(
     assert metrics["baseline_elapsed_ms_mean"] >= 0.0
     assert metrics["optimized_elapsed_ms_mean"] >= 0.0
     assert metrics["elapsed_ms_mean"] == metrics["optimized_elapsed_ms_mean"]
+    assert metrics["sample_count"] == 1.0
+    assert metrics["iteration_count"] == 10.0
+    assert metrics["component_count"] == 4.0
+
+
+def test_trajectory_manifest_json_load_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MELIX_TRAJECTORY_MANIFEST_JSON_PROBE_ITERATIONS", "10")
+    monkeypatch.setenv("MELIX_TRAJECTORY_MANIFEST_JSON_PROBE_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_TRAJECTORY_MANIFEST_JSON_PROBE_COMPONENTS", "4")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/trajectory_manifest_json_load_probe.py"))
+
+    metrics = probe_script["run_probe"]()
+
+    assert metrics["old_mean_ms"] >= 0.0
+    assert metrics["new_mean_ms"] >= 0.0
+    assert metrics["elapsed_ms_mean"] == metrics["new_mean_ms"]
     assert metrics["sample_count"] == 1.0
     assert metrics["iteration_count"] == 10.0
     assert metrics["component_count"] == 4.0
@@ -2782,6 +2803,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "training-dataset-validation-sample-limit",
         "training-dataset-chunker-top-level-base-copy",
         "trajectory-provenance-copy-elision",
+        "trajectory-manifest-json-load",
         "dataset-registry-preview-limit-short-circuit",
         "dataset-version-listing-scandir",
         "dataset-source-records-scandir",
