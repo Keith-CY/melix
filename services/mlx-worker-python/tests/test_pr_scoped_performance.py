@@ -2743,6 +2743,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "training-dataset-validation-split-nsmallest",
         "training-dataset-validation-sample-limit",
         "training-dataset-chunker-top-level-base-copy",
+        "trajectory-provenance-copy-elision",
         "dataset-registry-preview-limit-short-circuit",
         "dataset-version-listing-scandir",
         "dataset-source-records-scandir",
