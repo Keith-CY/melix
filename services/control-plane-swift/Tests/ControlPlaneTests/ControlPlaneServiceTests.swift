@@ -4460,6 +4460,29 @@ struct ControlPlaneServiceTests {
         #expect(await modelOpsClient.lastBenchMatrixRequest == nil)
     }
 
+    @Test("execute rejects ops.run_bench_matrix when repeats exceed the product limit")
+    func executeRejectsOpsRunBenchMatrixWhenRepeatsExceedTheProductLimit() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunBenchMatrixRequest(repeats: 21, requests: 4)
+        )
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message.contains("Benchmark repeats"))
+        #expect(await modelOpsClient.lastBenchMatrixRequest == nil)
+    }
+
     @Test("execute rejects bench matrix validation failures for required dimensions and cache profiles")
     func executeRejectsBenchMatrixValidationFailuresForRequiredDimensionsAndCacheProfiles() async throws {
         let modelOpsClient = ScriptedModelOperationsWorkerClient()
@@ -6807,6 +6830,13 @@ struct ControlPlaneServiceTests {
 
         request = makeRunBenchRequest(modelID: "melix-dev-text")
         request.ops.runBench.repeats = 0
+        response = try await service.execute(request)
+        #expect(!response.ok)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message.contains("Benchmark repeats"))
+
+        request = makeRunBenchRequest(modelID: "melix-dev-text")
+        request.ops.runBench.repeats = 21
         response = try await service.execute(request)
         #expect(!response.ok)
         #expect(response.error.code == "invalid_argument")
