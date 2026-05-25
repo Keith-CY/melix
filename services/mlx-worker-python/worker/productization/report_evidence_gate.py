@@ -300,9 +300,19 @@ def _rule_matches_report(
         metric_prefix_tuple = _string_tuple(metric_prefixes)
         if any(str(metric.get("metric", "")).startswith(metric_prefix_tuple) for metric in metrics):
             return True
-    target_fields = tuple(str(item) for item in rule.get("target_fields", ()))
-    if target_fields and any(str(target.get(field, "")).strip() for target in targets for field in target_fields):
-        return True
+    target_fields = rule.get("target_fields", ())
+    if target_fields:
+        target_field_tuple = _string_tuple(target_fields)
+        for target in targets:
+            for field in target_field_tuple:
+                value = target.get(field, "")
+                if not value and field not in target:
+                    continue
+                if isinstance(value, str):
+                    if value.strip():
+                        return True
+                elif str(value).strip():
+                    return True
     required_probe_phases = set(str(item) for item in rule.get("probe_phases", ()))
     return bool(required_probe_phases and required_probe_phases.issubset(probe_phases))
 

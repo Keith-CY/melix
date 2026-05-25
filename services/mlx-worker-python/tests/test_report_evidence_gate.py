@@ -233,6 +233,77 @@ def test_report_evidence_gate_metric_prefix_list_rules_reflect_mutation() -> Non
     )
 
 
+def test_report_evidence_gate_target_field_tuple_rules_reuse_normalized_tuple() -> None:
+    report_evidence_gate_module._string_tuple_from_tuple.cache_clear()
+    rule = {"target_fields": ("adapter_id", "adapter_snapshot")}
+
+    assert report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[],
+        targets=[{"adapter_id": "adapter-a"}],
+        metrics=[],
+        probe_phases=set(),
+    )
+    assert report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[],
+        targets=[{"adapter_snapshot": "snapshot-a"}],
+        metrics=[],
+        probe_phases=set(),
+    )
+
+    cache_info = report_evidence_gate_module._string_tuple_from_tuple.cache_info()
+    assert cache_info.hits >= 1
+    assert cache_info.misses == 1
+
+
+def test_report_evidence_gate_target_field_list_rules_reflect_mutation() -> None:
+    target_fields = ["adapter_id"]
+    rule = {"target_fields": target_fields}
+
+    assert not report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[],
+        targets=[{"adapter_snapshot": "snapshot-a"}],
+        metrics=[],
+        probe_phases=set(),
+    )
+    target_fields.append("adapter_snapshot")
+    assert report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[],
+        targets=[{"adapter_snapshot": "snapshot-a"}],
+        metrics=[],
+        probe_phases=set(),
+    )
+
+
+def test_report_evidence_gate_target_field_preserves_stringified_presence() -> None:
+    rule = {"target_fields": ("adapter_id", "adapter_snapshot")}
+
+    assert not report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[],
+        targets=[{"adapter_id": "   "}],
+        metrics=[],
+        probe_phases=set(),
+    )
+    assert report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[],
+        targets=[{"adapter_id": None}],
+        metrics=[],
+        probe_phases=set(),
+    )
+    assert report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[],
+        targets=[{"adapter_id": 0}],
+        metrics=[],
+        probe_phases=set(),
+    )
+
+
 def test_report_evidence_gate_run_kind_list_rules_reflect_mutation() -> None:
     run_kinds = ["evaluation"]
     rule = {"run_kinds": run_kinds}
