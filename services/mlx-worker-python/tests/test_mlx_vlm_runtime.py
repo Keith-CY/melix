@@ -44,6 +44,7 @@ from worker.runtime.mlx_vlm_runtime import (
     _patch_gemma4_scaled_linear_quantization,
 )
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
+from worker.runtime.native_mtp.mlx_lm_loader import _model_safetensor_files
 from worker.runtime.temp_media_lifecycle import TempMediaSession
 
 
@@ -1492,6 +1493,108 @@ def test_mlx_vlm_runtime_applies_native_mtp_preload_patch_before_load(
     assert loaded["metadata"]["melix.native_mtp.patch_applied"] == "true"
     assert loaded["metadata"]["melix.native_mtp.active"] == "true"
     assert loaded["metadata"][_TEXT_ONLY_BATCH_GENERATOR_EXT_KEY] == "true"
+
+
+def test_native_mtp_model_safetensor_listing_uses_scandir_without_glob(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    expected_files = [
+        model_dir / "model-00002-of-00002.safetensors",
+        model_dir / "model-00001-of-00002.safetensors",
+        model_dir / "model.safetensors",
+    ]
+    for path in expected_files:
+        path.write_bytes(b"weights")
+    (model_dir / "mtp.safetensors").write_bytes(b"sidecar")
+    (model_dir / "model-not-a-safetensor.bin").write_bytes(b"ignored")
+    child_dir = model_dir / "model-subdir.safetensors"
+    child_dir.mkdir()
+    (child_dir / "nested.safetensors").write_bytes(b"ignored")
+
+    def fail_glob(self: Path, pattern: str):  # pragma: no cover - regression guard
+        raise AssertionError(
+            f"_model_safetensor_files() should not allocate Path.glob({pattern!r})"
+        )
+
+    monkeypatch.setattr(Path, "glob", fail_glob)
+
+    assert _model_safetensor_files(model_dir) == sorted(
+        str(path) for path in [*expected_files, child_dir]
+    )
+    assert _model_safetensor_files(tmp_path / "missing") == []
+
+
+def test_native_mtp_patched_loader_uses_scandir_model_weight_listing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import worker.runtime.native_mtp.mlx_lm_loader as loader_module
+
+    model_dir = tmp_path / "patched-model"
+    model_dir.mkdir()
+    (model_dir / "model.safetensors").write_bytes(b"base")
+    (model_dir / "mtp.safetensors").write_bytes(b"mtp")
+    (model_dir / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"language_model.mtp.fc.weight": "mtp.safetensors"}}),
+        encoding="utf-8",
+    )
+
+    loaded_weight_paths: list[str] = []
+
+    class FakeModelArgs:
+        @classmethod
+        def from_dict(cls, config: dict[str, object]) -> dict[str, object]:
+            return config
+
+    class FakeModel:
+        def __init__(self, args: dict[str, object]) -> None:
+            self.args = args
+            self.loaded_weights: list[tuple[str, object]] = []
+
+        def eval(self) -> None:
+            pass
+
+        def load_weights(self, weights: list[tuple[str, object]], *, strict: bool) -> None:
+            self.loaded_weights = weights
+            self.strict = strict
+
+        def parameters(self) -> list[object]:
+            return []
+
+    fake_mx = SimpleNamespace(
+        load=lambda path: loaded_weight_paths.append(path) or {path: path},
+        eval=lambda parameters: None,
+    )
+    fake_nn = SimpleNamespace(
+        Module=SimpleNamespace(is_module=lambda value: False),
+        QuantizedLinear=type("QuantizedLinear", (), {}),
+        quantize=lambda *args, **kwargs: None,
+    )
+    fake_utils = SimpleNamespace(
+        load_model=lambda *args, **kwargs: ("original", {}),
+        load_config=lambda path: {"model_type": "fake"},
+        _get_classes=lambda config: (FakeModel, FakeModelArgs),
+        _transform_awq_weights=lambda weights, quantization_config: (weights, {}),
+        tree_map=lambda callback, modules, is_leaf: modules,
+    )
+    fake_mlx_lm = ModuleType("mlx_lm")
+    fake_mlx_lm.utils = fake_utils
+    monkeypatch.setitem(sys.modules, "mlx", ModuleType("mlx"))
+    monkeypatch.setitem(sys.modules, "mlx.core", fake_mx)
+    monkeypatch.setitem(sys.modules, "mlx.nn", fake_nn)
+    monkeypatch.setitem(sys.modules, "mlx_lm", fake_mlx_lm)
+    monkeypatch.setitem(sys.modules, "mlx_lm.utils", fake_utils)
+    monkeypatch.setattr(loader_module, "_PATCHED", False)
+
+    assert loader_module.apply() is True
+    model, config = fake_utils.load_model(model_dir, lazy=True)
+
+    assert isinstance(model, FakeModel)
+    assert config == {"model_type": "fake"}
+    assert loaded_weight_paths == [str(model_dir / "model.safetensors"), str(model_dir / "mtp.safetensors")]
 
 
 def test_native_mtp_preload_patch_detects_qwen36_mtp_weights(

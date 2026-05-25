@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import glob
 import importlib.util
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, Callable, Type
 
@@ -23,6 +23,23 @@ def _load_json_payload(path: Path) -> dict[str, Any]:
 def _is_mtp_weight_key(key: Any) -> bool:
     value = str(key)
     return value.startswith("language_model.mtp.") or value.startswith("mtp.")
+
+
+def _model_safetensor_files(model_path: Path) -> list[str]:
+    """Return top-level ``model*.safetensors`` paths without glob allocation."""
+
+    try:
+        with os.scandir(model_path) as entries:
+            weight_files = [
+                entry.path
+                for entry in entries
+                if entry.name.startswith("model")
+                and entry.name.endswith(".safetensors")
+            ]
+    except FileNotFoundError:
+        return []
+    weight_files.sort()
+    return weight_files
 
 
 def extra_mtp_safetensor_files(model_path: Path) -> list[Path]:
@@ -92,7 +109,7 @@ def apply() -> bool:
         if model_config is not None:
             config.update(model_config)
 
-        weight_files = glob.glob(str(model_path / "model*.safetensors"))
+        weight_files = _model_safetensor_files(model_path)
         if not weight_files and strict:
             raise FileNotFoundError(f"No safetensors found in {model_path}")
 
