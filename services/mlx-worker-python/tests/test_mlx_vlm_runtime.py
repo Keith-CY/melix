@@ -33,6 +33,7 @@ from worker.runtime.mlx_vlm_runtime import (
     _TEXT_ONLY_BATCH_DONE,
     _TextOnlyBatchGeneratorScheduler,
     _TextOnlyBatchRequest,
+    _callable_accepts_positional_arg_count,
     _TextOnlyVLMDecodeAdapter,
     maybe_apply_native_mtp_preload_patches,
     _text_batch_generator_probe_kwargs,
@@ -3878,7 +3879,10 @@ def test_gemma4_multimodal_weight_presence_scans_weight_names_once() -> None:
     ]
 
 
-def test_gemma4_multimodal_weight_presence_accepts_dict_keys_view() -> None:
+def test_gemma4_multimodal_weight_presence_accepts_dict_keys_view(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     weights = {
         "language_model.model.layers.0.self_attn.q_proj.weight": object(),
         "embed_audio.proj.weight": object(),
@@ -3896,6 +3900,7 @@ def test_gemma4_multimodal_weight_presence_accepts_dict_keys_view() -> None:
             "vision_tower.proj.weight": object(),
         }.keys()
     ) == (True, False)
+    _assert_gemma4_optional_loader_hint_contract(monkeypatch, tmp_path)
 
 
 def test_gemma4_scaled_linear_patch_accepts_newer_language_api(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3978,6 +3983,15 @@ def test_callable_declares_kwarg_requires_explicit_parameter() -> None:
     assert runtime_utils.callable_declares_kwarg(variadic, "draft_model") is False
     assert runtime_utils.callable_declares_kwarg(object(), "draft_model") is False
     assert runtime_utils.callable_accepts_kwarg(variadic, "draft_model") is True
+
+
+def _assert_callable_accepts_positional_arg_count_handles_varargs_and_unknown_signature() -> None:
+    def with_varargs(*args):
+        return args
+
+    assert _callable_accepts_positional_arg_count(with_varargs, 4) is True
+    assert _callable_accepts_positional_arg_count(len, 2) is False
+    assert _callable_accepts_positional_arg_count(object(), 2) is True
 
 
 def test_auto_mlx_vlm_backend_mtp_detection_requires_declared_draft_kwargs() -> None:
@@ -4142,6 +4156,202 @@ def test_gemma4_text_backed_loader_uses_tokenizer_for_text_only_exports(
     assert calls["model_args"][0] == {"model_type": "gemma4_text"}
     assert list(calls["model_args"][1]) == ["model.layers.0.weight"]
     assert isinstance(processor, _CallableTokenizerProcessor)
+    assert execution_mode == "text_backed"
+
+
+def _assert_gemma4_optional_loader_hint_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _assert_callable_accepts_positional_arg_count_handles_varargs_and_unknown_signature()
+    _assert_gemma4_text_backed_loader_tolerates_missing_optional_tokenizer_hints(
+        monkeypatch,
+        tmp_path / "tokenizer-missing-hints",
+    )
+    _assert_gemma4_text_backed_loader_tolerates_missing_optional_processor_hints(
+        monkeypatch,
+        tmp_path / "processor-missing-hints",
+    )
+    _assert_gemma4_text_backed_loader_preserves_supported_processor_hints(
+        monkeypatch,
+        tmp_path / "processor-supported-hints",
+    )
+
+
+def _assert_gemma4_text_backed_loader_tolerates_missing_optional_tokenizer_hints(
+    monkeypatch: pytest.MonkeyPatch,
+    model_path: Path,
+) -> None:
+    _install_fake_mlx_core(monkeypatch)
+    modules = _install_fake_mlx_vlm_modules(monkeypatch)
+    import mlx.core as mx
+    import mlx_vlm.utils as utils
+
+    model_path.mkdir()
+    (model_path / "model.safetensors").write_bytes(b"")
+
+    modules["mlx_vlm.models.gemma4.language"].ScaledLinear = type(
+        "ScaledLinear",
+        (),
+        {"to_quantized": lambda self: self},
+    )
+    monkeypatch.setattr(utils, "get_model_and_args", lambda *_args, **_kwargs: pytest.fail("unexpected model load"))
+    monkeypatch.setattr(utils, "get_model_path", lambda *_args, **_kwargs: model_path)
+    monkeypatch.setattr(utils, "load_config", lambda *_args, **_kwargs: {"model_type": "gemma4_text"})
+    monkeypatch.setattr(utils, "load_processor", lambda *_args, **_kwargs: pytest.fail("unexpected processor load"))
+    monkeypatch.setattr(utils, "update_module_configs", lambda *_args, **_kwargs: pytest.fail("unexpected config update"))
+    monkeypatch.setattr(
+        AutoMLXVLMBackend,
+        "_load_gemma4_text_only_language_model",
+        staticmethod(lambda *, config, weights: "text-model"),
+    )
+    monkeypatch.setattr(mx, "load", lambda path: {"model.layers.0.weight": path})
+
+    def load_tokenizer(model_path_arg):
+        assert model_path_arg == model_path
+        return SimpleNamespace(_tokenizer=lambda *a, **k: None)
+
+    monkeypatch.setattr(utils, "load_tokenizer", load_tokenizer)
+
+    model, processor, execution_mode = AutoMLXVLMBackend._load_gemma4_text_backed_model(
+        model_spec=common_pb2.ModelSpec(model_path=str(model_path), revision="main"),
+        original_error=RuntimeError("original"),
+    )
+
+    assert model == "text-model"
+    assert isinstance(processor, _CallableTokenizerProcessor)
+    assert execution_mode == "text_backed"
+
+
+def _assert_gemma4_text_backed_loader_tolerates_missing_optional_processor_hints(
+    monkeypatch: pytest.MonkeyPatch,
+    model_path: Path,
+) -> None:
+    _install_fake_mlx_core(monkeypatch)
+    modules = _install_fake_mlx_vlm_modules(monkeypatch)
+    import mlx.core as mx
+    import mlx_vlm.utils as utils
+
+    model_path.mkdir()
+    (model_path / "model.safetensors").write_bytes(b"")
+    calls: dict[str, object] = {}
+
+    modules["mlx_vlm.models.gemma4.language"].ScaledLinear = type(
+        "ScaledLinear",
+        (),
+        {"to_quantized": lambda self: self},
+    )
+
+    class FakeModelConfig:
+        eos_token_id = 2
+
+        @classmethod
+        def from_dict(cls, config):
+            calls["config"] = dict(config)
+            return cls()
+
+    class FakeModel:
+        def __init__(self, config):
+            self.config = config
+            self.vision_tower = object()
+            self.embed_vision = object()
+            self.audio_tower = object()
+            self.embed_audio = object()
+
+        def load_weights(self, weights):
+            calls["load_weights"] = list(weights)
+
+    class FakeModelClass:
+        ModelConfig = FakeModelConfig
+        Model = FakeModel
+
+    monkeypatch.setattr(utils, "get_model_and_args", lambda *, config: (FakeModelClass, None))
+    monkeypatch.setattr(utils, "get_model_path", lambda *_args, **_kwargs: model_path)
+    monkeypatch.setattr(utils, "load_config", lambda *_args, **_kwargs: {"model_type": "gemma4"})
+    monkeypatch.setattr(
+        utils,
+        "update_module_configs",
+        lambda model_config, model_class, config, modules: model_config,
+    )
+
+    def load_processor(model_path_arg, tokenizer_arg):
+        assert model_path_arg == model_path
+        assert tokenizer_arg is True
+        return SimpleNamespace(image_processor=object())
+
+    monkeypatch.setattr(utils, "load_processor", load_processor)
+    monkeypatch.setattr(mx, "load", lambda path: {"language_model.model.layers.0.weight": path})
+
+    model, processor, execution_mode = AutoMLXVLMBackend._load_gemma4_text_backed_model(
+        model_spec=common_pb2.ModelSpec(model_path=str(model_path), revision="main"),
+        original_error=RuntimeError("original"),
+    )
+
+    assert isinstance(model, FakeModel)
+    assert processor.image_processor is not None
+    assert execution_mode == "text_backed"
+    assert [name for name, _value in calls["load_weights"]] == ["language_model.model.layers.0.weight"]
+
+
+def _assert_gemma4_text_backed_loader_preserves_supported_processor_hints(
+    monkeypatch: pytest.MonkeyPatch,
+    model_path: Path,
+) -> None:
+    _install_fake_mlx_core(monkeypatch)
+    modules = _install_fake_mlx_vlm_modules(monkeypatch)
+    import mlx.core as mx
+    import mlx_vlm.utils as utils
+
+    model_path.mkdir()
+    (model_path / "model.safetensors").write_bytes(b"")
+    calls: dict[str, object] = {}
+
+    modules["mlx_vlm.models.gemma4.language"].ScaledLinear = type(
+        "ScaledLinear",
+        (),
+        {"to_quantized": lambda self: self},
+    )
+
+    class FakeModelConfig:
+        eos_token_id = 7
+
+        @classmethod
+        def from_dict(cls, config):
+            return cls()
+
+    class FakeModel:
+        def __init__(self, config):
+            self.config = config
+
+        def load_weights(self, weights):
+            _ = weights
+
+    class FakeModelClass:
+        ModelConfig = FakeModelConfig
+        Model = FakeModel
+
+    monkeypatch.setattr(utils, "get_model_and_args", lambda *, config: (FakeModelClass, None))
+    monkeypatch.setattr(utils, "get_model_path", lambda *_args, **_kwargs: model_path)
+    monkeypatch.setattr(utils, "load_config", lambda *_args, **_kwargs: {"model_type": "gemma4"})
+    monkeypatch.setattr(
+        utils,
+        "update_module_configs",
+        lambda model_config, model_class, config, modules: model_config,
+    )
+
+    def load_processor(model_path_arg, tokenizer_arg, *, eos_token_ids):
+        calls["processor_args"] = (model_path_arg, tokenizer_arg, eos_token_ids)
+        return SimpleNamespace(image_processor=object())
+
+    monkeypatch.setattr(utils, "load_processor", load_processor)
+    monkeypatch.setattr(mx, "load", lambda path: {"language_model.model.layers.0.weight": path})
+
+    _model, _processor, execution_mode = AutoMLXVLMBackend._load_gemma4_text_backed_model(
+        model_spec=common_pb2.ModelSpec(model_path=str(model_path), revision="main"),
+        original_error=RuntimeError("original"),
+    )
+
+    assert calls["processor_args"] == (model_path, True, 7)
     assert execution_mode == "text_backed"
 
 
@@ -4380,9 +4590,11 @@ def test_mlx_vlm_runtime_uses_mtp_drafter_for_gemma4_text_backed_prompt_only_gen
 
 def _assert_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     *,
     legacy_step_signature: bool = False,
 ) -> None:
+    _assert_gemma4_optional_loader_hint_contract(monkeypatch, tmp_path)
     _install_fake_mlx_core(monkeypatch)
     _install_fake_mlx_vlm_prepare_inputs(monkeypatch)
     apply_calls: list[str] = []
@@ -4757,17 +4969,25 @@ def _assert_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
 
 def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
+    current_signature_path = tmp_path / "current-signature"
+    legacy_signature_path = tmp_path / "legacy-signature"
+    current_signature_path.mkdir()
+    legacy_signature_path.mkdir()
     _assert_chunked_prompt_auxiliary_slicing_contract()
     _assert_mlx_vlm_runtime_probe_fixtures_record_position_slice_fallback_count()
     _assert_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
         monkeypatch,
+        current_signature_path,
         legacy_step_signature=False,
     )
     _assert_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
         monkeypatch,
+        legacy_signature_path,
         legacy_step_signature=True,
     )
+
 
 @pytest.mark.parametrize(
     ("drafter", "draft_block_size"),

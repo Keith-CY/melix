@@ -339,6 +339,58 @@ struct GatewayServingDefaultsStoreTests {
         #expect(session.effectiveCompletionBatchSize == 1)
     }
 
+    @Test("summary projects gateway override receipts for suppressed stale settings")
+    func summaryProjectsGatewayOverrideReceiptsForSuppressedStaleSettings() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-serving-defaults-override-receipts-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let store = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:]
+        )
+
+        var command = Melix_Controlplane_V1_ApplyServingDefaults()
+        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.temperature = 0.4
+        command.topP = 0.9
+        command.maxTokens = 256
+        command.streamIntervalTokens = 2
+        command.maxConcurrentRequests = 6
+        command.concurrentProcessingEnabled = true
+        command.prefillBatchSize = 3
+        command.completionBatchSize = 2
+        command.accelerationMode = .speculativeDecode
+        command.draftModelID = "melix-dev-draft"
+        command.numDraftTokens = 6
+        try await store.apply(command: command)
+
+        let summary = await store.summary(
+            serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
+            defaultModelIDs: [:],
+            modelSettingsByModelID: [:]
+        )
+        let session = try #require(summary.sessions.first)
+
+        #expect(session.effectiveMaxConcurrentRequests == 2)
+        #expect(session.effectivePrefillBatchSize == 2)
+        #expect(session.effectiveCompletionBatchSize == 2)
+        #expect(session.effectiveAccelerationMode == .baseline)
+        #expect(session.effectiveDraftModelID.isEmpty)
+        #expect(session.effectiveNumDraftTokens == 0)
+        #expect(session.overrideReceiptSchema == "melix.gateway_override_receipt.v1")
+        #expect(session.suppressedOverrides == "max_concurrent_requests,prefill_batch_size,speculative_decode")
+        #expect(session.batchDisabledReason == "incompatible_batch_size")
+        #expect(session.speculativeDisabledReason == "unsupported_route")
+        #expect(session.multimodalRoutePolicy == "auto")
+        #expect(session.effectiveMultimodalRoute == "swift_text")
+        #expect(session.speculativeRoutePolicy == "auto")
+        #expect(session.effectiveSpeculativeMode == "baseline")
+        #expect(session.cacheQuantizationDisabledReason == "not_configurable")
+        #expect(session.pagedCacheDisabledReason == "not_configurable")
+    }
+
     @Test("summary projects model acceleration overrides over speculative gateway defaults")
     func summaryProjectsModelAccelerationOverridesOverSpeculativeGatewayDefaults() async throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
@@ -383,5 +435,211 @@ struct GatewayServingDefaultsStoreTests {
         #expect(session.effectiveDraftModelID.isEmpty)
         #expect(session.effectiveNumDraftTokens == 0)
         #expect(session.modelOverrideApplied)
+    }
+
+    @Test("summary receipts mirror effective speculative defaults")
+    func summaryReceiptsMirrorEffectiveSpeculativeDefaults() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-serving-defaults-speculative-receipts-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let store = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:]
+        )
+
+        var command = Melix_Controlplane_V1_ApplyServingDefaults()
+        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.temperature = 0.4
+        command.topP = 0.9
+        command.maxTokens = 256
+        command.streamIntervalTokens = 2
+        command.maxConcurrentRequests = 4
+        command.concurrentProcessingEnabled = true
+        command.prefillBatchSize = 2
+        command.completionBatchSize = 2
+        command.accelerationMode = .speculativeDecode
+        command.draftModelID = "melix-dev-draft"
+        command.numDraftTokens = 6
+        try await store.apply(command: command)
+
+        var modelSettings = Melix_Controlplane_V1_ModelSettings()
+        modelSettings.defaultAccelerationMode = .unspecified
+
+        let summary = await store.summary(
+            serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
+            defaultModelIDs: [ServerSessionRuntimeStore.defaultServerSessionID: "melix-dev-text"],
+            modelSettingsByModelID: ["melix-dev-text": modelSettings]
+        )
+        let session = try #require(summary.sessions.first)
+
+        #expect(session.effectiveAccelerationMode == .speculativeDecode)
+        #expect(session.effectiveSpeculativeMode == "speculative_decode")
+        #expect(session.effectiveDraftModelID == "melix-dev-draft")
+        #expect(session.effectiveNumDraftTokens == 6)
+        #expect(session.speculativeDisabledReason.isEmpty)
+        #expect(!session.suppressedOverrides.split(separator: ",").contains("speculative_decode"))
+    }
+
+    @Test("summary persists route policies as effective override receipts")
+    func summaryPersistsRoutePoliciesAsEffectiveOverrideReceipts() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-serving-defaults-route-policy-receipts-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let store = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:]
+        )
+
+        var command = Melix_Controlplane_V1_ApplyServingDefaults()
+        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.temperature = 0.4
+        command.topP = 0.9
+        command.maxTokens = 256
+        command.streamIntervalTokens = 2
+        command.maxConcurrentRequests = 4
+        command.concurrentProcessingEnabled = true
+        command.prefillBatchSize = 2
+        command.completionBatchSize = 2
+        command.accelerationMode = .speculativeDecode
+        command.draftModelID = "melix-dev-draft"
+        command.numDraftTokens = 6
+        command.multimodalRoutePolicy = "off"
+        command.speculativeRoutePolicy = "off"
+        try await store.apply(command: command)
+
+        var modelSettings = Melix_Controlplane_V1_ModelSettings()
+        modelSettings.defaultAccelerationMode = .unspecified
+
+        let summary = await store.summary(
+            serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
+            defaultModelIDs: [ServerSessionRuntimeStore.defaultServerSessionID: "melix-dev-text"],
+            modelSettingsByModelID: ["melix-dev-text": modelSettings]
+        )
+        let session = try #require(summary.sessions.first)
+
+        #expect(session.multimodalRoutePolicy == "off")
+        #expect(session.speculativeRoutePolicy == "off")
+        #expect(session.effectiveMultimodalRoute == "off")
+        #expect(session.effectiveSpeculativeMode == "baseline")
+        #expect(session.speculativeDisabledReason == "operator_disabled")
+        #expect(session.suppressedOverrides.split(separator: ",").contains("speculative_decode"))
+    }
+
+    @Test("summary projects default model multimodal route into override receipts")
+    func summaryProjectsDefaultModelMultimodalRouteIntoOverrideReceipts() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-serving-defaults-multimodal-route-receipts-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let store = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:]
+        )
+
+        var command = Melix_Controlplane_V1_ApplyServingDefaults()
+        command.serverSessionID = ServerSessionRuntimeStore.defaultServerSessionID
+        command.temperature = 0.4
+        command.topP = 0.9
+        command.maxTokens = 256
+        command.streamIntervalTokens = 2
+        command.maxConcurrentRequests = 4
+        command.concurrentProcessingEnabled = true
+        command.prefillBatchSize = 2
+        command.completionBatchSize = 2
+        try await store.apply(command: command)
+
+        let vlmModel = ModelCatalog.devVLMModel()
+        let summary = await store.summary(
+            serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
+            defaultModelIDs: [ServerSessionRuntimeStore.defaultServerSessionID: vlmModel.modelID],
+            modelSettingsByModelID: [vlmModel.modelID: vlmModel.settings]
+        )
+        let session = try #require(summary.sessions.first)
+
+        #expect(session.multimodalRoutePolicy == "auto")
+        #expect(session.effectiveMultimodalRoute == "python_vlm")
+    }
+
+    @Test("summary does not serialize route identifiers as policy tokens")
+    func summaryDoesNotSerializeRouteIdentifiersAsPolicyTokens() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-serving-defaults-route-id-receipts-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let store = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:]
+        )
+
+        var modelSettings = Melix_Controlplane_V1_ModelSettings()
+        modelSettings.ext["melix.capability.route_kind"] = "   "
+        let summary = await store.summary(
+            serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
+            defaultModelIDs: [ServerSessionRuntimeStore.defaultServerSessionID: "melix-route-missing"],
+            modelSettingsByModelID: ["melix-route-missing": modelSettings]
+        )
+        let session = try #require(summary.sessions.first)
+
+        #expect(session.multimodalRoutePolicy == "auto")
+        #expect(session.effectiveMultimodalRoute == "swift_text")
+        #expect(session.effectiveMultimodalRoute != "auto")
+    }
+
+    @Test("summary loads legacy serving default records without route policies")
+    func summaryLoadsLegacyServingDefaultRecordsWithoutRoutePolicies() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-serving-defaults-legacy-route-policy-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let storeURL = temporaryRoot.appendingPathComponent("gateway-serving-defaults.json")
+        try Data(
+            """
+            {
+              "schema_version": 1,
+              "sessions": [
+                {
+                  "server_session_id": "\(ServerSessionRuntimeStore.defaultServerSessionID)",
+                  "temperature": 0.4,
+                  "top_p": 0.9,
+                  "max_tokens": 256,
+                  "stream_interval_tokens": 2,
+                  "max_concurrent_requests": 2,
+                  "concurrent_processing_enabled": true,
+                  "prefill_batch_size": 2,
+                  "completion_batch_size": 2,
+                  "acceleration_mode": 1,
+                  "draft_model_id": "",
+                  "num_draft_tokens": 0,
+                  "acceleration_profile": "balanced",
+                  "source": 4,
+                  "updated_at_unix_ms": 12345
+                }
+              ]
+            }
+            """.utf8
+        ).write(to: storeURL)
+
+        let store = GatewayServingDefaultsStore(
+            storeURL: storeURL,
+            defaults: [:]
+        )
+        let summary = await store.summary(
+            serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
+            defaultModelIDs: [:],
+            modelSettingsByModelID: [:]
+        )
+        let session = try #require(summary.sessions.first)
+
+        #expect(session.source == .operatorOverride)
+        #expect(session.multimodalRoutePolicy == "auto")
+        #expect(session.speculativeRoutePolicy == "auto")
+        #expect(session.effectiveMultimodalRoute == "swift_text")
     }
 }

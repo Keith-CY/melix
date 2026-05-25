@@ -1378,6 +1378,8 @@ public actor ModelCatalog {
         model.settings.ext["vision_supports_tool_calls"] = "true"
         model.settings.ext["melix.multimodal_adapter_hash"] = capabilityAdapter.adapterSetHash
         applyCapabilityAdapter(capabilityAdapter, to: &model)
+        model.supportedModalities = ["text", "image", "video"]
+        model.settings.ext["melix.capability.supported_modalities"] = "text,image,video"
         return withSynchronizedResidency(model)
     }
 

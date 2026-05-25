@@ -279,11 +279,13 @@ struct MelixRuntimeDiscoveryBuilder {
 
     func capabilitiesPayload(modelQuery: String = "") -> [String: Any] {
         let seedModels = ModelCatalog.phaseSevenContractSeedModels().map { model in
-            [
+            let mediaRouteReceipt = ModelCatalogPresentation.publicMediaRouteReceipt(for: model)
+            return [
                 "model_id": model.modelID,
                 "kind": model.kind,
-                "supported_modalities": model.supportedModalities,
+                "supported_modalities": mediaRouteReceipt.effectiveSupportedModalities,
                 "supported_tasks": model.supportedTasks,
+                "media_route_receipt": mediaRouteReceipt.payload,
                 "capability_receipt": ModelCapabilityReceipts.discoveryPayload(for: model),
             ]
         }

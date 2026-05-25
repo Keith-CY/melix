@@ -10282,6 +10282,7 @@ public actor MelixCLIRunner {
             // whether a loaded model is fused or adapter-backed.
             "runtime_mode": model.runtimeMode,
             "load_trust": makeModelLoadTrustPayload(model),
+            "media_route_receipt": ModelCatalogPresentation.publicMediaRoutePayload(for: model),
         ]
         let activationMode = model.settings.ext["melix.activation_mode"] ?? ""
         if !activationMode.isEmpty {
@@ -10325,6 +10326,7 @@ public actor MelixCLIRunner {
                 payload[key] = value
             }
             payload["load_trust"] = makeModelLoadTrustPayload(snapshotModel)
+            payload["media_route_receipt"] = ModelCatalogPresentation.publicMediaRoutePayload(for: snapshotModel)
         }
         return payload
     }

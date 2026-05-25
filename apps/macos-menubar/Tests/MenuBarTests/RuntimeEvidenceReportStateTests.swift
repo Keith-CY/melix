@@ -200,6 +200,12 @@ struct RuntimeEvidenceReportStateTests {
         #expect(result.servingDiagnosticsQueueSummaryText == "8 retained / 24 dropped / 32 observed")
         #expect(result.servingDiagnosticsRetentionSummaryText == "debug mode retains up to 256 events")
         #expect(result.servingDiagnosticsDropSummaryText == "24 debug events were dropped; diagnosis may be partial.")
+        #expect(result.mediaRouteReceipt?.mediaRoute == "swift_text")
+        #expect(result.mediaRouteReceipt?.mediaPartsCount == 0)
+        #expect(result.mediaRouteReceipt?.mediaTurnCount == 0)
+        #expect(result.mediaRouteReceipt?.cacheHitCount == 0)
+        #expect(result.mediaRouteReceipt?.cacheMissCount == 0)
+        #expect(result.mediaRouteReceipt?.unsupportedReason == "none")
 
         let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
         viewModel.selectSurface(.tools)

@@ -53,6 +53,7 @@ public struct RuntimeDiagnosticsDebugBundleState: Equatable, Sendable, Decodable
     public let redactedFieldCount: Int
     public let sourceRunRecordPath: String
     public let artifacts: [String: String]
+    public let mediaRouteReceipt: RuntimeDiscoveryMediaRouteReceiptState?
     public let servingDiagnostics: RuntimeDiagnosticsServingDiagnosticsSummary?
 
     public var manifestPath: String {
@@ -146,6 +147,10 @@ public struct RuntimeDiagnosticsDebugBundleState: Equatable, Sendable, Decodable
         redactedFieldCount = try container.decodeIfPresent(Int.self, forKey: .redactedFieldCount) ?? 0
         sourceRunRecordPath = try container.decodeIfPresent(String.self, forKey: .sourceRunRecordPath) ?? ""
         artifacts = try container.decodeIfPresent([String: String].self, forKey: .artifacts) ?? [:]
+        mediaRouteReceipt = try container.decodeIfPresent(
+            RuntimeDiagnosticsMediaRouteReceiptEnvelope.self,
+            forKey: .mediaRouteReceipt
+        )?.state
         servingDiagnostics = try container.decodeIfPresent(
             RuntimeDiagnosticsServingDiagnosticsSummary.self,
             forKey: .servingDiagnostics
@@ -164,6 +169,7 @@ public struct RuntimeDiagnosticsDebugBundleState: Equatable, Sendable, Decodable
         case redactedFieldCount = "redacted_field_count"
         case sourceRunRecordPath = "source_run_record_path"
         case artifacts
+        case mediaRouteReceipt = "media_route_receipt"
         case servingDiagnostics = "serving_diagnostics"
     }
 
@@ -186,5 +192,30 @@ public struct RuntimeDiagnosticsDebugBundleState: Equatable, Sendable, Decodable
                 segment.prefix(1).uppercased() + segment.dropFirst()
             }
             .joined(separator: " ")
+    }
+}
+
+private struct RuntimeDiagnosticsMediaRouteReceiptEnvelope: Decodable {
+    let state: RuntimeDiscoveryMediaRouteReceiptState
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        state = RuntimeDiscoveryMediaRouteReceiptState(
+            mediaRoute: try container.decodeIfPresent(String.self, forKey: .mediaRoute) ?? "",
+            mediaPartsCount: max(0, try container.decodeIfPresent(Int.self, forKey: .mediaPartsCount) ?? 0),
+            mediaTurnCount: max(0, try container.decodeIfPresent(Int.self, forKey: .mediaTurnCount) ?? 0),
+            cacheHitCount: max(0, try container.decodeIfPresent(Int.self, forKey: .cacheHitCount) ?? 0),
+            cacheMissCount: max(0, try container.decodeIfPresent(Int.self, forKey: .cacheMissCount) ?? 0),
+            unsupportedReason: try container.decodeIfPresent(String.self, forKey: .unsupportedReason) ?? ""
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case mediaRoute = "media_route"
+        case mediaPartsCount = "media_parts_count"
+        case mediaTurnCount = "media_turn_count"
+        case cacheHitCount = "cache_hit_count"
+        case cacheMissCount = "cache_miss_count"
+        case unsupportedReason = "unsupported_reason"
     }
 }

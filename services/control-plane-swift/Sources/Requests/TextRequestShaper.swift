@@ -390,6 +390,9 @@ public struct TextRequestShaper: Sendable {
             ocrPolicy: resolvedOCRPolicy,
             partialMode: partialMode.mode,
             assistantPrefill: partialMode.assistantPrefill,
+            mediaPartsSummary: request.mediaPartsSummary,
+            orderedMessagePartsRequired: request.orderedMessagePartsRequired,
+            legacyImageFallbackInjected: request.legacyImageFallbackInjected,
             openAICompatibilityReceipts: request.openAICompatibilityReceipts
         )
     }

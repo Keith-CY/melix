@@ -571,10 +571,17 @@ struct MelixCLIRunnerTests {
         let textModel = try #require(models.first { $0["model_id"] as? String == "melix-dev-text" })
         let receipt = try #require(textModel["capability_receipt"] as? [String: Any])
         let acceleration = try #require(receipt["acceleration"] as? [String: Any])
+        let textRouteReceipt = try #require(textModel["media_route_receipt"] as? [String: Any])
         #expect(capabilities["schema_version"] as? String == "melix.discovery.capabilities.v1")
         #expect((capabilities["supported_tasks"] as? [String])?.contains("text-generation") == true)
         #expect(receipt["schema_version"] as? String == "melix.model_capability_receipt.v1")
         #expect(acceleration["requested_acceleration_mode"] as? String == "baseline")
+        #expect(textRouteReceipt["media_route"] as? String == "swift_text")
+        #expect(textRouteReceipt["unsupported_reason"] as? String == "none")
+        #expect(textRouteReceipt["media_parts_count"] as? Int == 0)
+        #expect(textRouteReceipt["media_turn_count"] as? Int == 0)
+        #expect(textRouteReceipt["cache_hit_count"] as? Int == 0)
+        #expect(textRouteReceipt["cache_miss_count"] as? Int == 0)
         #expect(suggestions.contains { $0["model_id"] as? String == "mlx-community/Qwen3.5-9B-MLX-4bit" })
         #expect(models.contains { $0["model_id"] as? String == "melix-dev-vlm" })
         #expect(models.contains { $0["model_id"] as? String == "melix-dev-image" })
@@ -5297,6 +5304,7 @@ struct MelixCLIRunnerTests {
         let baseTrust = try #require(byID["melix-base-text"]?["load_trust"] as? [String: Any])
         let fusedTrust = try #require(byID["melix-base-text-lora-fused"]?["load_trust"] as? [String: Any])
         let runtimeTrust = try #require(byID["melix-base-text-lora-runtime"]?["load_trust"] as? [String: Any])
+        let baseRouteReceipt = try #require(byID["melix-base-text"]?["media_route_receipt"] as? [String: Any])
         #expect(baseTrust["effective_mode"] as? String == "not_applicable")
         #expect(fusedTrust["requested_mode"] as? String == "default_safe")
         #expect(fusedTrust["effective_mode"] as? String == "default_safe")
@@ -5304,6 +5312,12 @@ struct MelixCLIRunnerTests {
         #expect(runtimeTrust["requested_mode"] as? String == "trust_remote_code")
         #expect(runtimeTrust["effective_mode"] as? String == "trust_remote_code")
         #expect(runtimeTrust["receipt_present"] as? Bool == true)
+        #expect(baseRouteReceipt["media_route"] as? String == "swift_text")
+        #expect(baseRouteReceipt["media_parts_count"] as? Int == 0)
+        #expect(baseRouteReceipt["media_turn_count"] as? Int == 0)
+        #expect(baseRouteReceipt["cache_hit_count"] as? Int == 0)
+        #expect(baseRouteReceipt["cache_miss_count"] as? Int == 0)
+        #expect(baseRouteReceipt["unsupported_reason"] as? String == "none")
         // Base models have no activation_mode in settings.ext so the field
         // is omitted from the payload rather than blank-strung.
         #expect(byID["melix-base-text"]?["activation_mode"] == nil)
@@ -5558,6 +5572,7 @@ struct MelixCLIRunnerTests {
         let jsonData = try #require(jsonOutput.data(using: .utf8))
         let payload = try #require(try JSONSerialization.jsonObject(with: jsonData) as? [String: Any])
         let loadTrust = try #require(payload["load_trust"] as? [String: Any])
+        let mediaRouteReceipt = try #require(payload["media_route_receipt"] as? [String: Any])
 
         #expect(textOutput.contains("load_trust_requested=trust_remote_code"))
         #expect(textOutput.contains("load_trust_effective=default_safe"))
@@ -5571,6 +5586,12 @@ struct MelixCLIRunnerTests {
         #expect(loadTrust["requires_reload_for_trust_change"] as? Bool == true)
         #expect(loadTrust["custom_loader_detection_source"] as? String == "config_json:auto_map")
         #expect(loadTrust["block_reason"] as? String == "custom_loader_requires_trust_remote_code")
+        #expect(mediaRouteReceipt["media_route"] as? String == "python_text_compatibility")
+        #expect(mediaRouteReceipt["unsupported_reason"] as? String == "none")
+        #expect(mediaRouteReceipt["media_parts_count"] as? Int == 0)
+        #expect(mediaRouteReceipt["media_turn_count"] as? Int == 0)
+        #expect(mediaRouteReceipt["cache_hit_count"] as? Int == 0)
+        #expect(mediaRouteReceipt["cache_miss_count"] as? Int == 0)
     }
 
     @Test("model load and chat run map missing cache errors to the stable CLI code")
@@ -11144,7 +11165,7 @@ struct MelixCLIRunnerTests {
     }
 
     @Test("diagnostics probe policy uses safe defaults unless debug mode is requested")
-    func diagnosticsProbePolicyPayloadUsesSafeDefaults() {
+    func diagnosticsProbePolicyPayloadUsesSafeDefaults() throws {
         let emptyPolicy = MelixDiagnosticsStore.probePolicyPayload(environment: [:])
         #expect(emptyPolicy["mode"] as? String == "minimal")
         #expect(emptyPolicy["fallback_applied"] as? Bool == false)
@@ -11166,6 +11187,26 @@ struct MelixCLIRunnerTests {
         #expect(debugPolicy["fallback_applied"] as? Bool == false)
         #expect(debugPolicy["detailed_telemetry_enabled"] as? Bool == true)
         #expect(debugPolicy["debug_artifacts_enabled"] as? Bool == true)
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-early-failure-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MelixDiagnosticsStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": root.path]),
+            environment: [:]
+        )
+        let bundleRoot = try store.writeEarlyFailureBundle(
+            commandID: "chat.run",
+            arguments: ["chat", "run"],
+            errorMessage: "request failed",
+            traceID: "trace-early-failure"
+        )
+        let capabilityReceipts = try #require(try parseJSONFile(
+            bundleRoot.appendingPathComponent("capability-receipts.json").path
+        ))
+        let mediaRouteReceipt = try #require(capabilityReceipts["media_route_receipt"] as? [String: Any])
+        #expect(mediaRouteReceipt["media_route"] as? String == "swift_text")
+        #expect(mediaRouteReceipt["unsupported_reason"] as? String == "none")
     }
 
     @Test("lora list fails when the server snapshot has no models")
@@ -11530,7 +11571,13 @@ struct MelixCLIRunnerTests {
         let bundleManifest = try #require(
             JSONSerialization.jsonObject(with: bundleManifestData) as? [String: Any]
         )
+        let capabilityReceiptsPayload = try parseJSONFile(
+            bundleOutputRoot.appendingPathComponent("capability-receipts.json").path
+        )
+        let capabilityReceipts = try #require(capabilityReceiptsPayload)
         let probePolicy = try #require(bundleManifest["probe_policy"] as? [String: Any])
+        let manifestMediaRouteReceipt = try #require(bundleManifest["media_route_receipt"] as? [String: Any])
+        let bundleMediaRouteReceipt = try #require(capabilityReceipts["media_route_receipt"] as? [String: Any])
         #expect(bundleLogs.contains("sk-secret-log") == false)
         #expect(bundleEnv.contains("sk-secret-env") == false)
         #expect(bundleCommand.contains("hidden-prompt-token") == false)
@@ -11542,6 +11589,54 @@ struct MelixCLIRunnerTests {
         #expect(bundleManifest["debug_artifact_policy"] as? String == "explicit_cli_command")
         #expect(bundleManifest["debug_jsonl_enabled"] as? Bool == true)
         #expect(bundleManifest["debug_jsonl_event_limit"] as? Int == 256)
+        #expect(manifestMediaRouteReceipt["media_route"] as? String == "swift_text")
+        #expect(manifestMediaRouteReceipt["media_parts_count"] as? Int == 0)
+        #expect(manifestMediaRouteReceipt["media_turn_count"] as? Int == 0)
+        #expect(manifestMediaRouteReceipt["cache_hit_count"] as? Int == 0)
+        #expect(manifestMediaRouteReceipt["cache_miss_count"] as? Int == 0)
+        #expect(manifestMediaRouteReceipt["unsupported_reason"] as? String == "none")
+        #expect(bundleMediaRouteReceipt["media_route"] as? String == "swift_text")
+        #expect(bundleMediaRouteReceipt["media_parts_count"] as? Int == 0)
+        #expect(bundleMediaRouteReceipt["media_turn_count"] as? Int == 0)
+        #expect(bundleMediaRouteReceipt["cache_hit_count"] as? Int == 0)
+        #expect(bundleMediaRouteReceipt["cache_miss_count"] as? Int == 0)
+        #expect(bundleMediaRouteReceipt["unsupported_reason"] as? String == "none")
+
+        let imageRunRoot = sourceRoot.appendingPathComponent("image-1", isDirectory: true)
+        try FileManager.default.createDirectory(at: imageRunRoot, withIntermediateDirectories: true)
+        var imageRunRecord = makeRunRecordPayloadForTest(
+            runID: "image-1",
+            runKind: "image_generation",
+            runRoot: imageRunRoot,
+            startedAtUnixMS: 900
+        )
+        imageRunRecord["target"] = [
+            "model_id": "melix-dev-image",
+            "task_kind": "image_generate",
+            "source_repo": "melix/image",
+            "runtime_backend": "mlx",
+        ]
+        try writeJSONObjectForTest(
+            imageRunRecord,
+            to: imageRunRoot.appendingPathComponent("run-record.json")
+        )
+        let imageBundleRoot = root.appendingPathComponent("debug-output/image-1", isDirectory: true)
+        _ = try await runner.run(
+            .debugBundle(
+                .init(
+                    runID: "image-1",
+                    sourcePath: sourceRoot.path,
+                    outputPath: imageBundleRoot.path,
+                    json: true
+                )
+            )
+        )
+        let imageManifest = try #require(try parseJSONFile(
+            imageBundleRoot.appendingPathComponent("manifest.json").path
+        ))
+        let imageMediaRouteReceipt = try #require(imageManifest["media_route_receipt"] as? [String: Any])
+        #expect(imageMediaRouteReceipt["media_route"] as? String == "python_image")
+        #expect(imageMediaRouteReceipt["effective_supported_modalities"] as? [String] == ["text", "image"])
 
         let emptyList = try await runner.run(.runsList(.init(sourcePath: root.appendingPathComponent("missing").path)))
         #expect(emptyList == "No run records found.\n")

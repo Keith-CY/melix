@@ -251,7 +251,7 @@ def run_smoke(repo_root: Path) -> dict[str, Any]:
                 frame_budget=4,
             ),
             expected_fragments=[
-                "invalid_argument",
+                "unsupported_media_payload",
                 "Unsupported video URI scheme: http.",
             ],
             source_reference="http://127.0.0.1/remote-video.mp4",

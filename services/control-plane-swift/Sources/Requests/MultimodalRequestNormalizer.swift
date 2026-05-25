@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import MelixWorkerProtocol
 
@@ -159,10 +160,10 @@ public struct OpenAIMultimodalContentPart: Sendable, Codable, Equatable {
         public init(from decoder: Decoder) throws {
             let container = try decoder.singleValueContainer()
             let rawValue = try container.decode(String.self)
-            guard let value = PartType(rawValue: rawValue) else {
+            guard let type = Self(rawValue: rawValue) else {
                 throw MultimodalRequestNormalizationError.unsupportedPartType(rawValue)
             }
-            self = value
+            self = type
         }
 
         public func encode(to encoder: Encoder) throws {
@@ -429,6 +430,80 @@ public struct OpenAIMultimodalMessage: Sendable, Codable, Equatable {
     }
 }
 
+public struct NormalizedMediaPartSummary: Sendable, Codable, Equatable {
+    public let mediaKind: String
+    public let sourceKind: String
+    public let source: String
+    public let turnIndex: Int
+    public let partIndex: Int
+    public let byteLength: UInt64?
+    public let filename: String?
+    public let format: String?
+    public let stableDigest: String?
+
+    enum CodingKeys: String, CodingKey {
+        case mediaKind = "media_kind"
+        case sourceKind = "source_kind"
+        case source
+        case turnIndex = "turn_index"
+        case partIndex = "part_index"
+        case byteLength = "byte_length"
+        case filename
+        case format
+        case stableDigest = "stable_digest"
+    }
+
+    public init(
+        mediaKind: String,
+        sourceKind: String,
+        source: String,
+        turnIndex: Int,
+        partIndex: Int,
+        byteLength: UInt64? = nil,
+        filename: String? = nil,
+        format: String? = nil,
+        stableDigest: String? = nil
+    ) {
+        self.mediaKind = mediaKind
+        self.sourceKind = sourceKind
+        self.source = source
+        self.turnIndex = turnIndex
+        self.partIndex = partIndex
+        self.byteLength = byteLength
+        self.filename = Self.nilIfEmpty(filename)
+        self.format = Self.nilIfEmpty(format)
+        self.stableDigest = Self.nilIfEmpty(stableDigest)
+    }
+
+    private static func nilIfEmpty(_ value: String?) -> String? {
+        guard let value else {
+            return nil
+        }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+public struct NormalizedMediaPartsSummary: Sendable, Codable, Equatable {
+    public let parts: [NormalizedMediaPartSummary]
+
+    public init(parts: [NormalizedMediaPartSummary] = []) {
+        self.parts = parts
+    }
+
+    public var isEmpty: Bool {
+        parts.isEmpty
+    }
+
+    public var count: Int {
+        parts.count
+    }
+
+    public var turnCount: Int {
+        Set(parts.map(\.turnIndex)).count
+    }
+}
+
 public struct MultimodalRequestNormalizer: Sendable {
     private static let supportedVideoFormats: Set<String> = ["mp4", "mov", "m4v", "webm"]
     private static let supportedVideoMimeTypes: [String: String] = [
@@ -445,6 +520,37 @@ public struct MultimodalRequestNormalizer: Sendable {
         _ messages: [OpenAIMultimodalMessage]
     ) throws -> [Melix_Worker_V1_ChatMessage] {
         try messages.map(normalize)
+    }
+
+    public func mediaPartsSummary(
+        for messages: [OpenAIMultimodalMessage]
+    ) throws -> NormalizedMediaPartsSummary {
+        var summaries: [NormalizedMediaPartSummary] = []
+        for (turnIndex, message) in messages.enumerated() {
+            for (partIndex, part) in message.content.enumerated() {
+                let normalized = try normalize(part)
+                if let summary = mediaPartSummary(
+                    for: normalized,
+                    turnIndex: turnIndex,
+                    partIndex: partIndex
+                ) {
+                    summaries.append(summary)
+                }
+            }
+        }
+        return NormalizedMediaPartsSummary(parts: summaries)
+    }
+
+    public func mediaPartsSummary(
+        for messages: [NormalizedTextMessage]
+    ) -> NormalizedMediaPartsSummary {
+        NormalizedMediaPartsSummary(
+            parts: messages.enumerated().flatMap { turnIndex, message in
+                message.parts.enumerated().compactMap { partIndex, part in
+                    mediaPartSummary(for: part, turnIndex: turnIndex, partIndex: partIndex)
+                }
+            }
+        )
     }
 
     public func normalize(
@@ -738,5 +844,77 @@ public struct MultimodalRequestNormalizer: Sendable {
             media.preprocessingHints["external_url_host"] = receipt.host
         }
         media.preprocessingHints["external_url_receipt"] = receipt.reason
+    }
+
+    private func mediaPartSummary(
+        for part: Melix_Worker_V1_MessagePart,
+        turnIndex: Int,
+        partIndex: Int
+    ) -> NormalizedMediaPartSummary? {
+        let mediaKind: String
+        switch part.media.mediaType {
+        case .image:
+            mediaKind = "image"
+        case .audio:
+            mediaKind = "audio"
+        case .video:
+            mediaKind = "video"
+        default:
+            return nil
+        }
+
+        let sourceKind: String
+        let source: String
+        let digestPayload: Data?
+        let byteLength: UInt64?
+        switch part.media.sourceKind {
+        case .mediaSourceInlineBytes:
+            sourceKind = "inline_bytes"
+            source = "inline_bytes"
+            if part.imageBytes.isEmpty == false {
+                digestPayload = part.imageBytes
+                byteLength = UInt64(part.imageBytes.count)
+            } else if part.audioBytes.isEmpty == false {
+                digestPayload = part.audioBytes
+                byteLength = UInt64(part.audioBytes.count)
+            } else if part.videoBytes.isEmpty == false {
+                digestPayload = part.videoBytes
+                byteLength = UInt64(part.videoBytes.count)
+            } else {
+                digestPayload = nil
+                byteLength = part.media.byteLength > 0 ? part.media.byteLength : nil
+            }
+        case .mediaSourceUri:
+            sourceKind = part.media.preprocessingHints["external_url_source_kind"] ?? "uri"
+            source = firstNonEmpty(part.imageUri, part.audioUri, part.videoUri) ?? "uri"
+            digestPayload = Data(source.utf8)
+            byteLength = nil
+        default:
+            return nil
+        }
+
+        return NormalizedMediaPartSummary(
+            mediaKind: mediaKind,
+            sourceKind: sourceKind,
+            source: source,
+            turnIndex: turnIndex,
+            partIndex: partIndex,
+            byteLength: byteLength,
+            filename: part.media.filename,
+            format: part.media.format,
+            stableDigest: digestPayload.map(Self.sha256Hex)
+        )
+    }
+
+    private func firstNonEmpty(_ values: String...) -> String? {
+        values.first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func sha256Hex(_ data: Data) -> String {
+        // TODO(issue-42): Move large inline-media hashing off the request hot path.
+        SHA256.hash(data: data)
+            .map { String(format: "%02x", $0) }
+            .joined()
     }
 }

@@ -21,6 +21,10 @@ _EXPORTS: dict[str, tuple[str, str]] = {
         "worker.productization.packaged_vlm_cache",
         "build_packaged_vlm_cache_receipt",
     ),
+    "packaged_vlm_processor_modality_counts": (
+        "worker.productization.packaged_vlm_cache",
+        "packaged_vlm_processor_modality_counts",
+    ),
     "BuildMetadata": ("worker.productization.build_metadata", "BuildMetadata"),
     "BenchmarkMetricValue": ("worker.productization.benchmark_schemas", "BenchmarkMetricValue"),
     "BenchmarkQueueRecord": ("worker.productization.benchmark_queue", "BenchmarkQueueRecord"),
@@ -169,6 +173,7 @@ __all__ = [
     "list_packaging_target_profiles",
     "resolve_local_connect_host",
     "packaged_vlm_artifact_specs",
+    "packaged_vlm_processor_modality_counts",
     "render_info_plist",
     "render_launcher_script",
     "render_portable_environment_script",

@@ -74,6 +74,75 @@ struct ModelCatalogTests {
         #expect(legacyMetadata["melix.model_path"] == "/tmp/registry/model")
     }
 
+    @Test("public route receipts withdraw media claims for text only fallback")
+    func publicRouteReceiptsWithdrawMediaClaimsForTextOnlyFallback() async throws {
+        var fallbackModel = ModelCatalog.devVLMModel()
+        fallbackModel.modelID = "melix-vlm-text-fallback"
+        fallbackModel.routeClass = .workerRouteSwiftText
+        fallbackModel.settings.ext["melix.capability.route_kind"] = "swift_text"
+
+        let metadata = try #require(ModelCatalogPresentation.publicAPIMetadata(for: fallbackModel))
+
+        #expect(metadata["melix.capability.supported_modalities"] == "text")
+        #expect(metadata["melix.media.route"] == "swift_text")
+        #expect(metadata["melix.media.declared_supported_modalities"] == "text,image,video")
+        #expect(metadata["melix.media.effective_supported_modalities"] == "text")
+        #expect(metadata["melix.media.unsupported_reason"] == "text_only_runtime")
+        #expect(metadata["melix.media.parts_count"] == "0")
+        #expect(metadata["melix.media.turn_count"] == "0")
+    }
+
+    @Test("public media route receipts project effective modalities for non-text routes")
+    func publicMediaRouteReceiptsProjectEffectiveModalitiesForNonTextRoutes() async throws {
+        var ocr = ModelCatalog.devOCRModel()
+        ocr.settings.ext.removeValue(forKey: "melix.capability.route_kind")
+        #expect(ModelCatalogPresentation.publicRouteIdentifier(for: ocr) == "python_ocr")
+        #expect(ModelCatalogPresentation.publicMediaRouteReceipt(for: ocr).effectiveSupportedModalities == ["image"])
+
+        var vlm = ModelCatalog.devVLMModel()
+        vlm.settings.ext["melix.capability.supported_modalities"] = " text, image, video "
+        #expect(ModelCatalogPresentation.publicMediaRouteReceipt(for: vlm).effectiveSupportedModalities == [
+            "text",
+            "image",
+            "video",
+        ])
+
+        var transcription = ModelCatalog.devTranscriptionModel()
+        transcription.settings.ext.removeValue(forKey: "melix.capability.route_kind")
+        transcription.routeClass = .unspecified
+        transcription.settings.ext["melix.capability.class"] = "transcription"
+        #expect(ModelCatalogPresentation.publicRouteIdentifier(for: transcription) == "python_transcription")
+        #expect(
+            ModelCatalogPresentation.publicMediaRouteReceipt(for: transcription).effectiveSupportedModalities == ["audio"]
+        )
+
+        var speech = ModelCatalog.devSpeechModel()
+        speech.settings.ext.removeValue(forKey: "melix.capability.route_kind")
+        speech.routeClass = .unspecified
+        speech.settings.ext.removeValue(forKey: "melix.capability.class")
+        speech.capabilityClass = .modelCapabilitySpeech
+        #expect(ModelCatalogPresentation.publicRouteIdentifier(for: speech) == "python_speech")
+        #expect(ModelCatalogPresentation.publicMediaRouteReceipt(for: speech).effectiveSupportedModalities == [
+            "text",
+            "audio",
+        ])
+
+        var image = ModelCatalog.devImageModel()
+        image.settings.ext.removeValue(forKey: "melix.capability.route_kind")
+        #expect(ModelCatalogPresentation.publicRouteIdentifier(for: image) == "python_image")
+        #expect(ModelCatalogPresentation.publicMediaRouteReceipt(for: image).effectiveSupportedModalities == [
+            "text",
+            "image",
+        ])
+
+        var unknown = Melix_Controlplane_V1_ModelSummary()
+        unknown.modelID = "custom-binary"
+        unknown.kind = "binary"
+        unknown.supportedModalities = []
+        #expect(ModelCatalogPresentation.publicRouteIdentifier(for: unknown) == "unspecified")
+        #expect(ModelCatalogPresentation.publicMediaRoutePayload(for: unknown)["media_route"] as? String == "unspecified")
+    }
+
     @Test("model capability receipts cover tasks acceleration drafts and speculative metadata")
     func modelCapabilityReceiptsCoverTasksAccelerationDraftsAndSpeculativeMetadata() async throws {
         var model = ModelCatalog.devTextModel()
