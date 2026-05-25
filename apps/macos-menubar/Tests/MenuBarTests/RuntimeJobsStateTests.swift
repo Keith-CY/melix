@@ -399,6 +399,95 @@ struct RuntimeJobsStateTests {
         #expect(viewModel.selectedRuntimeJobDetail?.summary.id == "bench-20260516-1120")
     }
 
+    @Test("job detail decodes local training queue and trainability preflight state")
+    @MainActor
+    func jobDetailDecodesLocalTrainingQueueAndTrainabilityPreflightState() throws {
+        let viewModel = RuntimeViewModel(client: FakeControlPlaneXPCClient())
+        let detail = try RuntimeJobsPayloadDecoder.decodeDetail(Data("""
+        {
+          "schema_version": "melix.job_status.v1",
+          "job_id": "training-queue-0001",
+          "run_kind": "training",
+          "operation": "train_lora",
+          "status": "failed",
+          "phase": "failed",
+          "started_at_unix_ms": 1778911200000,
+          "updated_at_unix_ms": 1778911210000,
+          "duration_ms": 10000,
+          "model_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+          "task_kind": "train_lora",
+          "dataset_id": "support-chat",
+          "artifact_root": "/tmp/melix/jobs/training-queue-0001",
+          "record_path": "/tmp/melix/state/local-training-queue.json",
+          "cancelable": false,
+          "error": {
+            "code": "insufficient_training_samples",
+            "message": "LoRA training requires at least one training sample.",
+            "retriable": false,
+            "remediation": "Add more accepted training samples before starting training."
+          },
+          "training_queue": {
+            "schema_version": "melix.local_training_queue.v1",
+            "resource_class": "exclusive_local_training",
+            "recovery_policy": "fix_preflight_and_retry",
+            "queue_path": "/tmp/melix/state/local-training-queue.json",
+            "workspace_manifest_path": "/tmp/workspace/workspace-manifest.json",
+            "dataset_version_id": "support-chat-v2",
+            "preflight_receipt_path": "/tmp/melix/jobs/training-queue-0001/trainability-preflight.json"
+          },
+          "trainability_preflight": {
+            "schema_version": "melix.trainability_preflight.v1",
+            "status": "blocked",
+            "model_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "model_family": "qwen3",
+            "dataset_format": "chat_messages",
+            "training_mode": "qlora",
+            "sample_count": 0,
+            "validation_sample_count": 0,
+            "checks": [
+              {
+                "code": "insufficient_training_samples",
+                "status": "blocked",
+                "severity": "error",
+                "operator_message": "LoRA training requires at least one training sample.",
+                "remediation": "Add more accepted training samples before starting training.",
+                "details": {
+                  "sample_count": "0",
+                  "minimum_sample_count": "1"
+                }
+              }
+            ],
+            "operator_errors": [
+              {
+                "code": "insufficient_training_samples",
+                "severity": "error",
+                "operator_message": "LoRA training requires at least one training sample.",
+                "retriable": false,
+                "remediation": "Add more accepted training samples before starting training.",
+                "details": {
+                  "sample_count": "0",
+                  "minimum_sample_count": "1"
+                }
+              }
+            ],
+            "metrics": {
+              "unsupported_configuration_count": 1
+            }
+          }
+        }
+        """.utf8))
+
+        viewModel.applyRuntimeJobDetail(detail)
+
+        #expect(viewModel.selectedRuntimeJobDetail?.trainingQueue?.recoveryPolicy == "fix_preflight_and_retry")
+        #expect(viewModel.selectedRuntimeJobDetail?.trainingQueue?.datasetVersionID == "support-chat-v2")
+        #expect(viewModel.selectedRuntimeJobDetail?.error?.remediation == "Add more accepted training samples before starting training.")
+        let preflight = try #require(viewModel.selectedRuntimeJobDetail?.trainabilityPreflight)
+        #expect(preflight.status == "blocked")
+        #expect(preflight.blockingChecks.map(\.code) == ["insufficient_training_samples"])
+        #expect(preflight.operatorErrors.first?.remediation == "Add more accepted training samples before starting training.")
+    }
+
     @Test("runtime view model refreshes jobs through CLI workflow runner")
     @MainActor
     func runtimeViewModelRefreshesJobsThroughCLIWorkflowRunner() async throws {

@@ -3273,14 +3273,17 @@ struct DesktopFoundationViewTests {
         viewModel.selectToolSection(.jobs)
         let detail = try RuntimeJobsPayloadDecoder.decodeDetail(Data("""
         {
-          "job_id": "bench-20260516-1120",
-          "run_kind": "benchmark",
-          "operation": "bench run",
+          "job_id": "training-queue-0001",
+          "run_kind": "training",
+          "operation": "train_lora",
           "status": "failed",
-          "phase": "export",
-          "model_id": "mlx-community/Qwen3-8B",
-          "task_kind": "text-generation",
-          "artifact_root": "/tmp/melix/jobs/bench-20260516-1120",
+          "phase": "preflight",
+          "model_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+          "task_kind": "train_lora",
+          "dataset_id": "support-chat",
+          "artifact_root": "/tmp/melix/jobs/training-queue-0001",
+          "record_path": "/tmp/melix/state/local-training-queue.json",
+          "cancelable": false,
           "timestamps": {
             "started_at_unix_ms": 1778911200000,
             "updated_at_unix_ms": 1778911210000,
@@ -3288,18 +3291,65 @@ struct DesktopFoundationViewTests {
             "duration_ms": 15000
           },
           "error": {
-            "code": "E_MLX",
-            "message": "out of memory"
+            "code": "insufficient_training_samples",
+            "message": "LoRA training requires at least one training sample.",
+            "retriable": false,
+            "remediation": "Add more accepted training samples before starting training."
+          },
+          "training_queue": {
+            "schema_version": "melix.local_training_queue.v1",
+            "resource_class": "exclusive_local_training",
+            "recovery_policy": "fix_preflight_and_retry",
+            "queue_path": "/tmp/melix/state/local-training-queue.json",
+            "workspace_manifest_path": "/tmp/workspace/workspace-manifest.json",
+            "dataset_version_id": "support-chat-v2",
+            "preflight_receipt_path": "/tmp/melix/jobs/training-queue-0001/trainability-preflight.json"
+          },
+          "trainability_preflight": {
+            "schema_version": "melix.trainability_preflight.v1",
+            "status": "blocked",
+            "receipt_path": "/tmp/melix/jobs/training-queue-0001/trainability-preflight.json",
+            "model_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+            "model_family": "qwen3",
+            "dataset_format": "chat_messages",
+            "training_mode": "qlora",
+            "sample_count": 0,
+            "validation_sample_count": 0,
+            "checks": [
+              {
+                "code": "insufficient_training_samples",
+                "status": "blocked",
+                "severity": "error",
+                "operator_message": "LoRA training requires at least one training sample.",
+                "remediation": "Add more accepted training samples before starting training."
+              }
+            ],
+            "operator_errors": [
+              {
+                "code": "insufficient_training_samples",
+                "severity": "error",
+                "operator_message": "LoRA training requires at least one training sample.",
+                "retriable": false,
+                "remediation": "Add more accepted training samples before starting training."
+              },
+              {
+                "code": "workspace_manifest_unreadable",
+                "severity": "error",
+                "operator_message": "",
+                "retriable": true,
+                "remediation": "   "
+              }
+            ]
           },
           "logs": {
             "available": true,
-            "path": "/tmp/melix/jobs/bench-20260516-1120/job.log",
-            "command": "melix jobs logs bench-20260516-1120"
+            "path": "/tmp/melix/jobs/training-queue-0001/job.log",
+            "command": "melix jobs logs training-queue-0001"
           },
           "artifacts": [
             {
               "kind": "manifest",
-              "path": "/tmp/melix/jobs/bench-20260516-1120/manifest.json",
+              "path": "/tmp/melix/jobs/training-queue-0001/manifest.json",
               "relative_path": "manifest.json",
               "exists": true
             }
@@ -3311,20 +3361,32 @@ struct DesktopFoundationViewTests {
         let view = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
         let values = renderedTextValues(in: view)
 
-        #expect(values.contains("bench-20260516-1120"))
+        #expect(values.contains("training-queue-0001"))
         #expect(values.contains("failed"))
-        #expect(values.contains("export"))
+        #expect(values.contains("preflight"))
         #expect(values.contains(expectedDesktopJobTimestampText(1_778_911_200_000)))
         #expect(values.contains("raw 1778911200000 ms"))
         #expect(values.contains(expectedDesktopJobTimestampText(1_778_911_215_000)))
         #expect(values.contains("raw 1778911215000 ms"))
         #expect(values.contains("15000 ms"))
-        #expect(values.contains("E_MLX"))
-        #expect(values.contains("out of memory"))
-        #expect(values.contains("/tmp/melix/jobs/bench-20260516-1120/job.log"))
-        #expect(values.contains("melix jobs logs bench-20260516-1120"))
+        #expect(values.contains("insufficient_training_samples"))
+        #expect(values.contains("LoRA training requires at least one training sample."))
+        #expect(values.contains("not retriable"))
+        #expect(values.contains("Add more accepted training samples before starting training."))
+        #expect(values.contains("workspace_manifest_unreadable"))
+        #expect(values.contains("retriable"))
+        #expect(values.allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false })
+        #expect(values.contains("fix_preflight_and_retry"))
+        #expect(values.contains("exclusive_local_training"))
+        #expect(values.contains("support-chat-v2"))
+        #expect(values.contains("/tmp/melix/state/local-training-queue.json"))
+        #expect(values.contains("/tmp/melix/jobs/training-queue-0001/trainability-preflight.json"))
+        #expect(values.contains("blocked"))
+        #expect(values.contains("qlora"))
+        #expect(values.contains("/tmp/melix/jobs/training-queue-0001/job.log"))
+        #expect(values.contains("melix jobs logs training-queue-0001"))
         #expect(values.contains("manifest"))
-        #expect(values.contains("/tmp/melix/jobs/bench-20260516-1120/manifest.json"))
+        #expect(values.contains("/tmp/melix/jobs/training-queue-0001/manifest.json"))
     }
 
     @Test("jobs tool section renders CLI operation controls")

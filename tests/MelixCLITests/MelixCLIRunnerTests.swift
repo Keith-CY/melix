@@ -11922,6 +11922,46 @@ struct MelixCLIRunnerTests {
             #expect(error == .runtime("No job was found for missing."))
         }
 
+        let renderedQueueStatus = renderJobStatus([
+            "job_id": "training-queue-0001",
+            "status": "failed",
+            "phase": "failed",
+            "started_at_unix_ms": 1,
+            "record_path": "/tmp/melix/state/local-training-queue.json",
+            "error": [
+                "code": "insufficient_training_samples",
+                "message": "LoRA training requires at least one training sample.",
+                "remediation": "Add more accepted training samples before starting training.",
+            ],
+            "training_queue": [
+                "recovery_policy": "fix_preflight_and_retry",
+                "preflight_receipt_path": "/tmp/melix/jobs/training-queue-0001/trainability-preflight.json",
+            ],
+            "trainability_preflight": [
+                "checks": [
+                    [
+                        "code": "insufficient_training_samples",
+                        "status": "blocked",
+                        "operator_message": "LoRA training requires at least one training sample.",
+                        "remediation": "Add accepted samples before retrying.",
+                    ],
+                    [
+                        "code": "workspace_manifest_unreadable",
+                        "status": "error",
+                        "operator_message": "Workspace manifest could not be decoded.",
+                        "remediation": "Repair the workspace manifest before retrying.",
+                    ],
+                ],
+            ],
+        ])
+        #expect(renderedQueueStatus.contains("Recovery: fix_preflight_and_retry"))
+        #expect(renderedQueueStatus.contains("Remediation: Add more accepted training samples before starting training."))
+        #expect(renderedQueueStatus.contains("Preflight: /tmp/melix/jobs/training-queue-0001/trainability-preflight.json"))
+        #expect(renderedQueueStatus.contains("Preflight Check: insufficient_training_samples: LoRA training requires at least one training sample."))
+        #expect(renderedQueueStatus.contains("Preflight Remediation: Add accepted samples before retrying."))
+        #expect(renderedQueueStatus.contains("Preflight Check: workspace_manifest_unreadable: Workspace manifest could not be decoded."))
+        #expect(renderedQueueStatus.contains("Preflight Remediation: Repair the workspace manifest before retrying."))
+
         #expect(renderJobArtifacts(["job_id": "empty", "artifacts": []]) == "No artifacts found for empty.\n")
         let renderedFallbacks = renderJobList([
             [
@@ -11953,8 +11993,52 @@ struct MelixCLIRunnerTests {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-jobs-training-queue-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let home = MelixHome(environment: ["MELIX_HOME": root.path])
         let queue = LocalTrainingQueueStore(melixHome: home)
+        let preflightReceiptPath = root.appendingPathComponent("trainability-preflight.json")
+        try """
+        {
+          "schema_version": "melix.trainability_preflight.v1",
+          "status": "blocked",
+          "model_id": "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
+          "model_family": "qwen3",
+          "dataset_format": "chat_messages",
+          "training_mode": "qlora",
+          "sample_count": 0,
+          "validation_sample_count": 0,
+          "checks": [
+            {
+              "code": "insufficient_training_samples",
+              "status": "blocked",
+              "severity": "error",
+              "operator_message": "LoRA training requires at least one training sample.",
+              "remediation": "Add more accepted training samples before starting training.",
+              "details": {
+                "sample_count": "0",
+                "minimum_sample_count": "1"
+              }
+            }
+          ],
+          "operator_errors": [
+            {
+              "code": "insufficient_training_samples",
+              "severity": "error",
+              "operator_message": "LoRA training requires at least one training sample.",
+              "retriable": false,
+              "remediation": "Add more accepted training samples before starting training.",
+              "details": {
+                "sample_count": "0",
+                "minimum_sample_count": "1"
+              }
+            }
+          ],
+          "metrics": {
+            "unsupported_configuration_count": 1
+          }
+        }
+        """
+        .write(to: preflightReceiptPath, atomically: true, encoding: .utf8)
         let admitted = try queue.admit(
             LocalTrainingQueueAdmissionRequest(
                 modelID: "mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
@@ -11964,10 +12048,18 @@ struct MelixCLIRunnerTests {
                 parameters: [
                     "dataset_version_id": "dataset-v2",
                     "workspace_manifest_path": "/tmp/workspace/manifest.json",
+                    "preflight_receipt_path": preflightReceiptPath.path,
+                    "recovery_policy": "fix_preflight_and_retry",
                 ]
             )
         )
-        _ = try queue.markRunning(jobID: admitted.jobID)
+        _ = try queue.markFailed(
+            jobID: admitted.jobID,
+            code: "insufficient_training_samples",
+            message: "LoRA training requires at least one training sample.",
+            retriable: false,
+            remediation: "Add more accepted training samples before starting training."
+        )
 
         let runner = MelixCLIRunner(
             client: StubControlPlaneXPCClient(),
@@ -11978,17 +12070,26 @@ struct MelixCLIRunnerTests {
             try await runner.run(.jobsList(.init(json: true)))
         ) as? [[String: Any]])
         let summary = try #require(listJSON.first { $0["job_id"] as? String == admitted.jobID })
-        #expect(summary["status"] as? String == "running")
+        #expect(summary["status"] as? String == "failed")
         #expect(summary["record_path"] as? String == home.localTrainingQueueFileURL.path)
 
         let showJSON = try #require(parseJSONObject(
             try await runner.run(.jobsShow(.init(jobID: admitted.jobID, json: true)))
         ))
         let trainingQueue = try #require(showJSON["training_queue"] as? [String: Any])
+        let error = try #require(showJSON["error"] as? [String: Any])
+        let trainabilityPreflight = try #require(showJSON["trainability_preflight"] as? [String: Any])
+        let operatorErrors = try #require(trainabilityPreflight["operator_errors"] as? [[String: Any]])
         #expect(showJSON["schema_version"] as? String == "melix.job_status.v1")
-        #expect(showJSON["phase"] as? String == "running")
+        #expect(showJSON["phase"] as? String == "failed")
         #expect(trainingQueue["schema_version"] as? String == "melix.local_training_queue.v1")
         #expect(trainingQueue["dataset_version_id"] as? String == "dataset-v2")
+        #expect(trainingQueue["recovery_policy"] as? String == "fix_preflight_and_retry")
+        #expect(trainingQueue["preflight_receipt_path"] as? String == preflightReceiptPath.path)
+        #expect(error["code"] as? String == "insufficient_training_samples")
+        #expect(error["remediation"] as? String == "Add more accepted training samples before starting training.")
+        #expect(trainabilityPreflight["status"] as? String == "blocked")
+        #expect(operatorErrors.first?["remediation"] as? String == "Add more accepted training samples before starting training.")
 
         let artifactsJSON = try #require(parseJSONObject(
             try await runner.run(.jobsArtifacts(.init(jobID: admitted.jobID, json: true)))
@@ -12005,27 +12106,11 @@ struct MelixCLIRunnerTests {
             #expect(error == .runtime("No logs were found for \(admitted.jobID)."))
         }
 
-        let cancelJSON = try #require(parseJSONObject(
-            try await runner.run(.jobsCancel(.init(jobID: admitted.jobID, json: true)))
-        ))
-        let requestPath = try #require(cancelJSON["request_path"] as? String)
-        let request = try #require(try parseJSONFile(requestPath))
-        let cancelledShow = try #require(parseJSONObject(
-            try await runner.run(.jobsShow(.init(jobID: admitted.jobID, json: true)))
-        ))
-        let cancellation = try #require(cancelledShow["cancellation"] as? [String: Any])
-
-        #expect(cancelJSON["cancel_requested"] as? Bool == true)
-        #expect(cancelJSON["status"] as? String == "cancel_requested")
-        #expect(request["source_queue_path"] as? String == home.localTrainingQueueFileURL.path)
-        #expect(cancellation["requested"] as? Bool == true)
-
-        _ = try queue.markSucceeded(jobID: admitted.jobID)
         let terminalCancelJSON = try #require(parseJSONObject(
             try await runner.run(.jobsCancel(.init(jobID: admitted.jobID, json: true)))
         ))
         #expect(terminalCancelJSON["cancel_requested"] as? Bool == false)
-        #expect(terminalCancelJSON["status"] as? String == "succeeded")
+        #expect(terminalCancelJSON["status"] as? String == "failed")
         #expect(terminalCancelJSON["reason"] as? String == "job_terminal_or_not_active")
     }
 
