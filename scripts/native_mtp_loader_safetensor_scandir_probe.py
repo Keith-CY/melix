@@ -9,6 +9,7 @@ import tempfile
 import time
 import tracemalloc
 from pathlib import Path
+from typing import Any, Callable
 
 repo_root_env = os.environ.get("MELIX_NATIVE_MTP_LOADER_REPO_ROOT")
 repo_root = Path(repo_root_env) if repo_root_env else Path(__file__).resolve().parents[1]
@@ -16,20 +17,30 @@ sys.path.insert(0, str(repo_root))
 sys.path.insert(0, str(repo_root / "services/mlx-worker-python"))
 
 try:
-    from worker.runtime.native_mtp.mlx_lm_loader import _model_safetensor_files
-except ImportError:  # Base revisions before this slice do not expose the helper.
+    from worker.runtime.native_mtp.mlx_lm_loader import _load_json_payload, _model_safetensor_files
+except ImportError:  # Base revisions before this slice do not expose the helpers.
+    _load_json_payload = None
     _model_safetensor_files = None
 
 
 def _populate_model_dir(model_dir: Path, *, model_files: int, distractor_files: int) -> None:
     model_dir.mkdir(parents=True, exist_ok=True)
+    weight_map: dict[str, str] = {}
     for index in range(model_files):
-        (model_dir / f"model-{index:05d}-of-{model_files:05d}.safetensors").write_bytes(b"0")
+        file_name = f"model-{index:05d}-of-{model_files:05d}.safetensors"
+        (model_dir / file_name).write_bytes(b"0")
+        weight_map[f"language_model.layers.{index}.weight"] = file_name
     (model_dir / "model.safetensors").write_bytes(b"0")
     for index in range(distractor_files):
-        (model_dir / f"mtp-{index:05d}.safetensors").write_bytes(b"0")
+        mtp_name = f"mtp-{index:05d}.safetensors"
+        (model_dir / mtp_name).write_bytes(b"0")
         (model_dir / f"model-{index:05d}.bin").write_bytes(b"0")
+        weight_map[f"language_model.mtp.layers.{index}.weight"] = mtp_name
     (model_dir / "model-nested.safetensors").mkdir()
+    (model_dir / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": weight_map}, sort_keys=True),
+        encoding="utf-8",
+    )
 
 
 def _glob_model_safetensors(model_dir: Path) -> list[str]:
@@ -38,7 +49,21 @@ def _glob_model_safetensors(model_dir: Path) -> list[str]:
     return files
 
 
-def _measure(callback, model_dir: Path, *, samples: int) -> tuple[list[float], list[float], int]:
+def _read_text_json_payload(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _measure(
+    callback: Callable[[Path], object],
+    path: Path,
+    *,
+    samples: int,
+    result_count_getter: Callable[[object], int] = len,
+) -> tuple[list[float], list[float], int]:
     elapsed_ms: list[float] = []
     peaks: list[float] = []
     result_count = 0
@@ -46,14 +71,21 @@ def _measure(callback, model_dir: Path, *, samples: int) -> tuple[list[float], l
         tracemalloc.start()
         start = time.perf_counter()
         try:
-            result = callback(model_dir)
+            result = callback(path)
         finally:
             _, peak = tracemalloc.get_traced_memory()
             tracemalloc.stop()
         elapsed_ms.append((time.perf_counter() - start) * 1000.0)
         peaks.append(float(peak))
-        result_count = len(result)
+        result_count = result_count_getter(result)
     return elapsed_ms, peaks, result_count
+
+
+def _weight_map_count(result: object) -> int:
+    if not isinstance(result, dict):
+        return 0
+    weight_map = result.get("weight_map")
+    return len(weight_map) if isinstance(weight_map, dict) else 0
 
 
 def run_probe() -> dict[str, float | int | str]:
@@ -72,8 +104,26 @@ def run_probe() -> dict[str, float | int | str]:
         candidate = candidate_callback(model_dir)
         if baseline != candidate:
             raise SystemExit("candidate safetensor listing differs from glob baseline")
-        old_ms, old_peaks, result_count = _measure(_glob_model_safetensors, model_dir, samples=samples)
-        new_ms, new_peaks, _ = _measure(candidate_callback, model_dir, samples=samples)
+
+        index_path = model_dir / "model.safetensors.index.json"
+        old_payload = _read_text_json_payload(index_path)
+        payload_callback = _load_json_payload or _read_text_json_payload
+        new_payload = payload_callback(index_path)
+        if old_payload != new_payload:
+            raise SystemExit("candidate native-MTP index JSON payload differs from read_text baseline")
+
+        old_ms, old_peaks, result_count = _measure(
+            _read_text_json_payload,
+            index_path,
+            samples=samples,
+            result_count_getter=_weight_map_count,
+        )
+        new_ms, new_peaks, _ = _measure(
+            payload_callback,
+            index_path,
+            samples=samples,
+            result_count_getter=_weight_map_count,
+        )
     old_mean = statistics.mean(old_ms)
     new_mean = statistics.mean(new_ms)
     return {

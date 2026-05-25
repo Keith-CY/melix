@@ -45,7 +45,7 @@ from worker.runtime.mlx_vlm_runtime import (
     _patch_gemma4_scaled_linear_quantization,
 )
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
-from worker.runtime.native_mtp.mlx_lm_loader import _model_safetensor_files
+from worker.runtime.native_mtp.mlx_lm_loader import _load_json_payload, _model_safetensor_files
 from worker.runtime.temp_media_lifecycle import TempMediaSession
 
 
@@ -1494,6 +1494,28 @@ def test_mlx_vlm_runtime_applies_native_mtp_preload_patch_before_load(
     assert loaded["metadata"]["melix.native_mtp.patch_applied"] == "true"
     assert loaded["metadata"]["melix.native_mtp.active"] == "true"
     assert loaded["metadata"][_TEXT_ONLY_BATCH_GENERATOR_EXT_KEY] == "true"
+
+
+def test_native_mtp_index_payload_loads_from_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    index_path = tmp_path / "model.safetensors.index.json"
+    index_payload = {
+        "weight_map": {
+            "language_model.mtp.fc.weight": "mtp.safetensors",
+            "language_model.model.embed_tokens.weight": "model.safetensors",
+        }
+    }
+    index_path.write_text(json.dumps(index_payload), encoding="utf-8")
+
+    def fail_read_text(self: Path, *args, **kwargs):  # pragma: no cover - regression guard
+        raise AssertionError("_load_json_payload() should not allocate a decoded read_text copy")
+
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+
+    assert _load_json_payload(index_path) == index_payload
+    assert _load_json_payload(tmp_path / "missing.json") == {}
 
 
 def test_native_mtp_model_safetensor_listing_uses_scandir_without_glob(
