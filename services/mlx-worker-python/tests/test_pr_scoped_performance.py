@@ -207,7 +207,9 @@ def test_scope_report_selects_dataset_version_listing_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/productization/dataset_preparation.py"],
     )
 
-    assert "dataset-version-listing-scandir" in _selected_probe_ids(scope)
+    selected_ids = _selected_probe_ids(scope)
+    assert "dataset-version-listing-scandir" in selected_ids
+    assert "dataset-source-records-scandir" in selected_ids
 
 
 def test_scope_report_selects_lora_aux_modules_probe() -> None:
@@ -250,6 +252,26 @@ def test_dataset_version_listing_probe_script_emits_metrics(
     assert metrics["elapsed_ms_p95"] >= 0.0
     assert metrics["sample_count"] == 1.0
     assert metrics["version_count"] == 5.0
+
+
+def test_dataset_source_records_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_DIRS", "3")
+    monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_FILES_PER_DIR", "4")
+    monkeypatch.setenv("MELIX_DATASET_SOURCE_RECORDS_PROBE_SAMPLES", "1")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/dataset_source_records_probe.py"))
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["elapsed_ms_p95"] >= 0.0
+    assert metrics["sample_count"] == 1.0
+    assert metrics["directory_count"] == 3.0
+    assert metrics["files_per_directory"] == 4.0
+    assert metrics["file_count_mean"] == 12.0
 
 
 def test_scope_report_selects_tool_registry_schema_bytes_probe() -> None:
@@ -2694,6 +2716,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "training-dataset-chunker-top-level-base-copy",
         "dataset-registry-preview-limit-short-circuit",
         "dataset-version-listing-scandir",
+        "dataset-source-records-scandir",
         "maintenance-bench-report-readback",
         "maintenance-percentile-vector-reuse",
         "maintenance-prompt-shape-vector-repeat",
