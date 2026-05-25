@@ -42,6 +42,10 @@ def build_training_planner_receipt(
     metric_for_best_model = ext.get("metric_for_best_model", "").strip()
     if not metric_for_best_model:
         metric_for_best_model = "validation_loss" if validation_sample_count > 0 else "loss_best"
+    generation_mode = generation_mode_receipt(ext.get("generation_mode", ""))
+    softcap_raw = ext.get("final_logit_softcapping", "").strip() or ext.get(
+        "chunked_logits_softcap", ""
+    )
 
     return {
         "batching_strategy": batching_strategy,
@@ -70,9 +74,9 @@ def build_training_planner_receipt(
         "grad_checkpoint_enabled": gradient_checkpointing,
         "attention_backend": attention_backend_receipt(ext.get("attention_backend", "")),
         "metric_for_best_model_resolved": metric_for_best_model,
-        "generation_mode": ext.get("generation_mode", "").strip().lower() or "disabled",
+        "generation_mode": generation_mode,
         "final_logit_softcapping": final_logit_softcapping(
-            ext.get("final_logit_softcapping", ""),
+            softcap_raw,
             float_value=float_value,
         ),
     }
@@ -149,6 +153,24 @@ def attention_backend_receipt(raw_backend: str) -> dict[str, str]:
     }
 
 
+def generation_mode_receipt(raw_mode: str) -> str:
+    mode = raw_mode.strip().lower() or "disabled"
+    if mode in {"disabled", "teacher_forced"}:
+        return mode
+    from worker.model_ops.errors import ModelOperationError
+
+    raise ModelOperationError(
+        code="invalid_argument",
+        message=f"Unsupported generation_mode: {mode}",
+        details={
+            "field": "generation_mode",
+            "reason": "unsupported_generation_mode",
+            "received": mode,
+            "supported_generation_modes": "disabled,teacher_forced",
+        },
+    )
+
+
 def final_logit_softcapping(
     raw_value: str,
     *,
@@ -166,6 +188,7 @@ def typed_validation_details(
     reason: str,
     received: str,
     minimum: int | float,
+    allowed_bounds: str | None = None,
     include_raw_value: bool = False,
 ) -> dict[str, str]:
     minimum_text = format_bound_value(minimum)
@@ -174,7 +197,7 @@ def typed_validation_details(
         "reason": reason,
         "received": received,
         "minimum": minimum_text,
-        "allowed_bounds": f">={minimum_text}",
+        "allowed_bounds": allowed_bounds or f">={minimum_text}",
         "http_status": "422",
     }
     if include_raw_value:

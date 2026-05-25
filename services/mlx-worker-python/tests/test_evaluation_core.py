@@ -3321,11 +3321,12 @@ def test_normalized_answer_skips_extractors_for_free_text(monkeypatch: pytest.Mo
     assert EvaluationCore._normalized_answer("'quoted'") == "quoted"
     assert EvaluationCore._normalized_answer("''") == ""
     assert EvaluationCore._normalized_answer("9.0") == "9"
+    assert EvaluationCore._normalized_answer("+9.00") == "9"
     assert EvaluationCore._normalized_answer("b") == "B"
     assert EvaluationCore._normalized_answer("Option C is correct") == "option c is correct"
 
-    assert numeric_calls == 1
-    assert option_calls == 1
+    assert numeric_calls == 0
+    assert option_calls == 0
 
 
 def test_evaluation_helpers_cover_timeout_fallback_and_digit_choice_resolution() -> None:

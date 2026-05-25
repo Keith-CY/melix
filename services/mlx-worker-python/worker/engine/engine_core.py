@@ -6,7 +6,11 @@ import json
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2
 
 from worker.registry import WorkerRegistry
-from worker.engine.text_finalizer import apply_text_response_metrics
+from worker.engine.text_finalizer import (
+    TextFinalizationUsage,
+    apply_text_response_metrics,
+    finalize_text_response,
+)
 from worker.runtime.mlx_text_runtime import RuntimeToolCallEvent, RuntimeTokenEvent
 from worker.runtime.mlx_text_runtime import resolve_text_stop_contract
 from worker.runtime.multimodal_attention_policy import MultimodalPrefillAttentionBudgetExceeded
@@ -117,6 +121,7 @@ class EngineCore:
         runtime = self._registry.runtime_for_loaded_model(loaded_model)
         generate_tokens = runtime.generate_tokens
         state = self._registry.start_request(request_id, runtime_kind=loaded_model.runtime_kind)
+        cancel_event = state.cancel_event
         allocate_seq = state.allocate_seq
         plain_text_fast_path = self._plain_text_fast_path(request)
         compat_receipt = None if plain_text_fast_path else self._compat_policy_receipt(execution_ext)
@@ -182,7 +187,7 @@ class EngineCore:
                     loaded_model.runtime_model,
                     prompt,
                     effective_sampling,
-                    state.cancel_event,
+                    cancel_event,
                     execution_ext=execution_ext,
                     acceleration_policy=execution.acceleration,
                 )
@@ -191,11 +196,11 @@ class EngineCore:
                     loaded_model.runtime_model,
                     prompt,
                     effective_sampling,
-                    state.cancel_event,
+                    cancel_event,
                     execution_ext=execution_ext,
                 )
             for runtime_event in runtime_events:
-                if state.cancel_event.is_set():
+                if cancel_event.is_set():
                     break
                 if isinstance(runtime_event, RuntimeToolCallEvent):
                     generated_tool_call_delta_count += 1
@@ -245,6 +250,8 @@ class EngineCore:
                     )
                 else:
                     stream_fragment = StreamFragment(runtime_event.text, runtime_event.raw_text)
+                if token_route_receipt is not None and runtime_event.token_ids:
+                    token_route_receipt.append_token_ids(runtime_event.token_ids)
                 for delta in accept_stream_fragment(stream_fragment):
                     if delta.reasoning_text:
                         generated_reasoning_delta_count += 1
@@ -253,6 +260,7 @@ class EngineCore:
                             token_route_receipt.record_span(
                                 channel="hidden_reasoning",
                                 channel_source="reasoning_tag",
+                                token_count=delta.token_count,
                             )
                         yield inference_pb2.ExecuteEvent(
                             request_id=request_id,
@@ -271,6 +279,7 @@ class EngineCore:
                             token_route_receipt.record_span(
                                 channel="tool_call",
                                 channel_source="tool_call_tag",
+                                token_count=delta.token_count,
                             )
                         yield inference_pb2.ExecuteEvent(
                             request_id=request_id,
@@ -290,6 +299,8 @@ class EngineCore:
                             token_route_receipt.record_span(
                                 channel="visible_text",
                                 channel_source="raw_text",
+                                token_count=delta.token_count,
+                                consume_all_available=True,
                             )
                         if track_usage:
                             completion_token_count += 1
@@ -304,7 +315,7 @@ class EngineCore:
                             ),
                         )
 
-            if track_usage and not state.cancel_event.is_set():
+            if track_usage and not cancel_event.is_set():
                 completion_tokens = completion_token_count
                 if last_token_event is not None and last_token_event.prompt_tokens:
                     prompt_tokens = int(last_token_event.prompt_tokens)
@@ -332,7 +343,7 @@ class EngineCore:
                 )
 
             finish_reason = "stop"
-            if state.cancel_event.is_set():
+            if cancel_event.is_set():
                 finish_reason = "cancelled"
             elif last_finish_reason:
                 finish_reason = last_finish_reason
@@ -341,9 +352,8 @@ class EngineCore:
             parser_metrics = {key: str(value) for key, value in assembled.metrics.items()}
             parser_metrics.update(_text_native_mtp_parser_metrics(last_token_event))
             resolved_stop_token_count = str(stop_contract.resolved_stop_token_count)
+            created = execution_ext.get("melix.response.created", "")
             if plain_text_fast_path:
-                stream_mode_text = "true" if request.stream else "false"
-                usage_trailer_text = stream_mode_text if usage_trailer_emitted else "false"
                 response_history_normalized_count = execution_ext.get(
                     "melix.response_history.normalized_count",
                     "0",
@@ -356,11 +366,9 @@ class EngineCore:
                     "melix.compat.effective_config_hash",
                     "",
                 )
-                created = execution_ext.get("melix.response.created", "")
                 generated_tool_call_delta_count_text = str(generated_tool_call_delta_count)
                 if token_route_receipt is not None:
                     token_route_receipt_json = token_route_receipt.to_json()
-                tool_calls_finalized_text = "true" if generated_tool_call_delta_count else "false"
                 parser_metrics.update(
                     {
                         "resolved_stop_token_count": resolved_stop_token_count,
@@ -373,18 +381,6 @@ class EngineCore:
                         "generated_reasoning_delta_count": "0",
                         "generated_tool_call_delta_count": generated_tool_call_delta_count_text,
                         "token_route_receipt_json": token_route_receipt_json,
-                        "response_id": request_id,
-                        "created": created,
-                        "stream_mode": stream_mode_text,
-                        "finish_reason": finish_reason,
-                        "usage_prompt_tokens": str(finalized_prompt_tokens),
-                        "usage_completion_tokens": str(finalized_completion_tokens),
-                        "usage_total_tokens": str(finalized_prompt_tokens + finalized_completion_tokens),
-                        "usage_trailer_emitted": usage_trailer_text,
-                        "reasoning_finalized": "false",
-                        "tool_calls_finalized": tool_calls_finalized_text,
-                        "malformed_channel_recovered": "false",
-                        "finalizer_path": "stream" if request.stream else "non_stream",
                     }
                 )
             else:
@@ -405,42 +401,30 @@ class EngineCore:
                     "melix.compat.effective_config_hash",
                     "",
                 )
-                created = execution_ext.get("melix.response.created", "")
                 parser_metrics["turn_boundary_stop_reason"] = turn_boundary_stop_reason or finish_reason
                 parser_metrics["generated_reasoning_delta_count"] = str(generated_reasoning_delta_count)
                 parser_metrics["generated_tool_call_delta_count"] = str(generated_tool_call_delta_count)
                 if token_route_receipt is not None:
                     token_route_receipt_json = token_route_receipt.to_json()
                 parser_metrics["token_route_receipt_json"] = token_route_receipt_json
-                malformed_tool_fragment_count = int(
-                    parser_metrics.get("malformed_tool_fragment_count", "0") or "0"
-                )
-                reasoning_finalized = (
-                    bool(assembled.reasoning_text)
-                    or generated_reasoning_delta_count > 0
-                    or int(parser_metrics.get("harmony_channel_hidden_count", "0") or "0") > 0
-                )
-                tool_calls_finalized = (
-                    generated_tool_call_delta_count > 0
-                    or malformed_tool_fragment_count > 0
-                )
-                malformed_channel_recovered = (
-                    int(parser_metrics.get("reasoning_channel_recovery_count", "0") or "0") > 0
-                    or malformed_tool_fragment_count > 0
-                )
-                apply_text_response_metrics(
-                    parser_metrics,
-                    response_id=request_id,
-                    created=created,
-                    stream_mode=bool(request.stream),
-                    finish_reason=finish_reason,
+            finalization_receipt = finalize_text_response(
+                response_id=request_id,
+                created=created,
+                stream_mode=bool(request.stream),
+                finish_reason=finish_reason,
+                usage=TextFinalizationUsage(
                     prompt_tokens=finalized_prompt_tokens,
                     completion_tokens=finalized_completion_tokens,
-                    usage_trailer_emitted=usage_trailer_emitted,
-                    reasoning_finalized=reasoning_finalized,
-                    tool_calls_finalized=tool_calls_finalized,
-                    malformed_channel_recovered=malformed_channel_recovered,
-                )
+                ),
+                usage_trailer_emitted=usage_trailer_emitted,
+                reasoning_text=assembled.reasoning_text,
+                tool_call_count=assembled.tool_call_count,
+                parser_metrics=parser_metrics,
+            )
+            apply_text_response_metrics(
+                parser_metrics,
+                receipt=finalization_receipt,
+            )
             yield inference_pb2.ExecuteEvent(
                 request_id=request_id,
                 execution_kind="generate",

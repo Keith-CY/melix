@@ -47,6 +47,7 @@ class VisionProbeSnapshot:
     multimodal_fallback_reason: str = "not_reported"
     multimodal_decode_sync_mode: str = "baseline"
     multi_image_scatter_mode: str = "none"
+    multimodal_position_slice_fallback_count: int = 0
     quantized_load_mode: str = "fallback"
     quantized_load_fallback_reason: str = "not_reported"
     attention_budget_receipt: dict[str, object] = field(default_factory=dict)

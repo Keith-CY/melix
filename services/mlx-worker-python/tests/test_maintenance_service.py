@@ -5871,6 +5871,7 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
     assert [value.calls for value in counted_strings] == [1, 1, 1]
 
     MaintenanceCore._shape_benchmark_prompt.cache_clear()
+    MaintenanceCore._benchmark_prompt_token_count.cache_clear()
     assert core._shape_benchmark_prompt("", context_length=3) == "benchmark benchmark benchmark"
     assert core._shape_benchmark_prompt("one two three", context_length=2) == "one two"
     assert core._shape_benchmark_prompt("one two three", context_length=8) == (
@@ -5908,6 +5909,9 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
     fallback_prompt = SplitCountingPrompt("one\ttwo  three")
     assert core._benchmark_whitespace_token_count(fallback_prompt) == 3
     assert fallback_prompt.split_calls == 1
+    assert core._benchmark_prompt_token_count(fallback_prompt) == 3
+    assert core._benchmark_prompt_token_count(fallback_prompt) == 3
+    assert fallback_prompt.split_calls == 2
     assert normalized_prompt.split_calls == 0
     unicode_space_prompt = SplitCountingPrompt("one\u2003two three")
     assert core._benchmark_whitespace_token_count(unicode_space_prompt) == 3
@@ -5917,6 +5921,24 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
         3,
     )
     assert normalized_prompt.split_calls == 0
+
+    counted_context_calls = 0
+    original_counter = MaintenanceCore._benchmark_prompt_token_count
+
+    def counted_prompt_token_count(prompt: str) -> int:
+        nonlocal counted_context_calls
+        counted_context_calls += 1
+        return original_counter(prompt)
+
+    monkeypatch.setattr(
+        MaintenanceCore,
+        "_benchmark_prompt_token_count",
+        staticmethod(counted_prompt_token_count),
+    )
+    assert MaintenanceCore._benchmark_context_lengths(suite=default_prompt_suite, parameters={}) == (
+        3,
+    )
+    assert counted_context_calls == 1
     default_shaped_suite = SimpleNamespace(prompt_batches=(shaped_repeated_prompt,), title="unused")
     assert MaintenanceCore._benchmark_context_lengths(suite=default_shaped_suite, parameters={}) == (
         6,

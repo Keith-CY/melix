@@ -749,6 +749,44 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     assert native_tool_receipt["route_tracking_enabled"] is True
     assert native_tool_receipt["tool_choice_policy"] == "auto"
 
+    metadata_registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=MetadataStreamingBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    metadata_runtime_service = WorkerRuntimeService(metadata_registry)
+    metadata_inference_service = WorkerInferenceService(metadata_registry)
+    metadata_handle = metadata_runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    ).model_handle
+    metadata_request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-token-route-token-ids"),
+            model_handle=metadata_handle,
+            ext={"melix.reasoning.mode": "enabled"},
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Track route token ids")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+    metadata_events = list(
+        metadata_inference_service.Generate(metadata_request, context=None)
+    )
+    metadata_completed = next(
+        event.completed for event in metadata_events if event.HasField("completed")
+    )
+    metadata_receipt = json.loads(
+        metadata_completed.parser_metrics["token_route_receipt_json"]
+    )
+    assert metadata_receipt["route_tracking_enabled"] is True
+    assert metadata_receipt["route_count"] == 2
+    assert [route["token_id"] for route in metadata_receipt["routes"]] == [301, 302]
+
     inactive_route_request = inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
             id=common_pb2.RequestIdentity(request_id="req-inactive-route-receipt"),

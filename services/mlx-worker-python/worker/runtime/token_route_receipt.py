@@ -89,9 +89,13 @@ class TokenRouteReceipt:
         *,
         channel: str,
         channel_source: str,
+        token_count: int = 1,
         consume_all_available: bool = False,
     ) -> None:
         if not self._enabled:
+            return
+        normalized_token_count = int(token_count)
+        if normalized_token_count <= 0:
             return
         if consume_all_available and self._pending_token_ids:
             token_ids = self._pending_token_ids
@@ -103,7 +107,7 @@ class TokenRouteReceipt:
             )
             return
         self._record_tokens(
-            token_ids=[self._route_token_id()],
+            token_ids=self._route_token_ids(normalized_token_count),
             channel=channel,
             channel_source=channel_source,
         )
@@ -150,6 +154,9 @@ class TokenRouteReceipt:
         if self._pending_token_ids:
             return self._pending_token_ids.pop(0)
         return self._next_synthetic_token_id()
+
+    def _route_token_ids(self, token_count: int) -> list[int]:
+        return [self._route_token_id() for _ in range(token_count)]
 
     def _record_tokens(
         self,

@@ -210,10 +210,16 @@ def build_lora_canary_receipt_fields(
         merge_export_canary_failures.append("missing_base_config")
     if not source_tokenizer_present:
         merge_export_canary_failures.append("missing_tokenizer_config")
+    elif not source_eos_token:
+        merge_export_canary_failures.append("missing_source_eos_token")
     if not Path(weights_path).is_file():
         merge_export_canary_failures.append("missing_adapter_weights")
+    if saved_tokenizer_config and not saved_eos_token:
+        merge_export_canary_failures.append("missing_saved_eos_token")
     if source_eos_token and saved_eos_token and source_eos_token != saved_eos_token:
         merge_export_canary_failures.append("eos_token_mismatch")
+    if not aux_modules_restored:
+        merge_export_canary_failures.append("missing_auxiliary_modules")
 
     callback_api_drift_result = "pass"
     callback_arity = _optional_int(adapter_config.get("callback_arity"))

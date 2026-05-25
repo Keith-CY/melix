@@ -198,7 +198,16 @@ def test_report_evidence_gate_run_kind_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["elapsed_ms_mean"] >= 0.0
     assert metrics["match_count"] == metrics["iterations"] * metrics["sample_count"]
+    assert metrics["metric_prefix_match_count"] == metrics["iterations"] * metrics["sample_count"]
+    assert metrics["target_field_match_count"] == metrics["iterations"] * metrics["sample_count"]
+    assert metrics["run_kind_elapsed_ms_mean"] >= 0.0
+    assert metrics["metric_prefix_elapsed_ms_mean"] >= 0.0
+    assert metrics["target_field_elapsed_ms_mean"] >= 0.0
     assert metrics["run_kind_count"] == 65.0
+    assert metrics["metric_prefix_count"] == 65.0
+    assert metrics["target_field_count"] == 65.0
+    assert metrics["metrics_per_call"] == 80.0
+    assert metrics["targets_per_call"] == 80.0
 
 
 def test_scope_report_selects_dataset_version_listing_probe() -> None:
@@ -228,6 +237,15 @@ def test_scope_report_selects_trajectory_provenance_copy_elision_probe() -> None
     )
 
     assert _selected_probe_ids(scope) == ["trajectory-provenance-copy-elision"]
+
+
+def test_scope_report_selects_native_mtp_loader_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/runtime/native_mtp/mlx_lm_loader.py"],
+    )
+
+    assert _selected_probe_ids(scope) == ["native-mtp-loader-safetensor-scandir"]
 
 
 def test_lora_aux_modules_scandir_probe_script_emits_metrics(
@@ -264,6 +282,25 @@ def test_trajectory_provenance_copy_elision_probe_script_emits_metrics(
     assert metrics["sample_count"] == 1.0
     assert metrics["iteration_count"] == 10.0
     assert metrics["component_count"] == 4.0
+
+
+def test_native_mtp_loader_safetensor_scandir_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MELIX_NATIVE_MTP_LOADER_MODEL_FILES", "8")
+    monkeypatch.setenv("MELIX_NATIVE_MTP_LOADER_DISTRACTOR_FILES", "8")
+    monkeypatch.setenv("MELIX_NATIVE_MTP_LOADER_SAMPLES", "1")
+    probe_script = runpy.run_path(
+        str(REPO_ROOT / "scripts/native_mtp_loader_safetensor_scandir_probe.py")
+    )
+
+    metrics = probe_script["run_probe"]()
+
+    assert metrics["old_mean_ms"] >= 0.0
+    assert metrics["new_mean_ms"] >= 0.0
+    assert metrics["result_count"] == 10
+    assert metrics["model_files"] == 8
+    assert metrics["distractor_files"] == 8
 
 
 def test_dataset_version_listing_probe_script_emits_metrics(
@@ -830,8 +867,8 @@ def test_evaluation_answer_normalization_probe_command_emits_metrics() -> None:
     metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
 
     assert metrics["elapsed_ms_mean"] > 0
-    assert metrics["numeric_extract_calls_mean"] == 300.0
-    assert metrics["option_extract_calls_mean"] == 300.0
+    assert metrics["numeric_extract_calls_mean"] == 0.0
+    assert metrics["option_extract_calls_mean"] == 0.0
     assert metrics["answer_count"] == 3000.0
     assert metrics["free_text_answer_count"] == 2400.0
     assert metrics["normalization_checksum"] > 0
@@ -2721,6 +2758,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "lora-experiment-run-dir-name-scan",
         "lora-reward-summary-candidate-minmax",
         "mlx-lm-structured-result-tail-parse",
+        "native-mtp-loader-safetensor-scandir",
         "mlx-audio-local-uri-zero-copy-preprocess",
         "mlx-audio-generate-signature-cache",
         "mlx-audio-speech-signature-cache",

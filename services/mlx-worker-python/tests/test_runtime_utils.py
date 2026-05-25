@@ -404,10 +404,10 @@ def test_estimate_model_weight_resident_bytes_handles_file_missing_and_stat_erro
 
     original_stat = runtime_utils.Path.stat
 
-    def fake_stat(path):
+    def fake_stat(path, *args, **kwargs):
         if path == weight_file:
             raise OSError("no stat")
-        return original_stat(path)
+        return original_stat(path, *args, **kwargs)
 
     monkeypatch.setattr(runtime_utils.Path, "stat", fake_stat)
 

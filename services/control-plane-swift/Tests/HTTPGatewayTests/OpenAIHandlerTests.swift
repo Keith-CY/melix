@@ -978,6 +978,13 @@ struct OpenAIHandlerTests {
         #expect(receipt["melix.generation.stop_requested"] == #"["END","DONE"]"#)
         #expect(receipt["melix.generation.stop_effective"] == #"["END","DONE"]"#)
         #expect(receipt["melix.generation.stop_source"] == "request")
+        #expect(receipt["melix.generation.temperature"] == "0")
+        #expect(receipt["melix.generation.top_p"] == "1")
+        #expect(receipt["melix.generation.top_k"] == "0")
+        #expect(receipt["melix.generation.min_p"] == "")
+        #expect(receipt["melix.generation.repeat_penalty"] == "")
+        #expect(receipt["melix.generation.presence_penalty"] == "")
+        #expect(receipt["melix.generation.seed"] == "")
     }
 
     @Test(
@@ -5600,6 +5607,9 @@ struct OpenAIHandlerTests {
         #expect(receipt["melix.generation.output_cap_source"] == expectedSource)
         #expect(receipt["melix.generation.stop_effective"] == expectedStopReceipt)
         #expect(receipt["melix.generation.stop_source"] == "request")
+        #expect(receipt["melix.generation.top_k"]?.isEmpty == false)
+        #expect(receipt["melix.generation.presence_penalty"]?.isEmpty == false)
+        #expect(receipt["melix.generation.seed"]?.isEmpty == false)
     }
 
     @Test("POST /v1/responses forwards reasoning and tool delta events")
@@ -11190,6 +11200,50 @@ struct OpenAIHandlerTests {
         #expect(metadata["max_prompt_tokens_effective"] as? Int == 4)
         #expect(metadata["output_cap_tokens"] as? Int == 4)
         #expect(await workerClient.lastGenerateRequest == nil)
+    }
+
+    @Test("default output cap does not exhaust prompt budget for short prompts")
+    func defaultOutputCapDoesNotExhaustPromptBudgetForShortPrompts() async throws {
+        let workerClient = ScriptedWorkerClient(events: [
+            makeCompletedEvent(
+                requestID: "req-default-output-cap-short-prompt",
+                seq: 1,
+                finishReason: "stop",
+                assistantText: "ok"
+            ),
+        ])
+        var model = warmModel()
+        model.maxContext = 8
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [model]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-default-output-cap-short-prompt" })
+        )
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": false,
+              "messages": [
+                { "role": "user", "content": "hello" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let choice = try #require((payload["choices"] as? [[String: Any]])?.first)
+        let message = try #require(choice["message"] as? [String: Any])
+
+        #expect(response.statusCode == 200)
+        #expect(message["content"] as? String == "ok")
+        #expect(await workerClient.lastGenerateRequest != nil)
     }
 
     @Test("chat requests return 409 when the model is not ready")

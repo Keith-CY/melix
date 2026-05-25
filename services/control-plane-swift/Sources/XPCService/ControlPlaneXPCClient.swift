@@ -182,7 +182,7 @@ public struct ControlPlaneBenchRequest: Equatable, Sendable {
         self.contextLengths = Self.normalizedBenchValues(contextLengths)
         self.generationLength = generationLength
         self.batchSizes = Self.normalizedBenchValues(batchSizes)
-        self.repeats = repeats == 0 ? 1 : repeats
+        self.repeats = Self.normalizedRepeats(repeats)
         self.cacheProfile = cacheProfile
         self.reasoningMode = reasoningMode
         self.structuredOutputMode = structuredOutputMode
@@ -190,6 +190,12 @@ public struct ControlPlaneBenchRequest: Equatable, Sendable {
     }
 
     public static let validCacheProfiles: [String] = ["cold", "warm", "partial_prefix"]
+    public static let minRepeats: UInt32 = 1
+    public static let maxRepeats: UInt32 = 20
+
+    public static func normalizedRepeats(_ repeats: UInt32) -> UInt32 {
+        repeats == 0 ? minRepeats : repeats
+    }
 
     public static func normalizedBenchValues(_ values: [UInt32]) -> [UInt32] {
         Array(Set(values)).sorted()
@@ -254,7 +260,7 @@ public struct ControlPlaneBenchMatrixRequest: Equatable, Sendable {
         self.reasoningModes = Self.normalizedStringValues(reasoningModes)
         self.structuredOutputModes = Self.normalizedStringValues(structuredOutputModes)
         self.concurrencyLevels = ControlPlaneBenchRequest.normalizedBenchValues(concurrencyLevels)
-        self.repeats = repeats == 0 ? 1 : repeats
+        self.repeats = ControlPlaneBenchRequest.normalizedRepeats(repeats)
         self.requests = requests
         self.durationSeconds = durationSeconds
         self.allowLargeMatrix = allowLargeMatrix

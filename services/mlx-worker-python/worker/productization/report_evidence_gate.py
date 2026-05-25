@@ -295,14 +295,24 @@ def _rule_matches_report(
         for run in runs:
             if to_string(run.get(run_kind_key, "")) in run_kind_set:
                 return True
-    metric_prefixes = tuple(str(item) for item in rule.get("metric_prefixes", ()))
-    if metric_prefixes and any(
-        str(metric.get("metric", "")).startswith(metric_prefixes) for metric in metrics
-    ):
-        return True
-    target_fields = tuple(str(item) for item in rule.get("target_fields", ()))
-    if target_fields and any(str(target.get(field, "")).strip() for target in targets for field in target_fields):
-        return True
+    metric_prefixes = rule.get("metric_prefixes", ())
+    if metric_prefixes:
+        metric_prefix_tuple = _string_tuple(metric_prefixes)
+        if any(str(metric.get("metric", "")).startswith(metric_prefix_tuple) for metric in metrics):
+            return True
+    target_fields = rule.get("target_fields", ())
+    if target_fields:
+        target_field_tuple = _string_tuple(target_fields)
+        for target in targets:
+            for field in target_field_tuple:
+                value = target.get(field, "")
+                if not value and field not in target:
+                    continue
+                if isinstance(value, str):
+                    if value.strip():
+                        return True
+                elif str(value).strip():
+                    return True
     required_probe_phases = set(str(item) for item in rule.get("probe_phases", ()))
     return bool(required_probe_phases and required_probe_phases.issubset(probe_phases))
 
@@ -312,10 +322,21 @@ def _string_frozenset_from_tuple(values: tuple[object, ...]) -> frozenset[str]:
     return frozenset(str(item) for item in values)
 
 
+@lru_cache(maxsize=128)
+def _string_tuple_from_tuple(values: tuple[object, ...]) -> tuple[str, ...]:
+    return tuple(str(item) for item in values)
+
+
 def _string_frozenset(values: object) -> frozenset[str]:
     if isinstance(values, tuple):
         return _string_frozenset_from_tuple(values)
     return frozenset(str(item) for item in values)  # type: ignore[union-attr]
+
+
+def _string_tuple(values: object) -> tuple[str, ...]:
+    if isinstance(values, tuple):
+        return _string_tuple_from_tuple(values)
+    return tuple(str(item) for item in values)  # type: ignore[union-attr]
 
 
 def _telemetry_failures(report: dict[str, object]) -> list[str]:

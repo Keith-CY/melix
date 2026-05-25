@@ -26,6 +26,12 @@ when MLX is already importable, and attaches bounded cleanup evidence to
   `media_decoder_dependency`, `native_load_status`, `disabled_decoder_paths`,
   `fallback_reader`, `unsupported_reason`, `traceback_cleanup_result`, and
   `retained_tensor_bytes_after_failure`.
+- Receipt coercion must treat a missing or null `disabled_decoder_paths` value
+  as empty evidence, never as the literal string `None`.
+- Successful adapter manifests must keep runtime and adapter capability refusal
+  reasons distinct: `runtime_unsupported_reason` mirrors the nested
+  `training_runtime_preflight.unsupported_reason`, while
+  `adapter_unsupported_reason` mirrors the adapter capability gate reason.
 - Include: optional media decoder states `healthy`, `missing`, and `broken`.
 - Include: text-only LoRA behavior staying unaffected when optional decoder
   dependencies are broken.

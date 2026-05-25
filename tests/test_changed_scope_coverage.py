@@ -68,6 +68,7 @@ def test_parse_changed_lines_handles_multiple_files_and_hunks() -> None:
         "foo.py": {3, 4, 12},
         "bar.py": {6, 7},
     }
+    assert changed_scope_coverage._parse_changed_lines(diff_text + "\n") == changed
 
 
 def test_parse_hunk_new_start_uses_delimiters_for_counted_and_single_line_ranges() -> None:

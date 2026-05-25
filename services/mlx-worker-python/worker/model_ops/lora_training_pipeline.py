@@ -33,6 +33,7 @@ from worker.model_ops.training_receipts import (
 )
 from worker.model_ops.training_runtime_preflight import (
     call_with_training_failure_cleanup,
+    runtime_preflight_failure_details,
     training_runtime_preflight_fields,
     truthy,
 )
@@ -163,6 +164,9 @@ class LoRATrainingPipeline:
             adapter_scope=adapter_scope,
             inspection_only=truthy(request_ext.get("inspect_only_import", "")),
         )
+        runtime_unsupported_reason = str(runtime_preflight_fields.get("unsupported_reason", ""))
+        adapter_unsupported_reason = config.unsupported_reason
+        runtime_failure_details = runtime_preflight_failure_details(runtime_preflight_fields)
 
         emit("train", 0.8)
         training_result = call_with_training_failure_cleanup(
@@ -180,7 +184,8 @@ class LoRATrainingPipeline:
                     source_model_kind=source_model.model_kind,
                     source_model_ext=dict(source_model.ext),
                 )
-            )
+            ),
+            details=runtime_failure_details,
         )
 
         emit("write_adapter", 0.9)
@@ -194,9 +199,13 @@ class LoRATrainingPipeline:
                 multimodal_lora_nan_guard_triggered=(
                     training_result.metrics.multimodal_lora_nan_guard_triggered
                 ),
-            )
+            ),
+            details=runtime_failure_details,
         )
-        call_with_training_failure_cleanup(lambda: raise_for_adapter_freeze_audit(adapter_audit))
+        call_with_training_failure_cleanup(
+            lambda: raise_for_adapter_freeze_audit(adapter_audit),
+            details=runtime_failure_details,
+        )
         adapter_audit_fields = audit_manifest_fields(adapter_audit)
         adapter_artifact_bytes = adapter_audit.adapter_checkpoint_bytes
         adapter_set_hash = _content_hash(training_result.weights_path, training_result.adapter_config_path)
@@ -292,7 +301,9 @@ class LoRATrainingPipeline:
             "adapter_capabilities": dict(config.adapter_capabilities),
             "backend_supported": config.backend_supported,
             **runtime_preflight_fields,
-            "unsupported_reason": config.unsupported_reason,
+            "runtime_unsupported_reason": runtime_unsupported_reason,
+            "adapter_unsupported_reason": adapter_unsupported_reason,
+            "unsupported_reason": adapter_unsupported_reason,
             "preference_loss": config.preference_loss,
             "dataset_contract": config.dataset_contract,
             "dora_enabled": config.adapter_algorithm == "dora",
@@ -319,7 +330,13 @@ class LoRATrainingPipeline:
             "optimizer_steps": config.iters // config.gradient_accumulation,
             "mask_prompt": config.mask_prompt,
             "max_seq_length": config.max_seq_length,
-            **config.training_planner_receipt,
+            **{
+                **config.training_planner_receipt,
+                "profile_artifact_path": (
+                    training_result.metrics.profile_artifact_path
+                    or str(config.training_planner_receipt.get("profile_artifact_path", ""))
+                ),
+            },
             "training.max_steps": config.max_steps,
             "training_duration_ms": training_result.metrics.job_duration_ms,
             "training.job_duration_ms": training_result.metrics.job_duration_ms,
