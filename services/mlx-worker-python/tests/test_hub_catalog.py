@@ -168,6 +168,13 @@ def test_search_models_with_mlx_only_keeps_repo_ids_with_mlx_suffix() -> None:
     assert [item.repo_id for item in page.items] == ["unsloth/gemma-4-E4B-it-MLX-8bit"]
 
 
+def test_payload_mlx_tag_match_stays_exact_and_case_insensitive() -> None:
+    assert _payload_is_mlx_compatible({"tags": ["mLx", object()], "cardData": {}}) is True
+    assert _payload_is_mlx_compatible({"tags": "MLX", "cardData": {}}) is True
+    assert _payload_is_mlx_compatible({"tags": ["mlx-compatible"], "cardData": {}}) is False
+    assert _payload_is_mlx_compatible({"tags": ["ammlx"], "cardData": {}}) is False
+
+
 def test_search_models_with_mlx_only_prefilters_payloads_before_local_fit(monkeypatch: pytest.MonkeyPatch) -> None:
     payload = [
         {
