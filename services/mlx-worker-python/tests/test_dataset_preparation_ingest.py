@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import sys
 
+import pytest
+
 from worker.productization.dataset_preparation import (
     DatasetIngestRequest,
+    _iter_source_file_paths,
     prepare_dataset_ingest,
 )
 
@@ -18,6 +22,85 @@ WORKSPACE_FIXTURE = (
     Path(__file__).resolve().parents[1]
     / "fixtures/workspace/m-courtyard-smoke.dev.v1/workspace-manifest.json"
 )
+
+
+def test_dataset_ingest_source_file_paths_use_scandir_without_rglob(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_root = tmp_path / "raw-inputs"
+    (input_root / "b").mkdir(parents=True)
+    (input_root / "a").mkdir()
+    (input_root / "z.txt").write_text("root\n", encoding="utf-8")
+    (input_root / "b" / "b.txt").write_text("b\n", encoding="utf-8")
+    (input_root / "a" / "a.txt").write_text("a\n", encoding="utf-8")
+
+    def fail_rglob(self: Path, pattern: str):  # pragma: no cover - failure path only
+        raise AssertionError(f"_iter_source_file_paths() should not call Path.rglob({pattern!r})")
+
+    monkeypatch.setattr(Path, "rglob", fail_rglob)
+
+    assert [path.relative_to(input_root).as_posix() for path in _iter_source_file_paths(input_root)] == [
+        "a/a.txt",
+        "b/b.txt",
+        "z.txt",
+    ]
+
+
+def test_dataset_ingest_source_file_paths_skips_scandir_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_root = tmp_path / "raw-inputs"
+    input_root.mkdir()
+    child_dir = input_root / "child"
+    file_path = input_root / "ok.txt"
+
+    class _ScandirResult:
+        def __init__(self, entries: list[object]) -> None:
+            self._entries = entries
+
+        def __enter__(self) -> list[object]:
+            return self._entries
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+            return False
+
+    class _BadEntry:
+        path = os.fspath(input_root / "bad.txt")
+
+        def is_dir(self, *, follow_symlinks: bool) -> bool:
+            raise OSError("bad entry")
+
+        def is_file(self, *, follow_symlinks: bool) -> bool:
+            raise OSError("bad entry")
+
+    class _ChildDirEntry:
+        path = os.fspath(child_dir)
+
+        def is_dir(self, *, follow_symlinks: bool) -> bool:
+            return True
+
+        def is_file(self, *, follow_symlinks: bool) -> bool:
+            return False
+
+    class _FileEntry:
+        path = os.fspath(file_path)
+
+        def is_dir(self, *, follow_symlinks: bool) -> bool:
+            return False
+
+        def is_file(self, *, follow_symlinks: bool) -> bool:
+            return True
+
+    def fake_scandir(path: object) -> _ScandirResult:
+        if os.fspath(path) == os.fspath(input_root):
+            return _ScandirResult([_BadEntry(), _ChildDirEntry(), _FileEntry()])
+        raise OSError("missing child")
+
+    monkeypatch.setattr("worker.productization.dataset_preparation.os.scandir", fake_scandir)
+
+    assert _iter_source_file_paths(input_root) == [file_path]
 
 
 def test_dataset_ingest_receipt_reports_independent_cleaning_controls(
