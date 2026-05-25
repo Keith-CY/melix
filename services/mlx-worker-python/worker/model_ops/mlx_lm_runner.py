@@ -471,13 +471,14 @@ def _extract_structured_result_payload(stdout: str) -> dict[str, object] | None:
             if previous_character != "\n" and previous_character != "\r":
                 search_end = prefix_index
                 continue
-        line_end = len(stdout)
         newline_index = stdout.find("\n", prefix_index)
-        carriage_index = stdout.find("\r", prefix_index)
         if newline_index >= 0:
-            line_end = min(line_end, newline_index)
-        if carriage_index >= 0:
-            line_end = min(line_end, carriage_index)
+            line_end = newline_index
+        else:
+            line_end = len(stdout)
+            carriage_index = stdout.find("\r", prefix_index)
+            if carriage_index >= 0:
+                line_end = carriage_index
         return json.loads(stdout[prefix_index + prefix_length:line_end])
 
 
