@@ -77,6 +77,7 @@ class VisionProbeSnapshot:
     text_batch_generator_prefill_total_token_count: int = 0
     text_batch_generator_prefill_completed_request_count: int = 0
     text_batch_generator_prefill_step_size: int = 0
+    multimodal_position_slice_fallback_count: int = 0
 
 
 @dataclass(frozen=True)
