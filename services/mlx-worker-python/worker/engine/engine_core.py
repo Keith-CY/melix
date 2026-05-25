@@ -121,6 +121,7 @@ class EngineCore:
         runtime = self._registry.runtime_for_loaded_model(loaded_model)
         generate_tokens = runtime.generate_tokens
         state = self._registry.start_request(request_id, runtime_kind=loaded_model.runtime_kind)
+        cancel_event = state.cancel_event
         allocate_seq = state.allocate_seq
         plain_text_fast_path = self._plain_text_fast_path(request)
         compat_receipt = None if plain_text_fast_path else self._compat_policy_receipt(execution_ext)
@@ -186,7 +187,7 @@ class EngineCore:
                     loaded_model.runtime_model,
                     prompt,
                     effective_sampling,
-                    state.cancel_event,
+                    cancel_event,
                     execution_ext=execution_ext,
                     acceleration_policy=execution.acceleration,
                 )
@@ -195,11 +196,11 @@ class EngineCore:
                     loaded_model.runtime_model,
                     prompt,
                     effective_sampling,
-                    state.cancel_event,
+                    cancel_event,
                     execution_ext=execution_ext,
                 )
             for runtime_event in runtime_events:
-                if state.cancel_event.is_set():
+                if cancel_event.is_set():
                     break
                 if isinstance(runtime_event, RuntimeToolCallEvent):
                     generated_tool_call_delta_count += 1
@@ -314,7 +315,7 @@ class EngineCore:
                             ),
                         )
 
-            if track_usage and not state.cancel_event.is_set():
+            if track_usage and not cancel_event.is_set():
                 completion_tokens = completion_token_count
                 if last_token_event is not None and last_token_event.prompt_tokens:
                     prompt_tokens = int(last_token_event.prompt_tokens)
@@ -342,7 +343,7 @@ class EngineCore:
                 )
 
             finish_reason = "stop"
-            if state.cancel_event.is_set():
+            if cancel_event.is_set():
                 finish_reason = "cancelled"
             elif last_finish_reason:
                 finish_reason = last_finish_reason
