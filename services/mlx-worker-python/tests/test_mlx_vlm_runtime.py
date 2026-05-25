@@ -45,7 +45,11 @@ from worker.runtime.mlx_vlm_runtime import (
     _patch_gemma4_scaled_linear_quantization,
 )
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
-from worker.runtime.native_mtp.mlx_lm_loader import _load_json_payload, _model_safetensor_files
+from worker.runtime.native_mtp.mlx_lm_loader import (
+    _load_json_payload,
+    _model_safetensor_files,
+    extra_mtp_safetensor_files,
+)
 from worker.runtime.temp_media_lifecycle import TempMediaSession
 
 
@@ -1548,6 +1552,40 @@ def test_native_mtp_model_safetensor_listing_uses_scandir_without_glob(
         str(path) for path in [*expected_files, child_dir]
     )
     assert _model_safetensor_files(tmp_path / "missing") == []
+
+
+def test_native_mtp_extra_safetensor_files_filters_names_before_path_join(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    index_payload = {
+        "weight_map": {
+            "language_model.mtp.layers.0.weight": "model-00001-of-00002.safetensors",
+            "language_model.mtp.layers.1.weight": "mtp-00001.safetensors",
+            "language_model.mtp.layers.2.weight": "notes.txt",
+            "language_model.layers.0.weight": "ignored-mtp.safetensors",
+        }
+    }
+    (model_dir / "model.safetensors.index.json").write_text(
+        json.dumps(index_payload),
+        encoding="utf-8",
+    )
+    sidecar_path = model_dir / "mtp-00001.safetensors"
+    sidecar_path.write_bytes(b"mtp")
+
+    original_join = Path.__truediv__
+    joined_names: list[str] = []
+
+    def tracked_join(self: Path, key: object) -> Path:
+        joined_names.append(str(key))
+        return original_join(self, key)
+
+    monkeypatch.setattr(Path, "__truediv__", tracked_join)
+
+    assert extra_mtp_safetensor_files(model_dir) == [sidecar_path]
+    assert joined_names == ["model.safetensors.index.json", "mtp-00001.safetensors"]
 
 
 def test_native_mtp_patched_loader_uses_scandir_model_weight_listing(

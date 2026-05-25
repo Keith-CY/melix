@@ -17,8 +17,13 @@ sys.path.insert(0, str(repo_root))
 sys.path.insert(0, str(repo_root / "services/mlx-worker-python"))
 
 try:
-    from worker.runtime.native_mtp.mlx_lm_loader import _load_json_payload, _model_safetensor_files
+    from worker.runtime.native_mtp.mlx_lm_loader import (
+        _load_json_payload,
+        _model_safetensor_files,
+        extra_mtp_safetensor_files,
+    )
 except ImportError:  # Base revisions before this slice do not expose the helpers.
+    extra_mtp_safetensor_files = None
     _load_json_payload = None
     _model_safetensor_files = None
 
@@ -55,6 +60,27 @@ def _read_text_json_payload(path: Path) -> dict[str, Any]:
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _baseline_extra_mtp_safetensor_files(model_dir: Path) -> list[Path]:
+    index_payload = _read_text_json_payload(model_dir / "model.safetensors.index.json")
+    weight_map = index_payload.get("weight_map")
+    if not isinstance(weight_map, dict):
+        return []
+    extra_files: list[Path] = []
+    seen: set[Path] = set()
+    for key, file_name in weight_map.items():
+        value = str(key)
+        if not (value.startswith("language_model.mtp.") or value.startswith("mtp.")):
+            continue
+        path = model_dir / str(file_name)
+        if path.name.startswith("model") or path.suffix != ".safetensors":
+            continue
+        if path in seen or not path.exists():
+            continue
+        seen.add(path)
+        extra_files.append(path)
+    return extra_files
 
 
 def _measure(
@@ -112,6 +138,12 @@ def run_probe() -> dict[str, float | int | str]:
         if old_payload != new_payload:
             raise SystemExit("candidate native-MTP index JSON payload differs from read_text baseline")
 
+        baseline_extra = _baseline_extra_mtp_safetensor_files(model_dir)
+        extra_callback = extra_mtp_safetensor_files or _baseline_extra_mtp_safetensor_files
+        candidate_extra = extra_callback(model_dir)
+        if baseline_extra != candidate_extra:
+            raise SystemExit("candidate native-MTP sidecar shard listing differs from baseline")
+
         old_ms, old_peaks, result_count = _measure(
             _read_text_json_payload,
             index_path,
@@ -124,10 +156,23 @@ def run_probe() -> dict[str, float | int | str]:
             samples=samples,
             result_count_getter=_weight_map_count,
         )
+        extra_old_ms, extra_old_peaks, extra_result_count = _measure(
+            _baseline_extra_mtp_safetensor_files,
+            model_dir,
+            samples=samples,
+        )
+        extra_new_ms, extra_new_peaks, _ = _measure(
+            extra_callback,
+            model_dir,
+            samples=samples,
+        )
     old_mean = statistics.mean(old_ms)
     new_mean = statistics.mean(new_ms)
+    extra_old_mean = statistics.mean(extra_old_ms)
+    extra_new_mean = statistics.mean(extra_new_ms)
     return {
         "result_count": result_count,
+        "extra_result_count": extra_result_count,
         "model_files": model_files,
         "distractor_files": distractor_files,
         "samples": samples,
@@ -137,6 +182,12 @@ def run_probe() -> dict[str, float | int | str]:
         "speedup": old_mean / new_mean if new_mean else 0.0,
         "old_peak_bytes_mean": statistics.mean(old_peaks),
         "new_peak_bytes_mean": statistics.mean(new_peaks),
+        "extra_old_mean_ms": extra_old_mean,
+        "extra_new_mean_ms": extra_new_mean,
+        "extra_delta_ms": extra_new_mean - extra_old_mean,
+        "extra_speedup": extra_old_mean / extra_new_mean if extra_new_mean else 0.0,
+        "extra_old_peak_bytes_mean": statistics.mean(extra_old_peaks),
+        "extra_new_peak_bytes_mean": statistics.mean(extra_new_peaks),
     }
 
 

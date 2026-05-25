@@ -53,8 +53,11 @@ def extra_mtp_safetensor_files(model_path: Path) -> list[Path]:
     for key, file_name in weight_map.items():
         if not _is_mtp_weight_key(key):
             continue
-        path = model_path / str(file_name)
-        if path.name.startswith("model") or path.suffix != ".safetensors":
+        file_name_text = str(file_name)
+        if file_name_text.startswith("model") or not file_name_text.endswith(".safetensors"):
+            continue
+        path = model_path / file_name_text
+        if path.name.startswith("model"):
             continue
         if path in seen:
             continue
