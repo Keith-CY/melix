@@ -162,7 +162,7 @@ def _assert_chunked_prompt_kwargs_slice_inputs_embeds_and_mrope_position_ids_by_
 
 def _assert_chunked_prompt_kwargs_reports_position_slice_fallback_for_stale_metadata() -> None:
     inputs_embeds = _FakeMLXArray([[[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]]])
-    stale_position_ids = _FakeMLXArray([[[0, 1, 2], [10, 11, 12], [20, 21, 22]]])
+    stale_position_ids = _FakeMLXArray([[[0, 1, 2, 3], [10, 11, 12, 13], [20, 21, 22, 23]]])
 
     sliced, fallback_count = mlx_vlm_runtime_module._slice_chunked_prompt_kwargs(
         {
@@ -176,6 +176,21 @@ def _assert_chunked_prompt_kwargs_reports_position_slice_fallback_for_stale_meta
     assert fallback_count == 1
     assert sliced["inputs_embeds"].tolist() == [[[2.0], [3.0], [4.0]]]
     assert sliced["position_ids"] is stale_position_ids
+
+
+def _assert_chunked_prompt_kwargs_passthrough_already_aligned_decode_tensor_no_fallback() -> None:
+    chunk_position_ids = _FakeMLXArray([[[6], [16], [26]]])
+
+    sliced, fallback_count = mlx_vlm_runtime_module._slice_chunked_prompt_kwargs(
+        {
+            "position_ids": chunk_position_ids,
+        },
+        cache_offset=6,
+        seq_len=1,
+    )
+
+    assert fallback_count == 0
+    assert sliced["position_ids"] is chunk_position_ids
 
 
 def _assert_chunked_prompt_model_wrapper_records_position_slice_fallback_count() -> None:
@@ -217,7 +232,7 @@ def _assert_chunked_prompt_model_wrapper_records_position_slice_fallback_count()
             forwarded_kwargs.append(dict(kwargs))
             return SimpleNamespace(logits=_FakeMLXArray([[[0.0]]]))
 
-    stale_position_ids = _FakeMLXArray([[[0, 1, 2], [10, 11, 12], [20, 21, 22]]])
+    stale_position_ids = _FakeMLXArray([[[0, 1, 2, 3], [10, 11, 12, 13], [20, 21, 22, 23]]])
     wrapped = runtime._wrap_chunked_prompt_model(
         SimpleNamespace(
             config=SimpleNamespace(model_type="gemma4"),
@@ -358,6 +373,7 @@ def _assert_chunked_prompt_cache_offset_and_proxy_passthrough_edges() -> None:
 def _assert_chunked_prompt_auxiliary_slicing_contract() -> None:
     _assert_chunked_prompt_kwargs_slice_inputs_embeds_and_mrope_position_ids_by_cache_offset()
     _assert_chunked_prompt_kwargs_reports_position_slice_fallback_for_stale_metadata()
+    _assert_chunked_prompt_kwargs_passthrough_already_aligned_decode_tensor_no_fallback()
     _assert_chunked_prompt_model_wrapper_records_position_slice_fallback_count()
     _assert_chunked_prompt_model_wrapper_slices_position_ids_for_current_cache_window()
     _assert_chunked_prompt_slice_helpers_cover_defensive_edges()
@@ -369,6 +385,9 @@ test_chunked_prompt_kwargs_slice_inputs_embeds_and_mrope_position_ids_by_cache_o
 )
 test_chunked_prompt_kwargs_reports_position_slice_fallback_for_stale_metadata = (
     _assert_chunked_prompt_kwargs_reports_position_slice_fallback_for_stale_metadata
+)
+test_chunked_prompt_kwargs_passthrough_already_aligned_decode_tensor_no_fallback = (
+    _assert_chunked_prompt_kwargs_passthrough_already_aligned_decode_tensor_no_fallback
 )
 test_chunked_prompt_model_wrapper_records_position_slice_fallback_count = (
     _assert_chunked_prompt_model_wrapper_records_position_slice_fallback_count

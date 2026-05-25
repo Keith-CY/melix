@@ -120,6 +120,8 @@ def _slice_prompt_kwarg_axis(value: Any, *, axis: int, start: int, stop: int) ->
         axis_extent = int(shape[normalized_axis])
     except (TypeError, ValueError):
         return None
+    if axis_extent == stop - start:
+        return value
     if axis_extent < stop:
         return None
     index: list[object] = [slice(None)] * ndim

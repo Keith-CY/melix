@@ -37,6 +37,9 @@ cache offsets instead of relying on exact-length assumptions or a fixed axis.
 - Other known prompt-length-aware kwargs with second-axis sequence shape keep
   the existing second-axis behavior.
 - Slice windows use normalized `cache_offset` and `seq_len` values.
+- If the backend already provides a tensor whose prompt axis is exactly
+  `seq_len`, Melix treats it as pre-sliced for the current chunk and passes it
+  through without recording a fallback.
 - If a tensor cannot cover the requested slice window, Melix records a
   `multimodal_position_slice_fallback_count` receipt value instead of silently
   claiming aligned chunking.
@@ -47,6 +50,8 @@ cache offsets instead of relying on exact-length assumptions or a fixed axis.
   prompt-length-aware kwarg stay aligned for the same chunk window.
 - Regression fixtures prove that `position_ids` uses
   `cache_offset:cache_offset + seq_len`, including mRoPE last-axis slicing.
+- Regression fixtures prove that already aligned decode-time auxiliary tensors
+  do not increment fallback diagnostics.
 - Long-video and repeated-media fixtures expose
   `multimodal_position_slice_fallback_count` through the existing VLM probe
   snapshot path.
