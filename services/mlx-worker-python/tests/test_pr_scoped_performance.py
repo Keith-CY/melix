@@ -221,6 +221,15 @@ def test_scope_report_selects_lora_aux_modules_probe() -> None:
     assert _selected_probe_ids(scope) == ["lora-aux-modules-scandir"]
 
 
+def test_scope_report_selects_trajectory_provenance_copy_elision_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/trajectory_provenance.py"],
+    )
+
+    assert _selected_probe_ids(scope) == ["trajectory-provenance-copy-elision"]
+
+
 def test_lora_aux_modules_scandir_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -235,6 +244,26 @@ def test_lora_aux_modules_scandir_probe_script_emits_metrics(
     assert metrics["elapsed_ms_mean"] >= 0.0
     assert metrics["noise_file_count"] == 5.0
     assert metrics["scandir_calls_mean"] == 1.0
+
+
+def test_trajectory_provenance_copy_elision_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_TRAJECTORY_PROVENANCE_PROBE_ITERATIONS", "10")
+    monkeypatch.setenv("MELIX_TRAJECTORY_PROVENANCE_PROBE_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_TRAJECTORY_PROVENANCE_PROBE_COMPONENTS", "4")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/trajectory_provenance_copy_elision_probe.py"))
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["baseline_elapsed_ms_mean"] >= 0.0
+    assert metrics["optimized_elapsed_ms_mean"] >= 0.0
+    assert metrics["elapsed_ms_mean"] == metrics["optimized_elapsed_ms_mean"]
+    assert metrics["sample_count"] == 1.0
+    assert metrics["iteration_count"] == 10.0
+    assert metrics["component_count"] == 4.0
 
 
 def test_dataset_version_listing_probe_script_emits_metrics(

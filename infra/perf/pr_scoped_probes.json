@@ -4259,5 +4259,59 @@
         "warn_pct": 0.0
       }
     ]
+  },
+  {
+    "id": "trajectory-provenance-copy-elision",
+    "name": "Trajectory provenance copy elision",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/trajectory_provenance.py",
+      "services/mlx-worker-python/tests/test_trajectory_provenance.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/trajectory_provenance_copy_elision_probe.py"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_trajectory_provenance.py::test_normalize_trajectory_provenance_copies_nested_json_containers services/mlx-worker-python/tests/test_trajectory_provenance.py::test_copy_trajectory_provenance_value_falls_back_for_custom_mutables services/mlx-worker-python/tests/test_trajectory_provenance.py::test_load_trajectory_provenance_from_snapshot_manifest_uses_stable_field_names services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_trajectory_provenance_copy_elision_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_trajectory_provenance_copy_elision_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run --source=worker.trajectory_provenance -m pytest -q services/mlx-worker-python/tests/test_trajectory_provenance.py::test_normalize_trajectory_provenance_copies_nested_json_containers services/mlx-worker-python/tests/test_trajectory_provenance.py::test_copy_trajectory_provenance_value_falls_back_for_custom_mutables services/mlx-worker-python/tests/test_trajectory_provenance.py::test_load_trajectory_provenance_from_snapshot_manifest_uses_stable_field_names && uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/trajectory_provenance.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" python3 scripts/trajectory_provenance_copy_elision_probe.py",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "baseline_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "optimized_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "delta_ms",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "speedup",
+        "unit": "x",
+        "direction": "higher_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "component_count",
+        "unit": "count",
+        "direction": "higher_is_better",
+        "warn_pct": 0.0
+      }
+    ]
   }
 ]
