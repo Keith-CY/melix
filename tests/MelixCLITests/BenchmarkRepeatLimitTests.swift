@@ -62,7 +62,7 @@ struct BenchmarkRepeatLimitTests {
                 "--suite", "smoke",
                 "--repeats", "21",
             ],
-            equals: .usage("Invalid value for --repeats. Expected an integer between 1 and 20.")
+            equals: .usage("Invalid value for --repeats: 21. Expected an integer between 1 and 20.")
         )
 
         try assertParserError(
@@ -82,7 +82,7 @@ struct BenchmarkRepeatLimitTests {
                 "--repeats", "21",
                 "--requests", "4",
             ],
-            equals: .usage("Invalid value for --repeats. Expected an integer between 1 and 20.")
+            equals: .usage("Invalid value for --repeats: 21. Expected an integer between 1 and 20.")
         )
 
         try assertParserError(
@@ -93,7 +93,7 @@ struct BenchmarkRepeatLimitTests {
                 "--bench-repeats", "21",
                 "--dry-run",
             ],
-            equals: .usage("Invalid value for --bench-repeats. Expected an integer between 1 and 20.")
+            equals: .usage("Invalid value for --bench-repeats: 21. Expected an integer between 1 and 20.")
         )
     }
 

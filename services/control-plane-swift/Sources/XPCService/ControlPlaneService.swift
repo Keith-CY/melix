@@ -973,7 +973,7 @@ public actor ControlPlaneService {
             return errorResponse(
                 for: request,
                 code: "invalid_argument",
-                message: "Benchmark repeats must be between 1 and 20."
+                message: "Benchmark repeats must be between \(ControlPlaneBenchRequest.minRepeats) and \(ControlPlaneBenchRequest.maxRepeats)."
             )
         }
 
@@ -1246,11 +1246,12 @@ public actor ControlPlaneService {
                 message: "Exactly one of requests or duration_seconds must be set for matrix benchmarks."
             )
         }
-        guard command.repeats <= ControlPlaneBenchRequest.maxRepeats else {
+        guard command.repeats >= ControlPlaneBenchRequest.minRepeats,
+              command.repeats <= ControlPlaneBenchRequest.maxRepeats else {
             return errorResponse(
                 for: request,
                 code: "invalid_argument",
-                message: "Benchmark repeats must be between 1 and 20."
+                message: "Benchmark repeats must be between \(ControlPlaneBenchRequest.minRepeats) and \(ControlPlaneBenchRequest.maxRepeats)."
             )
         }
         for cacheProfile in cacheProfiles where ControlPlaneBenchRequest.validCacheProfiles.contains(cacheProfile) == false {

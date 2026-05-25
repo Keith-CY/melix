@@ -5721,7 +5721,7 @@ public enum MelixCLIParser {
             return nil
         }
         guard (ControlPlaneBenchRequest.minRepeats...ControlPlaneBenchRequest.maxRepeats).contains(parsed) else {
-            throw MelixCLIError.usage("Invalid value for \(option). Expected an integer between 1 and 20.")
+            throw MelixCLIError.usage("Invalid value for \(option): \(parsed). Expected an integer between \(ControlPlaneBenchRequest.minRepeats) and \(ControlPlaneBenchRequest.maxRepeats).")
         }
         return parsed
     }

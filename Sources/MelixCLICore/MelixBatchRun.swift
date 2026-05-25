@@ -900,7 +900,7 @@ enum BatchRunPlanner {
             option: option
         )
         guard (ControlPlaneBenchRequest.minRepeats...ControlPlaneBenchRequest.maxRepeats).contains(value) else {
-            throw MelixCLIError.usage("Invalid value for \(option): \(value). Expected an integer between 1 and 20.")
+            throw MelixCLIError.usage("Invalid value for \(option): \(value). Expected an integer between \(ControlPlaneBenchRequest.minRepeats) and \(ControlPlaneBenchRequest.maxRepeats).")
         }
         return value
     }
