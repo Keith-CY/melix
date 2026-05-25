@@ -111,7 +111,8 @@ def trajectory_provenance_from_snapshot_manifest(
 def load_trajectory_provenance_from_snapshot_manifest(
     manifest_path: Path,
 ) -> dict[str, Any]:
-    payload = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    manifest_path = Path(manifest_path)
+    payload = json.loads(manifest_path.read_bytes())
     if not isinstance(payload, dict):
         return {}
     return trajectory_provenance_from_snapshot_manifest(
