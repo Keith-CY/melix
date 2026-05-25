@@ -441,10 +441,8 @@ class RequestStreamAssembler:
             return None
         had_pending = bool(self._pending_token_bytes)
         if not had_pending:
-            if token_bytes.isascii():
-                return token_bytes.decode("ascii")
             try:
-                return token_bytes.decode("utf-8")
+                return token_bytes.decode()
             except UnicodeDecodeError:
                 pass
         self._pending_token_bytes += token_bytes
