@@ -295,6 +295,7 @@ class ToolRegistry:
         copy_dict = _COPY_DICT
         copy_list = _COPY_LIST
         tools: list[dict[str, Any]] = []
+        append_tool = tools.append
         for (
             name,
             description,
@@ -306,7 +307,7 @@ class ToolRegistry:
             properties: dict[str, Any] = {}
             for argument_name, schema in schema_properties:
                 properties[argument_name] = copy_dict(schema)
-            tools.append(
+            append_tool(
                 {
                     "type": "function",
                     "function": {
