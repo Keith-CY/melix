@@ -661,13 +661,10 @@ def _direct_size_hint_from_text(text: str) -> int:
 
 
 def _direct_card_size_hint_from_text(text: str) -> int:
-    hint = _direct_size_hint_from_text(text)
-    if hint > 0:
-        return hint
     stripped_text = _strip_model_size_label(text)
-    if not stripped_text:
-        return 0
-    return _direct_size_hint_from_text(stripped_text)
+    if stripped_text:
+        return _direct_size_hint_from_text(stripped_text)
+    return _direct_size_hint_from_text(text)
 
 
 def _strip_model_size_label(text: str) -> str:
