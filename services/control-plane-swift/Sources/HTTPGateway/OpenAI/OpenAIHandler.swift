@@ -22,6 +22,139 @@ public struct RichOutputSanitizationResult: Equatable, Sendable {
     }
 }
 
+enum ToolCallMarkupSanitizer {
+    struct StreamingState {
+        private var buffer = ""
+        private var suppressingCloseMarker: String?
+
+        mutating func accept(_ text: String) -> String {
+            guard !text.isEmpty else {
+                return ""
+            }
+            buffer += text
+            return drain(final: false)
+        }
+
+        mutating func finish() -> String {
+            let output = drain(final: true)
+            buffer = ""
+            suppressingCloseMarker = nil
+            return output
+        }
+
+        private mutating func drain(final: Bool) -> String {
+            if let closeMarker = suppressingCloseMarker {
+                guard let closeRange = buffer.range(of: closeMarker) else {
+                    buffer = Self.retainedSuffix(buffer, maxLength: max(closeMarker.count - 1, 0))
+                    return ""
+                }
+
+                buffer = String(buffer[closeRange.upperBound...])
+                suppressingCloseMarker = nil
+                return drain(final: final)
+            }
+
+            var output = ""
+            while let match = ToolCallMarkupSanitizer.firstOpenMarker(in: buffer[...]) {
+                output += String(buffer[..<match.range.lowerBound])
+                let bodyStart = match.range.upperBound
+                if let closeRange = buffer[bodyStart...].range(of: match.close) {
+                    buffer = String(buffer[closeRange.upperBound...])
+                    continue
+                }
+
+                suppressingCloseMarker = match.close
+                let suppressedTail = String(buffer[bodyStart...])
+                buffer = Self.retainedSuffix(suppressedTail, maxLength: max(match.close.count - 1, 0))
+                return output
+            }
+
+            let heldPrefixLength = ToolCallMarkupSanitizer.trailingOpenMarkerPrefixLength(in: buffer)
+            guard heldPrefixLength > 0 else {
+                output += buffer
+                buffer = ""
+                return output
+            }
+
+            let safeEnd = buffer.index(buffer.endIndex, offsetBy: -heldPrefixLength)
+            output += String(buffer[..<safeEnd])
+            buffer = final ? "" : String(buffer[safeEnd...])
+            return output
+        }
+
+        private static func retainedSuffix(_ value: String, maxLength: Int) -> String {
+            guard maxLength > 0, value.count > maxLength else {
+                return maxLength > 0 ? value : ""
+            }
+            return String(value.suffix(maxLength))
+        }
+    }
+
+    static func sanitizeFinalText(_ text: String) -> String {
+        guard !text.isEmpty else {
+            return text
+        }
+
+        var remaining = text[...]
+        var output = ""
+        while let match = firstOpenMarker(in: remaining) {
+            output += String(remaining[..<match.range.lowerBound])
+            let bodyStart = match.range.upperBound
+            guard let closeRange = remaining[bodyStart...].range(of: match.close) else {
+                return output
+            }
+            remaining = remaining[closeRange.upperBound...]
+        }
+        output += String(remaining)
+        let heldPrefixLength = trailingOpenMarkerPrefixLength(in: output)
+        if heldPrefixLength > 0 {
+            output.removeLast(heldPrefixLength)
+        }
+        return output
+    }
+
+    private static func firstOpenMarker(
+        in text: Substring
+    ) -> (range: Range<String.Index>, close: String)? {
+        var selected: (range: Range<String.Index>, close: String)?
+        for marker in markers {
+            guard let range = text.range(of: marker.open) else {
+                continue
+            }
+            if selected == nil || range.lowerBound < selected!.range.lowerBound {
+                selected = (range, marker.close)
+            }
+        }
+        return selected
+    }
+
+    private static func trailingOpenMarkerPrefixLength(in text: String) -> Int {
+        guard !text.isEmpty else {
+            return 0
+        }
+
+        var best = 0
+        for marker in markers {
+            let maxCandidateLength = min(text.count, marker.open.count - 1)
+            guard maxCandidateLength > 0 else {
+                continue
+            }
+            for length in 1...maxCandidateLength {
+                let suffix = String(text.suffix(length))
+                if marker.open.hasPrefix(suffix) {
+                    best = max(best, length)
+                }
+            }
+        }
+        return best
+    }
+
+    private static let markers: [(open: String, close: String)] = [
+        ("<tool_call>", "</tool_call>"),
+        ("<|tool_call>", "<tool_call|>"),
+    ]
+}
+
 public enum RichOutputSanitizer {
     public static func sanitized(_ text: String) -> String {
         sanitize(text).text
@@ -87,6 +220,12 @@ public enum RichOutputSanitizer {
         var sanitized = text
         var blockedHTMLFragmentCount = 0
         var unsafeURIRejectionCount = 0
+
+        let beforeToolMarkupCleanup = sanitized
+        sanitized = ToolCallMarkupSanitizer.sanitizeFinalText(sanitized)
+        if sanitized != beforeToolMarkupCleanup {
+            blockedHTMLFragmentCount += 1
+        }
 
         for regex in activeFragmentRegexes {
             let matches = regex.matches(
@@ -2113,7 +2252,6 @@ public struct OpenAIHandler: Sendable {
             gatewayServingDefaults: servingDefaults,
             mcpToolCatalog: mcpToolCatalog
         )
-        await recordShapingMetrics(for: translated, startedAt: shapingStartedAt)
         let responseModelID = executionModelID == originalModelID ? nil : originalModelID
         let responseTranslated = TranslatedChatRequest(
             requestID: translated.requestID,
@@ -2143,6 +2281,7 @@ public struct OpenAIHandler: Sendable {
             )
             await recordMediaAdmissionFailure(mediaAdmissionFailure)
         }
+        await recordShapingMetrics(for: finalTranslated, startedAt: shapingStartedAt)
         return ResolvedOpenAITextRequest(
             translated: finalTranslated,
             idleSweepRequest: resolved.idleSweepRequest
@@ -2610,6 +2749,20 @@ public struct OpenAIHandler: Sendable {
             )
         if batchGeneratorEnabled {
             workerRequest.execution.ext["melix.vlm.text_only_batch_generator"] = "true"
+            if shouldSuppressVLMTextOnlyBatchGeneratorModelToolParser(
+                normalizedRequest: normalizedRequest,
+                workerRequest: workerRequest
+            ) {
+                workerRequest.execution.ext.removeValue(forKey: "melix.tool_parser.mode")
+                workerRequest.execution.ext.removeValue(forKey: "melix.tool_parser.source")
+                workerRequest.execution.ext.removeValue(forKey: "melix.tool_parser.namespaces")
+                workerRequest.execution.ext.removeValue(forKey: "melix.tool_parser.fallback_mode")
+                workerRequest.execution.ext["melix.tool_parser.suppressed_reason"] =
+                    "vlm_text_only_batch_generator_no_tools"
+                workerRequest.execution.scope.parserMode = ""
+                workerRequest.execution.scope.toolParserMode = ""
+                workerRequest.execution.ext["melix.cache.fingerprint.parser_mode"] = ""
+            }
             if shouldNormalizeVLMTextOnlyBatchGeneratorSampling(
                 normalizedRequest: normalizedRequest,
                 workerRequest: workerRequest
@@ -2625,6 +2778,25 @@ public struct OpenAIHandler: Sendable {
             workerRequest: workerRequest,
             stream: translated.stream
         )
+    }
+
+    private func shouldSuppressVLMTextOnlyBatchGeneratorModelToolParser(
+        normalizedRequest: NormalizedTextRequest,
+        workerRequest: Melix_Worker_V1_GenerateRequest
+    ) -> Bool {
+        guard normalizedRequest.toolParser == nil,
+              normalizedRequest.tools.isEmpty,
+              normalizedRequest.toolChoice == nil
+        else {
+            return false
+        }
+        guard workerRequest.execution.ext["melix.tool_parser.source"] == "model" else {
+            return false
+        }
+        guard workerRequest.execution.ext["melix.mcp.source_ids"] == nil else {
+            return false
+        }
+        return true
     }
 
     private func shouldAutoEnableVLMTextOnlyBatchGenerator(

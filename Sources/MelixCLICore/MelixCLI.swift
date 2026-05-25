@@ -5911,6 +5911,20 @@ private struct ArgumentCursor {
                 index += 1
                 continue
             }
+            if let equalsIndex = token.firstIndex(of: "="), token.hasPrefix("--") {
+                let option = String(token[..<equalsIndex])
+                let value = String(token[token.index(after: equalsIndex)...])
+                guard valueLessFlags.contains(option) == false else {
+                    throw MelixCLIError.usage(MelixCLIParser.usageText)
+                }
+                if multiValueOptions.contains(option) {
+                    result.multi[option, default: []].append(value)
+                } else {
+                    result.single[option] = value
+                }
+                index += 1
+                continue
+            }
             guard token.hasPrefix("--") else {
                 throw MelixCLIError.usage(MelixCLIParser.usageText)
             }

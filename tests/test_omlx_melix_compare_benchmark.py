@@ -53,6 +53,126 @@ def test_build_prompt_supports_saturating_decode_style() -> None:
     assert "MELIX-OMLX-BENCH-request-1" in prompt
 
 
+def test_request_key_is_endpoint_independent_for_fair_comparison() -> None:
+    scenario = bench.BenchmarkScenario(
+        scenario_id="pt128-out64-c1-r0",
+        prompt_token_target=128,
+        max_tokens=64,
+        concurrency=1,
+        cache_profile="cold_unique",
+        repeat_index=0,
+        prompt_style="saturating",
+    )
+
+    assert bench.request_key_for_scenario(scenario, request_index=0) == (
+        "pt128-out64-c1-r0-req0"
+    )
+
+
+def test_cold_unique_request_key_includes_run_key_without_endpoint() -> None:
+    scenario = bench.BenchmarkScenario(
+        scenario_id="pt512-out64-c1-r0",
+        prompt_token_target=512,
+        max_tokens=64,
+        concurrency=1,
+        cache_profile="cold_unique",
+        repeat_index=0,
+        prompt_style="saturating",
+    )
+
+    assert bench.request_key_for_scenario(
+        scenario,
+        request_index=0,
+        run_key="run-20260524",
+    ) == "run-20260524-pt512-out64-c1-r0-req0"
+
+
+def test_repeated_request_key_omits_run_key_for_warm_cache() -> None:
+    scenario = bench.BenchmarkScenario(
+        scenario_id="pt512-out64-c1-r0",
+        prompt_token_target=512,
+        max_tokens=64,
+        concurrency=1,
+        cache_profile="repeated",
+        repeat_index=0,
+        prompt_style="saturating",
+    )
+
+    assert bench.request_key_for_scenario(
+        scenario,
+        request_index=0,
+        run_key="run-20260524",
+    ) == "pt512-out64-c1-r0-req0"
+
+
+def test_stream_chat_completion_sends_explicit_sampling_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def readline(self):
+            lines = captured.setdefault(
+                "lines",
+                iter(
+                    [
+                        b'data: {"choices":[{"delta":{"content":"ok"}}],"usage":{"prompt_tokens":3,"completion_tokens":1}}\n',
+                        b"data: [DONE]\n",
+                    ]
+                ),
+            )
+            return next(lines, b"")
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(bench.urllib.request, "urlopen", fake_urlopen)
+
+    endpoint = bench.EndpointConfig(
+        name="melix",
+        base_url="http://127.0.0.1:12434/v1",
+        model="target-model",
+        headers={},
+    )
+    scenario = bench.BenchmarkScenario(
+        scenario_id="pt128-out16-c1-r0",
+        prompt_token_target=128,
+        max_tokens=16,
+        concurrency=1,
+        cache_profile="repeated",
+        repeat_index=0,
+    )
+
+    observation = bench.stream_chat_completion(
+        endpoint,
+        scenario,
+        request_index=0,
+        request_key="same",
+        include_usage=True,
+        temperature=0.0,
+        top_p=1.0,
+        top_k=0,
+        timeout_seconds=5.0,
+        group_id="group",
+        group_elapsed_ms=0.0,
+    )
+
+    assert observation.status == "ok"
+    assert captured["payload"]["temperature"] == 0.0
+    assert captured["payload"]["top_p"] == 1.0
+    assert captured["payload"]["top_k"] == 0
+
+
 def test_preflight_requires_target_model_to_be_listed(monkeypatch: pytest.MonkeyPatch) -> None:
     endpoint = bench.EndpointConfig(
         name="melix",
@@ -321,6 +441,15 @@ def test_markdown_summary_lists_text_batch_generator_metrics() -> None:
                 "vision.text_batch_generator.first_empty_segment_count": 0,
                 "vision.text_batch_generator.next_ms_total": 120.5,
                 "vision.text_batch_generator.emit_ms_total": 4.25,
+                "vision.text_batch_generator.speculative_cycle_count_total": 4,
+                "vision.text_batch_generator.speculative_backbone_ms_total": 210.5,
+                "http.parser.text_batch_generator_speculative_cycle_count_total": 39,
+                "http.parser.text_batch_generator_speculative_accepted_count_total": 24,
+                "http.parser.text_batch_generator_speculative_backbone_ms_total": 3197.16,
+                "http.parser.text_batch_generator_prepare_ms": 2.5,
+                "http.parser.text_batch_generator_prompt_encode_ms": 0.75,
+                "http.parser.text_batch_generator_prefill_ms": 8.25,
+                "http.parser.text_batch_generator_batch_insert_ms": 0.5,
             },
         },
         dry_run=False,
@@ -336,6 +465,41 @@ def test_markdown_summary_lists_text_batch_generator_metrics() -> None:
     assert "`vision.text_batch_generator.first_empty_segment_count` | 0.00" in markdown
     assert "`vision.text_batch_generator.next_ms_total` | 120.50" in markdown
     assert "`vision.text_batch_generator.emit_ms_total` | 4.25" in markdown
+    assert "`vision.text_batch_generator.speculative_cycle_count_total` | 4.00" in markdown
+    assert "`vision.text_batch_generator.speculative_backbone_ms_total` | 210.50" in markdown
+    assert "`http.parser.text_batch_generator_speculative_cycle_count_total` | 39.00" in markdown
+    assert "`http.parser.text_batch_generator_speculative_accepted_count_total` | 24.00" in markdown
+    assert "`http.parser.text_batch_generator_speculative_backbone_ms_total` | 3197.16" in markdown
+    assert "`http.parser.text_batch_generator_prepare_ms` | 2.50" in markdown
+    assert "`http.parser.text_batch_generator_prompt_encode_ms` | 0.75" in markdown
+    assert "`http.parser.text_batch_generator_prefill_ms` | 8.25" in markdown
+    assert "`http.parser.text_batch_generator_batch_insert_ms` | 0.50" in markdown
+
+
+def test_metrics_snapshot_reports_text_batch_generator_http_gap() -> None:
+    markdown = bench.render_markdown_summary(
+        [],
+        [],
+        preflight=[],
+        warmups=[],
+        metrics_snapshot={
+            "ok": True,
+            "values": {
+                "http.stream_first_event_ms": 1552.02,
+                "http.parser.text_batch_generator_first_visible_ms": 1435.31,
+            },
+        },
+        dry_run=False,
+        measurement_profile={
+            "profile": "cold",
+            "warmup_requests_per_endpoint": 0,
+            "operator_note": "",
+        },
+    )
+
+    assert "`http.stream_first_event_ms` | 1552.02" in markdown
+    assert "`http.parser.text_batch_generator_first_visible_ms` | 1435.31" in markdown
+    assert "`http.text_batch_generator_first_visible_to_stream_first_event_ms` | 116.71" in markdown
 
 
 def test_warmup_requests_mark_measurements_as_warm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -358,7 +522,10 @@ def test_warmup_requests_mark_measurements_as_warm(tmp_path: Path, monkeypatch: 
         *,
         include_usage: bool,
         temperature: float,
+        top_p: float,
+        top_k: int,
         timeout_seconds: float,
+        run_key: str = "",
     ) -> list[bench.RequestObservation]:
         return [
             bench.RequestObservation(
@@ -560,14 +727,20 @@ def test_warmups_are_written_separately_from_summaries(tmp_path: Path, monkeypat
             "error": None,
         }
 
+    run_keys: list[str] = []
+
     def fake_run_group(
         endpoint: bench.EndpointConfig,
         scenario: bench.BenchmarkScenario,
         *,
         include_usage: bool,
         temperature: float,
+        top_p: float,
+        top_k: int,
         timeout_seconds: float,
+        run_key: str = "",
     ) -> list[bench.RequestObservation]:
+        run_keys.append(run_key)
         return [
             bench.RequestObservation(
                 endpoint=endpoint.name,
@@ -643,6 +816,98 @@ def test_warmups_are_written_separately_from_summaries(tmp_path: Path, monkeypat
         (item["cache_profile"], item["prompt_token_target"], item["max_tokens"], item["prompt_style"])
         for item in summary["summaries"]
     } == {("cold_unique", 1024, 128, "concise")}
+    assert run_keys == ["warmup", "warmup", "warm-run", "warm-run"]
+
+
+def test_alternate_endpoint_order_reverses_odd_repeats(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_preflight(endpoint: bench.EndpointConfig, *, timeout_seconds: float) -> dict[str, object]:
+        return {
+            "endpoint": endpoint.name,
+            "base_url": endpoint.base_url,
+            "status_code": 200,
+            "ok": True,
+            "model": endpoint.model,
+            "model_listed": True,
+            "model_count": 1,
+            "models": [endpoint.model],
+            "error": None,
+        }
+
+    calls: list[tuple[str, int]] = []
+
+    def fake_run_group(
+        endpoint: bench.EndpointConfig,
+        scenario: bench.BenchmarkScenario,
+        *,
+        include_usage: bool,
+        temperature: float,
+        top_p: float,
+        top_k: int,
+        timeout_seconds: float,
+        run_key: str = "",
+    ) -> list[bench.RequestObservation]:
+        calls.append((endpoint.name, scenario.repeat_index))
+        return [
+            bench.RequestObservation(
+                endpoint=endpoint.name,
+                model=endpoint.model,
+                scenario_id=scenario.scenario_id,
+                group_id=f"{endpoint.name}-{scenario.scenario_id}",
+                prompt_token_target=scenario.prompt_token_target,
+                prompt_token_source="usage",
+                max_tokens=scenario.max_tokens,
+                concurrency=scenario.concurrency,
+                cache_profile=scenario.cache_profile,
+                repeat_index=scenario.repeat_index,
+                request_index=0,
+                status="ok",
+                http_status=200,
+                error="",
+                ttft_ms=100.0,
+                total_ms=200.0,
+                decode_ms=100.0,
+                completion_tokens=5.0,
+                completion_token_source="usage",
+                prompt_tokens=20.0,
+                streamed_chunks=1,
+                completion_chars=20,
+                decode_tokens_per_second=50.0,
+                group_elapsed_ms=200.0,
+            )
+        ]
+
+    monkeypatch.setattr(bench, "preflight_endpoint", fake_preflight)
+    monkeypatch.setattr(bench, "run_group", fake_run_group)
+    args = bench.build_arg_parser().parse_args(
+        [
+            "--model",
+            "local-model",
+            "--run-id",
+            "alternate-run",
+            "--staging-root",
+            str(tmp_path),
+            "--no-export",
+            "--warmup-requests",
+            "0",
+            "--repeats",
+            "2",
+            "--endpoint-order",
+            "alternate",
+        ]
+    )
+    bench.validate_args(args)
+
+    bench.run_benchmark(args)
+
+    assert calls == [
+        ("melix", 0),
+        ("omlx", 0),
+        ("omlx", 1),
+        ("melix", 1),
+    ]
 
 
 def test_validate_args_rejects_invalid_warmup_values() -> None:

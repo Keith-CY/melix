@@ -368,6 +368,114 @@ struct OpenAIConformanceMatrixTests {
         #expect(payload.contains("data: [DONE]"))
     }
 
+    @Test("streaming chat usage trailer uses OpenAI chunk shape")
+    func streamingChatUsageTrailerUsesOpenAIChunkShape() async throws {
+        let worker = RecordingConformanceWorker(
+            requestID: "req-stream-usage-trailer",
+            events: [
+                makeTokenEvent(requestID: "req-stream-usage-trailer", seq: 1, text: "done"),
+                makeUsageEvent(requestID: "req-stream-usage-trailer", seq: 2, promptTokens: 5, completionTokens: 7),
+                makeCompletedEvent(
+                    requestID: "req-stream-usage-trailer",
+                    seq: 3,
+                    finishReason: "stop",
+                    assistantText: "done"
+                ),
+            ]
+        )
+        let handler = Self.handler(worker: worker)
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(
+                    Self.body(extra: #""stream": true, "stream_options": { "include_usage": true }"#).utf8
+                )
+            )
+        )
+        let payload = try await collectConformanceBody(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("event: usage") == false)
+        #expect(payload.contains("\"object\":\"chat.completion.chunk\""))
+        #expect(payload.contains("\"choices\":[]"))
+        #expect(payload.contains("\"usage\""))
+        #expect(payload.contains("\"prompt_tokens\":5"))
+        #expect(payload.contains("\"completion_tokens\":7"))
+        #expect(payload.contains("\"total_tokens\":12"))
+        #expect(orderedConformanceRanges(in: payload, needles: [
+            "\"content\":\"done\"",
+            "\"usage\"",
+            "\"finish_reason\":\"stop\"",
+            "data: [DONE]",
+        ]))
+    }
+
+    @Test("orphan tool-call markup is suppressed across streaming and non-streaming chat")
+    func orphanToolCallMarkupIsSuppressedAcrossStreamingAndNonStreamingChat() async throws {
+        let nonStreamWorker = RecordingConformanceWorker(
+            requestID: "req-orphan-non-stream",
+            events: [
+                makeCompletedEvent(
+                    requestID: "req-orphan-non-stream",
+                    seq: 1,
+                    finishReason: "stop",
+                    assistantText: #"Visible before <tool_call>{"name":"ghost","arguments":{"q":"leak"}}"#
+                ),
+            ]
+        )
+        let nonStreamResponse = try await Self.handler(worker: nonStreamWorker).handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(Self.body(extra: #""stream": false"#).utf8)
+            )
+        )
+        let nonStreamPayload = try await collectConformanceBody(nonStreamResponse.body)
+
+        #expect(nonStreamResponse.statusCode == 200)
+        #expect(nonStreamPayload.contains(#""content":"Visible before ""#))
+        #expect(nonStreamPayload.contains("<tool_call>") == false)
+        #expect(nonStreamPayload.contains("\"ghost\"") == false)
+
+        let streamWorker = RecordingConformanceWorker(
+            requestID: "req-orphan-stream",
+            events: [
+                makeTokenEvent(requestID: "req-orphan-stream", seq: 1, text: "stream visible "),
+                makeTokenEvent(requestID: "req-orphan-stream", seq: 2, text: "<|tool_"),
+                makeTokenEvent(
+                    requestID: "req-orphan-stream",
+                    seq: 3,
+                    text: #"call>call:terminal.execute{"command":"pwd"}"#
+                ),
+                makeCompletedEvent(
+                    requestID: "req-orphan-stream",
+                    seq: 4,
+                    finishReason: "stop",
+                    assistantText: #"stream visible <|tool_call>call:terminal.execute{"command":"pwd"}"#
+                ),
+            ]
+        )
+        let streamResponse = try await Self.handler(worker: streamWorker).handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: Data(Self.body(extra: #""stream": true"#).utf8)
+            )
+        )
+        let streamPayload = try await collectConformanceBody(streamResponse.body)
+
+        #expect(streamResponse.statusCode == 200)
+        #expect(streamPayload.contains(#""content":"stream visible ""#))
+        #expect(streamPayload.contains("<|tool_") == false)
+        #expect(streamPayload.contains("<|tool_call>") == false)
+        #expect(streamPayload.contains("terminal.execute") == false)
+        #expect(streamPayload.contains("data: [DONE]"))
+    }
+
     @Test("legacy function_call codable values normalize into stable tool choices")
     func legacyFunctionCallCodableValuesNormalizeIntoStableToolChoices() throws {
         let decoder = JSONDecoder()
@@ -570,6 +678,17 @@ private func collectConformanceEvents(
         events.append(event)
     }
     return events
+}
+
+private func orderedConformanceRanges(in payload: String, needles: [String]) -> Bool {
+    var cursor = payload.startIndex
+    for needle in needles {
+        guard let range = payload[cursor...].range(of: needle) else {
+            return false
+        }
+        cursor = range.upperBound
+    }
+    return true
 }
 
 private actor RecordingConformanceWorker:

@@ -67,7 +67,16 @@ This PR does not:
   - Confirm usage and reasoning execution metadata stay explicit.
   - Confirm streaming forced-tool fixtures emit OpenAI-compatible tool-call deltas.
   - Confirm logprobs request rows report `unsupported` instead of silently dropping the field.
-- [ ] Verify focused tests, changed-line coverage, full local gate, and PR-scoped performance before opening the PR.
+- [x] Add protocol parity usage trailer and orphan tool-call markup cleanup rows.
+  - Confirm chat-completions streaming usage is emitted as an OpenAI-compatible
+    `chat.completion.chunk` trailer with empty `choices` and `usage` totals.
+  - Confirm stream and non-stream chat-completions responses share cleanup for
+    orphan `<tool_call>` and `<|tool_call>` markup so truncated tool markup does
+    not leak into visible assistant text.
+  - Keep this slice local to the Swift boundary; real proxy parity, Anthropic
+    protocol parity, disabled-tool prompt guards, oversized payload truncation,
+    and backend token logprobs remain follow-up work.
+- [x] Verify focused tests, changed-line coverage, full local gate, and PR-scoped performance before opening the PR.
 
 ## Verification Commands
 
@@ -99,3 +108,6 @@ The pre-commit gate writes the PR-scoped performance report under `.runtime/pre-
 - Issue #1392 remains the narrower SwiftLM-derived SSE/prefill-progress ordering slice.
 - Real remote-provider proxy parity can reuse the report schema added here, but this PR only proves deterministic local request routing.
 - Worker-generated token logprobs require runtime support and are intentionally represented as an explicit unsupported receipt in this slice.
+- Anthropic/protocol parity, disabled-tool prompt guards, oversized payload
+  truncation metadata, and backend token logprob propagation remain separate
+  issue #1384 slices.

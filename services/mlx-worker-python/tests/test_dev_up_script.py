@@ -525,11 +525,13 @@ def test_write_runtime_environment_exports_sidecar_roots(tmp_path: Path, monkeyp
     monkeypatch.setenv("MELIX_SWIFT_MLX_METALLIB_PATH", str(metallib_path))
     monkeypatch.setenv("MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE", "1")
     monkeypatch.setenv("MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE", "1")
+    monkeypatch.setenv("MELIX_MODEL_ROOTS", str(tmp_path / "model-roots"))
 
     env_path = dev_up.write_runtime_environment(layout)
     payload = env_path.read_text(encoding="utf-8")
 
     assert f'export MELIX_MANAGED_MODEL_ROOT="{layout.managed_models_dir}"' in payload
+    assert f'export MELIX_MODEL_ROOTS="{tmp_path / "model-roots"}"' in payload
     assert f'export MELIX_AUDIO_RUNTIME_PACK_ROOT="{layout.audio_runtime_packs_dir}"' in payload
     assert f'export MELIX_MODEL_OPS_JOBS_ROOT="{layout.model_ops_jobs_root}"' in payload
     assert f'export MELIX_EVALUATION_JOBS_ROOT="{layout.evaluation_jobs_root}"' in payload

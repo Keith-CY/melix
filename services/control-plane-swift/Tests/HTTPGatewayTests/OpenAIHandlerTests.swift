@@ -1812,6 +1812,47 @@ struct OpenAIHandlerTests {
         #expect(await harness.textClient.lastGenerateRequest == nil)
     }
 
+    @Test("POST /v1/chat/completions suppresses model-default tool parser on VLM text-only batch-generator requests")
+    func postChatCompletionsSuppressesModelDefaultToolParserOnVLMTextOnlyBatchGeneratorRequests() async throws {
+        let harness = makeGemma4VLMOpenAIHandler(requestID: "req-http-gemma4-vlm-auto-batch-parser-suppressed")
+
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": true,
+              "temperature": 0,
+              "messages": [
+                { "role": "user", "content": "Reply briefly." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+        _ = try await collectBody(response.body)
+        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
+        let metrics = await harness.metricsStore.snapshot()
+
+        #expect(response.statusCode == 200)
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == "true")
+        #expect(generateRequest.execution.ext["melix.tool_parser.mode"] == nil)
+        #expect(generateRequest.execution.ext["melix.tool_parser.namespaces"] == nil)
+        #expect(generateRequest.execution.ext["melix.tool_parser.fallback_mode"] == nil)
+        #expect(generateRequest.execution.ext["melix.tool_parser.suppressed_reason"] == "vlm_text_only_batch_generator_no_tools")
+        #expect(generateRequest.execution.scope.parserMode.isEmpty)
+        #expect(generateRequest.execution.scope.toolParserMode.isEmpty)
+        #expect(metrics.values["http.tool_parser_request_count", default: 0] == 0)
+        #expect(metrics.values["http.tool_parser_qwen_request_count", default: 0] == 0)
+    }
+
     @Test("POST /v1/chat/completions keeps Gemma4 VLM batch-generator disabled for non-greedy requests")
     func postChatCompletionsKeepsGemma4VLMBatchGeneratorDisabledForNonGreedyRequests() async throws {
         let harness = makeGemma4VLMOpenAIHandler(requestID: "req-http-gemma4-vlm-non-greedy")
@@ -11558,7 +11599,8 @@ struct OpenAIHandlerTests {
         handler: OpenAIHandler,
         catalog: ModelCatalog,
         textClient: ScriptedWorkerClient,
-        vlmClient: ScriptedWorkerClient
+        vlmClient: ScriptedWorkerClient,
+        metricsStore: MetricsStore
     ) {
         var vlmModel = ModelCatalog.devVLMModel()
         vlmModel.settings.ext["vision_family_id"] = "gemma4-v1"
@@ -11597,6 +11639,7 @@ struct OpenAIHandlerTests {
             ]
         )
         let resolvedServingDefaultsStore = gatewayServingDefaultsStore ?? servingDefaultsStore
+        let metricsStore = MetricsStore()
         let handler = OpenAIHandler(
             modelCatalog: catalog,
             requestCoordinator: RequestCoordinator(
@@ -11605,12 +11648,13 @@ struct OpenAIHandlerTests {
                 modelCatalog: catalog
             ),
             workerRegistry: workerRegistry,
+            metricsStore: metricsStore,
             translator: ChatRequestTranslator(requestIDGenerator: { requestID }),
             sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) }),
             mcpToolCatalog: mcpToolCatalog,
             gatewayServingDefaultsStore: resolvedServingDefaultsStore
         )
-        return (handler, catalog, textClient, vlmClient)
+        return (handler, catalog, textClient, vlmClient, metricsStore)
     }
 
     private func warmModel() -> Melix_Controlplane_V1_ModelSummary {

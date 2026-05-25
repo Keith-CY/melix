@@ -1651,8 +1651,7 @@ private actor ProcessTerminationState {
 }
 
 public struct GRPCPythonWorkerRunner: PythonWorkerRPCRunning, Sendable {
-    private let makeEventLoopGroup: @Sendable () -> MultiThreadedEventLoopGroup
-    private let shutdownEventLoopGroup: @Sendable (MultiThreadedEventLoopGroup) async throws -> Void
+    private let sessionProvider: PythonWorkerGRPCSessionProvider
 
     public init(
         makeEventLoopGroup: @escaping @Sendable () -> MultiThreadedEventLoopGroup = {
@@ -1660,10 +1659,14 @@ public struct GRPCPythonWorkerRunner: PythonWorkerRPCRunning, Sendable {
         },
         shutdownEventLoopGroup: @escaping @Sendable (MultiThreadedEventLoopGroup) async throws -> Void = { group in
             try await group.shutdownGracefully()
-        }
+        },
+        onClientSessionCreated: @escaping @Sendable () -> Void = {}
     ) {
-        self.makeEventLoopGroup = makeEventLoopGroup
-        self.shutdownEventLoopGroup = shutdownEventLoopGroup
+        self.sessionProvider = PythonWorkerGRPCSessionProvider(
+            makeEventLoopGroup: makeEventLoopGroup,
+            shutdownEventLoopGroup: shutdownEventLoopGroup,
+            onClientSessionCreated: onClientSessionCreated
+        )
     }
 
     public func handshake(
@@ -2001,25 +2004,18 @@ public struct GRPCPythonWorkerRunner: PythonWorkerRPCRunning, Sendable {
             Melix_Worker_V1_MaintenanceService.Client<HTTP2ClientTransport.Posix>
         ) async throws -> Result
     ) async throws -> Result {
-        let eventLoopGroup = makeEventLoopGroup()
+        let session = try sessionProvider.session(socketPath: socketPath)
         do {
-            let result = try await withGRPCClient(
-                transport: .http2NIOPosix(
-                    target: .unixDomainSocket(path: socketPath),
-                    transportSecurity: .plaintext,
-                    eventLoopGroup: eventLoopGroup
-                )
-            ) { client in
-                let runtimeClient = Melix_Worker_V1_RuntimeService.Client(wrapping: client)
-                let inferenceClient = Melix_Worker_V1_InferenceService.Client(wrapping: client)
-                let cacheClient = Melix_Worker_V1_CacheService.Client(wrapping: client)
-                let maintenanceClient = Melix_Worker_V1_MaintenanceService.Client(wrapping: client)
-                return try await operation(runtimeClient, inferenceClient, cacheClient, maintenanceClient)
-            }
-            try await shutdownEventLoopGroup(eventLoopGroup)
-            return result
+            return try await operation(
+                session.runtimeClient,
+                session.inferenceClient,
+                session.cacheClient,
+                session.maintenanceClient
+            )
         } catch {
-            try? await shutdownEventLoopGroup(eventLoopGroup)
+            if shouldInvalidateGRPCSession(for: error) {
+                sessionProvider.invalidate(socketPath: socketPath, ifMatching: session)
+            }
             throw workerClientError(from: error)
         }
     }
@@ -2034,6 +2030,132 @@ public struct GRPCPythonWorkerRunner: PythonWorkerRPCRunning, Sendable {
         options.timeout = .seconds(timeoutSeconds)
         return options
     }
+}
+
+private final class PythonWorkerGRPCSessionProvider: @unchecked Sendable {
+    private let lock = NSLock()
+    private let makeEventLoopGroup: @Sendable () -> MultiThreadedEventLoopGroup
+    private let shutdownEventLoopGroup: @Sendable (MultiThreadedEventLoopGroup) async throws -> Void
+    private let onClientSessionCreated: @Sendable () -> Void
+    private var sessions: [String: PythonWorkerGRPCSession] = [:]
+
+    init(
+        makeEventLoopGroup: @escaping @Sendable () -> MultiThreadedEventLoopGroup,
+        shutdownEventLoopGroup: @escaping @Sendable (MultiThreadedEventLoopGroup) async throws -> Void,
+        onClientSessionCreated: @escaping @Sendable () -> Void
+    ) {
+        self.makeEventLoopGroup = makeEventLoopGroup
+        self.shutdownEventLoopGroup = shutdownEventLoopGroup
+        self.onClientSessionCreated = onClientSessionCreated
+    }
+
+    func session(socketPath: String) throws -> PythonWorkerGRPCSession {
+        lock.lock()
+        if let session = sessions[socketPath] {
+            lock.unlock()
+            return session
+        }
+
+        let eventLoopGroup = makeEventLoopGroup()
+        do {
+            let session = try PythonWorkerGRPCSession(
+                socketPath: socketPath,
+                eventLoopGroup: eventLoopGroup
+            )
+            sessions[socketPath] = session
+            lock.unlock()
+            onClientSessionCreated()
+            return session
+        } catch {
+            lock.unlock()
+            try? eventLoopGroup.syncShutdownGracefully()
+            throw error
+        }
+    }
+
+    func invalidate(socketPath: String, ifMatching session: PythonWorkerGRPCSession) {
+        lock.lock()
+        let cachedSession = sessions[socketPath]
+        if cachedSession === session {
+            sessions.removeValue(forKey: socketPath)
+        }
+        lock.unlock()
+
+        if cachedSession === session {
+            session.closeNow()
+        }
+    }
+
+    deinit {
+        lock.lock()
+        let sessions = Array(sessions.values)
+        self.sessions.removeAll(keepingCapacity: false)
+        lock.unlock()
+
+        for session in sessions {
+            session.closeNow()
+        }
+    }
+}
+
+private final class PythonWorkerGRPCSession: @unchecked Sendable {
+    let runtimeClient: Melix_Worker_V1_RuntimeService.Client<HTTP2ClientTransport.Posix>
+    let inferenceClient: Melix_Worker_V1_InferenceService.Client<HTTP2ClientTransport.Posix>
+    let cacheClient: Melix_Worker_V1_CacheService.Client<HTTP2ClientTransport.Posix>
+    let maintenanceClient: Melix_Worker_V1_MaintenanceService.Client<HTTP2ClientTransport.Posix>
+
+    private let lock = NSLock()
+    private let eventLoopGroup: MultiThreadedEventLoopGroup
+    private let client: GRPCClient<HTTP2ClientTransport.Posix>
+    private let connectionTask: Task<Void, Error>
+    private var isClosed = false
+
+    init(
+        socketPath: String,
+        eventLoopGroup: MultiThreadedEventLoopGroup
+    ) throws {
+        self.eventLoopGroup = eventLoopGroup
+
+        let transport = try HTTP2ClientTransport.Posix(
+            target: .unixDomainSocket(path: socketPath),
+            transportSecurity: .plaintext,
+            eventLoopGroup: eventLoopGroup
+        )
+        let client = GRPCClient(transport: transport)
+        self.client = client
+        self.runtimeClient = Melix_Worker_V1_RuntimeService.Client(wrapping: client)
+        self.inferenceClient = Melix_Worker_V1_InferenceService.Client(wrapping: client)
+        self.cacheClient = Melix_Worker_V1_CacheService.Client(wrapping: client)
+        self.maintenanceClient = Melix_Worker_V1_MaintenanceService.Client(wrapping: client)
+        self.connectionTask = Task {
+            try await client.runConnections()
+        }
+    }
+
+    func closeNow() {
+        lock.lock()
+        guard !isClosed else {
+            lock.unlock()
+            return
+        }
+        isClosed = true
+        lock.unlock()
+
+        client.beginGracefulShutdown()
+        connectionTask.cancel()
+        try? eventLoopGroup.syncShutdownGracefully()
+    }
+
+    deinit {
+        closeNow()
+    }
+}
+
+private func shouldInvalidateGRPCSession(for error: Error) -> Bool {
+    if let rpcError = error as? GRPCCore.RPCError {
+        return rpcError.code == .unavailable
+    }
+    return error is GRPCCore.RuntimeError
 }
 
 private func workerClientError(from error: Error) -> WorkerClientError {

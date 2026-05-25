@@ -35,7 +35,7 @@ from worker.productization.benchmark_suites import BenchmarkSuiteCatalog
 from worker.registry import LoadedModel, MemoryBudgetExceeded, WorkerRegistry
 from worker.runtime.audio_runtime_protocols import AudioBackendUnavailableError
 from worker.runtime.deterministic_delay import configured_delay_ms
-from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, RuntimeUnavailableError
+from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, NativeMTPBatchTimings, RuntimeTokenEvent, RuntimeUnavailableError
 
 
 class FakeBackend:
@@ -70,6 +70,51 @@ class ApplicableBackend(FakeBackend):
             "model_path": model_spec.model_path,
             "trust_remote_code": trust_remote_code,
         }
+
+
+class SpeculativeBackend(FakeBackend):
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
+        _ = loaded_model, prompt, sampling
+        yield RuntimeTokenEvent(
+            text="A",
+            prompt_tokens=5,
+            completion_tokens=1,
+            speculative_acceptance_rate=0.5,
+            speculative_rollback_rate=0.5,
+            speculative_accepted_tokens=1,
+            speculative_rejected_tokens=1,
+            speculative_num_draft_tokens=1,
+            speculative_draft_model_configured=True,
+            speculative_target_verify_ms=100.25,
+        )
+        if cancel_event.is_set():
+            return
+        yield RuntimeTokenEvent(
+            text="B",
+            prompt_tokens=5,
+            completion_tokens=2,
+            finish_reason="length",
+            speculative_acceptance_rate=0.75,
+            speculative_rollback_rate=0.25,
+            speculative_accepted_tokens=3,
+            speculative_rejected_tokens=1,
+            speculative_num_draft_tokens=1,
+            speculative_draft_model_configured=True,
+            speculative_target_verify_ms=210.5,
+            native_mtp_timings=NativeMTPBatchTimings(
+                cycle_count=4,
+                mtp_head_ms=20.25,
+                sample_ms=3.75,
+                cache_ops_ms=5.5,
+                insert_ms=1.25,
+                prepare_ms=2.5,
+                prompt_encode_ms=0.75,
+                prefill_ms=8.25,
+                batch_insert_ms=0.5,
+                first_response_ms=9.5,
+                first_visible_ms=10.75,
+            ),
+        )
 
 
 class StubAudioRuntime:
@@ -587,6 +632,13 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
             text_batch_generator_first_visible_ms_total=12.5,
             text_batch_generator_first_visible_token_index_total=2,
             text_batch_generator_first_empty_segment_count=1,
+            text_batch_generator_speculative_cycle_count_total=4,
+            text_batch_generator_speculative_accepted_count_total=3,
+            text_batch_generator_speculative_rejected_count_total=1,
+            text_batch_generator_speculative_backbone_ms_total=210.5,
+            text_batch_generator_speculative_mtp_head_ms_total=20.25,
+            text_batch_generator_speculative_sample_ms_total=3.75,
+            text_batch_generator_speculative_cache_ops_ms_total=5.5,
         ),
     )
     vision_stats = registry.runtime_stats()
@@ -624,6 +676,13 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert vision_stats.text_batch_generator_first_visible_ms_total == 12.5
     assert vision_stats.text_batch_generator_first_visible_token_index_total == 2
     assert vision_stats.text_batch_generator_first_empty_segment_count == 1
+    assert vision_stats.text_batch_generator_speculative_cycle_count_total == 4
+    assert vision_stats.text_batch_generator_speculative_accepted_count_total == 3
+    assert vision_stats.text_batch_generator_speculative_rejected_count_total == 1
+    assert vision_stats.text_batch_generator_speculative_backbone_ms_total == 210.5
+    assert vision_stats.text_batch_generator_speculative_mtp_head_ms_total == 20.25
+    assert vision_stats.text_batch_generator_speculative_sample_ms_total == 3.75
+    assert vision_stats.text_batch_generator_speculative_cache_ops_ms_total == 5.5
 
     registry.record_transcription_probe(
         SimpleNamespace(
@@ -644,6 +703,7 @@ def test_registry_capabilities_and_request_lifecycle() -> None:
     assert transcription_stats.last_audio_chunk_count == 4
     assert transcription_stats.last_temp_media_artifact_count == 0
     assert transcription_stats.last_temp_media_cleanup_failure_count == 0
+    assert transcription_stats.text_batch_generator_speculative_cycle_count_total == 0
 
     registry.record_speech_probe(
         SimpleNamespace(
@@ -840,6 +900,46 @@ def test_registry_runtime_stats_include_vlm_cache_bytes_after_generation() -> No
     assert runtime_stats.l1_cache_bytes == cache_stats.stats.l1_bytes
     assert runtime_stats.cache_resident_bytes == cache_stats.stats.l1_bytes
     assert runtime_stats.l1_hit_rate == cache_stats.stats.l1_hit_rate
+
+
+def test_text_generate_completed_metrics_include_native_mtp_batch_stats() -> None:
+    _, runtime_service, inference_service = build_services(backend=SpeculativeBackend())
+    model_handle = load_default_model(runtime_service)
+
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-text-mtp-metrics"),
+            model_handle=model_handle,
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="hello")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=2),
+        stream=True,
+        return_usage=True,
+    )
+
+    events = list(inference_service.Generate(request, context=None))
+    completed = next(event.completed for event in events if event.HasField("completed"))
+
+    assert completed.parser_metrics["text_batch_generator_speculative_cycle_count_total"] == "4"
+    assert completed.parser_metrics["text_batch_generator_speculative_accepted_count_total"] == "3"
+    assert completed.parser_metrics["text_batch_generator_speculative_rejected_count_total"] == "1"
+    assert completed.parser_metrics["text_batch_generator_speculative_backbone_ms_total"] == "210.5"
+    assert completed.parser_metrics["text_batch_generator_speculative_mtp_head_ms_total"] == "20.25"
+    assert completed.parser_metrics["text_batch_generator_speculative_sample_ms_total"] == "3.75"
+    assert completed.parser_metrics["text_batch_generator_speculative_cache_ops_ms_total"] == "5.5"
+    assert completed.parser_metrics["text_batch_generator_insert_ms"] == "1.25"
+    assert completed.parser_metrics["text_batch_generator_prepare_ms"] == "2.5"
+    assert completed.parser_metrics["text_batch_generator_prompt_encode_ms"] == "0.75"
+    assert completed.parser_metrics["text_batch_generator_prefill_ms"] == "8.25"
+    assert completed.parser_metrics["text_batch_generator_batch_insert_ms"] == "0.5"
+    assert completed.parser_metrics["text_batch_generator_first_response_ms"] == "9.5"
+    assert completed.parser_metrics["text_batch_generator_first_visible_ms"] == "10.75"
+    assert completed.finish_reason == "length"
 
 
 def test_registry_runtime_stats_include_audio_load_and_fallback_probes() -> None:

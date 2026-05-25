@@ -271,6 +271,100 @@ def test_managed_download_manifest_records_operation_receipt_fields(tmp_path: Pa
     }
 
 
+def test_strict_managed_download_requires_digest_before_materializing_artifact(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_path = tmp_path / "source.bin"
+    source_path.write_bytes(b"abcdef")
+    output_dir = tmp_path / "output"
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo",
+        ext={
+            "source_path": str(source_path),
+            "melix.target_scope": "hub:mlx-community/demo@main",
+            "melix.operation_kind": "managed_model_install",
+            "melix.strict_install_mode": "true",
+        },
+    )
+
+    with pytest.raises(ModelOperationError) as exc_info:
+        pipeline.run(request, job_id="job-strict", output_dir=output_dir)
+
+    assert exc_info.value.code == "artifact_integrity_required"
+    state_payload = json.loads(exc_info.value.details["state_json"])
+    assert state_payload["status"] == "failed"
+    assert state_payload["terminal_state"] == "failed"
+    assert state_payload["last_error"] == "missing_artifact_digest"
+    assert state_payload["operation_id"].startswith("managed_model_install:")
+    assert state_payload["target_scope"] == "hub:mlx-community/demo@main"
+    assert state_payload["artifact_integrity"] == {
+        "verification_mode": "receipt_fixture",
+        "policy_present": False,
+        "digest": "",
+        "checked_at": "not_recorded",
+        "failure_reason": "missing_artifact_digest",
+        "status": "failed",
+    }
+    assert not (output_dir / "download.artifact").exists()
+    assert not (output_dir / "download.artifact.partial").exists()
+
+
+def test_strict_managed_download_with_digest_materializes_artifact(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_path = tmp_path / "source.bin"
+    source_path.write_bytes(b"abcdef")
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo",
+        ext={
+            "source_path": str(source_path),
+            "melix.target_scope": "hub:mlx-community/demo@main",
+            "melix.operation_kind": "managed_model_install",
+            "melix.strict_install_mode": "true",
+            "melix.artifact_digest": "sha256:abc",
+        },
+    )
+
+    result = pipeline.run(request, job_id="job-strict-digest", output_dir=tmp_path / "output")
+
+    assert result.output_path.read_bytes() == b"abcdef"
+    payload = json.loads(result.snapshots[-1].manifest_json)
+    assert payload["status"] == "completed"
+    assert payload["artifact_integrity"]["status"] == "passed"
+    assert payload["artifact_integrity"]["digest"] == "sha256:abc"
+
+
+def test_strict_managed_hub_import_requires_digest_before_snapshot_resolution(tmp_path: Path) -> None:
+    pipeline = DownloadPipeline()
+    source_dir = tmp_path / "managed-snapshot"
+    source_dir.mkdir()
+    (source_dir / "config.json").write_text("{}", encoding="utf-8")
+    output_dir = tmp_path / "output"
+    request = maintenance_pb2.ConvertModelRequest(
+        source_model="mlx-community/demo",
+        ext={
+            "source_path": str(source_dir),
+            "melix.managed_import": "true",
+            "melix.source_kind": "hub_repo",
+            "melix.hf_repo_id": "mlx-community/demo",
+            "melix.hf_revision": "main",
+            "melix.install_mode": "strict",
+        },
+    )
+
+    with pytest.raises(ModelOperationError) as exc_info:
+        pipeline.run(request, job_id="job-strict-hub", output_dir=output_dir)
+
+    assert exc_info.value.code == "artifact_integrity_required"
+    state_payload = json.loads((output_dir / "download.state.json").read_text(encoding="utf-8"))
+    assert json.loads(exc_info.value.details["state_json"]) == state_payload
+    assert state_payload["status"] == "failed"
+    assert state_payload["stage"] == "strict_preflight"
+    assert state_payload["target_scope"] == "hub:mlx-community/demo@main"
+    assert state_payload["artifact_integrity"]["policy_present"] is False
+    assert state_payload["artifact_integrity"]["failure_reason"] == "missing_artifact_digest"
+    assert state_payload["output_path"] == ""
+    assert state_payload["partial_path"] == ""
+
+
 def test_operation_identity_respects_explicit_id_and_local_source_fallback(tmp_path: Path) -> None:
     source_path = tmp_path / "source.bin"
     source_path.write_bytes(b"local")
@@ -325,6 +419,8 @@ def test_receipt_eligibility_includes_all_operation_receipt_triggers() -> None:
         {"melix.operation_id": "op-explicit"},
         {"melix.operation_kind": "artifact_import"},
         {"melix.target_scope": "scope-a"},
+        {"melix.strict_install_mode": "true"},
+        {"melix.install_mode": "strict"},
         {"melix.artifact_digest": "sha256:abc"},
         {"artifact_digest": "sha256:abc"},
         {"sha256": "abc"},

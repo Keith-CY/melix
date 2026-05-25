@@ -1039,6 +1039,13 @@ struct RequestCoordinatorTests {
             response.stats.textBatchGeneratorFirstVisibleMsTotal = 12.5
             response.stats.textBatchGeneratorFirstVisibleTokenIndexTotal = 2
             response.stats.textBatchGeneratorFirstEmptySegmentCount = 1
+            response.stats.textBatchGeneratorSpeculativeCycleCountTotal = 4
+            response.stats.textBatchGeneratorSpeculativeAcceptedCountTotal = 3
+            response.stats.textBatchGeneratorSpeculativeRejectedCountTotal = 1
+            response.stats.textBatchGeneratorSpeculativeBackboneMsTotal = 210.5
+            response.stats.textBatchGeneratorSpeculativeMtpHeadMsTotal = 20.25
+            response.stats.textBatchGeneratorSpeculativeSampleMsTotal = 3.75
+            response.stats.textBatchGeneratorSpeculativeCacheOpsMsTotal = 5.5
             return response
         }())
         await workerClient.setCacheStatsResponse({
@@ -1114,6 +1121,13 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["vision.text_batch_generator.first_visible_ms_total", default: -1] == 12.5)
         #expect(metrics.values["vision.text_batch_generator.first_visible_token_index_total", default: -1] == 2)
         #expect(metrics.values["vision.text_batch_generator.first_empty_segment_count", default: -1] == 1)
+        #expect(metrics.values["vision.text_batch_generator.speculative_cycle_count_total", default: -1] == 4)
+        #expect(metrics.values["vision.text_batch_generator.speculative_accepted_count_total", default: -1] == 3)
+        #expect(metrics.values["vision.text_batch_generator.speculative_rejected_count_total", default: -1] == 1)
+        #expect(metrics.values["vision.text_batch_generator.speculative_backbone_ms_total", default: -1] == 210.5)
+        #expect(metrics.values["vision.text_batch_generator.speculative_mtp_head_ms_total", default: -1] == 20.25)
+        #expect(metrics.values["vision.text_batch_generator.speculative_sample_ms_total", default: -1] == 3.75)
+        #expect(metrics.values["vision.text_batch_generator.speculative_cache_ops_ms_total", default: -1] == 5.5)
         #expect(metrics.values["scheduler.multimodal_continuous_batch_requested_capacity", default: -1] == 2)
         #expect(metrics.values["scheduler.multimodal_continuous_batch_effective_capacity", default: -1] == 1)
         #expect(metrics.values["scheduler.multimodal_continuous_batch_enabled", default: -1] == 0)
@@ -3202,6 +3216,216 @@ struct RequestCoordinatorTests {
         )
     }
 
+    @Test("follow-up token delivery is not blocked by scheduler progress publishing")
+    func followUpTokenDeliveryIsNotBlockedBySchedulerProgressPublishing() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let metricsStore = MetricsStore()
+        let gate = DelayedSchedulerEventGate()
+        let decodeProgressCounter = AsyncCounter()
+        let streamRecorder = WorkerStreamEventRecorder()
+        let schedulerReadModel = SchedulerReadModel(
+            metricsStore: metricsStore,
+            eventPublisher: { event in
+                guard event.requestID == "req-follow-up-token-fast-delivery",
+                      event.requestProgress.phase == .requestDecoding
+                else {
+                    return
+                }
+                if await decodeProgressCounter.increment() >= 2 {
+                    await gate.wait()
+                }
+            }
+        )
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-follow-up-token-fast-delivery")
+        )
+        let collector = Task {
+            do {
+                for try await event in execution.stream {
+                    await streamRecorder.append(event)
+                    if case .tokenDelta(let delta) = event.payload,
+                       delta.text == "second" {
+                        break
+                    }
+                }
+            } catch {
+            }
+        }
+        defer { collector.cancel() }
+
+        await workerClient.emitToken(requestID: "req-follow-up-token-fast-delivery", text: "first")
+        _ = await waitForRecordedWorkerEvent(
+            streamRecorder,
+            matching: { event in
+                guard case .tokenDelta(let delta) = event.payload else {
+                    return false
+                }
+                return delta.text == "first"
+            },
+            attempts: 50
+        )
+        await workerClient.emitToken(requestID: "req-follow-up-token-fast-delivery", text: "second")
+
+        let deliveredBeforeProgressPublisherFinished = await waitForRecordedWorkerEvent(
+            streamRecorder,
+            matching: { event in
+                guard case .tokenDelta(let delta) = event.payload else {
+                    return false
+                }
+                return delta.text == "second"
+            },
+            attempts: 10
+        )
+        await gate.open()
+        await workerClient.finishDecode(requestID: "req-follow-up-token-fast-delivery")
+        _ = await collector.result
+
+        #expect(deliveredBeforeProgressPublisherFinished != nil)
+    }
+
+    @Test("follow-up tokens do not republish scheduler decoding progress")
+    func followUpTokensDoNotRepublishSchedulerDecodingProgress() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let metricsStore = MetricsStore()
+        let decodeProgressCounter = AsyncCounter()
+        let schedulerReadModel = SchedulerReadModel(
+            metricsStore: metricsStore,
+            eventPublisher: { event in
+                guard event.requestID == "req-follow-up-token-progress",
+                      event.requestProgress.phase == .requestDecoding
+                else {
+                    return
+                }
+                _ = await decodeProgressCounter.increment()
+            }
+        )
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-follow-up-token-progress")
+        )
+        let collector = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        defer { collector.cancel() }
+
+        await workerClient.emitToken(requestID: "req-follow-up-token-progress", text: "first")
+        await workerClient.emitToken(requestID: "req-follow-up-token-progress", text: "second")
+        await workerClient.finishDecode(requestID: "req-follow-up-token-progress")
+        _ = await collector.result
+
+        #expect(await decodeProgressCounter.current() == 1)
+    }
+
+    @Test("tokens do not republish scheduler decoding progress after decode started")
+    func tokensDoNotRepublishSchedulerDecodingProgressAfterDecodeStarted() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let metricsStore = MetricsStore()
+        let decodeProgressCounter = AsyncCounter()
+        let schedulerReadModel = SchedulerReadModel(
+            metricsStore: metricsStore,
+            eventPublisher: { event in
+                guard event.requestID == "req-decode-start-progress",
+                      event.requestProgress.phase == .requestDecoding
+                else {
+                    return
+                }
+                _ = await decodeProgressCounter.increment()
+            }
+        )
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-decode-start-progress")
+        )
+        let collector = Task {
+            do {
+                for try await _ in execution.stream {
+                }
+            } catch {
+            }
+        }
+        defer { collector.cancel() }
+
+        await workerClient.emitDecodeStarted(
+            requestID: "req-decode-start-progress",
+            decodeHandle: "decode-req-decode-start-progress"
+        )
+        await workerClient.emitToken(requestID: "req-decode-start-progress", text: "first")
+        await workerClient.emitToken(requestID: "req-decode-start-progress", text: "second")
+        await workerClient.finishDecode(requestID: "req-decode-start-progress")
+        _ = await collector.result
+
+        #expect(await decodeProgressCounter.current() == 1)
+    }
+
+    @Test("terminal stream delivery is not blocked by post-response observability refresh")
+    func terminalStreamDeliveryIsNotBlockedByPostResponseObservabilityRefresh() async throws {
+        let workerClient = BlockingObservabilityWorkerClient()
+        let streamRecorder = WorkerStreamEventRecorder()
+        let streamCompletion = AsyncFlag()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry()
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-terminal-fast-delivery")
+        )
+        let collector = Task {
+            do {
+                for try await event in execution.stream {
+                    await streamRecorder.append(event)
+                }
+                await streamCompletion.set()
+            } catch {
+            }
+        }
+        defer { collector.cancel() }
+
+        await workerClient.emitToken(requestID: "req-terminal-fast-delivery", text: "done")
+        await workerClient.finish(requestID: "req-terminal-fast-delivery")
+
+        let completedBeforeObservabilityFinished = await waitForRecordedWorkerEvent(
+            streamRecorder,
+            matching: { event in
+                if case .completed = event.payload {
+                    return true
+                }
+                return false
+            },
+            attempts: 10
+        )
+        let streamFinishedBeforeObservabilityFinished = await waitForFlag(streamCompletion, attempts: 10)
+        await workerClient.releaseObservability()
+        _ = await collector.result
+
+        #expect(completedBeforeObservabilityFinished != nil)
+        #expect(streamFinishedBeforeObservabilityFinished)
+        #expect(await workerClient.runtimeStatsCallCount >= 1)
+    }
+
     @Test("reasoning budget overflow truncates streamed reasoning and closes the request explicitly")
     func reasoningBudgetOverflowTruncatesStreamedReasoningAndClosesTheRequestExplicitly() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -4500,6 +4724,113 @@ private actor ToolCallingWorkerClient: WorkerRoutingClient {
     }
 }
 
+private actor BlockingObservabilityWorkerClient:
+    WorkerRoutingClient,
+    CacheIntrospectingWorkerClientProtocol,
+    RuntimeIntrospectingWorkerClientProtocol
+{
+    private var continuations: [String: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>.Continuation] = [:]
+    private var observabilityReleased = false
+    private var observabilityWaiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var runtimeStatsCallCount = 0
+    private(set) var cacheStatsCallCount = 0
+
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        let requestID = request.execution.id.requestID
+        return AsyncThrowingStream { continuation in
+            continuations[requestID] = continuation
+        }
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        continuations.removeValue(forKey: requestID)?.finish()
+        return true
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        response.modelHandle = "melix-dev-text::swift"
+        return response
+    }
+
+    func emitToken(requestID: String, text: String) {
+        guard let continuation = continuations[requestID] else {
+            return
+        }
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "generate"
+        event.phase = .executionDecoding
+        event.lane = "text.decode.interactive"
+        var tokenDelta = Melix_Worker_V1_TokenDelta()
+        tokenDelta.text = text
+        event.tokenDelta = tokenDelta
+        continuation.yield(event)
+    }
+
+    func finish(requestID: String) {
+        guard let continuation = continuations.removeValue(forKey: requestID) else {
+            return
+        }
+        var event = Melix_Worker_V1_ExecuteEvent()
+        event.requestID = requestID
+        event.executionKind = "generate"
+        event.phase = .executionCompleted
+        event.lane = "text.decode.interactive"
+        var completed = Melix_Worker_V1_Completed()
+        completed.finishReason = "stop"
+        completed.assistantText = "done"
+        event.completed = completed
+        continuation.yield(event)
+        continuation.finish()
+    }
+
+    func releaseObservability() {
+        observabilityReleased = true
+        let waiters = observabilityWaiters
+        observabilityWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    func runtimeStats() async throws -> Melix_Worker_V1_GetRuntimeStatsResponse {
+        runtimeStatsCallCount += 1
+        await waitForObservabilityRelease()
+        var response = Melix_Worker_V1_GetRuntimeStatsResponse()
+        response.stats.residentBytes = 8_192
+        response.stats.modelResidentBytes = 8_192
+        return response
+    }
+
+    func cacheStats() async throws -> Melix_Worker_V1_GetCacheStatsResponse {
+        cacheStatsCallCount += 1
+        await waitForObservabilityRelease()
+        var response = Melix_Worker_V1_GetCacheStatsResponse()
+        response.stats.l1Bytes = 2_048
+        response.stats.activeMode = .hybrid
+        return response
+    }
+
+    private func waitForObservabilityRelease() async {
+        guard !observabilityReleased else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            observabilityWaiters.append(continuation)
+        }
+    }
+}
+
 private actor DelayedSchedulerEventGate {
     private var isOpen = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
@@ -4526,6 +4857,19 @@ private actor DelayedSchedulerEventGate {
     }
 }
 
+private actor AsyncCounter {
+    private var value = 0
+
+    func increment() -> Int {
+        value += 1
+        return value
+    }
+
+    func current() -> Int {
+        value
+    }
+}
+
 private actor WorkerStreamEventRecorder {
     private var events: [Melix_Worker_V1_ExecuteEvent] = []
 
@@ -4537,6 +4881,18 @@ private actor WorkerStreamEventRecorder {
         matching predicate: @Sendable (Melix_Worker_V1_ExecuteEvent) -> Bool
     ) -> Melix_Worker_V1_ExecuteEvent? {
         events.first(where: predicate)
+    }
+}
+
+private actor AsyncFlag {
+    private var value = false
+
+    func set() {
+        value = true
+    }
+
+    func isSet() -> Bool {
+        value
     }
 }
 
@@ -4748,6 +5104,16 @@ private func waitForMetricValue(
         try? await Task.sleep(nanoseconds: 10_000_000)
     }
     return await metricsStore.value(forKey: key)
+}
+
+private func waitForFlag(_ flag: AsyncFlag, attempts: Int = 100) async -> Bool {
+    for _ in 0..<(attempts * waitAttemptsMultiplier) {
+        if await flag.isSet() {
+            return true
+        }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    return await flag.isSet()
 }
 
 private func waitForPrefillRequest(

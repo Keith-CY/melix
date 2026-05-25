@@ -600,6 +600,41 @@ public nonisolated struct Melix_Worker_V1_RuntimeStats: @unchecked Sendable {
     set {_uniqueStorage()._modelLoadTrustBlockedCount = newValue}
   }
 
+  public var textBatchGeneratorSpeculativeCycleCountTotal: UInt64 {
+    get {_storage._textBatchGeneratorSpeculativeCycleCountTotal}
+    set {_uniqueStorage()._textBatchGeneratorSpeculativeCycleCountTotal = newValue}
+  }
+
+  public var textBatchGeneratorSpeculativeAcceptedCountTotal: UInt64 {
+    get {_storage._textBatchGeneratorSpeculativeAcceptedCountTotal}
+    set {_uniqueStorage()._textBatchGeneratorSpeculativeAcceptedCountTotal = newValue}
+  }
+
+  public var textBatchGeneratorSpeculativeRejectedCountTotal: UInt64 {
+    get {_storage._textBatchGeneratorSpeculativeRejectedCountTotal}
+    set {_uniqueStorage()._textBatchGeneratorSpeculativeRejectedCountTotal = newValue}
+  }
+
+  public var textBatchGeneratorSpeculativeBackboneMsTotal: Double {
+    get {_storage._textBatchGeneratorSpeculativeBackboneMsTotal}
+    set {_uniqueStorage()._textBatchGeneratorSpeculativeBackboneMsTotal = newValue}
+  }
+
+  public var textBatchGeneratorSpeculativeMtpHeadMsTotal: Double {
+    get {_storage._textBatchGeneratorSpeculativeMtpHeadMsTotal}
+    set {_uniqueStorage()._textBatchGeneratorSpeculativeMtpHeadMsTotal = newValue}
+  }
+
+  public var textBatchGeneratorSpeculativeSampleMsTotal: Double {
+    get {_storage._textBatchGeneratorSpeculativeSampleMsTotal}
+    set {_uniqueStorage()._textBatchGeneratorSpeculativeSampleMsTotal = newValue}
+  }
+
+  public var textBatchGeneratorSpeculativeCacheOpsMsTotal: Double {
+    get {_storage._textBatchGeneratorSpeculativeCacheOpsMsTotal}
+    set {_uniqueStorage()._textBatchGeneratorSpeculativeCacheOpsMsTotal = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1220,7 +1255,7 @@ nonisolated extension Melix_Worker_V1_WarmupModelResponse: SwiftProtobuf.Message
 
 nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RuntimeStats"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_state\0\u{3}resident_bytes\0\u{3}active_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{3}l1_cache_bytes\0\u{3}l2_cache_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}active_multimodal_requests\0\u{3}last_probe_kind\0\u{3}last_preprocess_latency_ms\0\u{3}last_preprocess_input_bytes\0\u{3}last_preprocess_peak_memory_bytes\0\u{3}last_first_token_latency_ms\0\u{3}last_transcription_latency_ms\0\u{3}last_speech_latency_ms\0\u{3}last_audio_duration_seconds\0\u{3}last_audio_chunk_count\0\u{3}last_audio_output_bytes\0\u{3}last_image_job_latency_ms\0\u{3}last_image_artifact_publish_ms\0\u{3}last_image_output_bytes\0\u{3}last_image_peak_memory_bytes\0\u{3}model_resident_bytes\0\u{3}cache_resident_bytes\0\u{3}kv_cache_bytes\0\u{3}peak_allocation_bytes\0\u{3}memory_headroom_bytes\0\u{3}last_audio_model_load_latency_ms\0\u{3}last_audio_backend_unavailable_count\0\u{3}last_voice_fallback_count\0\u{3}last_language_fallback_count\0\u{3}last_video_effective_frame_count\0\u{3}last_video_requested_frame_budget\0\u{3}last_video_window_ms\0\u{3}last_temp_media_artifact_count\0\u{3}last_temp_media_artifact_bytes\0\u{3}last_temp_media_cleanup_latency_ms\0\u{3}last_temp_media_cleanup_failure_count\0\u{3}generation_stream_owner_mode\0\u{3}worker_thread_init_latency_ms\0\u{3}stream_sync_fallback_count\0\u{3}last_speech_streaming_enabled\0\u{3}last_speech_streaming_interval_ms\0\u{3}last_speech_first_audio_latency_ms\0\u{3}last_multimodal_decode_mode\0\u{3}last_multimodal_fallback_reason\0\u{3}last_multimodal_decode_sync_mode\0\u{3}text_batch_generator_submitted_request_count\0\u{3}text_batch_generator_completed_request_count\0\u{3}text_batch_generator_step_count\0\u{3}text_batch_generator_generated_token_count\0\u{3}text_batch_generator_peak_active_batch_size\0\u{3}text_batch_generator_queue_wait_ms_total\0\u{3}text_batch_generator_insert_ms_total\0\u{3}text_batch_generator_executor_step_ms_total\0\u{3}text_batch_generator_next_ms_total\0\u{3}text_batch_generator_emit_ms_total\0\u{3}text_batch_generator_active_batch_size\0\u{3}text_batch_generator_generated_response_count\0\u{3}text_batch_generator_failed_request_count\0\u{3}text_batch_generator_prepare_ms_total\0\u{3}text_batch_generator_first_response_ms_total\0\u{3}text_batch_generator_first_visible_ms_total\0\u{3}text_batch_generator_first_visible_token_index_total\0\u{3}text_batch_generator_first_empty_segment_count\0\u{3}last_model_load_trust_policy_resolution_ms\0\u{3}model_load_trust_blocked_count\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_state\0\u{3}resident_bytes\0\u{3}active_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{3}l1_cache_bytes\0\u{3}l2_cache_bytes\0\u{3}l1_hit_rate\0\u{3}l2_hit_rate\0\u{3}active_multimodal_requests\0\u{3}last_probe_kind\0\u{3}last_preprocess_latency_ms\0\u{3}last_preprocess_input_bytes\0\u{3}last_preprocess_peak_memory_bytes\0\u{3}last_first_token_latency_ms\0\u{3}last_transcription_latency_ms\0\u{3}last_speech_latency_ms\0\u{3}last_audio_duration_seconds\0\u{3}last_audio_chunk_count\0\u{3}last_audio_output_bytes\0\u{3}last_image_job_latency_ms\0\u{3}last_image_artifact_publish_ms\0\u{3}last_image_output_bytes\0\u{3}last_image_peak_memory_bytes\0\u{3}model_resident_bytes\0\u{3}cache_resident_bytes\0\u{3}kv_cache_bytes\0\u{3}peak_allocation_bytes\0\u{3}memory_headroom_bytes\0\u{3}last_audio_model_load_latency_ms\0\u{3}last_audio_backend_unavailable_count\0\u{3}last_voice_fallback_count\0\u{3}last_language_fallback_count\0\u{3}last_video_effective_frame_count\0\u{3}last_video_requested_frame_budget\0\u{3}last_video_window_ms\0\u{3}last_temp_media_artifact_count\0\u{3}last_temp_media_artifact_bytes\0\u{3}last_temp_media_cleanup_latency_ms\0\u{3}last_temp_media_cleanup_failure_count\0\u{3}generation_stream_owner_mode\0\u{3}worker_thread_init_latency_ms\0\u{3}stream_sync_fallback_count\0\u{3}last_speech_streaming_enabled\0\u{3}last_speech_streaming_interval_ms\0\u{3}last_speech_first_audio_latency_ms\0\u{3}last_multimodal_decode_mode\0\u{3}last_multimodal_fallback_reason\0\u{3}last_multimodal_decode_sync_mode\0\u{3}text_batch_generator_submitted_request_count\0\u{3}text_batch_generator_completed_request_count\0\u{3}text_batch_generator_step_count\0\u{3}text_batch_generator_generated_token_count\0\u{3}text_batch_generator_peak_active_batch_size\0\u{3}text_batch_generator_queue_wait_ms_total\0\u{3}text_batch_generator_insert_ms_total\0\u{3}text_batch_generator_executor_step_ms_total\0\u{3}text_batch_generator_next_ms_total\0\u{3}text_batch_generator_emit_ms_total\0\u{3}text_batch_generator_active_batch_size\0\u{3}text_batch_generator_generated_response_count\0\u{3}text_batch_generator_failed_request_count\0\u{3}text_batch_generator_prepare_ms_total\0\u{3}text_batch_generator_first_response_ms_total\0\u{3}text_batch_generator_first_visible_ms_total\0\u{3}text_batch_generator_first_visible_token_index_total\0\u{3}text_batch_generator_first_empty_segment_count\0\u{3}last_model_load_trust_policy_resolution_ms\0\u{3}model_load_trust_blocked_count\0\u{3}text_batch_generator_speculative_cycle_count_total\0\u{3}text_batch_generator_speculative_accepted_count_total\0\u{3}text_batch_generator_speculative_rejected_count_total\0\u{3}text_batch_generator_speculative_backbone_ms_total\0\u{3}text_batch_generator_speculative_mtp_head_ms_total\0\u{3}text_batch_generator_speculative_sample_ms_total\0\u{3}text_batch_generator_speculative_cache_ops_ms_total\0")
 
   fileprivate class _StorageClass {
     var _workerState: String = String()
@@ -1292,6 +1327,13 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
     var _textBatchGeneratorFirstEmptySegmentCount: UInt64 = 0
     var _lastModelLoadTrustPolicyResolutionMs: Double = 0
     var _modelLoadTrustBlockedCount: UInt64 = 0
+    var _textBatchGeneratorSpeculativeCycleCountTotal: UInt64 = 0
+    var _textBatchGeneratorSpeculativeAcceptedCountTotal: UInt64 = 0
+    var _textBatchGeneratorSpeculativeRejectedCountTotal: UInt64 = 0
+    var _textBatchGeneratorSpeculativeBackboneMsTotal: Double = 0
+    var _textBatchGeneratorSpeculativeMtpHeadMsTotal: Double = 0
+    var _textBatchGeneratorSpeculativeSampleMsTotal: Double = 0
+    var _textBatchGeneratorSpeculativeCacheOpsMsTotal: Double = 0
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -1371,6 +1413,13 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
       _textBatchGeneratorFirstEmptySegmentCount = source._textBatchGeneratorFirstEmptySegmentCount
       _lastModelLoadTrustPolicyResolutionMs = source._lastModelLoadTrustPolicyResolutionMs
       _modelLoadTrustBlockedCount = source._modelLoadTrustBlockedCount
+      _textBatchGeneratorSpeculativeCycleCountTotal = source._textBatchGeneratorSpeculativeCycleCountTotal
+      _textBatchGeneratorSpeculativeAcceptedCountTotal = source._textBatchGeneratorSpeculativeAcceptedCountTotal
+      _textBatchGeneratorSpeculativeRejectedCountTotal = source._textBatchGeneratorSpeculativeRejectedCountTotal
+      _textBatchGeneratorSpeculativeBackboneMsTotal = source._textBatchGeneratorSpeculativeBackboneMsTotal
+      _textBatchGeneratorSpeculativeMtpHeadMsTotal = source._textBatchGeneratorSpeculativeMtpHeadMsTotal
+      _textBatchGeneratorSpeculativeSampleMsTotal = source._textBatchGeneratorSpeculativeSampleMsTotal
+      _textBatchGeneratorSpeculativeCacheOpsMsTotal = source._textBatchGeneratorSpeculativeCacheOpsMsTotal
     }
   }
 
@@ -1458,6 +1507,13 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
         case 67: try { try decoder.decodeSingularUInt64Field(value: &_storage._textBatchGeneratorFirstEmptySegmentCount) }()
         case 68: try { try decoder.decodeSingularDoubleField(value: &_storage._lastModelLoadTrustPolicyResolutionMs) }()
         case 69: try { try decoder.decodeSingularUInt64Field(value: &_storage._modelLoadTrustBlockedCount) }()
+        case 70: try { try decoder.decodeSingularUInt64Field(value: &_storage._textBatchGeneratorSpeculativeCycleCountTotal) }()
+        case 71: try { try decoder.decodeSingularUInt64Field(value: &_storage._textBatchGeneratorSpeculativeAcceptedCountTotal) }()
+        case 72: try { try decoder.decodeSingularUInt64Field(value: &_storage._textBatchGeneratorSpeculativeRejectedCountTotal) }()
+        case 73: try { try decoder.decodeSingularDoubleField(value: &_storage._textBatchGeneratorSpeculativeBackboneMsTotal) }()
+        case 74: try { try decoder.decodeSingularDoubleField(value: &_storage._textBatchGeneratorSpeculativeMtpHeadMsTotal) }()
+        case 75: try { try decoder.decodeSingularDoubleField(value: &_storage._textBatchGeneratorSpeculativeSampleMsTotal) }()
+        case 76: try { try decoder.decodeSingularDoubleField(value: &_storage._textBatchGeneratorSpeculativeCacheOpsMsTotal) }()
         default: break
         }
       }
@@ -1673,6 +1729,27 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
       if _storage._modelLoadTrustBlockedCount != 0 {
         try visitor.visitSingularUInt64Field(value: _storage._modelLoadTrustBlockedCount, fieldNumber: 69)
       }
+      if _storage._textBatchGeneratorSpeculativeCycleCountTotal != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._textBatchGeneratorSpeculativeCycleCountTotal, fieldNumber: 70)
+      }
+      if _storage._textBatchGeneratorSpeculativeAcceptedCountTotal != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._textBatchGeneratorSpeculativeAcceptedCountTotal, fieldNumber: 71)
+      }
+      if _storage._textBatchGeneratorSpeculativeRejectedCountTotal != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._textBatchGeneratorSpeculativeRejectedCountTotal, fieldNumber: 72)
+      }
+      if _storage._textBatchGeneratorSpeculativeBackboneMsTotal.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._textBatchGeneratorSpeculativeBackboneMsTotal, fieldNumber: 73)
+      }
+      if _storage._textBatchGeneratorSpeculativeMtpHeadMsTotal.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._textBatchGeneratorSpeculativeMtpHeadMsTotal, fieldNumber: 74)
+      }
+      if _storage._textBatchGeneratorSpeculativeSampleMsTotal.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._textBatchGeneratorSpeculativeSampleMsTotal, fieldNumber: 75)
+      }
+      if _storage._textBatchGeneratorSpeculativeCacheOpsMsTotal.bitPattern != 0 {
+        try visitor.visitSingularDoubleField(value: _storage._textBatchGeneratorSpeculativeCacheOpsMsTotal, fieldNumber: 76)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1751,6 +1828,13 @@ nonisolated extension Melix_Worker_V1_RuntimeStats: SwiftProtobuf.Message, Swift
         if _storage._textBatchGeneratorFirstEmptySegmentCount != rhs_storage._textBatchGeneratorFirstEmptySegmentCount {return false}
         if _storage._lastModelLoadTrustPolicyResolutionMs != rhs_storage._lastModelLoadTrustPolicyResolutionMs {return false}
         if _storage._modelLoadTrustBlockedCount != rhs_storage._modelLoadTrustBlockedCount {return false}
+        if _storage._textBatchGeneratorSpeculativeCycleCountTotal != rhs_storage._textBatchGeneratorSpeculativeCycleCountTotal {return false}
+        if _storage._textBatchGeneratorSpeculativeAcceptedCountTotal != rhs_storage._textBatchGeneratorSpeculativeAcceptedCountTotal {return false}
+        if _storage._textBatchGeneratorSpeculativeRejectedCountTotal != rhs_storage._textBatchGeneratorSpeculativeRejectedCountTotal {return false}
+        if _storage._textBatchGeneratorSpeculativeBackboneMsTotal != rhs_storage._textBatchGeneratorSpeculativeBackboneMsTotal {return false}
+        if _storage._textBatchGeneratorSpeculativeMtpHeadMsTotal != rhs_storage._textBatchGeneratorSpeculativeMtpHeadMsTotal {return false}
+        if _storage._textBatchGeneratorSpeculativeSampleMsTotal != rhs_storage._textBatchGeneratorSpeculativeSampleMsTotal {return false}
+        if _storage._textBatchGeneratorSpeculativeCacheOpsMsTotal != rhs_storage._textBatchGeneratorSpeculativeCacheOpsMsTotal {return false}
         return true
       }
       if !storagesAreEqual {return false}
