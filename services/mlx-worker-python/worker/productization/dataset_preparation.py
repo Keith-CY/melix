@@ -499,7 +499,7 @@ def _iter_source_records(
     input_path: Path,
     operator_failures: list[dict[str, Any]],
 ) -> Iterable[dict[str, Any]]:
-    paths = [input_path] if input_path.is_file() else sorted(path for path in input_path.rglob("*") if path.is_file())
+    paths = [input_path] if input_path.is_file() else _iter_source_file_paths(input_path)
     for path in paths:
         source_kind = _source_kind(path)
         if source_kind is None:
@@ -534,6 +534,27 @@ def _iter_source_records(
                 text=_normalize_line_endings(text),
                 metadata=_metadata_for_path(path, source_kind),
             )
+
+
+def _iter_source_file_paths(input_path: Path) -> list[Path]:
+    file_paths: list[str] = []
+    stack = [os.fspath(input_path)]
+    while stack:
+        directory = stack.pop()
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            file_paths.append(entry.path)
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    file_paths.sort()
+    return [Path(path) for path in file_paths]
 
 
 def _source_kind(path: Path) -> str | None:

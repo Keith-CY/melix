@@ -26,6 +26,16 @@ from worker.runtime.mlx_text_runtime import (
     _float_tuple,
     _int_tuple,
 )
+from worker.runtime.multimodal_attention_policy import (
+    AttentionPrefillPolicyDecision,
+    MultimodalPrefillAttentionBudgetExceeded,
+    attention_policy_metadata,
+    attention_budget_configured,
+    build_attention_budget_receipt,
+    choose_attention_prefill_policy,
+    enforce_attention_prefill_policy,
+    int_metadata as _attention_int_metadata,
+)
 from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
 from worker.runtime.multimodal_position_receipts import build_position_metadata_receipt
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request, rebuild_multimodal_hash
@@ -353,6 +363,7 @@ class _TextOnlyBatchRequest:
         prompt_tokens: int,
         started_at: float | None = None,
         prepare_ms: float = 0.0,
+        prefill_step_size: int | None = None,
     ) -> None:
         self.loaded_model = loaded_model
         self.input_ids = input_ids
@@ -379,6 +390,7 @@ class _TextOnlyBatchRequest:
         self.last_speculative_mtp_head_ms = 0.0
         self.last_speculative_sample_ms = 0.0
         self.last_speculative_cache_ops_ms = 0.0
+        self.prefill_step_size = prefill_step_size
 
 
 @dataclass
@@ -612,6 +624,9 @@ class _TextOnlyBatchGeneratorScheduler:
             [request.input_ids for request in requests],
             max_tokens=[request.max_tokens for request in requests],
         )
+        for request in requests:
+            if request.prefill_step_size is not None:
+                self._stats.prefill_step_size = request.prefill_step_size
         for uid, request in zip(uids, requests):
             request.uid = int(uid)
             self._active_by_uid[int(uid)] = request
@@ -943,6 +958,9 @@ def _tokenizer_stop_token_ids(tokenizer: Any) -> list[int]:
         elif str(value).strip():
             token_ids.append(int(value))
     return list(dict.fromkeys(token_ids))
+
+
+_int_metadata = _attention_int_metadata
 
 
 def _gemma4_multimodal_weight_presence(weight_names: Iterable[str]) -> tuple[bool, bool]:
@@ -1709,6 +1727,7 @@ class MLXVLMRuntime:
                     sampling=sampling,
                     cancel_event=cancel_event,
                     acceleration_policy=acceleration_policy,
+                    execution_ext=execution_ext,
                 )
                 return
             if not bool(getattr(acceleration_policy, "allow_baseline_fallback", False)):
@@ -1720,11 +1739,30 @@ class MLXVLMRuntime:
             raise RuntimeError(
                 "The loaded Gemma 4 MLX package does not include vision weights, so image inputs are unavailable."
             )
-        self._ensure_fast_path_probe(loaded_model, prepared_request)
+        attention_policy = self._attention_prefill_policy(
+            loaded_model=loaded_model,
+            prepared_request=prepared_request,
+            execution_ext=execution_ext,
+        )
+        self._ensure_fast_path_probe(
+            loaded_model,
+            prepared_request,
+            attention_policy=attention_policy,
+        )
+        enforce_attention_prefill_policy(attention_policy)
         if cancel_event.is_set():
             return
 
-        prompt_tokens = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
+        prompt_tokens = (
+            attention_policy.prompt_tokens
+            if attention_policy is not None
+            else self.prompt_token_count(prepared_request, loaded_model=loaded_model)
+        )
+        selected_prefill_step_size = (
+            attention_policy.selected_prefill_step_size
+            if attention_policy is not None and attention_policy.prefill_chunk_mode == "auto_chunk"
+            else None
+        )
         text_only_batch_generator_unsupported_reason = (
             self._text_only_batch_generator_unsupported_reason(
                 loaded_model=loaded_model,
@@ -1745,6 +1783,7 @@ class MLXVLMRuntime:
                 sampling=sampling,
                 cancel_event=cancel_event,
                 prompt_tokens=prompt_tokens,
+                prefill_step_size=selected_prefill_step_size,
             )
             return
         if self._can_use_text_only_step_fast_path(
@@ -1765,6 +1804,7 @@ class MLXVLMRuntime:
                     sampling=sampling,
                     cancel_event=cancel_event,
                     prompt_tokens=prompt_tokens,
+                    prefill_step_size=selected_prefill_step_size,
                     speculative_fallback_reason=speculative_fallback_reason,
                     text_only_batch_generator_unsupported_reason=(
                         text_only_batch_generator_unsupported_reason
@@ -1824,6 +1864,11 @@ class MLXVLMRuntime:
                             multimodal_decode_mode="fallback",
                             multimodal_fallback_reason="backend_video_kwarg_unsupported",
                         )
+                if selected_prefill_step_size is not None and _callable_accepts_kwarg(
+                    self._backend.stream_generate_fn,
+                    "prefill_step_size",
+                ):
+                    stream_kwargs["prefill_step_size"] = selected_prefill_step_size
 
                 started_at = time.perf_counter()
                 first_token_at: float | None = None
@@ -1918,13 +1963,30 @@ class MLXVLMRuntime:
         sampling,
         cancel_event: Event,
         acceleration_policy: common_pb2.AccelerationPolicy,
+        execution_ext: dict[str, str] | None = None,
     ):
-        self._ensure_fast_path_probe(loaded_model, prepared_request)
         if cancel_event.is_set():
             return
         prompt_tokens = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
         draft_model_id = str(getattr(acceleration_policy, "draft_model_id", "") or "").strip()
         draft_block_size = self._mtp_draft_block_size(acceleration_policy)
+        attention_policy = self._attention_prefill_policy(
+            loaded_model=loaded_model,
+            prepared_request=prepared_request,
+            seq_len=prompt_tokens,
+            execution_ext=execution_ext,
+        )
+        self._ensure_fast_path_probe(
+            loaded_model,
+            prepared_request,
+            attention_policy=attention_policy,
+        )
+        enforce_attention_prefill_policy(attention_policy)
+        selected_prefill_step_size = (
+            attention_policy.selected_prefill_step_size
+            if attention_policy is not None and attention_policy.prefill_chunk_mode == "auto_chunk"
+            else None
+        )
 
         def backend_events():
             self._backend._ensure_runtime()
@@ -1940,6 +2002,7 @@ class MLXVLMRuntime:
                     drafter=drafter,
                     draft_block_size=draft_block_size,
                     prompt_tokens=prompt_tokens,
+                    prefill_step_size=selected_prefill_step_size,
                 )
                 return
 
@@ -1950,6 +2013,11 @@ class MLXVLMRuntime:
                 "draft_kind": "mtp",
                 "draft_block_size": draft_block_size,
             }
+            if selected_prefill_step_size is not None and _callable_accepts_kwarg(
+                self._backend.batch_generate_fn,
+                "prefill_step_size",
+            ):
+                batch_kwargs["prefill_step_size"] = selected_prefill_step_size
 
             started_at = time.perf_counter()
             response_batch = self._backend.batch_generate_fn(
@@ -2016,6 +2084,7 @@ class MLXVLMRuntime:
         drafter: Any,
         draft_block_size: int,
         prompt_tokens: int,
+        prefill_step_size: int | None,
     ):
         import mlx.core as mx
         from mlx_vlm.utils import prepare_inputs
@@ -2048,16 +2117,24 @@ class MLXVLMRuntime:
             detokenizer.reset()
         first_token_at: float | None = None
         completion_tokens = 0
+        step_kwargs: dict[str, Any] = {
+            "max_tokens": int(getattr(sampling, "max_output_tokens", 0) or 64),
+            "draft_model": drafter,
+            "draft_kind": "mtp",
+            "draft_block_size": draft_block_size,
+        }
+        if _callable_accepts_kwarg(
+            self._backend.generate_step_fn,
+            "prefill_step_size",
+        ):
+            step_kwargs["prefill_step_size"] = prefill_step_size
+
         for token, _logprobs in self._backend.generate_step_fn(
             input_ids,
             loaded_model["model"],
             None,
             mask,
-            max_tokens=int(getattr(sampling, "max_output_tokens", 0) or 64),
-            draft_model=drafter,
-            draft_kind="mtp",
-            draft_block_size=draft_block_size,
-            prefill_step_size=None,
+            **step_kwargs,
         ):
             if cancel_event.is_set():
                 return
@@ -2112,6 +2189,7 @@ class MLXVLMRuntime:
         sampling,
         cancel_event: Event,
         prompt_tokens: int,
+        prefill_step_size: int | None,
         speculative_fallback_reason: str,
         text_only_batch_generator_unsupported_reason: str = "",
     ):
@@ -2183,16 +2261,24 @@ class MLXVLMRuntime:
                 speculative_draft_model_configured=False if speculative_fallback_reason else None,
             )
 
+        step_kwargs: dict[str, Any] = {
+            "max_tokens": int(getattr(sampling, "max_output_tokens", 0) or 64),
+            "temperature": float(getattr(sampling, "temperature", 0.0)),
+            "top_p": float(getattr(sampling, "top_p", 1.0)),
+            "top_k": int(getattr(sampling, "top_k", 0)),
+        }
+        if _callable_accepts_kwarg(
+            self._backend.generate_step_fn,
+            "prefill_step_size",
+        ):
+            step_kwargs["prefill_step_size"] = prefill_step_size
+
         for token, logprobs in self._backend.generate_step_fn(
             input_ids,
             loaded_model["model"],
             None,
             mask,
-            max_tokens=int(getattr(sampling, "max_output_tokens", 0) or 64),
-            temperature=float(getattr(sampling, "temperature", 0.0)),
-            top_p=float(getattr(sampling, "top_p", 1.0)),
-            top_k=int(getattr(sampling, "top_k", 0)),
-            prefill_step_size=None,
+            **step_kwargs,
         ):
             if cancel_event.is_set():
                 return
@@ -2338,6 +2424,7 @@ class MLXVLMRuntime:
         sampling,
         cancel_event: Event,
         prompt_tokens: int,
+        prefill_step_size: int | None = None,
     ):
         from mlx_vlm.utils import prepare_inputs
 
@@ -2377,7 +2464,10 @@ class MLXVLMRuntime:
             if hasattr(loaded_model["processor"], "tokenizer")
             else loaded_model["processor"]
         )
-        scheduler = self._text_only_batch_generator_scheduler(loaded_model)
+        scheduler = self._text_only_batch_generator_scheduler(
+            loaded_model,
+            prefill_step_size=prefill_step_size,
+        )
         request = _TextOnlyBatchRequest(
             loaded_model=loaded_model,
             input_ids=input_ids,
@@ -2388,6 +2478,7 @@ class MLXVLMRuntime:
             prompt_tokens=prompt_tokens,
             started_at=started_at,
             prepare_ms=prepare_ms,
+            prefill_step_size=prefill_step_size,
         )
         first_event = True
         for event in scheduler.submit(request):
@@ -2420,11 +2511,21 @@ class MLXVLMRuntime:
                 ),
             )
 
-    def _text_only_batch_generator_scheduler(self, loaded_model) -> _TextOnlyBatchGeneratorScheduler:
+    def _text_only_batch_generator_scheduler(
+        self,
+        loaded_model,
+        *,
+        prefill_step_size: int | None = None,
+    ) -> _TextOnlyBatchGeneratorScheduler:
         scheduler_key = "_melix_text_only_batch_generator_scheduler"
+        requested_prefill_step_size = _text_only_batch_prefill_step_size(prefill_step_size)
         scheduler = loaded_model.get(scheduler_key)
         if isinstance(scheduler, _TextOnlyBatchGeneratorScheduler):
-            return scheduler
+            if scheduler._prefill_step_size != requested_prefill_step_size:
+                scheduler.close()
+                loaded_model.pop(scheduler_key, None)
+            else:
+                return scheduler
         adapter = _TextOnlyVLMDecodeAdapter(loaded_model["model"])
         scheduler = _TextOnlyBatchGeneratorScheduler(
             model=loaded_model["model"],
@@ -2433,6 +2534,7 @@ class MLXVLMRuntime:
             executor=self._executor,
             max_batch_size=None,
             wait_ms=2.0,
+            prefill_step_size=requested_prefill_step_size,
         )
         loaded_model[scheduler_key] = scheduler
         if not any(candidate is loaded_model for candidate in self._loaded_models_with_schedulers):
@@ -2599,6 +2701,8 @@ class MLXVLMRuntime:
         self,
         loaded_model,
         prepared_request: PreparedVisionRequest,
+        *,
+        attention_policy: AttentionPrefillPolicyDecision | None = None,
     ) -> None:
         """Call plan() when generate_tokens() did not follow render_prompt().
 
@@ -2611,8 +2715,18 @@ class MLXVLMRuntime:
         """
         signature = fast_path_probe_signature(loaded_model, prepared_request)
         if self._last_fast_path_signature == signature:
+            if attention_policy is not None:
+                self._last_probe = replace(
+                    self._last_probe,
+                    attention_budget_receipt=build_attention_budget_receipt(attention_policy),
+                )
             return
-        self._record_fast_path_probe(loaded_model, prepared_request, signature=signature)
+        self._record_fast_path_probe(
+            loaded_model,
+            prepared_request,
+            signature=signature,
+            attention_policy=attention_policy,
+        )
 
     def _record_fast_path_probe(
         self,
@@ -2621,6 +2735,7 @@ class MLXVLMRuntime:
         *,
         signature: tuple[str, ...] | None = None,
         seq_len: int | None = None,
+        attention_policy: AttentionPrefillPolicyDecision | None = None,
     ) -> None:
         signature = signature or fast_path_probe_signature(
             loaded_model,
@@ -2651,6 +2766,15 @@ class MLXVLMRuntime:
             multi_image_scatter_mode=fast_path.multi_image_scatter_mode,
             quantized_load_mode=fast_path.quantized_load_mode,
             quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
+            attention_budget_receipt=build_attention_budget_receipt(
+                attention_policy
+                if attention_policy is not None
+                else self._attention_prefill_policy(
+                    loaded_model=loaded_model,
+                    prepared_request=prepared_request,
+                    seq_len=seq_len,
+                )
+            ),
             position_metadata_receipt=self._position_metadata_receipt(
                 loaded_model=loaded_model,
                 prepared_request=prepared_request,
@@ -2673,6 +2797,42 @@ class MLXVLMRuntime:
             prepared_request=prepared_request,
             seq_len=seq_len,
             fallback_reason=fallback_reason,
+        )
+
+    def _attention_prefill_policy(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        seq_len: int | None = None,
+        execution_ext: dict[str, str] | None = None,
+    ) -> AttentionPrefillPolicyDecision | None:
+        if not attention_budget_configured(loaded_model, execution_ext=execution_ext):
+            return None
+        metadata = attention_policy_metadata(loaded_model, execution_ext=execution_ext)
+        family_config = self._family_config(loaded_model)
+        if seq_len is None:
+            seq_len = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
+        return choose_attention_prefill_policy(
+            family_id=str(getattr(family_config, "family_id", "") or metadata.get("vision_family_id", "")),
+            prompt_tokens=seq_len,
+            budget_bytes=_attention_int_metadata(
+                metadata,
+                "melix.vlm.attention_cost_budget_bytes",
+                "melix.vlm.prefill_attention_budget_bytes",
+            ),
+            hidden_size=_attention_int_metadata(metadata, "melix.vlm.hidden_size", "hidden_size"),
+            num_hidden_layers=_attention_int_metadata(
+                metadata,
+                "melix.vlm.num_hidden_layers",
+                "melix.vlm.layer_count",
+                "num_hidden_layers",
+            ),
+            dtype_bytes=_attention_int_metadata(
+                metadata,
+                "melix.vlm.attention_dtype_bytes",
+                "attention_dtype_bytes",
+            ),
         )
 
     @staticmethod

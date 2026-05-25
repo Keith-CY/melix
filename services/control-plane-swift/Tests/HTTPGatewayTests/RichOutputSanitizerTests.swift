@@ -66,4 +66,77 @@ struct RichOutputSanitizerTests {
             unsafeURIRejectionCount: 0
         ))
     }
+
+    @Test("sanitizer removes complete and orphan tool-call markup outside code fences")
+    func removesCompleteAndOrphanToolCallMarkupOutsideCodeFences() {
+        let input = """
+        before <tool_call>{"name":"search","arguments":{"q":"melix"}}</tool_call> middle <|tool_call>call:terminal.execute{"command":"pwd"} after
+
+        ```text
+        <tool_call>{"name":"keep"}</tool_call>
+        ```
+        """
+
+        let result = RichOutputSanitizer.sanitize(input)
+
+        #expect(result.text == """
+        before  middle ```text
+        <tool_call>{"name":"keep"}</tool_call>
+        ```
+        """)
+        #expect(result.didSanitize)
+        #expect(result.blockedHTMLFragmentCount == 1)
+        #expect(result.unsafeURIRejectionCount == 0)
+    }
+
+    @Test("streaming tool-call markup sanitizer suppresses split orphan markers")
+    func streamingToolCallMarkupSanitizerSuppressesSplitOrphanMarkers() {
+        var sanitizer = ToolCallMarkupSanitizer.StreamingState()
+
+        #expect(sanitizer.accept("visible <|tool_") == "visible ")
+        #expect(sanitizer.accept(#"call>call:terminal.execute{"command":"pwd"}"#) == "")
+        #expect(sanitizer.finish() == "")
+    }
+
+    @Test("streaming tool-call markup sanitizer accepts empty deltas")
+    func streamingToolCallMarkupSanitizerAcceptsEmptyDeltas() {
+        var sanitizer = ToolCallMarkupSanitizer.StreamingState()
+
+        #expect(sanitizer.accept("") == "")
+    }
+
+    @Test("streaming tool-call markup sanitizer removes complete single-delta markup")
+    func streamingToolCallMarkupSanitizerRemovesCompleteSingleDeltaMarkup() {
+        var sanitizer = ToolCallMarkupSanitizer.StreamingState()
+
+        #expect(sanitizer.accept(#"a <tool_call>{"name":"search"}</tool_call> b"#) == "a  b")
+        #expect(sanitizer.finish() == "")
+    }
+
+    @Test("streaming tool-call markup sanitizer drops partial markers at finish")
+    func streamingToolCallMarkupSanitizerDropsPartialMarkersAtFinish() {
+        var sanitizer = ToolCallMarkupSanitizer.StreamingState()
+
+        #expect(sanitizer.accept("visible <|tool_") == "visible ")
+        #expect(sanitizer.finish() == "")
+    }
+
+    @Test("streaming tool-call markup sanitizer resumes after a closed marker")
+    func streamingToolCallMarkupSanitizerResumesAfterClosedMarker() {
+        var sanitizer = ToolCallMarkupSanitizer.StreamingState()
+
+        #expect(sanitizer.accept(#"a <tool_call>{"name":"search"}"#) == "a ")
+        #expect(sanitizer.accept("</tool_call> b") == " b")
+        #expect(sanitizer.finish() == "")
+    }
+
+    @Test("final text tool-call sanitizer drops partial trailing markers")
+    func finalTextToolCallSanitizerDropsPartialTrailingMarkers() {
+        #expect(ToolCallMarkupSanitizer.sanitizeFinalText("visible <tool_") == "visible ")
+    }
+
+    @Test("final text tool-call sanitizer preserves empty text")
+    func finalTextToolCallSanitizerPreservesEmptyText() {
+        #expect(ToolCallMarkupSanitizer.sanitizeFinalText("") == "")
+    }
 }

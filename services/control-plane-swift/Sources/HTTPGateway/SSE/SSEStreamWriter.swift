@@ -90,21 +90,33 @@ public struct SSEStreamWriter: Sendable {
             let keepaliveTask = keepaliveTask(continuation: continuation)
             let task = Task {
                 var emittedDataFrame = false
+                var chatTextSanitizer = ToolCallMarkupSanitizer.StreamingState()
                 do {
                     for try await event in stream {
                         if !options.includeUsage, case .usageDelta = event.payload {
                             continue
                         }
-                        emittedDataFrame = true
-                        continuation.yield(
-                            encode(
-                                event: event,
-                                requestID: requestID,
-                                modelID: modelID,
-                                shape: shape,
-                                toolParser: toolParser
+                        let encodedEvent: Melix_Worker_V1_ExecuteEvent
+                        if shape == .chatCompletions {
+                            encodedEvent = Self.sanitizeChatCompletionsEvent(
+                                event,
+                                sanitizer: &chatTextSanitizer
                             )
-                        )
+                        } else {
+                            encodedEvent = event
+                        }
+                        if !Self.shouldSuppressEmptyChatTokenDelta(encodedEvent, shape: shape) {
+                            emittedDataFrame = true
+                            continuation.yield(
+                                encode(
+                                    event: encodedEvent,
+                                    requestID: requestID,
+                                    modelID: modelID,
+                                    shape: shape,
+                                    toolParser: toolParser
+                                )
+                            )
+                        }
                     }
                 } catch {
                     emittedDataFrame = true
@@ -136,6 +148,40 @@ public struct SSEStreamWriter: Sendable {
                     await disconnectNotifier.fireIfNeeded()
                 }
             }
+        }
+    }
+
+    private static func shouldSuppressEmptyChatTokenDelta(
+        _ event: Melix_Worker_V1_ExecuteEvent,
+        shape: StreamShape
+    ) -> Bool {
+        guard shape == .chatCompletions,
+              case .tokenDelta(let delta) = event.payload
+        else {
+            return false
+        }
+        return delta.text.isEmpty
+    }
+
+    private static func sanitizeChatCompletionsEvent(
+        _ event: Melix_Worker_V1_ExecuteEvent,
+        sanitizer: inout ToolCallMarkupSanitizer.StreamingState
+    ) -> Melix_Worker_V1_ExecuteEvent {
+        switch event.payload {
+        case .tokenDelta(let delta):
+            var sanitizedEvent = event
+            sanitizedEvent.tokenDelta.text = sanitizer.accept(delta.text)
+            return sanitizedEvent
+        case .completed(let completed):
+            var sanitizedEvent = event
+            _ = sanitizer.finish()
+            sanitizedEvent.completed.assistantText = ToolCallMarkupSanitizer.sanitizeFinalText(completed.assistantText)
+            return sanitizedEvent
+        case .error:
+            _ = sanitizer.finish()
+            return event
+        default:
+            return event
         }
     }
 
@@ -323,12 +369,17 @@ public struct SSEStreamWriter: Sendable {
             )
         case .usageDelta(let usage):
             return frame(
-                event: "usage",
+                event: "message",
                 json: [
-                    "request_id": requestID,
+                    "id": requestID,
+                    "object": "chat.completion.chunk",
+                    "created": Int(now().timeIntervalSince1970),
+                    "model": modelID,
+                    "choices": [],
                     "usage": [
                         "prompt_tokens": Int(usage.promptTokens),
                         "completion_tokens": Int(usage.completionTokens),
+                        "total_tokens": Int(usage.promptTokens) + Int(usage.completionTokens),
                     ],
                 ]
             )
