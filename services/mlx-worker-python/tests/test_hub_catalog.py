@@ -18,6 +18,7 @@ from worker.model_ops.hub_catalog import (
     _bytes_per_parameter,
     _is_mlx_compatible,
     _local_fit_evidence,
+    _payload_is_mlx_compatible,
     _quantization_summary,
     _size_hint_from_text,
 )
@@ -238,6 +239,38 @@ def test_search_models_with_mlx_only_prefilters_payloads_before_local_fit(monkey
         "card/model",
         "owner/repo-mlx-suffix",
     ]
+
+
+def test_payload_mlx_filter_avoids_string_list_materialization(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_string_list(value: object) -> list[str]:
+        raise AssertionError(f"unexpected payload tag materialization: {value!r}")  # pragma: no cover
+
+    monkeypatch.setattr(hub_catalog_module, "_string_list", fail_string_list)
+
+    assert _payload_is_mlx_compatible(
+        {
+            "id": "plain/model",
+            "tags": ["Text-Generation", "MLX", object()],
+            "library_name": "transformers",
+            "cardData": {},
+        }
+    ) is True
+    assert _payload_is_mlx_compatible(
+        {
+            "id": "plain/model",
+            "tags": "mlx",
+            "library_name": "transformers",
+            "cardData": {},
+        }
+    ) is True
+    assert _payload_is_mlx_compatible(
+        {
+            "id": "plain/model",
+            "tags": ["Text-Generation", object()],
+            "library_name": "transformers",
+            "cardData": {},
+        }
+    ) is False
 
 
 def test_card_data_tag_mlx_check_avoids_string_list_materialization(monkeypatch: pytest.MonkeyPatch) -> None:

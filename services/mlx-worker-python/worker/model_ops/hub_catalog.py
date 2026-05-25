@@ -393,8 +393,7 @@ def _base_models(value: Any) -> list[str]:
 
 def _payload_is_mlx_compatible(payload: dict[str, Any]) -> bool:
     card_data = payload.get("cardData") if isinstance(payload.get("cardData"), dict) else {}
-    tags = _string_list(payload.get("tags"))
-    if any(tag.lower() == "mlx" for tag in tags):
+    if _tag_payload_contains_mlx(payload.get("tags")):
         return True
     library_name = _string(payload.get("library_name") or card_data.get("library_name"))
     if library_name.lower() == "mlx":
