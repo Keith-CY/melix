@@ -4156,6 +4156,9 @@ class MaintenanceCore:
         parameters: dict[str, str],
     ) -> tuple[int, ...]:
         raw_value = parameters.get("context_lengths", "").strip()
+        if not raw_value and not parameters:
+            default_prompt = suite.prompt_batches[0] if suite.prompt_batches else suite.title
+            return (MaintenanceCore._benchmark_prompt_token_count(default_prompt),)
         values: list[int] = []
         if raw_value:
             for token in raw_value.split(","):
@@ -4244,6 +4247,7 @@ class MaintenanceCore:
         return len(prompt.split())
 
     @staticmethod
+    @lru_cache(maxsize=1024)
     def _benchmark_prompt_token_count(prompt: str) -> int:
         if isinstance(prompt, ShapedBenchmarkPrompt):
             return max(1, prompt.token_count)
