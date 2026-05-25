@@ -67,6 +67,106 @@ _GEMMA4_CLOSE_MARKER = "<channel|>"
 _GEMMA4_TURN_END_MARKER = "<turn|>"
 _GEMMA4_TOOL_RESPONSE_OPEN = "<|tool_response>"
 _GEMMA4_TOOL_RESPONSE_CLOSE = "<tool_response|>"
+_PROMPT_SECOND_AXIS_KWARGS = {
+    "attention_mask",
+    "decoder_inputs_embeds",
+    "deepstack_visual_embeds",
+    "visual_pos_masks",
+    "per_layer_inputs",
+    "full_text_row_masked_out_mask",
+    "pos_hw",
+}
+_PROMPT_LAST_AXIS_KWARGS = {"position_ids"}
+
+
+def _slice_chunked_prompt_kwargs(
+    prompt_kwargs: dict[str, Any],
+    *,
+    cache_offset: int,
+    seq_len: int,
+) -> tuple[dict[str, Any], int]:
+    start = max(0, int(cache_offset or 0))
+    length = max(0, int(seq_len or 0))
+    stop = start + length
+    if not prompt_kwargs or length <= 0:
+        return dict(prompt_kwargs or {}), 0
+
+    sliced = dict(prompt_kwargs)
+    fallback_count = 0
+    for key, value in prompt_kwargs.items():
+        axis = _chunked_prompt_kwarg_axis(key)
+        if axis is None:
+            continue
+        replacement = _slice_prompt_kwarg_axis(value, axis=axis, start=start, stop=stop)
+        if replacement is None:
+            fallback_count += 1
+            continue
+        sliced[key] = replacement
+    return sliced, fallback_count
+
+
+def _chunked_prompt_kwarg_axis(key: str) -> int | None:
+    if key == "inputs_embeds" or key in _PROMPT_SECOND_AXIS_KWARGS:
+        return 1
+    if key in _PROMPT_LAST_AXIS_KWARGS:
+        return -1
+    return None
+
+
+def _slice_prompt_kwarg_axis(value: Any, *, axis: int, start: int, stop: int) -> Any | None:
+    shape = getattr(value, "shape", None)
+    if not isinstance(shape, (tuple, list)) or not shape:
+        return None
+    ndim = len(shape)
+    normalized_axis = axis if axis >= 0 else ndim + axis
+    if normalized_axis < 0 or normalized_axis >= ndim:
+        return None
+    try:
+        axis_extent = int(shape[normalized_axis])
+    except (TypeError, ValueError):
+        return None
+    if axis_extent == stop - start:
+        return value
+    if axis_extent < stop:
+        return None
+    index: list[object] = [slice(None)] * ndim
+    index[normalized_axis] = slice(start, stop)
+    try:
+        return value[tuple(index)]
+    except (TypeError, IndexError, KeyError, ValueError):
+        return None
+
+
+def _prompt_axis_length(value: Any) -> int:
+    shape = getattr(value, "shape", None)
+    if isinstance(shape, (tuple, list)) and len(shape) >= 2:
+        return max(0, int(shape[1]))
+    if isinstance(shape, (tuple, list)) and shape:
+        return max(0, int(shape[-1]))
+    if isinstance(value, (list, tuple)):
+        return len(value)
+    return 0
+
+
+def _prompt_cache_offset(cache: Any) -> int | None:
+    if isinstance(cache, (list, tuple)):
+        for item in cache:
+            offset = _prompt_cache_offset(item)
+            if offset is not None:
+                return offset
+        return 0
+    offset = getattr(cache, "offset", None)
+    if offset is None:
+        return None
+    try:
+        if hasattr(offset, "tolist"):
+            offset = offset.tolist()
+        if isinstance(offset, (list, tuple)):
+            offset = offset[0] if offset else 0
+        return max(0, int(offset or 0))
+    except (TypeError, ValueError):
+        return None
+
 
 class RuntimeUnavailableError(RuntimeError):
     pass
@@ -348,6 +448,52 @@ class _CallableTokenizerProcessor:
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         tokenizer = getattr(self._tokenizer_wrapper, "_tokenizer", self._tokenizer_wrapper)
         return tokenizer(*args, **kwargs)
+
+
+class _ChunkedPromptLanguageModelProxy:
+    def __init__(self, language_model: Any, runtime: "MLXVLMRuntime") -> None:
+        self._language_model = language_model
+        self._runtime = runtime
+
+    def __getattr__(self, attr: str) -> Any:
+        return getattr(self._language_model, attr)
+
+    def __call__(self, *args, **kwargs):
+        cache_offset = _prompt_cache_offset(kwargs.get("cache"))
+        seq_len = _prompt_axis_length(
+            _first_present(
+                kwargs.get("inputs_embeds"),
+                kwargs.get("inputs"),
+                args[0] if args else None,
+            )
+        )
+        if cache_offset is not None and seq_len > 0:
+            sliced_kwargs, fallback_count = _slice_chunked_prompt_kwargs(
+                {key: value for key, value in kwargs.items() if key != "inputs_embeds"},
+                cache_offset=cache_offset,
+                seq_len=seq_len,
+            )
+            if fallback_count:
+                self._runtime._record_multimodal_position_slice_fallback(fallback_count)
+            kwargs = {**kwargs, **sliced_kwargs}
+        return self._language_model(*args, **kwargs)
+
+
+class _ChunkedPromptModelProxy:
+    def __init__(self, model: Any, runtime: "MLXVLMRuntime") -> None:
+        self._model = model
+        language_model = getattr(model, "language_model", None)
+        self.language_model = (
+            _ChunkedPromptLanguageModelProxy(language_model, runtime)
+            if language_model is not None
+            else language_model
+        )
+
+    def __getattr__(self, attr: str) -> Any:
+        return getattr(self._model, attr)
+
+    def __call__(self, *args, **kwargs):
+        return self._model(*args, **kwargs)
 
 
 class _TextOnlyBatchRequest:
@@ -1874,8 +2020,13 @@ class MLXVLMRuntime:
                 first_token_at: float | None = None
                 completion_tokens = 0
                 cumulative_raw_text = ""
+                generation_model = (
+                    self._wrap_chunked_prompt_model(loaded_model["model"])
+                    if selected_prefill_step_size is not None
+                    else loaded_model["model"]
+                )
                 for response in self._backend.stream_generate_fn(
-                    loaded_model["model"],
+                    generation_model,
                     loaded_model["processor"],
                     formatted_prompt,
                     **stream_kwargs,
@@ -2696,6 +2847,23 @@ class MLXVLMRuntime:
                     _text_batch_generator_stats_snapshot(scheduler)
                 )
         return replace(probe, **stats_kwargs) if stats_kwargs else probe
+
+    def _wrap_chunked_prompt_model(self, model: Any) -> Any:
+        if isinstance(model, _ChunkedPromptModelProxy):
+            return model
+        return _ChunkedPromptModelProxy(model, self)
+
+    def _record_multimodal_position_slice_fallback(self, fallback_count: int) -> None:
+        count = max(0, int(fallback_count or 0))
+        if count <= 0:
+            return
+        self._last_probe = replace(
+            self._last_probe,
+            multimodal_position_slice_fallback_count=(
+                int(getattr(self._last_probe, "multimodal_position_slice_fallback_count", 0) or 0)
+                + count
+            ),
+        )
 
     def _ensure_fast_path_probe(
         self,
