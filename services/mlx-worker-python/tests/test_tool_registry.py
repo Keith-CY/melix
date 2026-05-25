@@ -202,6 +202,37 @@ def test_tool_descriptor_schema_payload_returns_isolated_mutable_payloads() -> N
     assert second_payload["required"] == ["media_ref", "region"]
 
 
+def test_tool_descriptor_schema_payload_uses_cached_local_copy_helpers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool = built_in_tool_registry().tools[0]
+    dict_copy_calls = 0
+    list_copy_calls = 0
+
+    def counting_dict_copy(value: dict[str, object]) -> dict[str, object]:
+        nonlocal dict_copy_calls
+        dict_copy_calls += 1
+        return dict.copy(value)
+
+    def counting_list_copy(value: list[str]) -> list[str]:
+        nonlocal list_copy_calls
+        list_copy_calls += 1
+        return list.copy(value)
+
+    monkeypatch.setattr(tool_registry_module, "_COPY_DICT", counting_dict_copy)
+    monkeypatch.setattr(tool_registry_module, "_COPY_LIST", counting_list_copy)
+
+    payload = tool.schema_payload()
+
+    assert payload["properties"]["media_ref"] == {
+        "type": "string",
+        "description": "Identifier or URI for the source image.",
+    }
+    assert payload["required"] == ["media_ref", "region"]
+    assert dict_copy_calls == len(tool._cached_schema_properties)
+    assert list_copy_calls == 1
+
+
 def test_tool_registry_rejects_duplicate_tool_names() -> None:
     registry = built_in_tool_registry()
 
