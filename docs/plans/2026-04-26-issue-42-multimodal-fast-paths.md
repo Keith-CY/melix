@@ -365,6 +365,10 @@ Executable unit issues:
   `disabled_reason=unsupported_route`. `speculative_route_policy=off`
   preserves stale speculative operator input but launches with baseline
   speculative mode and `operator_disabled` receipt metadata.
+- Unit 1.2.3 clears worker-facing optimized acceleration profiles when
+  speculative defaults are downgraded for an unsupported VLM route, so the
+  admitted baseline request uses the default baseline serving profile instead
+  of leaking an unverified optimized profile into dispatch.
 - Unit 1.2.3 follow-up review coverage keeps route identifiers separate from
   route-policy tokens in override receipts, treats transcription, speech, and
   image routes as media-aware before model-modality admission, and avoids

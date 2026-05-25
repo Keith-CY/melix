@@ -212,7 +212,7 @@ public struct GatewayServingDefaultsPolicy: Sendable, Equatable {
                 accelerationMode: .baseline,
                 draftModelID: "",
                 numDraftTokens: 0,
-                accelerationProfile: accelerationProfile,
+                accelerationProfile: "",
                 multimodalRoutePolicy: multimodalRoutePolicy,
                 speculativeRoutePolicy: speculativeRoutePolicy
             )
