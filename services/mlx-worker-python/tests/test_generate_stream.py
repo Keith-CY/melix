@@ -633,6 +633,11 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     assert completed.parser_metrics["resolved_stop_token_count"] == "0"
     assert completed.parser_metrics["reasoning_flag_source"] == "unspecified"
     assert completed.parser_metrics["turn_boundary_stop_reason"] == "length"
+    assert completed.parser_metrics["channel_state_preferred_source"] == "raw_text"
+    assert completed.parser_metrics["open_tool_event_count"] == "0"
+    assert completed.parser_metrics["pending_marker_tail_chars"] == "0"
+    assert completed.parser_metrics["orphan_tool_event_flush_count"] == "0"
+    assert completed.parser_metrics["terminal_marker_tail_flush_count"] == "0"
     usage = next(event.usage_delta for event in events if event.HasField("usage_delta"))
     assert usage.prompt_tokens == 5
     assert usage.completion_tokens == 2

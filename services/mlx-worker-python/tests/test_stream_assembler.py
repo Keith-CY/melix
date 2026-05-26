@@ -135,6 +135,44 @@ def _token_count_routing_probe() -> None:
         )
     )
     partial_tool_completed = partial_tool_assembler.completed()
+    channel_source_state = stream_assembler.ChannelAssemblyState()
+    channel_source_state.record_channel_source("raw_text")
+    channel_source_state.record_channel_source("reasoning_tag")
+    channel_source_state.record_channel_source("tool_call_tag")
+    channel_source_state.record_channel_source("reasoning_tag")
+    split_tool_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-split-tool",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+    )
+    split_tool_first = split_tool_assembler.accept(StreamFragment(raw_text="alpha<|tool_"))
+    split_tool_second = split_tool_assembler.accept(
+        StreamFragment(raw_text='alpha<|tool_call>call:search{"q":"alpha"}<tool_call|>')
+    )
+    split_tool_completed = split_tool_assembler.completed()
+    orphan_tool_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-orphan-tool",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    orphan_tool_deltas = orphan_tool_assembler.accept(
+        StreamFragment(raw_text='visible <tool_call>{"name":"search","arguments":{"q":"leak"}}')
+    )
+    orphan_tool_open_count = orphan_tool_assembler.channel_state.open_tool_event_count
+    orphan_tool_completed = orphan_tool_assembler.completed()
+    terminal_tail_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-terminal-tail",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+    )
+    terminal_tail_deltas = terminal_tail_assembler.accept(
+        StreamFragment(raw_text="visible <|tool_")
+    )
+    terminal_tail_pending = terminal_tail_assembler.channel_state.pending_marker_tail
+    terminal_tail_completed = terminal_tail_assembler.completed()
 
     assert [
         (
@@ -179,6 +217,40 @@ def _token_count_routing_probe() -> None:
     assert partial_tool_completed.metrics["partial_tool_candidate_count"] == 2
     assert partial_tool_completed.metrics["malformed_tool_fragment_count"] == 0
     assert partial_tool_completed.metrics["unknown_tool_delta_count"] == 0
+    assert channel_source_state.preferred_channel_source == "tool_call_tag"
+    assert [delta.content_text for delta in split_tool_first if delta.content_text] == [
+        "alpha"
+    ]
+    assert split_tool_assembler.channel_state.pending_marker_tail == ""
+    assert split_tool_assembler.channel_state.open_tool_event_count == 0
+    assert [delta.tool_call.tool_name for delta in split_tool_second if delta.tool_call] == [
+        "search"
+    ]
+    assert split_tool_completed.assistant_text == "alpha"
+    assert split_tool_completed.metrics["pending_marker_tail_chars"] == 0
+    assert split_tool_completed.metrics["max_pending_marker_tail_chars"] == len("<|tool_")
+    assert split_tool_completed.metrics["open_tool_event_count"] == 0
+    assert split_tool_completed.metrics["channel_state_preferred_source"] == "tool_call_tag"
+    assert [delta.content_text for delta in orphan_tool_deltas if delta.content_text] == [
+        "visible "
+    ]
+    assert [delta.tool_call for delta in orphan_tool_deltas if delta.tool_call] == []
+    assert orphan_tool_open_count == 1
+    assert orphan_tool_completed.assistant_text == "visible "
+    assert orphan_tool_completed.metrics["malformed_tool_fragment_count"] == 1
+    assert orphan_tool_completed.metrics["orphan_tool_event_flush_count"] == 1
+    assert orphan_tool_completed.metrics["open_tool_event_count"] == 0
+    assert orphan_tool_completed.metrics["tool_call_markup_leak_count"] == 0
+    assert [delta.content_text for delta in terminal_tail_deltas if delta.content_text] == [
+        "visible "
+    ]
+    assert terminal_tail_pending == "<|tool_"
+    assert terminal_tail_assembler.channel_state.pending_marker_tail == ""
+    assert terminal_tail_completed.assistant_text == "visible "
+    assert terminal_tail_completed.metrics["terminal_marker_tail_flush_count"] == 1
+    assert terminal_tail_completed.metrics["pending_marker_tail_chars"] == 0
+    assert terminal_tail_completed.metrics["max_pending_marker_tail_chars"] == len("<|tool_")
+    assert terminal_tail_completed.metrics["tool_call_markup_leak_count"] == 0
 
 
 def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:

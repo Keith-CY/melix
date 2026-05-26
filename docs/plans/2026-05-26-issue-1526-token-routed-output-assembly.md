@@ -40,6 +40,39 @@ routing through receipt fields.
    terminators, and stream/non-stream normalized receipt parity.
 6. Update the structured streaming runbook with the receipt fields and metrics
    needed to diagnose routing decisions.
+7. Add a request-local channel assembly state that records the preferred
+   classified channel source, preserves incomplete marker tails across chunks,
+   exposes annotation-dependent segment state for future protocol-bearing
+   annotation payloads, and terminally closes orphan tool-call markers with typed
+   metrics.
+
+## Current Slice Status
+
+Completed:
+
+- Token route receipts report router identity, channel, channel source,
+  reasoning mode, tool-choice policy, visible token count, hidden reasoning
+  token count, and raw-text fallback use.
+- Allowed-tool receipts distinguish declared tools, explicit empty tool lists,
+  omitted tools, schema conflicts, and parser suppression reasons.
+- Partial and argumentless tool objects are suppressed and counted with
+  `partial_tool_candidate_count` instead of being promoted to structured tool
+  calls.
+- `RequestStreamAssembler` owns an explicit request-local
+  `ChannelAssemblyState` for the preferred channel source, pending marker tail,
+  annotation-dependent segment count, and open tool events.
+- Split marker prefixes and terminal partial markers are covered by fixtures and
+  reported through `max_pending_marker_tail_chars`,
+  `pending_marker_tail_chars`, and `terminal_marker_tail_flush_count`.
+- Orphan tool-call markers are terminally flushed without visible markup leaks
+  and reported through `orphan_tool_event_flush_count`.
+
+Remaining for issue closeout:
+
+- Annotation-dependent spans still need protocol-bearing fixtures where text
+  arrives before annotation payloads.
+- Tool-result payload buffering remains blocked on a runtime event or protocol
+  shape that can carry bundled tool results separately from tool-call deltas.
 
 ## Verification
 
