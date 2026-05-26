@@ -485,52 +485,227 @@ def test_generate_token_route_receipt_counts_all_tokens_in_visible_span() -> Non
     ]
 
 
+def test_generate_records_request_local_allowed_tools_receipt() -> None:
+    inference_service, model_handle = _build_services(TokenRoutedVisibleBackend())
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-allowed-tools-receipt"),
+            model_handle=model_handle,
+            ext={
+                "melix.tool_config.source": "openai_chat_tools",
+                "melix.tool_config.tool_count": "3",
+                "melix.mcp.source_ids": "shared,task",
+            },
+            tool_config=common_pb2.ToolConfig(
+                tools=[
+                    common_pb2.ToolDefinition(
+                        name="search",
+                        description="shared search",
+                        json_schema='{"type":"object","properties":{"q":{"type":"string"}}}',
+                    ),
+                    common_pb2.ToolDefinition(
+                        name="search",
+                        description="task override",
+                        json_schema='{"type":"object","properties":{"query":{"type":"string"}}}',
+                    ),
+                    common_pb2.ToolDefinition(
+                        name="lookup",
+                        description="lookup docs",
+                        json_schema='{"type":"object"}',
+                    ),
+                ],
+                tool_choice="auto",
+            ),
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="List tools")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+
+    completed = next(
+        event.completed
+        for event in inference_service.Generate(request, context=None)
+        if event.HasField("completed")
+    )
+    receipt = json.loads(completed.parser_metrics["allowed_tools_receipt_json"])
+
+    assert receipt == {
+        "allowed_tool_names": ["search", "lookup"],
+        "allowed_tool_count": 2,
+        "tool_choice_policy": "auto",
+        "tool_config_source": "openai_chat_tools",
+        "tool_source_ids": ["shared", "task"],
+        "tool_config_state": "declared",
+        "schema_conflict_count": 1,
+        "schema_conflicts": ["search"],
+        "suppressed_reason": "",
+    }
+
+
+def test_generate_distinguishes_omitted_and_explicit_empty_allowed_tools() -> None:
+    inference_service, model_handle = _build_services(TokenRoutedVisibleBackend())
+    omitted_request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-tools-omitted"),
+            model_handle=model_handle,
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Say hi")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+    explicit_empty_request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-tools-empty"),
+            model_handle=model_handle,
+            ext={
+                "melix.tool_config.source": "openai_chat_tools",
+                "melix.tool_config.tool_count": "0",
+                "melix.tool_parser.suppressed_reason": "request_tools_empty",
+            },
+            tool_config=common_pb2.ToolConfig(tool_choice="none"),
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Say hi")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+
+    omitted_completed = next(
+        event.completed
+        for event in inference_service.Generate(omitted_request, context=None)
+        if event.HasField("completed")
+    )
+    explicit_empty_completed = next(
+        event.completed
+        for event in inference_service.Generate(explicit_empty_request, context=None)
+        if event.HasField("completed")
+    )
+    omitted_receipt = json.loads(omitted_completed.parser_metrics["allowed_tools_receipt_json"])
+    explicit_empty_receipt = json.loads(
+        explicit_empty_completed.parser_metrics["allowed_tools_receipt_json"]
+    )
+
+    assert omitted_receipt["tool_config_state"] == "omitted"
+    assert omitted_receipt["tool_choice_policy"] == "auto"
+    assert omitted_receipt["allowed_tool_names"] == []
+    assert explicit_empty_receipt["tool_config_state"] == "explicit_empty"
+    assert explicit_empty_receipt["tool_choice_policy"] == "none"
+    assert explicit_empty_receipt["suppressed_reason"] == "request_tools_empty"
+
+
 @pytest.mark.parametrize(
     ("case_id", "raw_text", "expected"),
     [
         (
-            "plain",
-            "plain final answer",
+            "auto",
+            "visible final answer",
             {
+                "assistant_text": "visible final answer",
+                "reasoning_text": "",
                 "reasoning_finalized": "false",
                 "tool_calls_finalized": "false",
                 "malformed_channel_recovered": "false",
+                "tool_choice_policy": "auto",
             },
         ),
         (
-            "reasoning",
-            "<think>hidden trace</think>visible answer",
+            "none",
+            "visible answer without tools",
             {
-                "reasoning_finalized": "true",
+                "assistant_text": "visible answer without tools",
+                "reasoning_text": "",
+                "reasoning_finalized": "false",
                 "tool_calls_finalized": "false",
                 "malformed_channel_recovered": "false",
+                "tool_choice_policy": "none",
             },
         ),
         (
-            "tool",
+            "forced-valid",
             '<tool_call>{"name":"search","arguments":{"q":"one"}}</tool_call>',
             {
+                "assistant_text": "",
+                "reasoning_text": "",
                 "reasoning_finalized": "false",
                 "tool_calls_finalized": "true",
                 "malformed_channel_recovered": "false",
+                "tool_choice_policy": "required",
+            },
+        ),
+        (
+            "forced-missing-tool",
+            '<tool_call>{"name":"missing","arguments":{"q":"one"}}</tool_call>visible',
+            {
+                "assistant_text": "visible",
+                "reasoning_text": "",
+                "reasoning_finalized": "false",
+                "tool_calls_finalized": "false",
+                "malformed_channel_recovered": "false",
+                "unknown_tool_delta_count": "1",
+                "tool_choice_policy": "required",
+            },
+        ),
+        (
+            "reasoning-only-truncation",
+            "<think>unfinished hidden reasoning",
+            {
+                "assistant_text": "",
+                "reasoning_text": "",
+                "reasoning_finalized": "false",
+                "tool_calls_finalized": "false",
+                "malformed_channel_recovered": "true",
+                "malformed_reasoning_count": "1",
+                "tool_choice_policy": "auto",
+            },
+        ),
+        (
+            "alternate-final-terminator",
+            "<think>hidden trace\nAnswer: 42",
+            {
+                "assistant_text": "Answer: 42",
+                "reasoning_text": "hidden trace",
+                "reasoning_finalized": "true",
+                "tool_calls_finalized": "false",
+                "malformed_channel_recovered": "true",
+                "tool_choice_policy": "auto",
             },
         ),
         (
             "malformed",
             "<|channel>thought hidden\n\nFinal answer",
             {
+                "assistant_text": "Final answer",
+                "reasoning_text": "hidden",
                 "reasoning_finalized": "true",
                 "tool_calls_finalized": "false",
                 "malformed_channel_recovered": "true",
+                "tool_choice_policy": "auto",
             },
         ),
         (
             "truncated",
             'visible <tool_call>{"name":"search","arguments":{"q":"unfinished"}',
             {
+                "assistant_text": "visible ",
+                "reasoning_text": "",
                 "reasoning_finalized": "false",
                 "tool_calls_finalized": "true",
                 "malformed_channel_recovered": "true",
+                "tool_choice_policy": "required",
             },
         ),
     ],
@@ -544,15 +719,19 @@ def test_generate_finalizer_receipt_matches_for_stream_and_non_stream_modes(
         raw_text=raw_text,
         stream=True,
         request_id=f"req-finalizer-stream-{case_id}",
+        tool_choice=expected["tool_choice_policy"],
     )
     non_stream_events = _generate_finalizer_events(
         raw_text=raw_text,
         stream=False,
         request_id=f"req-finalizer-non-stream-{case_id}",
+        tool_choice=expected["tool_choice_policy"],
     )
 
-    stream_receipt = _finalizer_receipt(stream_events)
-    non_stream_receipt = _finalizer_receipt(non_stream_events)
+    stream_completed = _finalizer_completed(stream_events)
+    non_stream_completed = _finalizer_completed(non_stream_events)
+    stream_receipt = dict(stream_completed.parser_metrics)
+    non_stream_receipt = dict(non_stream_completed.parser_metrics)
 
     for field in (
         "response_id",
@@ -582,11 +761,22 @@ def test_generate_finalizer_receipt_matches_for_stream_and_non_stream_modes(
     assert _normalized_finalizer_receipt(stream_receipt) == _normalized_finalizer_receipt(
         non_stream_receipt
     )
+    assert stream_completed.assistant_text == non_stream_completed.assistant_text
+    assert stream_completed.reasoning_text == non_stream_completed.reasoning_text
+    assert stream_completed.raw_assistant_text == non_stream_completed.raw_assistant_text
+    assert stream_completed.assistant_text == expected["assistant_text"]
+    assert stream_completed.reasoning_text == expected["reasoning_text"]
+    stream_route_receipt = json.loads(stream_receipt["token_route_receipt_json"])
+    non_stream_route_receipt = json.loads(non_stream_receipt["token_route_receipt_json"])
+    assert stream_route_receipt["tool_choice_policy"] == expected["tool_choice_policy"]
+    assert non_stream_route_receipt["tool_choice_policy"] == expected["tool_choice_policy"]
     assert stream_receipt["finish_reason"] == "length"
     assert stream_receipt["usage_prompt_tokens"] == "11"
     assert stream_receipt["usage_completion_tokens"] == "3"
     assert stream_receipt["usage_total_tokens"] == "14"
     for key, value in expected.items():
+        if key in {"assistant_text", "reasoning_text", "tool_choice_policy"}:
+            continue
         assert stream_receipt[key] == value
 
 
@@ -640,6 +830,7 @@ def _generate_finalizer_events(
     raw_text: str,
     stream: bool,
     request_id: str,
+    tool_choice: str = "auto",
     return_usage: bool = True,
 ):
     inference_service, model_handle = _build_services(FinalizerParityBackend(raw_text=raw_text))
@@ -666,6 +857,7 @@ def _generate_finalizer_events(
                     )
                 ],
                 parser="qwen",
+                tool_choice="" if tool_choice == "auto" else tool_choice,
             ),
         ),
         messages=[
@@ -696,8 +888,11 @@ def _build_services(backend):
 
 
 def _finalizer_receipt(events) -> dict[str, str]:
-    completed = next(event.completed for event in events if event.HasField("completed"))
-    return dict(completed.parser_metrics)
+    return dict(_finalizer_completed(events).parser_metrics)
+
+
+def _finalizer_completed(events):
+    return next(event.completed for event in events if event.HasField("completed"))
 
 
 def _normalized_finalizer_receipt(receipt: dict[str, str]) -> dict[str, str]:

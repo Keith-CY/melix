@@ -259,6 +259,7 @@ class RequestStreamAssembler:
             "reasoning_parser_bypassed_count": 0,
             "tool_call_name_normalized_count": 0,
             "unknown_tool_delta_count": 0,
+            "partial_tool_candidate_count": 0,
             "harmony_channel_hidden_count": 0,
             "harmony_channel_unknown_count": 0,
             "harmony_channel_markup_leak_count": 0,
@@ -926,9 +927,15 @@ class RequestStreamAssembler:
         if not isinstance(payload, dict):
             self._metrics["malformed_tool_fragment_count"] += 1
             return None
+        if not payload:
+            self._metrics["partial_tool_candidate_count"] += 1
+            return None
         name = str(payload.get("name") or payload.get("tool_name") or "").strip()
         if not name:
             self._metrics["malformed_tool_fragment_count"] += 1
+            return None
+        if "arguments" not in payload:
+            self._metrics["partial_tool_candidate_count"] += 1
             return None
         resolved_name = self._resolve_tool_name(name)
         if resolved_name is None:

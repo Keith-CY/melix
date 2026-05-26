@@ -116,6 +116,8 @@ The worker stream assembler reports parser metrics on completed events:
 - `effective_parser_config_json`
 - `compat_policy_receipt_json`
 - `compat_effective_config_hash`
+- `token_route_receipt_json`
+- `allowed_tools_receipt_json`
 
 Expected healthy values:
 
@@ -159,6 +161,15 @@ Expected healthy values:
 - `compat_policy_receipt_json` and `compat_effective_config_hash` should
   preserve the request-shaped compatibility policy receipt on completed events
   without adding raw hidden reasoning content to the receipt
+- `token_route_receipt_json` should report the token router id/version, latest
+  routed token id, channel, channel source, `reasoning_mode`,
+  `tool_choice_policy`, visible token count, hidden reasoning token count,
+  sampled route records, and whether raw-text fallback token ids were used
+- `allowed_tools_receipt_json` should report request-local `allowed_tool_names`,
+  `tool_config_state` (`declared`, `explicit_empty`, or `omitted`),
+  `tool_choice_policy`, tool config source, tool source ids, schema conflict
+  names/count, and any suppressed reason; this receipt distinguishes
+  omitted tools from explicit `tools=[]`
 - requests with typed `ToolConfig.tools` should increment
   `native_tool_exemplar_injected_count` when those tools are forwarded as
   tokenizer-native `tools` kwargs and no explicit native `tools` kwargs were

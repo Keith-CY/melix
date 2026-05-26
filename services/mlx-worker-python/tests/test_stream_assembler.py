@@ -1421,6 +1421,33 @@ def test_malformed_non_object_and_nameless_tool_calls_are_skipped() -> None:
     assert completed.metrics["tool_call_markup_leak_count"] == 0
 
 
+def test_empty_or_argumentless_tool_objects_are_partial_candidates_not_tool_calls() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-partial-tool-candidates",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+        allowed_tool_names=("search",),
+    )
+
+    deltas = assembler.accept(
+        StreamFragment(
+            raw_text=(
+                "<tool_call>{}</tool_call>"
+                '<tool_call>{"name":"search"}</tool_call>'
+                "visible"
+            )
+        )
+    )
+    completed = assembler.completed()
+
+    assert [delta.tool_call for delta in deltas if delta.tool_call] == []
+    assert [delta.content_text for delta in deltas if delta.content_text] == ["visible"]
+    assert completed.metrics["partial_tool_candidate_count"] == 2
+    assert completed.metrics["malformed_tool_fragment_count"] == 0
+    assert completed.metrics["unknown_tool_delta_count"] == 0
+
+
 def test_duplicate_tool_call_fragments_are_skipped_when_raw_stream_replays_out_of_order() -> None:
     assembler = RequestStreamAssembler(
         request_id="req-duplicate-tool",

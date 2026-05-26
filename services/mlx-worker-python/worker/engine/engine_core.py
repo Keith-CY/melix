@@ -25,6 +25,7 @@ from worker.runtime.token_counting import whitespace_token_count as _whitespace_
 _ENGINE_STOP_CONTRACT_CACHE_FIELD = "_melix.engine.resolved_text_stop_contract_cache"
 _TOKEN_ROUTER_ID = "melix.worker.token_router"
 _TOKEN_ROUTER_VERSION = "1"
+_COMPACT_SORTED_JSON_ENCODER = json.JSONEncoder(separators=(",", ":"), sort_keys=True)
 _DEFAULT_INACTIVE_TOKEN_ROUTE_RECEIPT_JSON = inactive_token_route_receipt_json(
     _TOKEN_ROUTER_ID,
     _TOKEN_ROUTER_VERSION,
@@ -353,6 +354,7 @@ class EngineCore:
             parser_metrics.update(_text_native_mtp_parser_metrics(last_token_event))
             resolved_stop_token_count = str(stop_contract.resolved_stop_token_count)
             created = execution_ext.get("melix.response.created", "")
+            allowed_tools_receipt_json = self._allowed_tools_receipt_json(request)
             if plain_text_fast_path:
                 response_history_normalized_count = execution_ext.get(
                     "melix.response_history.normalized_count",
@@ -381,6 +383,7 @@ class EngineCore:
                         "generated_reasoning_delta_count": "0",
                         "generated_tool_call_delta_count": generated_tool_call_delta_count_text,
                         "token_route_receipt_json": token_route_receipt_json,
+                        "allowed_tools_receipt_json": allowed_tools_receipt_json,
                     }
                 )
             else:
@@ -407,6 +410,7 @@ class EngineCore:
                 if token_route_receipt is not None:
                     token_route_receipt_json = token_route_receipt.to_json()
                 parser_metrics["token_route_receipt_json"] = token_route_receipt_json
+                parser_metrics["allowed_tools_receipt_json"] = allowed_tools_receipt_json
             finalization_receipt = finalize_text_response(
                 response_id=request_id,
                 created=created,
@@ -711,6 +715,61 @@ class EngineCore:
             request_id=request.execution.id.request_id,
             reasoning_enabled=False,
         )
+
+    @staticmethod
+    def _allowed_tools_receipt_json(request: inference_pb2.GenerateRequest) -> str:
+        execution = request.execution
+        ext = execution.ext
+        seen_tools: dict[str, str] = {}
+        allowed_names: list[str] = []
+        schema_conflicts: list[str] = []
+        for tool in execution.tool_config.tools:
+            name = tool.name.strip()
+            if not name:
+                continue
+            schema = tool.json_schema.strip()
+            previous_schema = seen_tools.get(name)
+            if previous_schema is None:
+                seen_tools[name] = schema
+                allowed_names.append(name)
+            elif previous_schema != schema and name not in schema_conflicts:
+                schema_conflicts.append(name)
+
+        raw_tool_count = ext.get("melix.tool_config.tool_count", "").strip()
+        explicit_empty = (
+            not allowed_names
+            and execution.HasField("tool_config")
+            and (raw_tool_count == "0" or bool(ext.get("melix.tool_config.source", "").strip()))
+        )
+        if allowed_names:
+            tool_config_state = "declared"
+        elif explicit_empty:
+            tool_config_state = "explicit_empty"
+        else:
+            tool_config_state = "omitted"
+
+        tool_choice_policy = (
+            execution.tool_config.tool_choice.strip()
+            or ext.get("melix.compat.tool_choice_resolved", "").strip()
+            or "auto"
+        )
+        source_ids = [
+            item.strip()
+            for item in ext.get("melix.mcp.source_ids", "").split(",")
+            if item.strip()
+        ]
+        payload = {
+            "allowed_tool_names": allowed_names,
+            "allowed_tool_count": len(allowed_names),
+            "tool_choice_policy": tool_choice_policy,
+            "tool_config_source": ext.get("melix.tool_config.source", "").strip(),
+            "tool_source_ids": source_ids,
+            "tool_config_state": tool_config_state,
+            "schema_conflict_count": len(schema_conflicts),
+            "schema_conflicts": schema_conflicts,
+            "suppressed_reason": ext.get("melix.tool_parser.suppressed_reason", "").strip(),
+        }
+        return _COMPACT_SORTED_JSON_ENCODER.encode(payload)
 
     @staticmethod
     def _stream_assembler(
