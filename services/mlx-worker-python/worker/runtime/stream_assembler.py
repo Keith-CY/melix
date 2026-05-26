@@ -593,6 +593,8 @@ class RequestStreamAssembler:
 
     def _drain_buffer(self, final: bool) -> list[AssemblyDelta]:
         deltas: list[AssemblyDelta] = []
+        channel_state = self.channel_state
+        metrics = self._metrics
         while self._buffer:
             if "<" not in self._buffer:
                 content = self._buffer
@@ -608,13 +610,20 @@ class RequestStreamAssembler:
                     if visible_prefix:
                         self._buffer = held_suffix
                         if len(visible_prefix) <= 8:
-                            self._metrics["stream_short_reply_flush_count"] += 1
+                            metrics["stream_short_reply_flush_count"] += 1
                         if not final:
-                            self._record_prefix_hold(held_suffix)
+                            held_len = len(held_suffix)
+                            channel_state.pending_marker_tail = held_suffix
+                            if held_len > channel_state.max_pending_marker_tail_chars:
+                                channel_state.max_pending_marker_tail_chars = held_len
+                            if held_len > metrics["stream_prefix_hold_chars"]:
+                                metrics["stream_prefix_hold_chars"] = held_len
                         deltas.append(self._content_delta(visible_prefix))
                         continue
                     if final and self._should_flush_terminal_marker_tail(held_suffix):
-                        self.channel_state.flush_terminal_marker_tail()
+                        if channel_state.pending_marker_tail:
+                            channel_state.terminal_marker_tail_flush_count += 1
+                        channel_state.pending_marker_tail = ""
                         self._buffer = ""
                         continue
                     if not final:
@@ -637,7 +646,8 @@ class RequestStreamAssembler:
             if tag == self._THINK_OPEN or tag == self._PIPE_REASONING_OPEN:
                 if self.channel_state.pending_marker_tail:
                     self.channel_state.clear_marker_tail()
-                self.channel_state.record_reasoning_source()
+                if channel_state.preferred_channel_source != "tool_call_tag":
+                    channel_state.preferred_channel_source = "reasoning_tag"
                 close_tag = (
                     self._PIPE_REASONING_CLOSE
                     if tag == self._PIPE_REASONING_OPEN
@@ -676,21 +686,27 @@ class RequestStreamAssembler:
                 continue
 
             if tag == self._TOOL_OPEN or tag == self._PIPE_TOOL_OPEN:
-                if self.channel_state.pending_marker_tail:
-                    self.channel_state.clear_marker_tail()
-                self.channel_state.open_tool_event()
+                if channel_state.pending_marker_tail:
+                    channel_state.pending_marker_tail = ""
+                channel_state.preferred_channel_source = "tool_call_tag"
+                if channel_state.open_tool_event_count == 0:
+                    channel_state.open_tool_event_count = 1
                 close_tag = self._PIPE_TOOL_CLOSE if tag == self._PIPE_TOOL_OPEN else self._TOOL_CLOSE
                 close_index = self._buffer.find(close_tag, len(tag))
                 if close_index < 0:
                     if final:
-                        self._metrics["malformed_tool_fragment_count"] += 1
-                        self.channel_state.flush_orphan_tool_events()
+                        metrics["malformed_tool_fragment_count"] += 1
+                        if channel_state.open_tool_event_count:
+                            channel_state.orphan_tool_event_flush_count += (
+                                channel_state.open_tool_event_count
+                            )
+                        channel_state.open_tool_event_count = 0
                         self._buffer = ""
                     break
                 body = self._buffer[len(tag) : close_index]
                 self._buffer = self._buffer[close_index + len(close_tag) :]
                 tool_delta = self._tool_delta(body)
-                self.channel_state.close_tool_event()
+                channel_state.open_tool_event_count = 0
                 if tool_delta is not None:
                     deltas.append(AssemblyDelta(raw_text=body, tool_call=tool_delta))
                 continue
