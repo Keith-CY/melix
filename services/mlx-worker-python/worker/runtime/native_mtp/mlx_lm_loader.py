@@ -21,8 +21,7 @@ def _load_json_payload(path: Path) -> dict[str, Any]:
 
 
 def _is_mtp_weight_key(key: Any) -> bool:
-    value = str(key)
-    return value.startswith("language_model.mtp.") or value.startswith("mtp.")
+    return str(key).startswith(("language_model.mtp.", "mtp."))
 
 
 def _model_safetensor_files(model_path: Path) -> list[str]:
