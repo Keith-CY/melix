@@ -324,6 +324,16 @@ struct MelixCLIRunnerTests {
         #expect(metrics["melix.cli.parse_ms"] as? Double == 0.25)
     }
 
+    @Test("json metric placeholders sanitize scalar names without changing token shape")
+    func jsonMetricPlaceholdersSanitizeScalarNamesWithoutChangingTokenShape() {
+        let placeholder = MelixCLIJSONMetricPatch.makePlaceholder(metricName: "melix.cli.json_encode-ms")
+
+        #expect(placeholder.token.hasPrefix("__MELIX_METRIC_melix_cli_json_encode_ms_"))
+        #expect(placeholder.token.hasSuffix("__"))
+        #expect(placeholder.jsonLiteral == "\"\(placeholder.token)\"")
+        #expect(placeholder.jsonLiteralData == Data(placeholder.jsonLiteral.utf8))
+    }
+
     @Test("settings show resolves precedence and reports source metadata")
     func settingsShowResolvesPrecedenceAndReportsSourceMetadata() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
