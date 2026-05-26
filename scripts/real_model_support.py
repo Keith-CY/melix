@@ -335,8 +335,11 @@ def _has_recognized_model_weight_files(path: Path) -> bool:
                     continue
             except OSError:
                 continue
-            if entry.name in _REAL_MODEL_WEIGHT_FILENAMES:
+            name = entry.name
+            if name in _REAL_MODEL_WEIGHT_FILENAMES:
                 return True
-            if entry.name.lower().endswith(_REAL_MODEL_WEIGHT_SUFFIXES):
+            if name.endswith(_REAL_MODEL_WEIGHT_SUFFIXES):
+                return True
+            if not name.islower() and name.lower().endswith(_REAL_MODEL_WEIGHT_SUFFIXES):
                 return True
     return False
