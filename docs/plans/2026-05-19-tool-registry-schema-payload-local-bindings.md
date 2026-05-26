@@ -80,6 +80,24 @@ Expected effect:
 - leave registry selection, schema payload construction, and protobuf config
   serialization unchanged.
 
+## Follow-up Slice: Schema Payload Copy Function Bindings
+
+The 2026-05-26 follow-up keeps the `ToolDescriptor.schema_payload()` API and
+copy-on-return behavior unchanged, but reuses the module-level `dict.copy` and
+`list.copy` bindings inside the schema-payload constructor. This mirrors the
+already-applied OpenAI tool payload slice and removes repeated bound-method
+lookups for every schema dictionary and required-argument list copied during the
+registered schema-payload probe.
+
+Expected effect:
+
+- reduce repeated schema payload construction overhead measured by
+  `tool-registry-schema-bytes-cache` `schema_payload_elapsed_ms_mean`;
+- preserve independently mutable returned `properties` dictionaries and
+  `required` lists;
+- leave tool selection, OpenAI tool payload construction, and protobuf config
+  serialization unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.
