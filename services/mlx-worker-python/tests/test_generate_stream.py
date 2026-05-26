@@ -647,6 +647,7 @@ def test_generate_streams_token_and_terminal_completion() -> None:
             },
             tool_config=common_pb2.ToolConfig(
                 tools=[
+                    common_pb2.ToolDefinition(name="   ", json_schema='{"type":"object"}'),
                     common_pb2.ToolDefinition(name="empty", json_schema=""),
                     common_pb2.ToolDefinition(
                         name="search",
@@ -686,6 +687,36 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     assert allowed_tools_receipt["allowed_tool_names"] == ["empty", "search", "bad"]
     assert allowed_tools_receipt["schema_conflict_count"] == 1
     assert allowed_tools_receipt["schema_conflicts"] == ["bad"]
+
+    explicit_empty_request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-explicit-empty-tools-receipt"),
+            model_handle=model_handle,
+            ext={
+                "melix.tool_config.source": "openai_chat_tools",
+                "melix.tool_config.tool_count": "0",
+            },
+            tool_config=common_pb2.ToolConfig(),
+        )
+    )
+    explicit_empty_receipt = json.loads(
+        EngineCore._allowed_tools_receipt_json(explicit_empty_request)
+    )
+    assert explicit_empty_receipt["tool_config_state"] == "explicit_empty"
+    assert explicit_empty_receipt["allowed_tool_count"] == 0
+
+    suppressed_without_tools_request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-suppressed-without-tools-receipt"),
+            model_handle=model_handle,
+            ext={"melix.tool_parser.suppressed_reason": "partial_json"},
+        )
+    )
+    suppressed_without_tools_receipt = json.loads(
+        EngineCore._allowed_tools_receipt_json(suppressed_without_tools_request)
+    )
+    assert suppressed_without_tools_receipt["tool_config_state"] == "omitted"
+    assert suppressed_without_tools_receipt["suppressed_reason"] == "partial_json"
 
     assert engine_core_module._parser_metric_text(0) is engine_core_module._METRIC_ZERO_TEXT
     assert engine_core_module._parser_metric_text("plain") == "plain"
@@ -1805,4 +1836,3 @@ def test_generate_forwards_acceleration_policy_to_runtimes_that_accept_it() -> N
     assert seen_policy.draft_model_id == "mlx-community/gemma-4-E2B-it-assistant-bf16"
     assert seen_policy.num_draft_tokens == 6
     assert seen_policy.allow_baseline_fallback is True
-
