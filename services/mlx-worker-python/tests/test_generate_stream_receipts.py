@@ -699,6 +699,38 @@ def test_generate_distinguishes_omitted_and_explicit_empty_allowed_tools() -> No
     assert explicit_empty_receipt["suppressed_reason"] == "request_tools_empty"
 
 
+def test_allowed_tools_receipt_reuses_static_omitted_receipt() -> None:
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-tools-omitted-fast-path"),
+            model_handle="model-dev-text",
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Say hi")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+
+    receipt_json = engine_core_module.EngineCore._allowed_tools_receipt_json(request)
+
+    assert receipt_json is engine_core_module._DEFAULT_OMITTED_ALLOWED_TOOLS_RECEIPT_JSON
+    assert json.loads(receipt_json) == {
+        "allowed_tool_count": 0,
+        "allowed_tool_names": [],
+        "schema_conflict_count": 0,
+        "schema_conflicts": [],
+        "suppressed_reason": "",
+        "tool_choice_policy": "auto",
+        "tool_config_source": "",
+        "tool_config_state": "omitted",
+        "tool_source_ids": [],
+    }
+
+
 @pytest.mark.parametrize(
     ("case_id", "raw_text", "expected"),
     [

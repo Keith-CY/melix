@@ -687,6 +687,10 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     assert allowed_tools_receipt["schema_conflict_count"] == 1
     assert allowed_tools_receipt["schema_conflicts"] == ["bad"]
 
+    assert engine_core_module._parser_metric_text(0) is engine_core_module._METRIC_ZERO_TEXT
+    assert engine_core_module._parser_metric_text("plain") == "plain"
+    assert engine_core_module._parser_metric_text(3) == "3"
+
     structured_registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=StructuredStreamingBackend()),
         model_catalog=WorkerModelCatalog(),
@@ -1801,3 +1805,4 @@ def test_generate_forwards_acceleration_policy_to_runtimes_that_accept_it() -> N
     assert seen_policy.draft_model_id == "mlx-community/gemma-4-E2B-it-assistant-bf16"
     assert seen_policy.num_draft_tokens == 6
     assert seen_policy.allow_baseline_fallback is True
+
