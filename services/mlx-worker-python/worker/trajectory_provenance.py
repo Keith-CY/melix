@@ -104,7 +104,7 @@ def trajectory_provenance_from_snapshot_manifest(
         value = manifest.get(source_field)
         if value in ("", None):
             continue
-        provenance[output_field] = _copy_trajectory_provenance_value(value) if isinstance(value, (dict, list)) else value
+        provenance[output_field] = value
     return normalize_trajectory_provenance(provenance)
 
 
