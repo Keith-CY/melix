@@ -447,6 +447,14 @@ def test_has_recognized_model_weight_files_skips_path_iterdir(monkeypatch, tmp_p
     assert _has_recognized_model_weight_files(model_dir) is True
 
 
+def test_has_recognized_model_weight_files_preserves_uppercase_suffix_fallback(tmp_path: Path) -> None:
+    model_dir = tmp_path / "weights"
+    model_dir.mkdir()
+    (model_dir / "MODEL.SAFETENSORS").write_text("{}", encoding="utf-8")
+
+    assert _has_recognized_model_weight_files(model_dir) is True
+
+
 def test_has_recognized_model_weight_files_does_not_recurse_into_subdirectories(tmp_path: Path) -> None:
     model_dir = tmp_path / "weights"
     model_dir.mkdir()
