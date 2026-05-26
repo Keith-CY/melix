@@ -11,7 +11,7 @@ def test_compute_build_metadata_uses_release_tag_version() -> None:
     )
 
     assert metadata.version == "1.2.3"
-    assert metadata.artifact_name == "Melix-1.2.3-macos"
+    assert metadata.artifact_name == "Melix-1.2.3"
 
 
 def test_compute_build_metadata_uses_branch_and_commit_for_non_release() -> None:
@@ -22,7 +22,7 @@ def test_compute_build_metadata_uses_branch_and_commit_for_non_release() -> None
     )
 
     assert metadata.version == "0.1.0+abcdef1"
-    assert metadata.artifact_name == "Melix-develop-abcdef1-macos"
+    assert metadata.artifact_name == "Melix-develop-abcdef1"
 
 
 def test_sanitize_ref_name_normalizes_slashes_and_spaces() -> None:
