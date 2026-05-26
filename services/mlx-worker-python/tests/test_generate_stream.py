@@ -10,7 +10,13 @@ from worker.grpc_server import WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime import mlx_text_runtime
-from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, RuntimeTokenEvent, RuntimeToolCallEvent
+from worker.runtime.mlx_text_runtime import (
+    AutoMLXBackend,
+    MLXTextRuntime,
+    NativeMTPBatchTimings,
+    RuntimeTokenEvent,
+    RuntimeToolCallEvent,
+)
 from worker.runtime.multimodal_attention_policy import (
     MultimodalPrefillAttentionBudgetExceeded,
     choose_attention_prefill_policy,
@@ -29,6 +35,43 @@ class StreamingFakeBackend:
     def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
         yield RuntimeTokenEvent(text="Hello", prompt_tokens=5, completion_tokens=1)
         yield RuntimeTokenEvent(text=" world", prompt_tokens=5, completion_tokens=2, finish_reason="length")
+
+
+def test_text_native_mtp_parser_metrics_fast_paths_empty_events() -> None:
+    assert engine_core_module._text_native_mtp_parser_metrics(None) == {}
+    assert engine_core_module._text_native_mtp_parser_metrics(RuntimeTokenEvent(text="plain")) == {}
+
+
+def test_text_native_mtp_parser_metrics_preserves_speculative_and_timing_values() -> None:
+    metrics = engine_core_module._text_native_mtp_parser_metrics(
+        RuntimeTokenEvent(
+            text="mtp",
+            speculative_accepted_tokens=3,
+            speculative_rejected_tokens=1,
+            speculative_target_verify_ms=2.5,
+            native_mtp_timings=NativeMTPBatchTimings(
+                cycle_count=2,
+                mtp_head_ms=1.0,
+                sample_ms=None,
+                cache_ops_ms=None,
+                insert_ms=None,
+                prepare_ms=None,
+                prompt_encode_ms=None,
+                prefill_ms=None,
+                batch_insert_ms=None,
+                first_response_ms=None,
+                first_visible_ms=None,
+            ),
+        )
+    )
+
+    assert metrics == {
+        "text_batch_generator_speculative_cycle_count_total": "2",
+        "text_batch_generator_speculative_accepted_count_total": "3",
+        "text_batch_generator_speculative_rejected_count_total": "1",
+        "text_batch_generator_speculative_backbone_ms_total": "2.5",
+        "text_batch_generator_speculative_mtp_head_ms_total": "1.0",
+    }
 
 
 class TemplateCapturingTokenizer:

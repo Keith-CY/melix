@@ -70,6 +70,14 @@ def _text_native_mtp_parser_metrics(event: RuntimeTokenEvent | None) -> dict[str
         return {}
 
     t = event.native_mtp_timings
+    if (
+        t is None
+        and event.speculative_accepted_tokens is None
+        and event.speculative_rejected_tokens is None
+        and event.speculative_target_verify_ms is None
+    ):
+        return {}
+
     metric_fields = {
         "text_batch_generator_speculative_cycle_count_total": t.cycle_count if t else None,
         "text_batch_generator_speculative_accepted_count_total": event.speculative_accepted_tokens,
