@@ -106,7 +106,8 @@ class BenchmarkQueueStore:
         except OSError:
             return []
         records.sort(key=_RECORD_SORT_KEY)
-        return [self._clone_record(record) for record in records]
+        clone_record = self._clone_record
+        return [clone_record(record) for record in records]
 
     def transition(
         self,
@@ -163,7 +164,8 @@ class BenchmarkQueueStore:
         cached = self._decoded_record_cache.get(cache_key)
         if cached is not None and cached.metadata_key == current_metadata_key:
             return cached.record
-        record = BenchmarkQueueRecord.from_dict(json.loads(Path(path).read_bytes()))
+        with open(cache_key, "rb") as record_file:
+            record = BenchmarkQueueRecord.from_dict(json.loads(record_file.read()))
         self._decoded_record_cache[cache_key] = _RecordCacheEntry(
             metadata_key=current_metadata_key,
             record=record,
