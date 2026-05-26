@@ -1193,6 +1193,57 @@ def test_mlx_lm_source_and_smoke_file_helpers_cover_edge_cases(tmp_path: Path) -
     ) == ("config.json", "tokenizer.json", "model.safetensors.index.json", "model.safetensors")
 
 
+def test_mlx_lm_smoke_required_files_scans_bundle_markers_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "tokenizer.model").write_bytes(b"sentencepiece")
+    (bundle / "model.safetensors.index.json").write_bytes(
+        json.dumps({"weight_map": {"layer.weight": "model-00001-of-00001.safetensors"}}).encode("utf-8")
+    )
+
+    real_scandir = os.scandir
+    scanned_paths: list[Path] = []
+
+    def tracked_scandir(path: str | bytes | os.PathLike[str] | os.PathLike[bytes] | int):
+        scanned_paths.append(Path(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(quantization_pipeline_module.os, "scandir", tracked_scandir)
+    monkeypatch.setattr(
+        Path,
+        "exists",
+        Mock(side_effect=AssertionError("bundle marker checks should use os.scandir")),
+    )
+
+    assert _smoke_required_files_for_backend(
+        bundle,
+        quantization_backend="mlx_lm_convert",
+    ) == (
+        "config.json",
+        "tokenizer.model",
+        "model.safetensors.index.json",
+        "model-00001-of-00001.safetensors",
+    )
+
+    single_file_bundle = tmp_path / "single-file-bundle"
+    single_file_bundle.mkdir()
+    (single_file_bundle / "tokenizer.json").write_text("{}\n", encoding="utf-8")
+    (single_file_bundle / "model.safetensors").write_bytes(b"weights")
+    assert _smoke_required_files_for_backend(
+        single_file_bundle,
+        quantization_backend="mlx_lm_convert",
+    ) == ("config.json", "tokenizer.json", "model.safetensors")
+
+    assert _smoke_required_files_for_backend(
+        tmp_path / "missing-bundle",
+        quantization_backend="mlx_lm_convert",
+    ) == ("config.json", "tokenizer.json", "model.safetensors")
+    assert scanned_paths == [bundle, single_file_bundle, tmp_path / "missing-bundle"]
+
+
 def test_mlx_lm_index_weight_files_reads_index_as_bytes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
