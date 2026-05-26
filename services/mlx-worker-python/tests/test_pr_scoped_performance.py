@@ -3026,6 +3026,23 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
     assert release_gate_metrics["endswith_checks_mean"]["warn_pct"] == 0.0
     assert release_gate_metrics["elapsed_ms_mean"]["direction"] == "informational"
 
+    native_mtp_metrics = {
+        metric["key"]: metric
+        for metric in by_id["native-mtp-loader-safetensor-scandir"]["metrics"]
+    }
+    for metric_key in (
+        "old_mean_ms",
+        "old_peak_bytes_mean",
+        "extra_old_mean_ms",
+        "extra_old_peak_bytes_mean",
+        "key_old_mean_ms",
+    ):
+        assert native_mtp_metrics[metric_key]["direction"] == "informational"
+        assert "warn_pct" not in native_mtp_metrics[metric_key]
+    assert native_mtp_metrics["key_new_mean_ms"]["direction"] == "lower_is_better"
+    assert native_mtp_metrics["key_delta_ms"]["direction"] == "lower_is_better"
+    assert native_mtp_metrics["key_speedup"]["direction"] == "higher_is_better"
+
     changed_scope_metrics = {
         metric["key"]: metric
         for metric in by_id["changed-scope-coverage-empty-path-short-circuit"]["metrics"]
