@@ -171,13 +171,14 @@ def _indexed_safetensors_shard_bytes(model_dir: Path) -> int:
 
 def _top_level_weight_file_bytes(model_dir: Path) -> int:
     total = 0
+    entry_file_size = _weight_dir_entry_file_size
     try:
         entries = os.scandir(model_dir)
     except OSError:
         return 0
     with entries:
         for entry in entries:
-            total += _weight_dir_entry_file_size(entry)
+            total += entry_file_size(entry)
     return total
 
 
