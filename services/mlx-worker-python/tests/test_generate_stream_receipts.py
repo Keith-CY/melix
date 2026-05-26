@@ -547,6 +547,98 @@ def test_generate_records_request_local_allowed_tools_receipt() -> None:
     }
 
 
+def test_generate_treats_equivalent_duplicate_tool_schemas_as_same() -> None:
+    inference_service, model_handle = _build_services(TokenRoutedVisibleBackend())
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-equivalent-tool-schemas"),
+            model_handle=model_handle,
+            ext={
+                "melix.tool_config.source": "openai_chat_tools",
+                "melix.tool_config.tool_count": "2",
+            },
+            tool_config=common_pb2.ToolConfig(
+                tools=[
+                    common_pb2.ToolDefinition(
+                        name="search",
+                        json_schema='{"type":"object","properties":{"q":{"type":"string"}}}',
+                    ),
+                    common_pb2.ToolDefinition(
+                        name="search",
+                        json_schema=(
+                            '{\n'
+                            '  "properties": {"q": {"type": "string"}},\n'
+                            '  "type": "object"\n'
+                            "}"
+                        ),
+                    ),
+                ],
+                tool_choice="auto",
+            ),
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="List tools")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+
+    completed = next(
+        event.completed
+        for event in inference_service.Generate(request, context=None)
+        if event.HasField("completed")
+    )
+    receipt = json.loads(completed.parser_metrics["allowed_tools_receipt_json"])
+
+    assert receipt["allowed_tool_names"] == ["search"]
+    assert receipt["schema_conflict_count"] == 0
+    assert receipt["schema_conflicts"] == []
+
+
+def test_generate_keeps_invalid_duplicate_tool_schema_comparison_observable() -> None:
+    inference_service, model_handle = _build_services(TokenRoutedVisibleBackend())
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-invalid-tool-schema"),
+            model_handle=model_handle,
+            ext={
+                "melix.tool_config.source": "openai_chat_tools",
+                "melix.tool_config.tool_count": "3",
+            },
+            tool_config=common_pb2.ToolConfig(
+                tools=[
+                    common_pb2.ToolDefinition(name="empty", json_schema=""),
+                    common_pb2.ToolDefinition(name="search", json_schema='{"type":'),
+                    common_pb2.ToolDefinition(name="search", json_schema='{"type":"object"}'),
+                ],
+                tool_choice="auto",
+            ),
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="List tools")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+
+    completed = next(
+        event.completed
+        for event in inference_service.Generate(request, context=None)
+        if event.HasField("completed")
+    )
+    receipt = json.loads(completed.parser_metrics["allowed_tools_receipt_json"])
+
+    assert receipt["allowed_tool_names"] == ["empty", "search"]
+    assert receipt["schema_conflict_count"] == 1
+    assert receipt["schema_conflicts"] == ["search"]
+
+
 def test_generate_distinguishes_omitted_and_explicit_empty_allowed_tools() -> None:
     inference_service, model_handle = _build_services(TokenRoutedVisibleBackend())
     omitted_request = inference_pb2.GenerateRequest(

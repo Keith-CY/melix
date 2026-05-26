@@ -34,6 +34,17 @@ _DEFAULT_INACTIVE_TOKEN_ROUTE_RECEIPT_JSON = inactive_token_route_receipt_json(
 )
 
 
+def _canonical_json_schema_key(schema: str) -> str:
+    stripped = schema.strip()
+    if not stripped:
+        return ""
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        return stripped
+    return _COMPACT_SORTED_JSON_ENCODER.encode(parsed)
+
+
 def _text_native_mtp_parser_metrics(event: RuntimeTokenEvent | None) -> dict[str, str]:
     if event is None:
         return {}
@@ -727,7 +738,7 @@ class EngineCore:
             name = tool.name.strip()
             if not name:
                 continue
-            schema = tool.json_schema.strip()
+            schema = _canonical_json_schema_key(tool.json_schema)
             previous_schema = seen_tools.get(name)
             if previous_schema is None:
                 seen_tools[name] = schema

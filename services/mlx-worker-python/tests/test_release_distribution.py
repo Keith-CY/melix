@@ -307,7 +307,7 @@ def test_release_homebrew_distribution_workflow_publishes_configured_tap() -> No
     assert "MELIX_HOMEBREW_TAP_TOKEN" in workflow
     assert "scripts/render_release_distribution.py" in workflow
     assert "Casks/melix.rb" in workflow
-    assert "EndBug/add-and-commit@v9" in workflow
+    assert "EndBug/add-and-commit@v10" in workflow
     assert 'message: "chore: update melix Homebrew cask ${{ steps.archive.outputs.version }}"' in workflow
     download_step = _workflow_step(workflow, "Download release archive")
     assert "gh release download" in download_step
@@ -332,7 +332,7 @@ def test_release_nix_distribution_workflow_publishes_configured_repo() -> None:
     assert "nix/flake.nix" in workflow
     assert "command -v nix" in workflow
     assert 'nix --extra-experimental-features "nix-command flakes" flake check "./nix-distribution" --no-build' in workflow
-    assert "EndBug/add-and-commit@v9" in workflow
+    assert "EndBug/add-and-commit@v10" in workflow
     assert 'message: "chore: update melix Nix package ${{ steps.archive.outputs.version }}"' in workflow
     download_step = _workflow_step(workflow, "Download release archive")
     assert "gh release download" in download_step
