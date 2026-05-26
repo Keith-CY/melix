@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
+from worker import trajectory_provenance as trajectory_provenance_module
 from worker.engine.maintenance_core import MaintenanceCore
 from worker.grpc_server import WorkerMaintenanceService
 from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
@@ -262,6 +263,37 @@ def test_trajectory_provenance_helpers_ignore_empty_or_unrelated_inputs(
     assert load_trajectory_provenance_from_snapshot_dir(tmp_path / "missing-snapshot") == {}
     assert adapter_manifest_trajectory_provenance(None) == {}
     assert alignment_metrics_trajectory_provenance(None) == {}
+
+
+def test_snapshot_manifest_copies_nested_fields_once_via_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_copy = trajectory_provenance_module._copy_trajectory_provenance_value
+    copy_calls = 0
+
+    def counting_copy(value: object) -> object:
+        nonlocal copy_calls
+        copy_calls += 1
+        return original_copy(value)
+
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_copy_trajectory_provenance_value",
+        counting_copy,
+    )
+    manifest = {
+        "format": "agentic_tool_trace",
+        "source_dataset_id": "agentic-snapshot",
+        "version": "2026-05-25",
+        "trajectory_trace_digest": "abc123",
+        "trajectory_quality_metrics": [],
+    }
+
+    provenance = trajectory_provenance_from_snapshot_manifest(manifest)
+
+    assert provenance["trajectory_quality_metrics"] == []
+    assert provenance["trajectory_quality_metrics"] is not manifest["trajectory_quality_metrics"]
+    assert copy_calls == 1
 
 
 def test_normalize_trajectory_provenance_copies_nested_json_containers() -> None:
