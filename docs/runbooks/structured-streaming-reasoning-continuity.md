@@ -125,6 +125,11 @@ The worker stream assembler reports parser metrics on completed events:
 - `open_tool_event_count`
 - `orphan_tool_event_flush_count`
 - `channel_state_preferred_source`
+- `annotation_payload_resolved_count`
+- `annotation_payload_missing_count`
+- `tool_result_payload_buffered_count`
+- `annotation_delta_count`
+- `tool_result_delta_count`
 
 Expected healthy values:
 
@@ -187,6 +192,13 @@ Expected healthy values:
 - classified reasoning or tool spans should set `channel_state_preferred_source`
   to `reasoning_tag` or `tool_call_tag` so later raw text does not become the
   primary explanation for the assembled output
+- annotation payloads that arrive after visible text should emit typed
+  `AnnotationDelta` frames, increment `annotation_delta_count`, resolve pending
+  spans with `annotation_payload_resolved_count`, and leave the payload JSON out
+  of `assistant_text`
+- bundled tool execution results should emit typed `ToolResultDelta` frames,
+  increment `tool_result_delta_count` and `tool_result_payload_buffered_count`,
+  and leave `result_json` out of visible assistant text
 - requests with typed `ToolConfig.tools` should increment
   `native_tool_exemplar_injected_count` when those tools are forwarded as
   tokenizer-native `tools` kwargs and no explicit native `tools` kwargs were

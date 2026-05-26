@@ -76,6 +76,24 @@ struct ControlPlaneChatExecutionTests {
                 )
         )
         #expect(
+            ControlPlaneChatStreamEvent(executeEvent: makeAnnotationExecuteEvent()) ==
+                .annotationDelta(
+                    annotationID: "cite-1",
+                    kind: "citation",
+                    startOffset: 12,
+                    endOffset: 20,
+                    payloadJSON: #"{"url":"https://example.test/source"}"#
+                )
+        )
+        #expect(
+            ControlPlaneChatStreamEvent(executeEvent: makeToolResultExecuteEvent()) ==
+                .toolResultDelta(
+                    callID: "tool-1",
+                    status: "ok",
+                    resultJSON: #"{"temperature":72}"#
+                )
+        )
+        #expect(
             ControlPlaneChatStreamEvent(executeEvent: makeUsageExecuteEvent()) ==
                 .usage(promptTokens: 21, completionTokens: 34)
         )
@@ -208,6 +226,26 @@ private func makeToolExecuteEvent() -> Melix_Worker_V1_ExecuteEvent {
     event.toolCallDelta.callID = "tool-1"
     event.toolCallDelta.toolName = "search"
     event.toolCallDelta.argumentsJsonFragment = #"{"q":"melix"}"#
+    return event
+}
+
+private func makeAnnotationExecuteEvent() -> Melix_Worker_V1_ExecuteEvent {
+    var event = Melix_Worker_V1_ExecuteEvent()
+    event.annotationDelta = Melix_Worker_V1_AnnotationDelta()
+    event.annotationDelta.annotationID = "cite-1"
+    event.annotationDelta.kind = "citation"
+    event.annotationDelta.startOffset = 12
+    event.annotationDelta.endOffset = 20
+    event.annotationDelta.payloadJson = #"{"url":"https://example.test/source"}"#
+    return event
+}
+
+private func makeToolResultExecuteEvent() -> Melix_Worker_V1_ExecuteEvent {
+    var event = Melix_Worker_V1_ExecuteEvent()
+    event.toolResultDelta = Melix_Worker_V1_ToolResultDelta()
+    event.toolResultDelta.callID = "tool-1"
+    event.toolResultDelta.status = "ok"
+    event.toolResultDelta.resultJson = #"{"temperature":72}"#
     return event
 }
 

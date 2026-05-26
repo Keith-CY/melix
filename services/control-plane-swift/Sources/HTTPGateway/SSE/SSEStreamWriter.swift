@@ -299,6 +299,26 @@ public struct SSEStreamWriter: Sendable {
                 event: "tool_call",
                 json: payload
             )
+        case .annotationDelta(let annotation):
+            return frame(
+                event: "annotation",
+                json: annotationPayload(
+                    annotation,
+                    requestID: requestID,
+                    modelID: modelID,
+                    type: "completion.annotation.delta"
+                )
+            )
+        case .toolResultDelta(let toolResult):
+            return frame(
+                event: "tool_result",
+                json: toolResultPayload(
+                    toolResult,
+                    requestID: requestID,
+                    modelID: modelID,
+                    type: "completion.tool_result.delta"
+                )
+            )
         case .heartbeat(let heartbeat):
             return frame(
                 event: "heartbeat",
@@ -435,6 +455,30 @@ public struct SSEStreamWriter: Sendable {
                 event: "message",
                 json: payload
             )
+        case .annotationDelta(let annotation):
+            var payload = annotationPayload(
+                annotation,
+                requestID: requestID,
+                modelID: modelID,
+                type: "chat.completion.annotation.delta"
+            )
+            payload["object"] = "chat.completion.annotation.delta"
+            return frame(
+                event: "annotation",
+                json: payload
+            )
+        case .toolResultDelta(let toolResult):
+            var payload = toolResultPayload(
+                toolResult,
+                requestID: requestID,
+                modelID: modelID,
+                type: "chat.completion.tool_result.delta"
+            )
+            payload["object"] = "chat.completion.tool_result.delta"
+            return frame(
+                event: "tool_result",
+                json: payload
+            )
         case .heartbeat(let heartbeat):
             return frame(
                 event: "heartbeat",
@@ -537,6 +581,28 @@ public struct SSEStreamWriter: Sendable {
                 event: "response.tool_call.delta",
                 json: payload
             )
+        case .annotationDelta(let annotation):
+            return frame(
+                event: "response.annotation.delta",
+                json: annotationPayload(
+                    annotation,
+                    requestID: requestID,
+                    modelID: modelID,
+                    type: "response.annotation.delta",
+                    identityKey: "response_id"
+                )
+            )
+        case .toolResultDelta(let toolResult):
+            return frame(
+                event: "response.tool_result.delta",
+                json: toolResultPayload(
+                    toolResult,
+                    requestID: requestID,
+                    modelID: modelID,
+                    type: "response.tool_result.delta",
+                    identityKey: "response_id"
+                )
+            )
         case .heartbeat(let heartbeat):
             return frame(
                 event: "response.heartbeat",
@@ -634,6 +700,28 @@ public struct SSEStreamWriter: Sendable {
             return frame(
                 event: "message.tool_call.delta",
                 json: payload
+            )
+        case .annotationDelta(let annotation):
+            return frame(
+                event: "message.annotation.delta",
+                json: annotationPayload(
+                    annotation,
+                    requestID: requestID,
+                    modelID: modelID,
+                    type: "message.annotation.delta",
+                    identityKey: "message_id"
+                )
+            )
+        case .toolResultDelta(let toolResult):
+            return frame(
+                event: "message.tool_result.delta",
+                json: toolResultPayload(
+                    toolResult,
+                    requestID: requestID,
+                    modelID: modelID,
+                    type: "message.tool_result.delta",
+                    identityKey: "message_id"
+                )
             )
         case .usageDelta(let usage):
             return frame(
@@ -764,6 +852,42 @@ public struct SSEStreamWriter: Sendable {
             merged["mcp_source_ids"] = toolParser.mcpSourceIDs
         }
         return merged
+    }
+
+    private func annotationPayload(
+        _ annotation: Melix_Worker_V1_AnnotationDelta,
+        requestID: String,
+        modelID: String,
+        type: String,
+        identityKey: String = "id"
+    ) -> [String: Any] {
+        [
+            "type": type,
+            identityKey: requestID,
+            "model": modelID,
+            "annotation_id": annotation.annotationID,
+            "kind": annotation.kind,
+            "start_offset": Int(annotation.startOffset),
+            "end_offset": Int(annotation.endOffset),
+            "payload_json": annotation.payloadJson,
+        ]
+    }
+
+    private func toolResultPayload(
+        _ toolResult: Melix_Worker_V1_ToolResultDelta,
+        requestID: String,
+        modelID: String,
+        type: String,
+        identityKey: String = "id"
+    ) -> [String: Any] {
+        [
+            "type": type,
+            identityKey: requestID,
+            "model": modelID,
+            "call_id": toolResult.callID,
+            "status": toolResult.status,
+            "result_json": toolResult.resultJson,
+        ]
     }
 
     private func frame(event: String, json: [String: Any]) -> Data {

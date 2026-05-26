@@ -1016,6 +1016,10 @@ public actor RequestCoordinator {
                                 await metricsStore.increment("http.reasoning_delta_count")
                             case .toolCallDelta:
                                 await metricsStore.increment("http.tool_delta_count")
+                            case .annotationDelta:
+                                await metricsStore.increment("http.annotation_delta_count")
+                            case .toolResultDelta:
+                                await metricsStore.increment("http.tool_result_delta_count")
                             case .completed(let completed):
                                 await self.preserveReasoningContinuity(
                                     requestIdentity: request.workerRequest.execution.id,
@@ -1123,7 +1127,7 @@ public actor RequestCoordinator {
 
     private func isSemanticStreamEvent(_ event: Melix_Worker_V1_ExecuteEvent) -> Bool {
         switch event.payload {
-        case .tokenDelta, .reasoningDelta, .toolCallDelta:
+        case .tokenDelta, .reasoningDelta, .toolCallDelta, .annotationDelta, .toolResultDelta:
             return true
         default:
             return false
@@ -1132,7 +1136,7 @@ public actor RequestCoordinator {
 
     private func publishesDecodingPhase(_ event: Melix_Worker_V1_ExecuteEvent) -> Bool {
         switch event.payload {
-        case .decodeStarted, .tokenDelta, .reasoningDelta, .toolCallDelta, .usageDelta:
+        case .decodeStarted, .tokenDelta, .reasoningDelta, .toolCallDelta, .annotationDelta, .toolResultDelta, .usageDelta:
             return true
         default:
             return false
@@ -1326,7 +1330,7 @@ public actor RequestCoordinator {
                 accelerationProfileID: accelerationProfileID,
                 source: workerSource
             )
-        case .tokenDelta, .reasoningDelta, .toolCallDelta, .usageDelta:
+        case .tokenDelta, .reasoningDelta, .toolCallDelta, .annotationDelta, .toolResultDelta, .usageDelta:
             if shouldPublishTokenPhase {
                 await schedulerReadModel.recordPhaseTransition(
                     requestID: requestID,
@@ -1342,6 +1346,11 @@ public actor RequestCoordinator {
                 await hydrateToolResult(
                     requestIdentity: requestIdentity,
                     toolCallID: toolCallDelta.callID
+                )
+            } else if case .toolResultDelta(let toolResultDelta) = event.payload {
+                await hydrateToolResult(
+                    requestIdentity: requestIdentity,
+                    toolCallID: toolResultDelta.callID
                 )
             }
         case .cacheDecision(let cacheDecision):

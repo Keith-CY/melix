@@ -183,6 +183,23 @@ def _token_count_routing_probe() -> None:
     lifecycle_state.flush_orphan_tool_events()
     lifecycle_state.open_tool_event()
     lifecycle_state.close_tool_event()
+    annotation_state = stream_assembler.ChannelAssemblyState()
+    annotation_state.open_annotation_span("cite-1", start_offset=0, end_offset=7)
+    pending_annotation_count = annotation_state.pending_annotated_segment_count
+    duplicate_annotation_pending = annotation_state.open_annotation_span(
+        "cite-1",
+        start_offset=0,
+        end_offset=7,
+    )
+    resolved_annotation = annotation_state.resolve_annotation_payload(
+        "cite-1",
+        payload_json='{"url":"https://example.test/source"}',
+    )
+    missing_annotation = annotation_state.resolve_annotation_payload(
+        "missing",
+        payload_json='{"url":"https://example.test/missing"}',
+    )
+    annotation_metrics = annotation_state.metric_fields()
     stale_tail_assembler = RequestStreamAssembler(
         request_id="req-channel-state-stale-tail-clear",
         reasoning_enabled=False,
@@ -307,6 +324,13 @@ def _token_count_routing_probe() -> None:
     assert lifecycle_state.orphan_tool_event_flush_count == 1
     assert lifecycle_state.open_tool_event_count == 0
     assert lifecycle_state.preferred_channel_source == "tool_call_tag"
+    assert pending_annotation_count == 1
+    assert duplicate_annotation_pending is False
+    assert resolved_annotation is True
+    assert missing_annotation is False
+    assert annotation_metrics["pending_annotated_segment_count"] == 0
+    assert annotation_metrics["annotation_payload_resolved_count"] == 1
+    assert annotation_metrics["annotation_payload_missing_count"] == 1
     assert [delta.content_text for delta in stale_tail_deltas if delta.content_text] == [
         "visible <x"
     ]

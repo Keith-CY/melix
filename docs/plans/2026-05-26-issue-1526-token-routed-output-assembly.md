@@ -66,18 +66,38 @@ Completed:
   `pending_marker_tail_chars`, and `terminal_marker_tail_flush_count`.
 - Orphan tool-call markers are terminally flushed without visible markup leaks
   and reported through `orphan_tool_event_flush_count`.
-
-Remaining for issue closeout:
-
-- Annotation-dependent spans still need protocol-bearing fixtures where text
-  arrives before annotation payloads.
-- Tool-result payload buffering remains blocked on a runtime event or protocol
-  shape that can carry bundled tool results separately from tool-call deltas.
+- Add worker `ExecuteEvent` payloads for typed `AnnotationDelta` and
+  `ToolResultDelta` so annotation and tool-result payloads travel separately
+  from visible assistant text.
+- Add Python runtime event types for annotation and tool-result payloads, and
+  pass them through `EngineCore.generate`.
+- Keep annotation/tool-result payloads out of `assistant_text`; use
+  `ChannelAssemblyState` to record pending/resolved annotation counts and
+  buffered tool-result counts in completed parser metrics.
+- Control-plane chat execution and HTTP SSE bridging preserve typed annotation
+  and tool-result frames without promoting their payload JSON to visible text.
+- Regenerate protocol artifacts after schema changes.
 
 ## Verification
 
-- `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python --extra mlx pytest services/mlx-worker-python/tests/test_generate_stream_receipts.py services/mlx-worker-python/tests/test_stream_assembler.py services/mlx-worker-python/tests/test_stream_assembler_receipts.py -q`
-- `make py-test` before PR handoff when the focused tests are stable.
-- Metrics report: Python worker receipt scope, with coverage measured for
-  `worker/runtime/stream_assembler.py`, `worker/runtime/token_route_receipt.py`,
-  and `worker/engine/engine_core.py` when preparing the final commit.
+- `make swift-test`
+- `make py-test`
+- `make integration-test`
+- Focused Python coverage:
+  `PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 UV_CACHE_DIR="$PWD/.uv-cache" uv run --project services/mlx-worker-python --extra mlx coverage run -m pytest services/mlx-worker-python/tests/test_generate_stream.py services/mlx-worker-python/tests/test_stream_assembler.py services/mlx-worker-python/tests/test_generate_stream_receipts.py services/mlx-worker-python/tests/test_stream_assembler_receipts.py -q`
+- Python changed-line coverage:
+  `UV_PYTHON=3.12 UV_CACHE_DIR="$PWD/.uv-cache" uv run python scripts/python_changed_line_coverage.py --coverage-json .runtime/coverage/issue-1526-python-coverage.json --diff-from origin/main services/mlx-worker-python/worker/engine/engine_core.py services/mlx-worker-python/worker/runtime/mlx_text_runtime.py services/mlx-worker-python/worker/runtime/stream_assembler.py services/mlx-worker-python/tests/test_generate_stream.py services/mlx-worker-python/tests/test_stream_assembler.py`
+  reported 100.00% changed-line coverage, 113/113 measurable changed lines.
+- Focused control-plane Swift coverage:
+  `HOME="$PWD/.swift-home/control-coverage" CLANG_MODULE_CACHE_PATH="$PWD/services/control-plane-swift/.build/ModuleCache.noindex/control-coverage" xcrun swift test --package-path services/control-plane-swift --enable-code-coverage --filter 'ControlPlaneChatExecutionTests|SSEStreamWriterTests|RequestCoordinatorTests'`
+  plus `scripts/swift_changed_line_coverage.py` reported 97.24% changed-line
+  coverage, 352/362 measurable changed lines.
+- Focused macOS menubar Swift coverage:
+  `HOME="$PWD/.swift-home/menubar-coverage" CLANG_MODULE_CACHE_PATH="$PWD/apps/macos-menubar/.build/ModuleCache.noindex/coverage" xcrun swift test --package-path apps/macos-menubar --enable-code-coverage --filter 'RuntimeViewModelTests/chatPromptIgnoresAnnotationAndToolResultPayloadsInVisibleTranscript'`
+  plus `scripts/swift_changed_line_coverage.py` reported 100.00% changed-line
+  coverage, 38/38 measurable changed lines.
+- Metrics report: worker parser metrics now include
+  `annotation_delta_count`, `tool_result_delta_count`,
+  `annotation_payload_resolved_count`, `annotation_payload_missing_count`, and
+  `tool_result_payload_buffered_count`; HTTP metrics include
+  `http.annotation_delta_count` and `http.tool_result_delta_count`.
