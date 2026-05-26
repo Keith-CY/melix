@@ -17,8 +17,7 @@ def build_paired_statistical_evidence(
 ) -> dict[str, object]:
     outcomes = _normalized_outcomes(paired_outcomes)
     sample_size = len(outcomes)
-    mean_value = _mean(outcomes)
-    all_values_equal = _outcome_values_equal(outcomes)
+    mean_value, all_values_equal = _outcome_summary(outcomes)
     delta_accuracy = _rounded(mean_value)
     bootstrap_interval = _paired_bootstrap_interval(
         outcomes=outcomes,
@@ -194,6 +193,23 @@ def _outcome_values_equal(values: tuple[float, ...]) -> bool:
     if values[0] != values[-1]:
         return False
     return _all_values_equal(values)
+
+
+def _outcome_summary(values: tuple[float, ...]) -> tuple[float, bool]:
+    iterator = iter(values)
+    try:
+        first_value = next(iterator)
+    except StopIteration:
+        return 0.0, False
+    total = first_value
+    all_values_equal = True
+    sample_size = 1
+    for value in iterator:
+        sample_size += 1
+        total += value
+        if value != first_value:
+            all_values_equal = False
+    return total / sample_size, all_values_equal
 
 
 def _all_values_equal(values: tuple[float, ...]) -> bool:
