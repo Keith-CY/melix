@@ -153,6 +153,7 @@ class ChannelAssemblyState:
 
     def open_tool_event(self) -> None:
         self.record_channel_source("tool_call_tag")
+        # The grammar only allows one open tool event; keep this as a 0/1 gauge.
         if self.open_tool_event_count == 0:
             self.open_tool_event_count = 1
 
@@ -891,6 +892,7 @@ class RequestStreamAssembler:
 
     @staticmethod
     def _should_flush_terminal_marker_tail(suffix: str) -> bool:
+        # A single "<" may be literal content; only suppress multi-char marker prefixes.
         return len(suffix) > 1
 
     def _sync_channel_state_metrics(self) -> None:
