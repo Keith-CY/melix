@@ -234,7 +234,7 @@ def test_report_evidence_gate_metric_prefix_list_rules_reflect_mutation() -> Non
 
 
 def test_report_evidence_gate_target_field_tuple_rules_reuse_normalized_tuple() -> None:
-    report_evidence_gate_module._string_tuple_from_tuple.cache_clear()
+    report_evidence_gate_module._string_frozenset_from_tuple.cache_clear()
     rule = {"target_fields": ("adapter_id", "adapter_snapshot")}
 
     assert report_evidence_gate_module._rule_matches_report(
@@ -252,9 +252,34 @@ def test_report_evidence_gate_target_field_tuple_rules_reuse_normalized_tuple() 
         probe_phases=set(),
     )
 
-    cache_info = report_evidence_gate_module._string_tuple_from_tuple.cache_info()
+    cache_info = report_evidence_gate_module._string_frozenset_from_tuple.cache_info()
     assert cache_info.hits >= 1
     assert cache_info.misses == 1
+
+
+def test_report_evidence_gate_target_field_scan_iterates_present_keys() -> None:
+    class CountingDict(dict[str, object]):
+        get_calls = 0
+
+        def get(
+            self, key: object, default: object = None
+        ) -> object:  # pragma: no cover - fails if called
+            self.get_calls += 1
+            return super().get(key, default)
+
+    target = CountingDict({"target_field": "adapter-snapshot"})
+
+    assert report_evidence_gate_module._rule_matches_report(
+        rule={
+            "target_fields": tuple(f"probe_field_{index}" for index in range(64))
+            + ("target_field",)
+        },
+        runs=[],
+        targets=[target],
+        metrics=[],
+        probe_phases=set(),
+    )
+    assert target.get_calls == 0
 
 
 def test_report_evidence_gate_target_field_list_rules_reflect_mutation() -> None:
