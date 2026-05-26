@@ -1565,6 +1565,7 @@ def test_native_mtp_extra_safetensor_files_filters_names_before_path_join(
             "language_model.mtp.layers.0.weight": "model-00001-of-00002.safetensors",
             "language_model.mtp.layers.1.weight": "mtp-00001.safetensors",
             "language_model.mtp.layers.2.weight": "notes.txt",
+            "language_model.mtp.layers.3.weight": "mtp-00001.safetensors",
             "language_model.layers.0.weight": "ignored-mtp.safetensors",
         }
     }
