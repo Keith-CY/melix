@@ -486,6 +486,37 @@ def test_run_local_suite_skips_dataset_parsing_for_zero_sample_request(tmp_path:
     assert run.samples == ()
 
 
+def test_run_local_suite_reuses_parameter_map_for_defaults(tmp_path: Path) -> None:
+    dataset_root = _write_dataset_package(
+        tmp_path=tmp_path,
+        dataset_id="mmlu-dev-parameters",
+        suite_id="mmlu",
+        samples=(({"id": "1", "prompt": "2+2?", "expected": "4"}),),
+    )
+    backend = ScriptedEvaluationBackend(("Answer: 4",))
+    runtime = MLXTextRuntime(backend=backend)
+    registry = FakeEvaluationRegistry(runtime=runtime, model_id="persisted-eval-model")
+    runner = EvaluationCore(jobs_root=tmp_path / "runs" / "mmlu", registry=registry)
+
+    run = runner.run_local_suite(
+        model_id="persisted-eval-model",
+        model_handle=registry.handle,
+        suite_id="mmlu",
+        dataset_root=dataset_root,
+        sample_size=1,
+        parameters={
+            "scoring_mode": "multiple_choice_accuracy",
+            "code_exec_policy": "disabled",
+            "task_kind": "text-generation",
+        },
+    )
+
+    assert run.job.scoring_mode == "multiple_choice_accuracy"
+    assert run.job.code_exec_policy == "disabled"
+    assert run.job.task_kind == "text-generation"
+    assert run.samples[0].typed_score == 1.0
+
+
 def test_run_local_suite_reuses_combined_sample_list_for_validators(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
