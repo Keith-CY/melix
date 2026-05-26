@@ -74,13 +74,15 @@ struct HTTPRuntimeDiscoveryPayloads {
     }
 
     private func modelPayload(_ model: Melix_Controlplane_V1_ModelSummary) -> [String: Any] {
-        [
+        let mediaRouteReceipt = ModelCatalogPresentation.publicMediaRouteReceipt(for: model)
+        return [
             "model_id": model.modelID,
             "kind": model.kind,
             "state": model.state.discoveryString,
             "hf_repo_id": model.settings.ext["melix.hf_repo_id"] ?? "",
-            "supported_modalities": model.supportedModalities,
+            "supported_modalities": mediaRouteReceipt.effectiveSupportedModalities,
             "supported_tasks": model.supportedTasks,
+            "media_route_receipt": mediaRouteReceipt.payload,
             "capability_receipt": ModelCapabilityReceipts.discoveryPayload(for: model),
         ]
     }

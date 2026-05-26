@@ -3,8 +3,158 @@ from __future__ import annotations
 import json
 import logging
 
+import pytest
+
 from worker.runtime import stream_assembler
-from worker.runtime.stream_assembler import RequestStreamAssembler, StreamFragment
+from worker.runtime.stream_assembler import (
+    AssembledToolCall,
+    AssemblyDelta,
+    RequestStreamAssembler,
+    StreamFragment,
+)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _token_count_routing_probe() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-token-count-spans",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    deltas = assembler.accept(
+        StreamFragment(
+            raw_text=(
+                "<think>alpha beta gamma</think>"
+                '<tool_call>{"name":"search","arguments":{"q":"one"}}</tool_call>'
+                "visible"
+            ),
+            token_ids=(101, 102, 103, 104, 105, 106),
+        )
+    )
+    plain_assembler = RequestStreamAssembler(
+        request_id="req-plain-token-count",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    plain_deltas = plain_assembler.accept(
+        StreamFragment(raw_text="visible plain", token_ids=(201, 202))
+    )
+    default_plain_assembler = RequestStreamAssembler(
+        request_id="req-plain-default-token-count",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    default_plain_deltas = default_plain_assembler.accept(
+        StreamFragment(raw_text="visible default")
+    )
+    observed_assembler = RequestStreamAssembler(
+        request_id="req-observed-default-token-count",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    observed_deltas = observed_assembler.accept(
+        StreamFragment(raw_text="observed visible", parser_observation="flush_tokens=0")
+    )
+    empty_annotated = assembler._annotate_token_counts([], 2)
+    single_annotated = assembler._annotate_token_counts(
+        [AssemblyDelta(content_text="visible")],
+        2,
+    )
+    compressed = assembler._annotate_token_counts(
+        [
+            AssemblyDelta(reasoning_text="alpha beta"),
+            AssemblyDelta(tool_call=AssembledToolCall("call-1", "search", "{}", 1, "qwen")),
+            AssemblyDelta(content_text="visible"),
+        ],
+        2,
+    )
+    compressed_with_extra = assembler._annotate_token_counts(
+        [
+            AssemblyDelta(reasoning_text="alpha beta gamma"),
+            AssemblyDelta(tool_call=AssembledToolCall("call-2", "search", "{}", 1, "qwen")),
+            AssemblyDelta(content_text="visible"),
+        ],
+        4,
+    )
+    compressed_after_sparse_extra = assembler._annotate_token_counts(
+        [
+            AssemblyDelta(content_text="visible"),
+            AssemblyDelta(reasoning_text="alpha beta gamma"),
+            AssemblyDelta(tool_call=AssembledToolCall("call-3", "search", "{}", 1, "qwen")),
+        ],
+        4,
+    )
+    extra_tool = assembler._annotate_token_counts(
+        [
+            AssemblyDelta(reasoning_text="alpha"),
+            AssemblyDelta(tool_call=AssembledToolCall("call-4", "search", "{}", 1, "qwen")),
+            AssemblyDelta(content_text="visible"),
+        ],
+        5,
+    )
+    extra_reasoning = assembler._annotate_token_counts(
+        [AssemblyDelta(reasoning_text="alpha"), AssemblyDelta(content_text="visible")],
+        4,
+    )
+    json_assembler = RequestStreamAssembler(
+        request_id="req-json-token-count",
+        reasoning_enabled=True,
+        structured_output_mode="json_object",
+        tool_parser_mode="",
+    )
+    json_deltas = json_assembler.accept(
+        StreamFragment(raw_text='{"answer":"ok"}', token_ids=(301, 302))
+    )
+    default_json_assembler = RequestStreamAssembler(
+        request_id="req-json-default-token-count",
+        reasoning_enabled=True,
+        structured_output_mode="json_object",
+        tool_parser_mode="",
+    )
+    default_json_deltas = default_json_assembler.accept(
+        StreamFragment(raw_text='{"answer":"plain"}')
+    )
+
+    assert [
+        (
+            delta.reasoning_text,
+            delta.tool_call.tool_name if delta.tool_call else "",
+            delta.content_text,
+            delta.token_count,
+        )
+        for delta in deltas
+    ] == [
+        ("alpha beta gamma", "", "", 3),
+        ("", "search", "", 2),
+        ("", "", "visible", 1),
+    ]
+    assert [(delta.content_text, delta.token_count) for delta in plain_deltas] == [
+        ("visible plain", 2)
+    ]
+    assert [(delta.content_text, delta.token_count) for delta in default_plain_deltas] == [
+        ("visible default", 1)
+    ]
+    assert [
+        (delta.content_text, delta.parser_observation, delta.token_count)
+        for delta in observed_deltas
+    ] == [("observed visible", "flush_tokens=0", 1)]
+    assert empty_annotated == []
+    assert [delta.token_count for delta in single_annotated] == [2]
+    assert [delta.token_count for delta in compressed] == [1, 1, 0]
+    assert [delta.token_count for delta in compressed_with_extra] == [2, 1, 1]
+    assert [delta.token_count for delta in compressed_after_sparse_extra] == [1, 2, 1]
+    assert [delta.token_count for delta in extra_tool] == [1, 3, 1]
+    assert [delta.token_count for delta in extra_reasoning] == [3, 1]
+    assert [(delta.content_text, delta.token_count) for delta in json_deltas] == [
+        ('{"answer":"ok"}', 2)
+    ]
+    assert [(delta.content_text, delta.token_count) for delta in default_json_deltas] == [
+        ('{"answer":"plain"}', 1)
+    ]
 
 
 def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:
@@ -267,6 +417,34 @@ def test_token_byte_delta_decodes_complete_ascii_without_incremental_decoder(mon
     assert decoder_calls == 0
 
 
+def test_token_byte_delta_decodes_complete_multibyte_without_incremental_decoder(monkeypatch) -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-token-byte-complete-multibyte",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+    decoder_calls = 0
+    original_decoder_factory = stream_assembler._UTF8_INCREMENTAL_DECODER
+
+    def tracked_decoder_factory():
+        nonlocal decoder_calls
+        decoder_calls += 1  # pragma: no cover - direct decode guard must stay cold
+        return original_decoder_factory()  # pragma: no cover
+
+    monkeypatch.setattr(stream_assembler, "_UTF8_INCREMENTAL_DECODER", tracked_decoder_factory)
+
+    deltas = assembler.accept(StreamFragment(token_bytes="héllo".encode("utf-8")))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in deltas] == ["héllo"]
+    assert completed.assistant_text == "héllo"
+    assert completed.raw_text == "héllo"
+    assert completed.metrics["generated_token_count"] == 1
+    assert completed.metrics["byte_fallback_decode_error_count"] == 0
+    assert decoder_calls == 0
+
+
 def test_token_byte_delta_preserves_split_multibyte_sequence(monkeypatch) -> None:
     assembler = RequestStreamAssembler(
         request_id="req-token-byte-split-multibyte",
@@ -311,6 +489,24 @@ def test_token_byte_raw_parts_materialize_before_raw_text_delta() -> None:
     assert [delta.content_text for delta in first + second] == ["hello ", "world"]
     assert completed.assistant_text == "hello world"
     assert completed.raw_text == "hello world"
+    assert completed.metrics["non_monotonic_stream_count"] == 0
+
+
+def test_text_fragments_without_raw_text_are_treated_as_deltas() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-text-deltas",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+
+    first = assembler.accept(StreamFragment(text="Hel"))
+    second = assembler.accept(StreamFragment(text="lo"))
+    completed = assembler.completed()
+
+    assert [delta.content_text for delta in first + second] == ["Hel", "lo"]
+    assert completed.assistant_text == "Hello"
+    assert completed.raw_text == "Hello"
     assert completed.metrics["non_monotonic_stream_count"] == 0
 
 

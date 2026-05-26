@@ -25,6 +25,20 @@ TRAJECTORY_PROVENANCE_FIELDS = (
 
 TRAJECTORY_PROVENANCE_CSV_FIELDS = TRAJECTORY_PROVENANCE_FIELDS
 
+_JSON_IMMUTABLE_TYPES = (str, int, float, bool, type(None))
+
+
+def _copy_trajectory_provenance_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _copy_trajectory_provenance_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_copy_trajectory_provenance_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_copy_trajectory_provenance_value(item) for item in value)
+    if isinstance(value, _JSON_IMMUTABLE_TYPES):
+        return value
+    return copy.deepcopy(value)
+
 
 def normalize_trajectory_provenance(
     provenance: Mapping[str, Any] | None,
@@ -37,7 +51,7 @@ def normalize_trajectory_provenance(
         if value in ("", None):
             continue
         if isinstance(value, (dict, list)):
-            normalized[field] = copy.deepcopy(value)
+            normalized[field] = _copy_trajectory_provenance_value(value)
         else:
             normalized[field] = value
     return normalized
@@ -90,14 +104,15 @@ def trajectory_provenance_from_snapshot_manifest(
         value = manifest.get(source_field)
         if value in ("", None):
             continue
-        provenance[output_field] = copy.deepcopy(value) if isinstance(value, (dict, list)) else value
+        provenance[output_field] = value
     return normalize_trajectory_provenance(provenance)
 
 
 def load_trajectory_provenance_from_snapshot_manifest(
     manifest_path: Path,
 ) -> dict[str, Any]:
-    payload = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    manifest_path = Path(manifest_path)
+    payload = json.loads(manifest_path.read_bytes())
     if not isinstance(payload, dict):
         return {}
     return trajectory_provenance_from_snapshot_manifest(

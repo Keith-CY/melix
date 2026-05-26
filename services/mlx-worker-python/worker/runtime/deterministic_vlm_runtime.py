@@ -8,6 +8,13 @@ from typing import Callable
 
 from packages.protocol.python.worker.v1 import cache_pb2, common_pb2
 
+from worker.runtime.multimodal_attention_policy import (
+    AttentionPrefillPolicyDecision,
+    build_attention_budget_receipt,
+    enforce_attention_prefill_policy,
+    int_metadata as _int_metadata,
+    resolve_configured_attention_prefill_policy,
+)
 from worker.runtime.deterministic_delay import sleep_if_configured
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent, RuntimeToolCallEvent
 from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
@@ -40,8 +47,10 @@ class VisionProbeSnapshot:
     multimodal_fallback_reason: str = "not_reported"
     multimodal_decode_sync_mode: str = "baseline"
     multi_image_scatter_mode: str = "none"
+    multimodal_position_slice_fallback_count: int = 0
     quantized_load_mode: str = "fallback"
     quantized_load_fallback_reason: str = "not_reported"
+    attention_budget_receipt: dict[str, object] = field(default_factory=dict)
     position_metadata_receipt: dict[str, object] = field(
         default_factory=lambda: build_position_metadata_receipt()
     )
@@ -69,6 +78,13 @@ class VisionProbeSnapshot:
     text_batch_generator_prefill_total_token_count: int = 0
     text_batch_generator_prefill_completed_request_count: int = 0
     text_batch_generator_prefill_step_size: int = 0
+    text_batch_generator_speculative_cycle_count_total: int = 0
+    text_batch_generator_speculative_accepted_count_total: int = 0
+    text_batch_generator_speculative_rejected_count_total: int = 0
+    text_batch_generator_speculative_backbone_ms_total: float = 0.0
+    text_batch_generator_speculative_mtp_head_ms_total: float = 0.0
+    text_batch_generator_speculative_sample_ms_total: float = 0.0
+    text_batch_generator_speculative_cache_ops_ms_total: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -110,6 +126,7 @@ class PreparedVisionPrompt:
     prompt_tokens: int
     cache_identity: str
     scope_id: str
+    attention_policy: AttentionPrefillPolicyDecision | None
 
 
 class DeterministicVLMRuntime:
@@ -131,12 +148,16 @@ class DeterministicVLMRuntime:
         self._cache_snapshot: cache_pb2.CacheSnapshot | None = None
         self._fast_path_controller = MultimodalFastPathController()
         self._last_fast_path_signature: tuple[str, ...] | None = None
+        self._last_attention_policy_signature: tuple[str, ...] | None = None
+        self._last_attention_policy: AttentionPrefillPolicyDecision | None = None
 
     def load_model(self, model_spec):
-        family_config = resolve_vision_family_config(dict(model_spec.ext))
+        ext = dict(model_spec.ext)
+        family_config = resolve_vision_family_config(ext)
         metadata = {
+            **ext,
             **family_config.capability_metadata(),
-            "melix.vlm.execution_mode": dict(model_spec.ext).get(
+            "melix.vlm.execution_mode": ext.get(
                 "melix.vlm.execution_mode",
                 "multimodal",
             ).strip()
@@ -174,6 +195,7 @@ class DeterministicVLMRuntime:
             loaded_model,
             prompt.prepared_request,
             seq_len=prompt.prompt_tokens,
+            attention_policy=prompt.attention_policy,
         )
         self._last_probe = replace(
             self._last_probe,
@@ -197,11 +219,13 @@ class DeterministicVLMRuntime:
         request_id: str,
         loaded_model,
         messages,
+        prefill_step_size: int = 0,
         execution_ext: dict[str, str] | None = None,
     ) -> VisionPrefillSession:
         prompt = self._prepare_prompt(
             messages,
             loaded_model=loaded_model,
+            requested_prefill_step_size=prefill_step_size,
             execution_ext=execution_ext,
         )
         prepared_request = prompt.prepared_request
@@ -212,7 +236,9 @@ class DeterministicVLMRuntime:
             loaded_model,
             prepared_request,
             seq_len=prompt_tokens,
+            attention_policy=prompt.attention_policy,
         )
+        enforce_attention_prefill_policy(prompt.attention_policy)
         self._cache_lookups += 1
         cache_hit = cache_identity in self._cache_entries
         if cache_hit:
@@ -323,7 +349,26 @@ class DeterministicVLMRuntime:
         cancel_event: Event,
         execution_ext: dict[str, str] | None = None,
     ):
-        self._ensure_fast_path_probe(loaded_model, prepared_request)
+        (
+            attention_policy,
+            self._last_attention_policy_signature,
+            self._last_attention_policy,
+        ) = resolve_configured_attention_prefill_policy(
+            loaded_model=loaded_model,
+            prepared_request=prepared_request,
+            family_config_resolver=self._family_config,
+            prompt_token_counter=self.prompt_token_count,
+            cached_signature=self._last_attention_policy_signature,
+            cached_decision=self._last_attention_policy,
+            execution_ext=execution_ext,
+        )
+        enforce_attention_prefill_policy(attention_policy)
+        self._ensure_fast_path_probe(
+            loaded_model,
+            prepared_request,
+            seq_len=attention_policy.prompt_tokens if attention_policy is not None else None,
+            attention_policy=attention_policy,
+        )
         response = self._response_text(prepared_request)
         cache_identity, scope_id = self._cache_identity(
             prepared_request,
@@ -424,6 +469,7 @@ class DeterministicVLMRuntime:
         prepared_request: PreparedVisionRequest,
         *,
         seq_len: int | None = None,
+        attention_policy: AttentionPrefillPolicyDecision | None = None,
     ) -> None:
         signature = fast_path_probe_signature(loaded_model, prepared_request)
         if self._last_fast_path_signature == signature:
@@ -433,6 +479,7 @@ class DeterministicVLMRuntime:
             prepared_request,
             signature=signature,
             seq_len=seq_len,
+            attention_policy=attention_policy,
         )
 
     def _record_fast_path_probe(
@@ -442,8 +489,26 @@ class DeterministicVLMRuntime:
         *,
         signature: tuple[str, ...] | None = None,
         seq_len: int | None = None,
+        attention_policy: AttentionPrefillPolicyDecision | None = None,
     ) -> None:
         fast_path = self._fast_path_controller.plan(loaded_model, prepared_request)
+        attention_decision = attention_policy
+        if attention_decision is None:
+            (
+                attention_decision,
+                self._last_attention_policy_signature,
+                self._last_attention_policy,
+            ) = resolve_configured_attention_prefill_policy(
+                loaded_model=loaded_model,
+                prepared_request=prepared_request,
+                seq_len=seq_len,
+                family_config_resolver=self._family_config,
+                prompt_token_counter=self.prompt_token_count,
+                cached_signature=self._last_attention_policy_signature,
+                cached_decision=self._last_attention_policy,
+                execution_ext=None,
+            )
+        attention_budget_receipt = build_attention_budget_receipt(attention_decision)
         self._last_fast_path_signature = signature or fast_path_probe_signature(
             loaded_model,
             prepared_request,
@@ -467,6 +532,7 @@ class DeterministicVLMRuntime:
             multi_image_scatter_mode=fast_path.multi_image_scatter_mode,
             quantized_load_mode=fast_path.quantized_load_mode,
             quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
+            attention_budget_receipt=attention_budget_receipt,
             position_metadata_receipt=self._position_metadata_receipt(
                 loaded_model=loaded_model,
                 prepared_request=prepared_request,
@@ -792,6 +858,7 @@ class DeterministicVLMRuntime:
         self,
         messages,
         loaded_model=None,
+        requested_prefill_step_size: int = 0,
         execution_ext: dict[str, str] | None = None,
     ) -> PreparedVisionPrompt:
         family_config = self._family_config(loaded_model)
@@ -806,10 +873,27 @@ class DeterministicVLMRuntime:
             loaded_model=loaded_model,
             family_config=family_config,
         )
+        (
+            attention_policy,
+            self._last_attention_policy_signature,
+            self._last_attention_policy,
+        ) = resolve_configured_attention_prefill_policy(
+            loaded_model=loaded_model,
+            prepared_request=prepared_request,
+            seq_len=prompt_tokens,
+            requested_prefill_step_size=requested_prefill_step_size,
+            family_config=family_config,
+            family_config_resolver=self._family_config,
+            prompt_token_counter=self.prompt_token_count,
+            cached_signature=self._last_attention_policy_signature,
+            cached_decision=self._last_attention_policy,
+            execution_ext=execution_ext,
+        )
         return PreparedVisionPrompt(
             prepared_request=prepared_request,
             family_config=family_config,
             prompt_tokens=prompt_tokens,
             cache_identity=cache_identity,
             scope_id=scope_id,
+            attention_policy=attention_policy,
         )

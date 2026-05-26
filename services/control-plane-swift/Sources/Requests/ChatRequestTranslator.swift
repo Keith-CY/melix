@@ -147,6 +147,10 @@ public struct NormalizedTextRequest: Sendable, Equatable {
     public let tools: [NormalizedToolDefinition]
     public let toolChoice: String?
     public let chatTemplate: ChatTemplateSelection?
+    public let mediaPartsSummary: NormalizedMediaPartsSummary
+    public let orderedMessagePartsRequired: Bool
+    public let legacyImageFallbackInjected: Bool
+    public let openAICompatibilityReceipts: [String: String]
 
     public init(
         endpoint: TextEndpointKind,
@@ -181,7 +185,11 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         toolParser: ToolParserSelection? = nil,
         tools: [NormalizedToolDefinition] = [],
         toolChoice: String? = nil,
-        chatTemplate: ChatTemplateSelection? = nil
+        chatTemplate: ChatTemplateSelection? = nil,
+        mediaPartsSummary: NormalizedMediaPartsSummary = .init(),
+        orderedMessagePartsRequired: Bool = false,
+        legacyImageFallbackInjected: Bool = false,
+        openAICompatibilityReceipts: [String: String] = [:]
     ) {
         self.endpoint = endpoint
         self.model = model
@@ -218,6 +226,13 @@ public struct NormalizedTextRequest: Sendable, Equatable {
         let trimmedToolChoice = toolChoice?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.toolChoice = trimmedToolChoice?.isEmpty == false ? trimmedToolChoice : nil
         self.chatTemplate = chatTemplate
+        self.mediaPartsSummary = mediaPartsSummary
+        self.orderedMessagePartsRequired = orderedMessagePartsRequired
+        self.legacyImageFallbackInjected = legacyImageFallbackInjected
+        self.openAICompatibilityReceipts = openAICompatibilityReceipts.filter { key, value in
+            !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
 }
 
@@ -256,7 +271,11 @@ public extension NormalizedTextRequest {
             toolParser: toolParser,
             tools: tools,
             toolChoice: toolChoice,
-            chatTemplate: chatTemplate
+            chatTemplate: chatTemplate,
+            mediaPartsSummary: mediaPartsSummary,
+            orderedMessagePartsRequired: orderedMessagePartsRequired,
+            legacyImageFallbackInjected: legacyImageFallbackInjected,
+            openAICompatibilityReceipts: openAICompatibilityReceipts
         )
     }
 
@@ -342,6 +361,10 @@ public struct ShapedTextRequest: Sendable, Equatable {
     public let ocrPolicy: ResolvedOCRExecutionPolicy?
     public let partialMode: String?
     public let assistantPrefill: AssistantPrefillSelection?
+    public let mediaPartsSummary: NormalizedMediaPartsSummary
+    public let orderedMessagePartsRequired: Bool
+    public let legacyImageFallbackInjected: Bool
+    public let openAICompatibilityReceipts: [String: String]
 }
 
 public struct AssistantPrefillSelection: Sendable, Equatable {
@@ -421,6 +444,64 @@ public enum OpenAIChatToolChoice: Codable, Sendable, Equatable {
             return try? value.canonicalJSONString()
         }
     }
+}
+
+public enum OpenAILegacyFunctionCall: Codable, Sendable, Equatable {
+    case mode(String)
+    case named(String)
+    case structured(StructuredJSONValue)
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let mode = try? container.decode(String.self) {
+            self = .mode(mode)
+            return
+        }
+        let value = try container.decode(StructuredJSONValue.self)
+        if case let .object(object) = value,
+           let name = object["name"]?.stringValue {
+            self = .named(name)
+            return
+        }
+        self = .structured(value)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case let .mode(mode):
+            try container.encode(mode)
+        case let .named(name):
+            try container.encode(["name": name])
+        case let .structured(value):
+            try container.encode(value)
+        }
+    }
+
+    public var normalizedToolChoice: String? {
+        switch self {
+        case let .mode(mode):
+            let trimmed = mode.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        case let .named(name):
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                return nil
+            }
+            return #"{"function":{"name":"\#(Self.escapedJSONString(trimmed))"},"type":"function"}"#
+        case let .structured(value):
+            return try? value.canonicalJSONString()
+        }
+    }
+
+    private static func escapedJSONString(_ value: String) -> String {
+        let data = (try? escapingEncoder.encode(value))
+            ?? Data(#""""#.utf8)
+        let encoded = String(decoding: data, as: UTF8.self)
+        return String(encoded.dropFirst().dropLast())
+    }
+
+    private static let escapingEncoder = JSONEncoder()
 }
 
 public struct OpenAIChatTool: Codable, Sendable, Equatable {
@@ -557,6 +638,17 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         public var hasMultimodalContent: Bool {
             contentParts != nil
         }
+
+        public var hasMessageLevelMedia: Bool {
+            contentParts?.contains { part in
+                switch part.type {
+                case .text, .inputText:
+                    return false
+                case .image, .imageURL, .inputImage, .audio, .audioURL, .inputAudio, .video, .videoURL, .inputVideo:
+                    return true
+                }
+            } ?? false
+        }
     }
 
     public let model: String
@@ -589,7 +681,15 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
     public let toolParser: ToolParserRequestConfiguration?
     public let tools: [OpenAIChatTool]?
     public let toolChoice: OpenAIChatToolChoice?
+    public let legacyFunctions: [OpenAIChatTool.FunctionDefinition]?
+    public let legacyFunctionCall: OpenAILegacyFunctionCall?
+    public let parallelToolCalls: Bool?
+    public let logprobs: Bool?
+    public let topLogprobs: UInt32?
     public let chatTemplateKwargs: ChatTemplateRequestConfiguration?
+    public let legacyImage: String?
+    public let legacyImageURL: String?
+    public let legacyImageBase64: String?
 
     enum CodingKeys: String, CodingKey {
         case model
@@ -623,7 +723,15 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         case toolParser = "tool_parser"
         case tools
         case toolChoice = "tool_choice"
+        case legacyFunctions = "functions"
+        case legacyFunctionCall = "function_call"
+        case parallelToolCalls = "parallel_tool_calls"
+        case logprobs
+        case topLogprobs = "top_logprobs"
         case chatTemplateKwargs = "chat_template_kwargs"
+        case legacyImage = "image"
+        case legacyImageURL = "image_url"
+        case legacyImageBase64 = "image_base64"
     }
 
     public init(
@@ -657,7 +765,15 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         toolParser: ToolParserRequestConfiguration? = nil,
         tools: [OpenAIChatTool]? = nil,
         toolChoice: OpenAIChatToolChoice? = nil,
-        chatTemplateKwargs: ChatTemplateRequestConfiguration? = nil
+        legacyFunctions: [OpenAIChatTool.FunctionDefinition]? = nil,
+        legacyFunctionCall: OpenAILegacyFunctionCall? = nil,
+        parallelToolCalls: Bool? = nil,
+        logprobs: Bool? = nil,
+        topLogprobs: UInt32? = nil,
+        chatTemplateKwargs: ChatTemplateRequestConfiguration? = nil,
+        legacyImage: String? = nil,
+        legacyImageURL: String? = nil,
+        legacyImageBase64: String? = nil
     ) {
         self.model = model
         self.messages = messages
@@ -689,7 +805,15 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         self.toolParser = toolParser
         self.tools = tools
         self.toolChoice = toolChoice
+        self.legacyFunctions = legacyFunctions
+        self.legacyFunctionCall = legacyFunctionCall
+        self.parallelToolCalls = parallelToolCalls
+        self.logprobs = logprobs
+        self.topLogprobs = topLogprobs
         self.chatTemplateKwargs = chatTemplateKwargs
+        self.legacyImage = legacyImage
+        self.legacyImageURL = legacyImageURL
+        self.legacyImageBase64 = legacyImageBase64
     }
 
     public init(from decoder: Decoder) throws {
@@ -724,7 +848,21 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         self.toolParser = try container.decodeIfPresent(ToolParserRequestConfiguration.self, forKey: .toolParser)
         self.tools = try container.decodeIfPresent([OpenAIChatTool].self, forKey: .tools)
         self.toolChoice = try container.decodeIfPresent(OpenAIChatToolChoice.self, forKey: .toolChoice)
+        self.legacyFunctions = try container.decodeIfPresent(
+            [OpenAIChatTool.FunctionDefinition].self,
+            forKey: .legacyFunctions
+        )
+        self.legacyFunctionCall = try container.decodeIfPresent(
+            OpenAILegacyFunctionCall.self,
+            forKey: .legacyFunctionCall
+        )
+        self.parallelToolCalls = try container.decodeIfPresent(Bool.self, forKey: .parallelToolCalls)
+        self.logprobs = try container.decodeIfPresent(Bool.self, forKey: .logprobs)
+        self.topLogprobs = try container.decodeIfPresent(UInt32.self, forKey: .topLogprobs)
         self.chatTemplateKwargs = try container.decodeIfPresent(ChatTemplateRequestConfiguration.self, forKey: .chatTemplateKwargs)
+        self.legacyImage = try container.decodeIfPresent(String.self, forKey: .legacyImage)
+        self.legacyImageURL = try container.decodeIfPresent(String.self, forKey: .legacyImageURL)
+        self.legacyImageBase64 = try container.decodeIfPresent(String.self, forKey: .legacyImageBase64)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -759,7 +897,15 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
         try container.encodeIfPresent(toolParser, forKey: .toolParser)
         try container.encodeIfPresent(tools, forKey: .tools)
         try container.encodeIfPresent(toolChoice, forKey: .toolChoice)
+        try container.encodeIfPresent(legacyFunctions, forKey: .legacyFunctions)
+        try container.encodeIfPresent(legacyFunctionCall, forKey: .legacyFunctionCall)
+        try container.encodeIfPresent(parallelToolCalls, forKey: .parallelToolCalls)
+        try container.encodeIfPresent(logprobs, forKey: .logprobs)
+        try container.encodeIfPresent(topLogprobs, forKey: .topLogprobs)
         try container.encodeIfPresent(chatTemplateKwargs, forKey: .chatTemplateKwargs)
+        try container.encodeIfPresent(legacyImage, forKey: .legacyImage)
+        try container.encodeIfPresent(legacyImageURL, forKey: .legacyImageURL)
+        try container.encodeIfPresent(legacyImageBase64, forKey: .legacyImageBase64)
     }
 
     public var structuredOutputConfiguration: StructuredOutputConfiguration? {
@@ -776,16 +922,67 @@ public struct OpenAIChatCompletionsRequest: Codable, Sendable {
 
     public var normalizedTools: [NormalizedToolDefinition] {
         get throws {
-            try (tools ?? []).compactMap { try $0.normalizedDefinition() }
+            let chatTools = try (tools ?? []).compactMap { try $0.normalizedDefinition() }
+            let functionTools = try (legacyFunctions ?? []).compactMap { function in
+                try OpenAIChatTool(type: "function", function: function).normalizedDefinition()
+            }
+            return chatTools + functionTools
         }
     }
 
     public var normalizedToolChoice: String? {
-        toolChoice?.normalizedValue
+        toolChoice?.normalizedValue ?? legacyFunctionCall?.normalizedToolChoice
+    }
+
+    public var compatibilityReceipts: [String: String] {
+        var receipts: [String: String] = [:]
+        if maxCompletionTokens != nil {
+            receipts["melix.openai.request.max_tokens_field"] = "max_completion_tokens"
+        } else if maxTokens != nil {
+            receipts["melix.openai.request.max_tokens_field"] = "max_tokens"
+        }
+        if legacyFunctions?.isEmpty == false {
+            receipts["melix.openai.legacy_functions"] = "true"
+        }
+        if legacyFunctionCall != nil {
+            receipts["melix.openai.legacy_function_call"] = "true"
+        }
+        if let parallelToolCalls {
+            receipts["melix.openai.parallel_tool_calls.requested"] = parallelToolCalls ? "true" : "false"
+            receipts["melix.tool_config.parallel_policy"] = parallelToolCalls ? "enabled" : "disabled"
+        }
+        if let logprobs {
+            receipts["melix.openai.logprobs.requested"] = logprobs ? "true" : "false"
+            receipts["melix.openai.logprobs.effective"] = logprobs ? "unsupported" : "disabled"
+        }
+        if let topLogprobs {
+            receipts["melix.openai.top_logprobs.requested"] = String(topLogprobs)
+            receipts["melix.openai.logprobs.effective"] = "unsupported"
+        }
+        return receipts
     }
 
     public var chatTemplateSelection: ChatTemplateSelection? {
         chatTemplateKwargs?.resolvedSelection()
+    }
+
+    public var legacyTopLevelImageReference: OpenAIMultimodalImageReference? {
+        let imageURL = legacyImageURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let imageURL, !imageURL.isEmpty {
+            return OpenAIMultimodalImageReference(url: imageURL)
+        }
+
+        let imageBase64 = legacyImageBase64?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let imageBase64, !imageBase64.isEmpty {
+            return OpenAIMultimodalImageReference(data: imageBase64)
+        }
+
+        let image = legacyImage?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let image, !image.isEmpty {
+            return OpenAIMultimodalImageReference(data: image)
+        }
+
+        return nil
     }
 
     static func decodeStopSequences(
@@ -1835,12 +2032,24 @@ public struct ChatRequestTranslator: Sendable {
     public func normalize(
         _ request: OpenAIChatCompletionsRequest
     ) throws -> NormalizedTextRequest {
-        makeNormalizedRequest(
+        if request.messages.contains(where: { $0.contentParts != nil }) {
+            return try normalizeMultimodalChat(request)
+        }
+
+        let legacyFallback = try legacyTopLevelImageFallback(
+            for: request,
+            hasMessageLevelMedia: request.messages.contains(where: \.hasMessageLevelMedia)
+        )
+        let fallbackInjection = injectLegacyTopLevelImageFallback(
+            legacyFallback,
+            into: request.messages.map {
+                NormalizedTextMessage(role: $0.role, name: $0.name, content: $0.content)
+            }
+        )
+        return makeNormalizedRequest(
             endpoint: .chatCompletions,
             model: request.model,
-            messages: request.messages.map {
-                NormalizedTextMessage(role: $0.role, name: $0.name, content: $0.content)
-            },
+            messages: fallbackInjection.messages,
             stream: request.stream,
             includeUsage: request.streamOptions?.includeUsage,
             temperature: request.temperature,
@@ -1868,7 +2077,9 @@ public struct ChatRequestTranslator: Sendable {
             toolParser: try request.toolParserSelection,
             tools: try request.normalizedTools,
             toolChoice: request.normalizedToolChoice,
-            chatTemplate: request.chatTemplateSelection
+            chatTemplate: request.chatTemplateSelection,
+            legacyImageFallbackInjected: fallbackInjection.injected,
+            openAICompatibilityReceipts: request.compatibilityReceipts
         )
     }
 
@@ -1878,18 +2089,29 @@ public struct ChatRequestTranslator: Sendable {
         let normalizer = MultimodalRequestNormalizer()
         let messages = try request.messages.map { message in
             if let contentParts = message.contentParts {
-                let normalized = try normalizer.normalize(
-                    OpenAIMultimodalMessage(role: message.role, name: message.name, content: contentParts)
+                let multimodalMessage = OpenAIMultimodalMessage(
+                    role: message.role,
+                    name: message.name,
+                    content: contentParts
                 )
+                let normalized = try normalizer.normalize(multimodalMessage)
                 return NormalizedTextMessage(role: normalized.role, name: normalized.name, parts: Array(normalized.parts))
             }
             return NormalizedTextMessage(role: message.role, name: message.name, content: message.content)
         }
+        let legacyFallback = try legacyTopLevelImageFallback(
+            for: request,
+            hasMessageLevelMedia: request.messages.contains(where: \.hasMessageLevelMedia)
+        )
+        let fallbackInjection = injectLegacyTopLevelImageFallback(
+            legacyFallback,
+            into: messages
+        )
 
         return makeNormalizedRequest(
             endpoint: .chatCompletions,
             model: request.model,
-            messages: messages,
+            messages: fallbackInjection.messages,
             stream: request.stream,
             includeUsage: request.streamOptions?.includeUsage,
             temperature: request.temperature,
@@ -1917,7 +2139,12 @@ public struct ChatRequestTranslator: Sendable {
             toolParser: try request.toolParserSelection,
             tools: try request.normalizedTools,
             toolChoice: request.normalizedToolChoice,
-            chatTemplate: request.chatTemplateSelection
+            chatTemplate: request.chatTemplateSelection,
+            mediaPartsSummary: normalizer.mediaPartsSummary(for: fallbackInjection.messages),
+            orderedMessagePartsRequired: request.messages.contains(where: { $0.contentParts != nil })
+                || !fallbackInjection.messages.flatMap(\.parts).filter { $0.media.mediaType != .text }.isEmpty,
+            legacyImageFallbackInjected: fallbackInjection.injected,
+            openAICompatibilityReceipts: request.compatibilityReceipts
         )
     }
 
@@ -2104,9 +2331,17 @@ public struct ChatRequestTranslator: Sendable {
         toolParser: ToolParserSelection? = nil,
         tools: [NormalizedToolDefinition] = [],
         toolChoice: String? = nil,
-        chatTemplate: ChatTemplateSelection? = nil
+        chatTemplate: ChatTemplateSelection? = nil,
+        mediaPartsSummary: NormalizedMediaPartsSummary? = nil,
+        orderedMessagePartsRequired: Bool? = nil,
+        legacyImageFallbackInjected: Bool = false,
+        openAICompatibilityReceipts: [String: String] = [:]
     ) -> NormalizedTextRequest {
-        NormalizedTextRequest(
+        let resolvedMediaPartsSummary = mediaPartsSummary
+            ?? MultimodalRequestNormalizer().mediaPartsSummary(for: messages)
+        let resolvedOrderedMessagePartsRequired = orderedMessagePartsRequired
+            ?? !resolvedMediaPartsSummary.isEmpty
+        return NormalizedTextRequest(
             endpoint: endpoint,
             model: model,
             messages: messages,
@@ -2139,13 +2374,63 @@ public struct ChatRequestTranslator: Sendable {
             toolParser: toolParser,
             tools: tools,
             toolChoice: toolChoice,
-            chatTemplate: chatTemplate
+            chatTemplate: chatTemplate,
+            mediaPartsSummary: resolvedMediaPartsSummary,
+            orderedMessagePartsRequired: resolvedOrderedMessagePartsRequired,
+            legacyImageFallbackInjected: legacyImageFallbackInjected,
+            openAICompatibilityReceipts: openAICompatibilityReceipts
         )
+    }
+
+    private func legacyTopLevelImageFallback(
+        for request: OpenAIChatCompletionsRequest,
+        hasMessageLevelMedia: Bool
+    ) throws -> Melix_Worker_V1_MessagePart? {
+        guard !hasMessageLevelMedia,
+              let legacyImage = request.legacyTopLevelImageReference
+        else {
+            return nil
+        }
+
+        return try MultimodalRequestNormalizer().normalize(
+            OpenAIMultimodalContentPart(
+                type: legacyImage.url?.isEmpty == false ? .imageURL : .inputImage,
+                imageURL: legacyImage.url?.isEmpty == false ? legacyImage : nil,
+                inputImage: legacyImage.url?.isEmpty == false ? nil : legacyImage
+            )
+        )
+    }
+
+    private func injectLegacyTopLevelImageFallback(
+        _ fallback: Melix_Worker_V1_MessagePart?,
+        into messages: [NormalizedTextMessage]
+    ) -> (messages: [NormalizedTextMessage], injected: Bool) {
+        guard let fallback else {
+            return (messages, false)
+        }
+        guard let targetIndex = messages.lastIndex(where: { $0.role == "user" }) else {
+            return (messages, false)
+        }
+
+        let injectedMessages = messages.enumerated().map { index, message in
+            guard index == targetIndex else {
+                return message
+            }
+            return NormalizedTextMessage(
+                role: message.role,
+                name: message.name,
+                parts: message.parts + [fallback],
+                harmonyMetadata: message.harmonyMetadata
+            )
+        }
+        return (injectedMessages, true)
     }
 
     private func messageParts(
         from blocks: [MelixMessagesContentBlock]
     ) -> [Melix_Worker_V1_MessagePart] {
+        // Melix Messages content blocks are text-only in this adapter today;
+        // media-bearing adapters should enter through MultimodalRequestNormalizer.
         blocks.compactMap { block in
             let text = block.normalizedText
             guard !text.isEmpty else {
@@ -2165,7 +2450,12 @@ public struct ChatRequestTranslator: Sendable {
         _ request: OpenAIChatCompletionsRequest,
         modelHandle: String
     ) throws -> TranslatedChatRequest {
-        try translate(try normalize(request), modelHandle: modelHandle, modelToolParser: nil)
+        let normalized = if request.messages.contains(where: \.hasMultimodalContent) {
+            try normalizeMultimodalChat(request)
+        } else {
+            try normalize(request)
+        }
+        return try translate(normalized, modelHandle: modelHandle, modelToolParser: nil)
     }
 
     public func translate(
@@ -2257,6 +2547,7 @@ public struct ChatRequestTranslator: Sendable {
             generateRequest.execution.ext["melix.workflow"] = workflow.rawValue
         }
         generateRequest.execution.ext["melix.endpoint"] = shapedRequest.endpoint.rawValue
+        applyMediaEndpointContract(shapedRequest, to: &generateRequest.execution)
         if let userID = shapedRequest.userID, !userID.isEmpty {
             generateRequest.execution.ext["melix.messages.user_id"] = userID
         }
@@ -2329,6 +2620,10 @@ public struct ChatRequestTranslator: Sendable {
         if let partialMode = shapedRequest.partialMode {
             generateRequest.execution.ext["melix.partial_mode"] = partialMode
         }
+        generateRequest.execution.ext.merge(
+            shapedRequest.openAICompatibilityReceipts,
+            uniquingKeysWith: { _, new in new }
+        )
         if let assistantPrefill = shapedRequest.assistantPrefill {
             generateRequest.execution.ext["melix.assistant_prefill"] = "true"
             generateRequest.execution.ext["melix.assistant_prefill.message_index"] = String(assistantPrefill.messageIndex)
@@ -2355,6 +2650,14 @@ public struct ChatRequestTranslator: Sendable {
         }
         if hasHarmonyMetadata {
             generateRequest.execution.ext["melix.harmony"] = "true"
+        }
+        applyMediaPartsSummary(
+            shapedRequest.mediaPartsSummary,
+            orderedMessagePartsRequired: shapedRequest.orderedMessagePartsRequired,
+            to: &generateRequest.execution
+        )
+        if shapedRequest.legacyImageFallbackInjected {
+            generateRequest.execution.ext["melix.legacy_image_fallback"] = "injected"
         }
         if let thinking = shapedRequest.thinking, thinking.isEnabled {
             generateRequest.execution.reasoning.enabled = true
@@ -2431,6 +2734,12 @@ public struct ChatRequestTranslator: Sendable {
         if !shapedRequest.draftModelID.isEmpty {
             generateRequest.execution.ext["melix.gateway.draft_model_id"] = shapedRequest.draftModelID
         }
+        if let gatewayServingDefaults {
+            generateRequest.execution.ext.merge(
+                gatewayServingDefaults.overrideReceiptExt,
+                uniquingKeysWith: { _, receiptValue in receiptValue }
+            )
+        }
         generateRequest.messages = shapedRequest.messages.map { message in
             var chatMessage = Melix_Worker_V1_ChatMessage()
             chatMessage.role = message.role
@@ -2445,6 +2754,60 @@ public struct ChatRequestTranslator: Sendable {
             workerRequest: generateRequest,
             stream: generateRequest.stream
         )
+    }
+
+    private func applyMediaEndpointContract(
+        _ shapedRequest: ShapedTextRequest,
+        to execution: inout Melix_Worker_V1_ExecutionMetadata
+    ) {
+        if !shapedRequest.mediaPartsSummary.isEmpty {
+            execution.ext["melix.media_parts.contract"] = "shared_summary"
+            return
+        }
+
+        switch shapedRequest.endpoint {
+        case .chatCompletions:
+            execution.ext["melix.media_parts.contract"] = "shared_summary_empty"
+        case .completions, .responses, .messages:
+            execution.ext["melix.media_parts.contract"] = "adapter_specific_text_only"
+            execution.ext["melix.media_parts.adapter_scope"] = shapedRequest.endpoint.rawValue
+        }
+    }
+
+    private func applyMediaPartsSummary(
+        _ summary: NormalizedMediaPartsSummary,
+        orderedMessagePartsRequired: Bool,
+        to execution: inout Melix_Worker_V1_ExecutionMetadata
+    ) {
+        if orderedMessagePartsRequired {
+            execution.ext["melix.worker_content.contract"] = "ordered_message_parts"
+            execution.ext["melix.worker_content.media_order"] = "message_part_order"
+        }
+        guard !summary.isEmpty else {
+            return
+        }
+        execution.ext["melix.media_parts.count"] = String(summary.count)
+        execution.ext["melix.media_turn_count"] = String(summary.turnCount)
+        for (index, part) in summary.parts.enumerated() {
+            let prefix = "melix.media_parts.\(index)"
+            execution.ext["\(prefix).kind"] = part.mediaKind
+            execution.ext["\(prefix).source_kind"] = part.sourceKind
+            execution.ext["\(prefix).source"] = part.source
+            execution.ext["\(prefix).turn_index"] = String(part.turnIndex)
+            execution.ext["\(prefix).part_index"] = String(part.partIndex)
+            if let byteLength = part.byteLength {
+                execution.ext["\(prefix).byte_length"] = String(byteLength)
+            }
+            if let filename = part.filename {
+                execution.ext["\(prefix).filename"] = filename
+            }
+            if let format = part.format {
+                execution.ext["\(prefix).format"] = format
+            }
+            if let stableDigest = part.stableDigest {
+                execution.ext["\(prefix).digest"] = stableDigest
+            }
+        }
     }
 
     private func addGenerationReceipt(

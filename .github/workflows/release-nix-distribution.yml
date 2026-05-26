@@ -1,0 +1,126 @@
+name: release-nix-distribution
+
+on:
+  release:
+    types: [published]
+  repository_dispatch:
+    types: [melix-release-asset-published]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Release tag to distribute, for example v1.2.3.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-nix-distribution-${{ github.event.release.tag_name || github.event.client_payload.tag_name || inputs.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish-nix:
+    runs-on: ubuntu-latest
+
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || github.event.client_payload.tag_name || inputs.tag_name }}
+      RELEASE_REPOSITORY: ${{ github.event.client_payload.repository || github.repository }}
+      RELEASE_ARCHIVE_NAME: ${{ github.event.client_payload.archive_name }}
+      NIX_REPOSITORY: ${{ vars.MELIX_NIX_REPOSITORY }}
+      NIX_FLAKE_PATH: flake.nix
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Validate Nix distribution configuration
+        shell: bash
+        env:
+          NIX_REPOSITORY_TOKEN: ${{ secrets.MELIX_NIX_REPOSITORY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$RELEASE_TAG" ]]; then
+            echo "RELEASE_TAG is required." >&2
+            exit 1
+          fi
+          if [[ -z "$NIX_REPOSITORY" ]]; then
+            echo "Set repository variable MELIX_NIX_REPOSITORY to owner/repo." >&2
+            exit 1
+          fi
+          if [[ -z "$NIX_REPOSITORY_TOKEN" ]]; then
+            echo "Set repository secret MELIX_NIX_REPOSITORY_TOKEN with write access to the Nix repository." >&2
+            exit 1
+          fi
+
+      - name: Checkout Melix renderer
+        uses: actions/checkout@v4
+
+      - name: Resolve release archive name
+        id: archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          archive_name="${RELEASE_ARCHIVE_NAME:-Melix-${version}-macos.zip}"
+          {
+            echo "version=$version"
+            echo "archive_name=$archive_name"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release-asset"
+          for attempt in {1..20}; do
+            if gh release download "$RELEASE_TAG" \
+              --repo "$RELEASE_REPOSITORY" \
+              --pattern "${{ steps.archive.outputs.archive_name }}" \
+              --dir "$RUNNER_TEMP/release-asset" \
+              --clobber \
+              && test -s "$RUNNER_TEMP/release-asset/${{ steps.archive.outputs.archive_name }}"; then
+              exit 0
+            fi
+            echo "Release archive not available yet; retry $attempt/20."
+            sleep 15
+          done
+          echo "Could not download ${{ steps.archive.outputs.archive_name }} from release $RELEASE_TAG." >&2
+          gh release view "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" --json assets >&2 || true
+          exit 1
+
+      - name: Render Nix distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/render_release_distribution.py \
+            --tag-name "$RELEASE_TAG" \
+            --repository "$RELEASE_REPOSITORY" \
+            --archive-path "$RUNNER_TEMP/release-asset/${{ steps.archive.outputs.archive_name }}" \
+            --output-root "$RUNNER_TEMP/release-distribution" \
+            --json
+
+      - name: Checkout Nix repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.MELIX_NIX_REPOSITORY }}
+          token: ${{ secrets.MELIX_NIX_REPOSITORY_TOKEN }}
+          path: nix-distribution
+
+      - name: Update Nix flake
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "nix-distribution/$(dirname "$NIX_FLAKE_PATH")"
+          cp "$RUNNER_TEMP/release-distribution/nix/flake.nix" "nix-distribution/$NIX_FLAKE_PATH"
+          if command -v nix >/dev/null 2>&1; then
+            nix --extra-experimental-features "nix-command flakes" flake check "./nix-distribution" --no-build
+          else
+            echo "nix is not installed on this runner; skipped flake check after rendering flake.nix."
+          fi
+
+      - name: Commit Nix flake update
+        uses: EndBug/add-and-commit@v9
+        with:
+          cwd: nix-distribution
+          add: ${{ env.NIX_FLAKE_PATH }}
+          message: "chore: update melix Nix package ${{ steps.archive.outputs.version }}"
+          default_author: github_actions

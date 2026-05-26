@@ -986,12 +986,12 @@ private func configureValidSyntheticDatasetPreviewRequest(_ viewModel: RuntimeVi
 @MainActor
 private func waitForSyntheticDatasetCondition(
     _ description: String,
-    timeoutNanoseconds: UInt64 = 2_000_000_000,
+    timeout: Duration = MenuBarTestEnvironment.bootstrapConditionTimeout,
     condition: @escaping @MainActor () -> Bool
 ) async throws {
     let start = ContinuousClock.now
     while condition() == false {
-        if start.duration(to: .now) > .nanoseconds(Int64(timeoutNanoseconds)) {
+        if start.duration(to: .now) > timeout {
             Issue.record("Timed out waiting for \(description)")
             return
         }

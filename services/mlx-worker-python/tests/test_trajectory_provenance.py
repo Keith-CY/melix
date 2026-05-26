@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from packages.protocol.python.worker.v1 import common_pb2, maintenance_pb2
+from worker import trajectory_provenance as trajectory_provenance_module
 from worker.engine.maintenance_core import MaintenanceCore
 from worker.grpc_server import WorkerMaintenanceService
 from worker.model_ops.adapter_activation_pipeline import AdapterActivationPipeline
@@ -42,6 +43,7 @@ from worker.registry import WorkerRegistry
 from worker.runtime.deterministic_backend import DeterministicTextBackend
 from worker.runtime.mlx_text_runtime import MLXTextRuntime
 from worker.trajectory_provenance import (
+    _copy_trajectory_provenance_value,
     adapter_manifest_trajectory_provenance,
     alignment_metrics_trajectory_provenance,
     append_trajectory_provenance,
@@ -207,6 +209,37 @@ def test_load_trajectory_provenance_from_snapshot_manifest_uses_stable_field_nam
     }
 
 
+def test_load_trajectory_provenance_from_snapshot_manifest_reads_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(
+        json.dumps(
+            {
+                "format": "agentic_tool_trace",
+                "source_dataset_id": "agentic-snapshot",
+                "version": "2026-05-25",
+                "trajectory_trace_digest": "abc123",
+            }
+        ).encode("utf-8")
+    )
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        raise AssertionError("manifest loading should avoid Path.read_text()")
+
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+
+    assert load_trajectory_provenance_from_snapshot_manifest(manifest_path) == {
+        "trajectory_dataset_id": "agentic-snapshot",
+        "trajectory_dataset_version": "2026-05-25",
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_snapshot_manifest_path": str(manifest_path),
+        "trajectory_split": "train",
+        "trajectory_trace_digest": "abc123",
+    }
+
+
 def test_trajectory_provenance_helpers_ignore_empty_or_unrelated_inputs(
     tmp_path: Path,
 ) -> None:
@@ -230,6 +263,76 @@ def test_trajectory_provenance_helpers_ignore_empty_or_unrelated_inputs(
     assert load_trajectory_provenance_from_snapshot_dir(tmp_path / "missing-snapshot") == {}
     assert adapter_manifest_trajectory_provenance(None) == {}
     assert alignment_metrics_trajectory_provenance(None) == {}
+
+
+def test_snapshot_manifest_copies_nested_fields_once_via_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_copy = trajectory_provenance_module._copy_trajectory_provenance_value
+    copy_calls = 0
+
+    def counting_copy(value: object) -> object:
+        nonlocal copy_calls
+        copy_calls += 1
+        return original_copy(value)
+
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_copy_trajectory_provenance_value",
+        counting_copy,
+    )
+    manifest = {
+        "format": "agentic_tool_trace",
+        "source_dataset_id": "agentic-snapshot",
+        "version": "2026-05-25",
+        "trajectory_trace_digest": "abc123",
+        "trajectory_quality_metrics": [],
+    }
+
+    provenance = trajectory_provenance_from_snapshot_manifest(manifest)
+
+    assert provenance["trajectory_quality_metrics"] == []
+    assert provenance["trajectory_quality_metrics"] is not manifest["trajectory_quality_metrics"]
+    assert copy_calls == 1
+
+
+def test_normalize_trajectory_provenance_copies_nested_json_containers() -> None:
+    source = {
+        "trajectory_quality_metrics": {
+            "reward_coverage_count": 1,
+            "components": [{"name": "format", "score": 1.0}],
+        },
+        "agentic_sft_token_metrics": {"trace_tokens": 12},
+    }
+
+    normalized = normalize_trajectory_provenance(source)
+    copied_quality = normalized["trajectory_quality_metrics"]
+
+    assert copied_quality == source["trajectory_quality_metrics"]
+    assert copied_quality is not source["trajectory_quality_metrics"]
+    assert copied_quality["components"] is not source["trajectory_quality_metrics"]["components"]
+    assert copied_quality["components"][0] is not source["trajectory_quality_metrics"]["components"][0]
+
+    source["trajectory_quality_metrics"]["components"][0]["score"] = 0.0
+    assert copied_quality["components"][0]["score"] == 1.0
+
+
+def test_copy_trajectory_provenance_value_falls_back_for_custom_mutables() -> None:
+    class CustomMutable:
+        def __init__(self, value: int) -> None:
+            self.value = value
+
+    original = {"items": [CustomMutable(1)], "tuple": (CustomMutable(2),)}
+
+    copied = _copy_trajectory_provenance_value(original)
+
+    assert copied is not original
+    assert copied["items"] is not original["items"]
+    assert copied["items"][0] is not original["items"][0]
+    assert copied["items"][0].value == 1
+    assert copied["tuple"] is not original["tuple"]
+    assert copied["tuple"][0] is not original["tuple"][0]
+    assert copied["tuple"][0].value == 2
 
 
 def test_train_lora_records_agentic_trajectory_provenance_in_adapter_manifest(

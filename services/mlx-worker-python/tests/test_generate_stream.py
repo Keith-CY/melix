@@ -11,6 +11,10 @@ from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime import mlx_text_runtime
 from worker.runtime.mlx_text_runtime import AutoMLXBackend, MLXTextRuntime, RuntimeTokenEvent, RuntimeToolCallEvent
+from worker.runtime.multimodal_attention_policy import (
+    MultimodalPrefillAttentionBudgetExceeded,
+    choose_attention_prefill_policy,
+)
 
 
 class StreamingFakeBackend:
@@ -347,6 +351,59 @@ class UsageCountingRuntime:
             prompt_tokens=self.prompt_tokens,
             completion_tokens=1,
             finish_reason="stop",
+        )
+
+
+class AttentionBudgetFailingRuntime:
+    runtime_name = "fake-attention-budget-runtime"
+
+    def __init__(self) -> None:
+        self.seen_prefill_step_size: int | None = None
+
+    def load_model(self, model_spec):
+        return {"model_id": model_spec.model_id}
+
+    def estimate_resident_bytes(self, model_spec):
+        _ = model_spec
+        return 0
+
+    def render_prompt(self, messages, loaded_model=None, template_kwargs=None, execution_ext=None):
+        _ = messages
+        _ = loaded_model
+        _ = template_kwargs
+        _ = execution_ext
+        return "blocked prefill"
+
+    def prompt_token_count(self, prompt):
+        _ = prompt
+        return 512
+
+    def generate_tokens(self, loaded_model, prompt, sampling, cancel_event, execution_ext=None):
+        _ = (loaded_model, sampling, cancel_event, execution_ext)
+        prompt_tokens = self.prompt_token_count(prompt)
+        decision = choose_attention_prefill_policy(
+            family_id="gemma4-v1",
+            prompt_tokens=prompt_tokens,
+            budget_bytes=1,
+        )
+        raise MultimodalPrefillAttentionBudgetExceeded(decision)
+
+    def prefill(self, request_id, loaded_model, messages, execution_ext=None, prefill_step_size=0):
+        _ = (request_id, loaded_model, messages, execution_ext)
+        self.seen_prefill_step_size = prefill_step_size
+        return SimpleNamespace(
+            decode_handle="attention-budget-decode",
+            block_table_id="attention-budget-table",
+            block_table=common_pb2.BlockTable(),
+            prompt_tokens=512,
+        )
+
+    def last_probe_snapshot(self):
+        return SimpleNamespace(
+            preprocess_latency_ms=0.0,
+            preprocess_input_bytes=0,
+            preprocess_peak_memory_bytes=0,
+            first_token_latency_ms=0.0,
         )
 
 
@@ -692,6 +749,44 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     assert native_tool_receipt["route_tracking_enabled"] is True
     assert native_tool_receipt["tool_choice_policy"] == "auto"
 
+    metadata_registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=MetadataStreamingBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    metadata_runtime_service = WorkerRuntimeService(metadata_registry)
+    metadata_inference_service = WorkerInferenceService(metadata_registry)
+    metadata_handle = metadata_runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    ).model_handle
+    metadata_request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-token-route-token-ids"),
+            model_handle=metadata_handle,
+            ext={"melix.reasoning.mode": "enabled"},
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Track route token ids")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+    metadata_events = list(
+        metadata_inference_service.Generate(metadata_request, context=None)
+    )
+    metadata_completed = next(
+        event.completed for event in metadata_events if event.HasField("completed")
+    )
+    metadata_receipt = json.loads(
+        metadata_completed.parser_metrics["token_route_receipt_json"]
+    )
+    assert metadata_receipt["route_tracking_enabled"] is True
+    assert metadata_receipt["route_count"] == 2
+    assert [route["token_id"] for route in metadata_receipt["routes"]] == [301, 302]
+
     inactive_route_request = inference_pb2.GenerateRequest(
         execution=inference_pb2.ExecutionMetadata(
             id=common_pb2.RequestIdentity(request_id="req-inactive-route-receipt"),
@@ -791,10 +886,109 @@ def test_generate_streams_token_and_terminal_completion() -> None:
         blocked_runtime,
         blocked_runtime.generate_tokens,
     )
+
+    class RuntimeWithBlockedPrefillCache:
+        def __setattr__(self, name, value):
+            if name == "_melix_accepts_prefill_step_size":
+                raise RuntimeError("cache unavailable")
+
+        prefill = lambda self, prefill_step_size=0: None  # noqa: E731
+
+    blocked_prefill_runtime = RuntimeWithBlockedPrefillCache()
+    assert engine_core_module._runtime_prefill_accepts_step_size(
+        blocked_prefill_runtime,
+        blocked_prefill_runtime.prefill,
+    )
     assert EngineCore._compat_policy_receipt({}) == {}
     assert EngineCore._compat_policy_receipt({"melix.compat.policy_receipt_json": ""}) == {}
     assert EngineCore._compat_policy_receipt({"melix.compat.policy_receipt_json": "{"}) == {}
     assert EngineCore._compat_policy_receipt({"melix.compat.policy_receipt_json": "[]"}) == {}
+
+    budget_runtime = AttentionBudgetFailingRuntime()
+    budget_registry = WorkerRegistry(
+        vlm_runtime=budget_runtime,  # type: ignore[arg-type]
+        model_catalog=WorkerModelCatalog(),
+    )
+    budget_runtime_service = WorkerRuntimeService(budget_registry)
+    budget_inference_service = WorkerInferenceService(budget_registry)
+    budget_handle = budget_runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_vlm_model()),
+        context=None,
+    ).model_handle
+    budget_events = list(
+        budget_inference_service.Generate(
+            inference_pb2.GenerateRequest(
+                execution=inference_pb2.ExecutionMetadata(
+                    id=common_pb2.RequestIdentity(request_id="req-attention-budget-error"),
+                    model_handle=budget_handle,
+                ),
+                messages=[
+                    common_pb2.ChatMessage(
+                        role="user",
+                        parts=[common_pb2.MessagePart(text="budget")],
+                    )
+                ],
+                sampling=common_pb2.SamplingConfig(max_output_tokens=4),
+                stream=True,
+            ),
+            context=None,
+        )
+    )
+    budget_error = budget_events[0].error.error
+    assert budget_error.code == "multimodal_prefill_attention_budget_exceeded"
+    assert budget_error.details["auto_chunk_reason"] == "attention_budget_exceeded"
+    assert budget_error.details["selected_prefill_step_size"] == "0"
+
+    budget_prefill = budget_inference_service.Prefill(
+        inference_pb2.PrefillRequest(
+            execution=inference_pb2.ExecutionMetadata(
+                id=common_pb2.RequestIdentity(request_id="req-attention-budget-prefill"),
+                model_handle=budget_handle,
+            ),
+            messages=[
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[common_pb2.MessagePart(text="budget")],
+                )
+            ],
+            return_decode_handle=True,
+            prefill_step_size=32,
+        ),
+        context=None,
+    )
+    assert budget_prefill.ok is True
+    assert budget_runtime.seen_prefill_step_size == 32
+
+    def failing_prefill(*args, **kwargs):
+        _ = (args, kwargs)
+        decision = choose_attention_prefill_policy(
+            family_id="gemma4-v1",
+            prompt_tokens=512,
+            budget_bytes=1,
+        )
+        raise MultimodalPrefillAttentionBudgetExceeded(decision)
+
+    budget_runtime.prefill = failing_prefill  # type: ignore[method-assign]
+    rejected_prefill = budget_inference_service.Prefill(
+        inference_pb2.PrefillRequest(
+            execution=inference_pb2.ExecutionMetadata(
+                id=common_pb2.RequestIdentity(request_id="req-attention-budget-prefill-reject"),
+                model_handle=budget_handle,
+            ),
+            messages=[
+                common_pb2.ChatMessage(
+                    role="user",
+                    parts=[common_pb2.MessagePart(text="budget")],
+                )
+            ],
+            return_decode_handle=True,
+            prefill_step_size=32,
+        ),
+        context=None,
+    )
+    assert rejected_prefill.ok is False
+    assert rejected_prefill.admission_state == common_pb2.ADMISSION_REJECTED
+    assert rejected_prefill.error.details["auto_chunk_reason"] == "attention_budget_exceeded"
 
 
 def test_generate_streams_reasoning_tool_and_content_channels_from_raw_text() -> None:
@@ -1142,6 +1336,7 @@ def test_decode_updates_loaded_model_status_throughput_fields() -> None:
                 )
             ],
             return_decode_handle=True,
+            prefill_step_size=16,
         ),
         context=None,
     )

@@ -302,38 +302,39 @@ public struct ToolParserRegistry: Sendable {
 
     public func selectorAuditReceipts() -> [ToolParserAuditReceipt] {
         descriptors.flatMap { descriptor in
-            let requestContextMode = primaryContext(for: descriptor)
-            let acceptedWireFormats = acceptedWireFormats(
-                for: descriptor,
-                requestContextMode: requestContextMode
-            )
-            return [
-                ToolParserAuditReceipt(
-                    parserID: descriptor.mode.rawValue,
-                    parserKind: descriptor.parserKind,
-                    acceptedWireFormats: acceptedWireFormats,
-                    selectorSurface: .api,
-                    selectorSource: "request.tool_parser",
+            descriptor.requestContextModes.flatMap { requestContextMode in
+                let acceptedWireFormats = acceptedWireFormats(
+                    for: descriptor,
                     requestContextMode: requestContextMode
-                ),
-                ToolParserAuditReceipt(
-                    parserID: descriptor.mode.rawValue,
-                    parserKind: descriptor.parserKind,
-                    acceptedWireFormats: acceptedWireFormats,
-                    selectorSurface: .desktop,
-                    selectorSource: "tooling_settings.builtin_tool_parser_modes",
-                    requestContextMode: requestContextMode
-                ),
-                ToolParserAuditReceipt(
-                    parserID: descriptor.mode.rawValue,
-                    parserKind: descriptor.parserKind,
-                    acceptedWireFormats: acceptedWireFormats,
-                    selectorSurface: .cli,
-                    selectorSource: "none",
-                    requestContextMode: requestContextMode,
-                    exemptionReason: Self.cliSelectorExemptionReason
-                ),
-            ]
+                )
+                return [
+                    ToolParserAuditReceipt(
+                        parserID: descriptor.mode.rawValue,
+                        parserKind: descriptor.parserKind,
+                        acceptedWireFormats: acceptedWireFormats,
+                        selectorSurface: .api,
+                        selectorSource: "request.tool_parser",
+                        requestContextMode: requestContextMode
+                    ),
+                    ToolParserAuditReceipt(
+                        parserID: descriptor.mode.rawValue,
+                        parserKind: descriptor.parserKind,
+                        acceptedWireFormats: acceptedWireFormats,
+                        selectorSurface: .desktop,
+                        selectorSource: "tooling_settings.builtin_tool_parser_modes",
+                        requestContextMode: requestContextMode
+                    ),
+                    ToolParserAuditReceipt(
+                        parserID: descriptor.mode.rawValue,
+                        parserKind: descriptor.parserKind,
+                        acceptedWireFormats: acceptedWireFormats,
+                        selectorSurface: .cli,
+                        selectorSource: "none",
+                        requestContextMode: requestContextMode,
+                        exemptionReason: Self.cliSelectorExemptionReason
+                    ),
+                ]
+            }
         }
     }
 
@@ -465,10 +466,6 @@ public struct ToolParserRegistry: Sendable {
     }
 
     private static let cliSelectorExemptionReason = "CLI has no request-construction surface for tool parser selection; it reports remote model supported_parsers only."
-
-    private func primaryContext(for descriptor: Descriptor) -> ToolParserRequestContextMode {
-        descriptor.requestContextModes.first ?? .plain
-    }
 
     private func receipt(
         mode: ToolParserMode,

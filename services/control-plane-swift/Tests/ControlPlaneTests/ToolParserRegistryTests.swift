@@ -63,9 +63,9 @@ struct ToolParserRegistryTests {
         let desktop = selectorReceipts.filter { $0.selectorSurface == .desktop }
         let cli = selectorReceipts.filter { $0.selectorSurface == .cli }
 
-        #expect(api.map(\.parserID) == parserIDs)
-        #expect(desktop.map(\.parserID) == parserIDs)
-        #expect(cli.map(\.parserID) == parserIDs)
+        #expect(Set(api.map(\.parserID)) == Set(parserIDs))
+        #expect(Set(desktop.map(\.parserID)) == Set(parserIDs))
+        #expect(Set(cli.map(\.parserID)) == Set(parserIDs))
         #expect(api.allSatisfy { $0.selectorSource == "request.tool_parser" })
         #expect(desktop.allSatisfy { $0.selectorSource == "tooling_settings.builtin_tool_parser_modes" })
         #expect(cli.allSatisfy { $0.selectorSource == "none" })
@@ -74,6 +74,27 @@ struct ToolParserRegistryTests {
         })
         #expect(api.allSatisfy { $0.exemptionReason.isEmpty })
         #expect(desktop.allSatisfy { $0.exemptionReason.isEmpty })
+    }
+
+    @Test("selector parity audit covers every supported request context")
+    func selectorParityAuditCoversEverySupportedRequestContext() {
+        struct ParserContext: Hashable {
+            let parserID: String
+            let requestContextMode: ToolParserRequestContextMode
+        }
+
+        let registry = ToolParserRegistry()
+        let declaredContexts = Set(registry.auditReceipts().map {
+            ParserContext(parserID: $0.parserID, requestContextMode: $0.requestContextMode)
+        })
+        let selectorReceipts = registry.selectorAuditReceipts()
+
+        for surface in [ToolParserSelectorSurface.api, .desktop, .cli] {
+            let surfaceContexts = Set(selectorReceipts.filter { $0.selectorSurface == surface }.map {
+                ParserContext(parserID: $0.parserID, requestContextMode: $0.requestContextMode)
+            })
+            #expect(surfaceContexts == declaredContexts)
+        }
     }
 
     @Test("fixture request contexts cover JSON tool reasoning and plain parsers")
@@ -225,6 +246,9 @@ struct ToolParserRegistryTests {
         let translated = try translator.translate(request, modelHandle: "worker-text")
         let ext = translated.workerRequest.execution.ext
         let receipt = try #require(ext["melix.compat.policy_receipt_json"])
+        let receiptObject = try #require(
+            try JSONSerialization.jsonObject(with: Data(receipt.utf8)) as? [String: Any]
+        )
 
         #expect(ext["melix.compat.compat_surface"] == "openai.chat.completions")
         #expect(ext["melix.compat.stream_mode"] == "stream")
@@ -242,6 +266,73 @@ struct ToolParserRegistryTests {
         #expect(receipt.contains(#""compat_surface":"openai.chat.completions""#))
         #expect(receipt.contains(#""tool_namespaces":["tools.search"]"#))
         #expect(receipt.contains(#""effective_config_hash":"\#(ext["melix.compat.effective_config_hash"] ?? "")""#))
+        #expect(Set(receiptObject.keys) == compatReceiptFieldNames())
+    }
+
+    @Test("request-local compatibility policy receipt overrides do not mutate default requests")
+    func requestLocalCompatibilityPolicyReceiptOverridesDoNotMutateDefaultRequests() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-compat-policy-defaults" })
+        let overrideRequest = OpenAIChatCompletionsRequest(
+            model: "melix-dev-text",
+            messages: [.init(role: "user", content: "Call a tool and answer as JSON.")],
+            enableThinking: true,
+            reasoningEffort: "low",
+            stream: true,
+            responseFormat: StructuredOutputRequestFormat(
+                type: .jsonSchema,
+                jsonSchema: StructuredOutputJSONSchemaDefinition(
+                    name: "answer",
+                    schema: .object(["type": .string("object")]),
+                    strict: true
+                )
+            ),
+            toolParser: ToolParserRequestConfiguration(
+                mode: .qwen,
+                namespaces: ["tools.search"]
+            ),
+            tools: [
+                OpenAIChatTool(
+                    type: "function",
+                    function: OpenAIChatTool.FunctionDefinition(
+                        name: "search",
+                        description: "Search documents",
+                        parameters: .object(["type": .string("object")])
+                    )
+                ),
+            ],
+            toolChoice: .mode("required")
+        )
+        let defaultRequest = OpenAIChatCompletionsRequest(
+            model: "melix-dev-text",
+            messages: [.init(role: "user", content: "Answer plainly.")],
+            stream: false
+        )
+
+        let translatedBaseline = try translator.translate(defaultRequest, modelHandle: "worker-text")
+        _ = try translator.translate(overrideRequest, modelHandle: "worker-text")
+        let translatedDefault = try translator.translate(defaultRequest, modelHandle: "worker-text")
+        let baselineExt = translatedBaseline.workerRequest.execution.ext
+        let ext = translatedDefault.workerRequest.execution.ext
+        let receipt = try #require(ext["melix.compat.policy_receipt_json"])
+        let receiptObject = try #require(
+            try JSONSerialization.jsonObject(with: Data(receipt.utf8)) as? [String: Any]
+        )
+
+        #expect(Set(receiptObject.keys) == compatReceiptFieldNames())
+        #expect(ext["melix.compat.compat_surface"] == baselineExt["melix.compat.compat_surface"])
+        #expect(ext["melix.compat.stream_mode"] == "non_stream")
+        #expect(ext["melix.compat.reasoning_mode"] == baselineExt["melix.compat.reasoning_mode"])
+        #expect(ext["melix.compat.reasoning_source"] == baselineExt["melix.compat.reasoning_source"])
+        #expect(ext["melix.compat.reasoning_effort"] == baselineExt["melix.compat.reasoning_effort"])
+        #expect(ext["melix.compat.tool_parser_mode"] == baselineExt["melix.compat.tool_parser_mode"])
+        #expect(ext["melix.compat.tool_parser_source"] == baselineExt["melix.compat.tool_parser_source"])
+        #expect(ext["melix.compat.tool_namespaces"] == baselineExt["melix.compat.tool_namespaces"])
+        #expect(ext["melix.compat.tool_choice_requested"] == baselineExt["melix.compat.tool_choice_requested"])
+        #expect(ext["melix.compat.tool_choice_resolved"] == baselineExt["melix.compat.tool_choice_resolved"])
+        #expect(ext["melix.compat.structured_output_mode"] == baselineExt["melix.compat.structured_output_mode"])
+        #expect(ext["melix.compat.output_modalities"] == baselineExt["melix.compat.output_modalities"])
+        #expect(ext["melix.compat.effective_config_hash"]?.isEmpty == false)
+        #expect(ext["melix.compat.effective_config_hash"] == baselineExt["melix.compat.effective_config_hash"])
     }
 
     @Test("multimodal tool parser requests preserve image parts and execution metadata")
@@ -485,5 +576,23 @@ struct ToolParserRegistryTests {
             saveBoundarySnapshot: nil,
             toolParser: toolParser
         )
+    }
+
+    private func compatReceiptFieldNames() -> Set<String> {
+        [
+            "compat_surface",
+            "stream_mode",
+            "reasoning_mode",
+            "reasoning_source",
+            "reasoning_effort",
+            "tool_parser_mode",
+            "tool_parser_source",
+            "tool_namespaces",
+            "tool_choice_requested",
+            "tool_choice_resolved",
+            "structured_output_mode",
+            "output_modalities",
+            "effective_config_hash",
+        ]
     }
 }

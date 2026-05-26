@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import json
 from pathlib import Path
 from unittest.mock import Mock
@@ -449,7 +450,7 @@ def test_list_records_warm_cache_uses_direntry_string_paths(
     assert path_constructions == 0
 
 
-def test_list_records_decodes_uncached_records_from_bytes(
+def test_list_records_decodes_uncached_records_from_binary_file(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -468,25 +469,28 @@ def test_list_records_decodes_uncached_records_from_bytes(
     path = queue_root / "queue-1.json"
     path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
     store = BenchmarkQueueStore()
-    read_bytes_calls = 0
-    original_read_bytes = Path.read_bytes
+    binary_open_calls = 0
+    original_open = builtins.open
 
-    def tracked_read_bytes(self: Path) -> bytes:
-        nonlocal read_bytes_calls
-        if self == path:
-            read_bytes_calls += 1
-        return original_read_bytes(self)
+    def tracked_open(file: object, mode: str = "r", *args: object, **kwargs: object):
+        nonlocal binary_open_calls
+        if file == str(path) and mode == "rb":
+            binary_open_calls += 1
+        return original_open(file, mode, *args, **kwargs)
 
     read_text_mock = Mock(side_effect=AssertionError("uncached queue records should be decoded from bytes"))
+    read_bytes_mock = Mock(side_effect=AssertionError("uncached queue records should avoid Path allocation for byte reads"))
 
-    monkeypatch.setattr(Path, "read_bytes", tracked_read_bytes)
+    monkeypatch.setattr(builtins, "open", tracked_open)
     monkeypatch.setattr(Path, "read_text", read_text_mock)
+    monkeypatch.setattr(Path, "read_bytes", read_bytes_mock)
 
     records = store.list_records(queue_root=queue_root)
 
     assert [record.queue_item_id for record in records] == ["queue-1"]
-    assert read_bytes_calls == 1
+    assert binary_open_calls == 1
     read_text_mock.assert_not_called()
+    read_bytes_mock.assert_not_called()
 
 
 def test_list_records_reuses_direntry_stat_for_metadata_key(

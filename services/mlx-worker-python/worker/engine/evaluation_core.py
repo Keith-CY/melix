@@ -3921,13 +3921,11 @@ class EvaluationCore:
     def _normalized_answer(value: str) -> str:
         stripped = EvaluationCore._strip_wrapping(value)
         if len(stripped) == 1:
-            option = EvaluationCore._extract_option_value(stripped)
-            if option is not None:
+            option = stripped.upper()
+            if option.isalpha():
                 return option
         if stripped and stripped[0] in "+-0123456789" and EvaluationCore._looks_like_numeric(stripped):
-            numeric = EvaluationCore._extract_numeric_value(stripped)
-            if numeric is not None:
-                return numeric
+            return EvaluationCore._normalized_numeric_literal(stripped)
         if (
             "  " in stripped
             or "\t" in stripped
@@ -3959,6 +3957,13 @@ class EvaluationCore:
         if stripped.endswith("."):
             stripped = stripped.rstrip(".")
         return stripped
+
+    @staticmethod
+    def _normalized_numeric_literal(value: str) -> str:
+        numeric = value.lstrip("+")
+        if "." in numeric:
+            numeric = numeric.rstrip("0").rstrip(".")
+        return numeric
 
     @staticmethod
     def _looks_like_numeric(value: str) -> bool:

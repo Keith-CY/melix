@@ -84,6 +84,14 @@ def _json_error_code(payload: object) -> str:
     return code if isinstance(code, str) else ""
 
 
+def _private_external_media_refusal_success(status: int, payload: object) -> bool:
+    return (
+        status == 400
+        and _json_error_code(payload) == "invalid_argument"
+        and "External media URL host is not allowed" in json.dumps(payload)
+    )
+
+
 def test_media_tool_rejection_success_helper_rejects_malformed_payloads() -> None:
     assert _chat_completions_media_tool_rejection_success(400, b"not-json") is False
     assert _chat_completions_media_tool_rejection_success(400, {"error": "bad"}) is False
@@ -411,8 +419,7 @@ def test_multimodal_chat_accepts_local_and_rejects_private_remote_image_urls(tmp
             },
         )
         assert remote_status == 400
-        assert _json_error_code(remote_payload) == "invalid_argument"
-        assert "External media URL host is not allowed" in json.dumps(remote_payload)
+        assert _private_external_media_refusal_success(remote_status, remote_payload)
     finally:
         stack.stop()
 
@@ -779,9 +786,7 @@ def test_phase6_vision_evidence_report_is_machine_readable(tmp_path: Path) -> No
                     and b"Image content: phase6 local evidence image" in local_payload
                 ),
                 "remote_image_refusal_success": (
-                    remote_status == 400
-                    and _json_error_code(remote_payload) == "invalid_argument"
-                    and "External media URL host is not allowed" in json.dumps(remote_payload)
+                    _private_external_media_refusal_success(remote_status, remote_payload)
                 ),
                 "multi_image_success": (
                     multi_status == 200

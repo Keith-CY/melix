@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from copy import copy
 from dataclasses import dataclass, field, replace
 import hashlib
 import importlib.util
+import inspect
+import json
 import logging
 import os
 from queue import Queue
@@ -24,6 +27,16 @@ from worker.runtime.mlx_text_runtime import (
     _float_tuple,
     _int_tuple,
 )
+from worker.runtime.multimodal_attention_policy import (
+    AttentionPrefillPolicyDecision,
+    MultimodalPrefillAttentionBudgetExceeded,
+    attention_policy_metadata,
+    attention_budget_configured,
+    build_attention_budget_receipt,
+    choose_attention_prefill_policy,
+    enforce_attention_prefill_policy,
+    int_metadata as _attention_int_metadata,
+)
 from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
 from worker.runtime.multimodal_position_receipts import build_position_metadata_receipt
 from worker.runtime.multimodal_preprocessing import PreparedVisionRequest, prepare_vision_request, rebuild_multimodal_hash
@@ -43,8 +56,11 @@ _GEMMA4_PRESENCE_BOTH = (True, True)
 
 _TEXT_ONLY_BATCH_GENERATOR_EXT_KEY = "melix.vlm.text_only_batch_generator"
 _TEXT_ONLY_STEP_COOPERATIVE_EXT_KEY = "melix.vlm.text_only_step_cooperative"
+_NATIVE_MTP_ENABLED_EXT_KEY = "melix.native_mtp.enabled"
 _TEXT_ONLY_BATCH_PREFILL_STEP_SIZE_ENV = "MELIX_VLM_TEXT_BATCH_PREFILL_STEP_SIZE"
 _TEXT_ONLY_BATCH_DEFAULT_PREFILL_STEP_SIZE = 512
+_TEXT_ONLY_BATCH_MAX_BATCH_SIZE_ENV = "MELIX_VLM_TEXT_BATCH_MAX_BATCH_SIZE"
+_TEXT_ONLY_BATCH_DEFAULT_MAX_BATCH_SIZE = 8
 _TEXT_ONLY_BATCH_DONE = object()
 _GEMMA4_OPEN_MARKER = "<|channel>thought\n"
 _GEMMA4_OPEN_MARKER_BARE = "<|channel>"
@@ -52,9 +68,213 @@ _GEMMA4_CLOSE_MARKER = "<channel|>"
 _GEMMA4_TURN_END_MARKER = "<turn|>"
 _GEMMA4_TOOL_RESPONSE_OPEN = "<|tool_response>"
 _GEMMA4_TOOL_RESPONSE_CLOSE = "<tool_response|>"
+_PROMPT_SECOND_AXIS_KWARGS = {
+    "attention_mask",
+    "decoder_inputs_embeds",
+    "deepstack_visual_embeds",
+    "visual_pos_masks",
+    "per_layer_inputs",
+    "full_text_row_masked_out_mask",
+    "pos_hw",
+}
+_PROMPT_LAST_AXIS_KWARGS = {"position_ids"}
+
+
+def _slice_chunked_prompt_kwargs(
+    prompt_kwargs: dict[str, Any],
+    *,
+    cache_offset: int,
+    seq_len: int,
+) -> tuple[dict[str, Any], int]:
+    start = max(0, int(cache_offset or 0))
+    length = max(0, int(seq_len or 0))
+    stop = start + length
+    if not prompt_kwargs or length <= 0:
+        return dict(prompt_kwargs or {}), 0
+
+    sliced = dict(prompt_kwargs)
+    fallback_count = 0
+    for key, value in prompt_kwargs.items():
+        axis = _chunked_prompt_kwarg_axis(key)
+        if axis is None:
+            continue
+        replacement = _slice_prompt_kwarg_axis(value, axis=axis, start=start, stop=stop)
+        if replacement is None:
+            fallback_count += 1
+            continue
+        sliced[key] = replacement
+    return sliced, fallback_count
+
+
+def _chunked_prompt_kwarg_axis(key: str) -> int | None:
+    if key == "inputs_embeds" or key in _PROMPT_SECOND_AXIS_KWARGS:
+        return 1
+    if key in _PROMPT_LAST_AXIS_KWARGS:
+        return -1
+    return None
+
+
+def _slice_prompt_kwarg_axis(value: Any, *, axis: int, start: int, stop: int) -> Any | None:
+    shape = getattr(value, "shape", None)
+    if not isinstance(shape, (tuple, list)) or not shape:
+        return None
+    ndim = len(shape)
+    normalized_axis = axis if axis >= 0 else ndim + axis
+    if normalized_axis < 0 or normalized_axis >= ndim:
+        return None
+    try:
+        axis_extent = int(shape[normalized_axis])
+    except (TypeError, ValueError):
+        return None
+    if axis_extent == stop - start:
+        return value
+    if axis_extent < stop:
+        return None
+    index: list[object] = [slice(None)] * ndim
+    index[normalized_axis] = slice(start, stop)
+    try:
+        return value[tuple(index)]
+    except (TypeError, IndexError, KeyError, ValueError):
+        return None
+
+
+def _prompt_axis_length(value: Any) -> int:
+    shape = getattr(value, "shape", None)
+    if isinstance(shape, (tuple, list)) and len(shape) >= 2:
+        return max(0, int(shape[1]))
+    if isinstance(shape, (tuple, list)) and shape:
+        return max(0, int(shape[-1]))
+    if isinstance(value, (list, tuple)):
+        return len(value)
+    return 0
+
+
+def _prompt_cache_offset(cache: Any) -> int | None:
+    if isinstance(cache, (list, tuple)):
+        for item in cache:
+            offset = _prompt_cache_offset(item)
+            if offset is not None:
+                return offset
+        return 0
+    offset = getattr(cache, "offset", None)
+    if offset is None:
+        return None
+    try:
+        if hasattr(offset, "tolist"):
+            offset = offset.tolist()
+        if isinstance(offset, (list, tuple)):
+            offset = offset[0] if offset else 0
+        return max(0, int(offset or 0))
+    except (TypeError, ValueError):
+        return None
+
 
 class RuntimeUnavailableError(RuntimeError):
     pass
+
+
+def maybe_apply_native_mtp_preload_patches(
+    model_path: str,
+    *,
+    metadata: dict[str, str],
+) -> dict[str, str]:
+    enabled = _truthy_string(metadata.get(_NATIVE_MTP_ENABLED_EXT_KEY, ""))
+    model_dir = Path(model_path)
+    config_payload = _load_json_payload(model_dir / "config.json")
+    model_type = _native_mtp_model_type(config_payload)
+    mtp_layers = _native_mtp_layer_count(config_payload)
+    compatible = model_type in {"qwen3_5", "qwen3_5_text"} and mtp_layers > 0
+    weights_present, weight_count = _native_mtp_weight_presence(model_dir)
+
+    active = False
+    patch_applied = False
+    reason = "disabled"
+    try:
+        from worker.runtime import native_mtp
+
+        native_mtp.set_mtp_active(False)
+        native_mtp.set_mtp_weight_attachment(False)
+        if compatible:
+            native_mtp.set_mtp_weight_attachment(weights_present)
+            patch_applied = native_mtp.apply_native_mtp_patches()
+            if not patch_applied:
+                reason = "patch_failed"
+            elif not enabled:
+                reason = "disabled"
+            elif not weights_present:
+                reason = "missing_mtp_weights"
+            else:
+                active = True
+                reason = ""
+        elif enabled:
+            reason = "unsupported_model"
+        native_mtp.set_mtp_active(active)
+    except Exception as exc:  # pragma: no cover - defensive runtime guard.
+        logger.warning("Native MTP preload patch failed for %s: %s", model_path, exc)
+        reason = "patch_error"
+        try:
+            native_mtp.set_mtp_active(False)
+            native_mtp.set_mtp_weight_attachment(False)
+        except Exception:
+            pass
+
+    return {
+        "melix.native_mtp.enabled": "true" if enabled else "false",
+        "melix.native_mtp.compatible": "true" if compatible else "false",
+        "melix.native_mtp.weights_present": "true" if weights_present else "false",
+        "melix.native_mtp.weight_count": str(weight_count),
+        "melix.native_mtp.patch_applied": "true" if patch_applied else "false",
+        "melix.native_mtp.active": "true" if active else "false",
+        "melix.native_mtp.reason": reason,
+    }
+
+
+def _load_json_payload(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _native_mtp_model_type(config_payload: dict[str, Any]) -> str:
+    text_config = config_payload.get("text_config")
+    if isinstance(text_config, dict):
+        value = text_config.get("model_type") or config_payload.get("model_type")
+    else:
+        value = config_payload.get("model_type")
+    return str(value or "").strip().lower()
+
+
+def _native_mtp_layer_count(config_payload: dict[str, Any]) -> int:
+    candidates: list[Any] = []
+    text_config = config_payload.get("text_config")
+    if isinstance(text_config, dict):
+        candidates.append(text_config.get("mtp_num_hidden_layers"))
+    candidates.append(config_payload.get("mtp_num_hidden_layers"))
+    for value in candidates:
+        try:
+            return max(0, int(value or 0))
+        except (TypeError, ValueError):
+            continue
+    return 0
+
+
+def _native_mtp_weight_presence(model_dir: Path) -> tuple[bool, int]:
+    index_payload = _load_json_payload(model_dir / "model.safetensors.index.json")
+    weight_map = index_payload.get("weight_map")
+    if not isinstance(weight_map, dict):
+        return False, 0
+    count = sum(
+        1
+        for key in weight_map
+        if str(key).startswith("language_model.mtp.") or str(key).startswith("mtp.")
+    )
+    return count > 0, count
+
+
+def _truthy_string(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
 
 @dataclass(frozen=True)
@@ -92,6 +312,18 @@ class _TextOnlyVLMDecodeAdapter:
     def __init__(self, vlm_model: Any) -> None:
         self._vlm_model = vlm_model
         self._language_model = getattr(vlm_model, "language_model", vlm_model)
+        self._melix_native_mtp_active = bool(
+            getattr(self._language_model, "_melix_native_mtp_active", False)
+        )
+        self._uses_mrope = self._detect_mrope(vlm_model)
+
+    @property
+    def language_model(self):
+        return self._language_model
+
+    @property
+    def mtp(self):
+        return getattr(self._language_model, "mtp", None)
 
     @property
     def layers(self):
@@ -115,10 +347,95 @@ class _TextOnlyVLMDecodeAdapter:
 
         return [KVCache() for _ in range(len(self.layers))]
 
+    def make_mtp_cache(self):
+        if hasattr(self._language_model, "make_mtp_cache"):
+            return self._language_model.make_mtp_cache()
+        return []
+
+    def mtp_forward(self, hidden_states, next_token_ids, mtp_cache):
+        return self._language_model.mtp_forward(hidden_states, next_token_ids, mtp_cache)
+
+    def rollback_speculative_cache(self, caches, gdn_states, accepted, block_size):
+        return self._language_model.rollback_speculative_cache(
+            caches,
+            gdn_states,
+            accepted,
+            block_size,
+        )
+
+    def _force_text_only_rope_context(self):
+        context_factory = getattr(
+            self._language_model,
+            "_melix_force_text_only_rope_context",
+            None,
+        )
+        if callable(context_factory):
+            return context_factory()
+        return nullcontext()
+
+    def _has_force_text_only_rope_context(self) -> bool:
+        return callable(
+            getattr(
+                self._language_model,
+                "_melix_force_text_only_rope_context",
+                None,
+            )
+        )
+
+    @staticmethod
+    def _detect_mrope(vlm_model: Any) -> bool:
+        config = getattr(vlm_model, "config", None)
+        text_config = getattr(config, "text_config", None)
+        rope_cfg = None
+        if text_config is not None:
+            rope_cfg = getattr(text_config, "rope_scaling", None) or getattr(
+                text_config,
+                "rope_parameters",
+                None,
+            )
+        if isinstance(rope_cfg, dict):
+            return "mrope_section" in rope_cfg
+        return False
+
+    def _text_only_position_ids(self, input_ids: Any, cache: Any) -> Any | None:
+        if not self._uses_mrope or cache is None or not hasattr(input_ids, "shape"):
+            return None
+        try:
+            import mlx.core as mx
+        except Exception:
+            return None
+        batch_size, seq_len = input_ids.shape[:2]
+        offset = None
+        for c in cache:
+            candidate = getattr(c, "offset", None)
+            if candidate is not None:
+                offset = candidate
+                break
+        if offset is None:
+            return None
+        if isinstance(offset, mx.array) and offset.ndim > 0:
+            positions = offset[:batch_size][:, None] + mx.arange(seq_len)[None, :]
+        else:
+            positions = mx.arange(seq_len).reshape(1, -1) + offset
+            positions = mx.broadcast_to(positions, (batch_size, seq_len))
+        return mx.broadcast_to(positions[None, :, :], (3, batch_size, seq_len))
+
     def __call__(self, input_ids, cache=None, **kwargs):
-        if hasattr(self._vlm_model, "_set_position_state"):
+        has_position_ids = "position_ids" in kwargs
+        force_plain_rope = self._has_force_text_only_rope_context()
+        if not has_position_ids and not force_plain_rope:
+            position_ids = self._text_only_position_ids(input_ids, cache)
+            if position_ids is not None:
+                kwargs["position_ids"] = position_ids
+                has_position_ids = True
+        if (
+            not has_position_ids
+            and not force_plain_rope
+            and hasattr(self._vlm_model, "_set_position_state")
+        ):
             self._vlm_model._set_position_state(input_ids)
-        result = self._language_model(input_ids, cache=cache, **kwargs)
+        with self._force_text_only_rope_context():
+            result = self._language_model(input_ids, cache=cache, **kwargs)
         return result.logits if hasattr(result, "logits") else result
 
 
@@ -134,6 +451,52 @@ class _CallableTokenizerProcessor:
         return tokenizer(*args, **kwargs)
 
 
+class _ChunkedPromptLanguageModelProxy:
+    def __init__(self, language_model: Any, runtime: "MLXVLMRuntime") -> None:
+        self._language_model = language_model
+        self._runtime = runtime
+
+    def __getattr__(self, attr: str) -> Any:
+        return getattr(self._language_model, attr)
+
+    def __call__(self, *args, **kwargs):
+        cache_offset = _prompt_cache_offset(kwargs.get("cache"))
+        seq_len = _prompt_axis_length(
+            _first_present(
+                kwargs.get("inputs_embeds"),
+                kwargs.get("inputs"),
+                args[0] if args else None,
+            )
+        )
+        if cache_offset is not None and seq_len > 0:
+            sliced_kwargs, fallback_count = _slice_chunked_prompt_kwargs(
+                {key: value for key, value in kwargs.items() if key != "inputs_embeds"},
+                cache_offset=cache_offset,
+                seq_len=seq_len,
+            )
+            if fallback_count:
+                self._runtime._record_multimodal_position_slice_fallback(fallback_count)
+            kwargs = {**kwargs, **sliced_kwargs}
+        return self._language_model(*args, **kwargs)
+
+
+class _ChunkedPromptModelProxy:
+    def __init__(self, model: Any, runtime: "MLXVLMRuntime") -> None:
+        self._model = model
+        language_model = getattr(model, "language_model", None)
+        self.language_model = (
+            _ChunkedPromptLanguageModelProxy(language_model, runtime)
+            if language_model is not None
+            else language_model
+        )
+
+    def __getattr__(self, attr: str) -> Any:
+        return getattr(self._model, attr)
+
+    def __call__(self, *args, **kwargs):
+        return self._model(*args, **kwargs)
+
+
 class _TextOnlyBatchRequest:
     def __init__(
         self,
@@ -147,6 +510,7 @@ class _TextOnlyBatchRequest:
         prompt_tokens: int,
         started_at: float | None = None,
         prepare_ms: float = 0.0,
+        prefill_step_size: int | None = None,
     ) -> None:
         self.loaded_model = loaded_model
         self.input_ids = input_ids
@@ -166,6 +530,14 @@ class _TextOnlyBatchRequest:
         self.empty_text_token_count_before_first_visible = 0
         self.completion_tokens = 0
         self.cumulative_raw_text = ""
+        self.last_speculative_cycle_count = 0
+        self.last_speculative_accepted_tokens = 0
+        self.last_speculative_rejected_tokens = 0
+        self.last_speculative_backbone_ms = 0.0
+        self.last_speculative_mtp_head_ms = 0.0
+        self.last_speculative_sample_ms = 0.0
+        self.last_speculative_cache_ops_ms = 0.0
+        self.prefill_step_size = prefill_step_size
 
 
 @dataclass
@@ -194,6 +566,13 @@ class _TextOnlyBatchGeneratorStats:
     prefill_total_token_count: int = 0
     prefill_completed_request_count: int = 0
     prefill_step_size: int = _TEXT_ONLY_BATCH_DEFAULT_PREFILL_STEP_SIZE
+    speculative_cycle_count_total: int = 0
+    speculative_accepted_count_total: int = 0
+    speculative_rejected_count_total: int = 0
+    speculative_backbone_ms_total: float = 0.0
+    speculative_mtp_head_ms_total: float = 0.0
+    speculative_sample_ms_total: float = 0.0
+    speculative_cache_ops_ms_total: float = 0.0
 
     def snapshot(self) -> "_TextOnlyBatchGeneratorStats":
         return replace(self)
@@ -233,6 +612,13 @@ def _text_batch_generator_probe_kwargs(stats: _TextOnlyBatchGeneratorStats) -> d
         "text_batch_generator_prefill_total_token_count": stats.prefill_total_token_count,
         "text_batch_generator_prefill_completed_request_count": stats.prefill_completed_request_count,
         "text_batch_generator_prefill_step_size": stats.prefill_step_size,
+        "text_batch_generator_speculative_cycle_count_total": stats.speculative_cycle_count_total,
+        "text_batch_generator_speculative_accepted_count_total": stats.speculative_accepted_count_total,
+        "text_batch_generator_speculative_rejected_count_total": stats.speculative_rejected_count_total,
+        "text_batch_generator_speculative_backbone_ms_total": stats.speculative_backbone_ms_total,
+        "text_batch_generator_speculative_mtp_head_ms_total": stats.speculative_mtp_head_ms_total,
+        "text_batch_generator_speculative_sample_ms_total": stats.speculative_sample_ms_total,
+        "text_batch_generator_speculative_cache_ops_ms_total": stats.speculative_cache_ops_ms_total,
     }
 
 
@@ -253,6 +639,23 @@ def _text_only_batch_prefill_step_size(value: object | None = None) -> int:
     return min(8192, max(1, parsed))
 
 
+def _text_only_batch_max_batch_size(value: object | None = None) -> int:
+    raw_value = os.environ.get(_TEXT_ONLY_BATCH_MAX_BATCH_SIZE_ENV) if value is None else value
+    if raw_value is None or str(raw_value).strip() == "":
+        return _TEXT_ONLY_BATCH_DEFAULT_MAX_BATCH_SIZE
+    try:
+        parsed = int(str(raw_value).strip())
+    except ValueError:
+        logger.warning(
+            "Ignoring invalid %s=%r; using %d.",
+            _TEXT_ONLY_BATCH_MAX_BATCH_SIZE_ENV,
+            raw_value,
+            _TEXT_ONLY_BATCH_DEFAULT_MAX_BATCH_SIZE,
+        )
+        return _TEXT_ONLY_BATCH_DEFAULT_MAX_BATCH_SIZE
+    return min(256, max(1, parsed))
+
+
 class _TextOnlyBatchGeneratorScheduler:
     def __init__(
         self,
@@ -261,7 +664,7 @@ class _TextOnlyBatchGeneratorScheduler:
         processor: Any,
         adapter: _TextOnlyVLMDecodeAdapter,
         executor: MLXRuntimeExecutor | None = None,
-        max_batch_size: int = 8,
+        max_batch_size: int | None = None,
         wait_ms: float = 2.0,
         prefill_step_size: int | None = None,
     ) -> None:
@@ -269,7 +672,7 @@ class _TextOnlyBatchGeneratorScheduler:
         self._processor = processor
         self._adapter = adapter
         self._executor = executor
-        self._max_batch_size = max(1, int(max_batch_size))
+        self._max_batch_size = _text_only_batch_max_batch_size(max_batch_size)
         self._wait_seconds = max(0.0, float(wait_ms) / 1000.0)
         self._prefill_step_size = _text_only_batch_prefill_step_size(prefill_step_size)
         self._condition = Condition()
@@ -329,14 +732,9 @@ class _TextOnlyBatchGeneratorScheduler:
                         self._condition.wait(timeout=self._wait_seconds)
                     pending = self._take_pending_locked()
                 try:
-                    insert_started_at = time.perf_counter()
-                    self._run_on_executor(lambda: self._insert_pending(pending))
-                    insert_elapsed_ms = (time.perf_counter() - insert_started_at) * 1000.0
-                    step_started_at = time.perf_counter()
-                    self._run_on_executor(self._remove_cancelled_active_requests)
-                    self._run_on_executor(self._step)
-                    self._run_on_executor(self._remove_cancelled_active_requests)
-                    step_elapsed_ms = (time.perf_counter() - step_started_at) * 1000.0
+                    insert_elapsed_ms, step_elapsed_ms = self._run_on_executor(
+                        lambda: self._executor_tick(pending)
+                    )
                 except BaseException as exc:
                     self._fail_requests([request for request in pending if request.uid is None], exc)
                     raise
@@ -345,6 +743,17 @@ class _TextOnlyBatchGeneratorScheduler:
                     self._stats.executor_step_ms_total += step_elapsed_ms
         except BaseException as exc:  # pragma: no cover - defensive batch worker cleanup
             self._fail_all(exc)
+
+    def _executor_tick(self, pending: list[_TextOnlyBatchRequest]) -> tuple[float, float]:
+        insert_started_at = time.perf_counter()
+        self._insert_pending(pending)
+        insert_elapsed_ms = (time.perf_counter() - insert_started_at) * 1000.0
+        step_started_at = time.perf_counter()
+        self._remove_cancelled_active_requests()
+        self._step()
+        self._remove_cancelled_active_requests()
+        step_elapsed_ms = (time.perf_counter() - step_started_at) * 1000.0
+        return insert_elapsed_ms, step_elapsed_ms
 
     def _take_pending_locked(self) -> list[_TextOnlyBatchRequest]:
         available_slots = self._max_batch_size - len(self._active_by_uid)
@@ -362,6 +771,9 @@ class _TextOnlyBatchGeneratorScheduler:
             [request.input_ids for request in requests],
             max_tokens=[request.max_tokens for request in requests],
         )
+        for request in requests:
+            if request.prefill_step_size is not None:
+                self._stats.prefill_step_size = request.prefill_step_size
         for uid, request in zip(uids, requests):
             request.uid = int(uid)
             self._active_by_uid[int(uid)] = request
@@ -450,6 +862,7 @@ class _TextOnlyBatchGeneratorScheduler:
         request.detokenizer.add_token(token_id)
         request.completion_tokens += 1
         self._stats.generated_token_count += 1
+        self._record_speculative_response_stats(request, response)
         text = str(getattr(request.detokenizer, "last_segment", "") or "")
         if not text:
             if request.first_visible_text_at is None:
@@ -475,8 +888,122 @@ class _TextOnlyBatchGeneratorScheduler:
                 generation_tps=(request.completion_tokens / generation_elapsed) if generation_elapsed > 0 else 0.0,
                 peak_memory=float(getattr(response, "peak_memory", 0.0) or 0.0),
                 finish_reason=str(getattr(response, "finish_reason", "") or "") or None,
+                speculative_acceptance_rate=getattr(response, "speculative_acceptance_rate", None),
+                speculative_rollback_rate=getattr(response, "speculative_rollback_rate", None),
+                speculative_accepted_tokens=getattr(response, "speculative_accepted_tokens", None),
+                speculative_rejected_tokens=getattr(response, "speculative_rejected_tokens", None),
+                speculative_num_draft_tokens=getattr(response, "speculative_num_draft_tokens", None),
+                speculative_draft_model_configured=getattr(
+                    response,
+                    "speculative_draft_model_configured",
+                    None,
+                ),
             )
         )
+
+    def _record_speculative_response_stats(
+        self,
+        request: _TextOnlyBatchRequest,
+        response: Any,
+    ) -> None:
+        cycle_count = self._response_nonnegative_int(
+            response,
+            "speculative_cycle_count",
+            request.last_speculative_cycle_count,
+        )
+        accepted_tokens = self._response_nonnegative_int(
+            response,
+            "speculative_accepted_tokens",
+            request.last_speculative_accepted_tokens,
+        )
+        rejected_tokens = self._response_nonnegative_int(
+            response,
+            "speculative_rejected_tokens",
+            request.last_speculative_rejected_tokens,
+        )
+        backbone_ms = self._response_nonnegative_float(
+            response,
+            "speculative_backbone_ms",
+            request.last_speculative_backbone_ms,
+        )
+        mtp_head_ms = self._response_nonnegative_float(
+            response,
+            "speculative_mtp_head_ms",
+            request.last_speculative_mtp_head_ms,
+        )
+        sample_ms = self._response_nonnegative_float(
+            response,
+            "speculative_sample_ms",
+            request.last_speculative_sample_ms,
+        )
+        cache_ops_ms = self._response_nonnegative_float(
+            response,
+            "speculative_cache_ops_ms",
+            request.last_speculative_cache_ops_ms,
+        )
+
+        self._stats.speculative_cycle_count_total += max(
+            0,
+            cycle_count - request.last_speculative_cycle_count,
+        )
+        self._stats.speculative_accepted_count_total += max(
+            0,
+            accepted_tokens - request.last_speculative_accepted_tokens,
+        )
+        self._stats.speculative_rejected_count_total += max(
+            0,
+            rejected_tokens - request.last_speculative_rejected_tokens,
+        )
+        self._stats.speculative_backbone_ms_total += max(
+            0.0,
+            backbone_ms - request.last_speculative_backbone_ms,
+        )
+        self._stats.speculative_mtp_head_ms_total += max(
+            0.0,
+            mtp_head_ms - request.last_speculative_mtp_head_ms,
+        )
+        self._stats.speculative_sample_ms_total += max(
+            0.0,
+            sample_ms - request.last_speculative_sample_ms,
+        )
+        self._stats.speculative_cache_ops_ms_total += max(
+            0.0,
+            cache_ops_ms - request.last_speculative_cache_ops_ms,
+        )
+
+        request.last_speculative_cycle_count = cycle_count
+        request.last_speculative_accepted_tokens = accepted_tokens
+        request.last_speculative_rejected_tokens = rejected_tokens
+        request.last_speculative_backbone_ms = backbone_ms
+        request.last_speculative_mtp_head_ms = mtp_head_ms
+        request.last_speculative_sample_ms = sample_ms
+        request.last_speculative_cache_ops_ms = cache_ops_ms
+
+    @staticmethod
+    def _response_nonnegative_int(response: Any, attr_name: str, default: int) -> int:
+        try:
+            value = getattr(response, attr_name)
+        except Exception:
+            return default
+        if value is None:
+            return default
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _response_nonnegative_float(response: Any, attr_name: str, default: float) -> float:
+        try:
+            value = getattr(response, attr_name)
+        except Exception:
+            return default
+        if value is None:
+            return default
+        try:
+            return max(0.0, float(value))
+        except (TypeError, ValueError):
+            return default
 
     def _finish_request(self, request: _TextOnlyBatchRequest) -> None:
         if request.uid is not None:
@@ -578,6 +1105,9 @@ def _tokenizer_stop_token_ids(tokenizer: Any) -> list[int]:
         elif str(value).strip():
             token_ids.append(int(value))
     return list(dict.fromkeys(token_ids))
+
+
+_int_metadata = _attention_int_metadata
 
 
 def _gemma4_multimodal_weight_presence(weight_names: Iterable[str]) -> tuple[bool, bool]:
@@ -822,6 +1352,46 @@ def _gemma4_loaded_execution_mode(model: Any, processor: Any) -> str:
     return "text_backed"
 
 
+def _callable_accepts_positional_arg_count(callable_obj: Any, arg_count: int) -> bool:
+    try:
+        signature = inspect.signature(callable_obj)
+    except (TypeError, ValueError):
+        return True
+
+    positional_capacity = 0
+    for parameter in signature.parameters.values():
+        if parameter.kind == inspect.Parameter.VAR_POSITIONAL:
+            return True
+        if parameter.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            positional_capacity += 1
+    return positional_capacity >= arg_count
+
+
+def _load_tokenizer_with_supported_hints(load_tokenizer_fn: Any, model_path: Path) -> Any:
+    kwargs: dict[str, Any] = {}
+    if _callable_accepts_kwarg(load_tokenizer_fn, "return_tokenizer"):
+        kwargs["return_tokenizer"] = True
+    return load_tokenizer_fn(model_path, **kwargs)
+
+
+def _load_processor_with_supported_hints(
+    load_processor_fn: Any,
+    model_path: Path,
+    *,
+    eos_token_ids: Any,
+) -> Any:
+    args: tuple[Any, ...] = (model_path, True)
+    if not _callable_accepts_positional_arg_count(load_processor_fn, 2):
+        args = (model_path,)
+    kwargs: dict[str, Any] = {}
+    if _callable_accepts_kwarg(load_processor_fn, "eos_token_ids"):
+        kwargs["eos_token_ids"] = eos_token_ids
+    return load_processor_fn(*args, **kwargs)
+
+
 def _patch_gemma4_scaled_linear_quantization() -> None:
     import mlx.nn as nn
     import mlx_vlm.models.gemma4.language as gemma4_language
@@ -968,6 +1538,11 @@ class AutoMLXVLMBackend:
         metadata["mlx_lm_version"] = _installed_package_version("mlx-lm")
         metadata["mlx_vlm_version"] = _installed_package_version("mlx-vlm")
         execution_mode = metadata.get("melix.vlm.execution_mode", "").strip() or "multimodal"
+        native_mtp_metadata = maybe_apply_native_mtp_preload_patches(
+            model_spec.model_path,
+            metadata=metadata,
+        )
+        metadata.update(native_mtp_metadata)
         try:
             load_kwargs: dict[str, Any] = {"revision": model_spec.revision or "main"}
             if trust_remote_code:
@@ -982,13 +1557,24 @@ class AutoMLXVLMBackend:
                 model_spec=model_spec,
                 original_error=exc,
             )
+        language_model = getattr(model, "language_model", model)
+        native_mtp_active = _truthy_string(metadata.get("melix.native_mtp.active"))
+        try:
+            setattr(language_model, "_melix_native_mtp_active", native_mtp_active)
+        except Exception:
+            pass
         metadata["melix.vlm.execution_mode"] = execution_mode
         metadata["melix.vlm.text_only_step_cooperative"] = (
             "true"
             if self.generate_step_fn is not None and _supports_isolated_streaming_detokenizer(processor)
             else "false"
         )
-        metadata[_TEXT_ONLY_BATCH_GENERATOR_EXT_KEY] = "false"
+        metadata[_TEXT_ONLY_BATCH_GENERATOR_EXT_KEY] = (
+            "true"
+            if _truthy_string(metadata.get(_TEXT_ONLY_BATCH_GENERATOR_EXT_KEY))
+            or _truthy_string(metadata.get("melix.native_mtp.active"))
+            else "false"
+        )
         family_config = resolve_vision_family_config(dict(model_spec.ext))
         capability_metadata = family_config.capability_metadata()
         capability_metadata["melix.vlm.text_only_step_cooperative"] = metadata[
@@ -1063,10 +1649,7 @@ class AutoMLXVLMBackend:
                 weights=weights,
             )
             processor = _CallableTokenizerProcessor(
-                load_tokenizer(
-                    model_path,
-                    return_tokenizer=True,
-                )
+                _load_tokenizer_with_supported_hints(load_tokenizer, model_path)
             )
             return model, processor, "text_backed"
 
@@ -1120,9 +1703,9 @@ class AutoMLXVLMBackend:
         ]
         model.load_weights(filtered_weights)
 
-        processor = load_processor(
+        processor = _load_processor_with_supported_hints(
+            load_processor,
             model_path,
-            True,
             eos_token_ids=getattr(model.config, "eos_token_id", None),
         )
         execution_mode = "text_backed"
@@ -1328,6 +1911,7 @@ class MLXVLMRuntime:
                     sampling=sampling,
                     cancel_event=cancel_event,
                     acceleration_policy=acceleration_policy,
+                    execution_ext=execution_ext,
                 )
                 return
             if not bool(getattr(acceleration_policy, "allow_baseline_fallback", False)):
@@ -1339,11 +1923,30 @@ class MLXVLMRuntime:
             raise RuntimeError(
                 "The loaded Gemma 4 MLX package does not include vision weights, so image inputs are unavailable."
             )
-        self._ensure_fast_path_probe(loaded_model, prepared_request)
+        attention_policy = self._attention_prefill_policy(
+            loaded_model=loaded_model,
+            prepared_request=prepared_request,
+            execution_ext=execution_ext,
+        )
+        self._ensure_fast_path_probe(
+            loaded_model,
+            prepared_request,
+            attention_policy=attention_policy,
+        )
+        enforce_attention_prefill_policy(attention_policy)
         if cancel_event.is_set():
             return
 
-        prompt_tokens = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
+        prompt_tokens = (
+            attention_policy.prompt_tokens
+            if attention_policy is not None
+            else self.prompt_token_count(prepared_request, loaded_model=loaded_model)
+        )
+        selected_prefill_step_size = (
+            attention_policy.selected_prefill_step_size
+            if attention_policy is not None and attention_policy.prefill_chunk_mode == "auto_chunk"
+            else None
+        )
         text_only_batch_generator_unsupported_reason = (
             self._text_only_batch_generator_unsupported_reason(
                 loaded_model=loaded_model,
@@ -1364,6 +1967,7 @@ class MLXVLMRuntime:
                 sampling=sampling,
                 cancel_event=cancel_event,
                 prompt_tokens=prompt_tokens,
+                prefill_step_size=selected_prefill_step_size,
             )
             return
         if self._can_use_text_only_step_fast_path(
@@ -1384,6 +1988,7 @@ class MLXVLMRuntime:
                     sampling=sampling,
                     cancel_event=cancel_event,
                     prompt_tokens=prompt_tokens,
+                    prefill_step_size=selected_prefill_step_size,
                     speculative_fallback_reason=speculative_fallback_reason,
                     text_only_batch_generator_unsupported_reason=(
                         text_only_batch_generator_unsupported_reason
@@ -1443,13 +2048,23 @@ class MLXVLMRuntime:
                             multimodal_decode_mode="fallback",
                             multimodal_fallback_reason="backend_video_kwarg_unsupported",
                         )
+                if selected_prefill_step_size is not None and _callable_accepts_kwarg(
+                    self._backend.stream_generate_fn,
+                    "prefill_step_size",
+                ):
+                    stream_kwargs["prefill_step_size"] = selected_prefill_step_size
 
                 started_at = time.perf_counter()
                 first_token_at: float | None = None
                 completion_tokens = 0
                 cumulative_raw_text = ""
+                generation_model = (
+                    self._wrap_chunked_prompt_model(loaded_model["model"])
+                    if selected_prefill_step_size is not None
+                    else loaded_model["model"]
+                )
                 for response in self._backend.stream_generate_fn(
-                    loaded_model["model"],
+                    generation_model,
                     loaded_model["processor"],
                     formatted_prompt,
                     **stream_kwargs,
@@ -1537,13 +2152,30 @@ class MLXVLMRuntime:
         sampling,
         cancel_event: Event,
         acceleration_policy: common_pb2.AccelerationPolicy,
+        execution_ext: dict[str, str] | None = None,
     ):
-        self._ensure_fast_path_probe(loaded_model, prepared_request)
         if cancel_event.is_set():
             return
         prompt_tokens = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
         draft_model_id = str(getattr(acceleration_policy, "draft_model_id", "") or "").strip()
         draft_block_size = self._mtp_draft_block_size(acceleration_policy)
+        attention_policy = self._attention_prefill_policy(
+            loaded_model=loaded_model,
+            prepared_request=prepared_request,
+            seq_len=prompt_tokens,
+            execution_ext=execution_ext,
+        )
+        self._ensure_fast_path_probe(
+            loaded_model,
+            prepared_request,
+            attention_policy=attention_policy,
+        )
+        enforce_attention_prefill_policy(attention_policy)
+        selected_prefill_step_size = (
+            attention_policy.selected_prefill_step_size
+            if attention_policy is not None and attention_policy.prefill_chunk_mode == "auto_chunk"
+            else None
+        )
 
         def backend_events():
             self._backend._ensure_runtime()
@@ -1559,6 +2191,7 @@ class MLXVLMRuntime:
                     drafter=drafter,
                     draft_block_size=draft_block_size,
                     prompt_tokens=prompt_tokens,
+                    prefill_step_size=selected_prefill_step_size,
                 )
                 return
 
@@ -1569,6 +2202,11 @@ class MLXVLMRuntime:
                 "draft_kind": "mtp",
                 "draft_block_size": draft_block_size,
             }
+            if selected_prefill_step_size is not None and _callable_accepts_kwarg(
+                self._backend.batch_generate_fn,
+                "prefill_step_size",
+            ):
+                batch_kwargs["prefill_step_size"] = selected_prefill_step_size
 
             started_at = time.perf_counter()
             response_batch = self._backend.batch_generate_fn(
@@ -1635,6 +2273,7 @@ class MLXVLMRuntime:
         drafter: Any,
         draft_block_size: int,
         prompt_tokens: int,
+        prefill_step_size: int | None,
     ):
         import mlx.core as mx
         from mlx_vlm.utils import prepare_inputs
@@ -1667,16 +2306,24 @@ class MLXVLMRuntime:
             detokenizer.reset()
         first_token_at: float | None = None
         completion_tokens = 0
+        step_kwargs: dict[str, Any] = {
+            "max_tokens": int(getattr(sampling, "max_output_tokens", 0) or 64),
+            "draft_model": drafter,
+            "draft_kind": "mtp",
+            "draft_block_size": draft_block_size,
+        }
+        if _callable_accepts_kwarg(
+            self._backend.generate_step_fn,
+            "prefill_step_size",
+        ):
+            step_kwargs["prefill_step_size"] = prefill_step_size
+
         for token, _logprobs in self._backend.generate_step_fn(
             input_ids,
             loaded_model["model"],
             None,
             mask,
-            max_tokens=int(getattr(sampling, "max_output_tokens", 0) or 64),
-            draft_model=drafter,
-            draft_kind="mtp",
-            draft_block_size=draft_block_size,
-            prefill_step_size=None,
+            **step_kwargs,
         ):
             if cancel_event.is_set():
                 return
@@ -1731,6 +2378,7 @@ class MLXVLMRuntime:
         sampling,
         cancel_event: Event,
         prompt_tokens: int,
+        prefill_step_size: int | None,
         speculative_fallback_reason: str,
         text_only_batch_generator_unsupported_reason: str = "",
     ):
@@ -1802,16 +2450,24 @@ class MLXVLMRuntime:
                 speculative_draft_model_configured=False if speculative_fallback_reason else None,
             )
 
+        step_kwargs: dict[str, Any] = {
+            "max_tokens": int(getattr(sampling, "max_output_tokens", 0) or 64),
+            "temperature": float(getattr(sampling, "temperature", 0.0)),
+            "top_p": float(getattr(sampling, "top_p", 1.0)),
+            "top_k": int(getattr(sampling, "top_k", 0)),
+        }
+        if _callable_accepts_kwarg(
+            self._backend.generate_step_fn,
+            "prefill_step_size",
+        ):
+            step_kwargs["prefill_step_size"] = prefill_step_size
+
         for token, logprobs in self._backend.generate_step_fn(
             input_ids,
             loaded_model["model"],
             None,
             mask,
-            max_tokens=int(getattr(sampling, "max_output_tokens", 0) or 64),
-            temperature=float(getattr(sampling, "temperature", 0.0)),
-            top_p=float(getattr(sampling, "top_p", 1.0)),
-            top_k=int(getattr(sampling, "top_k", 0)),
-            prefill_step_size=None,
+            **step_kwargs,
         ):
             if cancel_event.is_set():
                 return
@@ -1957,6 +2613,7 @@ class MLXVLMRuntime:
         sampling,
         cancel_event: Event,
         prompt_tokens: int,
+        prefill_step_size: int | None = None,
     ):
         from mlx_vlm.utils import prepare_inputs
 
@@ -1996,7 +2653,10 @@ class MLXVLMRuntime:
             if hasattr(loaded_model["processor"], "tokenizer")
             else loaded_model["processor"]
         )
-        scheduler = self._text_only_batch_generator_scheduler(loaded_model)
+        scheduler = self._text_only_batch_generator_scheduler(
+            loaded_model,
+            prefill_step_size=prefill_step_size,
+        )
         request = _TextOnlyBatchRequest(
             loaded_model=loaded_model,
             input_ids=input_ids,
@@ -2007,6 +2667,7 @@ class MLXVLMRuntime:
             prompt_tokens=prompt_tokens,
             started_at=started_at,
             prepare_ms=prepare_ms,
+            prefill_step_size=prefill_step_size,
         )
         first_event = True
         for event in scheduler.submit(request):
@@ -2039,19 +2700,30 @@ class MLXVLMRuntime:
                 ),
             )
 
-    def _text_only_batch_generator_scheduler(self, loaded_model) -> _TextOnlyBatchGeneratorScheduler:
+    def _text_only_batch_generator_scheduler(
+        self,
+        loaded_model,
+        *,
+        prefill_step_size: int | None = None,
+    ) -> _TextOnlyBatchGeneratorScheduler:
         scheduler_key = "_melix_text_only_batch_generator_scheduler"
+        requested_prefill_step_size = _text_only_batch_prefill_step_size(prefill_step_size)
         scheduler = loaded_model.get(scheduler_key)
         if isinstance(scheduler, _TextOnlyBatchGeneratorScheduler):
-            return scheduler
+            if scheduler._prefill_step_size != requested_prefill_step_size:
+                scheduler.close()
+                loaded_model.pop(scheduler_key, None)
+            else:
+                return scheduler
         adapter = _TextOnlyVLMDecodeAdapter(loaded_model["model"])
         scheduler = _TextOnlyBatchGeneratorScheduler(
             model=loaded_model["model"],
             processor=loaded_model["processor"],
             adapter=adapter,
             executor=self._executor,
-            max_batch_size=8,
+            max_batch_size=None,
             wait_ms=2.0,
+            prefill_step_size=requested_prefill_step_size,
         )
         loaded_model[scheduler_key] = scheduler
         if not any(candidate is loaded_model for candidate in self._loaded_models_with_schedulers):
@@ -2214,10 +2886,29 @@ class MLXVLMRuntime:
                 )
         return replace(probe, **stats_kwargs) if stats_kwargs else probe
 
+    def _wrap_chunked_prompt_model(self, model: Any) -> Any:
+        if isinstance(model, _ChunkedPromptModelProxy):
+            return model
+        return _ChunkedPromptModelProxy(model, self)
+
+    def _record_multimodal_position_slice_fallback(self, fallback_count: int) -> None:
+        count = max(0, int(fallback_count or 0))
+        if count <= 0:
+            return
+        self._last_probe = replace(
+            self._last_probe,
+            multimodal_position_slice_fallback_count=(
+                int(getattr(self._last_probe, "multimodal_position_slice_fallback_count", 0) or 0)
+                + count
+            ),
+        )
+
     def _ensure_fast_path_probe(
         self,
         loaded_model,
         prepared_request: PreparedVisionRequest,
+        *,
+        attention_policy: AttentionPrefillPolicyDecision | None = None,
     ) -> None:
         """Call plan() when generate_tokens() did not follow render_prompt().
 
@@ -2230,8 +2921,18 @@ class MLXVLMRuntime:
         """
         signature = fast_path_probe_signature(loaded_model, prepared_request)
         if self._last_fast_path_signature == signature:
+            if attention_policy is not None:
+                self._last_probe = replace(
+                    self._last_probe,
+                    attention_budget_receipt=build_attention_budget_receipt(attention_policy),
+                )
             return
-        self._record_fast_path_probe(loaded_model, prepared_request, signature=signature)
+        self._record_fast_path_probe(
+            loaded_model,
+            prepared_request,
+            signature=signature,
+            attention_policy=attention_policy,
+        )
 
     def _record_fast_path_probe(
         self,
@@ -2240,6 +2941,7 @@ class MLXVLMRuntime:
         *,
         signature: tuple[str, ...] | None = None,
         seq_len: int | None = None,
+        attention_policy: AttentionPrefillPolicyDecision | None = None,
     ) -> None:
         signature = signature or fast_path_probe_signature(
             loaded_model,
@@ -2270,6 +2972,15 @@ class MLXVLMRuntime:
             multi_image_scatter_mode=fast_path.multi_image_scatter_mode,
             quantized_load_mode=fast_path.quantized_load_mode,
             quantized_load_fallback_reason=fast_path.quantized_load_fallback_reason,
+            attention_budget_receipt=build_attention_budget_receipt(
+                attention_policy
+                if attention_policy is not None
+                else self._attention_prefill_policy(
+                    loaded_model=loaded_model,
+                    prepared_request=prepared_request,
+                    seq_len=seq_len,
+                )
+            ),
             position_metadata_receipt=self._position_metadata_receipt(
                 loaded_model=loaded_model,
                 prepared_request=prepared_request,
@@ -2292,6 +3003,42 @@ class MLXVLMRuntime:
             prepared_request=prepared_request,
             seq_len=seq_len,
             fallback_reason=fallback_reason,
+        )
+
+    def _attention_prefill_policy(
+        self,
+        *,
+        loaded_model,
+        prepared_request: PreparedVisionRequest,
+        seq_len: int | None = None,
+        execution_ext: dict[str, str] | None = None,
+    ) -> AttentionPrefillPolicyDecision | None:
+        if not attention_budget_configured(loaded_model, execution_ext=execution_ext):
+            return None
+        metadata = attention_policy_metadata(loaded_model, execution_ext=execution_ext)
+        family_config = self._family_config(loaded_model)
+        if seq_len is None:
+            seq_len = self.prompt_token_count(prepared_request, loaded_model=loaded_model)
+        return choose_attention_prefill_policy(
+            family_id=str(getattr(family_config, "family_id", "") or metadata.get("vision_family_id", "")),
+            prompt_tokens=seq_len,
+            budget_bytes=_attention_int_metadata(
+                metadata,
+                "melix.vlm.attention_cost_budget_bytes",
+                "melix.vlm.prefill_attention_budget_bytes",
+            ),
+            hidden_size=_attention_int_metadata(metadata, "melix.vlm.hidden_size", "hidden_size"),
+            num_hidden_layers=_attention_int_metadata(
+                metadata,
+                "melix.vlm.num_hidden_layers",
+                "melix.vlm.layer_count",
+                "num_hidden_layers",
+            ),
+            dtype_bytes=_attention_int_metadata(
+                metadata,
+                "melix.vlm.attention_dtype_bytes",
+                "attention_dtype_bytes",
+            ),
         )
 
     @staticmethod

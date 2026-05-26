@@ -499,7 +499,7 @@ def _iter_source_records(
     input_path: Path,
     operator_failures: list[dict[str, Any]],
 ) -> Iterable[dict[str, Any]]:
-    paths = [input_path] if input_path.is_file() else sorted(path for path in input_path.rglob("*") if path.is_file())
+    paths = [input_path] if input_path.is_file() else _iter_source_file_paths(input_path)
     for path in paths:
         source_kind = _source_kind(path)
         if source_kind is None:
@@ -536,14 +536,37 @@ def _iter_source_records(
             )
 
 
+def _iter_source_file_paths(input_path: Path) -> list[Path]:
+    file_paths: list[str] = []
+    stack = [os.fspath(input_path)]
+    while stack:
+        directory = stack.pop()
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            file_paths.append(entry.path)
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    file_paths.sort()
+    return [Path(path) for path in file_paths]
+
+
 def _source_kind(path: Path) -> str | None:
-    suffixes = [suffix.lower() for suffix in path.suffixes]
-    if suffixes[-2:] == [".pdf", ".txt"]:
-        return "pdf"
-    if suffixes[-2:] == [".docx", ".txt"]:
-        return "docx"
-    suffix = suffixes[-1] if suffixes else ""
-    if suffix in {".txt", ".text"}:
+    suffix = path.suffix.lower()
+    if suffix == ".txt":
+        name = path.name.lower()
+        if name.endswith(".pdf.txt"):
+            return "pdf"
+        if name.endswith(".docx.txt"):
+            return "docx"
+        return "text"
+    if suffix == ".text":
         return "text"
     if suffix in {".md", ".markdown"}:
         return "markdown"
@@ -783,7 +806,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(path.read_bytes())
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:

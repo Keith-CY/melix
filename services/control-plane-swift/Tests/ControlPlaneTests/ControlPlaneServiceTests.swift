@@ -905,6 +905,20 @@ struct ControlPlaneServiceTests {
                 numDraftTokens: 6
             )
         )
+        var forcedBackendUnsupportedRequest = makeApplyServingDefaultsRequest(
+            temperature: 0.3,
+            topP: 0.91,
+            maxTokens: 384,
+            streamIntervalTokens: 2,
+            maxConcurrentRequests: 4,
+            accelerationMode: .speculativeDecode,
+            draftModelID: "melix-dev-text",
+            numDraftTokens: 6
+        )
+        forcedBackendUnsupportedRequest.server.applyServingDefaults.speculativeRoutePolicy = "force"
+        let forcedBackendUnsupported = try await backendUnsupportedService.execute(
+            forcedBackendUnsupportedRequest
+        )
 
         let servedModelUnsupportedService = ControlPlaneService(
             modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
@@ -958,8 +972,109 @@ struct ControlPlaneServiceTests {
         )
 
         #expect(backendUnsupported.error.code == ServingDefaultsValidationError.speculativeBackendUnsupported.code)
+        #expect(forcedBackendUnsupported.error.code == ServingDefaultsValidationError.speculativeBackendUnsupported.code)
+        #expect(forcedBackendUnsupported.error.details["disabled_reason"] == "unsupported_route")
+        #expect(forcedBackendUnsupported.error.details["route_policy"] == "force")
         #expect(servedModelUnsupported.error.code == ServingDefaultsValidationError.speculativeServedModelUnsupported.code)
         #expect(draftModelUnsupported.error.code == ServingDefaultsValidationError.speculativeDraftModelUnsupported.code)
+    }
+
+    @Test("execute rejects unsupported forced multimodal route policies")
+    func executeRejectsUnsupportedForcedMultimodalRoutePolicies() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-serving-defaults-force-route-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let servingDefaultsStore = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:]
+        )
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: [ModelCatalog.devTextModel()]),
+            gatewayConfigStore: GatewayConfigStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-config.json"),
+                defaults: [:]
+            ),
+            gatewayServingDefaultsStore: servingDefaultsStore,
+            gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434)
+        )
+
+        var request = makeApplyServingDefaultsRequest(
+            temperature: 0.4,
+            topP: 0.9,
+            maxTokens: 256,
+            streamIntervalTokens: 1,
+            maxConcurrentRequests: 2
+        )
+        request.server.applyServingDefaults.multimodalRoutePolicy = "force"
+
+        let response = try await service.execute(request)
+        let summary = await servingDefaultsStore.summary(
+            serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
+            defaultModelIDs: [:],
+            modelSettingsByModelID: [:]
+        )
+
+        #expect(!response.ok)
+        #expect(response.error.code == "unsupported_multimodal_route_policy")
+        #expect(response.error.details["disabled_reason"] == "unsupported_route")
+        #expect(response.error.details["route_policy"] == "force")
+        let session = try #require(summary.sessions.first)
+        #expect(session.source == .builtInDefaults)
+        #expect(session.updatedAtUnixMs == 0)
+    }
+
+    @Test("execute persists disabled route policies without speculative compatibility checks")
+    func executePersistsDisabledRoutePoliciesWithoutSpeculativeCompatibilityChecks() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-control-plane-serving-defaults-off-route-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let servingDefaultsStore = GatewayServingDefaultsStore(
+            storeURL: temporaryRoot.appendingPathComponent("gateway-serving-defaults.json"),
+            defaults: [:]
+        )
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: [ModelCatalog.devTextModel()]),
+            gatewayConfigStore: GatewayConfigStore(
+                storeURL: temporaryRoot.appendingPathComponent("gateway-config.json"),
+                defaults: [:]
+            ),
+            gatewayServingDefaultsStore: servingDefaultsStore,
+            gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 11_434),
+            gatewaySupportsSpeculativeDefaults: false
+        )
+
+        var request = makeApplyServingDefaultsRequest(
+            temperature: 0.4,
+            topP: 0.9,
+            maxTokens: 256,
+            streamIntervalTokens: 1,
+            maxConcurrentRequests: 2,
+            accelerationMode: .speculativeDecode,
+            draftModelID: "missing-draft",
+            numDraftTokens: 6
+        )
+        request.server.applyServingDefaults.multimodalRoutePolicy = "off"
+        request.server.applyServingDefaults.speculativeRoutePolicy = "off"
+
+        let response = try await service.execute(request)
+        let summary = await servingDefaultsStore.summary(
+            serverSessionIDs: [ServerSessionRuntimeStore.defaultServerSessionID],
+            defaultModelIDs: [:],
+            modelSettingsByModelID: [:]
+        )
+        let session = try #require(summary.sessions.first)
+
+        #expect(response.ok)
+        #expect(session.source == .operatorOverride)
+        #expect(session.multimodalRoutePolicy == "off")
+        #expect(session.speculativeRoutePolicy == "off")
+        #expect(session.effectiveMultimodalRoute == "off")
+        #expect(session.effectiveSpeculativeMode == "baseline")
+        #expect(session.speculativeDisabledReason == "operator_disabled")
     }
 
     @Test("execute validates speculative serving defaults against the default model only")
@@ -4415,7 +4530,7 @@ struct ControlPlaneServiceTests {
                 reasoningModes: ["enabled", "disabled"],
                 structuredOutputModes: ["json_schema", "plain_text"],
                 concurrencyLevels: [8, 1],
-                repeats: 0,
+                repeats: 1,
                 requests: 0,
                 durationSeconds: 30,
                 allowLargeMatrix: true
@@ -4457,6 +4572,52 @@ struct ControlPlaneServiceTests {
         #expect(response.ok == false)
         #expect(response.error.code == "invalid_argument")
         #expect(response.error.message.contains("Exactly one of requests or duration_seconds"))
+        #expect(await modelOpsClient.lastBenchMatrixRequest == nil)
+    }
+
+    @Test("execute rejects ops.run_bench_matrix when repeats fall below the product limit")
+    func executeRejectsOpsRunBenchMatrixWhenRepeatsFallBelowTheProductLimit() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunBenchMatrixRequest(repeats: 0, requests: 4)
+        )
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message.contains("Benchmark repeats"))
+        #expect(await modelOpsClient.lastBenchMatrixRequest == nil)
+    }
+
+    @Test("execute rejects ops.run_bench_matrix when repeats exceed the product limit")
+    func executeRejectsOpsRunBenchMatrixWhenRepeatsExceedTheProductLimit() async throws {
+        let modelOpsClient = ScriptedModelOperationsWorkerClient()
+        let catalog = ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels())
+        _ = await catalog.loadModel(id: "melix-dev-text", dispatchHandle: "melix-dev-text::explicit")
+        let service = ControlPlaneService(
+            modelCatalog: catalog,
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(
+            makeRunBenchMatrixRequest(repeats: 21, requests: 4)
+        )
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message.contains("Benchmark repeats"))
         #expect(await modelOpsClient.lastBenchMatrixRequest == nil)
     }
 
@@ -6813,6 +6974,13 @@ struct ControlPlaneServiceTests {
         #expect(response.error.message.contains("Benchmark repeats"))
 
         request = makeRunBenchRequest(modelID: "melix-dev-text")
+        request.ops.runBench.repeats = 21
+        response = try await service.execute(request)
+        #expect(!response.ok)
+        #expect(response.error.code == "invalid_argument")
+        #expect(response.error.message.contains("Benchmark repeats"))
+
+        request = makeRunBenchRequest(modelID: "melix-dev-text")
         request.ops.runBench.cacheProfile = "ancient"
         response = try await service.execute(request)
         #expect(!response.ok)
@@ -8677,10 +8845,15 @@ struct ControlPlaneServiceTests {
         #expect(generated.sampling.topP == 0.93)
         #expect(generated.sampling.maxOutputTokens == 320)
         #expect(generated.execution.ext["melix.stream.interval_tokens"] == "3")
-        #expect(generated.execution.ext["melix.gateway.max_concurrent_requests"] == "5")
+        #expect(generated.execution.ext["melix.gateway.max_concurrent_requests"] == "1")
         #expect(generated.execution.ext["melix.gateway.concurrent_processing"] == "false")
-        #expect(generated.execution.ext["melix.gateway.prefill_batch_size"] == "4")
-        #expect(generated.execution.ext["melix.gateway.completion_batch_size"] == "3")
+        #expect(generated.execution.ext["melix.gateway.prefill_batch_size"] == "1")
+        #expect(generated.execution.ext["melix.gateway.completion_batch_size"] == "1")
+        #expect(
+            generated.execution.ext["melix.gateway.suppressed_overrides"]
+                == "max_concurrent_requests,prefill_batch_size,completion_batch_size"
+        )
+        #expect(generated.execution.ext["melix.gateway.batch.disabled_reason"] == "incompatible_batch_size")
     }
 
     @Test("startChat propagates explicit reasoning and template flags before worker dispatch")

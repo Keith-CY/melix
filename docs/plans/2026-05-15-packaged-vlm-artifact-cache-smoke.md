@@ -17,6 +17,9 @@ local files selected after recovery.
 - Emit a packaged VLM route receipt with `model_artifact_path`,
   `companion_projector_path`, `cache_layout`, `cache_restore_status`, and
   `local_route_verified`.
+- Audit a deterministic text+image prompt through the bundled MLX VLM route and
+  record `processor_modality_counts`, `media_token_expansion`,
+  `packaged_media_route`, and `unsupported_reason`.
 
 ## Out Of Scope
 
@@ -32,6 +35,12 @@ local files selected after recovery.
   cancelled first pass.
 - `packaged_vlm.local_route_verified` proves both the model and projector paths
   resolved from the flat local cache.
+- `packaged_vlm.media_token_expansion` records the non-zero media-token
+  expansion observed by the packaged audit prompt.
+- `packaged_vlm.packaged_media_route_supported` proves the bundled MLX VLM route
+  remained admitted after packaging.
+- `packaged_vlm.processor_modality_count.{text,image,audio,video}` records the
+  processor-visible modality counts used by the audit receipt.
 
 ## Verification
 

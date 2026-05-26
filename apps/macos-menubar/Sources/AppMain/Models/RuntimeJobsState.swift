@@ -122,6 +122,8 @@ public struct RuntimeJobDetailState: Decodable, Equatable, Sendable {
     public let logs: RuntimeJobLogReferenceState
     public let artifacts: [RuntimeJobArtifactState]
     public let cancellation: RuntimeJobCancellationState
+    public let trainingQueue: RuntimeJobTrainingQueueState?
+    public let trainabilityPreflight: RuntimeJobTrainabilityPreflightState?
 
     public init(from decoder: Decoder) throws {
         summary = try RuntimeJobSummaryState(from: decoder)
@@ -142,6 +144,11 @@ public struct RuntimeJobDetailState: Decodable, Equatable, Sendable {
         artifacts = (try? container.decode([RuntimeJobArtifactState].self, forKey: .artifacts)) ?? []
         cancellation = (try? container.decode(RuntimeJobCancellationState.self, forKey: .cancellation))
             ?? RuntimeJobCancellationState(cancelable: summary.cancelable, requested: summary.cancellationRequested)
+        trainingQueue = try? container.decodeIfPresent(RuntimeJobTrainingQueueState.self, forKey: .trainingQueue)
+        trainabilityPreflight = try? container.decodeIfPresent(
+            RuntimeJobTrainabilityPreflightState.self,
+            forKey: .trainabilityPreflight
+        )
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -153,6 +160,8 @@ public struct RuntimeJobDetailState: Decodable, Equatable, Sendable {
         case logs
         case artifacts
         case cancellation
+        case trainingQueue = "training_queue"
+        case trainabilityPreflight = "trainability_preflight"
     }
 }
 
@@ -234,16 +243,166 @@ public struct RuntimeJobMetricState: Decodable, Equatable, Sendable {
 public struct RuntimeJobErrorState: Decodable, Equatable, Sendable {
     public let code: String
     public let message: String
+    public let retriable: Bool
+    public let remediation: String
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         code = container.decodeFlexibleString(forKey: .code)
         message = container.decodeFlexibleString(forKey: .message)
+        retriable = container.decodeFlexibleBool(forKey: .retriable)
+        remediation = container.decodeFlexibleString(forKey: .remediation)
     }
 
     private enum CodingKeys: String, CodingKey {
         case code
         case message
+        case retriable
+        case remediation
+    }
+}
+
+public struct RuntimeJobTrainingQueueState: Decodable, Equatable, Sendable {
+    public let schemaVersion: String
+    public let resourceClass: String
+    public let recoveryPolicy: String
+    public let queuePath: String
+    public let workspaceManifestPath: String
+    public let datasetVersionID: String
+    public let preflightReceiptPath: String
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = container.decodeFlexibleString(forKey: .schemaVersion)
+        resourceClass = container.decodeFlexibleString(forKey: .resourceClass)
+        recoveryPolicy = container.decodeFlexibleString(forKey: .recoveryPolicy)
+        queuePath = container.decodeFlexibleString(forKey: .queuePath)
+        workspaceManifestPath = container.decodeFlexibleString(forKey: .workspaceManifestPath)
+        datasetVersionID = container.decodeFlexibleString(forKey: .datasetVersionID)
+        preflightReceiptPath = container.decodeFlexibleString(forKey: .preflightReceiptPath)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case resourceClass = "resource_class"
+        case recoveryPolicy = "recovery_policy"
+        case queuePath = "queue_path"
+        case workspaceManifestPath = "workspace_manifest_path"
+        case datasetVersionID = "dataset_version_id"
+        case preflightReceiptPath = "preflight_receipt_path"
+    }
+}
+
+public struct RuntimeJobTrainabilityPreflightState: Decodable, Equatable, Sendable {
+    public let schemaVersion: String
+    public let status: String
+    public let receiptPath: String
+    public let modelID: String
+    public let modelFamily: String
+    public let datasetFormat: String
+    public let trainingMode: String
+    public let sampleCount: Int64
+    public let validationSampleCount: Int64
+    public let checks: [RuntimeJobTrainabilityCheckState]
+    public let operatorErrors: [RuntimeJobTrainabilityOperatorErrorState]
+
+    public var blockingChecks: [RuntimeJobTrainabilityCheckState] {
+        checks.filter(\.isBlocking)
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = container.decodeFlexibleString(forKey: .schemaVersion)
+        status = container.decodeFlexibleString(forKey: .status)
+        receiptPath = container.decodeFlexibleString(forKey: .receiptPath)
+        modelID = container.decodeFlexibleString(forKey: .modelID)
+        modelFamily = container.decodeFlexibleString(forKey: .modelFamily)
+        datasetFormat = container.decodeFlexibleString(forKey: .datasetFormat)
+        trainingMode = container.decodeFlexibleString(forKey: .trainingMode)
+        sampleCount = container.decodeFlexibleInt64(forKey: .sampleCount)
+        validationSampleCount = container.decodeFlexibleInt64(forKey: .validationSampleCount)
+        checks = (try? container.decode([RuntimeJobTrainabilityCheckState].self, forKey: .checks)) ?? []
+        operatorErrors = (try? container.decode(
+            [RuntimeJobTrainabilityOperatorErrorState].self,
+            forKey: .operatorErrors
+        )) ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case status
+        case receiptPath = "receipt_path"
+        case modelID = "model_id"
+        case modelFamily = "model_family"
+        case datasetFormat = "dataset_format"
+        case trainingMode = "training_mode"
+        case sampleCount = "sample_count"
+        case validationSampleCount = "validation_sample_count"
+        case checks
+        case operatorErrors = "operator_errors"
+    }
+}
+
+public struct RuntimeJobTrainabilityCheckState: Decodable, Equatable, Identifiable, Sendable {
+    public let code: String
+    public let status: String
+    public let severity: String
+    public let operatorMessage: String
+    public let remediation: String
+
+    public var id: String {
+        code
+    }
+
+    public var isBlocking: Bool {
+        let normalized = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized == "blocked" || normalized == "error"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        code = container.decodeFlexibleString(forKey: .code)
+        status = container.decodeFlexibleString(forKey: .status)
+        severity = container.decodeFlexibleString(forKey: .severity)
+        operatorMessage = container.decodeFlexibleString(forKey: .operatorMessage)
+        remediation = container.decodeFlexibleString(forKey: .remediation)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case code
+        case status
+        case severity
+        case operatorMessage = "operator_message"
+        case remediation
+    }
+}
+
+public struct RuntimeJobTrainabilityOperatorErrorState: Decodable, Equatable, Identifiable, Sendable {
+    public let code: String
+    public let severity: String
+    public let operatorMessage: String
+    public let retriable: Bool
+    public let remediation: String
+
+    public var id: String {
+        code
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        code = container.decodeFlexibleString(forKey: .code)
+        severity = container.decodeFlexibleString(forKey: .severity)
+        operatorMessage = container.decodeFlexibleString(forKey: .operatorMessage)
+        retriable = container.decodeFlexibleBool(forKey: .retriable)
+        remediation = container.decodeFlexibleString(forKey: .remediation)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case code
+        case severity
+        case operatorMessage = "operator_message"
+        case retriable
+        case remediation
     }
 }
 

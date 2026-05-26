@@ -160,4 +160,32 @@ func recordPythonVLMRuntimeProbeMetrics(
         Double(stats.textBatchGeneratorFirstEmptySegmentCount),
         forKey: "vision.text_batch_generator.first_empty_segment_count"
     )
+    await metricsStore.set(
+        Double(stats.textBatchGeneratorSpeculativeCycleCountTotal),
+        forKey: "vision.text_batch_generator.speculative_cycle_count_total"
+    )
+    await metricsStore.set(
+        Double(stats.textBatchGeneratorSpeculativeAcceptedCountTotal),
+        forKey: "vision.text_batch_generator.speculative_accepted_count_total"
+    )
+    await metricsStore.set(
+        Double(stats.textBatchGeneratorSpeculativeRejectedCountTotal),
+        forKey: "vision.text_batch_generator.speculative_rejected_count_total"
+    )
+    await metricsStore.set(
+        stats.textBatchGeneratorSpeculativeBackboneMsTotal,
+        forKey: "vision.text_batch_generator.speculative_backbone_ms_total"
+    )
+    await metricsStore.set(
+        stats.textBatchGeneratorSpeculativeMtpHeadMsTotal,
+        forKey: "vision.text_batch_generator.speculative_mtp_head_ms_total"
+    )
+    await metricsStore.set(
+        stats.textBatchGeneratorSpeculativeSampleMsTotal,
+        forKey: "vision.text_batch_generator.speculative_sample_ms_total"
+    )
+    await metricsStore.set(
+        stats.textBatchGeneratorSpeculativeCacheOpsMsTotal,
+        forKey: "vision.text_batch_generator.speculative_cache_ops_ms_total"
+    )
 }

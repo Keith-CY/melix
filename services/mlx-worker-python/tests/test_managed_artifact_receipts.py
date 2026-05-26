@@ -130,3 +130,40 @@ def test_live_managed_download_duplicate_reuses_in_progress_operation_receipt(tm
     snapshot = service._core._job_registry.snapshot()
     assert len(snapshot["jobs"]) == 1
     assert len(snapshot["downloads"]) == 1
+
+
+def test_strict_managed_download_failure_emits_integrity_receipt(tmp_path: Path) -> None:
+    source_path, _ = _write_download_source_file(tmp_path, size=1024)
+    output_dir = tmp_path / "strict-download"
+    service = build_service(tmp_path)
+
+    events = list(
+        service.ConvertModel(
+            maintenance_pb2.ConvertModelRequest(
+                source_model="mlx-community/strict-demo",
+                output_dir=str(output_dir),
+                generate_manifest=True,
+                ext={
+                    "operation": "download",
+                    "source_path": str(source_path),
+                    "melix.target_scope": "hub:mlx-community/strict-demo@main",
+                    "melix.operation_kind": "managed_model_install",
+                    "melix.strict_install_mode": "true",
+                },
+            ),
+            context=None,
+        )
+    )
+
+    assert events[0].started.job_id
+    assert events[-1].failed.error.code == "artifact_integrity_required"
+    manifest_payload = json.loads(
+        next(event.manifest for event in events if event.HasField("manifest")).manifest_json
+    )
+    assert manifest_payload["status"] == "failed"
+    assert manifest_payload["terminal_state"] == "failed"
+    assert manifest_payload["last_error"] == "missing_artifact_digest"
+    assert manifest_payload["artifact_integrity"]["policy_present"] is False
+    assert manifest_payload["artifact_integrity"]["failure_reason"] == "missing_artifact_digest"
+    assert json.loads((output_dir / "download.state.json").read_text(encoding="utf-8")) == manifest_payload
+    assert service._core._job_registry.snapshot()["downloads"][0]["artifact_integrity_status"] == "failed"

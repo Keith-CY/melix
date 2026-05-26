@@ -62,7 +62,22 @@ class DownloadPipeline:
         output_dir: Path,
     ) -> DownloadPipelineResult:
         ext = dict(request.ext)
+        strict_integrity_preflight = (
+            "melix.strict_install_mode" in ext
+            or ("melix.install_mode" in ext and ext.get("melix.install_mode", "").strip().lower() == "strict")
+        )
         if self._is_managed_hub_repo_import(ext):
+            if strict_integrity_preflight:
+                self._raise_if_strict_integrity_missing(
+                    request=request,
+                    job_id=job_id,
+                    output_dir=output_dir,
+                    state_path=output_dir / "download.state.json",
+                    output_path=Path(""),
+                    partial_path=Path(""),
+                    selected_mirror="https://huggingface.co",
+                    ext=ext,
+                )
             return self._run_managed_hub_repo_import(
                 request=request,
                 job_id=job_id,
@@ -108,6 +123,17 @@ class DownloadPipeline:
             selected_mirror=selected_mirror,
             ext=ext,
         )
+        if strict_integrity_preflight:
+            self._raise_if_strict_integrity_missing(
+                request=request,
+                job_id=job_id,
+                output_dir=output_dir,
+                state_path=state_path,
+                output_path=output_path,
+                partial_path=partial_path,
+                selected_mirror=selected_mirror,
+                ext=ext,
+            )
         snapshots: list[DownloadSnapshot] = [
             self._snapshot(
                 manifest_context=manifest_context,
@@ -636,22 +662,22 @@ class DownloadPipeline:
         payload = dict(manifest_context.base_payload)
         payload.update(
             {
-            "status": status,
-            "terminal_state": terminal_state,
-            "stage": stage,
-            "pct": round(pct, 6),
-            "downloaded_bytes": downloaded_bytes,
-            "total_bytes": total_bytes,
-            "resume_used": resume_used,
-            "resume_from_bytes": resume_from_bytes,
-            "retry_count": retry_count,
-            "stall_detection_count": stall_detection_count,
-            "stall_reason": stall_reason,
-            "metrics": {
-                "download.resume_success_rate": 1.0 if resume_used and terminal_state == "completed" else 0.0,
-                "download.retry_count": retry_count,
-                "download.stall_detection_count": stall_detection_count,
-            },
+                "status": status,
+                "terminal_state": terminal_state,
+                "stage": stage,
+                "pct": round(pct, 6),
+                "downloaded_bytes": downloaded_bytes,
+                "total_bytes": total_bytes,
+                "resume_used": resume_used,
+                "resume_from_bytes": resume_from_bytes,
+                "retry_count": retry_count,
+                "stall_detection_count": stall_detection_count,
+                "stall_reason": stall_reason,
+                "metrics": {
+                    "download.resume_success_rate": 1.0 if resume_used and terminal_state == "completed" else 0.0,
+                    "download.retry_count": retry_count,
+                    "download.stall_detection_count": stall_detection_count,
+                },
             }
         )
         if manifest_context.pending_artifact_integrity is not None:
@@ -750,6 +776,8 @@ class DownloadPipeline:
             or ext.get("melix.operation_id", "").strip() != ""
             or ext.get("melix.operation_kind", "").strip() != ""
             or ext.get("melix.target_scope", "").strip() != ""
+            or ext.get("melix.strict_install_mode", "").strip() != ""
+            or ext.get("melix.install_mode", "").strip().lower() == "strict"
             or ext.get("melix.artifact_digest", "").strip() != ""
             or ext.get("artifact_digest", "").strip() != ""
             or ext.get("sha256", "").strip() != ""
@@ -777,6 +805,90 @@ class DownloadPipeline:
             "failure_reason": failure_reason,
             "status": status,
         }
+
+    @classmethod
+    def _raise_if_strict_integrity_missing(
+        cls,
+        *,
+        request: maintenance_pb2.ConvertModelRequest,
+        job_id: str,
+        output_dir: Path,
+        state_path: Path,
+        output_path: Path,
+        partial_path: Path,
+        selected_mirror: str,
+        ext: dict[str, str],
+    ) -> None:
+        if not cls._strict_install_mode(ext) or cls._artifact_digest(ext):
+            return
+        public_ext = cls._public_ext(ext)
+        operation_id, target_scope, operation_kind = cls.operation_identity(request)
+        payload = {
+            "schema_version": "melix.download_job.v1",
+            "job_id": job_id,
+            "operation": "download",
+            "operation_id": operation_id,
+            "target_scope": target_scope,
+            "operation_kind": operation_kind,
+            "attempts": 1,
+            "timeout_ms": max(0, cls._int(ext.get("test_request_deadline_ms") or ext.get("timeout_ms"), default=0)),
+            "retry_after_ms": max(0, cls._int(ext.get("retry_after_ms") or ext.get("test_request_deadline_ms"), default=0)),
+            "last_error": "missing_artifact_digest",
+            "artifact_integrity": cls._artifact_integrity_receipt(
+                ext=public_ext,
+                status="failed",
+                failure_reason="missing_artifact_digest",
+            ),
+            "source_model": request.source_model,
+            "output_dir": str(output_dir),
+            "status": "failed",
+            "terminal_state": "failed",
+            "stage": "strict_preflight",
+            "pct": 0.0,
+            "source_path": request.ext.get("source_path", ""),
+            "output_path": str(output_path) if str(output_path) != "." else "",
+            "partial_path": str(partial_path) if str(partial_path) != "." else "",
+            "state_path": str(state_path),
+            "selected_mirror": selected_mirror,
+            "downloaded_bytes": 0,
+            "total_bytes": 0,
+            "resume_used": False,
+            "resume_from_bytes": 0,
+            "retry_count": 0,
+            "stall_detection_count": 0,
+            "stall_reason": "",
+            "ext": public_ext,
+            "metrics": {
+                "download.resume_success_rate": 0.0,
+                "download.retry_count": 0,
+                "download.stall_detection_count": 0,
+            },
+        }
+        state_json = cls._write_manifest_json(state_path, payload)
+        raise ModelOperationError(
+            code="artifact_integrity_required",
+            message="Strict managed artifact installs require an artifact digest before activation.",
+            details={
+                "state_json": state_json,
+                "failure_reason": "missing_artifact_digest",
+            },
+        )
+
+    @staticmethod
+    def _strict_install_mode(ext: dict[str, str]) -> bool:
+        raw_flag = ext.get("melix.strict_install_mode", "").strip().lower()
+        if raw_flag in {"1", "true", "yes", "on"}:
+            return True
+        return ext.get("melix.install_mode", "").strip().lower() == "strict"
+
+    @staticmethod
+    def _artifact_digest(ext: dict[str, Any]) -> str:
+        return str(
+            ext.get("melix.artifact_digest")
+            or ext.get("artifact_digest")
+            or ext.get("sha256")
+            or ""
+        ).strip()
 
     @staticmethod
     def _write_json_atomically(path: Path, payload: dict[str, Any]) -> None:

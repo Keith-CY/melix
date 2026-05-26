@@ -51,8 +51,13 @@ class DeterministicEmbeddingBackend:
         ]
         full_repeats, remainder = divmod(dimensions, 8)
         squared_sum = sum(value * value for value in base_values) * full_repeats
-        for value in base_values[:remainder]:
+        if remainder == 1:
+            value = base_values[0]
             squared_sum += value * value
+        else:
+            for index in range(remainder):
+                value = base_values[index]
+                squared_sum += value * value
 
         l2_norm = math.sqrt(squared_sum)
         if l2_norm == 0.0:
@@ -60,8 +65,11 @@ class DeterministicEmbeddingBackend:
         inverse_l2_norm = 1.0 / l2_norm
         normalized_base = [round(value * inverse_l2_norm, 6) for value in base_values]
         result = normalized_base * full_repeats
-        if remainder:
-            result.extend(normalized_base[:remainder])
+        if remainder == 1:
+            result.append(normalized_base[0])
+        else:
+            for index in range(remainder):
+                result.append(normalized_base[index])
         return result
 
     @staticmethod

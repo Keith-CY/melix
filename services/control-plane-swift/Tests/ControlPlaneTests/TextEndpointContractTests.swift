@@ -1502,6 +1502,80 @@ struct TextEndpointContractTests {
         #expect(message.parts[1].media.filename == "fixture.png")
     }
 
+    @Test("OpenAI multimodal chat normalization emits shared media part summary metadata")
+    func openAIMultimodalChatNormalizationEmitsSharedMediaPartSummaryMetadata() throws {
+        let decoder = JSONDecoder()
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-media-summary" })
+
+        let request = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-vlm",
+                  "stream": false,
+                  "messages": [
+                    {
+                      "role": "user",
+                      "content": [
+                        { "type": "text", "text": "Inspect the media." },
+                        {
+                          "type": "input_image",
+                          "input_image": {
+                            "data": "aW1hZ2U=",
+                            "mime_type": "image/png",
+                            "format": "png",
+                            "filename": "inline.png"
+                          }
+                        },
+                        {
+                          "type": "input_audio",
+                          "input_audio": {
+                            "url": "file:///tmp/clip.wav",
+                            "format": "wav",
+                            "filename": "clip.wav"
+                          }
+                        },
+                        {
+                          "type": "input_video",
+                          "input_video": {
+                            "url": "/tmp/demo.mp4",
+                            "format": "mp4",
+                            "filename": "demo.mp4"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        let normalized = try translator.normalizeMultimodalChat(request)
+        let translated = try translator.translate(normalized, modelHandle: "worker-vlm")
+
+        #expect(normalized.mediaPartsSummary.parts.count == 3)
+        #expect(normalized.mediaPartsSummary.parts.map(\.mediaKind) == ["image", "audio", "video"])
+        #expect(normalized.mediaPartsSummary.parts.map(\.sourceKind) == ["inline_bytes", "local", "local"])
+        #expect(normalized.mediaPartsSummary.parts.map(\.turnIndex) == [0, 0, 0])
+        #expect(normalized.mediaPartsSummary.parts.map(\.partIndex) == [1, 2, 3])
+        #expect(normalized.mediaPartsSummary.parts[0].byteLength == 5)
+        #expect(normalized.mediaPartsSummary.parts[0].stableDigest?.count == 64)
+        #expect(normalized.mediaPartsSummary.parts[1].source == "file:///tmp/clip.wav")
+        #expect(normalized.mediaPartsSummary.parts[2].source == "/tmp/demo.mp4")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.count"] == "3")
+        #expect(translated.workerRequest.execution.ext["melix.media_turn_count"] == "1")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.contract"] == "shared_summary")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.0.kind"] == "image")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.0.source_kind"] == "inline_bytes")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.0.byte_length"] == "5")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.0.filename"] == "inline.png")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.1.source"] == "file:///tmp/clip.wav")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.2.source"] == "/tmp/demo.mp4")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.2.digest"]?.count == 64)
+    }
+
     @Test("chat request contracts preserve media admission diagnostics")
     func chatRequestContractsPreserveMediaAdmissionDiagnostics() throws {
         let decoder = JSONDecoder()
@@ -1537,6 +1611,267 @@ struct TextEndpointContractTests {
         )) {
             _ = try translator.normalizeMultimodalChat(request)
         }
+    }
+
+    @Test("multimodal chat translation preserves two-turn image ordering in worker message parts")
+    func multimodalChatTranslationPreservesTwoTurnImageOrderingInWorkerMessageParts() throws {
+        let decoder = JSONDecoder()
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-two-turn-images" })
+        let request = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-vlm",
+                  "stream": false,
+                  "messages": [
+                    {
+                      "role": "user",
+                      "content": [
+                        { "type": "text", "text": "First turn first." },
+                        {
+                          "type": "input_image",
+                          "input_image": {
+                            "url": "/tmp/turn-0-first.png",
+                            "filename": "turn-0-first.png"
+                          }
+                        },
+                        { "type": "text", "text": "Then second." },
+                        {
+                          "type": "input_image",
+                          "input_image": {
+                            "url": "/tmp/turn-0-second.png",
+                            "filename": "turn-0-second.png"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "role": "assistant",
+                      "content": "I see the first pair."
+                    },
+                    {
+                      "role": "user",
+                      "content": [
+                        { "type": "text", "text": "Now compare this one." },
+                        {
+                          "type": "image_url",
+                          "image_url": {
+                            "url": "https://example.com/turn-2-first.png",
+                            "filename": "turn-2-first.png"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        let normalized = try translator.normalizeMultimodalChat(request)
+        let translated = try translator.translate(normalized, modelHandle: "worker-vlm")
+        let workerMessages = translated.workerRequest.messages
+
+        #expect(workerMessages.count == 3)
+        #expect(workerMessages[0].parts.map(\.text) == ["First turn first.", "", "Then second.", ""])
+        #expect(workerMessages[0].parts[1].imageUri == "/tmp/turn-0-first.png")
+        #expect(workerMessages[0].parts[3].imageUri == "/tmp/turn-0-second.png")
+        #expect(workerMessages[2].parts[0].text == "Now compare this one.")
+        #expect(workerMessages[2].parts[1].imageUri == "https://example.com/turn-2-first.png")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.count"] == "3")
+        #expect(translated.workerRequest.execution.ext["melix.media_turn_count"] == "2")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.0.turn_index"] == "0")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.0.part_index"] == "1")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.0.source"] == "/tmp/turn-0-first.png")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.1.turn_index"] == "0")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.1.part_index"] == "3")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.1.source"] == "/tmp/turn-0-second.png")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.2.turn_index"] == "2")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.2.part_index"] == "1")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.2.source"] == "https://example.com/turn-2-first.png")
+        #expect(translated.workerRequest.execution.ext["melix.worker_content.contract"] == "ordered_message_parts")
+        #expect(translated.workerRequest.execution.ext["melix.worker_content.media_order"] == "message_part_order")
+    }
+
+    @Test("legacy top-level chat images only inject when message-level media is absent")
+    func legacyTopLevelChatImagesOnlyInjectWhenMessageLevelMediaIsAbsent() throws {
+        let decoder = JSONDecoder()
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-legacy-image" })
+        let legacyOnly = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-vlm",
+                  "stream": false,
+                  "image_url": "file:///tmp/legacy.png",
+                  "messages": [
+                    { "role": "system", "content": "Be precise." },
+                    { "role": "user", "content": "Describe the legacy image." }
+                  ]
+                }
+                """.utf8
+            )
+        )
+        let mixed = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-vlm",
+                  "stream": false,
+                  "image_url": "file:///tmp/legacy.png",
+                  "messages": [
+                    {
+                      "role": "user",
+                      "content": [
+                        { "type": "text", "text": "Describe the message image." },
+                        {
+                          "type": "input_image",
+                          "input_image": {
+                            "url": "file:///tmp/message-level.png",
+                            "filename": "message-level.png"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        let legacyTranslated = try translator.translate(legacyOnly, modelHandle: "worker-vlm")
+        let mixedTranslated = try translator.translate(
+            try translator.normalizeMultimodalChat(mixed),
+            modelHandle: "worker-vlm"
+        )
+        let legacyUserMessage = try #require(legacyTranslated.workerRequest.messages.last)
+        let legacyImagePart = try #require(legacyUserMessage.parts.last)
+
+        #expect(legacyTranslated.workerRequest.messages[0].parts.count == 1)
+        #expect(legacyUserMessage.parts.count == 2)
+        #expect(legacyUserMessage.parts[0].text == "Describe the legacy image.")
+        #expect(legacyImagePart.imageUri == "file:///tmp/legacy.png")
+        #expect(legacyTranslated.workerRequest.execution.ext["melix.media_parts.count"] == "1")
+        #expect(legacyTranslated.workerRequest.execution.ext["melix.media_parts.0.turn_index"] == "1")
+        #expect(legacyTranslated.workerRequest.execution.ext["melix.media_parts.0.part_index"] == "1")
+        #expect(legacyTranslated.workerRequest.execution.ext["melix.media_parts.0.source"] == "file:///tmp/legacy.png")
+        #expect(legacyTranslated.workerRequest.execution.ext["melix.legacy_image_fallback"] == "injected")
+
+        #expect(mixedTranslated.workerRequest.messages[0].parts.count == 2)
+        #expect(mixedTranslated.workerRequest.messages[0].parts[1].imageUri == "file:///tmp/message-level.png")
+        #expect(mixedTranslated.workerRequest.execution.ext["melix.media_parts.count"] == "1")
+        #expect(mixedTranslated.workerRequest.execution.ext["melix.media_parts.0.source"] == "file:///tmp/message-level.png")
+        #expect(mixedTranslated.workerRequest.execution.ext["melix.legacy_image_fallback"] == nil)
+    }
+
+    @Test("legacy top-level chat images are not injected into assistant-only history")
+    func legacyTopLevelChatImagesAreNotInjectedIntoAssistantOnlyHistory() throws {
+        let decoder = JSONDecoder()
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-legacy-image-no-user" })
+        let assistantOnly = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-vlm",
+                  "stream": false,
+                  "image_url": "file:///tmp/legacy.png",
+                  "messages": [
+                    { "role": "system", "content": "Continue the answer." },
+                    { "role": "assistant", "content": "Draft answer." }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        let translated = try translator.translate(assistantOnly, modelHandle: "worker-vlm")
+
+        #expect(translated.workerRequest.messages.count == 2)
+        #expect(translated.workerRequest.messages[1].role == "assistant")
+        #expect(translated.workerRequest.messages[1].parts.count == 1)
+        #expect(translated.workerRequest.messages[1].parts[0].text == "Draft answer.")
+        #expect(translated.workerRequest.execution.ext["melix.media_parts.count"] == nil)
+        #expect(translated.workerRequest.execution.ext["melix.legacy_image_fallback"] == nil)
+    }
+
+    @Test("text-only chat content arrays preserve ordered parts and allow legacy image fallback")
+    func textOnlyChatContentArraysPreserveOrderedPartsAndAllowLegacyImageFallback() throws {
+        let decoder = JSONDecoder()
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-text-array-legacy" })
+        let textOnlyArray = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-vlm",
+                  "stream": false,
+                  "messages": [
+                    {
+                      "role": "user",
+                      "content": [
+                        { "type": "text", "text": "First text part." },
+                        { "type": "input_text", "text": "Second text part." }
+                      ]
+                    }
+                  ]
+                }
+                """.utf8
+            )
+        )
+        let textArrayWithLegacyImage = try decoder.decode(
+            OpenAIChatCompletionsRequest.self,
+            from: Data(
+                """
+                {
+                  "model": "melix-dev-vlm",
+                  "stream": false,
+                  "image_url": "file:///tmp/legacy-array.png",
+                  "messages": [
+                    {
+                      "role": "user",
+                      "content": [
+                        { "type": "text", "text": "First text part." },
+                        { "type": "input_text", "text": "Second text part." }
+                      ]
+                    }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        let textOnlyTranslated = try translator.translate(textOnlyArray, modelHandle: "worker-vlm")
+        let legacyTranslated = try translator.translate(textArrayWithLegacyImage, modelHandle: "worker-vlm")
+        let normalizedTextOnly = try translator.normalize(textOnlyArray)
+
+        #expect(normalizedTextOnly.messages[0].parts.map(\.text) == [
+            "First text part.",
+            "Second text part.",
+        ])
+        #expect(textOnlyTranslated.workerRequest.messages[0].parts.map(\.text) == [
+            "First text part.",
+            "Second text part.",
+        ])
+        #expect(textOnlyTranslated.workerRequest.execution.ext["melix.media_parts.count"] == nil)
+        #expect(
+            textOnlyTranslated.workerRequest.execution.ext["melix.worker_content.contract"]
+                == "ordered_message_parts"
+        )
+        #expect(textOnlyTranslated.workerRequest.execution.ext["melix.legacy_image_fallback"] == nil)
+
+        #expect(legacyTranslated.workerRequest.messages[0].parts.map(\.text) == [
+            "First text part.",
+            "Second text part.",
+            "",
+        ])
+        #expect(legacyTranslated.workerRequest.messages[0].parts[2].imageUri == "file:///tmp/legacy-array.png")
+        #expect(legacyTranslated.workerRequest.execution.ext["melix.media_parts.count"] == "1")
+        #expect(legacyTranslated.workerRequest.execution.ext["melix.media_parts.0.part_index"] == "2")
+        #expect(legacyTranslated.workerRequest.execution.ext["melix.legacy_image_fallback"] == "injected")
     }
 
     @Test("ocr model policies shape multimodal requests with default sampling and stop sequences")
@@ -2264,6 +2599,91 @@ struct TextEndpointContractTests {
         #expect(translated.workerRequest.execution.ext["melix.gateway.num_draft_tokens"] == "6")
     }
 
+    @Test("chat translation emits effective gateway override receipts before dispatch")
+    func chatTranslationEmitsEffectiveGatewayOverrideReceiptsBeforeDispatch() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-chat-serving-receipts" })
+        let normalized = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-text",
+                messages: [.init(role: "user", content: "Hello")],
+                sessionID: "session-serving-receipts"
+            )
+        )
+        let gatewayServingDefaults = GatewayServingDefaultsPolicy(
+            temperature: 0.35,
+            topP: 0.92,
+            maxTokens: 384,
+            streamIntervalTokens: 4,
+            maxConcurrentRequests: 6,
+            concurrentProcessingEnabled: true,
+            prefillBatchSize: 3,
+            completionBatchSize: 2,
+            accelerationMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft",
+            numDraftTokens: 6,
+            accelerationProfile: "throughput"
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-text::swift",
+            gatewayServingDefaults: gatewayServingDefaults.resolvingAccelerationCompatibility(for: nil)
+        )
+        let ext = translated.workerRequest.execution.ext
+
+        #expect(ext["melix.gateway.override_receipt_schema"] == "melix.gateway_override_receipt.v1")
+        #expect(ext["melix.gateway.max_concurrent_requests"] == "2")
+        #expect(ext["melix.gateway.prefill_batch_size"] == "2")
+        #expect(ext["melix.gateway.completion_batch_size"] == "2")
+        #expect(ext["melix.gateway.effective_multimodal_route"] == "swift_text")
+        #expect(ext["melix.gateway.speculative_route_policy"] == "auto")
+        #expect(ext["melix.gateway.effective_speculative_mode"] == "baseline")
+        #expect(ext["melix.gateway.speculative.disabled_reason"] == "unsupported_route")
+        #expect(ext["melix.gateway.suppressed_overrides"] == "max_concurrent_requests,prefill_batch_size,speculative_decode")
+        #expect(ext["melix.gateway.cache_quantization.disabled_reason"] == "not_configurable")
+        #expect(ext["melix.gateway.paged_cache.disabled_reason"] == "not_configurable")
+    }
+
+    @Test("chat translation emits disabled route policy receipts before dispatch")
+    func chatTranslationEmitsDisabledRoutePolicyReceiptsBeforeDispatch() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-chat-serving-off-routes" })
+        let normalized = try translator.normalize(
+            OpenAIChatCompletionsRequest(
+                model: "melix-dev-text",
+                messages: [.init(role: "user", content: "Hello")],
+                sessionID: "session-serving-off-routes"
+            )
+        )
+        let gatewayServingDefaults = GatewayServingDefaultsPolicy(
+            temperature: 0.35,
+            topP: 0.92,
+            maxTokens: 384,
+            streamIntervalTokens: 4,
+            maxConcurrentRequests: 2,
+            concurrentProcessingEnabled: true,
+            prefillBatchSize: 2,
+            completionBatchSize: 2,
+            accelerationMode: .speculativeDecode,
+            draftModelID: "melix-dev-draft",
+            numDraftTokens: 6,
+            accelerationProfile: "throughput",
+            multimodalRoutePolicy: "off",
+            speculativeRoutePolicy: "off"
+        )
+        let translated = try translator.translate(
+            normalized,
+            modelHandle: "melix-dev-text::swift",
+            gatewayServingDefaults: gatewayServingDefaults.resolvingAccelerationCompatibility(for: nil)
+        )
+        let ext = translated.workerRequest.execution.ext
+
+        #expect(ext["melix.gateway.multimodal_route_policy"] == "off")
+        #expect(ext["melix.gateway.effective_multimodal_route"] == "off")
+        #expect(ext["melix.gateway.speculative_route_policy"] == "off")
+        #expect(ext["melix.gateway.effective_speculative_mode"] == "baseline")
+        #expect(ext["melix.gateway.speculative.disabled_reason"] == "operator_disabled")
+        #expect(ext["melix.gateway.suppressed_overrides"] == "speculative_decode")
+    }
+
     @Test("model generation config overrides gateway serving defaults while admission metadata stays gateway-owned")
     func modelGenerationConfigOverridesGatewayServingDefaultsWhileAdmissionMetadataStaysGatewayOwned() throws {
         let translator = ChatRequestTranslator(requestIDGenerator: { "req-chat-serving-merge" })
@@ -2432,6 +2852,13 @@ struct TextEndpointContractTests {
             #expect(request.sampling.temperature == 0.2)
             #expect(request.sampling.maxOutputTokens == 512)
         }
+        #expect(chatTranslated.workerRequest.execution.ext["melix.media_parts.contract"] == "shared_summary_empty")
+        #expect(completionsTranslated.workerRequest.execution.ext["melix.media_parts.contract"] == "adapter_specific_text_only")
+        #expect(completionsTranslated.workerRequest.execution.ext["melix.media_parts.adapter_scope"] == "completions")
+        #expect(responsesTranslated.workerRequest.execution.ext["melix.media_parts.contract"] == "adapter_specific_text_only")
+        #expect(responsesTranslated.workerRequest.execution.ext["melix.media_parts.adapter_scope"] == "responses")
+        #expect(messagesTranslated.workerRequest.execution.ext["melix.media_parts.contract"] == "adapter_specific_text_only")
+        #expect(messagesTranslated.workerRequest.execution.ext["melix.media_parts.adapter_scope"] == "messages")
     }
 
     @Test("explicit request fields override preset defaults while workflow routing remains stable")

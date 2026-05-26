@@ -18,6 +18,7 @@ from worker.model_ops.hub_catalog import (
     _bytes_per_parameter,
     _is_mlx_compatible,
     _local_fit_evidence,
+    _payload_is_mlx_compatible,
     _quantization_summary,
     _size_hint_from_text,
 )
@@ -86,6 +87,7 @@ def test_quantization_summary_preserves_alias_order_from_lowered_tags() -> None:
 
 
 def test_bytes_per_parameter_preserves_quantization_priority_without_joining_tags() -> None:
+    assert _bytes_per_parameter([], lowered_tags={"family", "2bit", "float32"}) == 0.25
     assert _bytes_per_parameter([], lowered_tags={"family", "float32", "4-bit"}) == 0.5
     assert _bytes_per_parameter([], lowered_tags={"family", "8bit"}) == 1.0
     assert _bytes_per_parameter([], lowered_tags={"family", "3-bit", "8bit"}) == 0.375
@@ -166,6 +168,13 @@ def test_search_models_with_mlx_only_keeps_repo_ids_with_mlx_suffix() -> None:
     assert [item.repo_id for item in page.items] == ["unsloth/gemma-4-E4B-it-MLX-8bit"]
 
 
+def test_payload_mlx_tag_match_stays_exact_and_case_insensitive() -> None:
+    assert _payload_is_mlx_compatible({"tags": ["mLx", object()], "cardData": {}}) is True
+    assert _payload_is_mlx_compatible({"tags": "MLX", "cardData": {}}) is True
+    assert _payload_is_mlx_compatible({"tags": ["mlx-compatible"], "cardData": {}}) is False
+    assert _payload_is_mlx_compatible({"tags": ["ammlx"], "cardData": {}}) is False
+
+
 def test_search_models_with_mlx_only_prefilters_payloads_before_local_fit(monkeypatch: pytest.MonkeyPatch) -> None:
     payload = [
         {
@@ -237,6 +246,38 @@ def test_search_models_with_mlx_only_prefilters_payloads_before_local_fit(monkey
         "card/model",
         "owner/repo-mlx-suffix",
     ]
+
+
+def test_payload_mlx_filter_avoids_string_list_materialization(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_string_list(value: object) -> list[str]:
+        raise AssertionError(f"unexpected payload tag materialization: {value!r}")  # pragma: no cover
+
+    monkeypatch.setattr(hub_catalog_module, "_string_list", fail_string_list)
+
+    assert _payload_is_mlx_compatible(
+        {
+            "id": "plain/model",
+            "tags": ["Text-Generation", "MLX", object()],
+            "library_name": "transformers",
+            "cardData": {},
+        }
+    ) is True
+    assert _payload_is_mlx_compatible(
+        {
+            "id": "plain/model",
+            "tags": "mlx",
+            "library_name": "transformers",
+            "cardData": {},
+        }
+    ) is True
+    assert _payload_is_mlx_compatible(
+        {
+            "id": "plain/model",
+            "tags": ["Text-Generation", object()],
+            "library_name": "transformers",
+            "cardData": {},
+        }
+    ) is False
 
 
 def test_card_data_tag_mlx_check_avoids_string_list_materialization(monkeypatch: pytest.MonkeyPatch) -> None:

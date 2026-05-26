@@ -74,12 +74,44 @@ class AssemblyDelta:
     tool_call: AssembledToolCall | None = None
     parser_observation: str = ""
 
+    @property
+    def token_count(self) -> int:
+        return 1
+
+
+class TokenCountedAssemblyDelta(AssemblyDelta):
+    __slots__ = ("_token_count",)
+
+    def __init__(
+        self,
+        *,
+        content_text: str = "",
+        reasoning_text: str = "",
+        raw_text: str = "",
+        tool_call: AssembledToolCall | None = None,
+        parser_observation: str = "",
+        token_count: int,
+    ) -> None:
+        super().__init__(
+            content_text=content_text,
+            reasoning_text=reasoning_text,
+            raw_text=raw_text,
+            tool_call=tool_call,
+            parser_observation=parser_observation,
+        )
+        object.__setattr__(self, "_token_count", token_count)
+
+    @property
+    def token_count(self) -> int:
+        return self._token_count
+
 
 @dataclass(frozen=True, slots=True)
 class AssemblyCompletion:
     assistant_text: str
     reasoning_text: str
     raw_text: str
+    tool_call_count: int
     metrics: dict[str, int | str]
 
 
@@ -244,13 +276,19 @@ class RequestStreamAssembler:
             token_count = self._record_token_metadata(fragment)
             if token_bytes is not None:
                 byte_delta = self._token_byte_delta(token_bytes)
-        raw = fragment.raw_text if fragment.raw_text is not None else fragment.text
         if byte_delta is not None:
             if not byte_delta:
                 return []
             delta = byte_delta
-        elif raw:
-            delta = self._unseen_delta(raw)
+        elif fragment.raw_text is None:
+            delta = fragment.text
+            if delta:
+                self._materialized_raw_seen()
+                self._raw_seen += delta
+            else:
+                return []
+        elif fragment.raw_text:
+            delta = self._unseen_delta(fragment.raw_text)
         else:
             return []
 
@@ -267,19 +305,28 @@ class RequestStreamAssembler:
             self._assistant_parts.append(delta)
             if raw_delta_from_token_bytes:
                 self._raw_seen_assistant_part_count += 1
-            if token_count > 1:
-                self._metrics["stream_interval_delta_flush_count"] += 1
-            return [AssemblyDelta(content_text=delta, raw_text=delta)]
+            if token_count < 2:
+                return [AssemblyDelta(content_text=delta, raw_text=delta)]
+            self._metrics["stream_interval_delta_flush_count"] += 1
+            return [
+                TokenCountedAssemblyDelta(
+                    content_text=delta,
+                    raw_text=delta,
+                    token_count=token_count,
+                )
+            ]
 
         if raw_delta_from_token_bytes:
             self._materialized_raw_seen()
             self._raw_seen += delta
 
         if self._is_json_only_structured_output_value:
-            deltas = self._accept_json_structured_output(delta)
+            deltas = self._accept_json_structured_output(delta, token_count=token_count)
         else:
             self._buffer += delta
             deltas = self._drain_buffer(final=False)
+            if token_count > 0:
+                deltas = self._annotate_token_counts(deltas, token_count)
         if token_count > 1 and deltas:
             self._metrics["stream_interval_delta_flush_count"] += 1
         if fragment.parser_observation:
@@ -305,6 +352,7 @@ class RequestStreamAssembler:
             assistant_text="".join(self._assistant_parts),
             reasoning_text="".join(self._reasoning_parts),
             raw_text=self._materialized_raw_seen(),
+            tool_call_count=self._tool_fragment_index,
             metrics=metrics,
         )
 
@@ -393,10 +441,8 @@ class RequestStreamAssembler:
             return None
         had_pending = bool(self._pending_token_bytes)
         if not had_pending:
-            if token_bytes.isascii():
-                return token_bytes.decode("ascii")
             try:
-                return token_bytes.decode("utf-8")
+                return token_bytes.decode()
             except UnicodeDecodeError:
                 pass
         self._pending_token_bytes += token_bytes
@@ -436,13 +482,29 @@ class RequestStreamAssembler:
         if not parser_observation:
             return deltas
         return [
-            replace(delta, parser_observation=parser_observation)
+            self._with_parser_observation(delta, parser_observation)
             if delta.content_text or delta.reasoning_text or delta.tool_call is not None
             else delta
             for delta in deltas
         ]
 
-    def _accept_json_structured_output(self, delta: str) -> list[AssemblyDelta]:
+    @staticmethod
+    def _with_parser_observation(
+        delta: AssemblyDelta,
+        parser_observation: str,
+    ) -> AssemblyDelta:
+        if delta.token_count == 1:
+            return replace(delta, parser_observation=parser_observation)
+        return TokenCountedAssemblyDelta(
+            content_text=delta.content_text,
+            reasoning_text=delta.reasoning_text,
+            raw_text=delta.raw_text,
+            tool_call=delta.tool_call,
+            parser_observation=parser_observation,
+            token_count=delta.token_count,
+        )
+
+    def _accept_json_structured_output(self, delta: str, token_count: int = 0) -> list[AssemblyDelta]:
         self._buffer += delta
         if not self._json_started:
             json_start = self._first_json_delimiter(self._buffer)
@@ -459,7 +521,15 @@ class RequestStreamAssembler:
         if self._contains_reasoning_leak_marker(content):
             self._metrics["reasoning_leak_count"] += 1
         self._assistant_parts.append(content)
-        return [AssemblyDelta(content_text=content, raw_text=delta)]
+        if token_count <= 1:
+            return [AssemblyDelta(content_text=content, raw_text=delta)]
+        return [
+            TokenCountedAssemblyDelta(
+                content_text=content,
+                raw_text=delta,
+                token_count=token_count,
+            )
+        ]
 
     def _drain_buffer(self, final: bool) -> list[AssemblyDelta]:
         deltas: list[AssemblyDelta] = []
@@ -558,6 +628,83 @@ class RequestStreamAssembler:
 
             break
         return deltas
+
+    def _annotate_token_counts(
+        self,
+        deltas: list[AssemblyDelta],
+        token_count: int,
+    ) -> list[AssemblyDelta]:
+        if token_count <= 0 or not deltas:
+            return deltas
+        if len(deltas) == 1:
+            return [self._with_token_count(deltas[0], token_count)]
+
+        weights = [self._estimated_delta_token_count(delta) for delta in deltas]
+        if sum(weights) > token_count:
+            weights = self._compress_delta_token_counts(weights, token_count)
+        elif sum(weights) < token_count:
+            weights = self._distribute_extra_delta_tokens(deltas, weights, token_count - sum(weights))
+
+        return [self._with_token_count(delta, count) for delta, count in zip(deltas, weights)]
+
+    @staticmethod
+    def _with_token_count(delta: AssemblyDelta, token_count: int) -> AssemblyDelta:
+        if token_count == 1:
+            return delta
+        return TokenCountedAssemblyDelta(
+            content_text=delta.content_text,
+            reasoning_text=delta.reasoning_text,
+            raw_text=delta.raw_text,
+            tool_call=delta.tool_call,
+            parser_observation=delta.parser_observation,
+            token_count=token_count,
+        )
+
+    @staticmethod
+    def _estimated_delta_token_count(delta: AssemblyDelta) -> int:
+        if delta.content_text:
+            return max(1, len(delta.content_text.split()))
+        if delta.reasoning_text:
+            return max(1, len(delta.reasoning_text.split()))
+        return 1
+
+    @staticmethod
+    def _compress_delta_token_counts(weights: list[int], token_count: int) -> list[int]:
+        compressed = [1 for _ in weights]
+        remaining = token_count - len(compressed)
+        if remaining <= 0:
+            return compressed[:token_count] + [0 for _ in weights[token_count:]]
+        extras = [max(weight - 1, 0) for weight in weights]
+        while remaining > 0 and any(extras):
+            for index, extra in enumerate(extras):
+                if remaining <= 0:
+                    break
+                if extra <= 0:
+                    continue
+                compressed[index] += 1
+                extras[index] -= 1
+                remaining -= 1
+        return compressed
+
+    @staticmethod
+    def _distribute_extra_delta_tokens(
+        deltas: list[AssemblyDelta],
+        weights: list[int],
+        extra_tokens: int,
+    ) -> list[int]:
+        adjusted = list(weights)
+        priority_indexes = [
+            index for index, delta in enumerate(deltas) if delta.tool_call is not None
+        ] or [
+            index for index, delta in enumerate(deltas) if delta.reasoning_text
+        ] or list(range(len(deltas)))
+        cursor = 0
+        while extra_tokens > 0:
+            index = priority_indexes[cursor % len(priority_indexes)]
+            adjusted[index] += 1
+            extra_tokens -= 1
+            cursor += 1
+        return adjusted
 
     def _recover_unclosed_reasoning_body(self, body: str) -> tuple[str, str]:
         stripped = body.strip()

@@ -334,6 +334,10 @@ def _lowered_tag_set(tags: list[str]) -> set[str]:
     return {tag.lower() for tag in tags}
 
 
+def _is_mlx_atom(value: str) -> bool:
+    return len(value) == 3 and value[0] in "mM" and value[1] in "lL" and value[2] in "xX"
+
+
 def _tag_payload_contains_mlx(value: Any) -> bool:
     if isinstance(value, str):
         return value.lower() == "mlx"
@@ -393,11 +397,10 @@ def _base_models(value: Any) -> list[str]:
 
 def _payload_is_mlx_compatible(payload: dict[str, Any]) -> bool:
     card_data = payload.get("cardData") if isinstance(payload.get("cardData"), dict) else {}
-    tags = _string_list(payload.get("tags"))
-    if any(tag.lower() == "mlx" for tag in tags):
-        return True
     library_name = _string(payload.get("library_name") or card_data.get("library_name"))
-    if library_name.lower() == "mlx":
+    if library_name and _is_mlx_atom(library_name):
+        return True
+    if _tag_payload_contains_mlx(payload.get("tags")):
         return True
     repo_id = _string(payload.get("id") or payload.get("modelId"))
     if "mlx" in repo_id.lower():
@@ -661,13 +664,10 @@ def _direct_size_hint_from_text(text: str) -> int:
 
 
 def _direct_card_size_hint_from_text(text: str) -> int:
-    hint = _direct_size_hint_from_text(text)
-    if hint > 0:
-        return hint
     stripped_text = _strip_model_size_label(text)
-    if not stripped_text:
-        return 0
-    return _direct_size_hint_from_text(stripped_text)
+    if stripped_text:
+        return _direct_size_hint_from_text(stripped_text)
+    return _direct_size_hint_from_text(text)
 
 
 def _strip_model_size_label(text: str) -> str:
@@ -803,6 +803,20 @@ def _kv_cache_bytes_per_element(config: dict[str, Any]) -> int:
 
 def _bytes_per_parameter(tags: list[str], *, lowered_tags: set[str] | None = None) -> float:
     lowered = _normalized_lowered_tags(tags, lowered_tags)
+    if "2bit" in lowered or "2-bit" in lowered:
+        return 0.25
+    if "3bit" in lowered or "3-bit" in lowered:
+        return 0.375
+    if "4bit" in lowered or "4-bit" in lowered:
+        return 0.5
+    if "8bit" in lowered or "8-bit" in lowered:
+        return 1.0
+    if "fp32" in lowered or "float32" in lowered or "f32" in lowered:
+        return 4.0
+    return _bytes_per_parameter_from_tag_substrings(lowered)
+
+
+def _bytes_per_parameter_from_tag_substrings(lowered: set[str]) -> float:
     has_3bit = False
     has_4bit = False
     has_8bit = False

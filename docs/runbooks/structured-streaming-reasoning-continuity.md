@@ -48,6 +48,42 @@ Cache compatibility must include:
 - `melix.cache.fingerprint.chat_template_kwargs`
 - `melix.cache.fingerprint.reasoning_continuity_present`
 
+Text request compatibility policy receipts must be request-local and attached
+to worker `GenerateRequest.execution.ext` for both streaming and non-streaming
+text routes. Inspect:
+
+- `melix.compat.policy_receipt_json`
+- `melix.compat.compat_surface`
+- `melix.compat.stream_mode`
+- `melix.compat.reasoning_mode`
+- `melix.compat.reasoning_source`
+- `melix.compat.reasoning_effort`
+- `melix.compat.tool_parser_mode`
+- `melix.compat.tool_parser_source`
+- `melix.compat.tool_namespaces`
+- `melix.compat.tool_choice_requested`
+- `melix.compat.tool_choice_resolved`
+- `melix.compat.structured_output_mode`
+- `melix.compat.output_modalities`
+- `melix.compat.effective_config_hash`
+
+The JSON receipt shape is the canonical evidence shape and contains the same
+field names without the `melix.compat.` prefix:
+
+- `compat_surface`
+- `stream_mode`
+- `reasoning_mode`
+- `reasoning_source`
+- `reasoning_effort`
+- `tool_parser_mode`
+- `tool_parser_source`
+- `tool_namespaces`
+- `tool_choice_requested`
+- `tool_choice_resolved`
+- `structured_output_mode`
+- `output_modalities`
+- `effective_config_hash`
+
 ## Parser Diagnostics
 
 The worker stream assembler reports parser metrics on completed events:
@@ -78,6 +114,8 @@ The worker stream assembler reports parser metrics on completed events:
 - `response_history_normalized_count`
 - `native_tool_exemplar_injected_count`
 - `effective_parser_config_json`
+- `compat_policy_receipt_json`
+- `compat_effective_config_hash`
 
 Expected healthy values:
 
@@ -118,6 +156,9 @@ Expected healthy values:
   should include the request-scoped `reasoning_enabled`, `tool_parser_mode`,
   `structured_output_mode`, and `request_context_mode` values resolved before
   stream assembly starts
+- `compat_policy_receipt_json` and `compat_effective_config_hash` should
+  preserve the request-shaped compatibility policy receipt on completed events
+  without adding raw hidden reasoning content to the receipt
 - requests with typed `ToolConfig.tools` should increment
   `native_tool_exemplar_injected_count` when those tools are forwarded as
   tokenizer-native `tools` kwargs and no explicit native `tools` kwargs were

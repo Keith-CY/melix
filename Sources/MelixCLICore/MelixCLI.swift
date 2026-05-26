@@ -583,7 +583,7 @@ public struct BenchRunOptions: Equatable, Sendable {
         self.contextLengths = ControlPlaneBenchRequest.normalizedBenchValues(contextLengths)
         self.generationLength = generationLength
         self.batchSizes = ControlPlaneBenchRequest.normalizedBenchValues(batchSizes)
-        self.repeats = repeats == 0 ? 1 : repeats
+        self.repeats = ControlPlaneBenchRequest.normalizedRepeats(repeats)
         self.cacheProfile = cacheProfile
         self.reasoningMode = reasoningMode
         self.structuredOutputMode = structuredOutputMode
@@ -652,7 +652,7 @@ public struct BenchMatrixRunOptions: Equatable, Sendable {
         self.reasoningModes = ControlPlaneBenchMatrixRequest.normalizedStringValues(reasoningModes)
         self.structuredOutputModes = ControlPlaneBenchMatrixRequest.normalizedStringValues(structuredOutputModes)
         self.concurrencyLevels = ControlPlaneBenchRequest.normalizedBenchValues(concurrencyLevels)
-        self.repeats = repeats == 0 ? 1 : repeats
+        self.repeats = ControlPlaneBenchRequest.normalizedRepeats(repeats)
         self.requests = requests
         self.durationSeconds = durationSeconds
         self.allowLargeMatrix = allowLargeMatrix
@@ -4606,7 +4606,7 @@ public enum MelixCLIParser {
             let contextLengths = try parseUInt32List(values.multi["--context-length"] ?? [], option: "--context-length")
             let generationLength = try parseUInt32Value(values.single["--generation-length"], option: "--generation-length") ?? 0
             let batchSizes = try parseUInt32List(values.multi["--batch-size"] ?? [], option: "--batch-size")
-            let repeats = try parseUInt32Value(values.single["--repeats"], option: "--repeats", defaultValue: 1) ?? 1
+            let repeats = try parseBenchmarkRepeatValue(values.single["--repeats"], option: "--repeats", defaultValue: 1) ?? 1
             let cacheProfile = values.single["--cache-profile"] ?? ""
             guard cacheProfile.isEmpty || ControlPlaneBenchRequest.validCacheProfiles.contains(cacheProfile) else {
                 throw MelixCLIError.usage("Invalid value for --cache-profile. Expected one of: \(ControlPlaneBenchRequest.validCacheProfiles.joined(separator: ", ")).")
@@ -4713,7 +4713,7 @@ public enum MelixCLIParser {
             let generationLengths = try parseUInt32List(values.multi["--generation-length"] ?? [], option: "--generation-length")
             let batchSizes = try parseUInt32List(values.multi["--batch-size"] ?? [], option: "--batch-size")
             let concurrencyLevels = try parseUInt32List(values.multi["--concurrency"] ?? [], option: "--concurrency")
-            let repeats = try parseUInt32Value(values.single["--repeats"], option: "--repeats", defaultValue: 1) ?? 1
+            let repeats = try parseBenchmarkRepeatValue(values.single["--repeats"], option: "--repeats", defaultValue: 1) ?? 1
             let requests = try parseUInt32Value(values.single["--requests"], option: "--requests", defaultValue: 0) ?? 0
             let durationSeconds = try parseUInt32Value(
                 values.single["--duration-seconds"],
@@ -4953,7 +4953,7 @@ public enum MelixCLIParser {
                     benchContextLength: try parseUInt32Value(values.single["--bench-context-length"], option: "--bench-context-length") ?? 0,
                     benchGenerationLength: try parseUInt32Value(values.single["--bench-generation-length"], option: "--bench-generation-length") ?? 0,
                     benchBatchSize: try parseUInt32Value(values.single["--bench-batch-size"], option: "--bench-batch-size") ?? 0,
-                    benchRepeats: try parseUInt32Value(values.single["--bench-repeats"], option: "--bench-repeats") ?? 0,
+                    benchRepeats: try parseBenchmarkRepeatValue(values.single["--bench-repeats"], option: "--bench-repeats") ?? 0,
                     benchSampleSize: try parseUInt32Value(values.single["--bench-sample-size"], option: "--bench-sample-size") ?? 0,
                     benchBatchFactor: try parseUInt32Value(values.single["--bench-batch-factor"], option: "--bench-batch-factor") ?? 0,
                     evalSuite: values.single["--eval-suite"] ?? "",
@@ -5712,6 +5712,20 @@ public enum MelixCLIParser {
         return parsed
     }
 
+    private static func parseBenchmarkRepeatValue(
+        _ value: String?,
+        option: String,
+        defaultValue: UInt32? = nil
+    ) throws -> UInt32? {
+        guard let parsed = try parseUInt32Value(value, option: option, defaultValue: defaultValue) else {
+            return nil
+        }
+        guard (ControlPlaneBenchRequest.minRepeats...ControlPlaneBenchRequest.maxRepeats).contains(parsed) else {
+            throw MelixCLIError.usage("Invalid value for \(option): \(parsed). Expected an integer between \(ControlPlaneBenchRequest.minRepeats) and \(ControlPlaneBenchRequest.maxRepeats).")
+        }
+        return parsed
+    }
+
     private static func parseDoubleValue(
         _ value: String?,
         option: String,
@@ -5908,6 +5922,20 @@ private struct ArgumentCursor {
             let token = arguments[index]
             if valueLessFlags.contains(token) {
                 result.flags.insert(token)
+                index += 1
+                continue
+            }
+            if let equalsIndex = token.firstIndex(of: "="), token.hasPrefix("--") {
+                let option = String(token[..<equalsIndex])
+                let value = String(token[token.index(after: equalsIndex)...])
+                guard valueLessFlags.contains(option) == false else {
+                    throw MelixCLIError.usage(MelixCLIParser.usageText)
+                }
+                if multiValueOptions.contains(option) {
+                    result.multi[option, default: []].append(value)
+                } else {
+                    result.single[option] = value
+                }
                 index += 1
                 continue
             }
@@ -10254,6 +10282,7 @@ public actor MelixCLIRunner {
             // whether a loaded model is fused or adapter-backed.
             "runtime_mode": model.runtimeMode,
             "load_trust": makeModelLoadTrustPayload(model),
+            "media_route_receipt": ModelCatalogPresentation.publicMediaRoutePayload(for: model),
         ]
         let activationMode = model.settings.ext["melix.activation_mode"] ?? ""
         if !activationMode.isEmpty {
@@ -10297,6 +10326,7 @@ public actor MelixCLIRunner {
                 payload[key] = value
             }
             payload["load_trust"] = makeModelLoadTrustPayload(snapshotModel)
+            payload["media_route_receipt"] = ModelCatalogPresentation.publicMediaRoutePayload(for: snapshotModel)
         }
         return payload
     }
