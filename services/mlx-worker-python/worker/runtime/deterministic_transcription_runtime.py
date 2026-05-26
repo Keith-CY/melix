@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from worker.runtime.audio_preprocessing import prepare_audio_input
 from worker.runtime.deterministic_delay import sleep_if_configured
+from worker.runtime.deterministic_probe_mixin import DeterministicProbeMixin
 
 
 @dataclass(frozen=True)
@@ -23,7 +24,7 @@ class DeterministicTranscript:
     duration_seconds: float
 
 
-class DeterministicTranscriptionRuntime:
+class DeterministicTranscriptionRuntime(DeterministicProbeMixin[TranscriptionProbeSnapshot]):
     runtime_name = "deterministic-transcription"
 
     def __init__(self) -> None:
@@ -53,5 +54,3 @@ class DeterministicTranscriptionRuntime:
             duration_seconds=prepared.duration_seconds,
         )
 
-    def last_probe_snapshot(self) -> TranscriptionProbeSnapshot:
-        return self._last_probe
