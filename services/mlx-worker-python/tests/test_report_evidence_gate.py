@@ -234,7 +234,7 @@ def test_report_evidence_gate_metric_prefix_list_rules_reflect_mutation() -> Non
 
 
 def test_report_evidence_gate_target_field_tuple_rules_reuse_normalized_tuple() -> None:
-    report_evidence_gate_module._string_tuple_from_tuple.cache_clear()
+    report_evidence_gate_module._string_frozenset_from_tuple.cache_clear()
     rule = {"target_fields": ("adapter_id", "adapter_snapshot")}
 
     assert report_evidence_gate_module._rule_matches_report(
@@ -252,7 +252,7 @@ def test_report_evidence_gate_target_field_tuple_rules_reuse_normalized_tuple() 
         probe_phases=set(),
     )
 
-    cache_info = report_evidence_gate_module._string_tuple_from_tuple.cache_info()
+    cache_info = report_evidence_gate_module._string_frozenset_from_tuple.cache_info()
     assert cache_info.hits >= 1
     assert cache_info.misses == 1
 
