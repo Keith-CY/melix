@@ -319,9 +319,11 @@ def test_native_mtp_loader_safetensor_scandir_probe_script_emits_metrics(
 
     assert metrics["old_mean_ms"] >= 0.0
     assert metrics["new_mean_ms"] >= 0.0
-    assert metrics["result_count"] == 16
+    assert metrics["result_count"] == 24
+    assert metrics["extra_result_count"] == 8
     assert metrics["model_files"] == 8
     assert metrics["distractor_files"] == 8
+    assert metrics["duplicate_mtp_entries"] == 8
 
 
 def test_dataset_version_listing_probe_script_emits_metrics(
