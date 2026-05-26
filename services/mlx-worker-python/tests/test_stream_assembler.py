@@ -118,6 +118,23 @@ def _token_count_routing_probe() -> None:
     default_json_deltas = default_json_assembler.accept(
         StreamFragment(raw_text='{"answer":"plain"}')
     )
+    partial_tool_assembler = RequestStreamAssembler(
+        request_id="req-partial-tool-candidates",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+        allowed_tool_names=("search",),
+    )
+    partial_tool_deltas = partial_tool_assembler.accept(
+        StreamFragment(
+            raw_text=(
+                "<tool_call>{}</tool_call>"
+                '<tool_call>{"name":"search"}</tool_call>'
+                "visible"
+            )
+        )
+    )
+    partial_tool_completed = partial_tool_assembler.completed()
 
     assert [
         (
@@ -155,6 +172,13 @@ def _token_count_routing_probe() -> None:
     assert [(delta.content_text, delta.token_count) for delta in default_json_deltas] == [
         ('{"answer":"plain"}', 1)
     ]
+    assert [delta.tool_call for delta in partial_tool_deltas if delta.tool_call] == []
+    assert [delta.content_text for delta in partial_tool_deltas if delta.content_text] == [
+        "visible"
+    ]
+    assert partial_tool_completed.metrics["partial_tool_candidate_count"] == 2
+    assert partial_tool_completed.metrics["malformed_tool_fragment_count"] == 0
+    assert partial_tool_completed.metrics["unknown_tool_delta_count"] == 0
 
 
 def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:
@@ -1419,33 +1443,6 @@ def test_malformed_non_object_and_nameless_tool_calls_are_skipped() -> None:
     assert [delta.content_text for delta in deltas if delta.content_text] == ["visible"]
     assert completed.metrics["malformed_tool_fragment_count"] == 3
     assert completed.metrics["tool_call_markup_leak_count"] == 0
-
-
-def test_empty_or_argumentless_tool_objects_are_partial_candidates_not_tool_calls() -> None:
-    assembler = RequestStreamAssembler(
-        request_id="req-partial-tool-candidates",
-        reasoning_enabled=True,
-        structured_output_mode="",
-        tool_parser_mode="qwen",
-        allowed_tool_names=("search",),
-    )
-
-    deltas = assembler.accept(
-        StreamFragment(
-            raw_text=(
-                "<tool_call>{}</tool_call>"
-                '<tool_call>{"name":"search"}</tool_call>'
-                "visible"
-            )
-        )
-    )
-    completed = assembler.completed()
-
-    assert [delta.tool_call for delta in deltas if delta.tool_call] == []
-    assert [delta.content_text for delta in deltas if delta.content_text] == ["visible"]
-    assert completed.metrics["partial_tool_candidate_count"] == 2
-    assert completed.metrics["malformed_tool_fragment_count"] == 0
-    assert completed.metrics["unknown_tool_delta_count"] == 0
 
 
 def test_duplicate_tool_call_fragments_are_skipped_when_raw_stream_replays_out_of_order() -> None:
