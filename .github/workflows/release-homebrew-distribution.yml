@@ -52,7 +52,7 @@ jobs:
           fi
 
       - name: Checkout Melix renderer
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Resolve release archive name
         id: archive
@@ -99,7 +99,7 @@ jobs:
             --json
 
       - name: Checkout Homebrew tap
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ vars.MELIX_HOMEBREW_TAP_REPOSITORY }}
           token: ${{ secrets.MELIX_HOMEBREW_TAP_TOKEN }}
@@ -114,7 +114,7 @@ jobs:
           ruby -c "homebrew-tap/$HOMEBREW_CASK_PATH"
 
       - name: Commit Homebrew cask update
-        uses: EndBug/add-and-commit@v9
+        uses: EndBug/add-and-commit@v10
         with:
           cwd: homebrew-tap
           add: ${{ env.HOMEBREW_CASK_PATH }}

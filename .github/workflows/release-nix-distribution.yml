@@ -52,7 +52,7 @@ jobs:
           fi
 
       - name: Checkout Melix renderer
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Resolve release archive name
         id: archive
@@ -99,7 +99,7 @@ jobs:
             --json
 
       - name: Checkout Nix repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ vars.MELIX_NIX_REPOSITORY }}
           token: ${{ secrets.MELIX_NIX_REPOSITORY_TOKEN }}
@@ -118,7 +118,7 @@ jobs:
           fi
 
       - name: Commit Nix flake update
-        uses: EndBug/add-and-commit@v9
+        uses: EndBug/add-and-commit@v10
         with:
           cwd: nix-distribution
           add: ${{ env.NIX_FLAKE_PATH }}
