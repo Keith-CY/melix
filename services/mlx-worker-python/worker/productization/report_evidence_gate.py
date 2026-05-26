@@ -8,6 +8,7 @@ from typing import Any
 from worker.productization.benchmark_evaluation_report import validate_report_payload
 
 REPORT_EVIDENCE_GATE_SCHEMA_VERSION = "melix.report_evidence_gate.v1"
+_ABSENT_TARGET_FIELD = object()
 
 DEFAULT_RELEASE_EVIDENCE_MATRIX: dict[str, dict[str, object]] = {
     "serving_benchmark": {
@@ -303,10 +304,11 @@ def _rule_matches_report(
     target_fields = rule.get("target_fields", ())
     if target_fields:
         target_field_tuple = _string_tuple(target_fields)
+        absent = _ABSENT_TARGET_FIELD
         for target in targets:
             for field in target_field_tuple:
-                value = target.get(field, "")
-                if not value and field not in target:
+                value = target.get(field, absent)
+                if value is absent:
                     continue
                 if isinstance(value, str):
                     if value.strip():

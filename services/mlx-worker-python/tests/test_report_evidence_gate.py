@@ -302,6 +302,13 @@ def test_report_evidence_gate_target_field_preserves_stringified_presence() -> N
         metrics=[],
         probe_phases=set(),
     )
+    assert not report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[],
+        targets=[{"unrelated_field": 0}],
+        metrics=[],
+        probe_phases=set(),
+    )
 
 
 def test_report_evidence_gate_probe_phase_tuple_rules_reuse_normalized_set() -> None:
