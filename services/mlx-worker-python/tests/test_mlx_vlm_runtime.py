@@ -46,6 +46,7 @@ from worker.runtime.mlx_vlm_runtime import (
 )
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.native_mtp.mlx_lm_loader import (
+    _is_mtp_weight_key,
     _load_json_payload,
     _model_safetensor_files,
     extra_mtp_safetensor_files,
@@ -1520,6 +1521,17 @@ def test_native_mtp_index_payload_loads_from_bytes(
 
     assert _load_json_payload(index_path) == index_payload
     assert _load_json_payload(tmp_path / "missing.json") == {}
+
+
+def test_native_mtp_weight_key_detection_preserves_string_and_custom_keys() -> None:
+    class CustomKey:
+        def __str__(self) -> str:
+            return "mtp.custom.weight"
+
+    assert _is_mtp_weight_key("language_model.mtp.layers.0.weight") is True
+    assert _is_mtp_weight_key("mtp.layers.0.weight") is True
+    assert _is_mtp_weight_key("language_model.layers.0.weight") is False
+    assert _is_mtp_weight_key(CustomKey()) is True
 
 
 def test_native_mtp_model_safetensor_listing_uses_scandir_without_glob(

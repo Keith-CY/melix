@@ -18,12 +18,14 @@ sys.path.insert(0, str(repo_root / "services/mlx-worker-python"))
 
 try:
     from worker.runtime.native_mtp.mlx_lm_loader import (
+        _is_mtp_weight_key,
         _load_json_payload,
         _model_safetensor_files,
         extra_mtp_safetensor_files,
     )
 except ImportError:  # Base revisions before this slice do not expose the helpers.
     extra_mtp_safetensor_files = None
+    _is_mtp_weight_key = None
     _load_json_payload = None
     _model_safetensor_files = None
 
@@ -61,6 +63,11 @@ def _read_text_json_payload(path: Path) -> dict[str, Any]:
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _baseline_is_mtp_weight_key(key: Any) -> bool:
+    value = str(key)
+    return value.startswith("language_model.mtp.") or value.startswith("mtp.")
 
 
 def _baseline_extra_mtp_safetensor_files(model_dir: Path) -> list[Path]:
@@ -115,10 +122,32 @@ def _weight_map_count(result: object) -> int:
     return len(weight_map) if isinstance(weight_map, dict) else 0
 
 
+def _measure_key_predicate(
+    callback: Callable[[Any], bool],
+    keys: list[Any],
+    *,
+    samples: int,
+    iterations: int,
+) -> tuple[list[float], int]:
+    elapsed_ms: list[float] = []
+    expected_true_count = sum(1 for key in keys if _baseline_is_mtp_weight_key(key))
+    for _ in range(samples):
+        start = time.perf_counter()
+        true_count = 0
+        for _ in range(iterations):
+            for key in keys:
+                true_count += int(callback(key))
+        elapsed_ms.append((time.perf_counter() - start) * 1000.0)
+        if true_count != expected_true_count * iterations:
+            raise RuntimeError("candidate native-MTP key predicate differs from baseline")
+    return elapsed_ms, expected_true_count
+
+
 def run_probe() -> dict[str, float | int | str]:
     model_files = int(os.environ.get("MELIX_NATIVE_MTP_LOADER_MODEL_FILES", "1500"))
     distractor_files = int(os.environ.get("MELIX_NATIVE_MTP_LOADER_DISTRACTOR_FILES", "1500"))
     samples = int(os.environ.get("MELIX_NATIVE_MTP_LOADER_SAMPLES", "5"))
+    key_iterations = int(os.environ.get("MELIX_NATIVE_MTP_LOADER_KEY_ITERATIONS", "2500"))
     with tempfile.TemporaryDirectory() as tmp:
         model_dir = Path(tmp) / "model"
         _populate_model_dir(
@@ -167,10 +196,30 @@ def run_probe() -> dict[str, float | int | str]:
             model_dir,
             samples=samples,
         )
+        key_candidates = [
+            *old_payload["weight_map"].keys(),
+            "mtp.direct.weight",
+            "language_model.layers.0.weight",
+        ]
+        key_callback = _is_mtp_weight_key or _baseline_is_mtp_weight_key
+        key_old_ms, key_true_count = _measure_key_predicate(
+            _baseline_is_mtp_weight_key,
+            key_candidates,
+            samples=samples,
+            iterations=key_iterations,
+        )
+        key_new_ms, _ = _measure_key_predicate(
+            key_callback,
+            key_candidates,
+            samples=samples,
+            iterations=key_iterations,
+        )
     old_mean = statistics.mean(old_ms)
     new_mean = statistics.mean(new_ms)
     extra_old_mean = statistics.mean(extra_old_ms)
     extra_new_mean = statistics.mean(extra_new_ms)
+    key_old_mean = statistics.mean(key_old_ms)
+    key_new_mean = statistics.mean(key_new_ms)
     return {
         "result_count": result_count,
         "extra_result_count": extra_result_count,
@@ -178,6 +227,13 @@ def run_probe() -> dict[str, float | int | str]:
         "distractor_files": distractor_files,
         "duplicate_mtp_entries": distractor_files,
         "samples": samples,
+        "key_iterations": key_iterations,
+        "key_count": len(key_candidates),
+        "key_true_count": key_true_count,
+        "key_old_mean_ms": key_old_mean,
+        "key_new_mean_ms": key_new_mean,
+        "key_delta_ms": key_new_mean - key_old_mean,
+        "key_speedup": key_old_mean / key_new_mean if key_new_mean else 0.0,
         "old_mean_ms": old_mean,
         "new_mean_ms": new_mean,
         "delta_ms": new_mean - old_mean,
