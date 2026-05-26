@@ -13,6 +13,7 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 
 from worker.runtime.tool_registry import (  # noqa: E402
+    ToolRegistryError,
     built_in_tool_config,
     built_in_tool_registry,
 )
@@ -32,6 +33,8 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     full_list_self_samples: list[float] = []
     full_config_template_elapsed_samples: list[float] = []
     full_config_template_samples: list[float] = []
+    missing_selection_elapsed_samples: list[float] = []
+    missing_selection_error_samples: list[float] = []
     checksum = 0
 
     for _ in range(sample_count):
@@ -60,6 +63,19 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         )
         full_config_template_samples.append(float(full_config_template_count))
 
+        missing_selection_started = time.perf_counter()
+        missing_selection_count = 0
+        for index in range(full_config_iterations):
+            try:
+                registry.select((f"missing_tool_{index}",))
+            except ToolRegistryError:
+                missing_selection_count += 1
+        missing_selection_elapsed_samples.append(
+            (time.perf_counter() - missing_selection_started) * 1000.0
+        )
+        missing_selection_error_samples.append(float(missing_selection_count))
+        checksum += missing_selection_count
+
     return {
         "elapsed_ms_mean": statistics.fmean(elapsed_samples),
         "select_calls_mean": float(iterations),
@@ -68,6 +84,10 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
             full_config_template_elapsed_samples
         ),
         "full_config_template_hits_mean": statistics.fmean(full_config_template_samples),
+        "missing_selection_elapsed_ms_mean": statistics.fmean(
+            missing_selection_elapsed_samples
+        ),
+        "missing_selection_errors_mean": statistics.fmean(missing_selection_error_samples),
         "checksum": float(checksum),
         "iterations": float(iterations),
         "sample_count": float(sample_count),
