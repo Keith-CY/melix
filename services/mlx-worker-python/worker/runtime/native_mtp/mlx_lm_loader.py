@@ -10,6 +10,7 @@ from typing import Any, Callable, Type
 logger = logging.getLogger(__name__)
 
 _PATCHED = False
+_MTP_WEIGHT_KEY_PREFIXES = ("language_model.mtp.", "mtp.")
 
 
 def _load_json_payload(path: Path) -> dict[str, Any]:
@@ -21,7 +22,10 @@ def _load_json_payload(path: Path) -> dict[str, Any]:
 
 
 def _is_mtp_weight_key(key: Any) -> bool:
-    return str(key).startswith(("language_model.mtp.", "mtp."))
+    try:
+        return key.startswith(_MTP_WEIGHT_KEY_PREFIXES)
+    except (AttributeError, TypeError):
+        return str(key).startswith(_MTP_WEIGHT_KEY_PREFIXES)
 
 
 def _model_safetensor_files(model_path: Path) -> list[str]:

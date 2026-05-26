@@ -4455,8 +4455,7 @@
       {
         "key": "old_mean_ms",
         "unit": "ms",
-        "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "direction": "informational"
       },
       {
         "key": "new_mean_ms",
@@ -4479,8 +4478,7 @@
       {
         "key": "old_peak_bytes_mean",
         "unit": "bytes",
-        "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "direction": "informational"
       },
       {
         "key": "new_peak_bytes_mean",
@@ -4497,8 +4495,7 @@
       {
         "key": "extra_old_mean_ms",
         "unit": "ms",
-        "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "direction": "informational"
       },
       {
         "key": "extra_new_mean_ms",
@@ -4521,8 +4518,7 @@
       {
         "key": "extra_old_peak_bytes_mean",
         "unit": "bytes",
-        "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "direction": "informational"
       },
       {
         "key": "extra_new_peak_bytes_mean",
@@ -4539,8 +4535,7 @@
       {
         "key": "key_old_mean_ms",
         "unit": "ms",
-        "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "direction": "informational"
       },
       {
         "key": "key_new_mean_ms",
