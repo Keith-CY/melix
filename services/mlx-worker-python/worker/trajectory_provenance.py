@@ -26,6 +26,15 @@ TRAJECTORY_PROVENANCE_FIELDS = (
 TRAJECTORY_PROVENANCE_CSV_FIELDS = TRAJECTORY_PROVENANCE_FIELDS
 
 _JSON_IMMUTABLE_TYPES = (str, int, float, bool, type(None))
+_TRAJECTORY_MANIFEST_OPTIONAL_FIELD_MAP = (
+    ("trajectory_toolset_version", "trajectory_toolset_version"),
+    ("trajectory_registry_schema_version", "trajectory_registry_schema_version"),
+    ("trajectory_reward_policy_id", "trajectory_reward_policy_id"),
+    ("trajectory_leakage_policy_id", "trajectory_leakage_policy_id"),
+    ("source_package_path", "trajectory_package_path"),
+    ("trajectory_quality_metrics", "trajectory_quality_metrics"),
+    ("agentic_sft_token_metrics", "agentic_sft_token_metrics"),
+)
 
 
 def _copy_trajectory_provenance_value(value: Any) -> Any:
@@ -92,15 +101,7 @@ def trajectory_provenance_from_snapshot_manifest(
     }
     if snapshot_manifest_path is not None:
         provenance["trajectory_snapshot_manifest_path"] = str(snapshot_manifest_path)
-    for source_field, output_field in (
-        ("trajectory_toolset_version", "trajectory_toolset_version"),
-        ("trajectory_registry_schema_version", "trajectory_registry_schema_version"),
-        ("trajectory_reward_policy_id", "trajectory_reward_policy_id"),
-        ("trajectory_leakage_policy_id", "trajectory_leakage_policy_id"),
-        ("source_package_path", "trajectory_package_path"),
-        ("trajectory_quality_metrics", "trajectory_quality_metrics"),
-        ("agentic_sft_token_metrics", "agentic_sft_token_metrics"),
-    ):
+    for source_field, output_field in _TRAJECTORY_MANIFEST_OPTIONAL_FIELD_MAP:
         value = manifest.get(source_field)
         if value in ("", None):
             continue
