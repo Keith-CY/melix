@@ -28,9 +28,9 @@ def test_release_asset_from_tag_derives_existing_app_archive_url() -> None:
     )
 
     assert asset.version == "1.2.3"
-    assert asset.archive_name == "Melix-1.2.3-macos.zip"
+    assert asset.archive_name == "Melix-1.2.3.zip"
     assert asset.download_url == (
-        "https://github.com/Keith-CY/melix/releases/download/v1.2.3/Melix-1.2.3-macos.zip"
+        "https://github.com/Keith-CY/melix/releases/download/v1.2.3/Melix-1.2.3.zip"
     )
     assert asset.sha256_hex == "a" * 64
     assert asset.nix_hash == "sha256-qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo="
@@ -63,7 +63,7 @@ def test_release_asset_from_archive_rejects_missing_file(tmp_path: Path) -> None
         release_asset_from_archive(
             tag_name="v1.2.3",
             repository="Keith-CY/melix",
-            archive_path=tmp_path / "Melix-1.2.3-macos.zip",
+            archive_path=tmp_path / "Melix-1.2.3.zip",
         )
 
 
@@ -71,7 +71,7 @@ def test_release_asset_from_archive_hashes_without_whole_file_read(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    archive = tmp_path / "Melix-1.2.3-macos.zip"
+    archive = tmp_path / "Melix-1.2.3.zip"
     payload = b"melix archive" * 1024
     archive.write_bytes(payload)
 
@@ -94,8 +94,8 @@ def test_render_homebrew_cask_points_to_release_asset_and_service_metadata() -> 
         version="1.2.3",
         tag_name="v1.2.3",
         repository="Keith-CY/melix",
-        archive_name="Melix-1.2.3-macos.zip",
-        download_url="https://github.com/Keith-CY/melix/releases/download/v1.2.3/Melix-1.2.3-macos.zip",
+        archive_name="Melix-1.2.3.zip",
+        download_url="https://github.com/Keith-CY/melix/releases/download/v1.2.3/Melix-1.2.3.zip",
         sha256_hex="b" * 64,
     )
 
@@ -104,7 +104,7 @@ def test_render_homebrew_cask_points_to_release_asset_and_service_metadata() -> 
     assert 'cask "melix"' in cask
     assert 'version "1.2.3"' in cask
     assert 'sha256 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' in cask
-    assert 'url "https://github.com/Keith-CY/melix/releases/download/v1.2.3/Melix-1.2.3-macos.zip"' in cask
+    assert 'url "https://github.com/Keith-CY/melix/releases/download/v1.2.3/Melix-1.2.3.zip"' in cask
     assert 'app "Melix.app"' in cask
     assert 'zap trash: ["~/.melix"]' in cask
 
@@ -114,8 +114,8 @@ def test_render_nix_flake_exposes_darwin_package_from_release_asset() -> None:
         version="1.2.3",
         tag_name="v1.2.3",
         repository="Keith-CY/melix",
-        archive_name="Melix-1.2.3-macos.zip",
-        download_url="https://github.com/Keith-CY/melix/releases/download/v1.2.3/Melix-1.2.3-macos.zip",
+        archive_name="Melix-1.2.3.zip",
+        download_url="https://github.com/Keith-CY/melix/releases/download/v1.2.3/Melix-1.2.3.zip",
         sha256_hex="c" * 64,
     )
 
@@ -129,14 +129,14 @@ def test_render_nix_flake_exposes_darwin_package_from_release_asset() -> None:
     assert "pkgs.fetchurl" in flake
     assert "fetchzip" not in flake
     assert "nativeBuildInputs = [ pkgs.unzip ];" in flake
-    assert 'url = "https://github.com/Keith-CY/melix/releases/download/v1.2.3/Melix-1.2.3-macos.zip";' in flake
+    assert 'url = "https://github.com/Keith-CY/melix/releases/download/v1.2.3/Melix-1.2.3.zip";' in flake
     assert 'hash = "sha256-zMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMw=";' in flake
     assert 'unzip -q "$src" -d "$TMPDIR/melix-app"' in flake
     assert 'cp -R "$TMPDIR/melix-app/Melix.app" "$out/Applications/Melix.app"' in flake
 
 
 def test_write_distribution_files_rejects_archive_name_that_does_not_match_release_tag(tmp_path: Path) -> None:
-    archive = tmp_path / "Melix-wrong-macos.zip"
+    archive = tmp_path / "Melix-wrong.zip"
     archive.write_bytes(b"wrong release asset")
 
     with pytest.raises(ValueError, match="archive path name"):
@@ -149,7 +149,7 @@ def test_write_distribution_files_rejects_archive_name_that_does_not_match_relea
 
 
 def test_write_distribution_files_writes_manifest_for_ci_commit(tmp_path: Path) -> None:
-    archive = tmp_path / "Melix-1.2.3-macos.zip"
+    archive = tmp_path / "Melix-1.2.3.zip"
     archive.write_bytes(b"melix archive")
     sha256_hex = hashlib.sha256(b"melix archive").hexdigest()
     output_root = tmp_path / "dist"
@@ -166,7 +166,7 @@ def test_write_distribution_files_writes_manifest_for_ci_commit(tmp_path: Path) 
     manifest = json.loads((output_root / "manifest.json").read_text(encoding="utf-8"))
     assert manifest == payload
     assert payload["version"] == "1.2.3"
-    assert payload["archive_name"] == "Melix-1.2.3-macos.zip"
+    assert payload["archive_name"] == "Melix-1.2.3.zip"
     assert payload["sha256_hex"] == sha256_hex
     assert payload["nix_hash"].startswith("sha256-")
     assert payload["homebrew_cask_path"] == "homebrew/Casks/melix.rb"
@@ -179,7 +179,7 @@ def test_render_release_distribution_cli_writes_distribution_files(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _load_render_release_distribution_cli()
-    archive = tmp_path / "Melix-1.2.3-macos.zip"
+    archive = tmp_path / "Melix-1.2.3.zip"
     archive.write_bytes(b"melix cli archive")
     output_root = tmp_path / "dist"
 
@@ -202,7 +202,7 @@ def test_render_release_distribution_cli_writes_distribution_files(
 
     assert module.main() == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["archive_name"] == "Melix-1.2.3-macos.zip"
+    assert payload["archive_name"] == "Melix-1.2.3.zip"
     assert (output_root / "homebrew/Casks/melix.rb").exists()
     assert (output_root / "nix/flake.nix").exists()
 
@@ -213,7 +213,7 @@ def test_render_release_distribution_cli_writes_compact_json_without_pretty_flag
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _load_render_release_distribution_cli()
-    archive = tmp_path / "Melix-1.2.3-macos.zip"
+    archive = tmp_path / "Melix-1.2.3.zip"
     archive.write_bytes(b"melix compact cli archive")
 
     monkeypatch.setattr(
@@ -235,7 +235,7 @@ def test_render_release_distribution_cli_writes_compact_json_without_pretty_flag
     assert module.main() == 0
     output = capsys.readouterr().out
     assert "\n  " not in output
-    assert json.loads(output)["archive_name"] == "Melix-1.2.3-macos.zip"
+    assert json.loads(output)["archive_name"] == "Melix-1.2.3.zip"
 
 
 def test_render_release_distribution_cli_main_guard_exits_zero(
@@ -245,7 +245,7 @@ def test_render_release_distribution_cli_main_guard_exits_zero(
 ) -> None:
     repo_root = Path(__file__).resolve().parents[3]
     module_path = repo_root / "scripts/render_release_distribution.py"
-    archive = tmp_path / "Melix-1.2.3-macos.zip"
+    archive = tmp_path / "Melix-1.2.3.zip"
     archive.write_bytes(b"melix main guard archive")
     monkeypatch.setattr(
         sys,
@@ -267,7 +267,7 @@ def test_render_release_distribution_cli_main_guard_exits_zero(
         runpy.run_path(str(module_path), run_name="__main__")
 
     assert error.value.code == 0
-    assert json.loads(capsys.readouterr().out)["archive_name"] == "Melix-1.2.3-macos.zip"
+    assert json.loads(capsys.readouterr().out)["archive_name"] == "Melix-1.2.3.zip"
 
 
 def _load_render_release_distribution_cli():
@@ -303,10 +303,14 @@ def test_release_homebrew_distribution_workflow_publishes_configured_tap() -> No
     assert "types: [melix-release-asset-published]" in workflow
     assert "github.event.client_payload.tag_name" in workflow
     assert "github.event.release.prerelease" not in workflow
+    assert "environment:" in workflow
+    assert "name: release" in workflow
     assert "MELIX_HOMEBREW_TAP_REPOSITORY" in workflow
     assert "MELIX_HOMEBREW_TAP_TOKEN" in workflow
     assert "scripts/render_release_distribution.py" in workflow
     assert "Casks/melix.rb" in workflow
+    assert 'archive_name="${RELEASE_ARCHIVE_NAME:-Melix-${version}.zip}"' in workflow
+    assert "-macos.zip" not in workflow
     assert "EndBug/add-and-commit@v10" in workflow
     assert 'message: "chore: update melix Homebrew cask ${{ steps.archive.outputs.version }}"' in workflow
     download_step = _workflow_step(workflow, "Download release archive")
@@ -326,10 +330,14 @@ def test_release_nix_distribution_workflow_publishes_configured_repo() -> None:
     assert "types: [melix-release-asset-published]" in workflow
     assert "github.event.client_payload.tag_name" in workflow
     assert "github.event.release.prerelease" not in workflow
+    assert "environment:" in workflow
+    assert "name: release" in workflow
     assert "MELIX_NIX_REPOSITORY" in workflow
     assert "MELIX_NIX_REPOSITORY_TOKEN" in workflow
     assert "scripts/render_release_distribution.py" in workflow
     assert "nix/flake.nix" in workflow
+    assert 'archive_name="${RELEASE_ARCHIVE_NAME:-Melix-${version}.zip}"' in workflow
+    assert "-macos.zip" not in workflow
     assert "command -v nix" in workflow
     assert 'nix --extra-experimental-features "nix-command flakes" flake check "./nix-distribution" --no-build' in workflow
     assert "EndBug/add-and-commit@v10" in workflow
@@ -353,3 +361,16 @@ def test_package_workflow_dispatches_distribution_after_release_asset_upload() -
     assert '--field "client_payload[repository]=$RELEASE_REPOSITORY"' in workflow
     assert '--field "client_payload[archive_name]=$RELEASE_ARCHIVE_NAME"' in workflow
     assert "RELEASE_ARCHIVE_NAME" in workflow
+
+
+def test_packaging_targets_document_release_environment_secret_scope() -> None:
+    runbook = (
+        Path(__file__).resolve().parents[3]
+        / "docs/runbooks/platform-packaging-targets.md"
+    ).read_text(encoding="utf-8")
+
+    assert "`release` GitHub Actions environment" in runbook
+    assert "`MELIX_HOMEBREW_TAP_TOKEN`" in runbook
+    assert "`MELIX_NIX_REPOSITORY_TOKEN`" in runbook
+    assert "repository variables" in runbook
+    assert "environment secrets" in runbook
