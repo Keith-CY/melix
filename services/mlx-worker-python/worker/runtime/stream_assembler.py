@@ -10,6 +10,7 @@ import re
 logger = logging.getLogger(__name__)
 _UTF8_INCREMENTAL_DECODER = codecs.getincrementaldecoder("utf-8")
 _COMPACT_SORTED_JSON_ENCODER = json.JSONEncoder(separators=(",", ":"), sort_keys=True)
+_MISSING_TOOL_ARGUMENTS = object()
 
 
 @lru_cache(maxsize=32)
@@ -934,7 +935,8 @@ class RequestStreamAssembler:
         if not name:
             self._metrics["malformed_tool_fragment_count"] += 1
             return None
-        if "arguments" not in payload:
+        arguments = payload.get("arguments", _MISSING_TOOL_ARGUMENTS)
+        if arguments is _MISSING_TOOL_ARGUMENTS:
             self._metrics["partial_tool_candidate_count"] += 1
             return None
         resolved_name = self._resolve_tool_name(name)
@@ -945,7 +947,6 @@ class RequestStreamAssembler:
             self._metrics["tool_call_name_normalized_count"] += 1
             name = resolved_name
 
-        arguments = payload.get("arguments", {})
         call_id = str(payload.get("id") or payload.get("call_id") or "").strip()
         # Prefer model-provided call ids for dedupe so identical repeated calls
         # can be emitted. When a call id has already been seen, skip before
