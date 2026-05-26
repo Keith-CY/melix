@@ -364,30 +364,31 @@ class EvaluationCore:
         parameters: dict[str, str] | None = None,
         remote_target: Any | None = None,
     ) -> EvaluationRun:
+        parameter_map = parameters or {}
         requested_scoring_mode = (
             scoring_mode
             if scoring_mode is not None and scoring_mode != ""
-            else (parameters or {}).get("scoring_mode", "")
+            else parameter_map.get("scoring_mode", "")
         )
         if suite_id == "event_extraction" or requested_scoring_mode == "event_extraction_weighted_f1":
             loaded_model = self._loaded_model_for_execution(model_handle)
-            if str((parameters or {}).get("compare_mode", "")).strip():
+            if str(parameter_map.get("compare_mode", "")).strip():
                 return self._run_event_extraction_compare_suite(
                     model_id=model_id,
                     suite_id=suite_id,
-                    dataset_id=(parameters or {}).get("dataset_id", ""),
+                    dataset_id=parameter_map.get("dataset_id", ""),
                     sample_size=sample_size,
                     scoring_mode=requested_scoring_mode or "event_extraction_weighted_f1",
-                    parameters=dict(parameters or {}),
+                    parameters=dict(parameter_map),
                     loaded_model=loaded_model,
                 )
             return self._run_event_extraction_suite(
                 model_id=model_id,
                 suite_id=suite_id,
-                dataset_id=(parameters or {}).get("dataset_id", ""),
+                dataset_id=parameter_map.get("dataset_id", ""),
                 sample_size=sample_size,
                 scoring_mode=requested_scoring_mode or "event_extraction_weighted_f1",
-                parameters=dict(parameters or {}),
+                parameters=dict(parameter_map),
                 remote_target=remote_target,
                 loaded_model=loaded_model,
             )
@@ -419,7 +420,7 @@ class EvaluationCore:
                 ignored_paths=profile.ignored_paths,
             )
         resolved_task_kind = str(
-            (parameters or {}).get("task_kind") or manifest.get("task_kind") or "text-generation"
+            parameter_map.get("task_kind") or manifest.get("task_kind") or "text-generation"
         )
         manifest_input_modalities = tuple(
             str(value)
@@ -428,22 +429,22 @@ class EvaluationCore:
         )
         requested_few_shot = self._requested_parameter(
             explicit_value=few_shot,
-            parameters=parameters,
+            parameters=parameter_map,
             key="few_shot",
         )
         resolved_few_shot = self._resolve_int_parameter(
             explicit_value=few_shot,
-            parameters=parameters,
+            parameters=parameter_map,
             key="few_shot",
         )
         requested_seed = self._requested_parameter(
             explicit_value=seed,
-            parameters=parameters,
+            parameters=parameter_map,
             key="seed",
         )
         resolved_seed = self._resolve_int_parameter(
             explicit_value=seed,
-            parameters=parameters,
+            parameters=parameter_map,
             key="seed",
         )
         prefix_sample_limit = self._dataset_sample_load_limit(
@@ -458,7 +459,7 @@ class EvaluationCore:
         requested_scoring_mode = (
             scoring_mode
             if scoring_mode is not None and scoring_mode != ""
-            else (parameters or {}).get("scoring_mode", "")
+            else parameter_map.get("scoring_mode", "")
         )
         resolved_scoring_mode = self._resolve_scoring_mode(
             suite_id=suite_id,
@@ -477,7 +478,7 @@ class EvaluationCore:
         requested_code_exec_policy = (
             code_exec_policy
             if code_exec_policy is not None and code_exec_policy != ""
-            else (parameters or {}).get("code_exec_policy", "")
+            else parameter_map.get("code_exec_policy", "")
         )
         resolved_code_exec_policy = self._resolve_code_exec_policy(
             suite_id=suite_id,
@@ -500,8 +501,8 @@ class EvaluationCore:
         run_root = self._run_root(job_id)
         loaded_model = self._loaded_model_for_execution(model_handle)
         job_parameters = {"dataset_root": str(dataset_root)}
-        if parameters:
-            job_parameters.update(parameters)
+        if parameter_map:
+            job_parameters.update(parameter_map)
         hints_text = str(job_parameters.pop("evaluation_hints_text", "") or "").strip()
         eval_prompt_system_prompt = str(job_parameters.pop("eval_prompt_system_prompt", "") or "").strip()
         if hints_text:
