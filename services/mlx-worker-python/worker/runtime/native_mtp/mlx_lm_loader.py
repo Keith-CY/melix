@@ -20,11 +20,6 @@ def _load_json_payload(path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _is_mtp_weight_key(key: Any) -> bool:
-    value = str(key)
-    return value.startswith("language_model.mtp.") or value.startswith("mtp.")
-
-
 def _model_safetensor_files(model_path: Path) -> list[str]:
     """Return top-level ``model*.safetensors`` paths without glob allocation."""
 
@@ -51,7 +46,8 @@ def extra_mtp_safetensor_files(model_path: Path) -> list[Path]:
     extra_files: list[Path] = []
     seen: set[str] = set()
     for key, file_name in weight_map.items():
-        if not _is_mtp_weight_key(key):
+        key_text = key if isinstance(key, str) else str(key)
+        if not (key_text.startswith("language_model.mtp.") or key_text.startswith("mtp.")):
             continue
         file_name_text = str(file_name)
         file_basename = os.path.basename(file_name_text)
