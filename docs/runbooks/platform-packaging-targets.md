@@ -26,6 +26,8 @@ Target differentiation is expressed through `packaging_target_id`, `packaging_ki
 | `launch_agents_checkout` | `launch_agents` | local checkout | `repo_checkout` | `install_manifest_v1` | repository update channel |
 | `homebrew_service` | `homebrew` | Homebrew formula | `repo_checkout_with_installed_binaries` | `service_manifest_v1` | `brew upgrade` plus repository update metadata |
 | `macos_app_bundle_preview` | `app_bundle` | archive or drag install | `self_contained_bundle` | `embedded_target_manifest_v1` | manual bundle refresh with embedded update metadata |
+| `homebrew_release_cask` | `homebrew_cask` | published Homebrew tap | `self_contained_bundle` | `release_asset_digest_v1` | GitHub Release published workflow |
+| `nix_release_flake` | `nix_flake` | published Nix flake repository | `self_contained_bundle` | `release_asset_digest_v1` | GitHub Release published workflow |
 
 ## Target Outputs
 
@@ -43,6 +45,27 @@ Target differentiation is expressed through `packaging_target_id`, `packaging_ki
 - keeps the `homebrew` sidecar instance while projecting the same logical Melix identity and
   version or update metadata as the launch-agent flow
 - differentiates only through Homebrew supervision and installed-binary paths
+
+### `homebrew_release_cask`
+
+- rendered by `scripts/render_release_distribution.py`
+- writes `Casks/melix.rb` in the configured Homebrew tap repository
+- points at the existing GitHub Release asset `Melix-<version>-macos.zip`
+- records the SHA-256 digest computed from the downloaded release asset
+- is triggered by `.github/workflows/release-homebrew-distribution.yml` when a GitHub Release is
+  published, or when the package workflow dispatches `melix-release-asset-published` after
+  attaching the release archive
+
+### `nix_release_flake`
+
+- rendered by `scripts/render_release_distribution.py`
+- writes `flake.nix` in the configured Nix distribution repository
+- exposes `packages.aarch64-darwin.melix` and `packages.aarch64-darwin.default`
+- points at the existing GitHub Release asset `Melix-<version>-macos.zip`
+- records the Nix SRI SHA-256 source hash computed from the downloaded release asset
+- is triggered by `.github/workflows/release-nix-distribution.yml` when a GitHub Release is
+  published, or when the package workflow dispatches `melix-release-asset-published` after
+  attaching the release archive
 
 ### `macos_app_bundle_preview`
 
@@ -64,3 +87,16 @@ PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
 uv run --project services/mlx-worker-python --extra mlx \
 python scripts/m8_packaging_target_smoke.py --json
 ```
+
+Run the release-distribution renderer tests after changing Homebrew or Nix release publishing:
+
+```bash
+PYTHONPATH="$(pwd):$(pwd)/services/mlx-worker-python" \
+uv run --project services/mlx-worker-python \
+pytest -q services/mlx-worker-python/tests/test_release_distribution.py
+```
+
+Release distribution workflows require these repository variables and secrets:
+
+- `MELIX_HOMEBREW_TAP_REPOSITORY` and `MELIX_HOMEBREW_TAP_TOKEN`
+- `MELIX_NIX_REPOSITORY` and `MELIX_NIX_REPOSITORY_TOKEN`

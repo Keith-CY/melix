@@ -1,0 +1,122 @@
+name: release-homebrew-distribution
+
+on:
+  release:
+    types: [published]
+  repository_dispatch:
+    types: [melix-release-asset-published]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Release tag to distribute, for example v1.2.3.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-homebrew-distribution-${{ github.event.release.tag_name || github.event.client_payload.tag_name || inputs.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish-homebrew:
+    runs-on: ubuntu-latest
+
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || github.event.client_payload.tag_name || inputs.tag_name }}
+      RELEASE_REPOSITORY: ${{ github.event.client_payload.repository || github.repository }}
+      RELEASE_ARCHIVE_NAME: ${{ github.event.client_payload.archive_name }}
+      HOMEBREW_TAP_REPOSITORY: ${{ vars.MELIX_HOMEBREW_TAP_REPOSITORY }}
+      HOMEBREW_CASK_PATH: Casks/melix.rb
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Validate Homebrew distribution configuration
+        shell: bash
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.MELIX_HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$RELEASE_TAG" ]]; then
+            echo "RELEASE_TAG is required." >&2
+            exit 1
+          fi
+          if [[ -z "$HOMEBREW_TAP_REPOSITORY" ]]; then
+            echo "Set repository variable MELIX_HOMEBREW_TAP_REPOSITORY to owner/repo." >&2
+            exit 1
+          fi
+          if [[ -z "$HOMEBREW_TAP_TOKEN" ]]; then
+            echo "Set repository secret MELIX_HOMEBREW_TAP_TOKEN with write access to the tap repository." >&2
+            exit 1
+          fi
+
+      - name: Checkout Melix renderer
+        uses: actions/checkout@v4
+
+      - name: Resolve release archive name
+        id: archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          archive_name="${RELEASE_ARCHIVE_NAME:-Melix-${version}-macos.zip}"
+          {
+            echo "version=$version"
+            echo "archive_name=$archive_name"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release-asset"
+          for attempt in {1..20}; do
+            if gh release download "$RELEASE_TAG" \
+              --repo "$RELEASE_REPOSITORY" \
+              --pattern "${{ steps.archive.outputs.archive_name }}" \
+              --dir "$RUNNER_TEMP/release-asset" \
+              --clobber \
+              && test -s "$RUNNER_TEMP/release-asset/${{ steps.archive.outputs.archive_name }}"; then
+              exit 0
+            fi
+            echo "Release archive not available yet; retry $attempt/20."
+            sleep 15
+          done
+          echo "Could not download ${{ steps.archive.outputs.archive_name }} from release $RELEASE_TAG." >&2
+          gh release view "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" --json assets >&2 || true
+          exit 1
+
+      - name: Render Homebrew distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/render_release_distribution.py \
+            --tag-name "$RELEASE_TAG" \
+            --repository "$RELEASE_REPOSITORY" \
+            --archive-path "$RUNNER_TEMP/release-asset/${{ steps.archive.outputs.archive_name }}" \
+            --output-root "$RUNNER_TEMP/release-distribution" \
+            --json
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.MELIX_HOMEBREW_TAP_REPOSITORY }}
+          token: ${{ secrets.MELIX_HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update Homebrew cask
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "homebrew-tap/$(dirname "$HOMEBREW_CASK_PATH")"
+          cp "$RUNNER_TEMP/release-distribution/homebrew/Casks/melix.rb" "homebrew-tap/$HOMEBREW_CASK_PATH"
+          ruby -c "homebrew-tap/$HOMEBREW_CASK_PATH"
+
+      - name: Commit Homebrew cask update
+        uses: EndBug/add-and-commit@v9
+        with:
+          cwd: homebrew-tap
+          add: ${{ env.HOMEBREW_CASK_PATH }}
+          message: "chore: update melix Homebrew cask ${{ steps.archive.outputs.version }}"
+          default_author: github_actions

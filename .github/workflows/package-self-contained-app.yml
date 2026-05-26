@@ -219,3 +219,19 @@ jobs:
           files: ${{ runner.temp }}/${{ needs.package-app.outputs.artifact_name }}.zip
           # Tag pushes are the release source of truth for this workflow, so generated notes own the body.
           generate_release_notes: true
+
+      - name: Trigger release distribution workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_ARCHIVE_NAME: ${{ needs.package-app.outputs.artifact_name }}.zip
+        run: |
+          set -euo pipefail
+          gh api \
+            --method POST \
+            "repos/$RELEASE_REPOSITORY/dispatches" \
+            --field "event_type=melix-release-asset-published" \
+            --field "client_payload[tag_name]=$RELEASE_TAG" \
+            --field "client_payload[repository]=$RELEASE_REPOSITORY" \
+            --field "client_payload[archive_name]=$RELEASE_ARCHIVE_NAME"
