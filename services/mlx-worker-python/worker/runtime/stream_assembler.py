@@ -10,6 +10,7 @@ import re
 logger = logging.getLogger(__name__)
 _UTF8_INCREMENTAL_DECODER = codecs.getincrementaldecoder("utf-8")
 _COMPACT_SORTED_JSON_ENCODER = json.JSONEncoder(separators=(",", ":"), sort_keys=True)
+_MISSING_TOOL_ARGUMENTS = object()
 
 
 @lru_cache(maxsize=32)
@@ -113,6 +114,56 @@ class AssemblyCompletion:
     raw_text: str
     tool_call_count: int
     metrics: dict[str, int | str]
+
+
+@dataclass(slots=True)
+class ChannelAssemblyState:
+    preferred_channel_source: str = ""
+    pending_marker_tail: str = ""
+    pending_annotated_segment_count: int = 0
+    open_tool_event_count: int = 0
+    max_pending_marker_tail_chars: int = 0
+    terminal_marker_tail_flush_count: int = 0
+    orphan_tool_event_flush_count: int = 0
+
+    def record_channel_source(self, source: str) -> None:
+        if source == "tool_call_tag":
+            self.preferred_channel_source = source
+        elif source == "reasoning_tag":
+            if self.preferred_channel_source != "tool_call_tag":
+                self.preferred_channel_source = source
+        elif source == "raw_text" and not self.preferred_channel_source:
+            self.preferred_channel_source = source
+
+    def hold_marker_tail(self, tail: str) -> None:
+        self.pending_marker_tail = tail
+        self.max_pending_marker_tail_chars = max(self.max_pending_marker_tail_chars, len(tail))
+
+    def clear_marker_tail(self) -> None:
+        self.pending_marker_tail = ""
+
+    def record_reasoning_source(self) -> None:
+        if self.preferred_channel_source != "tool_call_tag":
+            self.preferred_channel_source = "reasoning_tag"
+
+    def flush_terminal_marker_tail(self) -> None:
+        if self.pending_marker_tail:
+            self.terminal_marker_tail_flush_count += 1
+        self.pending_marker_tail = ""
+
+    def open_tool_event(self) -> None:
+        self.record_channel_source("tool_call_tag")
+        # The grammar only allows one open tool event; keep this as a 0/1 gauge.
+        if self.open_tool_event_count == 0:
+            self.open_tool_event_count = 1
+
+    def close_tool_event(self) -> None:
+        self.open_tool_event_count = 0
+
+    def flush_orphan_tool_events(self) -> None:
+        if self.open_tool_event_count:
+            self.orphan_tool_event_flush_count += self.open_tool_event_count
+        self.open_tool_event_count = 0
 
 
 class RequestStreamAssembler:
@@ -231,6 +282,7 @@ class RequestStreamAssembler:
         self._raw_seen_assistant_part_count = 0
         self._buffer = ""
         self._pending_token_bytes = b""
+        self.channel_state = ChannelAssemblyState()
         self._json_started = False
         self._assistant_parts: list[str] = []
         self._reasoning_parts: list[str] = []
@@ -259,9 +311,17 @@ class RequestStreamAssembler:
             "reasoning_parser_bypassed_count": 0,
             "tool_call_name_normalized_count": 0,
             "unknown_tool_delta_count": 0,
+            "partial_tool_candidate_count": 0,
             "harmony_channel_hidden_count": 0,
             "harmony_channel_unknown_count": 0,
             "harmony_channel_markup_leak_count": 0,
+            "pending_marker_tail_chars": 0,
+            "max_pending_marker_tail_chars": 0,
+            "terminal_marker_tail_flush_count": 0,
+            "pending_annotated_segment_count": 0,
+            "open_tool_event_count": 0,
+            "orphan_tool_event_flush_count": 0,
+            "channel_state_preferred_source": "",
         }
 
     def accept(self, fragment: StreamFragment) -> list[AssemblyDelta]:
@@ -346,6 +406,7 @@ class RequestStreamAssembler:
                 self._buffer = ""
         else:
             self._drain_buffer(final=True)
+        self._sync_channel_state_metrics()
         metrics = dict(self._metrics)
         metrics["effective_parser_config_json"] = self._effective_parser_config_json()
         return AssemblyCompletion(
@@ -533,6 +594,8 @@ class RequestStreamAssembler:
 
     def _drain_buffer(self, final: bool) -> list[AssemblyDelta]:
         deltas: list[AssemblyDelta] = []
+        channel_state = self.channel_state
+        metrics = self._metrics
         while self._buffer:
             if "<" not in self._buffer:
                 content = self._buffer
@@ -542,18 +605,33 @@ class RequestStreamAssembler:
 
             next_tag = self._next_structural_tag()
             if next_tag is None:
-                if not final:
-                    held_suffix = self._partial_structural_tag_suffix()
-                    if held_suffix:
+                held_suffix = self._partial_structural_tag_suffix()
+                if held_suffix:
+                    visible_prefix = self._buffer[: -len(held_suffix)]
+                    if visible_prefix:
+                        self._buffer = held_suffix
+                        if len(visible_prefix) <= 8:
+                            metrics["stream_short_reply_flush_count"] += 1
+                        if not final:
+                            held_len = len(held_suffix)
+                            channel_state.pending_marker_tail = held_suffix
+                            if held_len > channel_state.max_pending_marker_tail_chars:
+                                channel_state.max_pending_marker_tail_chars = held_len
+                            if held_len > metrics["stream_prefix_hold_chars"]:
+                                metrics["stream_prefix_hold_chars"] = held_len
+                        deltas.append(self._content_delta(visible_prefix))
+                        continue
+                    if final and self._should_flush_terminal_marker_tail(held_suffix):
+                        if channel_state.pending_marker_tail:
+                            channel_state.terminal_marker_tail_flush_count += 1
+                        channel_state.pending_marker_tail = ""
+                        self._buffer = ""
+                        continue
+                    if not final:
                         self._record_prefix_hold(held_suffix)
-                        visible_prefix = self._buffer[: -len(held_suffix)]
-                        if visible_prefix:
-                            self._buffer = held_suffix
-                            if len(visible_prefix) <= 8:
-                                self._metrics["stream_short_reply_flush_count"] += 1
-                            deltas.append(self._content_delta(visible_prefix))
-                            continue
                         break
+                if self.channel_state.pending_marker_tail:
+                    self.channel_state.clear_marker_tail()
                 content = self._buffer
                 self._buffer = ""
                 deltas.append(self._content_delta(content))
@@ -567,6 +645,10 @@ class RequestStreamAssembler:
                 continue
 
             if tag == self._THINK_OPEN or tag == self._PIPE_REASONING_OPEN:
+                if self.channel_state.pending_marker_tail:
+                    self.channel_state.clear_marker_tail()
+                if channel_state.preferred_channel_source != "tool_call_tag":
+                    channel_state.preferred_channel_source = "reasoning_tag"
                 close_tag = (
                     self._PIPE_REASONING_CLOSE
                     if tag == self._PIPE_REASONING_OPEN
@@ -605,21 +687,34 @@ class RequestStreamAssembler:
                 continue
 
             if tag == self._TOOL_OPEN or tag == self._PIPE_TOOL_OPEN:
+                if channel_state.pending_marker_tail:
+                    channel_state.pending_marker_tail = ""
+                channel_state.preferred_channel_source = "tool_call_tag"
+                if channel_state.open_tool_event_count == 0:
+                    channel_state.open_tool_event_count = 1
                 close_tag = self._PIPE_TOOL_CLOSE if tag == self._PIPE_TOOL_OPEN else self._TOOL_CLOSE
                 close_index = self._buffer.find(close_tag, len(tag))
                 if close_index < 0:
                     if final:
-                        self._metrics["malformed_tool_fragment_count"] += 1
+                        metrics["malformed_tool_fragment_count"] += 1
+                        if channel_state.open_tool_event_count:
+                            channel_state.orphan_tool_event_flush_count += (
+                                channel_state.open_tool_event_count
+                            )
+                        channel_state.open_tool_event_count = 0
                         self._buffer = ""
                     break
                 body = self._buffer[len(tag) : close_index]
                 self._buffer = self._buffer[close_index + len(close_tag) :]
                 tool_delta = self._tool_delta(body)
+                channel_state.open_tool_event_count = 0
                 if tool_delta is not None:
                     deltas.append(AssemblyDelta(raw_text=body, tool_call=tool_delta))
                 continue
 
             if tag == self._PIPE_CHANNEL_OPEN:
+                if self.channel_state.pending_marker_tail:
+                    self.channel_state.clear_marker_tail()
                 channel_deltas = self._drain_pipe_channel(final=final)
                 if channel_deltas is None:
                     break
@@ -789,10 +884,36 @@ class RequestStreamAssembler:
         )
 
     def _record_prefix_hold(self, suffix: str) -> None:
+        self.channel_state.hold_marker_tail(suffix)
         self._metrics["stream_prefix_hold_chars"] = max(
             self._metrics["stream_prefix_hold_chars"],
             len(suffix),
         )
+
+    @staticmethod
+    def _should_flush_terminal_marker_tail(suffix: str) -> bool:
+        # A single "<" may be literal content; only suppress multi-char marker prefixes.
+        return len(suffix) > 1
+
+    def _sync_channel_state_metrics(self) -> None:
+        self._metrics["pending_marker_tail_chars"] = len(self.channel_state.pending_marker_tail)
+        self._metrics["max_pending_marker_tail_chars"] = (
+            self.channel_state.max_pending_marker_tail_chars
+        )
+        self._metrics["terminal_marker_tail_flush_count"] = (
+            self.channel_state.terminal_marker_tail_flush_count
+        )
+        self._metrics["pending_annotated_segment_count"] = (
+            self.channel_state.pending_annotated_segment_count
+        )
+        self._metrics["open_tool_event_count"] = self.channel_state.open_tool_event_count
+        self._metrics["orphan_tool_event_flush_count"] = (
+            self.channel_state.orphan_tool_event_flush_count
+        )
+        preferred_source = self.channel_state.preferred_channel_source
+        if not preferred_source and self._assistant_parts:
+            preferred_source = "raw_text"
+        self._metrics["channel_state_preferred_source"] = preferred_source
 
     def _content_delta(self, content: str) -> AssemblyDelta:
         if "<" in content:
@@ -890,6 +1011,7 @@ class RequestStreamAssembler:
             return [self._content_delta(body)] if body else []
 
         if channel_name in self._HIDDEN_PIPE_CHANNELS:
+            self.channel_state.record_reasoning_source()
             self._metrics["harmony_channel_hidden_count"] += 1
             hidden = body
             visible = ""
@@ -926,9 +1048,18 @@ class RequestStreamAssembler:
         if not isinstance(payload, dict):
             self._metrics["malformed_tool_fragment_count"] += 1
             return None
+        if not payload:
+            self._metrics["partial_tool_candidate_count"] += 1
+            return None
         name = str(payload.get("name") or payload.get("tool_name") or "").strip()
         if not name:
             self._metrics["malformed_tool_fragment_count"] += 1
+            return None
+        # A named tool object without arguments is still incomplete; suppress it
+        # so callers can use partial_tool_candidate_count for healing decisions.
+        arguments = payload.get("arguments", _MISSING_TOOL_ARGUMENTS)
+        if arguments is _MISSING_TOOL_ARGUMENTS:
+            self._metrics["partial_tool_candidate_count"] += 1
             return None
         resolved_name = self._resolve_tool_name(name)
         if resolved_name is None:
@@ -938,7 +1069,6 @@ class RequestStreamAssembler:
             self._metrics["tool_call_name_normalized_count"] += 1
             name = resolved_name
 
-        arguments = payload.get("arguments", {})
         call_id = str(payload.get("id") or payload.get("call_id") or "").strip()
         # Prefer model-provided call ids for dedupe so identical repeated calls
         # can be emitted. When a call id has already been seen, skip before

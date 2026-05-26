@@ -118,6 +118,111 @@ def _token_count_routing_probe() -> None:
     default_json_deltas = default_json_assembler.accept(
         StreamFragment(raw_text='{"answer":"plain"}')
     )
+    partial_tool_assembler = RequestStreamAssembler(
+        request_id="req-partial-tool-candidates",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+        allowed_tool_names=("search",),
+    )
+    partial_tool_deltas = partial_tool_assembler.accept(
+        StreamFragment(
+            raw_text=(
+                "<tool_call>{}</tool_call>"
+                '<tool_call>{"name":"search"}</tool_call>'
+                "visible"
+            )
+        )
+    )
+    partial_tool_completed = partial_tool_assembler.completed()
+    channel_source_state = stream_assembler.ChannelAssemblyState()
+    channel_source_state.record_channel_source("raw_text")
+    channel_source_state.record_channel_source("reasoning_tag")
+    channel_source_state.record_channel_source("tool_call_tag")
+    channel_source_state.record_channel_source("reasoning_tag")
+    split_tool_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-split-tool",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+    )
+    split_tool_first = split_tool_assembler.accept(StreamFragment(raw_text="alpha<|tool_"))
+    split_tool_second = split_tool_assembler.accept(
+        StreamFragment(raw_text='alpha<|tool_call>call:search{"q":"alpha"}<tool_call|>')
+    )
+    split_tool_completed = split_tool_assembler.completed()
+    orphan_tool_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-orphan-tool",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    orphan_tool_deltas = orphan_tool_assembler.accept(
+        StreamFragment(raw_text='visible <tool_call>{"name":"search","arguments":{"q":"leak"}}')
+    )
+    orphan_tool_open_count = orphan_tool_assembler.channel_state.open_tool_event_count
+    orphan_tool_completed = orphan_tool_assembler.completed()
+    terminal_tail_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-terminal-tail",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+    )
+    terminal_tail_deltas = terminal_tail_assembler.accept(
+        StreamFragment(raw_text="visible <|tool_")
+    )
+    terminal_tail_pending = terminal_tail_assembler.channel_state.pending_marker_tail
+    terminal_tail_completed = terminal_tail_assembler.completed()
+    lifecycle_state = stream_assembler.ChannelAssemblyState()
+    lifecycle_state.hold_marker_tail("<tool")
+    lifecycle_state.clear_marker_tail()
+    lifecycle_state.record_reasoning_source()
+    lifecycle_state.hold_marker_tail("<|tool_")
+    lifecycle_state.flush_terminal_marker_tail()
+    lifecycle_state.open_tool_event()
+    lifecycle_state.flush_orphan_tool_events()
+    lifecycle_state.open_tool_event()
+    lifecycle_state.close_tool_event()
+    stale_tail_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-stale-tail-clear",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    stale_tail_assembler.channel_state.hold_marker_tail("<tool")
+    stale_tail_deltas = stale_tail_assembler.accept(StreamFragment(raw_text="visible <x"))
+    reasoning_tail_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-reasoning-tail-clear",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    reasoning_tail_assembler.channel_state.hold_marker_tail("<tool")
+    reasoning_tail_deltas = reasoning_tail_assembler.accept(
+        StreamFragment(raw_text="<think>hidden</think>")
+    )
+    reasoning_tail_completed = reasoning_tail_assembler.completed()
+    pipe_tail_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-pipe-tail-clear",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+    pipe_tail_assembler.channel_state.hold_marker_tail("<|tool_")
+    pipe_tail_deltas = pipe_tail_assembler.accept(
+        StreamFragment(raw_text="<|channel>final<channel|>visible")
+    )
+    pipe_tail_completed = pipe_tail_assembler.completed()
+    hidden_pipe_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-hidden-pipe-source",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+    hidden_pipe_deltas = hidden_pipe_assembler.accept(
+        StreamFragment(raw_text="<|channel>analysis<channel|>hidden")
+    )
+    hidden_pipe_completed = hidden_pipe_assembler.completed()
 
     assert [
         (
@@ -155,6 +260,69 @@ def _token_count_routing_probe() -> None:
     assert [(delta.content_text, delta.token_count) for delta in default_json_deltas] == [
         ('{"answer":"plain"}', 1)
     ]
+    assert [delta.tool_call for delta in partial_tool_deltas if delta.tool_call] == []
+    assert [delta.content_text for delta in partial_tool_deltas if delta.content_text] == [
+        "visible"
+    ]
+    assert partial_tool_completed.metrics["partial_tool_candidate_count"] == 2
+    assert partial_tool_completed.metrics["malformed_tool_fragment_count"] == 0
+    assert partial_tool_completed.metrics["unknown_tool_delta_count"] == 0
+    assert channel_source_state.preferred_channel_source == "tool_call_tag"
+    assert [delta.content_text for delta in split_tool_first if delta.content_text] == [
+        "alpha"
+    ]
+    assert split_tool_assembler.channel_state.pending_marker_tail == ""
+    assert split_tool_assembler.channel_state.open_tool_event_count == 0
+    assert [delta.tool_call.tool_name for delta in split_tool_second if delta.tool_call] == [
+        "search"
+    ]
+    assert split_tool_completed.assistant_text == "alpha"
+    assert split_tool_completed.metrics["pending_marker_tail_chars"] == 0
+    assert split_tool_completed.metrics["max_pending_marker_tail_chars"] == len("<|tool_")
+    assert split_tool_completed.metrics["open_tool_event_count"] == 0
+    assert split_tool_completed.metrics["channel_state_preferred_source"] == "tool_call_tag"
+    assert [delta.content_text for delta in orphan_tool_deltas if delta.content_text] == [
+        "visible "
+    ]
+    assert [delta.tool_call for delta in orphan_tool_deltas if delta.tool_call] == []
+    assert orphan_tool_open_count == 1
+    assert orphan_tool_completed.assistant_text == "visible "
+    assert orphan_tool_completed.metrics["malformed_tool_fragment_count"] == 1
+    assert orphan_tool_completed.metrics["orphan_tool_event_flush_count"] == 1
+    assert orphan_tool_completed.metrics["open_tool_event_count"] == 0
+    assert orphan_tool_completed.metrics["tool_call_markup_leak_count"] == 0
+    assert [delta.content_text for delta in terminal_tail_deltas if delta.content_text] == [
+        "visible "
+    ]
+    assert terminal_tail_pending == "<|tool_"
+    assert terminal_tail_assembler.channel_state.pending_marker_tail == ""
+    assert terminal_tail_completed.assistant_text == "visible "
+    assert terminal_tail_completed.metrics["terminal_marker_tail_flush_count"] == 1
+    assert terminal_tail_completed.metrics["pending_marker_tail_chars"] == 0
+    assert terminal_tail_completed.metrics["max_pending_marker_tail_chars"] == len("<|tool_")
+    assert terminal_tail_completed.metrics["tool_call_markup_leak_count"] == 0
+    assert lifecycle_state.pending_marker_tail == ""
+    assert lifecycle_state.max_pending_marker_tail_chars == len("<|tool_")
+    assert lifecycle_state.terminal_marker_tail_flush_count == 1
+    assert lifecycle_state.orphan_tool_event_flush_count == 1
+    assert lifecycle_state.open_tool_event_count == 0
+    assert lifecycle_state.preferred_channel_source == "tool_call_tag"
+    assert [delta.content_text for delta in stale_tail_deltas if delta.content_text] == [
+        "visible <x"
+    ]
+    assert stale_tail_assembler.channel_state.pending_marker_tail == ""
+    assert [delta.reasoning_text for delta in reasoning_tail_deltas if delta.reasoning_text] == [
+        "hidden"
+    ]
+    assert reasoning_tail_completed.metrics["channel_state_preferred_source"] == "reasoning_tag"
+    assert [delta.content_text for delta in pipe_tail_deltas if delta.content_text] == [
+        "visible"
+    ]
+    assert pipe_tail_completed.metrics["pending_marker_tail_chars"] == 0
+    assert pipe_tail_completed.metrics["channel_state_preferred_source"] == "raw_text"
+    assert hidden_pipe_deltas == []
+    assert hidden_pipe_completed.reasoning_text == "hidden"
+    assert hidden_pipe_completed.metrics["channel_state_preferred_source"] == "reasoning_tag"
 
 
 def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:

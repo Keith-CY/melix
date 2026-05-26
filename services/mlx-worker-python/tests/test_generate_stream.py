@@ -633,9 +633,99 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     assert completed.parser_metrics["resolved_stop_token_count"] == "0"
     assert completed.parser_metrics["reasoning_flag_source"] == "unspecified"
     assert completed.parser_metrics["turn_boundary_stop_reason"] == "length"
+    assert completed.parser_metrics["channel_state_preferred_source"] == "raw_text"
+    assert completed.parser_metrics["open_tool_event_count"] == "0"
+    assert completed.parser_metrics["pending_marker_tail_chars"] == "0"
+    assert completed.parser_metrics["orphan_tool_event_flush_count"] == "0"
+    assert completed.parser_metrics["terminal_marker_tail_flush_count"] == "0"
     usage = next(event.usage_delta for event in events if event.HasField("usage_delta"))
     assert usage.prompt_tokens == 5
     assert usage.completion_tokens == 2
+
+    tool_schema_request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-generate-tool-schema-receipt"),
+            model_handle=model_handle,
+            ext={
+                "melix.tool_config.source": "openai_chat_tools",
+                "melix.tool_config.tool_count": "5",
+            },
+            tool_config=common_pb2.ToolConfig(
+                tools=[
+                    common_pb2.ToolDefinition(name="   ", json_schema='{"type":"object"}'),
+                    common_pb2.ToolDefinition(name="empty", json_schema=""),
+                    common_pb2.ToolDefinition(
+                        name="search",
+                        json_schema='{"type":"object","properties":{"q":{"type":"string"}}}',
+                    ),
+                    common_pb2.ToolDefinition(
+                        name="search",
+                        json_schema=(
+                            '{\n'
+                            '  "properties": {"q": {"type": "string"}},\n'
+                            '  "type": "object"\n'
+                            "}"
+                        ),
+                    ),
+                    common_pb2.ToolDefinition(name="bad", json_schema='{"type":'),
+                    common_pb2.ToolDefinition(name="bad", json_schema='{"type":"object"}'),
+                ],
+                tool_choice="auto",
+            ),
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="List tools")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+    tool_schema_events = list(inference_service.Generate(tool_schema_request, context=None))
+    tool_schema_completed = next(
+        event.completed for event in tool_schema_events if event.HasField("completed")
+    )
+    allowed_tools_receipt = json.loads(
+        tool_schema_completed.parser_metrics["allowed_tools_receipt_json"]
+    )
+    assert allowed_tools_receipt["allowed_tool_names"] == ["empty", "search", "bad"]
+    assert allowed_tools_receipt["schema_conflict_count"] == 1
+    assert allowed_tools_receipt["schema_conflicts"] == ["bad"]
+
+    explicit_empty_request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-explicit-empty-tools-receipt"),
+            model_handle=model_handle,
+            ext={
+                "melix.tool_config.source": "openai_chat_tools",
+                "melix.tool_config.tool_count": "0",
+            },
+            tool_config=common_pb2.ToolConfig(),
+        )
+    )
+    explicit_empty_receipt = json.loads(
+        EngineCore._allowed_tools_receipt_json(explicit_empty_request)
+    )
+    assert explicit_empty_receipt["tool_config_state"] == "explicit_empty"
+    assert explicit_empty_receipt["allowed_tool_count"] == 0
+
+    suppressed_without_tools_request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-suppressed-without-tools-receipt"),
+            model_handle=model_handle,
+            ext={"melix.tool_parser.suppressed_reason": "partial_json"},
+        )
+    )
+    suppressed_without_tools_receipt = json.loads(
+        EngineCore._allowed_tools_receipt_json(suppressed_without_tools_request)
+    )
+    assert suppressed_without_tools_receipt["tool_config_state"] == "omitted"
+    assert suppressed_without_tools_receipt["suppressed_reason"] == "partial_json"
+
+    assert engine_core_module._parser_metric_text(0) is engine_core_module._METRIC_ZERO_TEXT
+    assert engine_core_module._parser_metric_text("plain") == "plain"
+    assert engine_core_module._parser_metric_text(3) == "3"
 
     structured_registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=StructuredStreamingBackend()),

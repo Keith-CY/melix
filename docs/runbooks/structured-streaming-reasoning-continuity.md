@@ -116,6 +116,15 @@ The worker stream assembler reports parser metrics on completed events:
 - `effective_parser_config_json`
 - `compat_policy_receipt_json`
 - `compat_effective_config_hash`
+- `token_route_receipt_json`
+- `allowed_tools_receipt_json`
+- `pending_marker_tail_chars`
+- `max_pending_marker_tail_chars`
+- `terminal_marker_tail_flush_count`
+- `pending_annotated_segment_count`
+- `open_tool_event_count`
+- `orphan_tool_event_flush_count`
+- `channel_state_preferred_source`
 
 Expected healthy values:
 
@@ -159,6 +168,25 @@ Expected healthy values:
 - `compat_policy_receipt_json` and `compat_effective_config_hash` should
   preserve the request-shaped compatibility policy receipt on completed events
   without adding raw hidden reasoning content to the receipt
+- `token_route_receipt_json` should report the token router id/version, latest
+  routed token id, channel, channel source, `reasoning_mode`,
+  `tool_choice_policy`, visible token count, hidden reasoning token count,
+  sampled route records, and whether raw-text fallback token ids were used
+- `allowed_tools_receipt_json` should report request-local `allowed_tool_names`,
+  `tool_config_state` (`declared`, `explicit_empty`, or `omitted`),
+  `tool_choice_policy`, tool config source, tool source ids, schema conflict
+  names/count, and any suppressed reason; this receipt distinguishes
+  omitted tools from explicit `tools=[]`
+- request-local channel assembly state should finish with
+  `pending_marker_tail_chars == 0` and `open_tool_event_count == 0`; split marker
+  fixtures should retain the largest held suffix in `max_pending_marker_tail_chars`
+  without exposing control glyphs as visible text
+- terminal partial markers should increment `terminal_marker_tail_flush_count`,
+  and orphan tool-call markers should increment `orphan_tool_event_flush_count`
+  while keeping `tool_call_markup_leak_count == 0`
+- classified reasoning or tool spans should set `channel_state_preferred_source`
+  to `reasoning_tag` or `tool_call_tag` so later raw text does not become the
+  primary explanation for the assembled output
 - requests with typed `ToolConfig.tools` should increment
   `native_tool_exemplar_injected_count` when those tools are forwarded as
   tokenizer-native `tools` kwargs and no explicit native `tools` kwargs were
