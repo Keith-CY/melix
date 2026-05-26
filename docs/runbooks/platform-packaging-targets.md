@@ -50,7 +50,7 @@ Target differentiation is expressed through `packaging_target_id`, `packaging_ki
 
 - rendered by `scripts/render_release_distribution.py`
 - writes `Casks/melix.rb` in the configured Homebrew tap repository
-- points at the existing GitHub Release asset `Melix-<version>-macos.zip`
+- points at the existing GitHub Release asset `Melix-<version>.zip`
 - records the SHA-256 digest computed from the downloaded release asset
 - is triggered by `.github/workflows/release-homebrew-distribution.yml` when a GitHub Release is
   published, or when the package workflow dispatches `melix-release-asset-published` after
@@ -61,7 +61,7 @@ Target differentiation is expressed through `packaging_target_id`, `packaging_ki
 - rendered by `scripts/render_release_distribution.py`
 - writes `flake.nix` in the configured Nix distribution repository
 - exposes `packages.aarch64-darwin.melix` and `packages.aarch64-darwin.default`
-- points at the existing GitHub Release asset `Melix-<version>-macos.zip`
+- points at the existing GitHub Release asset `Melix-<version>.zip`
 - records the Nix SRI SHA-256 source hash computed from the downloaded release asset
 - is triggered by `.github/workflows/release-nix-distribution.yml` when a GitHub Release is
   published, or when the package workflow dispatches `melix-release-asset-published` after
@@ -96,7 +96,29 @@ uv run --project services/mlx-worker-python \
 pytest -q services/mlx-worker-python/tests/test_release_distribution.py
 ```
 
-Release distribution workflows require these repository variables and secrets:
+Release distribution workflows require these repository variables on the Melix
+source repository:
 
-- `MELIX_HOMEBREW_TAP_REPOSITORY` and `MELIX_HOMEBREW_TAP_TOKEN`
-- `MELIX_NIX_REPOSITORY` and `MELIX_NIX_REPOSITORY_TOKEN`
+- `MELIX_HOMEBREW_TAP_REPOSITORY`
+- `MELIX_NIX_REPOSITORY`
+
+Both release distribution jobs use the `release` GitHub Actions environment.
+That environment must provide these secrets:
+
+- `MELIX_HOMEBREW_TAP_TOKEN`
+- `MELIX_NIX_REPOSITORY_TOKEN`
+
+The repository variables name the external repositories that receive generated
+distribution files. The `release` environment secrets hold credentials, usually
+a fine-grained personal access token or GitHub App token, with write access to
+the corresponding external distribution repository. These values are not
+committed to the source tree and are not read from a local operator shell.
+
+The external repository names are deployment choices rather than hard-coded
+product requirements. A Homebrew tap normally uses an `owner/homebrew-<tap>`
+repository name so users can install with `brew tap owner/<tap>`. A Nix
+distribution repository provides a stable flake input for users who install
+with `nix build github:owner/repo#melix` or add that flake to their own
+configuration. Keeping these generated files outside the source repository
+keeps release distribution commits separate from source changes and allows each
+distribution channel to have narrower write credentials.

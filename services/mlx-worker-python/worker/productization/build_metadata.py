@@ -48,13 +48,13 @@ def compute_build_metadata(
         normalized = ref_name[1:] if ref_name.startswith("v") else ref_name
         return BuildMetadata(
             version=normalized,
-            artifact_name=f"Melix-{normalized}-macos",
+            artifact_name=f"Melix-{sanitize_ref_name(normalized)}",
         )
 
     branch = sanitize_ref_name(ref_name or "detached")
     return BuildMetadata(
         version=f"{base_version}+{short_sha}",
-        artifact_name=f"Melix-{branch}-{short_sha}-macos",
+        artifact_name=f"Melix-{branch}-{short_sha}",
     )
 
 

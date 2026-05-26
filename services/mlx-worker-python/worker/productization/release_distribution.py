@@ -45,7 +45,7 @@ def release_asset_from_tag(
     if "/" not in normalized_repository:
         raise ValueError("repository must use owner/name format")
     _validate_sha256_hex(sha256_hex)
-    archive_name = f"Melix-{version}-macos.zip"
+    archive_name = f"Melix-{version}.zip"
     download_url = f"https://github.com/{normalized_repository}/releases/download/{normalized_tag}/{archive_name}"
     return ReleaseAsset(
         version=version,

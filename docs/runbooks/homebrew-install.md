@@ -91,7 +91,7 @@ When a GitHub Release is published, the
 `melix-release-asset-published` repository dispatch emitted after the packaging
 workflow attaches the archive. It:
 
-1. downloads the existing `Melix-<version>-macos.zip` release asset,
+1. downloads the existing `Melix-<version>.zip` release asset,
 2. computes its SHA-256 digest,
 3. renders `Casks/melix.rb` for the configured tap repository,
 4. commits the cask update to that tap.
