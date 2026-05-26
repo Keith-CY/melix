@@ -424,6 +424,8 @@ def test_tool_registry_select_probe_script_emits_metrics(
     assert metrics["full_list_self_hits_mean"] == 4.0
     assert metrics["full_config_template_elapsed_ms_mean"] >= 0.0
     assert metrics["full_config_template_hits_mean"] == 4.0
+    assert metrics["missing_selection_elapsed_ms_mean"] >= 0.0
+    assert metrics["missing_selection_errors_mean"] == 4.0
 
 
 def test_tool_registry_names_probe_script_emits_metrics(

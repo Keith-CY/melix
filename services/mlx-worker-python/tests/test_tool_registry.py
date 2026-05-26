@@ -269,6 +269,27 @@ def test_tool_registry_select_looks_up_each_selected_name_once() -> None:
     assert index.contains_calls == 0
 
 
+def test_tool_registry_select_reuses_missing_name_sentinel_between_calls() -> None:
+    class DefaultRecordingIndex(dict[str, ToolDescriptor]):
+        def __init__(self, values: dict[str, ToolDescriptor]) -> None:
+            super().__init__(values)
+            self.default_ids: list[int] = []
+
+        def get(self, key: str, default: object = None) -> ToolDescriptor | object:
+            self.default_ids.append(id(default))
+            return super().get(key, default)
+
+    registry = ToolRegistry(built_in_tool_registry().tools)
+    index = DefaultRecordingIndex(registry._tool_by_name)
+    object.__setattr__(registry, "_tool_by_name", index)
+
+    for missing_name in ("missing_one", "missing_two"):
+        with pytest.raises(ToolRegistryError, match="Unknown tool registry entry requested"):
+            registry.select([missing_name])
+
+    assert len(set(index.default_ids)) == 1
+
+
 def test_tool_registry_select_reuses_cached_selected_registry() -> None:
     registry = ToolRegistry(built_in_tool_registry().tools)
 

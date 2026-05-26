@@ -13,6 +13,7 @@ _TOOL_CONFIG_FROM_BYTES = _TOOL_CONFIG.FromString
 _COMPACT_SORTED_JSON_ENCODER = json.JSONEncoder(separators=(",", ":"), sort_keys=True)
 _COPY_DICT = dict.copy
 _COPY_LIST = list.copy
+_MISSING_TOOL_SENTINEL = object()
 
 
 def _copy_tool_config(template: common_pb2.ToolConfig) -> common_pb2.ToolConfig:
@@ -264,12 +265,11 @@ class ToolRegistry:
         if cached_selection is not None:
             return cached_selection
         tool_by_name = self._tool_by_name
-        missing_sentinel = object()
         selected: list[ToolDescriptor] = []
         missing_names: list[str] = []
         for name in requested_names:
-            tool = tool_by_name.get(name, missing_sentinel)
-            if tool is missing_sentinel:
+            tool = tool_by_name.get(name, _MISSING_TOOL_SENTINEL)
+            if tool is _MISSING_TOOL_SENTINEL:
                 missing_names.append(name)
             else:
                 selected.append(tool)
