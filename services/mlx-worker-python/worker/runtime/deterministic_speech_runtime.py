@@ -120,4 +120,3 @@ class DeterministicSpeechRuntime(DeterministicProbeMixin[SpeechProbeSnapshot]):
                 audio_chunk_count=chunk_count,
             ),
         )
-

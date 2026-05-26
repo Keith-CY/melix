@@ -53,4 +53,3 @@ class DeterministicTranscriptionRuntime(DeterministicProbeMixin[TranscriptionPro
             language=request.language or "und",
             duration_seconds=prepared.duration_seconds,
         )
-
