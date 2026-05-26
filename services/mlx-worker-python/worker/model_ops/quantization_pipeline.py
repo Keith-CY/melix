@@ -885,15 +885,34 @@ def _smoke_required_files_for_backend(
 ) -> tuple[str, ...]:
     if quantization_backend != _MLX_LM_CONVERT_QUANTIZATION_BACKEND:
         return _SMOKE_REQUIRED_FILES
-    if (bundle_path / "tokenizer.json").exists():
-        tokenizer_file = "tokenizer.json"
-    elif (bundle_path / "tokenizer.model").exists():
-        tokenizer_file = "tokenizer.model"
-    else:
-        tokenizer_file = "tokenizer.json"
-    if (bundle_path / "model.safetensors").exists():
+
+    has_tokenizer_json = False
+    has_tokenizer_model = False
+    has_single_weight_file = False
+    has_weight_index = False
+    try:
+        with os.scandir(os.fspath(bundle_path)) as entries:
+            for entry in entries:
+                name = entry.name
+                if name == "tokenizer.json":
+                    has_tokenizer_json = True
+                elif name == "tokenizer.model":
+                    has_tokenizer_model = True
+                elif name == "model.safetensors":
+                    has_single_weight_file = True
+                elif name == "model.safetensors.index.json":
+                    has_weight_index = True
+                if has_tokenizer_json and has_single_weight_file:
+                    break
+    except OSError:
+        pass
+
+    tokenizer_file = (
+        "tokenizer.json" if has_tokenizer_json or not has_tokenizer_model else "tokenizer.model"
+    )
+    if has_single_weight_file:
         weight_files = ("model.safetensors",)
-    elif (bundle_path / "model.safetensors.index.json").exists():
+    elif has_weight_index:
         weight_files = _mlx_lm_index_weight_files(bundle_path)
     else:
         weight_files = ("model.safetensors",)
