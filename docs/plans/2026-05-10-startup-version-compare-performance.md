@@ -21,6 +21,15 @@ metadata.
 - Register `startup-signals-version-compare-single-pass` as a PR-scoped probe
   with focused test, coverage, and probe commands.
 
+## 2026-05-26 Raw v-prefix Fast Path
+
+This follow-up Python-only slice stays on the same registered probe and narrows
+its behavior change to `compare_versions()` calls where the raw inputs already
+match except for a single leading lowercase `v` on one side. Those pairs can
+return equality before stripping whitespace or parsing version parts. Whitespace-
+normalized and suffix-tolerant comparisons still flow through the existing
+single-pass parser.
+
 ## Metrics
 
 Primary registered probe: `startup-signals-version-compare-single-pass`.

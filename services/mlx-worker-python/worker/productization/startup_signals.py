@@ -137,6 +137,12 @@ def check_for_updates(installed_version: str, channel_path: str | Path) -> Updat
 def compare_versions(left: str, right: str) -> int:
     if left == right:
         return 0
+    left_length = len(left)
+    right_length = len(right)
+    if left_length == right_length + 1 and left and left[0] == "v" and left.startswith(right, 1):
+        return 0
+    if right_length == left_length + 1 and right and right[0] == "v" and right.startswith(left, 1):
+        return 0
     left_cleaned = left.strip()
     right_cleaned = right.strip()
     if left_cleaned == right_cleaned:
