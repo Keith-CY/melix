@@ -67,6 +67,28 @@ def test_release_asset_from_archive_rejects_missing_file(tmp_path: Path) -> None
         )
 
 
+def test_release_asset_from_archive_hashes_without_whole_file_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = tmp_path / "Melix-1.2.3-macos.zip"
+    payload = b"melix archive" * 1024
+    archive.write_bytes(payload)
+
+    def fail_whole_file_read(self: Path) -> bytes:
+        raise AssertionError("release archive hashing must stream bytes instead of read_bytes")
+
+    monkeypatch.setattr(Path, "read_bytes", fail_whole_file_read)
+
+    asset = release_asset_from_archive(
+        tag_name="v1.2.3",
+        repository="Keith-CY/melix",
+        archive_path=archive,
+    )
+
+    assert asset.sha256_hex == hashlib.sha256(payload).hexdigest()
+
+
 def test_render_homebrew_cask_points_to_release_asset_and_service_metadata() -> None:
     asset = ReleaseAsset(
         version="1.2.3",

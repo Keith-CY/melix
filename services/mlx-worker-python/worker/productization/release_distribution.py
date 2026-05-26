@@ -12,6 +12,7 @@ _SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 DEFAULT_RELEASE_REPOSITORY = "Keith-CY/melix"
 DEFAULT_HOMEBREW_CASK_RELATIVE_PATH = Path("homebrew/Casks/melix.rb")
 DEFAULT_NIX_FLAKE_RELATIVE_PATH = Path("nix/flake.nix")
+_HASH_CHUNK_SIZE = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -65,7 +66,7 @@ def release_asset_from_archive(
     archive = Path(archive_path).expanduser().resolve()
     if not archive.is_file():
         raise FileNotFoundError(f"Release archive does not exist: {archive}")
-    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    digest = _sha256_file(archive)
     asset = release_asset_from_tag(
         tag_name=tag_name,
         repository=repository,
@@ -178,3 +179,11 @@ def write_distribution_files(
 def _validate_sha256_hex(value: str) -> None:
     if _SHA256_HEX_RE.fullmatch(value) is None:
         raise ValueError("sha256_hex must be 64 lowercase hexadecimal characters")
+
+
+def _sha256_file(path: Path) -> str:
+    sha256 = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(_HASH_CHUNK_SIZE):
+            sha256.update(chunk)
+    return sha256.hexdigest()
