@@ -410,6 +410,8 @@ message ExecuteEvent {
     Completed completed = 18;
     ErrorEvent error = 19;
     Heartbeat heartbeat = 20;
+    AnnotationDelta annotation_delta = 25;
+    ToolResultDelta tool_result_delta = 26;
   }
 }
 ```
@@ -435,6 +437,8 @@ The streaming event model should support:
 - token delta
 - reasoning delta
 - tool-call delta
+- annotation delta
+- tool-result delta
 - usage delta
 - cache decision
 - boundary snapshot created
@@ -443,6 +447,16 @@ The streaming event model should support:
 - heartbeat
 
 This allows the control plane to bridge events cleanly into SSE while preserving internal semantics.
+
+`AnnotationDelta` carries annotation payloads, such as citation metadata, after
+the visible text span they annotate. It records `annotation_id`, `kind`,
+`start_offset`, `end_offset`, and `payload_json`; clients must not append
+`payload_json` to visible assistant text.
+
+`ToolResultDelta` carries a tool execution result separately from
+`ToolCallDelta` arguments. It records `call_id`, `status`, and `result_json`;
+the control plane may use `call_id` to update request-local session graph state,
+but public chat text remains assembled from `TokenDelta` and `Completed`.
 
 ### Prefill and Decode Split
 

@@ -11,7 +11,12 @@ from worker.engine.text_finalizer import (
     apply_text_response_metrics,
     finalize_text_response,
 )
-from worker.runtime.mlx_text_runtime import RuntimeToolCallEvent, RuntimeTokenEvent
+from worker.runtime.mlx_text_runtime import (
+    RuntimeAnnotationEvent,
+    RuntimeToolCallEvent,
+    RuntimeTokenEvent,
+    RuntimeToolResultEvent,
+)
 from worker.runtime.mlx_text_runtime import resolve_text_stop_contract
 from worker.runtime.multimodal_attention_policy import MultimodalPrefillAttentionBudgetExceeded
 from worker.runtime.runtime_utils import callable_accepts_kwarg as _callable_accepts_kwarg
@@ -187,6 +192,8 @@ class EngineCore:
         turn_boundary_stop_reason = ""
         generated_reasoning_delta_count = 0
         generated_tool_call_delta_count = 0
+        annotation_delta_count = 0
+        tool_result_delta_count = 0
         accept_stream_fragment = assembler.accept
         token_route_receipt: TokenRouteReceipt | None = None
         if plain_text_fast_path:
@@ -255,6 +262,46 @@ class EngineCore:
                             call_id=runtime_event.call_id,
                             tool_name=runtime_event.tool_name,
                             arguments_json_fragment=runtime_event.arguments_json_fragment,
+                        ),
+                    )
+                    continue
+
+                if isinstance(runtime_event, RuntimeAnnotationEvent):
+                    annotation_delta_count += 1
+                    assembler.channel_state.open_annotation_span(
+                        runtime_event.annotation_id,
+                        start_offset=runtime_event.start_offset,
+                        end_offset=runtime_event.end_offset,
+                    )
+                    assembler.channel_state.resolve_annotation_payload(
+                        runtime_event.annotation_id,
+                        payload_json=runtime_event.payload_json,
+                    )
+                    yield inference_pb2.ExecuteEvent(
+                        request_id=request_id,
+                        execution_kind="generate",
+                        seq=allocate_seq(),
+                        annotation_delta=inference_pb2.AnnotationDelta(
+                            annotation_id=runtime_event.annotation_id,
+                            kind=runtime_event.kind,
+                            start_offset=max(0, int(runtime_event.start_offset)),
+                            end_offset=max(0, int(runtime_event.end_offset)),
+                            payload_json=runtime_event.payload_json,
+                        ),
+                    )
+                    continue
+
+                if isinstance(runtime_event, RuntimeToolResultEvent):
+                    tool_result_delta_count += 1
+                    assembler.channel_state.buffer_tool_result_payload()
+                    yield inference_pb2.ExecuteEvent(
+                        request_id=request_id,
+                        execution_kind="generate",
+                        seq=allocate_seq(),
+                        tool_result_delta=inference_pb2.ToolResultDelta(
+                            call_id=runtime_event.call_id,
+                            status=runtime_event.status,
+                            result_json=runtime_event.result_json,
                         ),
                     )
                     continue
@@ -421,6 +468,8 @@ class EngineCore:
                         "turn_boundary_stop_reason": turn_boundary_stop_reason or finish_reason,
                         "generated_reasoning_delta_count": "0",
                         "generated_tool_call_delta_count": generated_tool_call_delta_count_text,
+                        "annotation_delta_count": str(annotation_delta_count),
+                        "tool_result_delta_count": str(tool_result_delta_count),
                         "token_route_receipt_json": token_route_receipt_json,
                         "allowed_tools_receipt_json": allowed_tools_receipt_json,
                     }
@@ -446,6 +495,8 @@ class EngineCore:
                 parser_metrics["turn_boundary_stop_reason"] = turn_boundary_stop_reason or finish_reason
                 parser_metrics["generated_reasoning_delta_count"] = str(generated_reasoning_delta_count)
                 parser_metrics["generated_tool_call_delta_count"] = str(generated_tool_call_delta_count)
+                parser_metrics["annotation_delta_count"] = str(annotation_delta_count)
+                parser_metrics["tool_result_delta_count"] = str(tool_result_delta_count)
                 if token_route_receipt is not None:
                     token_route_receipt_json = token_route_receipt.to_json()
                 parser_metrics["token_route_receipt_json"] = token_route_receipt_json

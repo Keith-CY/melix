@@ -127,6 +127,8 @@ message ExecuteEvent {
     Admitted admitted = 22;
     DecodeStarted decode_started = 23;
     AccelerationApplied acceleration_applied = 24;
+    AnnotationDelta annotation_delta = 25;
+    ToolResultDelta tool_result_delta = 26;
   }
 }
 
@@ -179,6 +181,20 @@ message ToolCallDelta {
   uint32 fragment_index = 4;
   string parser_mode = 5;
   bool complete = 6;
+}
+
+message AnnotationDelta {
+  string annotation_id = 1;
+  string kind = 2;
+  uint32 start_offset = 3;
+  uint32 end_offset = 4;
+  string payload_json = 5;
+}
+
+message ToolResultDelta {
+  string call_id = 1;
+  string status = 2;
+  string result_json = 3;
 }
 
 message UsageDelta {

@@ -81,6 +81,22 @@ class RuntimeToolCallEvent:
     arguments_json_fragment: str
 
 
+@dataclass(slots=True)
+class RuntimeAnnotationEvent:
+    annotation_id: str
+    kind: str
+    start_offset: int
+    end_offset: int
+    payload_json: str
+
+
+@dataclass(slots=True)
+class RuntimeToolResultEvent:
+    call_id: str
+    status: str
+    result_json: str
+
+
 _REWARD_SCORE_RE = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)")
 
 
@@ -1489,7 +1505,16 @@ class MLXTextRuntime:
             )
         try:
             normalized_events = (
-                item if isinstance(item, (RuntimeTokenEvent, RuntimeToolCallEvent)) else RuntimeTokenEvent(text=str(item))
+                item if isinstance(
+                    item,
+                    (
+                        RuntimeTokenEvent,
+                        RuntimeToolCallEvent,
+                        RuntimeAnnotationEvent,
+                        RuntimeToolResultEvent,
+                    ),
+                )
+                else RuntimeTokenEvent(text=str(item))
                 for item in item_iterable
             )
             yield from self._apply_stop_sequences(normalized_events, stop_contract.sequences)
@@ -1518,7 +1543,12 @@ class MLXTextRuntime:
 
     def _apply_stop_sequences(
         self,
-        events: Iterable[RuntimeTokenEvent | RuntimeToolCallEvent],
+        events: Iterable[
+            RuntimeTokenEvent
+            | RuntimeToolCallEvent
+            | RuntimeAnnotationEvent
+            | RuntimeToolResultEvent
+        ],
         stop_sequences: tuple[str, ...],
     ):
         if not stop_sequences:
@@ -1530,7 +1560,7 @@ class MLXTextRuntime:
         pending = ""
         last_token_event: RuntimeTokenEvent | None = None
         for event in events:
-            if isinstance(event, RuntimeToolCallEvent):
+            if isinstance(event, (RuntimeToolCallEvent, RuntimeAnnotationEvent, RuntimeToolResultEvent)):
                 if pending and last_token_event is not None:
                     yield replace(last_token_event, text=pending, raw_text=pending, finish_reason=None)
                     pending = ""

@@ -685,6 +685,22 @@ public nonisolated struct Melix_Worker_V1_ExecuteEvent: @unchecked Sendable {
     set {_uniqueStorage()._payload = .accelerationApplied(newValue)}
   }
 
+  public var annotationDelta: Melix_Worker_V1_AnnotationDelta {
+    get {
+      if case .annotationDelta(let v)? = _storage._payload {return v}
+      return Melix_Worker_V1_AnnotationDelta()
+    }
+    set {_uniqueStorage()._payload = .annotationDelta(newValue)}
+  }
+
+  public var toolResultDelta: Melix_Worker_V1_ToolResultDelta {
+    get {
+      if case .toolResultDelta(let v)? = _storage._payload {return v}
+      return Melix_Worker_V1_ToolResultDelta()
+    }
+    set {_uniqueStorage()._payload = .toolResultDelta(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public nonisolated enum OneOf_Payload: Equatable, Sendable {
@@ -703,6 +719,8 @@ public nonisolated struct Melix_Worker_V1_ExecuteEvent: @unchecked Sendable {
     case admitted(Melix_Worker_V1_Admitted)
     case decodeStarted(Melix_Worker_V1_DecodeStarted)
     case accelerationApplied(Melix_Worker_V1_AccelerationApplied)
+    case annotationDelta(Melix_Worker_V1_AnnotationDelta)
+    case toolResultDelta(Melix_Worker_V1_ToolResultDelta)
 
   }
 
@@ -839,6 +857,42 @@ public nonisolated struct Melix_Worker_V1_ToolCallDelta: Sendable {
   public var parserMode: String = String()
 
   public var complete: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Worker_V1_AnnotationDelta: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var annotationID: String = String()
+
+  public var kind: String = String()
+
+  public var startOffset: UInt32 = 0
+
+  public var endOffset: UInt32 = 0
+
+  public var payloadJson: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Worker_V1_ToolResultDelta: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var callID: String = String()
+
+  public var status: String = String()
+
+  public var resultJson: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -2355,7 +2409,7 @@ nonisolated extension Melix_Worker_V1_AbortResponse: SwiftProtobuf.Message, Swif
 
 nonisolated extension Melix_Worker_V1_ExecuteEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ExecuteEvent"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{3}execution_kind\0\u{1}seq\0\u{1}phase\0\u{3}admission_state\0\u{1}lane\0\u{3}queue_position\0\u{3}queue_delay_ms\0\u{3}acceleration_mode\0\u{3}prefill_started\0\u{3}prefill_progress\0\u{3}token_delta\0\u{3}reasoning_delta\0\u{3}tool_call_delta\0\u{3}usage_delta\0\u{3}cache_decision\0\u{3}snapshot_created\0\u{1}completed\0\u{1}error\0\u{1}heartbeat\0\u{1}queued\0\u{1}admitted\0\u{3}decode_started\0\u{3}acceleration_applied\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}request_id\0\u{3}execution_kind\0\u{1}seq\0\u{1}phase\0\u{3}admission_state\0\u{1}lane\0\u{3}queue_position\0\u{3}queue_delay_ms\0\u{3}acceleration_mode\0\u{3}prefill_started\0\u{3}prefill_progress\0\u{3}token_delta\0\u{3}reasoning_delta\0\u{3}tool_call_delta\0\u{3}usage_delta\0\u{3}cache_decision\0\u{3}snapshot_created\0\u{1}completed\0\u{1}error\0\u{1}heartbeat\0\u{1}queued\0\u{1}admitted\0\u{3}decode_started\0\u{3}acceleration_applied\0\u{3}annotation_delta\0\u{3}tool_result_delta\0")
 
   fileprivate class _StorageClass {
     var _requestID: String = String()
@@ -2610,6 +2664,32 @@ nonisolated extension Melix_Worker_V1_ExecuteEvent: SwiftProtobuf.Message, Swift
             _storage._payload = .accelerationApplied(v)
           }
         }()
+        case 25: try {
+          var v: Melix_Worker_V1_AnnotationDelta?
+          var hadOneofValue = false
+          if let current = _storage._payload {
+            hadOneofValue = true
+            if case .annotationDelta(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payload = .annotationDelta(v)
+          }
+        }()
+        case 26: try {
+          var v: Melix_Worker_V1_ToolResultDelta?
+          var hadOneofValue = false
+          if let current = _storage._payload {
+            hadOneofValue = true
+            if case .toolResultDelta(let m) = current {v = m}
+          }
+          try decoder.decodeSingularMessageField(value: &v)
+          if let v = v {
+            if hadOneofValue {try decoder.handleConflictingOneOf()}
+            _storage._payload = .toolResultDelta(v)
+          }
+        }()
         default: break
         }
       }
@@ -2709,6 +2789,14 @@ nonisolated extension Melix_Worker_V1_ExecuteEvent: SwiftProtobuf.Message, Swift
       case .accelerationApplied?: try {
         guard case .accelerationApplied(let v)? = _storage._payload else { preconditionFailure() }
         try visitor.visitSingularMessageField(value: v, fieldNumber: 24)
+      }()
+      case .annotationDelta?: try {
+        guard case .annotationDelta(let v)? = _storage._payload else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 25)
+      }()
+      case .toolResultDelta?: try {
+        guard case .toolResultDelta(let v)? = _storage._payload else { preconditionFailure() }
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 26)
       }()
       case nil: break
       }
@@ -3070,6 +3158,96 @@ nonisolated extension Melix_Worker_V1_ToolCallDelta: SwiftProtobuf.Message, Swif
     if lhs.fragmentIndex != rhs.fragmentIndex {return false}
     if lhs.parserMode != rhs.parserMode {return false}
     if lhs.complete != rhs.complete {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Worker_V1_AnnotationDelta: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AnnotationDelta"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}annotation_id\0\u{1}kind\0\u{3}start_offset\0\u{3}end_offset\0\u{3}payload_json\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.annotationID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.kind) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.startOffset) }()
+      case 4: try { try decoder.decodeSingularUInt32Field(value: &self.endOffset) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.payloadJson) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.annotationID.isEmpty {
+      try visitor.visitSingularStringField(value: self.annotationID, fieldNumber: 1)
+    }
+    if !self.kind.isEmpty {
+      try visitor.visitSingularStringField(value: self.kind, fieldNumber: 2)
+    }
+    if self.startOffset != 0 {
+      try visitor.visitSingularUInt32Field(value: self.startOffset, fieldNumber: 3)
+    }
+    if self.endOffset != 0 {
+      try visitor.visitSingularUInt32Field(value: self.endOffset, fieldNumber: 4)
+    }
+    if !self.payloadJson.isEmpty {
+      try visitor.visitSingularStringField(value: self.payloadJson, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_AnnotationDelta, rhs: Melix_Worker_V1_AnnotationDelta) -> Bool {
+    if lhs.annotationID != rhs.annotationID {return false}
+    if lhs.kind != rhs.kind {return false}
+    if lhs.startOffset != rhs.startOffset {return false}
+    if lhs.endOffset != rhs.endOffset {return false}
+    if lhs.payloadJson != rhs.payloadJson {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Worker_V1_ToolResultDelta: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ToolResultDelta"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}call_id\0\u{1}status\0\u{3}result_json\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.callID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.status) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.resultJson) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.callID.isEmpty {
+      try visitor.visitSingularStringField(value: self.callID, fieldNumber: 1)
+    }
+    if !self.status.isEmpty {
+      try visitor.visitSingularStringField(value: self.status, fieldNumber: 2)
+    }
+    if !self.resultJson.isEmpty {
+      try visitor.visitSingularStringField(value: self.resultJson, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_ToolResultDelta, rhs: Melix_Worker_V1_ToolResultDelta) -> Bool {
+    if lhs.callID != rhs.callID {return false}
+    if lhs.status != rhs.status {return false}
+    if lhs.resultJson != rhs.resultJson {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -11808,6 +11808,45 @@ struct RuntimeViewModelTests {
         #expect(toolEntries.first?.body == #"{"q":"melix"}"#)
     }
 
+    @Test("chat prompt ignores annotation and tool-result payloads in visible transcript")
+    @MainActor
+    func chatPromptIgnoresAnnotationAndToolResultPayloadsInVisibleTranscript() async throws {
+        let client = FakeControlPlaneXPCClient()
+        await client.configureChatEvents([
+            .tokenDelta("Answer with citation."),
+            .annotationDelta(
+                annotationID: "cite-1",
+                kind: "citation",
+                startOffset: 12,
+                endOffset: 20,
+                payloadJSON: #"{"url":"https://example.test/source"}"#
+            ),
+            .toolResultDelta(
+                callID: "tool-1",
+                status: "ok",
+                resultJSON: #"{"temperature":72}"#
+            ),
+            .completed(
+                finishReason: "stop",
+                assistantText: "Answer with citation.",
+                reasoningText: ""
+            ),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.chatComposerText = "Use side channels"
+
+        await viewModel.submitChatPrompt()
+
+        let assistantEntries = viewModel.chatTranscript.filter { $0.kind == .assistant }
+        #expect(assistantEntries.count == 1)
+        #expect(assistantEntries.first?.body == "Answer with citation.")
+        #expect(viewModel.chatTranscript.contains { $0.body.contains("example.test/source") } == false)
+        #expect(viewModel.chatTranscript.contains { $0.body.contains(#""temperature":72"#) } == false)
+    }
+
     @Test("chat prompt smooths bursty deltas while preserving final transcript fidelity")
     @MainActor
     func chatPromptSmoothsBurstyDeltasWhilePreservingFinalTranscriptFidelity() async throws {

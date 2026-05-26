@@ -105,6 +105,8 @@ public enum ControlPlaneChatStreamEvent: Sendable, Equatable {
     case tokenDelta(String)
     case reasoningDelta(String)
     case toolCallDelta(callID: String, toolName: String, argumentsFragment: String)
+    case annotationDelta(annotationID: String, kind: String, startOffset: UInt32, endOffset: UInt32, payloadJSON: String)
+    case toolResultDelta(callID: String, status: String, resultJSON: String)
     case usage(promptTokens: UInt32, completionTokens: UInt32)
     case completed(finishReason: String, assistantText: String, reasoningText: String)
     case failed(code: String, message: String)
@@ -140,6 +142,20 @@ public enum ControlPlaneChatStreamEvent: Sendable, Equatable {
                 callID: toolCallDelta.callID,
                 toolName: toolCallDelta.toolName,
                 argumentsFragment: toolCallDelta.argumentsJsonFragment
+            )
+        case .annotationDelta(let annotationDelta):
+            self = .annotationDelta(
+                annotationID: annotationDelta.annotationID,
+                kind: annotationDelta.kind,
+                startOffset: annotationDelta.startOffset,
+                endOffset: annotationDelta.endOffset,
+                payloadJSON: annotationDelta.payloadJson
+            )
+        case .toolResultDelta(let toolResultDelta):
+            self = .toolResultDelta(
+                callID: toolResultDelta.callID,
+                status: toolResultDelta.status,
+                resultJSON: toolResultDelta.resultJson
             )
         case .usageDelta(let usageDelta):
             self = .usage(

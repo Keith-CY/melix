@@ -7423,6 +7423,8 @@ public final class RuntimeViewModel {
                     toolDeltaCount += 1
                     appendToolDelta(callID: callID, toolName: toolName, argumentsFragment: argumentsFragment)
                     await Task.yield()
+                case .annotationDelta, .toolResultDelta:
+                    break
                 case .usage(let promptTokens, let completionTokens):
                     lastChatUsageText = "\(promptTokens) prompt • \(completionTokens) completion"
                 case .completed(let finishReason, let assistantText, let reasoningText):

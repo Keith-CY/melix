@@ -1609,6 +1609,49 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["http.tool_delta_count", default: 0] == 1)
     }
 
+    @Test("annotation and tool-result deltas are semantic stream events with metrics")
+    func annotationAndToolResultDeltasAreSemanticStreamEventsWithMetrics() async throws {
+        let workerClient = AnnotationToolResultWorkerClient()
+        let sessionGraphStore = SessionGraphStore(nowUnixMs: { 8_100 })
+        let metricsStore = MetricsStore()
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            sessionGraphStore: sessionGraphStore
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-annotation-tool-result",
+                sessionID: "session-annotation-tool-result",
+                branchID: "branch-main"
+            )
+        )
+
+        var payloadKinds: [String] = []
+        for try await event in execution.stream {
+            switch event.payload {
+            case .annotationDelta:
+                payloadKinds.append("annotation")
+            case .toolResultDelta:
+                payloadKinds.append("tool_result")
+            case .completed:
+                payloadKinds.append("completed")
+            default:
+                break
+            }
+        }
+
+        let state = await sessionGraphStore.state(for: "session-annotation-tool-result")
+        let metrics = await metricsStore.snapshot()
+        #expect(payloadKinds == ["annotation", "tool_result", "completed"])
+        #expect(state?.latestToolCallID == "tool-call-annotation-result")
+        #expect(metrics.values["http.annotation_delta_count", default: 0] == 1)
+        #expect(metrics.values["http.tool_result_delta_count", default: 0] == 1)
+        #expect(metrics.values["http.stream_first_event_ms", default: -1] >= 0)
+    }
+
     @Test("session reasoning continuity uses metadata markers without raw hidden leakage")
     func sessionReasoningContinuityUsesMetadataMarkersWithoutRawHiddenLeakage() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -4692,6 +4735,68 @@ private actor ToolCallingWorkerClient: WorkerRoutingClient {
             toolEvent.phase = .executionDecoding
             toolEvent.toolCallDelta = toolCall
             continuation.yield(toolEvent)
+
+            var completed = Melix_Worker_V1_Completed()
+            completed.finishReason = "stop"
+
+            var terminal = Melix_Worker_V1_ExecuteEvent()
+            terminal.requestID = request.execution.id.requestID
+            terminal.executionKind = "generate"
+            terminal.phase = .executionCompleted
+            terminal.completed = completed
+            continuation.yield(terminal)
+            continuation.finish()
+        }
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        true
+    }
+
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        var response = Melix_Worker_V1_LoadModelResponse()
+        response.ok = true
+        response.modelHandle = "melix-dev-text::swift"
+        return response
+    }
+}
+
+private actor AnnotationToolResultWorkerClient: WorkerRoutingClient {
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        AsyncThrowingStream { continuation in
+            var annotation = Melix_Worker_V1_AnnotationDelta()
+            annotation.annotationID = "cite-1"
+            annotation.kind = "citation"
+            annotation.startOffset = 0
+            annotation.endOffset = 7
+            annotation.payloadJson = #"{"url":"https://example.test/source"}"#
+
+            var annotationEvent = Melix_Worker_V1_ExecuteEvent()
+            annotationEvent.requestID = request.execution.id.requestID
+            annotationEvent.executionKind = "generate"
+            annotationEvent.phase = .executionDecoding
+            annotationEvent.annotationDelta = annotation
+            continuation.yield(annotationEvent)
+
+            var toolResult = Melix_Worker_V1_ToolResultDelta()
+            toolResult.callID = "tool-call-annotation-result"
+            toolResult.status = "ok"
+            toolResult.resultJson = #"{"temperature":72}"#
+
+            var toolResultEvent = Melix_Worker_V1_ExecuteEvent()
+            toolResultEvent.requestID = request.execution.id.requestID
+            toolResultEvent.executionKind = "generate"
+            toolResultEvent.phase = .executionDecoding
+            toolResultEvent.toolResultDelta = toolResult
+            continuation.yield(toolResultEvent)
 
             var completed = Melix_Worker_V1_Completed()
             completed.finishReason = "stop"

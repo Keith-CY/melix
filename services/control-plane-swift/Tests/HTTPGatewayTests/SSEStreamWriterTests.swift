@@ -606,6 +606,81 @@ struct SSEStreamWriterTests {
         #expect(messagesPayload.contains("\"parser_namespaces\":[\"tools.math\"]"))
     }
 
+    @Test("SSE streams preserve annotation and tool-result payload deltas")
+    func emitsAnnotationAndToolResultPayloadFrames() async throws {
+        let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 456) })
+
+        func payload(for shape: SSEStreamWriter.StreamShape, requestID: String) async throws -> String {
+            let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+                continuation.yield(makeTokenEvent(requestID: requestID, seq: 1, text: "Answer with citation."))
+                continuation.yield(makeAnnotationEvent(
+                    requestID: requestID,
+                    seq: 2,
+                    annotationID: "cite-1",
+                    kind: "citation",
+                    startOffset: 12,
+                    endOffset: 20,
+                    payloadJSON: "{\"url\":\"https://example.test/source\"}"
+                ))
+                continuation.yield(makeToolResultEvent(
+                    requestID: requestID,
+                    seq: 3,
+                    callID: "call-native",
+                    status: "ok",
+                    resultJSON: "{\"temperature\":72}"
+                ))
+                continuation.yield(makeCompletedEvent(
+                    requestID: requestID,
+                    seq: 4,
+                    finishReason: "stop",
+                    assistantText: "Answer with citation."
+                ))
+                continuation.finish()
+            }
+
+            return try await collectChunks(
+                writer.encode(
+                    stream: stream,
+                    requestID: requestID,
+                    modelID: "melix-dev-text",
+                    shape: shape
+                )
+            )
+        }
+
+        let chatPayload = try await payload(for: .chatCompletions, requestID: "chat-annotations")
+        #expect(chatPayload.contains("event: annotation"))
+        #expect(chatPayload.contains("\"object\":\"chat.completion.annotation.delta\""))
+        #expect(chatPayload.contains("\"annotation_id\":\"cite-1\""))
+        #expect(chatPayload.contains("\"kind\":\"citation\""))
+        #expect(chatPayload.contains("\"payload_json\":\"{\\\"url\\\":\\\"https:\\/\\/example.test\\/source\\\"}\""))
+        #expect(chatPayload.contains("event: tool_result"))
+        #expect(chatPayload.contains("\"object\":\"chat.completion.tool_result.delta\""))
+        #expect(chatPayload.contains("\"call_id\":\"call-native\""))
+        #expect(chatPayload.contains("\"result_json\":\"{\\\"temperature\\\":72}\""))
+
+        let completionsPayload = try await payload(for: .completions, requestID: "cmp-annotations")
+        #expect(completionsPayload.contains("event: annotation"))
+        #expect(completionsPayload.contains("\"type\":\"completion.annotation.delta\""))
+        #expect(completionsPayload.contains("event: tool_result"))
+        #expect(completionsPayload.contains("\"type\":\"completion.tool_result.delta\""))
+
+        let responsesPayload = try await payload(for: .responses, requestID: "resp-annotations")
+        #expect(responsesPayload.contains("event: response.annotation.delta"))
+        #expect(responsesPayload.contains("\"type\":\"response.annotation.delta\""))
+        #expect(responsesPayload.contains("event: response.tool_result.delta"))
+        #expect(responsesPayload.contains("\"type\":\"response.tool_result.delta\""))
+
+        let messagesPayload = try await payload(for: .messages, requestID: "msg-annotations")
+        #expect(messagesPayload.contains("event: message.annotation.delta"))
+        #expect(messagesPayload.contains("\"type\":\"message.annotation.delta\""))
+        #expect(messagesPayload.contains("event: message.tool_result.delta"))
+        #expect(messagesPayload.contains("\"type\":\"message.tool_result.delta\""))
+
+        #expect(chatPayload.contains("\"content\":\"{\\\"url\\\":") == false)
+        #expect(chatPayload.contains("\"content\":\"{\\\"temperature\\\":72}\"") == false)
+    }
+
     @Test("tool frames include MCP source identifiers when present")
     func toolFramesIncludeMCPSourceIdentifiersWhenPresent() async throws {
         let writer = SSEStreamWriter(now: { Date(timeIntervalSince1970: 789) })

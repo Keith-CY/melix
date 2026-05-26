@@ -516,6 +516,8 @@ Workers preserve raw generation text separately from public content. Stream asse
 - `TokenDelta` for public assistant content
 - `ReasoningDelta` for hidden reasoning stream material
 - `ToolCallDelta` for parsed tool-call fragments
+- `AnnotationDelta` for annotation payloads tied to visible text spans
+- `ToolResultDelta` for tool execution results tied to prior tool calls
 
 The worker also emits a request-local token route receipt in completed parser
 metrics. The receipt records `router_id`, `router_version`, `token_id`,
@@ -531,6 +533,14 @@ back to raw-text span routing but must mark the fallback in the receipt. When a
 single runtime fragment carries multiple token identifiers and parses into
 multiple channel deltas, the route receipt must attribute those identifiers to
 the parsed spans before visible text consumes any remaining tokens.
+
+Annotation and tool-result payloads are structured side channels. The worker
+must emit them as `AnnotationDelta` and `ToolResultDelta` rather than appending
+their JSON payloads to visible assistant text. The HTTP gateway may bridge them
+to endpoint-specific SSE frames, and the control plane may use tool-result
+`call_id` values to hydrate session graph metadata, but normalized stream and
+non-stream assistant text remains derived from public token deltas and completed
+assistant text only.
 
 Malformed or truncated tool fragments are recoverable parser observations. They should increment parser metrics and be skipped rather than fail the request. Display cleanup is not structural parsing; cleanup must not collapse meaningful leading or trailing content whitespace and must not re-emit generation-prefix control tokens.
 

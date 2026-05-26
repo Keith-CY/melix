@@ -78,6 +78,46 @@ func makeToolCallEvent(
     return event
 }
 
+func makeAnnotationEvent(
+    requestID: String,
+    seq: UInt64,
+    annotationID: String,
+    kind: String,
+    startOffset: UInt32,
+    endOffset: UInt32,
+    payloadJSON: String
+) -> Melix_Worker_V1_ExecuteEvent {
+    var event = Melix_Worker_V1_ExecuteEvent()
+    event.requestID = requestID
+    event.executionKind = "generate"
+    event.seq = seq
+    event.annotationDelta = Melix_Worker_V1_AnnotationDelta()
+    event.annotationDelta.annotationID = annotationID
+    event.annotationDelta.kind = kind
+    event.annotationDelta.startOffset = startOffset
+    event.annotationDelta.endOffset = endOffset
+    event.annotationDelta.payloadJson = payloadJSON
+    return event
+}
+
+func makeToolResultEvent(
+    requestID: String,
+    seq: UInt64,
+    callID: String,
+    status: String,
+    resultJSON: String
+) -> Melix_Worker_V1_ExecuteEvent {
+    var event = Melix_Worker_V1_ExecuteEvent()
+    event.requestID = requestID
+    event.executionKind = "generate"
+    event.seq = seq
+    event.toolResultDelta = Melix_Worker_V1_ToolResultDelta()
+    event.toolResultDelta.callID = callID
+    event.toolResultDelta.status = status
+    event.toolResultDelta.resultJson = resultJSON
+    return event
+}
+
 func makeCompletedEvent(
     requestID: String,
     seq: UInt64,

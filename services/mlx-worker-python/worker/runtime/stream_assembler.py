@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import codecs
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 import json
 import logging
@@ -125,6 +125,10 @@ class ChannelAssemblyState:
     max_pending_marker_tail_chars: int = 0
     terminal_marker_tail_flush_count: int = 0
     orphan_tool_event_flush_count: int = 0
+    annotation_payload_resolved_count: int = 0
+    annotation_payload_missing_count: int = 0
+    tool_result_payload_buffered_count: int = 0
+    _pending_annotation_ids: set[str] = field(default_factory=set, init=False, repr=False)
 
     def record_channel_source(self, source: str) -> None:
         if source == "tool_call_tag":
@@ -164,6 +168,50 @@ class ChannelAssemblyState:
         if self.open_tool_event_count:
             self.orphan_tool_event_flush_count += self.open_tool_event_count
         self.open_tool_event_count = 0
+
+    def open_annotation_span(
+        self,
+        annotation_id: str,
+        *,
+        start_offset: int,
+        end_offset: int,
+    ) -> bool:
+        _ = start_offset
+        _ = end_offset
+        normalized_id = annotation_id.strip()
+        if not normalized_id or normalized_id in self._pending_annotation_ids:
+            return False
+        self._pending_annotation_ids.add(normalized_id)
+        self.pending_annotated_segment_count = len(self._pending_annotation_ids)
+        return True
+
+    def resolve_annotation_payload(self, annotation_id: str, *, payload_json: str) -> bool:
+        _ = payload_json
+        normalized_id = annotation_id.strip()
+        if normalized_id and normalized_id in self._pending_annotation_ids:
+            self._pending_annotation_ids.remove(normalized_id)
+            self.pending_annotated_segment_count = len(self._pending_annotation_ids)
+            self.annotation_payload_resolved_count += 1
+            return True
+        self.annotation_payload_missing_count += 1
+        return False
+
+    def buffer_tool_result_payload(self) -> None:
+        self.tool_result_payload_buffered_count += 1
+
+    def metric_fields(self) -> dict[str, int | str]:
+        return {
+            "pending_marker_tail_chars": len(self.pending_marker_tail),
+            "max_pending_marker_tail_chars": self.max_pending_marker_tail_chars,
+            "terminal_marker_tail_flush_count": self.terminal_marker_tail_flush_count,
+            "pending_annotated_segment_count": self.pending_annotated_segment_count,
+            "open_tool_event_count": self.open_tool_event_count,
+            "orphan_tool_event_flush_count": self.orphan_tool_event_flush_count,
+            "channel_state_preferred_source": self.preferred_channel_source,
+            "annotation_payload_resolved_count": self.annotation_payload_resolved_count,
+            "annotation_payload_missing_count": self.annotation_payload_missing_count,
+            "tool_result_payload_buffered_count": self.tool_result_payload_buffered_count,
+        }
 
 
 class RequestStreamAssembler:
@@ -322,6 +370,9 @@ class RequestStreamAssembler:
             "open_tool_event_count": 0,
             "orphan_tool_event_flush_count": 0,
             "channel_state_preferred_source": "",
+            "annotation_payload_resolved_count": 0,
+            "annotation_payload_missing_count": 0,
+            "tool_result_payload_buffered_count": 0,
         }
 
     def accept(self, fragment: StreamFragment) -> list[AssemblyDelta]:
@@ -914,6 +965,15 @@ class RequestStreamAssembler:
         if not preferred_source and self._assistant_parts:
             preferred_source = "raw_text"
         self._metrics["channel_state_preferred_source"] = preferred_source
+        self._metrics["annotation_payload_resolved_count"] = (
+            self.channel_state.annotation_payload_resolved_count
+        )
+        self._metrics["annotation_payload_missing_count"] = (
+            self.channel_state.annotation_payload_missing_count
+        )
+        self._metrics["tool_result_payload_buffered_count"] = (
+            self.channel_state.tool_result_payload_buffered_count
+        )
 
     def _content_delta(self, content: str) -> AssemblyDelta:
         if "<" in content:

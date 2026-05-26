@@ -14,8 +14,10 @@ from worker.runtime.mlx_text_runtime import (
     AutoMLXBackend,
     MLXTextRuntime,
     NativeMTPBatchTimings,
+    RuntimeAnnotationEvent,
     RuntimeTokenEvent,
     RuntimeToolCallEvent,
+    RuntimeToolResultEvent,
 )
 from worker.runtime.multimodal_attention_policy import (
     MultimodalPrefillAttentionBudgetExceeded,
@@ -881,6 +883,91 @@ def test_generate_streams_token_and_terminal_completion() -> None:
     )
     assert native_tool_receipt["route_tracking_enabled"] is True
     assert native_tool_receipt["tool_choice_policy"] == "auto"
+
+    class RuntimeAnnotationToolResultBackend:
+        runtime_name = "fake-mlx"
+
+        def load_model(self, model_spec):
+            return {"model_id": model_spec.model_id}
+
+        def estimate_resident_bytes(self, model_spec):
+            _ = model_spec
+            return 2048
+
+        def generate_tokens(self, loaded_model, prompt, sampling, cancel_event):
+            _ = loaded_model
+            _ = prompt
+            _ = sampling
+            _ = cancel_event
+            yield RuntimeTokenEvent(text="Answer with citation.", prompt_tokens=4, completion_tokens=1)
+            yield RuntimeAnnotationEvent(
+                annotation_id="cite-1",
+                kind="citation",
+                start_offset=12,
+                end_offset=20,
+                payload_json='{"url":"https://example.test/source"}',
+            )
+            yield RuntimeToolResultEvent(
+                call_id="call-native",
+                status="ok",
+                result_json='{"temperature":72}',
+            )
+            yield RuntimeTokenEvent(text="", prompt_tokens=4, completion_tokens=1, finish_reason="stop")
+
+    annotation_registry = WorkerRegistry(
+        runtime=MLXTextRuntime(backend=RuntimeAnnotationToolResultBackend()),
+        model_catalog=WorkerModelCatalog(),
+    )
+    annotation_runtime_service = WorkerRuntimeService(annotation_registry)
+    annotation_inference_service = WorkerInferenceService(annotation_registry)
+    annotation_handle = annotation_runtime_service.LoadModel(
+        runtime_pb2.LoadModelRequest(model=WorkerModelCatalog.dev_text_model()),
+        context=None,
+    ).model_handle
+    annotation_request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-annotation-tool-result-event"),
+            model_handle=annotation_handle,
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="Answer with a citation and tool result.")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+    annotation_events = list(
+        annotation_inference_service.Generate(annotation_request, context=None)
+    )
+    annotation_delta = next(
+        event.annotation_delta
+        for event in annotation_events
+        if event.HasField("annotation_delta")
+    )
+    tool_result_delta = next(
+        event.tool_result_delta
+        for event in annotation_events
+        if event.HasField("tool_result_delta")
+    )
+    annotation_completed = next(
+        event.completed for event in annotation_events if event.HasField("completed")
+    )
+
+    assert annotation_delta.annotation_id == "cite-1"
+    assert annotation_delta.kind == "citation"
+    assert annotation_delta.start_offset == 12
+    assert annotation_delta.end_offset == 20
+    assert annotation_delta.payload_json == '{"url":"https://example.test/source"}'
+    assert tool_result_delta.call_id == "call-native"
+    assert tool_result_delta.status == "ok"
+    assert tool_result_delta.result_json == '{"temperature":72}'
+    assert annotation_completed.assistant_text == "Answer with citation."
+    assert "https://example.test/source" not in annotation_completed.assistant_text
+    assert '{"temperature":72}' not in annotation_completed.assistant_text
+    assert annotation_completed.parser_metrics["annotation_payload_resolved_count"] == "1"
+    assert annotation_completed.parser_metrics["tool_result_payload_buffered_count"] == "1"
 
     metadata_registry = WorkerRegistry(
         runtime=MLXTextRuntime(backend=MetadataStreamingBackend()),
