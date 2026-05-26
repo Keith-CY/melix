@@ -173,6 +173,56 @@ def _token_count_routing_probe() -> None:
     )
     terminal_tail_pending = terminal_tail_assembler.channel_state.pending_marker_tail
     terminal_tail_completed = terminal_tail_assembler.completed()
+    lifecycle_state = stream_assembler.ChannelAssemblyState()
+    lifecycle_state.hold_marker_tail("<tool")
+    lifecycle_state.clear_marker_tail()
+    lifecycle_state.record_reasoning_source()
+    lifecycle_state.hold_marker_tail("<|tool_")
+    lifecycle_state.flush_terminal_marker_tail()
+    lifecycle_state.open_tool_event()
+    lifecycle_state.flush_orphan_tool_events()
+    lifecycle_state.open_tool_event()
+    lifecycle_state.close_tool_event()
+    stale_tail_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-stale-tail-clear",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    stale_tail_assembler.channel_state.hold_marker_tail("<tool")
+    stale_tail_deltas = stale_tail_assembler.accept(StreamFragment(raw_text="visible <x"))
+    reasoning_tail_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-reasoning-tail-clear",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+    )
+    reasoning_tail_assembler.channel_state.hold_marker_tail("<tool")
+    reasoning_tail_deltas = reasoning_tail_assembler.accept(
+        StreamFragment(raw_text="<think>hidden</think>")
+    )
+    reasoning_tail_completed = reasoning_tail_assembler.completed()
+    pipe_tail_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-pipe-tail-clear",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+    pipe_tail_assembler.channel_state.hold_marker_tail("<|tool_")
+    pipe_tail_deltas = pipe_tail_assembler.accept(
+        StreamFragment(raw_text="<|channel>final<channel|>visible")
+    )
+    pipe_tail_completed = pipe_tail_assembler.completed()
+    hidden_pipe_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-hidden-pipe-source",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+    hidden_pipe_deltas = hidden_pipe_assembler.accept(
+        StreamFragment(raw_text="<|channel>analysis<channel|>hidden")
+    )
+    hidden_pipe_completed = hidden_pipe_assembler.completed()
 
     assert [
         (
@@ -251,6 +301,28 @@ def _token_count_routing_probe() -> None:
     assert terminal_tail_completed.metrics["pending_marker_tail_chars"] == 0
     assert terminal_tail_completed.metrics["max_pending_marker_tail_chars"] == len("<|tool_")
     assert terminal_tail_completed.metrics["tool_call_markup_leak_count"] == 0
+    assert lifecycle_state.pending_marker_tail == ""
+    assert lifecycle_state.max_pending_marker_tail_chars == len("<|tool_")
+    assert lifecycle_state.terminal_marker_tail_flush_count == 1
+    assert lifecycle_state.orphan_tool_event_flush_count == 1
+    assert lifecycle_state.open_tool_event_count == 0
+    assert lifecycle_state.preferred_channel_source == "tool_call_tag"
+    assert [delta.content_text for delta in stale_tail_deltas if delta.content_text] == [
+        "visible <x"
+    ]
+    assert stale_tail_assembler.channel_state.pending_marker_tail == ""
+    assert [delta.reasoning_text for delta in reasoning_tail_deltas if delta.reasoning_text] == [
+        "hidden"
+    ]
+    assert reasoning_tail_completed.metrics["channel_state_preferred_source"] == "reasoning_tag"
+    assert [delta.content_text for delta in pipe_tail_deltas if delta.content_text] == [
+        "visible"
+    ]
+    assert pipe_tail_completed.metrics["pending_marker_tail_chars"] == 0
+    assert pipe_tail_completed.metrics["channel_state_preferred_source"] == "raw_text"
+    assert hidden_pipe_deltas == []
+    assert hidden_pipe_completed.reasoning_text == "hidden"
+    assert hidden_pipe_completed.metrics["channel_state_preferred_source"] == "reasoning_tag"
 
 
 def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:
