@@ -935,6 +935,8 @@ class RequestStreamAssembler:
         if not name:
             self._metrics["malformed_tool_fragment_count"] += 1
             return None
+        # A named tool object without arguments is still incomplete; suppress it
+        # so callers can use partial_tool_candidate_count for healing decisions.
         arguments = payload.get("arguments", _MISSING_TOOL_ARGUMENTS)
         if arguments is _MISSING_TOOL_ARGUMENTS:
             self._metrics["partial_tool_candidate_count"] += 1
