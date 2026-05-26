@@ -2949,6 +2949,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     swift_verification_tests = (
         "jsonV1WrapsCommandResultsInAStableEnvelope",
         "jsonV1ErrorEnvelopesAreMachineReadable",
+        "jsonMetricPlaceholdersSanitizeScalarNamesWithoutChangingTokenShape",
         "jsonMetricPatchingRejectsMissingPlaceholders",
         "jsonMetricPatchingPreservesUserArtifactStringsThatLookLikeTheOldSentinel",
     )

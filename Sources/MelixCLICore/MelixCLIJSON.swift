@@ -9,6 +9,7 @@ func elapsedMilliseconds(since start: DispatchTime) -> Double {
 
 enum MelixCLIJSONMetricPatch {
     private static let metricLiteralLocale = Locale(identifier: "en_US_POSIX")
+    private static let metricNameAlphanumerics = CharacterSet.alphanumerics
 
     struct Placeholder {
         let token: String
@@ -23,11 +24,14 @@ enum MelixCLIJSONMetricPatch {
     }
 
     static func makePlaceholder(metricName: String) -> Placeholder {
-        let safeMetricName = metricName
-            .map { character in
-                character.isLetter || character.isNumber ? character : "_"
-            }
-        return Placeholder(token: "__MELIX_METRIC_\(String(safeMetricName))_\(UUID().uuidString)__")
+        var safeMetricName = String()
+        safeMetricName.reserveCapacity(metricName.count)
+        for scalar in metricName.unicodeScalars {
+            safeMetricName.unicodeScalars.append(
+                metricNameAlphanumerics.contains(scalar) ? scalar : "_"
+            )
+        }
+        return Placeholder(token: "__MELIX_METRIC_\(safeMetricName)_\(UUID().uuidString)__")
     }
 
     static func literal(for value: Double) -> String {
