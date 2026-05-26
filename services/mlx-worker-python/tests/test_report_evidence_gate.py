@@ -304,6 +304,51 @@ def test_report_evidence_gate_target_field_preserves_stringified_presence() -> N
     )
 
 
+def test_report_evidence_gate_probe_phase_tuple_rules_reuse_normalized_set() -> None:
+    report_evidence_gate_module._string_frozenset_from_tuple.cache_clear()
+    rule = {"probe_phases": ("runtime_prepare", "model_load", "decode")}
+
+    assert report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[],
+        targets=[],
+        metrics=[],
+        probe_phases={"runtime_prepare", "model_load", "decode"},
+    )
+    assert not report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[],
+        targets=[],
+        metrics=[],
+        probe_phases={"runtime_prepare", "decode"},
+    )
+
+    cache_info = report_evidence_gate_module._string_frozenset_from_tuple.cache_info()
+    assert cache_info.hits >= 1
+    assert cache_info.misses == 1
+
+
+def test_report_evidence_gate_probe_phase_list_rules_reflect_mutation() -> None:
+    probe_phases = ["runtime_prepare", "model_load", "decode", "embedding"]
+    rule = {"probe_phases": probe_phases}
+
+    assert not report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[],
+        targets=[],
+        metrics=[],
+        probe_phases={"runtime_prepare", "model_load", "decode"},
+    )
+    probe_phases.pop()
+    assert report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[],
+        targets=[],
+        metrics=[],
+        probe_phases={"runtime_prepare", "model_load", "decode"},
+    )
+
+
 def test_report_evidence_gate_run_kind_list_rules_reflect_mutation() -> None:
     run_kinds = ["evaluation"]
     rule = {"run_kinds": run_kinds}

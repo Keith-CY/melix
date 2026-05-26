@@ -313,7 +313,7 @@ def _rule_matches_report(
                         return True
                 elif str(value).strip():
                     return True
-    required_probe_phases = set(str(item) for item in rule.get("probe_phases", ()))
+    required_probe_phases = _string_frozenset(rule.get("probe_phases", ()))
     return bool(required_probe_phases and required_probe_phases.issubset(probe_phases))
 
 
