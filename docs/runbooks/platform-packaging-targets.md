@@ -77,6 +77,21 @@ Target differentiation is expressed through `packaging_target_id`, `packaging_ki
 - keeps the same logical Melix identity while making the bundle-specific distribution and update
   strategy explicit
 
+## Manual App Archive From `main`
+
+The GitHub Actions workflow `package-self-contained-app` can be run manually when an operator
+needs a fresh downloadable `Melix.app` archive from the repository `main` branch:
+
+1. Open **Actions** > **package-self-contained-app**.
+2. Select **Run workflow**.
+3. Keep `source_ref` set to `main` unless intentionally packaging another ref.
+4. Wait for the `package-app` job to complete on the macOS runner.
+5. Download the archive from the run summary under **Download packaged Melix.app** or from the
+   workflow run's **Artifacts** section.
+
+The manual archive uses the same self-contained app-bundle packaging path as push and tag runs.
+GitHub authentication may be required to download workflow artifacts.
+
 ## Deterministic Validation
 
 Run the repository-owned smoke command to verify the shared packaging target matrix across all

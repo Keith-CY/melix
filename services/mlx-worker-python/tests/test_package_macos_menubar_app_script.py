@@ -24,6 +24,17 @@ def find_named_workflow_step(workflow: str, name: str) -> re.Match[str]:
     return match
 
 
+def find_workflow_step(workflow: str, name: str) -> str:
+    match = re.search(
+        rf"^[ \t]*-[ \t]+name:[ \t]+{re.escape(name)}[ \t]*\n"
+        r"(?P<body>.*?)(?=^[ \t]*-[ \t]+(?:name:|uses:)|\Z)",
+        workflow,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    assert match is not None, f"Workflow step not found: {name}"
+    return match.group(0)
+
+
 def find_run_workflow_step(workflow: str, name: str, command: str) -> re.Match[str]:
     match = re.search(
         rf"^[ \t]*-[ \t]+name:[ \t]+{re.escape(name)}[ \t]*\n"
@@ -314,6 +325,42 @@ def test_package_workflow_wraps_long_packaging_steps_with_ci_progress() -> None:
 
     for label in progress_labels:
         assert f'bash scripts/ci_progress.sh "{label}"' in workflow
+
+
+def test_package_workflow_manual_dispatch_defaults_to_main_checkout() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert re.search(r"^[ \t]*workflow_dispatch:[ \t]*$", workflow, flags=re.MULTILINE)
+    assert "source_ref:" in workflow
+    assert 'default: "main"' in workflow
+    assert "type: string" in workflow
+
+    manual_checkout = find_workflow_step(workflow, "Checkout manual package source")
+    assert "if: github.event_name == 'workflow_dispatch'" in manual_checkout
+    assert "uses: actions/checkout@v6" in manual_checkout
+    assert "ref: ${{ inputs.source_ref }}" in manual_checkout
+
+    event_checkout = find_workflow_step(workflow, "Checkout event source")
+    assert "if: github.event_name != 'workflow_dispatch'" in event_checkout
+    assert "uses: actions/checkout@v6" in event_checkout
+    assert "ref:" not in event_checkout
+
+
+def test_package_workflow_publishes_download_summary_for_uploaded_app_artifact() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert re.search(r"^[ \t]*permissions:[ \t]*$", workflow, flags=re.MULTILINE)
+    assert re.search(r"^[ \t]+actions:[ \t]+read[ \t]*$", workflow, flags=re.MULTILINE)
+
+    summary_step = find_workflow_step(workflow, "Publish app artifact download summary")
+    assert "github.event_name != 'pull_request' && success()" in summary_step
+    assert "github.rest.actions.listWorkflowRunArtifacts" in summary_step
+    assert "process.env.GITHUB_STEP_SUMMARY" in summary_step
+    assert "Download packaged Melix.app" in summary_step
+    assert "Artifact:" in summary_step
+    assert "Download:" in summary_step
+    assert "Workflow run:" in summary_step
+    assert "artifacts/${artifact.id}" in summary_step
 
 
 def test_main_resolves_default_build_outputs_and_prints_app_path(
