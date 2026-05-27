@@ -8,6 +8,7 @@ from worker.runtime.audio_runtime_protocols import (
     SpeechStreamFrame,
 )
 from worker.runtime.deterministic_delay import sleep_if_configured
+from worker.runtime.deterministic_probe_mixin import DeterministicProbeMixin
 from worker.runtime.wav_helpers import (
     audio_to_pcm_chunks,
     progressive_wav_header,
@@ -31,7 +32,7 @@ class DeterministicSpeechResult:
     format: str
 
 
-class DeterministicSpeechRuntime:
+class DeterministicSpeechRuntime(DeterministicProbeMixin[SpeechProbeSnapshot]):
     runtime_name = "deterministic-speech"
 
     def __init__(self) -> None:
@@ -119,6 +120,3 @@ class DeterministicSpeechRuntime:
                 audio_chunk_count=chunk_count,
             ),
         )
-
-    def last_probe_snapshot(self) -> SpeechProbeSnapshot:
-        return self._last_probe

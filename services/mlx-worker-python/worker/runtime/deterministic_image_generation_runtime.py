@@ -10,6 +10,7 @@ from urllib.parse import unquote, urlparse
 from packages.protocol.python.worker.v1 import common_pb2, inference_pb2
 
 from worker.runtime.deterministic_delay import sleep_if_configured
+from worker.runtime.deterministic_probe_mixin import DeterministicProbeMixin
 
 
 _IMAGE_MIME_TYPES = {
@@ -38,7 +39,7 @@ class DeterministicImageGenerationResult:
     progress: common_pb2.ImageJobProgress
 
 
-class DeterministicImageGenerationRuntime:
+class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGenerationProbeSnapshot]):
     runtime_name = "deterministic-image"
 
     def __init__(self) -> None:
@@ -126,9 +127,6 @@ class DeterministicImageGenerationRuntime:
                 total_steps=image_count,
             ),
         )
-
-    def last_probe_snapshot(self) -> ImageGenerationProbeSnapshot:
-        return self._last_probe
 
     def edit_image(
         self,
@@ -371,12 +369,10 @@ class DeterministicImageGenerationRuntime:
         uri: str,
         label: str,
     ) -> tuple[bytes, str]:
-        if inline_bytes:
-            return inline_bytes, "png"
-        if uri:
-            path = cls._path_from_uri(uri, label=label)
-            return path.read_bytes(), cls._format_from_path(path)
-        raise ValueError(f"No {label} provided.")
+        result, fmt = cls._resolve_optional_edit_input(inline_bytes=inline_bytes, uri=uri, label=label)
+        if result is None:
+            raise ValueError(f"No {label} provided.")
+        return result, fmt
 
     @classmethod
     def _resolve_optional_edit_input(

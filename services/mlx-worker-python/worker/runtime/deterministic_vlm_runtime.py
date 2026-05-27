@@ -16,6 +16,7 @@ from worker.runtime.multimodal_attention_policy import (
     resolve_configured_attention_prefill_policy,
 )
 from worker.runtime.deterministic_delay import sleep_if_configured
+from worker.runtime.deterministic_probe_mixin import DeterministicProbeMixin
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent, RuntimeToolCallEvent
 from worker.runtime.multimodal_fast_paths import MultimodalFastPathController, fast_path_probe_signature
 from worker.runtime.multimodal_position_receipts import build_position_metadata_receipt
@@ -129,7 +130,7 @@ class PreparedVisionPrompt:
     attention_policy: AttentionPrefillPolicyDecision | None
 
 
-class DeterministicVLMRuntime:
+class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
     runtime_name = "deterministic-vlm"
 
     def __init__(
@@ -459,9 +460,6 @@ class DeterministicVLMRuntime:
                 temp_media_cleanup_latency_ms=cleanup_report.cleanup_latency_ms,
                 temp_media_cleanup_failure_count=cleanup_report.cleanup_failure_count,
             )
-
-    def last_probe_snapshot(self) -> VisionProbeSnapshot:
-        return self._last_probe
 
     def _ensure_fast_path_probe(
         self,

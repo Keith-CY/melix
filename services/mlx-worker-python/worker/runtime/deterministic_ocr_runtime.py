@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from threading import Event
 
 from worker.runtime.deterministic_delay import sleep_if_configured
+from worker.runtime.deterministic_probe_mixin import DeterministicProbeMixin
 from worker.runtime.mlx_text_runtime import RuntimeTokenEvent
 from worker.runtime.multimodal_preprocessing import (
     MultimodalPreprocessError,
@@ -22,7 +23,7 @@ class VisionProbeSnapshot:
     first_token_latency_ms: float
 
 
-class DeterministicOCRRuntime:
+class DeterministicOCRRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
     runtime_name = "deterministic-ocr"
 
     def __init__(self) -> None:
@@ -105,9 +106,6 @@ class DeterministicOCRRuntime:
             completion_tokens=max(1, _whitespace_token_count(output_text)),
             finish_reason="stop_sequence" if output_text != extracted_text else "stop",
         )
-
-    def last_probe_snapshot(self) -> VisionProbeSnapshot:
-        return self._last_probe
 
     def _effective_prompt(
         self,
