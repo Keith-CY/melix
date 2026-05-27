@@ -27,7 +27,7 @@ def find_named_workflow_step(workflow: str, name: str) -> re.Match[str]:
 def find_workflow_step(workflow: str, name: str) -> str:
     match = re.search(
         rf"^[ \t]*-[ \t]+name:[ \t]+{re.escape(name)}[ \t]*\n"
-        r"(?P<body>.*?)(?=^[ \t]*-[ \t]+(?:name:|uses:)|\Z)",
+        r"(?P<body>.*?)(?=^[ \t]*-[ \t]+|\Z)",
         workflow,
         flags=re.MULTILINE | re.DOTALL,
     )
@@ -325,6 +325,26 @@ def test_package_workflow_wraps_long_packaging_steps_with_ci_progress() -> None:
 
     for label in progress_labels:
         assert f'bash scripts/ci_progress.sh "{label}"' in workflow
+
+
+def test_find_workflow_step_stops_before_any_next_yaml_list_item() -> None:
+    workflow = """
+jobs:
+  package-app:
+    steps:
+      - name: Publish app artifact download summary
+        if: github.event_name != 'pull_request' && success()
+        uses: actions/github-script@v9
+      - run: echo should-not-be-included
+      - id: next-step
+        run: echo also-should-not-be-included
+"""
+
+    step = find_workflow_step(workflow, "Publish app artifact download summary")
+
+    assert "uses: actions/github-script@v9" in step
+    assert "should-not-be-included" not in step
+    assert "next-step" not in step
 
 
 def test_package_workflow_manual_dispatch_defaults_to_main_checkout() -> None:
