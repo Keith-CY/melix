@@ -20,7 +20,9 @@ The existing `package-self-contained-app` workflow remains the single packaging
 entry point. `workflow_dispatch` gets an explicit source-ref input that defaults
 to `main`, so a manual run packages `main` unless the operator intentionally
 overrides it. Manual runs use a dedicated checkout step for the selected source
-ref; push, pull request, and tag runs keep the default event checkout behavior.
+ref and pass that ref into shell steps through environment variables before
+resolving branch or tag build metadata. Push, pull request, and tag runs keep the
+default event checkout behavior.
 
 After uploading the app archive, the workflow writes a GitHub Actions step
 summary with the artifact name, direct artifact URL when available, and workflow

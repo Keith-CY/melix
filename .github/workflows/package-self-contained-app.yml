@@ -41,7 +41,6 @@ on:
 permissions:
   actions: read
   contents: read
-  issues: write
   pull-requests: write
 
 concurrency:
@@ -122,13 +121,25 @@ jobs:
 
       - name: Compute build metadata
         id: compute-build-metadata
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
         run: |
           ref_type="${GITHUB_REF_TYPE:-branch}"
           ref_name="${GITHUB_REF_NAME:-}"
           sha="${GITHUB_SHA:-}"
           if [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ]; then
-            ref_type="branch"
-            ref_name="${{ inputs.source_ref }}"
+            ref_name="$SOURCE_REF"
+            source_ref_name="${SOURCE_REF#refs/heads/}"
+            source_ref_name="${source_ref_name#refs/tags/}"
+            if git show-ref --verify --quiet "refs/tags/${source_ref_name}"; then
+              ref_type="tag"
+              ref_name="$source_ref_name"
+            elif git show-ref --verify --quiet "refs/heads/${source_ref_name}" || git show-ref --verify --quiet "refs/remotes/origin/${source_ref_name}"; then
+              ref_type="branch"
+              ref_name="$source_ref_name"
+            else
+              ref_type="branch"
+            fi
             sha="$(git rev-parse HEAD)"
           fi
 

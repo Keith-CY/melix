@@ -366,11 +366,31 @@ def test_package_workflow_manual_dispatch_defaults_to_main_checkout() -> None:
     assert "ref:" not in event_checkout
 
 
-def test_package_workflow_publishes_download_summary_for_uploaded_app_artifact() -> None:
+def test_package_workflow_keeps_permissions_minimal_for_artifact_summary() -> None:
     workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
 
     assert re.search(r"^[ \t]*permissions:[ \t]*$", workflow, flags=re.MULTILINE)
     assert re.search(r"^[ \t]+actions:[ \t]+read[ \t]*$", workflow, flags=re.MULTILINE)
+    assert re.search(r"^[ \t]+contents:[ \t]+read[ \t]*$", workflow, flags=re.MULTILINE)
+    assert re.search(r"^[ \t]+pull-requests:[ \t]+write[ \t]*$", workflow, flags=re.MULTILINE)
+    assert not re.search(r"^[ \t]+issues:[ \t]+write[ \t]*$", workflow, flags=re.MULTILINE)
+
+
+def test_package_workflow_passes_manual_source_ref_through_env_before_shell_use() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    compute_step = find_workflow_step(workflow, "Compute build metadata")
+    assert "env:" in compute_step
+    assert "SOURCE_REF: ${{ inputs.source_ref }}" in compute_step
+    run_body = compute_step.split("run: |", maxsplit=1)[1]
+    assert "${{ inputs.source_ref }}" not in run_body
+    assert 'ref_name="$SOURCE_REF"' in run_body
+    assert 'refs/tags/${source_ref_name}' in run_body
+    assert 'ref_type="tag"' in run_body
+
+
+def test_package_workflow_publishes_download_summary_for_uploaded_app_artifact() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
 
     summary_step = find_workflow_step(workflow, "Publish app artifact download summary")
     assert "github.event_name != 'pull_request' && success()" in summary_step
