@@ -2,6 +2,12 @@ name: package-self-contained-app
 
 on:
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Git ref to package. Keep the default to build the latest main branch app archive."
+        required: true
+        default: "main"
+        type: string
   pull_request:
     types:
       - opened
@@ -33,6 +39,7 @@ on:
       - "services/mlx-worker-python/**"
 
 permissions:
+  actions: read
   contents: read
   pull-requests: write
 
@@ -48,7 +55,15 @@ jobs:
       artifact_name: ${{ steps.compute-build-metadata.outputs.artifact_name }}
 
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout manual package source
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref }}
+
+      - name: Checkout event source
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/checkout@v6
 
       - uses: actions/setup-python@v6
         with:
@@ -106,16 +121,37 @@ jobs:
 
       - name: Compute build metadata
         id: compute-build-metadata
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
         run: |
+          ref_type="${GITHUB_REF_TYPE:-branch}"
+          ref_name="${GITHUB_REF_NAME:-}"
+          sha="${GITHUB_SHA:-}"
+          if [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ]; then
+            ref_name="$SOURCE_REF"
+            source_ref_name="${SOURCE_REF#refs/heads/}"
+            source_ref_name="${source_ref_name#refs/tags/}"
+            if git show-ref --verify --quiet "refs/tags/${source_ref_name}"; then
+              ref_type="tag"
+              ref_name="$source_ref_name"
+            elif git show-ref --verify --quiet "refs/heads/${source_ref_name}" || git show-ref --verify --quiet "refs/remotes/origin/${source_ref_name}"; then
+              ref_type="branch"
+              ref_name="$source_ref_name"
+            else
+              ref_type="branch"
+            fi
+            sha="$(git rev-parse HEAD)"
+          fi
+
           bash scripts/ci_progress.sh "Package app build metadata" \
             env PYTHONPATH="$GITHUB_WORKSPACE:$GITHUB_WORKSPACE/services/mlx-worker-python" \
             UV_CACHE_DIR="$GITHUB_WORKSPACE/.uv-cache" \
             uv run --project services/mlx-worker-python \
             python scripts/compute_build_metadata.py \
             --repo-root "$GITHUB_WORKSPACE" \
-            --ref-type "${GITHUB_REF_TYPE:-branch}" \
-            --ref-name "${GITHUB_REF_NAME:-}" \
-            --sha "${GITHUB_SHA:-}" \
+            --ref-type "$ref_type" \
+            --ref-name "$ref_name" \
+            --sha "$sha" \
             --github-output "$GITHUB_OUTPUT" \
             --json
 
@@ -143,6 +179,44 @@ jobs:
           name: ${{ steps.compute-build-metadata.outputs.artifact_name }}
           path: ${{ runner.temp }}/${{ steps.compute-build-metadata.outputs.artifact_name }}.zip
           if-no-files-found: error
+
+      - name: Publish app artifact download summary
+        if: github.event_name != 'pull_request' && success()
+        uses: actions/github-script@v9
+        env:
+          ARTIFACT_NAME: ${{ steps.compute-build-metadata.outputs.artifact_name }}
+        with:
+          script: |
+            const fs = require('fs');
+            const artifactName = process.env.ARTIFACT_NAME || 'melix-app';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const { owner, repo } = context.repo;
+            const artifactResponse = await github.rest.actions.listWorkflowRunArtifacts({
+              owner,
+              repo,
+              run_id: context.runId,
+              per_page: 100,
+            });
+            const artifact = artifactResponse.data.artifacts.find((entry) => entry.name === artifactName);
+            const artifactUrl = artifact
+              ? `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}/artifacts/${artifact.id}`
+              : `${runUrl}#artifacts`;
+            const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+            if (!summaryPath) {
+              core.warning('GITHUB_STEP_SUMMARY is not set; skipping artifact summary.');
+            } else {
+              const body = [
+                '## Download packaged Melix.app',
+                '',
+                `- Artifact: **${artifactName}.zip**`,
+                `- Download: ${artifactUrl}`,
+                `- Workflow run: ${runUrl}`,
+                '',
+                '> GitHub authentication may be required to download workflow artifacts.',
+                '',
+              ].join('\n');
+              fs.appendFileSync(summaryPath, body, 'utf8');
+            }
 
       - name: Update PR artifact comment
         if: github.event_name == 'pull_request' && success()
