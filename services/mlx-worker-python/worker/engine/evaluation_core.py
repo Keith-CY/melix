@@ -1876,11 +1876,24 @@ class EvaluationCore:
         sorted_values = sorted(values)
         value_count = len(sorted_values)
         round_ms = cls._round_ms
-        ordered_percentile = cls._ordered_percentile
+        if value_count == 1:
+            p50 = p95 = sorted_values[0]
+        else:
+            p50_lower, p50_remainder = divmod(value_count - 1, 2)
+            if p50_remainder:
+                p50 = (sorted_values[p50_lower] + sorted_values[p50_lower + 1]) * 0.5
+            else:
+                p50 = sorted_values[p50_lower]
+            p95_index = (value_count - 1) * 0.95
+            p95_lower = int(p95_index)
+            p95_fraction = p95_index - p95_lower
+            p95 = sorted_values[p95_lower] + (
+                sorted_values[p95_lower + 1] - sorted_values[p95_lower]
+            ) * p95_fraction
         return {
             "mean": round_ms(sum(sorted_values) / value_count),
-            "p50": round_ms(ordered_percentile(sorted_values, 50.0)),
-            "p95": round_ms(ordered_percentile(sorted_values, 95.0)),
+            "p50": round_ms(p50),
+            "p95": round_ms(p95),
             "max": round_ms(sorted_values[-1]),
         }
 

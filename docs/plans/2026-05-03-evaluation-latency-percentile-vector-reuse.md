@@ -27,7 +27,7 @@ The probe must be base-compatible so `origin/main` still runs successfully durin
 ## Success Metrics
 
 - `_latency_stats()` performs one sort per invocation instead of two.
-- A follow-up micro-slice may keep the same behavior and one-sort invariant while removing repeated class attribute lookups from the return-path by binding `_round_ms` and `_ordered_percentile` once per call.
+- A 2026-05-28 follow-up micro-slice keeps the same behavior and one-sort invariant while inlining the two fixed percentile calculations inside `_latency_stats()`. The previous class-attribute binding step is already present on `main`, so this slice removes the remaining two `_ordered_percentile(...)` helper calls from the hot return path instead of rebinding them again.
 - Latency summary outputs (`mean`, `p50`, `p95`, `max`) remain unchanged.
 - Focused changed-scope coverage for touched executable files is at least 95%.
 - The registered local probe must show stable or lower `elapsed_ms_mean` versus `origin/main`; `sorted_calls_mean` must remain `1.0`.
