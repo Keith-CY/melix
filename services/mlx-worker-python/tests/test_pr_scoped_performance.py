@@ -1651,6 +1651,16 @@ def test_scope_report_selects_package_macos_resolve_probe() -> None:
     assert "package-macos-resolve-fallback-scandir" in probe_ids
 
 
+def test_scope_report_selects_melix_metrics_snapshot_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["scripts/melix_metrics_snapshot.py"],
+    )
+
+    probe_ids = {probe["id"] for probe in scope["selected_probes"]}
+    assert "melix-metrics-snapshot-runtime-scandir" in probe_ids
+
+
 def test_scope_report_selects_dev_up_mlx_metal_dist_info_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -2817,6 +2827,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "multimodal-preprocessing-image-uri-single-parse",
         "macos-app-resource-bundle-scandir",
         "package-macos-resolve-fallback-scandir",
+        "melix-metrics-snapshot-runtime-scandir",
         "pr-scoped-performance-scope-json-read-bytes",
         "pr-scoped-performance-scope-matcher",
         "quantization-gate-manifest-event-streaming",
@@ -5104,6 +5115,19 @@ def test_package_macos_resolve_probe_script_emits_metrics(capsys: pytest.Capture
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["sample_count"] == 9.0
     assert metrics["triple_count"] == 1500.0
+    assert metrics["elapsed_ms_mean"] >= 0.0
+
+
+def test_melix_metrics_snapshot_discovery_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/melix_metrics_snapshot_discovery_probe.py"))
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["sample_count"] == 9.0
+    assert metrics["file_count"] == 4000.0
     assert metrics["elapsed_ms_mean"] >= 0.0
 
 

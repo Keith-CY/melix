@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
 import sys
@@ -69,10 +70,17 @@ def discover_latest_metrics_path(runtime_dir: Path | None, source_name: str) -> 
         return None
     pattern = SOURCE_DEFINITIONS[source_name]["runtime_pattern"]
     try:
-        candidates = [path for path in runtime_dir.expanduser().glob(pattern) if path.is_file()]
-        if not candidates:
-            return None
-        return max(candidates, key=lambda path: path.stat().st_mtime)
+        latest_path: Path | None = None
+        latest_mtime: float | None = None
+        with os.scandir(os.fspath(runtime_dir.expanduser())) as entries:
+            for entry in entries:
+                if not fnmatch.fnmatchcase(entry.name, pattern) or not entry.is_file():
+                    continue
+                mtime = entry.stat().st_mtime
+                if latest_mtime is None or mtime > latest_mtime:
+                    latest_path = Path(entry.path)
+                    latest_mtime = mtime
+        return latest_path
     except OSError:
         return None
 

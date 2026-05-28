@@ -2151,6 +2151,37 @@
     ]
   },
   {
+    "id": "melix-metrics-snapshot-runtime-scandir",
+    "name": "Melix metrics snapshot runtime discovery scandir",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "scripts/melix_metrics_snapshot.py",
+      "scripts/melix_metrics_snapshot_discovery_probe.py",
+      "tests/test_melix_metrics_snapshot.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "infra/perf/pr_scoped_probes.json"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q tests/test_melix_metrics_snapshot.py::test_runtime_dir_discovers_latest_metrics_files tests/test_melix_metrics_snapshot.py::test_runtime_dir_discovery_uses_single_scandir_without_path_glob services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_melix_metrics_snapshot_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_melix_metrics_snapshot_discovery_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q tests/test_melix_metrics_snapshot.py::test_runtime_dir_discovers_latest_metrics_files tests/test_melix_metrics_snapshot.py::test_runtime_dir_discovery_uses_single_scandir_without_path_glob services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_melix_metrics_snapshot_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_melix_metrics_snapshot_discovery_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json scripts/melix_metrics_snapshot.py scripts/melix_metrics_snapshot_discovery_probe.py tests/test_melix_metrics_snapshot.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 - <<'PY'\nimport importlib.util\nimport json\nimport os\nimport statistics\nimport sys\nimport tempfile\nimport time\nfrom pathlib import Path\nrepo_root = Path.cwd()\nmodule_path = repo_root / \"scripts\" / \"melix_metrics_snapshot.py\"\nspec = importlib.util.spec_from_file_location(\"melix_metrics_snapshot_probe\", module_path)\nif spec is None or spec.loader is None:\n    raise RuntimeError(f\"Unable to load {module_path}\")\nmodule = importlib.util.module_from_spec(spec)\nsys.modules[spec.name] = module\nspec.loader.exec_module(module)\nfile_count = 4000\nsample_count = 9\nelapsed_samples = []\nwith tempfile.TemporaryDirectory(prefix=\"melix-pr-perf-metrics-snapshot-\") as temp_dir:\n    runtime_dir = Path(temp_dir) / \"runtime\"\n    runtime_dir.mkdir()\n    expected = runtime_dir / \"control-plane-metrics-latest.json\"\n    for index in range(file_count):\n        path = runtime_dir / f\"control-plane-metrics-{index:04d}.json\"\n        path.write_text('{\"values\":{\"control_plane.text_first_load_ms\":1}}', encoding=\"utf-8\")\n        stamp = (1_000_000 + index) / 1000.0\n        os.utime(path, (stamp, stamp))\n    expected.write_text('{\"values\":{\"control_plane.text_first_load_ms\":2}}', encoding=\"utf-8\")\n    os.utime(expected, (2_000_000, 2_000_000))\n    for index in range(200):\n        (runtime_dir / f\"swift-text-worker-metrics-{index:04d}.json\").write_text('{\"values\":{\"swift_text.prefill_ms\":1}}', encoding=\"utf-8\")\n    resolved = expected\n    for _ in range(sample_count):\n        started = time.perf_counter()\n        resolved = module.discover_latest_metrics_path(runtime_dir, \"control_plane\")\n        elapsed_samples.append((time.perf_counter() - started) * 1000.0)\nif resolved != expected:\n    raise AssertionError(f\"expected {expected}, got {resolved}\")\nprint(json.dumps({\"elapsed_ms_mean\": round(statistics.fmean(elapsed_samples), 6), \"elapsed_ms_min\": round(min(elapsed_samples), 6), \"sample_count\": float(sample_count), \"file_count\": float(file_count)}, sort_keys=True))\nPY",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "elapsed_ms_min",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      }
+    ]
+  },
+  {
     "id": "dev-up-mlx-metal-dist-info-scandir",
     "name": "Dev-up MLX Metal dist-info scandir",
     "runner": "ubuntu-latest",
