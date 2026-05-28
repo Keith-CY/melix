@@ -68,10 +68,13 @@ def discover_latest_metrics_path(runtime_dir: Path | None, source_name: str) -> 
     if runtime_dir is None:
         return None
     pattern = SOURCE_DEFINITIONS[source_name]["runtime_pattern"]
-    candidates = [path for path in runtime_dir.expanduser().glob(pattern) if path.is_file()]
-    if not candidates:
+    try:
+        candidates = [path for path in runtime_dir.expanduser().glob(pattern) if path.is_file()]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda path: path.stat().st_mtime)
+    except OSError:
         return None
-    return max(candidates, key=lambda path: path.stat().st_mtime)
 
 
 def resolve_source_paths(
@@ -347,7 +350,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     sys.stdout.write(json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
     if args.strict and snapshot.get("ok") is not True:
-        return 2
+        return 1
     return 0
 
 

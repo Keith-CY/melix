@@ -796,7 +796,6 @@ def load_melix_metrics_snapshot(
         swift_text_worker_metrics=swift_text_worker_path,
         python_worker_metrics=python_worker_path,
         runtime_dir=runtime_dir,
-        environment={},
         stale_after_seconds=stale_after_seconds,
     )
     return snapshot

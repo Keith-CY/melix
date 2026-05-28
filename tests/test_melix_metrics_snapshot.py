@@ -276,5 +276,5 @@ def test_cli_emits_json_and_strict_mode_fails_on_missing_source(
         "--strict",
     ])
     strict_payload = json.loads(capsys.readouterr().out)
-    assert strict_exit == 2
+    assert strict_exit == 1
     assert strict_payload["ok"] is False
