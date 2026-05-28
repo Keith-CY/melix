@@ -185,6 +185,7 @@ def probe_metrics(analyzed: dict[str, Any]) -> dict[str, float]:
     worker_batch_size = _number(worker.get("max_model_step_batch_size"))
     decode_loop_iterations = _number(worker.get("decode_loop_iterations"))
     scheduler_active_cohorts = _number(admission.get("scheduler_continuous_batch_active_cohorts"))
+    scheduler_to_worker_batch_delta = max(0.0, scheduler_batch_size - worker_batch_size)
     return {
         "status_passed": 1.0 if analyzed.get("status") == "passed" else 0.0,
         "status_warning": 1.0 if analyzed.get("status") == "warning" else 0.0,
@@ -196,7 +197,7 @@ def probe_metrics(analyzed: dict[str, Any]) -> dict[str, float]:
         "worker_max_model_step_batch_size": worker_batch_size,
         "worker_decode_loop_iterations": decode_loop_iterations,
         "linked_request_count": float(len(links)),
-        "scheduler_to_worker_batch_delta": scheduler_batch_size - worker_batch_size,
+        "scheduler_to_worker_batch_delta": scheduler_to_worker_batch_delta,
     }
 
 

@@ -4603,7 +4603,7 @@
   {
     "id": "same-cohort-batching-probe-evidence",
     "name": "Same-cohort batching probe evidence",
-    "description": "Run the deterministic same-cohort Swift batching probe and expose scheduler-to-worker batch evidence as flat numeric metrics.",
+    "description": "Run the deterministic same-cohort Swift batching probe and expose scheduler-to-worker batch evidence as flat numeric metrics; scheduler_to_worker_batch_delta is the non-negative admission-to-worker batch gap.",
     "runner": "macos-15",
     "watch_globs": [
       "scripts/same_cohort_batching_probe.py",

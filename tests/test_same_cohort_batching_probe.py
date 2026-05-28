@@ -180,6 +180,15 @@ def test_probe_metrics_flattens_warning_evidence() -> None:
     }
 
 
+def test_probe_metrics_clamps_scheduler_to_worker_batch_delta() -> None:
+    raw = raw_probe_payload(admission_batch_size=2, worker_batch_size=3)
+    analyzed = probe.analyze_probe(raw)
+
+    metrics = probe.probe_metrics(analyzed)
+
+    assert metrics["scheduler_to_worker_batch_delta"] == 0.0
+
+
 def test_main_metrics_emits_numeric_json(tmp_path, monkeypatch, capsys) -> None:
     input_path = tmp_path / "raw.json"
     input_path.write_text(

@@ -2724,6 +2724,7 @@ struct RequestCoordinatorTests {
                 "decode_request_ids": decodeRequests.map(\.requestID),
                 "decode_handles": decodeRequests.map(\.decodeHandle),
                 "decode_loop_iterations": decodeRequests.count,
+                "decode_loop_iterations_source": "deterministic_phase_aware_worker_decode_request_stream_count",
                 "max_model_step_batch_size": 1,
                 "model_step_batch_size_source": "deterministic_phase_aware_worker_single_decode_stream_per_request",
                 "aggregate_output_tokens_per_second": aggregateOutputTokensPerSecond,
