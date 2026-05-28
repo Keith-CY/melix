@@ -57,12 +57,12 @@ def extra_mtp_safetensor_files(model_path: Path) -> list[Path]:
         if not _is_mtp_weight_key(key):
             continue
         file_name_text = str(file_name)
-        file_basename = os.path.basename(file_name_text)
-        if file_basename.startswith("model") or not file_name_text.endswith(".safetensors"):
-            continue
         if file_name_text in seen:
             continue
         seen.add(file_name_text)
+        file_basename = os.path.basename(file_name_text)
+        if file_basename.startswith("model") or not file_name_text.endswith(".safetensors"):
+            continue
         path = model_path / file_name_text
         if not path.exists():
             logger.warning("MTP shard listed in index is missing: %s", path)

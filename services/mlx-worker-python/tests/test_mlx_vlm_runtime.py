@@ -51,6 +51,7 @@ from worker.runtime.native_mtp.mlx_lm_loader import (
     _model_safetensor_files,
     extra_mtp_safetensor_files,
 )
+from worker.runtime.native_mtp import mlx_lm_loader as native_mtp_loader_module
 from worker.runtime.temp_media_lifecycle import TempMediaSession
 
 
@@ -1575,8 +1576,10 @@ def test_native_mtp_extra_safetensor_files_filters_names_before_path_join(
     index_payload = {
         "weight_map": {
             "language_model.mtp.layers.0.weight": "model-00001-of-00002.safetensors",
+            "language_model.mtp.layers.0.duplicate_weight": "model-00001-of-00002.safetensors",
             "language_model.mtp.layers.1.weight": "mtp-00001.safetensors",
             "language_model.mtp.layers.2.weight": "notes.txt",
+            "language_model.mtp.layers.2.duplicate_weight": "notes.txt",
             "language_model.mtp.layers.3.weight": "mtp-00001.safetensors",
             "language_model.layers.0.weight": "ignored-mtp.safetensors",
         }
@@ -1590,15 +1593,27 @@ def test_native_mtp_extra_safetensor_files_filters_names_before_path_join(
 
     original_join = Path.__truediv__
     joined_names: list[str] = []
+    original_basename = native_mtp_loader_module.os.path.basename
+    basename_names: list[str] = []
 
     def tracked_join(self: Path, key: object) -> Path:
         joined_names.append(str(key))
         return original_join(self, key)
 
+    def tracked_basename(path: str) -> str:
+        basename_names.append(path)
+        return original_basename(path)
+
     monkeypatch.setattr(Path, "__truediv__", tracked_join)
+    monkeypatch.setattr(native_mtp_loader_module.os.path, "basename", tracked_basename)
 
     assert extra_mtp_safetensor_files(model_dir) == [sidecar_path]
     assert joined_names == ["model.safetensors.index.json", "mtp-00001.safetensors"]
+    assert basename_names == [
+        "model-00001-of-00002.safetensors",
+        "mtp-00001.safetensors",
+        "notes.txt",
+    ]
 
 
 def test_native_mtp_patched_loader_uses_scandir_model_weight_listing(
