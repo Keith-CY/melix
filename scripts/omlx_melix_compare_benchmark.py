@@ -1110,6 +1110,7 @@ def enrich_hints_with_metrics(
     if (
         admission_cohort_size is not None
         and admission_cohort_size > 1
+        and (worker_decode_batch_size is not None or model_eval_batch_size is not None)
         and worker_execution_batch_size <= 1
     ):
         hints.append({
