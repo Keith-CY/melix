@@ -162,6 +162,13 @@ def test_dataset_catalog_inferred_split_and_config_preserves_legacy_helpers() ->
     assert catalog._inferred_split_and_config("") == ("", "default")
 
 
+def test_dataset_catalog_file_format_uses_supported_suffixes() -> None:
+    assert catalog._dataset_file_format(Path("README.md")) == "metadata"
+    assert catalog._dataset_file_format(Path("train.JSONL")) == "jsonl"
+    assert catalog._dataset_file_format(Path("train.jsonl.")) == ""
+    assert catalog._dataset_file_format(Path(".jsonl")) == ""
+
+
 def test_dataset_catalog_split_alias_prefix_scan_matches_legacy_delimiters() -> None:
     assert catalog._split_alias_from_candidate("train-00000-of-00001") == "train"
     assert catalog._split_alias_from_candidate("validation_shard_00000") == "validation"
