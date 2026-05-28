@@ -63,7 +63,7 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
     header_separator_len = len(header_separator)
     add_changed_line = None
     new_line: int | None = None
-    for line in diff_text.split("\n"):
+    for line in diff_text.splitlines():
         if not line:
             if add_changed_line is not None and new_line is not None:
                 new_line += 1
