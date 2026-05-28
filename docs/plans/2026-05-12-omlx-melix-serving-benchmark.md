@@ -44,6 +44,22 @@ not a fair source for direct Melix optimization deltas.
   gateway or queue overhead, prefill/runtime preparation, decode throughput,
   streaming assembly, and continuous batching behavior.
 
+## Melix Metrics Snapshot Interface
+
+Benchmark runs should capture Melix runtime metrics through the stable local CLI
+instead of scraping sidecar files directly:
+
+```bash
+python3 scripts/melix_metrics_snapshot.py \
+  --runtime-dir .runtime/sidecars/<instance-name>
+```
+
+The CLI emits one JSON payload with top-level flattened `values` for existing
+reports, per-source `source_values`, and `sources.<source_name>.freshness`
+metadata. Control-plane metrics and worker metrics are kept distinct in the
+`sources` map, and missing required sources are represented as `ok: false` with
+`missing_required_sources` so the benchmark report can preserve partial evidence.
+
 ## Fairness Rules
 
 - Use streaming requests for both systems; non-streaming requests are out of

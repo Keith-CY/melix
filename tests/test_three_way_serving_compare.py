@@ -750,6 +750,8 @@ def test_three_way_run_writes_merged_melix_metrics_snapshot(
 
     assert metrics_snapshot["values"]["control_plane.text_first_load_ms"] == 8547.46
     assert metrics_snapshot["values"]["swift_text.prefill_ms"] == 3706
+    assert metrics_snapshot["sources"]["control_plane"]["source_kind"] == "control_plane"
+    assert metrics_snapshot["sources"]["swift_text_worker"]["source_kind"] == "worker"
     assert "`swift_text.prefill_ms` | 3706.00" in markdown
 
 

@@ -446,6 +446,9 @@ def run_comparison(args: argparse.Namespace) -> dict[str, Any]:
     metrics_snapshot = base.load_melix_metrics_snapshot(
         control_plane_path=args.melix_control_plane_metrics,
         swift_text_worker_path=args.melix_swift_text_worker_metrics,
+        python_worker_path=args.melix_python_worker_metrics,
+        runtime_dir=args.melix_metrics_runtime_dir,
+        stale_after_seconds=args.melix_metrics_stale_after_seconds,
     )
     summaries = base.summarize_observations(observations)
     prompt_evidence = prompt_token_evidence(observations)
@@ -828,6 +831,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--preflight-retry-interval-seconds", type=float, default=2.0)
     parser.add_argument("--melix-control-plane-metrics", type=Path, default=None)
     parser.add_argument("--melix-swift-text-worker-metrics", type=Path, default=None)
+    parser.add_argument("--melix-python-worker-metrics", type=Path, default=None)
+    parser.add_argument("--melix-metrics-runtime-dir", type=Path, default=None)
+    parser.add_argument(
+        "--melix-metrics-stale-after-seconds",
+        type=float,
+        default=base.melix_metrics_snapshot.DEFAULT_STALE_AFTER_SECONDS,
+    )
     parser.add_argument(
         "--measurement-profile",
         choices=base.MEASUREMENT_PROFILES,
