@@ -30,6 +30,11 @@ def parse_args() -> argparse.Namespace:
         help="Write the analyzed probe JSON payload to this path.",
     )
     parser.add_argument(
+        "--metrics",
+        action="store_true",
+        help="Emit flat numeric metrics for the PR-scoped performance runner.",
+    )
+    parser.add_argument(
         "--fail-on-warning",
         action="store_true",
         help="Return a non-zero exit code when the probe detects admission batching without worker/model batching.",
@@ -169,6 +174,32 @@ def analyze_probe(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def probe_metrics(analyzed: dict[str, Any]) -> dict[str, float]:
+    raw = _as_dict(analyzed.get("raw_probe"))
+    admission = _as_dict(raw.get("admission"))
+    worker = _as_dict(raw.get("worker"))
+    links = _as_list(raw.get("request_links"))
+    warnings = _as_list(analyzed.get("warnings"))
+    failures = _as_list(analyzed.get("failures"))
+    scheduler_batch_size = _number(admission.get("scheduler_continuous_batch_size"))
+    worker_batch_size = _number(worker.get("max_model_step_batch_size"))
+    decode_loop_iterations = _number(worker.get("decode_loop_iterations"))
+    scheduler_active_cohorts = _number(admission.get("scheduler_continuous_batch_active_cohorts"))
+    return {
+        "status_passed": 1.0 if analyzed.get("status") == "passed" else 0.0,
+        "status_warning": 1.0 if analyzed.get("status") == "warning" else 0.0,
+        "status_failed": 1.0 if analyzed.get("status") == "failed" else 0.0,
+        "warning_count": float(len(warnings)),
+        "failure_count": float(len(failures)),
+        "scheduler_continuous_batch_size": scheduler_batch_size,
+        "scheduler_active_cohorts": scheduler_active_cohorts,
+        "worker_max_model_step_batch_size": worker_batch_size,
+        "worker_decode_loop_iterations": decode_loop_iterations,
+        "linked_request_count": float(len(links)),
+        "scheduler_to_worker_batch_delta": scheduler_batch_size - worker_batch_size,
+    }
+
+
 def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
@@ -216,6 +247,11 @@ def main() -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     analyzed = analyze_probe(raw)
+    if args.metrics:
+        print(json.dumps(probe_metrics(analyzed), sort_keys=True) + "\n", end="")
+        if analyzed["status"] == "failed":
+            return 1
+        return 0
     rendered = json.dumps(analyzed, indent=2, sort_keys=True) + "\n"
     if args.output is not None:
         try:

@@ -158,6 +158,75 @@ def test_main_can_fail_on_warning(tmp_path, monkeypatch) -> None:
     assert probe.main() == 2
 
 
+def test_probe_metrics_flattens_warning_evidence() -> None:
+    raw = raw_probe_payload(admission_batch_size=2, worker_batch_size=1)
+    raw["worker"]["decode_loop_iterations"] = 2
+    analyzed = probe.analyze_probe(raw)
+
+    metrics = probe.probe_metrics(analyzed)
+
+    assert metrics == {
+        "status_passed": 0.0,
+        "status_warning": 1.0,
+        "status_failed": 0.0,
+        "warning_count": 1.0,
+        "failure_count": 0.0,
+        "scheduler_continuous_batch_size": 2.0,
+        "scheduler_active_cohorts": 1.0,
+        "worker_max_model_step_batch_size": 1.0,
+        "worker_decode_loop_iterations": 2.0,
+        "linked_request_count": 2.0,
+        "scheduler_to_worker_batch_delta": 1.0,
+    }
+
+
+def test_main_metrics_emits_numeric_json(tmp_path, monkeypatch, capsys) -> None:
+    input_path = tmp_path / "raw.json"
+    input_path.write_text(
+        json.dumps(raw_probe_payload(admission_batch_size=2, worker_batch_size=1)),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "same_cohort_batching_probe.py",
+            "--input",
+            str(input_path),
+            "--metrics",
+        ],
+    )
+
+    assert probe.main() == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert all(isinstance(value, (int, float)) for value in metrics.values())
+    assert metrics["status_warning"] == 1.0
+    assert metrics["scheduler_to_worker_batch_delta"] == 1.0
+
+
+def test_main_metrics_returns_failure_for_failed_probe(tmp_path, monkeypatch, capsys) -> None:
+    input_path = tmp_path / "raw.json"
+    input_path.write_text(
+        json.dumps(raw_probe_payload(admission_batch_size=1, worker_batch_size=1)),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "same_cohort_batching_probe.py",
+            "--input",
+            str(input_path),
+            "--metrics",
+        ],
+    )
+
+    assert probe.main() == 1
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["status_failed"] == 1.0
+    assert metrics["failure_count"] == 1.0
+
+
 def test_main_returns_failure_status_for_invalid_probe(tmp_path, monkeypatch) -> None:
     input_path = tmp_path / "raw.json"
     input_path.write_text(

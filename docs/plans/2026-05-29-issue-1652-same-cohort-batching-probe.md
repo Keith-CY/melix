@@ -20,6 +20,11 @@ The architecture spec currently limits the continuous-batching baseline to Swift
    - Run the focused Swift probe test, extract its JSON evidence, analyze it, and optionally write the combined payload to disk.
    - Support an input-only mode for fast unit tests and later artifact re-analysis.
 4. Verify with focused Swift and Python tests.
+5. Register the probe with PR-scoped performance so changes to the script, Swift
+   probe seam, tests, or governing plan select the macOS runner probe in CI.
+   The registered `command_json` probe emits flat numeric metrics for scheduler
+   admission batch size, worker/model-step batch size, warning/failure counts,
+   linked request count, and the scheduler-to-worker batch delta.
 
 ## Success Metrics
 
