@@ -898,9 +898,13 @@ def _iter_supported_dataset_files(snapshot_dir: Path) -> Iterator[Path]:
 
 
 def _dataset_file_format(path: Path) -> str:
-    if path.name in _README_NAMES:
+    name = path.name
+    if name in _README_NAMES:
         return "metadata"
-    return _SUPPORTED_DATASET_SUFFIXES.get(path.suffix.lower(), "")
+    dot_index = name.rfind(".")
+    if dot_index <= 0 or dot_index == len(name) - 1:
+        return ""
+    return _SUPPORTED_DATASET_SUFFIXES.get(name[dot_index:].lower(), "")
 
 
 def _inferred_split(relative_path: str) -> str:
