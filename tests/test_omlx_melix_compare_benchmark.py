@@ -823,6 +823,10 @@ def test_metrics_snapshot_adds_multimodal_batching_hint(tmp_path: Path) -> None:
                 "scheduler.multimodal_continuous_batch_effective_capacity": 1,
                 "scheduler.multimodal_continuous_batch_blocked_count": 4,
                 "scheduler.multimodal_continuous_batch_blocked_reason_code": 2,
+                "scheduler.admission_cohort_size": 2,
+                "swift_text.decode_batch_size": 1,
+                "swift_text.model_eval_batch_size": 1,
+                "swift_text.per_batch_output_tokens_per_second": 8,
             },
         }),
         encoding="utf-8",
@@ -832,12 +836,17 @@ def test_metrics_snapshot_adds_multimodal_batching_hint(tmp_path: Path) -> None:
     hints = bench.enrich_hints_with_metrics([], snapshot)
 
     assert snapshot["ok"] is True
-    assert len(hints) == 1
+    assert len(hints) == 2
     assert hints[0]["severity"] == "high"
     assert hints[0]["melix_requested_batch_capacity"] == 2
     assert hints[0]["melix_effective_batch_capacity"] == 1
     assert hints[0]["melix_blocked_reason_code"] == 2
     assert "cooperative text-only token-step batching" in hints[0]["melix_blocked_reason"]
+    assert hints[1]["severity"] == "medium"
+    assert hints[1]["melix_admission_cohort_size"] == 2
+    assert hints[1]["melix_worker_decode_batch_size"] == 1
+    assert hints[1]["melix_model_eval_batch_size"] == 1
+    assert hints[1]["melix_per_batch_output_tokens_per_second"] == 8
 
 
 def test_binary_metadata_detects_release_debug_and_sha256(tmp_path: Path) -> None:
@@ -1083,6 +1092,11 @@ def test_melix_metrics_snapshot_merges_control_plane_and_swift_worker(tmp_path: 
                 "swift_text.prefill_ms": 3706,
                 "swift_text.decode_ttft_ms": 1910,
                 "swift_text.decode_tokens_per_second": 2,
+                "swift_text.decode_batch_size": 1,
+                "swift_text.model_eval_batch_size": 1,
+                "swift_text.per_batch_output_token_count": 16,
+                "swift_text.per_batch_output_tokens_per_second": 2,
+                "swift_text.decode_batch_observation_count": 1,
             },
         }),
         encoding="utf-8",
@@ -1107,6 +1121,11 @@ def test_melix_metrics_snapshot_merges_control_plane_and_swift_worker(tmp_path: 
     assert snapshot["values"]["control_plane.text_first_load_ms"] == 8547.46
     assert snapshot["values"]["swift_text.prefill_ms"] == 3706
     assert snapshot["values"]["swift_text.decode_tokens_per_second"] == 2
+    assert snapshot["values"]["swift_text.decode_batch_size"] == 1
+    assert snapshot["values"]["swift_text.model_eval_batch_size"] == 1
+    assert snapshot["values"]["swift_text.per_batch_output_token_count"] == 16
+    assert snapshot["values"]["swift_text.per_batch_output_tokens_per_second"] == 2
+    assert snapshot["values"]["swift_text.decode_batch_observation_count"] == 1
 
 
 def test_metrics_snapshot_handles_missing_invalid_and_bad_sources(tmp_path: Path) -> None:
@@ -1462,8 +1481,15 @@ def test_markdown_summary_lists_text_first_load_metrics() -> None:
         metrics_snapshot={
             "ok": True,
             "values": {
+                "scheduler.admission_cohort_size": 2,
+                "scheduler.admission_active_cohorts": 1,
                 "control_plane.text_first_load_ms": 8547.46,
                 "control_plane.text_first_load_resident_bytes": 32942997504,
+                "swift_text.decode_batch_size": 1,
+                "swift_text.model_eval_batch_size": 1,
+                "swift_text.per_batch_output_token_count": 16,
+                "swift_text.per_batch_output_tokens_per_second": 8,
+                "swift_text.decode_batch_observation_count": 1,
                 "swift_text.prefill_ms": 3447.17,
                 "swift_text.decode_ttft_ms": 8554.38,
             },
@@ -1478,6 +1504,12 @@ def test_markdown_summary_lists_text_first_load_metrics() -> None:
 
     assert "- Measurement profile: `cold`" in markdown
     assert "`control_plane.text_first_load_ms` | 8547.46" in markdown
+    assert "`scheduler.admission_cohort_size` | 2.00" in markdown
+    assert "`swift_text.decode_batch_size` | 1.00" in markdown
+    assert "`swift_text.model_eval_batch_size` | 1.00" in markdown
+    assert "`swift_text.per_batch_output_token_count` | 16.00" in markdown
+    assert "`swift_text.per_batch_output_tokens_per_second` | 8.00" in markdown
+    assert "`swift_text.decode_batch_observation_count` | 1.00" in markdown
     assert "`swift_text.prefill_ms` | 3447.17" in markdown
     assert "`swift_text.decode_ttft_ms` | 8554.38" in markdown
 

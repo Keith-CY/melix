@@ -486,13 +486,20 @@ def test_scope_report_selects_same_cohort_batching_probe() -> None:
 def test_same_cohort_batching_probe_metrics_are_numeric(tmp_path: Path) -> None:
     payload = {
         "admission": {
+            "scheduler_admission_cohort_size": 2,
+            "scheduler_admission_active_cohorts": 1,
             "scheduler_continuous_batch_size": 2,
             "scheduler_continuous_batch_active_cohorts": 1,
         },
         "worker": {
             "decode_request_ids": ["req-same-cohort-1", "req-same-cohort-2"],
+            "decode_batch_size": 1,
+            "model_eval_batch_size": 1,
             "max_model_step_batch_size": 1,
             "decode_loop_iterations": 2,
+            "decode_batch_observation_count": 2,
+            "per_batch_output_token_count": 1,
+            "per_batch_output_tokens_per_second": 8,
         },
         "request_links": [
             {"worker_decode_request_id": "req-same-cohort-1"},
@@ -523,8 +530,12 @@ def test_same_cohort_batching_probe_metrics_are_numeric(tmp_path: Path) -> None:
 
     assert metrics["status_warning"] == 1.0
     assert metrics["failure_count"] == 0.0
+    assert metrics["scheduler_admission_cohort_size"] == 2.0
     assert metrics["scheduler_continuous_batch_size"] == 2.0
+    assert metrics["worker_decode_batch_size"] == 1.0
+    assert metrics["worker_model_eval_batch_size"] == 1.0
     assert metrics["worker_max_model_step_batch_size"] == 1.0
+    assert metrics["worker_per_batch_output_tokens_per_second"] == 8.0
     assert metrics["scheduler_to_worker_batch_delta"] == 1.0
 
 
@@ -540,6 +551,8 @@ def test_same_cohort_batching_probe_registry_command_has_base_fallback(tmp_path:
     assert metrics == {
         "failure_count": 0.0,
         "linked_request_count": 0.0,
+        "scheduler_admission_active_cohorts": 0.0,
+        "scheduler_admission_cohort_size": 0.0,
         "scheduler_active_cohorts": 0.0,
         "scheduler_continuous_batch_size": 0.0,
         "scheduler_to_worker_batch_delta": 0.0,
@@ -547,8 +560,13 @@ def test_same_cohort_batching_probe_registry_command_has_base_fallback(tmp_path:
         "status_passed": 0.0,
         "status_warning": 1.0,
         "warning_count": 1.0,
+        "worker_decode_batch_observation_count": 0.0,
+        "worker_decode_batch_size": 0.0,
         "worker_decode_loop_iterations": 0.0,
+        "worker_model_eval_batch_size": 0.0,
         "worker_max_model_step_batch_size": 0.0,
+        "worker_per_batch_output_token_count": 0.0,
+        "worker_per_batch_output_tokens_per_second": 0.0,
     }
 
 

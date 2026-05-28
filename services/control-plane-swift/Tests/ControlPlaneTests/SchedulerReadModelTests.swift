@@ -332,6 +332,8 @@ struct SchedulerReadModelTests {
         #expect(metrics.values["scheduler.continuous_batch_size"] == 2)
         #expect(metrics.values["scheduler.continuous_batch_occupancy_pct"] == 100)
         #expect(metrics.values["scheduler.continuous_batch_active_cohorts"] == 1)
+        #expect(metrics.values["scheduler.admission_cohort_size"] == 2)
+        #expect(metrics.values["scheduler.admission_active_cohorts"] == 1)
         #expect(metrics.values["scheduler.batch_affinity_preferred_rate"] == 100)
     }
 

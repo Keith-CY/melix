@@ -644,6 +644,10 @@ public actor SchedulerReadModel {
             forKey: "scheduler.continuous_batch_active_cohorts"
         )
         await metricsStore.set(
+            Double(batchRequestIDsByCohort.count),
+            forKey: "scheduler.admission_active_cohorts"
+        )
+        await metricsStore.set(
             admittedRequests == 0
                 ? 0
                 : batchEligibleRequestCount / Double(admittedRequests) * 100,
@@ -658,6 +662,10 @@ public actor SchedulerReadModel {
         await metricsStore.set(
             Double(lastContinuousBatchSize),
             forKey: "scheduler.continuous_batch_size"
+        )
+        await metricsStore.set(
+            Double(lastContinuousBatchSize),
+            forKey: "scheduler.admission_cohort_size"
         )
         await metricsStore.set(
             lastContinuousBatchOccupancyPct,
