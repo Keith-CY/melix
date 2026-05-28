@@ -3034,6 +3034,8 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
     }
     for metric_key in (
         "old_mean_ms",
+        "delta_ms",
+        "speedup",
         "old_peak_bytes_mean",
         "extra_old_mean_ms",
         "extra_old_peak_bytes_mean",
