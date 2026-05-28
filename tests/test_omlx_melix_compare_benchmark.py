@@ -668,6 +668,12 @@ def test_binary_metadata_detects_release_debug_and_sha256(tmp_path: Path) -> Non
     assert debug["sha256"] == hashlib.sha256(b"debug-binary").hexdigest()
 
 
+def test_detect_swift_build_mode_prefers_innermost_build_directory() -> None:
+    path = Path("/outer/.build/debug/package/services/worker/.build/release/melix-text-worker-swift")
+
+    assert bench.detect_swift_build_mode(path) == "release"
+
+
 def test_binary_metadata_marks_unreadable_binary_without_raising(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -688,6 +694,27 @@ def test_binary_metadata_marks_unreadable_binary_without_raising(
     assert metadata["build_mode"] == "release"
     assert metadata["sha256"] is None
     assert "not readable" in metadata["error"]
+
+
+def test_comparison_validity_uses_binary_error_reason(tmp_path: Path) -> None:
+    missing_binary = tmp_path / ".build/release/missing-text-worker"
+    release_control = tmp_path / "control/.build/release/melix-control-plane"
+    release_control.parent.mkdir(parents=True)
+    release_control.write_bytes(b"release")
+    metadata = {
+        "melix": {
+            "binaries": {
+                "text_worker": bench.binary_metadata(missing_binary),
+                "control_plane": bench.binary_metadata(release_control),
+            },
+        },
+    }
+
+    validity = bench.comparison_validity_metadata(metadata, comparison_scope="peer")
+
+    assert validity["status"] == "invalid"
+    assert "binary error: binary path does not exist or is not a file" in validity["reasons"][0]
+    assert str(missing_binary) in validity["reasons"][0]
 
 
 def test_comparison_validity_rejects_debug_melix_binary(tmp_path: Path) -> None:
@@ -749,6 +776,13 @@ def test_comparison_validity_rejects_unknown_melix_build_mode(tmp_path: Path) ->
 
     assert validity["status"] == "invalid"
     assert "not a release build" in validity["reasons"][0]
+
+
+def test_split_source_summary_skips_non_strings() -> None:
+    assert bench._split_source_summary(["usage,estimate", None, 123, "unknown", "usage"]) == [
+        "estimate",
+        "usage",
+    ]
 
 
 def test_comparison_validity_rejects_mixed_token_accounting_by_default(

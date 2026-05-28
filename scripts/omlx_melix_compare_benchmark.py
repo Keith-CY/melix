@@ -908,8 +908,8 @@ def file_sha256(path: Path) -> str:
 
 def detect_swift_build_mode(path: Path) -> str:
     parts = path.expanduser().parts
-    for index, part in enumerate(parts):
-        if part != ".build":
+    for index in range(len(parts) - 1, -1, -1):
+        if parts[index] != ".build":
             continue
         tail = parts[index + 1 :]
         if "debug" in tail:
@@ -1011,7 +1011,11 @@ def comparison_validity_metadata(
             reasons.append(f"Melix {name} binary metadata was not provided.")
             continue
         if entry.get("exists") is not True:
-            reasons.append(f"Melix {name} binary path is not readable: {entry.get('path')}")
+            reasons.append(
+                f"Melix {name} binary error: "
+                f"{entry.get('error') or 'binary path is not readable'} "
+                f"(path: {entry.get('path')})"
+            )
             continue
         if entry.get("build_mode") == "debug":
             reasons.append(
@@ -1109,9 +1113,11 @@ def token_accounting_metadata(
     }
 
 
-def _split_source_summary(values: Iterable[str]) -> list[str]:
+def _split_source_summary(values: Iterable[Any]) -> list[str]:
     sources: set[str] = set()
     for value in values:
+        if not isinstance(value, str):
+            continue
         for source in value.split(","):
             source = source.strip()
             if source and source != "unknown":
