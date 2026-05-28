@@ -6,6 +6,7 @@ struct TextDecodeEngine: Sendable {
     let registry: WorkerRuntimeRegistry
     let abortRegistry: AbortRegistry
     let metrics: MetricsStore
+    let batchCoordinator: TextDecodeBatchCoordinator?
 
     func runDecode(
         request: Melix_Worker_V1_DecodeRequest,
@@ -50,20 +51,26 @@ struct TextDecodeEngine: Sendable {
             let acceleration = accelerationResolution.policy
             recordSpeculativeRequestMetrics(accelerationResolution)
 
-            let runtimeStream = try await registry.decodeEvents(
+            let shouldAbort: @Sendable () -> Bool = { abortHandle?.isAborted ?? false }
+            let runtimeStream = try await resolveRuntimeStream(
+                request: request,
+                requestID: requestID,
+                lane: lane,
                 session: session,
                 sampling: sampling,
-                maxOutputTokens: request.maxOutputTokens,
-                decodeStepSize: request.decodeStepSize,
-                prefillToken: request.prefillToken,
                 acceleration: acceleration,
-                shouldAbort: { abortHandle?.isAborted ?? false }
+                shouldAbort: shouldAbort
             )
 
             var seq: UInt64 = 1
             var completionTokens = 0
             var outputState = FilteredTextOutputState()
             var tokensPerSecond: Double?
+            var decodeBatchSize = 1
+            var modelEvalBatchSize = 1
+            var decodeLoopIterations = 1
+            var perBatchOutputTokenCount: Int?
+            var perBatchOutputTokensPerSecond: Double?
             var speculativeAccepted: Int?
             var speculativeRejected: Int?
             var speculativeFallbackCount: Int?
@@ -163,6 +170,15 @@ struct TextDecodeEngine: Sendable {
                 case .summary(let summary):
                     completionTokens = max(completionTokens, summary.completionTokens)
                     tokensPerSecond = summary.tokensPerSecond
+                    decodeBatchSize = max(decodeBatchSize, summary.decodeBatchSize ?? 1)
+                    modelEvalBatchSize = max(modelEvalBatchSize, summary.modelEvalBatchSize ?? 1)
+                    decodeLoopIterations = max(decodeLoopIterations, summary.decodeLoopIterations ?? 1)
+                    if let value = summary.perBatchOutputTokenCount {
+                        perBatchOutputTokenCount = max(perBatchOutputTokenCount ?? 0, value)
+                    }
+                    if let value = summary.perBatchOutputTokensPerSecond {
+                        perBatchOutputTokensPerSecond = value
+                    }
                     speculativeAccepted = summary.speculativeAcceptedTokens
                     speculativeRejected = summary.speculativeRejectedTokens
                     speculativeFallbackCount = summary.speculativeFallbackCount
@@ -255,18 +271,26 @@ struct TextDecodeEngine: Sendable {
             }
             metrics.recordMilliseconds("swift_text.decode_ms", value: elapsedMilliseconds(since: startedAt))
             let roundedTokensPerSecond = max(0, Int((tokensPerSecond ?? 0).rounded()))
+            let roundedPerBatchTokensPerSecond = max(
+                0,
+                Int((perBatchOutputTokensPerSecond ?? tokensPerSecond ?? 0).rounded())
+            )
             metrics.set("swift_text.decode_stream_event_count", value: outputState.eventCount)
-            metrics.set("swift_text.decode_batch_size", value: 1)
-            metrics.set("swift_text.model_eval_batch_size", value: 1)
+            metrics.set("swift_text.decode_batch_size", value: max(1, decodeBatchSize))
+            metrics.set("swift_text.model_eval_batch_size", value: max(1, modelEvalBatchSize))
             metrics.increment("swift_text.decode_batch_observation_count")
-            metrics.set("swift_text.per_batch_output_token_count", value: max(0, completionTokens))
+            metrics.set("swift_text.decode_loop_iterations", value: max(1, decodeLoopIterations))
+            metrics.set(
+                "swift_text.per_batch_output_token_count",
+                value: max(0, perBatchOutputTokenCount ?? completionTokens)
+            )
             metrics.set(
                 "swift_text.decode_tokens_per_second",
                 value: roundedTokensPerSecond
             )
             metrics.set(
                 "swift_text.per_batch_output_tokens_per_second",
-                value: roundedTokensPerSecond
+                value: roundedPerBatchTokensPerSecond
             )
             metrics.set(
                 "swift_text.active_kv_quantization_ratio",
@@ -319,6 +343,106 @@ struct TextDecodeEngine: Sendable {
                 message: error.localizedDescription
             ))
         }
+    }
+
+    private func resolveRuntimeStream(
+        request: Melix_Worker_V1_DecodeRequest,
+        requestID: String,
+        lane: String,
+        session: WorkerDecodeSession,
+        sampling: Melix_Worker_V1_SamplingConfig,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
+        if let candidate = await makeBatchCandidateIfEligible(
+            request: request,
+            requestID: requestID,
+            lane: lane,
+            session: session,
+            sampling: sampling,
+            acceleration: acceleration,
+            shouldAbort: shouldAbort
+        ), let batchCoordinator {
+            switch await batchCoordinator.enqueue(candidate) {
+            case .single:
+                break
+            case .batched(let stream, _):
+                return stream
+            }
+        }
+
+        return try await registry.decodeEvents(
+            session: session,
+            sampling: sampling,
+            maxOutputTokens: request.maxOutputTokens,
+            decodeStepSize: request.decodeStepSize,
+            prefillToken: request.prefillToken,
+            acceleration: acceleration,
+            shouldAbort: shouldAbort
+        )
+    }
+
+    private func makeBatchCandidateIfEligible(
+        request: Melix_Worker_V1_DecodeRequest,
+        requestID: String,
+        lane: String,
+        session: WorkerDecodeSession,
+        sampling: Melix_Worker_V1_SamplingConfig,
+        acceleration: Melix_Worker_V1_AccelerationPolicy,
+        shouldAbort: @escaping @Sendable () -> Bool
+    ) async -> TextDecodeBatchCandidate? {
+        guard batchCoordinator != nil,
+              await registry.supportsHomogeneousBatchDecode(),
+              !requestID.isEmpty,
+              !request.decodeHandle.isEmpty,
+              !request.execution.cacheHints.saveBoundarySnapshot else {
+            return nil
+        }
+        let maxBatchSize = decodeBatchSizeLimit(from: request.execution.ext)
+        guard maxBatchSize > 1 else {
+            return nil
+        }
+
+        let key = TextDecodeBatchEligibilityKey(
+            modelHandle: session.loadedModel.handle,
+            lane: lane,
+            sampling: TextDecodeSamplingKey(sampling),
+            acceleration: TextDecodeAccelerationKey(acceleration),
+            maxOutputTokens: request.maxOutputTokens,
+            decodeStepSize: request.decodeStepSize,
+            prefillToken: request.prefillToken
+        )
+        return TextDecodeBatchCandidate(
+            requestID: requestID,
+            key: key,
+            maxBatchSize: maxBatchSize,
+            session: session,
+            sampling: sampling,
+            maxOutputTokens: request.maxOutputTokens,
+            decodeStepSize: request.decodeStepSize,
+            prefillToken: request.prefillToken,
+            acceleration: acceleration,
+            shouldAbort: shouldAbort
+        )
+    }
+
+    private func decodeBatchSizeLimit(from executionExt: [String: String]) -> Int {
+        guard parseBool(
+            executionExt["melix.gateway.concurrent_processing"],
+            fallback: true
+        ) else {
+            return 1
+        }
+        let maxConcurrent = parsePositiveInt(
+            executionExt["melix.gateway.max_concurrent_sequences"]
+                ?? executionExt["melix.gateway.max_concurrent_requests"],
+            fallback: 4
+        )
+        let completionBatchSize = parsePositiveInt(
+            executionExt["melix.gateway.completion_batch_size"],
+            fallback: 1
+        )
+        return max(1, min(maxConcurrent, completionBatchSize))
     }
 
     private func recordSpeculativeMetrics(
@@ -583,6 +707,29 @@ private func isGreedySpeculativeSampling(_ sampling: Melix_Worker_V1_SamplingCon
     return sampling.temperature <= 0
         && effectiveTopP >= 1
         && sampling.topK == 0
+}
+
+private func parseBool(_ rawValue: String?, fallback: Bool) -> Bool {
+    guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !rawValue.isEmpty else {
+        return fallback
+    }
+    switch rawValue {
+    case "1", "true", "yes", "on":
+        return true
+    case "0", "false", "no", "off":
+        return false
+    default:
+        return fallback
+    }
+}
+
+private func parsePositiveInt(_ rawValue: String?, fallback: Int) -> Int {
+    guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+          let parsed = Int(rawValue),
+          parsed > 0 else {
+        return fallback
+    }
+    return parsed
 }
 
 private func effectiveRequestID(

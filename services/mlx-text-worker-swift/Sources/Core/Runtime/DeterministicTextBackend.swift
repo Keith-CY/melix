@@ -9,6 +9,10 @@ struct DeterministicTextBackend: TextRuntimeBackend {
         self.tokenDelayNanos = tokenDelayNanos
     }
 
+    var supportsHomogeneousBatchDecode: Bool {
+        true
+    }
+
     func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> LoadedTextModel {
         let modelSource = spec.modelPath.isEmpty ? spec.modelID : spec.modelPath
         return LoadedTextModel(
@@ -200,6 +204,119 @@ struct DeterministicTextBackend: TextRuntimeBackend {
             }
         }
     }
+
+    func decodeBatchEvents(
+        requests: [TextRuntimeDecodeRequest]
+    ) async throws -> AsyncThrowingStream<TextBatchGenerationEvent, Error> {
+        let prepared = requests.map { request in
+            let prompt = deterministicPrompt(from: request.context)
+            let response = deterministicDecodeResponse(prompt: prompt, prefillToken: request.prefillToken)
+            return DeterministicBatchDecodeState(
+                promptTokens: max(1, request.context.promptTokens),
+                outputTokens: deterministicChunks(
+                    from: response,
+                    maxOutputTokens: request.maxOutputTokens
+                ),
+                tokenDelayNanos: deterministicDecodeDelay(
+                    baselineDelay: tokenDelayNanos,
+                    mode: request.acceleration.mode,
+                    context: request.context
+                ),
+                acceleration: request.acceleration,
+                shouldAbort: request.shouldAbort
+            )
+        }
+
+        return AsyncThrowingStream { continuation in
+            Task {
+                let startedAt = ContinuousClock.now
+                let batchSize = prepared.count
+                var emittedByRequest = Array(repeating: 0, count: prepared.count)
+                var active = Array(repeating: true, count: prepared.count)
+                var positionByRequest = Array(repeating: 0, count: prepared.count)
+                var decodeLoopIterations = 0
+
+                while active.contains(true) {
+                    var yieldedInIteration = false
+
+                    for index in prepared.indices where active[index] {
+                        let state = prepared[index]
+                        if state.shouldAbort() || positionByRequest[index] >= state.outputTokens.count {
+                            active[index] = false
+                            continue
+                        }
+                        if state.tokenDelayNanos > 0 {
+                            try? await Task.sleep(nanoseconds: state.tokenDelayNanos)
+                        }
+                        if state.shouldAbort() {
+                            active[index] = false
+                            continue
+                        }
+                        let chunk = state.outputTokens[positionByRequest[index]]
+                        positionByRequest[index] += 1
+                        emittedByRequest[index] += 1
+                        yieldedInIteration = true
+                        continuation.yield(.token(requestIndex: index, text: chunk))
+                    }
+
+                    if !yieldedInIteration {
+                        break
+                    }
+                    decodeLoopIterations += 1
+                }
+
+                let elapsed = startedAt.duration(to: .now)
+                let elapsedSeconds = max(
+                    Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1_000_000_000_000_000_000,
+                    0.000_001
+                )
+                let totalCompletionTokens = emittedByRequest.reduce(0, +)
+                let batchTokensPerSecond = totalCompletionTokens > 0
+                    ? Double(totalCompletionTokens) / elapsedSeconds
+                    : 0
+
+                for index in prepared.indices {
+                    let emitted = emittedByRequest[index]
+                    let state = prepared[index]
+                    let speculativeAccepted = state.acceleration.mode == .speculativeDecode ? max(emitted - 1, 0) : nil
+                    let speculativeRejected = state.acceleration.mode == .speculativeDecode && emitted > 0 ? 1 : nil
+                    continuation.yield(.summary(
+                        requestIndex: index,
+                        TextGenerationSummary(
+                            promptTokens: state.promptTokens,
+                            completionTokens: emitted,
+                            tokensPerSecond: emitted > 0 ? Double(emitted) / elapsedSeconds : 0,
+                            decodeBatchSize: batchSize,
+                            modelEvalBatchSize: batchSize,
+                            decodeLoopIterations: decodeLoopIterations,
+                            perBatchOutputTokenCount: totalCompletionTokens,
+                            perBatchOutputTokensPerSecond: batchTokensPerSecond,
+                            speculativeAcceptedTokens: speculativeAccepted,
+                            speculativeRejectedTokens: speculativeRejected
+                        )
+                    ))
+                }
+                continuation.yield(.batchSummary(
+                    TextBatchGenerationSummary(
+                        decodeBatchSize: batchSize,
+                        modelEvalBatchSize: batchSize,
+                        decodeLoopIterations: decodeLoopIterations,
+                        outputTokenCount: totalCompletionTokens,
+                        tokensPerSecond: batchTokensPerSecond
+                    )
+                ))
+                continuation.finish()
+            }
+        }
+    }
+}
+
+private struct DeterministicBatchDecodeState: @unchecked Sendable {
+    let promptTokens: Int
+    let outputTokens: [String]
+    let tokenDelayNanos: UInt64
+    let acceleration: Melix_Worker_V1_AccelerationPolicy
+    let shouldAbort: @Sendable () -> Bool
 }
 
 private func deterministicPrompt(
