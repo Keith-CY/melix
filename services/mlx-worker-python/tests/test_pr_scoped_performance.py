@@ -473,6 +473,85 @@ def test_scope_report_selects_integration_swift_binary_resolution_probe() -> Non
     assert _selected_probe_ids(scope) == ["integration-swift-binary-resolution-scandir"]
 
 
+def test_scope_report_selects_same_cohort_batching_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["scripts/same_cohort_batching_probe.py"],
+    )
+
+    assert scope["selected_count"] == 1
+    assert _selected_probe_ids(scope) == ["same-cohort-batching-probe-evidence"]
+
+
+def test_same_cohort_batching_probe_metrics_are_numeric(tmp_path: Path) -> None:
+    payload = {
+        "admission": {
+            "scheduler_continuous_batch_size": 2,
+            "scheduler_continuous_batch_active_cohorts": 1,
+        },
+        "worker": {
+            "decode_request_ids": ["req-same-cohort-1", "req-same-cohort-2"],
+            "max_model_step_batch_size": 1,
+            "decode_loop_iterations": 2,
+        },
+        "request_links": [
+            {"worker_decode_request_id": "req-same-cohort-1"},
+            {"worker_decode_request_id": "req-same-cohort-2"},
+        ],
+    }
+    input_path = tmp_path / "same-cohort-raw.json"
+    input_path.write_text(json.dumps(payload), encoding="utf-8")
+    probe = ProbeDefinition(
+        probe_id="same-cohort-test",
+        name="Same cohort test",
+        runner="ubuntu-latest",
+        watch_globs=("scripts/same_cohort_batching_probe.py",),
+        test_command="true",
+        coverage_command="true",
+        probe_impl="command_json",
+        probe_command=f"python3 scripts/same_cohort_batching_probe.py --input {input_path} --metrics",
+        metrics=(
+            MetricDefinition(
+                key="scheduler_to_worker_batch_delta",
+                unit="count",
+                direction="lower_is_better",
+            ),
+        ),
+    )
+
+    metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["status_warning"] == 1.0
+    assert metrics["failure_count"] == 0.0
+    assert metrics["scheduler_continuous_batch_size"] == 2.0
+    assert metrics["worker_max_model_step_batch_size"] == 1.0
+    assert metrics["scheduler_to_worker_batch_delta"] == 1.0
+
+
+def test_same_cohort_batching_probe_registry_command_has_base_fallback(tmp_path: Path) -> None:
+    registry_probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "same-cohort-batching-probe-evidence"
+    )
+
+    metrics = _probe_command_json(probe=registry_probe, repo_root=tmp_path)
+
+    assert metrics == {
+        "failure_count": 0.0,
+        "linked_request_count": 0.0,
+        "scheduler_active_cohorts": 0.0,
+        "scheduler_continuous_batch_size": 0.0,
+        "scheduler_to_worker_batch_delta": 0.0,
+        "status_failed": 0.0,
+        "status_passed": 0.0,
+        "status_warning": 1.0,
+        "warning_count": 1.0,
+        "worker_decode_loop_iterations": 0.0,
+        "worker_max_model_step_batch_size": 0.0,
+    }
+
+
 def test_integration_swift_binary_resolution_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -2792,6 +2871,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "deterministic-image-output-byte-accounting",
         "deterministic-rerank-query-context-reuse",
         "rerank-core-top-k-heap-selection",
+        "same-cohort-batching-probe-evidence",
         "runtime-utils-kwarg-signature-cache",
         "runtime-utils-package-version-cache",
         "runtime-utils-top-level-weight-streaming",
