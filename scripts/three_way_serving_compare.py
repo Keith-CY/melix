@@ -424,6 +424,8 @@ def run_comparison(args: argparse.Namespace) -> dict[str, Any]:
                 prompt_style=args.prompt_style,
                 include_usage=args.include_usage,
                 temperature=args.temperature,
+                top_p=args.top_p,
+                top_k=args.top_k,
                 timeout_seconds=args.timeout_seconds,
             )
             observations = []
@@ -435,6 +437,8 @@ def run_comparison(args: argparse.Namespace) -> dict[str, Any]:
                             scenario,
                             include_usage=args.include_usage,
                             temperature=args.temperature,
+                            top_p=args.top_p,
+                            top_k=args.top_k,
                             timeout_seconds=args.timeout_seconds,
                         )
                     )
@@ -815,6 +819,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cache-profile", choices=["cold_unique", "repeated"], default="cold_unique")
     parser.add_argument("--prompt-style", choices=base.PROMPT_STYLES, default="concise")
     parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--top-p", type=float, default=1.0)
+    parser.add_argument("--top-k", type=int, default=0)
     parser.add_argument("--include-usage", action="store_true")
     parser.add_argument("--timeout-seconds", type=float, default=3600.0)
     parser.add_argument("--preflight-timeout-seconds", type=float, default=10.0)

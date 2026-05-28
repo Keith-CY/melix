@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import shutil
@@ -33,11 +34,13 @@ DEFAULT_TOP_P = 1.0
 DEFAULT_TOP_K = 0
 PROMPT_STYLES = ("concise", "saturating")
 MEASUREMENT_PROFILES = ("auto", "cold", "warm", "mixed")
-REPORT_SCHEMA_VERSION = 1
+COMPARISON_SCOPES = ("peer", "debug-only")
+REPORT_SCHEMA_VERSION = 2
 MELIX_VLM_BATCHING_BLOCKED_REASON_CODES = {
     1: "multimodal route does not expose a streaming continuous batching path",
     2: "python VLM request is not eligible for cooperative text-only token-step batching",
 }
+REQUIRED_MELIX_PEER_BINARY_NAMES = ("text_worker", "control_plane")
 
 
 @dataclass(frozen=True)
@@ -892,6 +895,236 @@ def metrics_manifest_entries(metrics_snapshot: dict[str, Any] | None, *, artifac
     return entries
 
 
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def detect_swift_build_mode(path: Path) -> str:
+    parts = path.expanduser().parts
+    for index in range(len(parts) - 1, -1, -1):
+        if parts[index] != ".build":
+            continue
+        tail = parts[index + 1 :]
+        if "debug" in tail:
+            return "debug"
+        if "release" in tail:
+            return "release"
+    return "unknown"
+
+
+def binary_metadata(path: Path | None, *, build_mode_detector=detect_swift_build_mode) -> dict[str, Any]:
+    if path is None:
+        return {
+            "provided": False,
+            "path": None,
+            "exists": False,
+            "sha256": None,
+            "build_mode": "unknown",
+        }
+    expanded = path.expanduser().resolve(strict=False)
+    exists = expanded.is_file()
+    sha256 = None
+    read_error = None
+    if exists:
+        try:
+            sha256 = file_sha256(expanded)
+        except OSError as exc:
+            read_error = f"{type(exc).__name__}: {exc}"
+    entry = {
+        "provided": True,
+        "path": str(expanded),
+        "exists": exists and read_error is None,
+        "sha256": sha256,
+        "build_mode": build_mode_detector(expanded),
+    }
+    if not exists:
+        entry["error"] = "binary path does not exist or is not a file"
+    elif read_error is not None:
+        entry["error"] = f"binary path is not readable: {read_error}"
+    return entry
+
+
+def runtime_metadata_from_args(
+    args: argparse.Namespace,
+    *,
+    endpoints: list[EndpointConfig],
+) -> dict[str, Any]:
+    endpoint_by_name = {endpoint.name: endpoint for endpoint in endpoints}
+    melix = endpoint_by_name.get("melix")
+    omlx = endpoint_by_name.get("omlx")
+    metadata: dict[str, Any] = {
+        "melix": {
+            "base_url": melix.base_url if melix is not None else None,
+            "model": melix.model if melix is not None else None,
+            "revision": args.melix_revision or None,
+            "version": args.melix_version or None,
+            "binaries": {
+                "text_worker": binary_metadata(args.melix_text_worker_binary),
+                "control_plane": binary_metadata(args.melix_control_plane_binary),
+            },
+        },
+        "omlx": {
+            "base_url": omlx.base_url if omlx is not None else None,
+            "model": omlx.model if omlx is not None else None,
+            "revision": args.omlx_revision or None,
+            "version": args.omlx_version or None,
+        },
+        "model_snapshot": {
+            "path": str(args.model_snapshot_path.expanduser()) if args.model_snapshot_path else None,
+        },
+    }
+    if args.swiftlm_revision or args.swiftlm_version or args.swiftlm_binary is not None:
+        metadata["swiftlm"] = {
+            "revision": args.swiftlm_revision or None,
+            "version": args.swiftlm_version or None,
+            "binaries": {
+                "server": binary_metadata(args.swiftlm_binary),
+            },
+        }
+    return metadata
+
+
+def comparison_validity_metadata(
+    runtime_metadata: dict[str, Any],
+    *,
+    comparison_scope: str,
+    token_accounting: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    reasons: list[str] = []
+    warnings: list[str] = []
+    melix = runtime_metadata.get("melix")
+    melix_binaries = melix.get("binaries", {}) if isinstance(melix, dict) else {}
+    binary_names = sorted({
+        *REQUIRED_MELIX_PEER_BINARY_NAMES,
+        *(melix_binaries.keys() if isinstance(melix_binaries, dict) else ()),
+    })
+    for name in binary_names:
+        entry = melix_binaries.get(name) if isinstance(melix_binaries, dict) else None
+        if not isinstance(entry, dict) or entry.get("provided") is not True:
+            reasons.append(f"Melix {name} binary metadata was not provided.")
+            continue
+        if entry.get("exists") is not True:
+            reasons.append(
+                f"Melix {name} binary error: "
+                f"{entry.get('error') or 'binary path is not readable'} "
+                f"(path: {entry.get('path')})"
+            )
+            continue
+        if entry.get("build_mode") == "debug":
+            reasons.append(
+                f"Melix {name} binary uses a debug build path: {entry.get('path')}"
+            )
+        elif entry.get("build_mode") != "release":
+            reasons.append(
+                f"Melix {name} binary is not a release build: build_mode={entry.get('build_mode')}"
+            )
+    if token_accounting is not None:
+        if (
+            token_accounting.get("mixed_prompt_token_sources") is True
+            and token_accounting.get("allow_mixed_token_accounting") is not True
+        ):
+            reasons.append(
+                "Prompt token accounting used mixed sources without --allow-mixed-token-accounting."
+            )
+        if (
+            token_accounting.get("mixed_completion_token_sources") is True
+            and token_accounting.get("allow_mixed_token_accounting") is not True
+        ):
+            reasons.append(
+                "Completion token accounting used mixed sources without --allow-mixed-token-accounting."
+            )
+        if (
+            token_accounting.get("allow_mixed_token_accounting") is True
+            and (
+                token_accounting.get("mixed_prompt_token_sources") is True
+                or token_accounting.get("mixed_completion_token_sources") is True
+            )
+        ):
+            warnings.append("Mixed token accounting was explicitly allowed for this run.")
+
+    if comparison_scope == "debug-only":
+        return {
+            "status": "debug_only",
+            "peer_comparison_valid": False,
+            "comparison_scope": comparison_scope,
+            "reasons": [
+                "Run was explicitly declared debug-only; do not use it as a fair peer performance comparison.",
+                *reasons,
+            ],
+            "warnings": warnings,
+        }
+    if reasons:
+        return {
+            "status": "invalid",
+            "peer_comparison_valid": False,
+            "comparison_scope": comparison_scope,
+            "reasons": reasons,
+            "warnings": warnings,
+        }
+    return {
+        "status": "valid",
+        "peer_comparison_valid": True,
+        "comparison_scope": comparison_scope,
+        "reasons": [],
+        "warnings": warnings,
+    }
+
+
+def scenario_matrix_metadata(scenarios: list[BenchmarkScenario]) -> dict[str, Any]:
+    repeat_indexes = [scenario.repeat_index for scenario in scenarios]
+    prompt_styles = sorted({scenario.prompt_style for scenario in scenarios})
+    return {
+        "prompt_style": prompt_styles[0] if len(prompt_styles) == 1 else None,
+        "prompt_token_targets": sorted({scenario.prompt_token_target for scenario in scenarios}),
+        "max_tokens": sorted({scenario.max_tokens for scenario in scenarios}),
+        "concurrency": sorted({scenario.concurrency for scenario in scenarios}),
+        "cache_profiles": sorted({scenario.cache_profile for scenario in scenarios}),
+        "prompt_styles": prompt_styles,
+        "repeat_count": (max(repeat_indexes) + 1) if repeat_indexes else 0,
+    }
+
+
+def token_accounting_metadata(
+    summaries: list[ScenarioSummary],
+    *,
+    include_usage_requested: bool,
+    allow_mixed_token_accounting: bool,
+) -> dict[str, Any]:
+    prompt_sources = _split_source_summary(
+        summary.prompt_token_sources for summary in summaries
+    )
+    completion_sources = _split_source_summary(
+        summary.completion_token_sources for summary in summaries
+    )
+    return {
+        "include_usage_requested": include_usage_requested,
+        "allow_mixed_token_accounting": allow_mixed_token_accounting,
+        "observed_prompt_token_sources": prompt_sources,
+        "observed_completion_token_sources": completion_sources,
+        "mixed_prompt_token_sources": len(prompt_sources) > 1,
+        "mixed_completion_token_sources": len(completion_sources) > 1,
+    }
+
+
+def _split_source_summary(values: Iterable[Any]) -> list[str]:
+    sources: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        for source in value.split(","):
+            source = source.strip()
+            if source and source != "unknown":
+                sources.add(source)
+    return sorted(sources)
+
+
 def _numeric_metric(values: dict[str, Any], key: str) -> float | None:
     value = values.get(key)
     if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -913,6 +1146,9 @@ def write_artifacts(
     hints: list[dict[str, Any]],
     dry_run: bool,
     measurement_profile: dict[str, Any],
+    runtime_metadata: dict[str, Any],
+    comparison_validity: dict[str, Any],
+    token_accounting: dict[str, Any],
 ) -> dict[str, str]:
     staging_dir.mkdir(parents=True, exist_ok=True)
     generated_at = datetime.now(timezone.utc).isoformat()
@@ -942,11 +1178,12 @@ def write_artifacts(
             for endpoint in endpoints
         ],
         "scenario_count": len(scenarios),
-        "scenario_settings": {
-            "prompt_style": scenarios[0].prompt_style if scenarios else None,
-        },
+        "scenario_settings": scenario_matrix_metadata(scenarios),
         "warmup_count": len(warmups),
         "warmup_settings": warmup_settings,
+        "runtime_metadata": runtime_metadata,
+        "comparison_validity": comparison_validity,
+        "token_accounting": token_accounting,
         "observation_count": len(observations),
         "preflight": preflight,
         "metrics": metrics_manifest_entries(
@@ -972,6 +1209,9 @@ def write_artifacts(
         "schema_version": REPORT_SCHEMA_VERSION,
         "generated_at": generated_at,
         "measurement_profile": measurement_profile,
+        "runtime_metadata": runtime_metadata,
+        "comparison_validity": comparison_validity,
+        "token_accounting": token_accounting,
         "melix_metrics_snapshot": metrics_snapshot,
         "warmups": [asdict(observation) for observation in warmups],
         "summaries": [asdict(summary) for summary in summaries],
@@ -991,6 +1231,8 @@ def write_artifacts(
             metrics_snapshot=metrics_snapshot,
             dry_run=dry_run,
             measurement_profile=measurement_profile,
+            runtime_metadata=runtime_metadata,
+            comparison_validity=comparison_validity,
         ),
         encoding="utf-8",
     )
@@ -1006,6 +1248,41 @@ def write_summary_csv(path: Path, summaries: list[ScenarioSummary]) -> None:
             writer.writerow(asdict(summary))
 
 
+def runtime_metadata_markdown_rows(runtime_metadata: dict[str, Any]) -> list[str]:
+    rows: list[str] = []
+    for runtime_name in ("melix", "omlx", "swiftlm"):
+        runtime = runtime_metadata.get(runtime_name)
+        if not isinstance(runtime, dict):
+            continue
+        model = runtime.get("model") or ""
+        revision = runtime.get("revision") or ""
+        version = runtime.get("version") or ""
+        binaries = runtime.get("binaries")
+        if isinstance(binaries, dict) and binaries:
+            for binary_name, binary in sorted(binaries.items()):
+                if not isinstance(binary, dict):
+                    continue
+                rows.append(
+                    "| {runtime}:{binary_name} | `{model}` | `{revision}` | `{version}` | `{build_mode}` | `{sha256}` |".format(
+                        runtime=runtime_name,
+                        binary_name=binary_name,
+                        model=model,
+                        revision=revision,
+                        version=version,
+                        build_mode=binary.get("build_mode") or "unknown",
+                        sha256=binary.get("sha256") or "",
+                    )
+                )
+        else:
+            rows.append(
+                f"| {runtime_name} | `{model}` | `{revision}` | `{version}` | n/a | n/a |"
+            )
+    snapshot = runtime_metadata.get("model_snapshot")
+    if isinstance(snapshot, dict) and snapshot.get("path"):
+        rows.append(f"| model_snapshot | `{snapshot.get('path')}` |  |  | n/a | n/a |")
+    return rows
+
+
 def render_markdown_summary(
     summaries: list[ScenarioSummary],
     hints: list[dict[str, Any]],
@@ -1015,12 +1292,25 @@ def render_markdown_summary(
     metrics_snapshot: dict[str, Any] | None,
     dry_run: bool,
     measurement_profile: dict[str, Any],
+    runtime_metadata: dict[str, Any] | None = None,
+    comparison_validity: dict[str, Any] | None = None,
 ) -> str:
     lines = ["# OMLX And Melix Serving Benchmark Summary", ""]
     lines.append(f"- Dry run: `{str(dry_run).lower()}`")
     lines.append(f"- Measurement profile: `{measurement_profile.get('profile', 'unknown')}`")
+    if comparison_validity is not None:
+        lines.append(f"- Peer comparison status: `{comparison_validity.get('status', 'unknown')}`")
+        for reason in comparison_validity.get("reasons") or []:
+            lines.append(f"- Peer comparison warning: {reason}")
     if measurement_profile.get("operator_note"):
         lines.append(f"- Measurement note: {measurement_profile['operator_note']}")
+    if runtime_metadata:
+        lines.append("")
+        lines.append("## Reproducibility")
+        lines.append("")
+        lines.append("| Runtime | Model | Revision | Version | Binary Build | Binary SHA256 |")
+        lines.append("|---|---|---|---|---|---|")
+        lines.extend(runtime_metadata_markdown_rows(runtime_metadata))
     lines.append("")
     lines.append("## Preflight")
     lines.append("")
@@ -1387,6 +1677,17 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         swift_text_worker_path=args.melix_swift_text_worker_metrics,
     )
     summaries = summarize_observations(observations)
+    runtime_metadata = runtime_metadata_from_args(args, endpoints=endpoints)
+    token_accounting = token_accounting_metadata(
+        summaries,
+        include_usage_requested=args.include_usage,
+        allow_mixed_token_accounting=args.allow_mixed_token_accounting,
+    )
+    comparison_validity = comparison_validity_metadata(
+        runtime_metadata,
+        comparison_scope=args.comparison_scope,
+        token_accounting=token_accounting,
+    )
     hints = enrich_hints_with_metrics(comparison_hints(summaries), metrics_snapshot)
     warmup_settings = {
         "request_count_per_endpoint": args.warmup_requests,
@@ -1407,6 +1708,9 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         hints=hints,
         dry_run=args.dry_run,
         measurement_profile=measurement_profile,
+        runtime_metadata=runtime_metadata,
+        comparison_validity=comparison_validity,
+        token_accounting=token_accounting,
     )
     exported_to = None if args.no_export else export_bundle(staging_dir, args.export_dir)
     return {
@@ -1417,6 +1721,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "scenario_count": len(scenarios),
         "warmup_count": len(warmups),
         "measurement_profile": measurement_profile["profile"],
+        "comparison_validity": comparison_validity,
         "observation_count": len(observations),
         "summary_count": len(summaries),
         "optimization_hint_count": len(hints),
@@ -1437,6 +1742,42 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default="", help="Model id to use for both endpoints.")
     parser.add_argument("--melix-model", default="", help="Melix model id; overrides --model.")
     parser.add_argument("--omlx-model", default="", help="OMLX model id; overrides --model.")
+    parser.add_argument("--melix-revision", default="", help="Melix git revision used for this run.")
+    parser.add_argument("--omlx-revision", default="", help="OMLX git revision used for this run.")
+    parser.add_argument("--swiftlm-revision", default="", help="Optional SwiftLM git revision used for an external peer run.")
+    parser.add_argument("--melix-version", default="", help="Melix build or CLI version used for this run.")
+    parser.add_argument("--omlx-version", default="", help="OMLX package/server version used for this run.")
+    parser.add_argument("--swiftlm-version", default="", help="Optional SwiftLM build or server version used for an external peer run.")
+    parser.add_argument(
+        "--melix-text-worker-binary",
+        type=Path,
+        default=None,
+        help="Melix Swift text-worker binary path; peer reports are invalid when this resolves to a debug build.",
+    )
+    parser.add_argument(
+        "--melix-control-plane-binary",
+        type=Path,
+        default=None,
+        help="Melix Swift control-plane binary path; peer reports are invalid when this resolves to a debug build.",
+    )
+    parser.add_argument(
+        "--swiftlm-binary",
+        type=Path,
+        default=None,
+        help="Optional SwiftLM binary path to hash into the reproducibility manifest.",
+    )
+    parser.add_argument(
+        "--model-snapshot-path",
+        type=Path,
+        default=None,
+        help="Optional local model snapshot path used by the compared servers.",
+    )
+    parser.add_argument(
+        "--comparison-scope",
+        choices=COMPARISON_SCOPES,
+        default="peer",
+        help="Use debug-only to explicitly mark artifacts as unsuitable for peer performance comparison.",
+    )
     parser.add_argument("--melix-header", action="append", default=[], help="Extra Melix header, 'Name: value'.")
     parser.add_argument("--omlx-header", action="append", default=[], help="Extra OMLX header, 'Name: value'.")
     parser.add_argument(
@@ -1482,6 +1823,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--top-p", type=float, default=DEFAULT_TOP_P)
     parser.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
     parser.add_argument("--include-usage", action="store_true", help="Request streaming usage chunks.")
+    parser.add_argument(
+        "--allow-mixed-token-accounting",
+        action="store_true",
+        help="Keep peer report artifacts when prompt/completion token counts come from mixed usage and estimate sources.",
+    )
     parser.add_argument("--timeout-seconds", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--preflight-timeout-seconds", type=float, default=10.0)
     parser.add_argument(
