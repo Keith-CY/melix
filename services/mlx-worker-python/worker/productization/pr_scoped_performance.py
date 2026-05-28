@@ -2453,10 +2453,32 @@ def _coverage_paths_by_probe_id(
     *,
     changed_paths: tuple[str, ...],
     probes: tuple[ProbeDefinition, ...],
+    selected_probe_ids: frozenset[str] | None = None,
 ) -> dict[str, tuple[str, ...]]:
     if not changed_paths:
         return {}
     exact_path_to_probe_indexes, wildcard_glob_matchers = _probe_match_indexes(probes)
+    selected_probe_indexes: frozenset[int] | None = None
+    if selected_probe_ids is not None and len(selected_probe_ids) < len(probes):
+        probe_id_to_index = _probe_id_to_index(probes)
+        selected_probe_indexes = frozenset(
+            index
+            for probe_id in selected_probe_ids
+            if (index := probe_id_to_index.get(probe_id)) is not None
+        )
+        if not selected_probe_indexes:
+            return {}
+        wildcard_glob_matchers = tuple(
+            (prefix, pattern, filtered_probe_indexes)
+            for prefix, pattern, probe_indexes in wildcard_glob_matchers
+            if (
+                filtered_probe_indexes := tuple(
+                    probe_index
+                    for probe_index in probe_indexes
+                    if probe_index in selected_probe_indexes
+                )
+            )
+        )
     coverage_paths_by_probe_index: dict[int, list[str]] = {}
     for path in changed_paths:
         direct_probe_ids = _FORCE_ALL_DIRECT_PROBE_IDS_BY_EXACT_PATH.get(path)
@@ -2470,6 +2492,11 @@ def _coverage_paths_by_probe_id(
         probe_indexes = exact_path_to_probe_indexes.get(path)
         if probe_indexes is not None:
             for probe_index in probe_indexes:
+                if (
+                    selected_probe_indexes is not None
+                    and probe_index not in selected_probe_indexes
+                ):
+                    continue
                 coverage_paths_by_probe_index.setdefault(probe_index, []).append(path)
         for prefix, pattern, probe_indexes in wildcard_glob_matchers:
             if prefix and not path.startswith(prefix):
@@ -2493,9 +2520,11 @@ def _selected_probes_with_coverage_paths(
     cached = _SCOPE_SELECTED_PROBES_WITH_COVERAGE_CACHE.get(cache_key)
     if cached is not None:
         return cached
+    selected_probe_ids = frozenset(str(probe_entry["id"]) for probe_entry in selected_probes)
     coverage_paths_by_probe_id = _coverage_paths_by_probe_id(
         changed_paths=changed_paths,
         probes=probes,
+        selected_probe_ids=selected_probe_ids,
     )
     cached = tuple(
         {
