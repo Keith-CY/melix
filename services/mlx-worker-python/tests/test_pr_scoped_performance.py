@@ -1859,6 +1859,19 @@ def test_match_probe_indexes_deduplicates_repeated_watch_globs() -> None:
         "beta": ("shared.py", "services/b.py"),
         "gamma": ("shared.py",),
     }
+    assert _coverage_paths_by_probe_id(
+        changed_paths=("shared.py", "services/b.py", "unmatched.py"),
+        probes=probes,
+        selected_probe_ids=frozenset({"beta"}),
+    ) == {"beta": ("shared.py", "services/b.py")}
+    assert (
+        _coverage_paths_by_probe_id(
+            changed_paths=("shared.py", "services/b.py"),
+            probes=probes,
+            selected_probe_ids=frozenset({"missing"}),
+        )
+        == {}
+    )
 
 
 def test_match_probe_indexes_exact_only_intersects_changed_paths() -> None:
