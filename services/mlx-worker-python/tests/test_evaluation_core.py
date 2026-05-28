@@ -720,12 +720,18 @@ def test_latency_stats_reuse_single_sorted_vector(monkeypatch: pytest.MonkeyPatc
         sorted_call_count += 1
         return original_sorted(*args, **kwargs)
 
+    def fail_ordered_percentile(*args, **kwargs):  # pragma: no cover - regression guard
+        raise AssertionError("_latency_stats should inline fixed percentile calculations")
+
     monkeypatch.setattr(builtins, "sorted", counting_sorted)
+    monkeypatch.setattr(EvaluationCore, "_ordered_percentile", fail_ordered_percentile)
 
     stats = EvaluationCore._latency_stats([40.0, 10.0, 30.0, 20.0])
 
     assert stats == {"mean": 25.0, "p50": 25.0, "p95": 38.5, "max": 40.0}
-    assert sorted_call_count == 1
+    assert EvaluationCore._latency_stats([10.0, 30.0, 20.0]) == {"mean": 20.0, "p50": 20.0, "p95": 29.0, "max": 30.0}
+    assert EvaluationCore._latency_stats([42.0]) == {"mean": 42.0, "p50": 42.0, "p95": 42.0, "max": 42.0}
+    assert sorted_call_count == 3
 
 
 def test_run_local_suite_executes_packaged_dataset_and_persists_result(tmp_path: Path) -> None:
