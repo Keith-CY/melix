@@ -25,6 +25,7 @@ import omlx_melix_compare_benchmark as base
 
 ENDPOINT_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 DEFAULT_RUN_ROOT = Path(".runtime/three-way-gemma31b128k")
+REPORT_SCHEMA_VERSION = 2
 
 
 def parse_endpoint_headers(values: Iterable[str]) -> dict[str, dict[str, str]]:
@@ -454,6 +455,18 @@ def run_comparison(args: argparse.Namespace) -> dict[str, Any]:
     prompt_evidence = prompt_token_evidence(observations)
     comparisons, peer_hints = peer_comparisons(summaries, target_endpoint=args.target_endpoint)
     hints = base.enrich_hints_with_metrics(peer_hints, metrics_snapshot)
+    request_phase_rows = base.build_request_phase_rows(observations)
+    peer_delta_rows = base.build_peer_delta_rows(
+        summaries,
+        target_endpoint=args.target_endpoint,
+        total_latency_threshold_ratio=args.total_latency_threshold_ratio,
+        decode_throughput_threshold_ratio=args.decode_throughput_threshold_ratio,
+    )
+    threshold_status = base.build_threshold_status(
+        peer_delta_rows,
+        total_latency_threshold_ratio=args.total_latency_threshold_ratio,
+        decode_throughput_threshold_ratio=args.decode_throughput_threshold_ratio,
+    )
     warmup_settings = {
         "request_count_per_endpoint": args.warmup_requests,
         "prompt_token_target": args.warmup_prompt_token_target,
@@ -473,6 +486,9 @@ def run_comparison(args: argparse.Namespace) -> dict[str, Any]:
         summaries=summaries,
         prompt_evidence=prompt_evidence,
         comparisons=comparisons,
+        request_phase_rows=request_phase_rows,
+        peer_delta_rows=peer_delta_rows,
+        threshold_status=threshold_status,
         hints=hints,
         dry_run=args.dry_run,
         target_endpoint=args.target_endpoint,
@@ -491,6 +507,9 @@ def run_comparison(args: argparse.Namespace) -> dict[str, Any]:
         "observation_count": len(observations),
         "summary_count": len(summaries),
         "comparison_count": len(comparisons),
+        "request_phase_row_count": len(request_phase_rows),
+        "peer_delta_row_count": len(peer_delta_rows),
+        "threshold_status": threshold_status,
         "optimization_hint_count": len(hints),
         "artifacts": artifact_paths,
     }
@@ -510,6 +529,9 @@ def write_artifacts(
     summaries: list[base.ScenarioSummary],
     prompt_evidence: list[dict[str, Any]],
     comparisons: list[dict[str, Any]],
+    request_phase_rows: list[dict[str, Any]],
+    peer_delta_rows: list[dict[str, Any]],
+    threshold_status: dict[str, Any],
     hints: list[dict[str, Any]],
     dry_run: bool,
     target_endpoint: str,
@@ -524,6 +546,9 @@ def write_artifacts(
         "summary_csv": staging_dir / "summary.csv",
         "summary_markdown": staging_dir / "summary.md",
         "runtime_snapshots": staging_dir / "runtime-snapshots.json",
+        "request_phase_rows": staging_dir / "request-phase-rows.json",
+        "peer_delta_rows": staging_dir / "peer-delta-rows.json",
+        "threshold_status": staging_dir / "threshold-status.json",
     }
     if warmups:
         paths["warmups"] = staging_dir / "warmups.jsonl"
@@ -531,7 +556,7 @@ def write_artifacts(
         paths["melix_metrics"] = staging_dir / "melix-metrics.json"
 
     manifest = {
-        "schema_version": 1,
+        "schema_version": REPORT_SCHEMA_VERSION,
         "generated_at": generated_at,
         "dry_run": dry_run,
         "target_endpoint": target_endpoint,
@@ -552,6 +577,9 @@ def write_artifacts(
         "warmup_count": len(warmups),
         "warmup_settings": warmup_settings,
         "observation_count": len(observations),
+        "request_phase_row_count": len(request_phase_rows),
+        "peer_delta_row_count": len(peer_delta_rows),
+        "threshold_status": threshold_status,
         "preflight": preflight,
         "artifacts": {key: path.name for key, path in paths.items()},
     }
@@ -572,8 +600,20 @@ def write_artifacts(
     with paths["observations"].open("w", encoding="utf-8") as handle:
         for observation in observations:
             handle.write(json.dumps(asdict(observation), sort_keys=True) + "\n")
+    paths["request_phase_rows"].write_text(
+        json.dumps(request_phase_rows, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    paths["peer_delta_rows"].write_text(
+        json.dumps(peer_delta_rows, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    paths["threshold_status"].write_text(
+        json.dumps(threshold_status, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     summary_payload = {
-        "schema_version": 1,
+        "schema_version": REPORT_SCHEMA_VERSION,
         "generated_at": generated_at,
         "target_endpoint": target_endpoint,
         "measurement_profile": measurement_profile,
@@ -583,6 +623,9 @@ def write_artifacts(
         "prompt_token_evidence": prompt_evidence,
         "summaries": [asdict(summary) for summary in summaries],
         "peer_comparisons": comparisons,
+        "request_phase_rows": request_phase_rows,
+        "peer_delta_rows": peer_delta_rows,
+        "threshold_status": threshold_status,
         "optimization_hints": hints,
     }
     paths["summary_json"].write_text(
@@ -600,6 +643,9 @@ def write_artifacts(
             prompt_evidence=prompt_evidence,
             warmups=warmups,
             metrics_snapshot=metrics_snapshot,
+            request_phase_rows=request_phase_rows,
+            peer_delta_rows=peer_delta_rows,
+            threshold_status=threshold_status,
             dry_run=dry_run,
             target_endpoint=target_endpoint,
             measurement_profile=measurement_profile,
@@ -619,6 +665,9 @@ def render_markdown_summary(
     prompt_evidence: list[dict[str, Any]],
     warmups: list[base.RequestObservation],
     metrics_snapshot: dict[str, Any] | None,
+    request_phase_rows: list[dict[str, Any]] | None = None,
+    peer_delta_rows: list[dict[str, Any]] | None = None,
+    threshold_status: dict[str, Any] | None = None,
     dry_run: bool,
     target_endpoint: str,
     measurement_profile: dict[str, Any],
@@ -629,6 +678,8 @@ def render_markdown_summary(
     lines.append(f"- Measurement profile: `{measurement_profile.get('profile', 'unknown')}`")
     if measurement_profile.get("operator_note"):
         lines.append(f"- Measurement note: {measurement_profile['operator_note']}")
+    if threshold_status is not None:
+        lines.append(f"- Threshold status: `{threshold_status.get('status', 'unknown')}`")
     lines.append("")
     lines.append("## Preflight")
     lines.append("")
@@ -714,6 +765,8 @@ def render_markdown_summary(
             )
     else:
         lines.append("No peer comparison rows were generated.")
+    base.append_peer_delta_markdown(lines, peer_delta_rows or [], threshold_status)
+    base.append_request_phase_markdown(lines, request_phase_rows or [])
     lines.append("")
     lines.append("## Runtime Snapshots")
     lines.append("")
@@ -826,6 +879,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--top-k", type=int, default=0)
     parser.add_argument("--include-usage", action="store_true")
     parser.add_argument("--timeout-seconds", type=float, default=3600.0)
+    parser.add_argument(
+        "--total-latency-threshold-ratio",
+        type=float,
+        default=base.DEFAULT_TOTAL_LATENCY_THRESHOLD_RATIO,
+    )
+    parser.add_argument(
+        "--decode-throughput-threshold-ratio",
+        type=float,
+        default=base.DEFAULT_DECODE_THROUGHPUT_THRESHOLD_RATIO,
+    )
     parser.add_argument("--preflight-timeout-seconds", type=float, default=10.0)
     parser.add_argument("--preflight-wait-seconds", type=float, default=0.0)
     parser.add_argument("--preflight-retry-interval-seconds", type=float, default=2.0)
@@ -884,6 +947,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--concurrency values must be positive")
     if args.timeout_seconds <= 0 or args.preflight_timeout_seconds <= 0:
         raise ValueError("Timeout values must be positive")
+    if args.total_latency_threshold_ratio < 0:
+        raise ValueError("--total-latency-threshold-ratio must be at least 0")
+    if not 0.0 <= args.decode_throughput_threshold_ratio <= 1.0:
+        raise ValueError("--decode-throughput-threshold-ratio must be between 0.0 and 1.0")
     if args.preflight_wait_seconds < 0:
         raise ValueError("--preflight-wait-seconds must be at least 0")
     if args.preflight_retry_interval_seconds <= 0:

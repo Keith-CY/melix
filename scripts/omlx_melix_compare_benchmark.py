@@ -41,7 +41,9 @@ DEFAULT_TOP_K = 0
 PROMPT_STYLES = ("concise", "saturating")
 MEASUREMENT_PROFILES = ("auto", "cold", "warm", "mixed")
 COMPARISON_SCOPES = ("peer", "debug-only")
-REPORT_SCHEMA_VERSION = 2
+REPORT_SCHEMA_VERSION = 3
+DEFAULT_TOTAL_LATENCY_THRESHOLD_RATIO = 0.25
+DEFAULT_DECODE_THROUGHPUT_THRESHOLD_RATIO = 0.25
 MELIX_VLM_BATCHING_BLOCKED_REASON_CODES = {
     1: "multimodal route does not expose a streaming continuous batching path",
     2: "python VLM request is not eligible for cooperative text-only token-step batching",
@@ -741,6 +743,252 @@ def comparison_hints(summaries: list[ScenarioSummary]) -> list[dict[str, Any]]:
     return hints
 
 
+def build_request_phase_rows(observations: list[RequestObservation]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for observation in observations:
+        rows.append({
+            "endpoint": observation.endpoint,
+            "model": observation.model,
+            "scenario_id": observation.scenario_id,
+            "group_id": observation.group_id,
+            "prompt_token_target": observation.prompt_token_target,
+            "max_tokens": observation.max_tokens,
+            "concurrency": observation.concurrency,
+            "cache_profile": observation.cache_profile,
+            "prompt_style": observation.prompt_style,
+            "repeat_index": observation.repeat_index,
+            "request_index": observation.request_index,
+            "status": observation.status,
+            "http_status": observation.http_status,
+            "error": observation.error,
+            "prompt_tokens": observation.prompt_tokens,
+            "prompt_token_source": observation.prompt_token_source,
+            "output_tokens": observation.completion_tokens,
+            "output_token_source": observation.completion_token_source,
+            "queue_ms": None,
+            "prefill_ms": None,
+            "first_http_sse_event_ms": observation.ttft_ms,
+            "decode_ms": observation.decode_ms,
+            "worker_stream_ms": None,
+            "total_ms": observation.total_ms,
+            "streamed_chunks": observation.streamed_chunks,
+            "completion_chars": observation.completion_chars,
+            "decode_tokens_per_second": observation.decode_tokens_per_second,
+            "group_elapsed_ms": observation.group_elapsed_ms,
+            "phase_sources": {
+                "queue_ms": "unavailable",
+                "prefill_ms": "unavailable",
+                "first_http_sse_event_ms": "client_stream_first_delta",
+                "decode_ms": "client_total_minus_first_delta",
+                "worker_stream_ms": "unavailable",
+                "total_ms": "client_elapsed",
+            },
+        })
+    return rows
+
+
+def build_peer_delta_rows(
+    summaries: list[ScenarioSummary],
+    *,
+    target_endpoint: str = "melix",
+    total_latency_threshold_ratio: float = DEFAULT_TOTAL_LATENCY_THRESHOLD_RATIO,
+    decode_throughput_threshold_ratio: float = DEFAULT_DECODE_THROUGHPUT_THRESHOLD_RATIO,
+) -> list[dict[str, Any]]:
+    grouped: dict[tuple[int, int, int, str, str], list[ScenarioSummary]] = {}
+    for summary in summaries:
+        grouped.setdefault(_scenario_key(summary), []).append(summary)
+
+    rows: list[dict[str, Any]] = []
+    for key, scenario_rows in sorted(grouped.items()):
+        target = next((row for row in scenario_rows if row.endpoint == target_endpoint), None)
+        if target is None:
+            continue
+        best_total_peer = _best_peer_summary(
+            scenario_rows,
+            target_endpoint,
+            "median_total_ms",
+            lower_is_better=True,
+        )
+        best_decode_peer = _best_peer_summary(
+            scenario_rows,
+            target_endpoint,
+            "median_decode_tokens_per_second",
+            lower_is_better=False,
+        )
+        total_status = _latency_threshold_status(
+            target.median_total_ms,
+            best_total_peer.median_total_ms if best_total_peer else None,
+            total_latency_threshold_ratio,
+        )
+        decode_status = _throughput_threshold_status(
+            target.median_decode_tokens_per_second,
+            best_decode_peer.median_decode_tokens_per_second if best_decode_peer else None,
+            decode_throughput_threshold_ratio,
+        )
+        row_status = (
+            "threshold_failed"
+            if total_status == "failed" or decode_status == "failed"
+            else "ok"
+            if total_status == "ok" and decode_status == "ok"
+            else "insufficient_data"
+        )
+        rows.append({
+            "scenario": _scenario_dict_from_key(key),
+            "target_endpoint": target_endpoint,
+            "status": row_status,
+            "total_latency": {
+                "status": total_status,
+                "threshold_ratio": total_latency_threshold_ratio,
+                "threshold_pct": total_latency_threshold_ratio * 100.0,
+                "target_median_ms": target.median_total_ms,
+                "best_peer": best_total_peer.endpoint if best_total_peer else None,
+                "best_peer_median_ms": best_total_peer.median_total_ms if best_total_peer else None,
+                "delta_ms": _delta(target.median_total_ms, best_total_peer.median_total_ms if best_total_peer else None),
+                "delta_pct": _percent_delta(
+                    target.median_total_ms,
+                    best_total_peer.median_total_ms if best_total_peer else None,
+                ),
+            },
+            "decode_throughput": {
+                "status": decode_status,
+                "threshold_ratio": decode_throughput_threshold_ratio,
+                "threshold_pct": decode_throughput_threshold_ratio * 100.0,
+                "target_median_tokens_per_second": target.median_decode_tokens_per_second,
+                "best_peer": best_decode_peer.endpoint if best_decode_peer else None,
+                "best_peer_median_tokens_per_second": (
+                    best_decode_peer.median_decode_tokens_per_second if best_decode_peer else None
+                ),
+                "delta_tokens_per_second": _delta(
+                    target.median_decode_tokens_per_second,
+                    best_decode_peer.median_decode_tokens_per_second if best_decode_peer else None,
+                ),
+                "delta_pct": _percent_delta(
+                    target.median_decode_tokens_per_second,
+                    best_decode_peer.median_decode_tokens_per_second if best_decode_peer else None,
+                ),
+            },
+        })
+    return rows
+
+
+def build_threshold_status(
+    peer_delta_rows: list[dict[str, Any]],
+    *,
+    total_latency_threshold_ratio: float = DEFAULT_TOTAL_LATENCY_THRESHOLD_RATIO,
+    decode_throughput_threshold_ratio: float = DEFAULT_DECODE_THROUGHPUT_THRESHOLD_RATIO,
+) -> dict[str, Any]:
+    failures: list[dict[str, Any]] = []
+    has_insufficient = False
+    for row in peer_delta_rows:
+        scenario = row.get("scenario", {})
+        for area in ("total_latency", "decode_throughput"):
+            area_payload = row.get(area, {})
+            status = area_payload.get("status") if isinstance(area_payload, dict) else None
+            if status == "failed":
+                failures.append({
+                    "scenario": scenario,
+                    "area": area,
+                    "target_endpoint": row.get("target_endpoint"),
+                    "best_peer": area_payload.get("best_peer"),
+                    "delta_pct": area_payload.get("delta_pct"),
+                    "threshold_pct": area_payload.get("threshold_pct"),
+                })
+            elif status != "ok":
+                has_insufficient = True
+    if not peer_delta_rows:
+        status = "no_data"
+    elif failures:
+        status = "threshold_failed"
+    elif has_insufficient:
+        status = "insufficient_data"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "row_count": len(peer_delta_rows),
+        "failure_count": len(failures),
+        "failures": failures,
+        "total_latency_threshold_pct": total_latency_threshold_ratio * 100.0,
+        "decode_throughput_threshold_pct": decode_throughput_threshold_ratio * 100.0,
+    }
+
+
+def _scenario_key(summary: ScenarioSummary) -> tuple[int, int, int, str, str]:
+    return (
+        summary.prompt_token_target,
+        summary.max_tokens,
+        summary.concurrency,
+        summary.cache_profile,
+        summary.prompt_style,
+    )
+
+
+def _scenario_dict_from_key(key: tuple[int, int, int, str, str]) -> dict[str, Any]:
+    prompt_token_target, max_tokens, concurrency, cache_profile, prompt_style = key
+    return {
+        "prompt_token_target": prompt_token_target,
+        "max_tokens": max_tokens,
+        "concurrency": concurrency,
+        "cache_profile": cache_profile,
+        "prompt_style": prompt_style,
+    }
+
+
+def _best_peer_summary(
+    rows: list[ScenarioSummary],
+    target_endpoint: str,
+    metric: str,
+    *,
+    lower_is_better: bool,
+) -> ScenarioSummary | None:
+    clean = [
+        row
+        for row in rows
+        if row.endpoint != target_endpoint
+        and row.error_count == 0
+        and getattr(row, metric) is not None
+    ]
+    if not clean:
+        return None
+    return (
+        min(clean, key=lambda row: getattr(row, metric))
+        if lower_is_better
+        else max(clean, key=lambda row: getattr(row, metric))
+    )
+
+
+def _latency_threshold_status(
+    target_value: float | None,
+    peer_value: float | None,
+    threshold_ratio: float,
+) -> str:
+    if target_value is None or peer_value is None:
+        return "missing"
+    return "failed" if target_value > peer_value * (1.0 + threshold_ratio) else "ok"
+
+
+def _throughput_threshold_status(
+    target_value: float | None,
+    peer_value: float | None,
+    threshold_ratio: float,
+) -> str:
+    if target_value is None or peer_value is None or peer_value <= 0:
+        return "missing"
+    return "failed" if target_value < peer_value * (1.0 - threshold_ratio) else "ok"
+
+
+def _delta(target_value: float | None, peer_value: float | None) -> float | None:
+    if target_value is None or peer_value is None:
+        return None
+    return target_value - peer_value
+
+
+def _percent_delta(target_value: float | None, peer_value: float | None) -> float | None:
+    if target_value is None or peer_value is None or peer_value == 0:
+        return None
+    return ((target_value - peer_value) / peer_value) * 100.0
+
+
 def _is_regressed_latency(melix_value: float | None, omlx_value: float | None) -> bool:
     if melix_value is None or omlx_value is None:
         return False
@@ -1119,6 +1367,9 @@ def write_artifacts(
     metrics_snapshot: dict[str, Any] | None,
     observations: list[RequestObservation],
     summaries: list[ScenarioSummary],
+    request_phase_rows: list[dict[str, Any]],
+    peer_delta_rows: list[dict[str, Any]],
+    threshold_status: dict[str, Any],
     hints: list[dict[str, Any]],
     dry_run: bool,
     measurement_profile: dict[str, Any],
@@ -1134,6 +1385,9 @@ def write_artifacts(
         "summary_json": staging_dir / "summary.json",
         "summary_csv": staging_dir / "summary.csv",
         "summary_markdown": staging_dir / "summary.md",
+        "request_phase_rows": staging_dir / "request-phase-rows.json",
+        "peer_delta_rows": staging_dir / "peer-delta-rows.json",
+        "threshold_status": staging_dir / "threshold-status.json",
     }
     if warmups:
         paths["warmups"] = staging_dir / "warmups.jsonl"
@@ -1161,6 +1415,9 @@ def write_artifacts(
         "comparison_validity": comparison_validity,
         "token_accounting": token_accounting,
         "observation_count": len(observations),
+        "request_phase_row_count": len(request_phase_rows),
+        "peer_delta_row_count": len(peer_delta_rows),
+        "threshold_status": threshold_status,
         "preflight": preflight,
         "metrics": metrics_manifest_entries(
             metrics_snapshot,
@@ -1181,6 +1438,18 @@ def write_artifacts(
     with paths["observations"].open("w", encoding="utf-8") as handle:
         for observation in observations:
             handle.write(json.dumps(asdict(observation), sort_keys=True) + "\n")
+    paths["request_phase_rows"].write_text(
+        json.dumps(request_phase_rows, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    paths["peer_delta_rows"].write_text(
+        json.dumps(peer_delta_rows, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    paths["threshold_status"].write_text(
+        json.dumps(threshold_status, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     summary_payload = {
         "schema_version": REPORT_SCHEMA_VERSION,
         "generated_at": generated_at,
@@ -1191,6 +1460,9 @@ def write_artifacts(
         "melix_metrics_snapshot": metrics_snapshot,
         "warmups": [asdict(observation) for observation in warmups],
         "summaries": [asdict(summary) for summary in summaries],
+        "request_phase_rows": request_phase_rows,
+        "peer_delta_rows": peer_delta_rows,
+        "threshold_status": threshold_status,
         "optimization_hints": hints,
     }
     paths["summary_json"].write_text(
@@ -1205,6 +1477,9 @@ def write_artifacts(
             preflight=preflight,
             warmups=warmups,
             metrics_snapshot=metrics_snapshot,
+            request_phase_rows=request_phase_rows,
+            peer_delta_rows=peer_delta_rows,
+            threshold_status=threshold_status,
             dry_run=dry_run,
             measurement_profile=measurement_profile,
             runtime_metadata=runtime_metadata,
@@ -1259,6 +1534,90 @@ def runtime_metadata_markdown_rows(runtime_metadata: dict[str, Any]) -> list[str
     return rows
 
 
+def append_peer_delta_markdown(
+    lines: list[str],
+    peer_delta_rows: list[dict[str, Any]],
+    threshold_status: dict[str, Any] | None,
+) -> None:
+    lines.append("")
+    lines.append("## Peer Delta Rows")
+    lines.append("")
+    if threshold_status is not None:
+        lines.append(
+            "- Status: `{status}`; failures: `{failures}`".format(
+                status=threshold_status.get("status", "unknown"),
+                failures=threshold_status.get("failure_count", 0),
+            )
+        )
+        lines.append("")
+    if not peer_delta_rows:
+        lines.append("No peer delta rows were generated.")
+        return
+    lines.append(
+        "| Scenario | Total Status | Total Best Peer | Total Target ms | Total Best ms | "
+        "Total Delta % | Decode Status | Decode Best Peer | Decode Target tok/s | "
+        "Decode Best tok/s | Decode Delta % |"
+    )
+    lines.append("|---|---|---|---:|---:|---:|---|---|---:|---:|---:|")
+    for row in peer_delta_rows:
+        scenario = row.get("scenario", {})
+        total = row.get("total_latency", {})
+        decode = row.get("decode_throughput", {})
+        lines.append(
+            "| pt={prompt} out={out} c={concurrency} | {total_status} | {total_peer} | {total_target} | {total_best} | {total_delta} | {decode_status} | {decode_peer} | {decode_target} | {decode_best} | {decode_delta} |".format(
+                prompt=scenario.get("prompt_token_target", "n/a"),
+                out=scenario.get("max_tokens", "n/a"),
+                concurrency=scenario.get("concurrency", "n/a"),
+                total_status=total.get("status", "missing") if isinstance(total, dict) else "missing",
+                total_peer=total.get("best_peer") or "n/a" if isinstance(total, dict) else "n/a",
+                total_target=_fmt(total.get("target_median_ms") if isinstance(total, dict) else None),
+                total_best=_fmt(total.get("best_peer_median_ms") if isinstance(total, dict) else None),
+                total_delta=_fmt(total.get("delta_pct") if isinstance(total, dict) else None),
+                decode_status=decode.get("status", "missing") if isinstance(decode, dict) else "missing",
+                decode_peer=decode.get("best_peer") or "n/a" if isinstance(decode, dict) else "n/a",
+                decode_target=_fmt(
+                    decode.get("target_median_tokens_per_second") if isinstance(decode, dict) else None
+                ),
+                decode_best=_fmt(
+                    decode.get("best_peer_median_tokens_per_second") if isinstance(decode, dict) else None
+                ),
+                decode_delta=_fmt(decode.get("delta_pct") if isinstance(decode, dict) else None),
+            )
+        )
+
+
+def append_request_phase_markdown(lines: list[str], request_phase_rows: list[dict[str, Any]]) -> None:
+    lines.append("")
+    lines.append("## Request Phase Rows")
+    lines.append("")
+    if not request_phase_rows:
+        lines.append("No request phase rows were generated.")
+        return
+    lines.append(
+        "| Endpoint | Scenario | Repeat | Request | Status | Queue ms | Prefill ms | "
+        "First HTTP/SSE Event ms | Decode ms | Worker Stream ms | Total ms | Output Tokens | Decode tok/s |"
+    )
+    lines.append("|---|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|")
+    for row in request_phase_rows:
+        lines.append(
+            "| {endpoint} | {scenario} | {repeat} | {request} | {status} | {queue} | {prefill} | {first_event} | {decode_ms} | {worker_stream} | {total} | {output_tokens} | {decode_tps} |".format(
+                endpoint=row.get("endpoint", ""),
+                scenario=row.get("scenario_id", ""),
+                repeat=row.get("repeat_index", ""),
+                request=row.get("request_index", ""),
+                status=row.get("status", ""),
+                queue=_fmt(row.get("queue_ms")),
+                prefill=_fmt(row.get("prefill_ms")),
+                first_event=_fmt(row.get("first_http_sse_event_ms")),
+                decode_ms=_fmt(row.get("decode_ms")),
+                worker_stream=_fmt(row.get("worker_stream_ms")),
+                total=_fmt(row.get("total_ms")),
+                output_tokens=_fmt(row.get("output_tokens")),
+                decode_tps=_fmt(row.get("decode_tokens_per_second")),
+            )
+        )
+
+
 def render_markdown_summary(
     summaries: list[ScenarioSummary],
     hints: list[dict[str, Any]],
@@ -1266,6 +1625,9 @@ def render_markdown_summary(
     preflight: list[dict[str, Any]],
     warmups: list[RequestObservation],
     metrics_snapshot: dict[str, Any] | None,
+    request_phase_rows: list[dict[str, Any]] | None = None,
+    peer_delta_rows: list[dict[str, Any]] | None = None,
+    threshold_status: dict[str, Any] | None = None,
     dry_run: bool,
     measurement_profile: dict[str, Any],
     runtime_metadata: dict[str, Any] | None = None,
@@ -1280,6 +1642,8 @@ def render_markdown_summary(
             lines.append(f"- Peer comparison warning: {reason}")
     if measurement_profile.get("operator_note"):
         lines.append(f"- Measurement note: {measurement_profile['operator_note']}")
+    if threshold_status is not None:
+        lines.append(f"- Threshold status: `{threshold_status.get('status', 'unknown')}`")
     if runtime_metadata:
         lines.append("")
         lines.append("## Reproducibility")
@@ -1347,6 +1711,8 @@ def render_markdown_summary(
                 aggregate=_fmt(summary.median_aggregate_output_tokens_per_second),
             )
         )
+    append_peer_delta_markdown(lines, peer_delta_rows or [], threshold_status)
+    append_request_phase_markdown(lines, request_phase_rows or [])
     if metrics_snapshot is not None:
         lines.append("")
         lines.append("## Melix Metrics Snapshot")
@@ -1668,6 +2034,18 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         token_accounting=token_accounting,
     )
     hints = enrich_hints_with_metrics(comparison_hints(summaries), metrics_snapshot)
+    request_phase_rows = build_request_phase_rows(observations)
+    peer_delta_rows = build_peer_delta_rows(
+        summaries,
+        target_endpoint="melix",
+        total_latency_threshold_ratio=args.total_latency_threshold_ratio,
+        decode_throughput_threshold_ratio=args.decode_throughput_threshold_ratio,
+    )
+    threshold_status = build_threshold_status(
+        peer_delta_rows,
+        total_latency_threshold_ratio=args.total_latency_threshold_ratio,
+        decode_throughput_threshold_ratio=args.decode_throughput_threshold_ratio,
+    )
     warmup_settings = {
         "request_count_per_endpoint": args.warmup_requests,
         "prompt_token_target": args.warmup_prompt_token_target,
@@ -1684,6 +2062,9 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         metrics_snapshot=metrics_snapshot,
         observations=observations,
         summaries=summaries,
+        request_phase_rows=request_phase_rows,
+        peer_delta_rows=peer_delta_rows,
+        threshold_status=threshold_status,
         hints=hints,
         dry_run=args.dry_run,
         measurement_profile=measurement_profile,
@@ -1703,6 +2084,9 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "comparison_validity": comparison_validity,
         "observation_count": len(observations),
         "summary_count": len(summaries),
+        "request_phase_row_count": len(request_phase_rows),
+        "peer_delta_row_count": len(peer_delta_rows),
+        "threshold_status": threshold_status,
         "optimization_hint_count": len(hints),
         "melix_metrics_snapshot": {
             "ok": metrics_snapshot.get("ok"),
@@ -1808,6 +2192,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Keep peer report artifacts when prompt/completion token counts come from mixed usage and estimate sources.",
     )
     parser.add_argument("--timeout-seconds", type=float, default=DEFAULT_TIMEOUT_SECONDS)
+    parser.add_argument(
+        "--total-latency-threshold-ratio",
+        type=float,
+        default=DEFAULT_TOTAL_LATENCY_THRESHOLD_RATIO,
+        help="Scenario status fails when target total latency is more than this ratio above the best peer.",
+    )
+    parser.add_argument(
+        "--decode-throughput-threshold-ratio",
+        type=float,
+        default=DEFAULT_DECODE_THROUGHPUT_THRESHOLD_RATIO,
+        help="Scenario status fails when target decode tok/s is more than this ratio below the best peer.",
+    )
     parser.add_argument("--preflight-timeout-seconds", type=float, default=10.0)
     parser.add_argument(
         "--preflight-wait-seconds",
@@ -1900,6 +2296,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--concurrency values must be positive")
     if args.timeout_seconds <= 0 or args.preflight_timeout_seconds <= 0:
         raise ValueError("Timeout values must be positive")
+    if args.total_latency_threshold_ratio < 0:
+        raise ValueError("--total-latency-threshold-ratio must be at least 0")
+    if not 0.0 <= args.decode_throughput_threshold_ratio <= 1.0:
+        raise ValueError("--decode-throughput-threshold-ratio must be between 0.0 and 1.0")
     if args.preflight_wait_seconds < 0:
         raise ValueError("--preflight-wait-seconds must be at least 0")
     if args.preflight_retry_interval_seconds <= 0:
