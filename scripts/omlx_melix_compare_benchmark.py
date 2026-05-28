@@ -2298,8 +2298,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("Timeout values must be positive")
     if args.total_latency_threshold_ratio < 0:
         raise ValueError("--total-latency-threshold-ratio must be at least 0")
-    if args.decode_throughput_threshold_ratio < 0:
-        raise ValueError("--decode-throughput-threshold-ratio must be at least 0")
+    if not 0.0 <= args.decode_throughput_threshold_ratio <= 1.0:
+        raise ValueError("--decode-throughput-threshold-ratio must be between 0.0 and 1.0")
     if args.preflight_wait_seconds < 0:
         raise ValueError("--preflight-wait-seconds must be at least 0")
     if args.preflight_retry_interval_seconds <= 0:

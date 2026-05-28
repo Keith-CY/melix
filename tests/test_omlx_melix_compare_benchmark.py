@@ -2068,6 +2068,7 @@ def test_validate_args_rejects_core_invalid_values() -> None:
         (["--model", "m", "--preflight-timeout-seconds", "0"], "Timeout values"),
         (["--model", "m", "--total-latency-threshold-ratio", "-0.1"], "total-latency"),
         (["--model", "m", "--decode-throughput-threshold-ratio", "-0.1"], "decode-throughput"),
+        (["--model", "m", "--decode-throughput-threshold-ratio", "1.1"], "decode-throughput"),
     ]
     for argv, expected in cases:
         args = bench.build_arg_parser().parse_args(argv)

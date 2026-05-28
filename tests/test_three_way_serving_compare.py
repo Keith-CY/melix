@@ -1059,6 +1059,17 @@ def test_export_bundle_returns_none_when_disabled(tmp_path: Path) -> None:
                 "melix=http://127.0.0.1:12441/v1::model",
                 "--endpoint",
                 "omlx=http://127.0.0.1:18061/v1::model",
+                "--decode-throughput-threshold-ratio",
+                "1.1",
+            ],
+            "decode-throughput",
+        ),
+        (
+            [
+                "--endpoint",
+                "melix=http://127.0.0.1:12441/v1::model",
+                "--endpoint",
+                "omlx=http://127.0.0.1:18061/v1::model",
                 "--preflight-wait-seconds",
                 "-1",
             ],
