@@ -62,5 +62,19 @@ The JSON payload includes:
 
 - Unit tests cover successful multi-source export, runtime-dir discovery, missing
   required sources, and strict-mode exit behavior.
+- Runtime-dir discovery is covered by the registered PR-scoped performance probe
+  `melix-metrics-snapshot-runtime-scandir`, which measures latest metrics file
+  lookup across a synthetic runtime directory with thousands of matching
+  snapshots and worker-metrics noise files.
 - Existing OMLX/Melix and three-way comparison tests continue to cover report
   artifact integration.
+
+## Performance Slice: Runtime Discovery Scandir
+
+The metrics snapshot CLI may be called during benchmark harness setup where the
+runtime directory contains many historical metrics snapshots. Runtime-dir source
+resolution should therefore avoid materializing a `Path.glob()` candidate list and
+avoid a second `Path.stat()` pass. The lookup now scans the runtime directory
+once with `os.scandir()`, filters names with the source runtime glob pattern, and
+tracks the highest file mtime while preserving the existing missing-directory and
+OSError fallback to `None`.
