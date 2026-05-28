@@ -113,6 +113,40 @@ def test_runtime_dir_discovers_latest_metrics_files(tmp_path: Path) -> None:
     assert snapshot["values"]["new"] == 2
 
 
+def test_runtime_dir_discovery_uses_single_scandir_without_path_glob(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    older = tmp_path / "control-plane-metrics-old.json"
+    newer = tmp_path / "control-plane-metrics-new.json"
+    ignored = tmp_path / "swift-text-worker-metrics.json"
+    write_metrics(older, updated_at_unix_ms=1_000, values={"old": 1})
+    write_metrics(newer, updated_at_unix_ms=2_000, values={"new": 2})
+    write_metrics(ignored, updated_at_unix_ms=3_000, values={"ignored": 3})
+    os.utime(older, (1, 1))
+    os.utime(newer, (2, 2))
+
+    def fail_glob(self: Path, pattern: str):
+        raise AssertionError(
+            f"discover_latest_metrics_path() should not allocate Path.glob({pattern!r}) results"
+        )
+
+    original_scandir = snapshot_cli.os.scandir
+    scanned_paths: list[str] = []
+
+    def counting_scandir(path: str):
+        scanned_paths.append(path)
+        return original_scandir(path)
+
+    monkeypatch.setattr(snapshot_cli.Path, "glob", fail_glob)
+    monkeypatch.setattr(snapshot_cli.os, "scandir", counting_scandir)
+
+    latest = snapshot_cli.discover_latest_metrics_path(tmp_path, "control_plane")
+
+    assert latest == newer
+    assert scanned_paths == [str(tmp_path)]
+
+
 def test_env_and_not_configured_sources_are_resolved(tmp_path: Path) -> None:
     control_plane_path = tmp_path / "env-control-plane-metrics.json"
     write_metrics(
