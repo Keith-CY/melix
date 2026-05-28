@@ -352,18 +352,32 @@ def build_family_support_matrix() -> dict[str, Any]:
             }
         )
 
-    live_verified_count = sum(1 for row in families if row["live_path"]["status"] == "verified")
+    live_verified_count = 0
+    capability_counts: dict[str, int] = {
+        "text": 0,
+        "transcription": 0,
+        "speech": 0,
+        "embedding": 0,
+        "rerank": 0,
+        "image": 0,
+    }
+    for row in families:
+        if row["live_path"]["status"] == "verified":
+            live_verified_count += 1
+        capability = row["capability"]
+        if capability in capability_counts:
+            capability_counts[capability] += 1
     contract_only_count = len(families) - live_verified_count
 
     return {
         "summary": {
             "family_count": len(families),
-            "text_family_count": sum(1 for row in families if row["capability"] == "text"),
-            "transcription_family_count": sum(1 for row in families if row["capability"] == "transcription"),
-            "speech_family_count": sum(1 for row in families if row["capability"] == "speech"),
-            "embedding_family_count": sum(1 for row in families if row["capability"] == "embedding"),
-            "rerank_family_count": sum(1 for row in families if row["capability"] == "rerank"),
-            "image_family_count": sum(1 for row in families if row["capability"] == "image"),
+            "text_family_count": capability_counts["text"],
+            "transcription_family_count": capability_counts["transcription"],
+            "speech_family_count": capability_counts["speech"],
+            "embedding_family_count": capability_counts["embedding"],
+            "rerank_family_count": capability_counts["rerank"],
+            "image_family_count": capability_counts["image"],
             "live_verified_count": live_verified_count,
             "contract_only_count": contract_only_count,
         },

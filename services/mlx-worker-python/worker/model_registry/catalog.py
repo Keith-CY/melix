@@ -257,12 +257,16 @@ def _tensor_index_evidence(
             counts["audio"] += 1
         elif _tensor_name_is_video(name):
             counts["video"] += 1
-        elif _tensor_name_is_projector(name):
-            counts["projector"] += 1
-        elif _tensor_name_is_draft(name):
-            counts["draft"] += 1
-        elif _tensor_name_is_text(name):
-            counts["text"] += 1
+        else:
+            # Lowercase once and reuse for the projector/draft checks that need it
+            # instead of recomputing it inside each helper.
+            lowered = name.lower()
+            if _tensor_name_is_projector(name, lowered):
+                counts["projector"] += 1
+            elif _tensor_name_is_draft(name, lowered):
+                counts["draft"] += 1
+            elif _tensor_name_is_text(name):
+                counts["text"] += 1
 
     modalities = tuple(
         modality
@@ -303,8 +307,9 @@ def _tensor_name_is_video(name: str) -> bool:
     return name.startswith(("video_tower.", "video_model.", "embed_video.", "video_encoder."))
 
 
-def _tensor_name_is_projector(name: str) -> bool:
-    lowered = name.lower()
+def _tensor_name_is_projector(name: str, lowered: str | None = None) -> bool:
+    if lowered is None:
+        lowered = name.lower()
     return (
         name.startswith(("multi_modal_projector.", "multimodal_projector.", "mm_projector.", "projector."))
         or ".multi_modal_projector." in lowered
@@ -313,12 +318,15 @@ def _tensor_name_is_projector(name: str) -> bool:
     )
 
 
-def _tensor_name_is_gemma4_vision_weight_remap(name: str) -> bool:
-    return name.startswith("embed_vision.proj.") or ".embed_vision.proj." in name.lower()
+def _tensor_name_is_gemma4_vision_weight_remap(name: str, lowered: str | None = None) -> bool:
+    if lowered is None:
+        lowered = name.lower()
+    return name.startswith("embed_vision.proj.") or ".embed_vision.proj." in lowered
 
 
-def _tensor_name_is_draft(name: str) -> bool:
-    lowered = name.lower()
+def _tensor_name_is_draft(name: str, lowered: str | None = None) -> bool:
+    if lowered is None:
+        lowered = name.lower()
     return name.startswith(("draft_model.", "mtp.", "dflash.")) or ".draft_" in lowered or ".mtp_" in lowered
 
 
@@ -1311,11 +1319,7 @@ def _count_media_placeholder_keys(payload: Mapping[str, object], prefixes: tuple
         if value in (None, "", [], {}):
             continue
         normalized_key = str(key).lower()
-        if any(normalized_key.startswith(prefix) for prefix in prefixes) and (
-            normalized_key.endswith("_token")
-            or normalized_key.endswith("_token_id")
-            or normalized_key.endswith("_token_ids")
-        ):
+        if normalized_key.startswith(prefixes) and normalized_key.endswith(("_token", "_token_id", "_token_ids")):
             count += 1
     return count
 
@@ -1375,17 +1379,15 @@ def _has_renamed_projector_tensor(
     if tensor_evidence.status != "ok":
         return False
     for name in _weight_map_tensor_names(model_dir, json_cache=json_cache):
-        if (
-            not _tensor_name_is_text(name)
-            and not _tensor_name_is_vision(name)
-            and not _tensor_name_is_audio(name)
-            and not _tensor_name_is_video(name)
-            and not _tensor_name_is_projector(name)
-            and not _tensor_name_is_draft(name)
-        ):
-            lowered = name.lower()
-            if "connector" in lowered or "projector" in lowered:
-                return True
+        if _tensor_name_is_text(name) or _tensor_name_is_vision(name) or _tensor_name_is_audio(name) or _tensor_name_is_video(name):
+            continue
+        # Reuse a single lowercase form across the projector/draft helpers and the
+        # connector/projector substring check below.
+        lowered = name.lower()
+        if _tensor_name_is_projector(name, lowered) or _tensor_name_is_draft(name, lowered):
+            continue
+        if "connector" in lowered or "projector" in lowered:
+            return True
     return False
 
 
