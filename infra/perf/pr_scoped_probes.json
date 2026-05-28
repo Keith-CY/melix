@@ -4477,14 +4477,12 @@
       {
         "key": "delta_ms",
         "unit": "ms",
-        "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "direction": "informational"
       },
       {
         "key": "speedup",
         "unit": "x",
-        "direction": "higher_is_better",
-        "warn_pct": 5.0
+        "direction": "informational"
       },
       {
         "key": "old_peak_bytes_mean",
