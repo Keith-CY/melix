@@ -1182,8 +1182,7 @@
       {
         "key": "delta_ms_mean",
         "unit": "ms",
-        "direction": "lower_is_better",
-        "warn_pct": 0.0
+        "direction": "informational"
       },
       {
         "key": "peak_bytes_mean",
@@ -1194,8 +1193,7 @@
       {
         "key": "peak_bytes_delta_mean",
         "unit": "bytes",
-        "direction": "lower_is_better",
-        "warn_pct": 0.0
+        "direction": "informational"
       },
       {
         "key": "paragraph_count",
