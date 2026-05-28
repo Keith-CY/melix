@@ -906,18 +906,15 @@ def test_melix_metrics_snapshot_merges_control_plane_and_swift_worker(tmp_path: 
 
     assert snapshot["ok"] is True
     assert snapshot["updated_at_unix_ms"] == 200
-    assert snapshot["sources"] == {
-        "control_plane": {
-            "ok": True,
-            "path": str(control_plane_path),
-            "updated_at_unix_ms": 100,
-        },
-        "swift_text_worker": {
-            "ok": True,
-            "path": str(swift_worker_path),
-            "updated_at_unix_ms": 200,
-        },
-    }
+    assert snapshot["sources"]["control_plane"]["ok"] is True
+    assert snapshot["sources"]["control_plane"]["path"] == str(control_plane_path)
+    assert snapshot["sources"]["control_plane"]["updated_at_unix_ms"] == 100
+    assert snapshot["sources"]["control_plane"]["source_kind"] == "control_plane"
+    assert snapshot["sources"]["swift_text_worker"]["ok"] is True
+    assert snapshot["sources"]["swift_text_worker"]["path"] == str(swift_worker_path)
+    assert snapshot["sources"]["swift_text_worker"]["updated_at_unix_ms"] == 200
+    assert snapshot["sources"]["swift_text_worker"]["source_kind"] == "worker"
+    assert snapshot["source_values"]["control_plane"]["http.ttfd_ms"] == 3447.17
     assert snapshot["values"]["control_plane.text_first_load_ms"] == 8547.46
     assert snapshot["values"]["swift_text.prefill_ms"] == 3706
     assert snapshot["values"]["swift_text.decode_tokens_per_second"] == 2
@@ -950,6 +947,47 @@ def test_metrics_snapshot_handles_missing_invalid_and_bad_sources(tmp_path: Path
     assert bench.enrich_hints_with_metrics([{"area": "existing"}], None) == [{"area": "existing"}]
     assert bench.enrich_hints_with_metrics([], {"ok": True, "values": []}) == []
     assert bench.metrics_manifest_entries(None, artifact_name="metrics.json") == {}
+
+
+def test_benchmark_metrics_snapshot_discovers_runtime_dir_sources(tmp_path: Path) -> None:
+    control_plane_path = tmp_path / "control-plane-metrics-abc.json"
+    swift_worker_path = tmp_path / "swift-text-worker-metrics-abc.json"
+    python_worker_path = tmp_path / "python-worker-metrics-abc.json"
+    control_plane_path.write_text(
+        json.dumps({
+            "updated_at_unix_ms": 100,
+            "values": {"control_plane.text_first_load_ms": 10},
+        }),
+        encoding="utf-8",
+    )
+    swift_worker_path.write_text(
+        json.dumps({
+            "updated_at_unix_ms": 200,
+            "values": {"swift_text.prefill_ms": 20},
+        }),
+        encoding="utf-8",
+    )
+    python_worker_path.write_text(
+        json.dumps({
+            "updated_at_unix_ms": 150,
+            "values": {"python_worker.bootstrap_ms": 30},
+        }),
+        encoding="utf-8",
+    )
+
+    snapshot = bench.load_melix_metrics_snapshot(
+        control_plane_path=None,
+        swift_text_worker_path=None,
+        runtime_dir=tmp_path,
+    )
+
+    assert snapshot["ok"] is True
+    assert snapshot["sources"]["control_plane"]["configured_by"] == "runtime_dir"
+    assert snapshot["sources"]["python_worker"]["ok"] is True
+    assert snapshot["values"]["python_worker.bootstrap_ms"] == 30
+    entries = bench.metrics_manifest_entries(snapshot, artifact_name="melix-metrics.json")
+    assert entries["melix_swift_text_worker"]["freshness"]["observed_at_unix_ms"] == 200
+    assert entries["melix_python_worker"]["path"] == str(python_worker_path)
 
 
 def test_markdown_summary_lists_text_batch_generator_metrics() -> None:

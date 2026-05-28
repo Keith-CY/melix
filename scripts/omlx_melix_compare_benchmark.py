@@ -19,6 +19,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+import melix_metrics_snapshot
+
 
 DEFAULT_PROMPT_TOKEN_TARGETS = [1024]
 DEFAULT_CONCURRENCY = [1]
@@ -773,60 +779,27 @@ def load_melix_metrics_snapshot(
     *,
     control_plane_path: Path | None,
     swift_text_worker_path: Path | None,
+    python_worker_path: Path | None = None,
+    runtime_dir: Path | None = None,
+    stale_after_seconds: float = melix_metrics_snapshot.DEFAULT_STALE_AFTER_SECONDS,
 ) -> dict[str, Any] | None:
-    source_paths = {
-        "control_plane": control_plane_path,
-        "swift_text_worker": swift_text_worker_path,
-    }
-    source_snapshots = {
-        name: load_metrics_snapshot(path)
-        for name, path in source_paths.items()
-        if path is not None
-    }
-    if not source_snapshots:
+    if (
+        control_plane_path is None
+        and swift_text_worker_path is None
+        and python_worker_path is None
+        and runtime_dir is None
+    ):
         return None
 
-    values: dict[str, Any] = {}
-    sources: dict[str, dict[str, Any]] = {}
-    updated_at_values: list[Any] = []
-    errors: list[str] = []
-    primary_path: str | None = None
-    ok = True
-    for name, snapshot in source_snapshots.items():
-        if snapshot is None:
-            continue
-        if primary_path is None:
-            primary_path = snapshot.get("path")
-        source = {
-            "ok": snapshot.get("ok"),
-            "path": snapshot.get("path"),
-            "updated_at_unix_ms": snapshot.get("updated_at_unix_ms"),
-        }
-        if snapshot.get("error"):
-            source["error"] = snapshot.get("error")
-        sources[name] = source
-        if snapshot.get("ok") is True:
-            snapshot_values = snapshot.get("values")
-            if isinstance(snapshot_values, dict):
-                values.update(snapshot_values)
-            updated_at_values.append(snapshot.get("updated_at_unix_ms"))
-        else:
-            ok = False
-            errors.append(f"{name}: {snapshot.get('error', 'unknown')}")
-
-    numeric_updates = [
-        value
-        for value in updated_at_values
-        if isinstance(value, (int, float)) and not isinstance(value, bool)
-    ]
-    return {
-        "path": primary_path,
-        "ok": ok,
-        "updated_at_unix_ms": max(numeric_updates) if numeric_updates else None,
-        "sources": sources,
-        "values": values,
-        **({"error": "; ".join(errors)} if errors else {}),
-    }
+    snapshot = melix_metrics_snapshot.build_snapshot_from_paths(
+        control_plane_metrics=control_plane_path,
+        swift_text_worker_metrics=swift_text_worker_path,
+        python_worker_metrics=python_worker_path,
+        runtime_dir=runtime_dir,
+        environment={},
+        stale_after_seconds=stale_after_seconds,
+    )
+    return snapshot
 
 
 def enrich_hints_with_metrics(
@@ -884,14 +857,18 @@ def metrics_manifest_entries(metrics_snapshot: dict[str, Any] | None, *, artifac
     }
     entries: dict[str, Any] = {"melix": entry}
     sources = metrics_snapshot.get("sources")
-    if isinstance(sources, dict) and isinstance(sources.get("control_plane"), dict):
-        control_plane = sources["control_plane"]
-        entries["melix_control_plane"] = {
-            "ok": control_plane.get("ok"),
-            "path": control_plane.get("path"),
-            "updated_at_unix_ms": control_plane.get("updated_at_unix_ms"),
-            "artifact": artifact_name,
-        }
+    if isinstance(sources, dict):
+        for source_name in ("control_plane", "swift_text_worker", "python_worker"):
+            source = sources.get(source_name)
+            if not isinstance(source, dict):
+                continue
+            entries[f"melix_{source_name}"] = {
+                "ok": source.get("ok"),
+                "path": source.get("path"),
+                "updated_at_unix_ms": source.get("updated_at_unix_ms"),
+                "freshness": source.get("freshness"),
+                "artifact": artifact_name,
+            }
     return entries
 
 
@@ -1675,6 +1652,9 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     metrics_snapshot = load_melix_metrics_snapshot(
         control_plane_path=args.melix_control_plane_metrics,
         swift_text_worker_path=args.melix_swift_text_worker_metrics,
+        python_worker_path=args.melix_python_worker_metrics,
+        runtime_dir=args.melix_metrics_runtime_dir,
+        stale_after_seconds=args.melix_metrics_stale_after_seconds,
     )
     summaries = summarize_observations(observations)
     runtime_metadata = runtime_metadata_from_args(args, endpoints=endpoints)
@@ -1853,6 +1833,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optional Melix Swift text worker metrics JSON to merge into the report.",
+    )
+    parser.add_argument(
+        "--melix-python-worker-metrics",
+        type=Path,
+        default=None,
+        help="Optional Melix Python worker metrics JSON to merge into the report.",
+    )
+    parser.add_argument(
+        "--melix-metrics-runtime-dir",
+        type=Path,
+        default=None,
+        help="Optional Melix runtime directory used to discover the newest metrics exports.",
+    )
+    parser.add_argument(
+        "--melix-metrics-stale-after-seconds",
+        type=float,
+        default=melix_metrics_snapshot.DEFAULT_STALE_AFTER_SECONDS,
+        help="Freshness threshold recorded for Melix metrics sources.",
     )
     parser.add_argument(
         "--measurement-profile",
