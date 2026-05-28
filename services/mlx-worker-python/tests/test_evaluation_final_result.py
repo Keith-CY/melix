@@ -317,7 +317,8 @@ def test_score_final_result_reuses_cached_parsed_json_payloads(monkeypatch: pyte
     evaluation_final_result_module._loads_json_payload.cache_clear()
 
 
-def test_score_final_result_reuses_cached_ignored_path_sets() -> None:
+def test_score_final_result_reuses_cached_schema_free_json_scores() -> None:
+    evaluation_final_result_module._cached_json_typed_score.cache_clear()
     evaluation_final_result_module._ignored_paths_for_profile.cache_clear()
     target = json.dumps(
         {
@@ -349,7 +350,8 @@ def test_score_final_result_reuses_cached_ignored_path_sets() -> None:
         typed_score=1.0,
         validation_status="validated",
     )
-    assert evaluation_final_result_module._ignored_paths_for_profile.cache_info().hits >= 1
+    assert evaluation_final_result_module._cached_json_typed_score.cache_info().hits >= 1
+    evaluation_final_result_module._cached_json_typed_score.cache_clear()
     evaluation_final_result_module._ignored_paths_for_profile.cache_clear()
 
 

@@ -1046,6 +1046,18 @@ def test_evaluation_text_fallback_probe_script_emits_metrics(
     assert metrics["paragraph_count"] == 21.0
 
 
+def test_evaluation_text_fallback_derived_delta_metrics_are_informational() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "evaluation-final-result-text-fallback-tail-scan"
+    )
+    metric_directions = {metric.key: metric.direction for metric in probe.metrics}
+
+    assert metric_directions["delta_ms_mean"] == "informational"
+    assert metric_directions["peak_bytes_delta_mean"] == "informational"
+
+
 def test_evaluation_json_typed_score_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
