@@ -515,6 +515,79 @@ def test_summarize_observations_computes_latency_and_group_throughput() -> None:
     assert summary.prompt_style == "concise"
 
 
+def test_request_phase_rows_record_client_phases_and_unavailable_runtime_phases() -> None:
+    rows = bench.build_request_phase_rows([
+        bench.RequestObservation(
+            endpoint="melix",
+            model="model",
+            scenario_id="pt1024-out64-c1-r0",
+            group_id="melix-pt1024-out64-c1-r0",
+            prompt_token_target=1024,
+            prompt_token_source="usage",
+            max_tokens=64,
+            concurrency=1,
+            cache_profile="cold_unique",
+            repeat_index=0,
+            request_index=0,
+            status="ok",
+            http_status=200,
+            error="",
+            ttft_ms=125.0,
+            total_ms=400.0,
+            decode_ms=275.0,
+            completion_tokens=64.0,
+            completion_token_source="usage",
+            prompt_tokens=1020.0,
+            streamed_chunks=64,
+            completion_chars=256,
+            decode_tokens_per_second=232.73,
+            group_elapsed_ms=410.0,
+            prompt_style="saturating",
+        )
+    ])
+
+    assert rows == [
+        {
+            "endpoint": "melix",
+            "model": "model",
+            "scenario_id": "pt1024-out64-c1-r0",
+            "group_id": "melix-pt1024-out64-c1-r0",
+            "prompt_token_target": 1024,
+            "max_tokens": 64,
+            "concurrency": 1,
+            "cache_profile": "cold_unique",
+            "prompt_style": "saturating",
+            "repeat_index": 0,
+            "request_index": 0,
+            "status": "ok",
+            "http_status": 200,
+            "error": "",
+            "prompt_tokens": 1020.0,
+            "prompt_token_source": "usage",
+            "output_tokens": 64.0,
+            "output_token_source": "usage",
+            "queue_ms": None,
+            "prefill_ms": None,
+            "first_http_sse_event_ms": 125.0,
+            "decode_ms": 275.0,
+            "worker_stream_ms": None,
+            "total_ms": 400.0,
+            "streamed_chunks": 64,
+            "completion_chars": 256,
+            "decode_tokens_per_second": 232.73,
+            "group_elapsed_ms": 410.0,
+            "phase_sources": {
+                "queue_ms": "unavailable",
+                "prefill_ms": "unavailable",
+                "first_http_sse_event_ms": "client_stream_first_delta",
+                "decode_ms": "client_total_minus_first_delta",
+                "worker_stream_ms": "unavailable",
+                "total_ms": "client_elapsed",
+            },
+        }
+    ]
+
+
 def test_statistics_helpers_cover_empty_and_percentile_edges() -> None:
     assert bench.median([None]) is None
     assert bench.percentile([None], 95) is None
@@ -621,6 +694,122 @@ def test_comparison_hints_flags_melix_regressions() -> None:
         "decode_throughput",
         "continuous_batching",
     }
+
+
+def test_peer_delta_rows_and_threshold_status_flag_best_peer_gaps() -> None:
+    summaries = [
+        bench.ScenarioSummary(
+            endpoint="melix",
+            model="model",
+            prompt_token_target=1024,
+            max_tokens=64,
+            concurrency=2,
+            cache_profile="cold_unique",
+            request_count=2,
+            success_count=2,
+            error_count=0,
+            error_rate=0.0,
+            median_ttft_ms=100.0,
+            p95_ttft_ms=100.0,
+            median_total_ms=260.0,
+            p95_total_ms=260.0,
+            median_decode_tokens_per_second=60.0,
+            median_aggregate_output_tokens_per_second=120.0,
+            median_completion_tokens=64.0,
+            prompt_style="saturating",
+        ),
+        bench.ScenarioSummary(
+            endpoint="omlx",
+            model="model",
+            prompt_token_target=1024,
+            max_tokens=64,
+            concurrency=2,
+            cache_profile="cold_unique",
+            request_count=2,
+            success_count=2,
+            error_count=0,
+            error_rate=0.0,
+            median_ttft_ms=80.0,
+            p95_ttft_ms=80.0,
+            median_total_ms=100.0,
+            p95_total_ms=100.0,
+            median_decode_tokens_per_second=80.0,
+            median_aggregate_output_tokens_per_second=160.0,
+            median_completion_tokens=64.0,
+            prompt_style="saturating",
+        ),
+        bench.ScenarioSummary(
+            endpoint="swiftlm",
+            model="model",
+            prompt_token_target=1024,
+            max_tokens=64,
+            concurrency=2,
+            cache_profile="cold_unique",
+            request_count=2,
+            success_count=2,
+            error_count=0,
+            error_rate=0.0,
+            median_ttft_ms=90.0,
+            p95_ttft_ms=90.0,
+            median_total_ms=120.0,
+            p95_total_ms=120.0,
+            median_decode_tokens_per_second=100.0,
+            median_aggregate_output_tokens_per_second=200.0,
+            median_completion_tokens=64.0,
+            prompt_style="saturating",
+        ),
+    ]
+
+    rows = bench.build_peer_delta_rows(
+        summaries,
+        target_endpoint="melix",
+        total_latency_threshold_ratio=0.25,
+        decode_throughput_threshold_ratio=0.25,
+    )
+    status = bench.build_threshold_status(
+        rows,
+        total_latency_threshold_ratio=0.25,
+        decode_throughput_threshold_ratio=0.25,
+    )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["status"] == "threshold_failed"
+    assert row["scenario"] == {
+        "prompt_token_target": 1024,
+        "max_tokens": 64,
+        "concurrency": 2,
+        "cache_profile": "cold_unique",
+        "prompt_style": "saturating",
+    }
+    assert row["total_latency"]["status"] == "failed"
+    assert row["total_latency"]["best_peer"] == "omlx"
+    assert row["total_latency"]["delta_ms"] == 160.0
+    assert row["total_latency"]["delta_pct"] == 160.0
+    assert row["decode_throughput"]["status"] == "failed"
+    assert row["decode_throughput"]["best_peer"] == "swiftlm"
+    assert row["decode_throughput"]["delta_tokens_per_second"] == -40.0
+    assert row["decode_throughput"]["delta_pct"] == -40.0
+    assert status["status"] == "threshold_failed"
+    assert status["failure_count"] == 2
+    assert status["failures"] == [
+        {
+            "scenario": row["scenario"],
+            "area": "total_latency",
+            "target_endpoint": "melix",
+            "best_peer": "omlx",
+            "delta_pct": 160.0,
+            "threshold_pct": 25.0,
+        },
+        {
+            "scenario": row["scenario"],
+            "area": "decode_throughput",
+            "target_endpoint": "melix",
+            "best_peer": "swiftlm",
+            "delta_pct": -40.0,
+            "threshold_pct": 25.0,
+        },
+    ]
 
 
 def test_metrics_snapshot_adds_multimodal_batching_hint(tmp_path: Path) -> None:
@@ -1063,6 +1252,77 @@ def test_metrics_snapshot_reports_text_batch_generator_http_gap() -> None:
     assert "`http.stream_first_event_ms` | 1552.02" in markdown
     assert "`http.parser.text_batch_generator_first_visible_ms` | 1435.31" in markdown
     assert "`http.text_batch_generator_first_visible_to_stream_first_event_ms` | 116.71" in markdown
+
+
+def test_markdown_summary_lists_peer_delta_and_request_phase_rows() -> None:
+    markdown = bench.render_markdown_summary(
+        [],
+        [],
+        preflight=[],
+        warmups=[],
+        metrics_snapshot=None,
+        request_phase_rows=[
+            {
+                "endpoint": "melix",
+                "scenario_id": "pt1024-out16-c1-r0",
+                "repeat_index": 0,
+                "request_index": 0,
+                "status": "ok",
+                "queue_ms": None,
+                "prefill_ms": None,
+                "first_http_sse_event_ms": 42.0,
+                "decode_ms": 58.0,
+                "worker_stream_ms": None,
+                "total_ms": 100.0,
+                "output_tokens": 16.0,
+                "decode_tokens_per_second": 275.86,
+            }
+        ],
+        peer_delta_rows=[
+            {
+                "scenario": {
+                    "prompt_token_target": 1024,
+                    "max_tokens": 16,
+                    "concurrency": 1,
+                    "cache_profile": "cold_unique",
+                    "prompt_style": "concise",
+                },
+                "target_endpoint": "melix",
+                "status": "threshold_failed",
+                "total_latency": {
+                    "status": "failed",
+                    "best_peer": "omlx",
+                    "target_median_ms": 150.0,
+                    "best_peer_median_ms": 100.0,
+                    "delta_pct": 50.0,
+                },
+                "decode_throughput": {
+                    "status": "ok",
+                    "best_peer": "swiftlm",
+                    "target_median_tokens_per_second": 80.0,
+                    "best_peer_median_tokens_per_second": 90.0,
+                    "delta_pct": -11.111,
+                },
+            }
+        ],
+        threshold_status={
+            "status": "threshold_failed",
+            "failure_count": 1,
+        },
+        dry_run=False,
+        measurement_profile={
+            "profile": "warm",
+            "warmup_requests_per_endpoint": 1,
+            "operator_note": "",
+        },
+    )
+
+    assert "- Threshold status: `threshold_failed`" in markdown
+    assert "## Peer Delta Rows" in markdown
+    assert "| pt=1024 out=16 c=1 | failed | omlx | 150.00 | 100.00 | 50.00 | ok | swiftlm | 80.00 | 90.00 | -11.11 |" in markdown
+    assert "## Request Phase Rows" in markdown
+    assert "First HTTP/SSE Event ms" in markdown
+    assert "| melix | pt1024-out16-c1-r0 | 0 | 0 | ok | n/a | n/a | 42.00 | 58.00 | n/a | 100.00 | 16.00 | 275.86 |" in markdown
 
 
 def test_warmup_requests_mark_measurements_as_warm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1533,10 +1793,20 @@ def test_warmups_are_written_separately_from_summaries(tmp_path: Path, monkeypat
     summary = json.loads((staging_dir / "summary.json").read_text(encoding="utf-8"))
     warmups = (staging_dir / "warmups.jsonl").read_text(encoding="utf-8").strip().splitlines()
     observations = (staging_dir / "observations.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    request_phase_rows = json.loads((staging_dir / "request-phase-rows.json").read_text(encoding="utf-8"))
+    peer_delta_rows = json.loads((staging_dir / "peer-delta-rows.json").read_text(encoding="utf-8"))
+    threshold_status = json.loads((staging_dir / "threshold-status.json").read_text(encoding="utf-8"))
+    markdown = (staging_dir / "summary.md").read_text(encoding="utf-8")
 
     assert result["warmup_count"] == 2
     assert result["observation_count"] == 2
+    assert result["request_phase_row_count"] == 2
+    assert result["peer_delta_row_count"] == 1
+    assert result["threshold_status"]["status"] == "ok"
     assert manifest["warmup_count"] == 2
+    assert manifest["request_phase_row_count"] == 2
+    assert manifest["peer_delta_row_count"] == 1
+    assert manifest["threshold_status"]["status"] == "ok"
     assert manifest["warmup_settings"] == {
         "max_tokens": 8,
         "prompt_style": "concise",
@@ -1553,14 +1823,33 @@ def test_warmups_are_written_separately_from_summaries(tmp_path: Path, monkeypat
         "repeat_count": 1,
     }
     assert manifest["artifacts"]["warmups"] == "warmups.jsonl"
+    assert manifest["artifacts"]["request_phase_rows"] == "request-phase-rows.json"
+    assert manifest["artifacts"]["peer_delta_rows"] == "peer-delta-rows.json"
+    assert manifest["artifacts"]["threshold_status"] == "threshold-status.json"
     assert len(warmups) == 2
     assert len(observations) == 2
+    assert len(request_phase_rows) == 2
+    assert len(peer_delta_rows) == 1
+    assert request_phase_rows[0]["first_http_sse_event_ms"] == 100.0
+    assert request_phase_rows[0]["queue_ms"] is None
+    assert request_phase_rows[0]["worker_stream_ms"] is None
+    assert peer_delta_rows[0]["status"] == "ok"
+    assert peer_delta_rows[0]["target_endpoint"] == "melix"
+    assert threshold_status["status"] == "ok"
+    assert threshold_status["row_count"] == 1
     assert len(summary["warmups"]) == 2
+    assert summary["request_phase_rows"] == request_phase_rows
+    assert summary["peer_delta_rows"] == peer_delta_rows
+    assert summary["threshold_status"] == threshold_status
     assert all(json.loads(line)["scenario_id"].startswith("warmup") for line in warmups)
     assert {
         (item["cache_profile"], item["prompt_token_target"], item["max_tokens"], item["prompt_style"])
         for item in summary["summaries"]
     } == {("cold_unique", 1024, 128, "concise")}
+    assert "## Peer Delta Rows" in markdown
+    assert "## Request Phase Rows" in markdown
+    assert "First HTTP/SSE Event ms" in markdown
+    assert "- Threshold status: `ok`" in markdown
     assert run_keys == ["warmup", "warmup", "warm-run", "warm-run"]
 
 
@@ -1777,6 +2066,8 @@ def test_validate_args_rejects_core_invalid_values() -> None:
         (["--model", "m", "--concurrency", "0"], "--concurrency"),
         (["--model", "m", "--timeout-seconds", "0"], "Timeout values"),
         (["--model", "m", "--preflight-timeout-seconds", "0"], "Timeout values"),
+        (["--model", "m", "--total-latency-threshold-ratio", "-0.1"], "total-latency"),
+        (["--model", "m", "--decode-throughput-threshold-ratio", "-0.1"], "decode-throughput"),
     ]
     for argv, expected in cases:
         args = bench.build_arg_parser().parse_args(argv)

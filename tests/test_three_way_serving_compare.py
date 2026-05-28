@@ -742,16 +742,44 @@ def test_three_way_run_writes_merged_melix_metrics_snapshot(
     )
     three_way.validate_args(args)
 
-    three_way.run_comparison(args)
+    result = three_way.run_comparison(args)
 
     staging_dir = tmp_path / "three-way-metrics"
+    manifest = json.loads((staging_dir / "manifest.json").read_text(encoding="utf-8"))
+    summary = json.loads((staging_dir / "summary.json").read_text(encoding="utf-8"))
     metrics_snapshot = json.loads((staging_dir / "melix-metrics.json").read_text(encoding="utf-8"))
+    request_phase_rows = json.loads((staging_dir / "request-phase-rows.json").read_text(encoding="utf-8"))
+    peer_delta_rows = json.loads((staging_dir / "peer-delta-rows.json").read_text(encoding="utf-8"))
+    threshold_status = json.loads((staging_dir / "threshold-status.json").read_text(encoding="utf-8"))
     markdown = (staging_dir / "summary.md").read_text(encoding="utf-8")
 
+    assert result["request_phase_row_count"] == 3
+    assert result["peer_delta_row_count"] == 1
+    assert result["threshold_status"]["status"] == "ok"
+    assert manifest["request_phase_row_count"] == 3
+    assert manifest["peer_delta_row_count"] == 1
+    assert manifest["threshold_status"]["status"] == "ok"
+    assert manifest["artifacts"]["request_phase_rows"] == "request-phase-rows.json"
+    assert manifest["artifacts"]["peer_delta_rows"] == "peer-delta-rows.json"
+    assert manifest["artifacts"]["threshold_status"] == "threshold-status.json"
+    assert len(request_phase_rows) == 3
+    assert len(peer_delta_rows) == 1
+    assert request_phase_rows[0]["first_http_sse_event_ms"] == 100.0
+    assert request_phase_rows[0]["output_tokens"] == 5.0
+    assert peer_delta_rows[0]["target_endpoint"] == "melix"
+    assert peer_delta_rows[0]["status"] == "ok"
+    assert threshold_status["row_count"] == 1
+    assert summary["request_phase_rows"] == request_phase_rows
+    assert summary["peer_delta_rows"] == peer_delta_rows
+    assert summary["threshold_status"] == threshold_status
     assert metrics_snapshot["values"]["control_plane.text_first_load_ms"] == 8547.46
     assert metrics_snapshot["values"]["swift_text.prefill_ms"] == 3706
     assert metrics_snapshot["sources"]["control_plane"]["source_kind"] == "control_plane"
     assert metrics_snapshot["sources"]["swift_text_worker"]["source_kind"] == "worker"
+    assert "- Threshold status: `ok`" in markdown
+    assert "## Peer Delta Rows" in markdown
+    assert "## Request Phase Rows" in markdown
+    assert "First HTTP/SSE Event ms" in markdown
     assert "`swift_text.prefill_ms` | 3706.00" in markdown
 
 
@@ -1002,6 +1030,28 @@ def test_export_bundle_returns_none_when_disabled(tmp_path: Path) -> None:
                 "0",
             ],
             "Timeout",
+        ),
+        (
+            [
+                "--endpoint",
+                "melix=http://127.0.0.1:12441/v1::model",
+                "--endpoint",
+                "omlx=http://127.0.0.1:18061/v1::model",
+                "--total-latency-threshold-ratio",
+                "-0.1",
+            ],
+            "total-latency",
+        ),
+        (
+            [
+                "--endpoint",
+                "melix=http://127.0.0.1:12441/v1::model",
+                "--endpoint",
+                "omlx=http://127.0.0.1:18061/v1::model",
+                "--decode-throughput-threshold-ratio",
+                "-0.1",
+            ],
+            "decode-throughput",
         ),
         (
             [
