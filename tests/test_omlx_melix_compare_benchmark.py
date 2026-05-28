@@ -849,6 +849,18 @@ def test_metrics_snapshot_adds_multimodal_batching_hint(tmp_path: Path) -> None:
     assert hints[1]["melix_per_batch_output_tokens_per_second"] == 8
 
 
+def test_metrics_snapshot_does_not_treat_missing_worker_batches_as_singleton() -> None:
+    snapshot = {
+        "ok": True,
+        "values": {
+            "scheduler.admission_cohort_size": 2,
+            "swift_text.per_batch_output_tokens_per_second": 8,
+        },
+    }
+
+    assert bench.enrich_hints_with_metrics([], snapshot) == []
+
+
 def test_binary_metadata_detects_release_debug_and_sha256(tmp_path: Path) -> None:
     release_binary = tmp_path / "services/mlx-text-worker-swift/.build/release/melix-text-worker-swift"
     release_binary.parent.mkdir(parents=True)
