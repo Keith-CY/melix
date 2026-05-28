@@ -5456,12 +5456,12 @@ private func progressPayload(
         "request_id": progress.requestID,
         "phase": "\(progress.phase)",
         "lane": progress.lane,
-        "queue_position": progress.queuePosition,
+        "queue_position": Int(progress.queuePosition),
         "admission_state": "\(progress.admissionState)",
-        "active_requests": progress.activeRequests,
-        "waiting_requests": progress.waitingRequests,
-        "prefill_processed_tokens": progress.prefillProcessedTokens,
-        "prefill_total_tokens": progress.prefillTotalTokens,
+        "active_requests": Int(progress.activeRequests),
+        "waiting_requests": Int(progress.waitingRequests),
+        "prefill_processed_tokens": Int(progress.prefillProcessedTokens),
+        "prefill_total_tokens": Int(progress.prefillTotalTokens),
     ]
 }
 

@@ -61,31 +61,44 @@ def run_swift_probe(swift_filter: str) -> dict[str, Any]:
         "--filter",
         swift_filter,
     ]
-    completed = subprocess.run(
-        command,
-        cwd=REPO_ROOT,
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=REPO_ROOT,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "Swift CLI ('swift') was not found in PATH. "
+            "Install Swift or run this script from a toolchain-enabled shell."
+        ) from exc
+    swift_output = completed.stdout or ""
     payloads = [
         line.removeprefix(PROBE_PREFIX)
-        for line in completed.stdout.splitlines()
+        for line in swift_output.splitlines()
         if line.startswith(PROBE_PREFIX)
     ]
     if completed.returncode != 0:
         raise RuntimeError(
             "same-cohort Swift probe test failed with exit code "
-            f"{completed.returncode}\n{completed.stdout}"
+            f"{completed.returncode}\n{swift_output}"
         )
     if not payloads:
         raise RuntimeError(
             "same-cohort Swift probe test passed but did not emit probe JSON. "
-            f"Expected prefix {PROBE_PREFIX!r}.\n{completed.stdout}"
+            f"Expected prefix {PROBE_PREFIX!r}.\n{swift_output}"
         )
-    return json.loads(payloads[-1])
+    try:
+        return json.loads(payloads[-1])
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"Failed to parse same-cohort probe JSON payload: {exc}\n"
+            f"Payload: {payloads[-1]}"
+        ) from exc
 
 
 def analyze_probe(raw: dict[str, Any]) -> dict[str, Any]:
@@ -97,14 +110,15 @@ def analyze_probe(raw: dict[str, Any]) -> dict[str, Any]:
     worker_max_batch_size = _number(worker.get("max_model_step_batch_size"))
     linked_request_count = len(links)
     worker_decode_request_ids = {
-        str(value)
+        request_id
         for value in _as_list(worker.get("decode_request_ids"))
-        if str(value)
+        if (request_id := _request_id(value)) is not None
     }
     linked_decode_request_ids = {
-        str(item.get("worker_decode_request_id"))
+        request_id
         for item in links
-        if isinstance(item, dict) and str(item.get("worker_decode_request_id", ""))
+        if isinstance(item, dict)
+        and (request_id := _request_id(item.get("worker_decode_request_id"))) is not None
     }
     missing_decode_links = sorted(linked_decode_request_ids - worker_decode_request_ids)
     warnings: list[dict[str, Any]] = []
@@ -169,18 +183,50 @@ def _number(value: Any) -> float:
     return 0.0
 
 
+def _request_id(value: Any) -> str | None:
+    if value is None:
+        return None
+    request_id = str(value).strip()
+    return request_id or None
+
+
+def _read_probe_input(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        raise RuntimeError(f"Input probe JSON file does not exist: {path}")
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"Failed to parse input probe JSON file {path}: {exc}"
+        ) from exc
+    if not isinstance(raw, dict):
+        raise RuntimeError(f"Input probe JSON file must contain a JSON object: {path}")
+    return raw
+
+
 def main() -> int:
     args = parse_args()
-    raw = (
-        json.loads(args.input.read_text(encoding="utf-8"))
-        if args.input is not None
-        else run_swift_probe(args.swift_filter)
-    )
+    try:
+        raw = (
+            _read_probe_input(args.input)
+            if args.input is not None
+            else run_swift_probe(args.swift_filter)
+        )
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     analyzed = analyze_probe(raw)
     rendered = json.dumps(analyzed, indent=2, sort_keys=True) + "\n"
     if args.output is not None:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(rendered, encoding="utf-8")
+        try:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(rendered, encoding="utf-8")
+        except OSError as exc:
+            print(
+                f"error: failed to write output file {args.output}: {exc}",
+                file=sys.stderr,
+            )
+            return 1
     print(rendered, end="")
     if analyzed["status"] == "failed":
         return 1

@@ -61,7 +61,7 @@ def test_passes_when_worker_model_step_batch_matches_admission_batch() -> None:
     assert analyzed["failures"] == []
 
 
-def test_fails_when_request_links_do_not_cover_worker_decode_requests() -> None:
+def test_fails_when_linked_decode_request_id_is_absent_from_worker_observations() -> None:
     raw = raw_probe_payload(admission_batch_size=2, worker_batch_size=1)
     raw["worker"]["decode_request_ids"] = ["req-same-cohort-1"]
 
@@ -69,6 +69,21 @@ def test_fails_when_request_links_do_not_cover_worker_decode_requests() -> None:
 
     assert analyzed["status"] == "failed"
     assert analyzed["failures"][0]["code"] == "missing_worker_decode_request_ids"
+
+
+def test_ignores_empty_or_none_decode_request_ids() -> None:
+    raw = raw_probe_payload(admission_batch_size=2, worker_batch_size=1)
+    raw["worker"]["decode_request_ids"] = [
+        "req-same-cohort-1",
+        None,
+        "  ",
+    ]
+    raw["request_links"][1]["worker_decode_request_id"] = None
+
+    analyzed = probe.analyze_probe(raw)
+
+    assert analyzed["status"] == "warning"
+    assert analyzed["failures"] == []
 
 
 def test_fails_when_two_request_links_are_missing() -> None:
@@ -162,6 +177,19 @@ def test_main_returns_failure_status_for_invalid_probe(tmp_path, monkeypatch) ->
     assert probe.main() == 1
 
 
+def test_non_numeric_batch_fields_are_treated_as_missing() -> None:
+    raw = raw_probe_payload(admission_batch_size=2, worker_batch_size=1)
+    raw["admission"]["scheduler_continuous_batch_size"] = "two"
+    raw["worker"]["max_model_step_batch_size"] = True
+
+    analyzed = probe.analyze_probe(raw)
+
+    assert analyzed["status"] == "failed"
+    failure_codes = {failure["code"] for failure in analyzed["failures"]}
+    assert "admission_batch_not_observed" in failure_codes
+    assert "worker_model_step_batch_missing" in failure_codes
+
+
 def test_run_swift_probe_extracts_prefixed_json(monkeypatch) -> None:
     raw = raw_probe_payload(admission_batch_size=2, worker_batch_size=1)
 
@@ -218,3 +246,115 @@ def test_run_swift_probe_raises_when_json_is_missing(monkeypatch) -> None:
         assert probe.PROBE_PREFIX in str(exc)
     else:
         raise AssertionError("Expected run_swift_probe to raise when JSON is missing.")
+
+
+def test_run_swift_probe_wraps_malformed_json(monkeypatch) -> None:
+    def fake_run(*_args, **_kwargs):
+        return subprocess.CompletedProcess(
+            args=["swift", "test"],
+            returncode=0,
+            stdout=f"{probe.PROBE_PREFIX}{{not-json}}\n",
+        )
+
+    monkeypatch.setattr(probe.subprocess, "run", fake_run)
+
+    try:
+        probe.run_swift_probe("focused-filter")
+    except RuntimeError as exc:
+        assert "Failed to parse same-cohort probe JSON payload" in str(exc)
+        assert "{not-json}" in str(exc)
+    else:
+        raise AssertionError("Expected run_swift_probe to wrap malformed JSON.")
+
+
+def test_run_swift_probe_wraps_missing_swift_cli(monkeypatch) -> None:
+    def fake_run(*_args, **_kwargs):
+        raise FileNotFoundError("swift")
+
+    monkeypatch.setattr(probe.subprocess, "run", fake_run)
+
+    try:
+        probe.run_swift_probe("focused-filter")
+    except RuntimeError as exc:
+        assert "Swift CLI" in str(exc)
+    else:
+        raise AssertionError("Expected run_swift_probe to wrap a missing Swift CLI.")
+
+
+def test_main_returns_error_for_missing_input_file(tmp_path, monkeypatch, capsys) -> None:
+    missing_path = tmp_path / "missing.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "same_cohort_batching_probe.py",
+            "--input",
+            str(missing_path),
+        ],
+    )
+
+    assert probe.main() == 1
+    captured = capsys.readouterr()
+    assert "Input probe JSON file does not exist" in captured.err
+
+
+def test_main_returns_error_for_malformed_input_json(tmp_path, monkeypatch, capsys) -> None:
+    input_path = tmp_path / "malformed.json"
+    input_path.write_text("{bad-json}", encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "same_cohort_batching_probe.py",
+            "--input",
+            str(input_path),
+        ],
+    )
+
+    assert probe.main() == 1
+    captured = capsys.readouterr()
+    assert "Failed to parse input probe JSON file" in captured.err
+
+
+def test_main_returns_error_for_non_object_input_json(tmp_path, monkeypatch, capsys) -> None:
+    input_path = tmp_path / "array.json"
+    input_path.write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "same_cohort_batching_probe.py",
+            "--input",
+            str(input_path),
+        ],
+    )
+
+    assert probe.main() == 1
+    captured = capsys.readouterr()
+    assert "must contain a JSON object" in captured.err
+
+
+def test_main_returns_error_when_output_write_fails(tmp_path, monkeypatch, capsys) -> None:
+    input_path = tmp_path / "raw.json"
+    input_path.write_text(
+        json.dumps(raw_probe_payload(admission_batch_size=2, worker_batch_size=1)),
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "existing-file"
+    output_dir.write_text("not a directory", encoding="utf-8")
+    output_path = output_dir / "analyzed.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "same_cohort_batching_probe.py",
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_path),
+        ],
+    )
+
+    assert probe.main() == 1
+    captured = capsys.readouterr()
+    assert "failed to write output file" in captured.err
