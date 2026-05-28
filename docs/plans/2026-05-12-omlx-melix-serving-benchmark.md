@@ -754,6 +754,19 @@ not a fair source for direct Melix optimization deltas.
   source builds before the benchmark can start.
 - Treat `model_listed=false` as an invalid comparison setup unless the operator
   explicitly requests `--allow-failed-preflight` to capture failure observations.
+- Peer comparison bundles use manifest schema version 2. For any report that
+  presents Melix numbers against OMLX, SwiftLM, or another peer runtime, record
+  the Melix Swift text-worker and control-plane binary paths, SHA-256 digests,
+  and detected build modes. A peer comparison is invalid unless both Melix
+  binaries are readable release artifacts. Debug builds are allowed only when
+  the run is explicitly marked `debug-only`, and those artifacts must not be
+  used as fair peer performance evidence.
+- Record peer reproducibility metadata alongside the scenario matrix: Melix and
+  OMLX revisions or versions when known, optional SwiftLM revision/version and
+  binary hash when a three-way run is assembled from this harness, local model
+  snapshot path, prompt/completion token source summaries, warmup count, cache
+  profile, prompt style, prompt targets, output lengths, concurrency values,
+  and repeat count.
 
 ## Current Known Gaps
 
