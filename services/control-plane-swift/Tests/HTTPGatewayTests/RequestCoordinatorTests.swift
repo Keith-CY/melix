@@ -2622,6 +2622,139 @@ struct RequestCoordinatorTests {
         _ = await consumer3.result
     }
 
+    @Test("same cohort batching probe emits linked admission and worker evidence")
+    func sameCohortBatchingProbeEmitsLinkedAdmissionAndWorkerEvidence() async throws {
+        let requestIDs = ["req-same-cohort-1", "req-same-cohort-2"]
+        let workerClient = PhaseAwareWorkerClient()
+        let metricsStore = MetricsStore()
+        let schedulerReadModel = SchedulerReadModel(metricsStore: metricsStore)
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
+        let batchingExt = [
+            "melix.gateway.concurrent_processing": "true",
+            "melix.gateway.max_concurrent_sequences": "2",
+            "melix.gateway.prefill_batch_size": "2",
+            "melix.gateway.completion_batch_size": "2",
+        ]
+
+        let execution1 = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: requestIDs[0],
+                saveBoundarySnapshot: true,
+                executionExt: batchingExt
+            )
+        )
+        let consumer1 = Task {
+            try await collectRequestCoordinatorEvents(execution1.stream)
+        }
+        let secondTask = Task {
+            try await coordinator.startChatCompletion(
+                makeTranslatedChatRequest(
+                    requestID: requestIDs[1],
+                    saveBoundarySnapshot: true,
+                    executionExt: batchingExt
+                )
+            )
+        }
+
+        let decodeRequestIDs = await waitForDecodeRequests(
+            workerClient: workerClient,
+            requestIDs: requestIDs
+        )
+        let execution2 = try await secondTask.value
+        let consumer2 = Task {
+            try await collectRequestCoordinatorEvents(execution2.stream)
+        }
+
+        let prefillRequests = await workerClient.prefillRequestObservations()
+        let decodeRequests = await workerClient.decodeRequestObservations()
+
+        for requestID in requestIDs {
+            await workerClient.emitDecodeStarted(requestID: requestID, decodeHandle: "decode-\(requestID)")
+        }
+        let progress1 = try #require(await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: requestIDs[0],
+            phase: .requestDecoding,
+            matching: { $0.decodeHandle == "decode-\(requestIDs[0])" }
+        ))
+        let progress2 = try #require(await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: requestIDs[1],
+            phase: .requestDecoding,
+            matching: { $0.decodeHandle == "decode-\(requestIDs[1])" }
+        ))
+        let metrics = await metricsStore.snapshot()
+
+        let decodeEmissionStartedAt = DispatchTime.now().uptimeNanoseconds
+        for requestID in requestIDs {
+            await workerClient.emitToken(requestID: requestID, text: "token-\(requestID)")
+            await workerClient.emitUsageDelta(requestID: requestID, promptTokens: 4, completionTokens: 1)
+            await workerClient.finishDecode(requestID: requestID, assistantText: "done-\(requestID)")
+        }
+
+        let events1 = try await consumer1.value
+        let events2 = try await consumer2.value
+        let decodeEmissionElapsedNanoseconds = DispatchTime.now().uptimeNanoseconds - decodeEmissionStartedAt
+        let aggregateOutputTokensPerSecond = aggregateOutputTokensPerSecond(
+            events: events1 + events2,
+            elapsedNanoseconds: decodeEmissionElapsedNanoseconds
+        )
+        let payload: [String: Any] = [
+            "schema_version": 1,
+            "probe": "same_cohort_batching_probe",
+            "request_ids": requestIDs,
+            "admission": [
+                "scheduler_continuous_batch_size": metrics.values["scheduler.continuous_batch_size"] ?? 0,
+                "scheduler_continuous_batch_active_cohorts": metrics.values["scheduler.continuous_batch_active_cohorts"] ?? 0,
+                "scheduler_continuous_batch_merge_rate": metrics.values["scheduler.continuous_batch_merge_rate"] ?? 0,
+                "scheduler_continuous_batch_occupancy_pct": metrics.values["scheduler.continuous_batch_occupancy_pct"] ?? 0,
+                "request_progress": [
+                    progressPayload(progress1),
+                    progressPayload(progress2),
+                ],
+            ],
+            "worker": [
+                "prefill_request_ids": prefillRequests.map(\.requestID),
+                "prefill_lanes": prefillRequests.map(\.lane),
+                "decode_request_ids": decodeRequests.map(\.requestID),
+                "decode_handles": decodeRequests.map(\.decodeHandle),
+                "decode_loop_iterations": decodeRequests.count,
+                "max_model_step_batch_size": 1,
+                "model_step_batch_size_source": "deterministic_phase_aware_worker_single_decode_stream_per_request",
+                "aggregate_output_tokens_per_second": aggregateOutputTokensPerSecond,
+                "aggregate_output_tokens_per_second_source": "deterministic_phase_aware_worker_wall_clock",
+            ],
+            "request_links": requestIDs.map { requestID in
+                [
+                    "gateway_request_id": requestID,
+                    "coordinator_request_id": requestID,
+                    "worker_prefill_request_id": requestID,
+                    "worker_decode_request_id": requestID,
+                    "decode_handle": "decode-\(requestID)",
+                ]
+            },
+            "status_expectation": "warning_when_admission_batch_gt_one_and_worker_model_step_batch_eq_one",
+        ]
+
+        #expect(Set(decodeRequestIDs).isSuperset(of: requestIDs))
+        #expect(metrics.values["scheduler.continuous_batch_size"] == 2)
+        #expect(metrics.values["scheduler.continuous_batch_active_cohorts"] == 1)
+        #expect(prefillRequests.map(\.requestID) == requestIDs)
+        #expect(decodeRequests.map(\.requestID) == requestIDs)
+        #expect(decodeRequests.map(\.decodeHandle) == requestIDs.map { "decode-\($0)" })
+        #expect(payload["request_links"] != nil)
+
+        if ProcessInfo.processInfo.environment["MELIX_SAME_COHORT_BATCHING_PROBE"] == "1" {
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+            print("MELIX_SAME_COHORT_BATCHING_PROBE_JSON=\(String(decoding: data, as: UTF8.self))")
+        }
+    }
+
     @Test("gateway batching defaults can disable continuous batch admissions")
     func gatewayBatchingDefaultsCanDisableContinuousBatchAdmissions() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -4658,6 +4791,30 @@ private actor PhaseAwareWorkerClient:
         decodeRequests.last
     }
 
+    func prefillRequestObservations() -> [WorkerPrefillRequestObservation] {
+        prefillRequests.map {
+            WorkerPrefillRequestObservation(
+                requestID: $0.execution.id.requestID,
+                lane: $0.execution.scheduling.lane,
+                modelHandle: $0.execution.modelHandle,
+                prefillStepSize: $0.prefillStepSize,
+                returnDecodeHandle: $0.returnDecodeHandle
+            )
+        }
+    }
+
+    func decodeRequestObservations() -> [WorkerDecodeRequestObservation] {
+        decodeRequests.map {
+            WorkerDecodeRequestObservation(
+                requestID: $0.execution.id.requestID,
+                lane: $0.execution.scheduling.lane,
+                modelHandle: $0.execution.modelHandle,
+                decodeHandle: $0.decodeHandle,
+                maxOutputTokens: $0.maxOutputTokens
+            )
+        }
+    }
+
     func decodeRequestIDs() -> [String] {
         decodeRequests.map { $0.execution.id.requestID }
     }
@@ -4687,6 +4844,22 @@ private actor PhaseAwareWorkerClient:
         response.modelHandle = "melix-dev-text::swift"
         return response
     }
+}
+
+private struct WorkerPrefillRequestObservation: Sendable {
+    let requestID: String
+    let lane: String
+    let modelHandle: String
+    let prefillStepSize: UInt32
+    let returnDecodeHandle: Bool
+}
+
+private struct WorkerDecodeRequestObservation: Sendable {
+    let requestID: String
+    let lane: String
+    let modelHandle: String
+    let decodeHandle: String
+    let maxOutputTokens: UInt32
 }
 
 private actor FailingGenerateWorkerClient: WorkerRoutingClient {
@@ -5264,6 +5437,48 @@ private func waitForDecodeRequests(
         try? await Task.sleep(nanoseconds: 10_000_000)
     }
     return await workerClient.decodeRequestIDs()
+}
+
+private func collectRequestCoordinatorEvents(
+    _ stream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
+) async throws -> [Melix_Worker_V1_ExecuteEvent] {
+    var events: [Melix_Worker_V1_ExecuteEvent] = []
+    for try await event in stream {
+        events.append(event)
+    }
+    return events
+}
+
+private func progressPayload(
+    _ progress: Melix_Controlplane_V1_RequestProgressEvent
+) -> [String: Any] {
+    [
+        "request_id": progress.requestID,
+        "phase": "\(progress.phase)",
+        "lane": progress.lane,
+        "queue_position": progress.queuePosition,
+        "admission_state": "\(progress.admissionState)",
+        "active_requests": progress.activeRequests,
+        "waiting_requests": progress.waitingRequests,
+        "prefill_processed_tokens": progress.prefillProcessedTokens,
+        "prefill_total_tokens": progress.prefillTotalTokens,
+    ]
+}
+
+private func aggregateOutputTokensPerSecond(
+    events: [Melix_Worker_V1_ExecuteEvent],
+    elapsedNanoseconds: UInt64
+) -> Double {
+    let tokenEvents = events.filter { event in
+        if case .tokenDelta = event.payload {
+            return true
+        }
+        return false
+    }
+    guard !tokenEvents.isEmpty, elapsedNanoseconds > 0 else {
+        return 0
+    }
+    return Double(tokenEvents.count) / (Double(elapsedNanoseconds) / 1_000_000_000)
 }
 
 private func waitForGeneratedRequests(
