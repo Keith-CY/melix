@@ -24,7 +24,11 @@ The architecture spec currently limits the continuous-batching baseline to Swift
    probe seam, tests, or governing plan select the macOS runner probe in CI.
    The registered `command_json` probe emits flat numeric metrics for scheduler
    admission batch size, worker/model-step batch size, warning/failure counts,
-   linked request count, and the scheduler-to-worker batch delta.
+   linked request count, and the scheduler-to-worker batch delta. Because this
+   PR introduces the probe script, the registered command includes a missing-
+   script baseline fallback that emits neutral zero evidence plus a warning
+   marker when running against `origin/main`; the head probe remains the source
+   of the new macOS Swift evidence.
 
 ## Success Metrics
 

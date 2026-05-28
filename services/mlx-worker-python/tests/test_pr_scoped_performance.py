@@ -528,6 +528,23 @@ def test_same_cohort_batching_probe_metrics_are_numeric(tmp_path: Path) -> None:
     assert metrics["scheduler_to_worker_batch_delta"] == 1.0
 
 
+def test_same_cohort_registered_probe_has_missing_script_baseline_fallback(tmp_path: Path) -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "same-cohort-batching-probe-evidence"
+    )
+
+    metrics = _probe_command_json(probe=probe, repo_root=tmp_path)
+
+    assert metrics["status_passed"] == 0.0
+    assert metrics["status_warning"] == 1.0
+    assert metrics["failure_count"] == 0.0
+    assert metrics["scheduler_continuous_batch_size"] == 0.0
+    assert metrics["worker_max_model_step_batch_size"] == 0.0
+    assert metrics["linked_request_count"] == 0.0
+
+
 def test_integration_swift_binary_resolution_probe_script_emits_metrics(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
