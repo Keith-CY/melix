@@ -111,8 +111,18 @@ def analyze_probe(raw: dict[str, Any]) -> dict[str, Any]:
     worker = _as_dict(raw.get("worker"))
     links = _as_list(raw.get("request_links"))
 
-    scheduler_batch_size = _number(admission.get("scheduler_continuous_batch_size"))
-    worker_max_batch_size = _number(worker.get("max_model_step_batch_size"))
+    scheduler_batch_size = _first_number(
+        admission,
+        "scheduler_admission_cohort_size",
+        "scheduler_continuous_batch_size",
+    )
+    worker_decode_batch_size = _first_number(worker, "decode_batch_size")
+    worker_model_eval_batch_size = _first_number(
+        worker,
+        "model_eval_batch_size",
+        "max_model_step_batch_size",
+    )
+    worker_max_batch_size = max(worker_decode_batch_size, worker_model_eval_batch_size)
     linked_request_count = len(links)
     worker_decode_request_ids = {
         request_id
@@ -147,11 +157,17 @@ def analyze_probe(raw: dict[str, Any]) -> dict[str, Any]:
             "message": "Scheduler did not report a same-cohort admission batch larger than one.",
             "scheduler_continuous_batch_size": scheduler_batch_size,
         })
-    if worker_max_batch_size <= 0:
+    if worker_decode_batch_size <= 0:
+        failures.append({
+            "code": "worker_decode_batch_missing",
+            "message": "Worker decode batch-size evidence is missing.",
+            "decode_batch_size": worker_decode_batch_size,
+        })
+    if worker_model_eval_batch_size <= 0:
         failures.append({
             "code": "worker_model_step_batch_missing",
             "message": "Worker/model-step batch-size evidence is missing.",
-            "max_model_step_batch_size": worker_max_batch_size,
+            "model_eval_batch_size": worker_model_eval_batch_size,
         })
     elif scheduler_batch_size > 1 and worker_max_batch_size == 1:
         warnings.append({
@@ -160,8 +176,9 @@ def analyze_probe(raw: dict[str, Any]) -> dict[str, Any]:
                 "Scheduler admitted a same-cohort batch, but worker/model-step "
                 "evidence still shows singleton decode steps."
             ),
-            "scheduler_continuous_batch_size": scheduler_batch_size,
-            "max_model_step_batch_size": worker_max_batch_size,
+            "scheduler_admission_cohort_size": scheduler_batch_size,
+            "decode_batch_size": worker_decode_batch_size,
+            "model_eval_batch_size": worker_model_eval_batch_size,
         })
 
     status = "failed" if failures else ("warning" if warnings else "passed")
@@ -181,10 +198,24 @@ def probe_metrics(analyzed: dict[str, Any]) -> dict[str, float]:
     links = _as_list(raw.get("request_links"))
     warnings = _as_list(analyzed.get("warnings"))
     failures = _as_list(analyzed.get("failures"))
-    scheduler_batch_size = _number(admission.get("scheduler_continuous_batch_size"))
-    worker_batch_size = _number(worker.get("max_model_step_batch_size"))
+    scheduler_batch_size = _first_number(
+        admission,
+        "scheduler_admission_cohort_size",
+        "scheduler_continuous_batch_size",
+    )
+    scheduler_active_cohorts = _first_number(
+        admission,
+        "scheduler_admission_active_cohorts",
+        "scheduler_continuous_batch_active_cohorts",
+    )
+    worker_decode_batch_size = _first_number(worker, "decode_batch_size")
+    worker_model_eval_batch_size = _first_number(
+        worker,
+        "model_eval_batch_size",
+        "max_model_step_batch_size",
+    )
+    worker_batch_size = max(worker_decode_batch_size, worker_model_eval_batch_size)
     decode_loop_iterations = _number(worker.get("decode_loop_iterations"))
-    scheduler_active_cohorts = _number(admission.get("scheduler_continuous_batch_active_cohorts"))
     scheduler_to_worker_batch_delta = max(0.0, scheduler_batch_size - worker_batch_size)
     return {
         "status_passed": 1.0 if analyzed.get("status") == "passed" else 0.0,
@@ -193,9 +224,18 @@ def probe_metrics(analyzed: dict[str, Any]) -> dict[str, float]:
         "warning_count": float(len(warnings)),
         "failure_count": float(len(failures)),
         "scheduler_continuous_batch_size": scheduler_batch_size,
+        "scheduler_admission_cohort_size": scheduler_batch_size,
         "scheduler_active_cohorts": scheduler_active_cohorts,
+        "scheduler_admission_active_cohorts": scheduler_active_cohorts,
+        "worker_decode_batch_size": worker_decode_batch_size,
+        "worker_model_eval_batch_size": worker_model_eval_batch_size,
         "worker_max_model_step_batch_size": worker_batch_size,
         "worker_decode_loop_iterations": decode_loop_iterations,
+        "worker_decode_batch_observation_count": _number(worker.get("decode_batch_observation_count")),
+        "worker_per_batch_output_token_count": _number(worker.get("per_batch_output_token_count")),
+        "worker_per_batch_output_tokens_per_second": _number(
+            worker.get("per_batch_output_tokens_per_second")
+        ),
         "linked_request_count": float(len(links)),
         "scheduler_to_worker_batch_delta": scheduler_to_worker_batch_delta,
     }
@@ -212,6 +252,14 @@ def _as_list(value: Any) -> list[Any]:
 def _number(value: Any) -> float:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return float(value)
+    return 0.0
+
+
+def _first_number(mapping: dict[str, Any], *keys: str) -> float:
+    for key in keys:
+        value = mapping.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
     return 0.0
 
 

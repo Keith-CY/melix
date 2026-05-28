@@ -795,8 +795,15 @@ def test_three_way_markdown_surfaces_melix_first_load_metrics() -> None:
         metrics_snapshot={
             "ok": True,
             "values": {
+                "scheduler.admission_cohort_size": 2,
+                "scheduler.admission_active_cohorts": 1,
                 "control_plane.text_first_load_ms": 8547.46,
                 "control_plane.text_first_load_resident_bytes": 32942997504,
+                "swift_text.decode_batch_size": 1,
+                "swift_text.model_eval_batch_size": 1,
+                "swift_text.per_batch_output_token_count": 16,
+                "swift_text.per_batch_output_tokens_per_second": 8,
+                "swift_text.decode_batch_observation_count": 1,
                 "swift_text.prefill_ms": 3447.17,
                 "swift_text.decode_ttft_ms": 8554.38,
             },
@@ -811,6 +818,12 @@ def test_three_way_markdown_surfaces_melix_first_load_metrics() -> None:
     )
 
     assert "- Measurement profile: `cold`" in markdown
+    assert "`scheduler.admission_cohort_size` | 2.00" in markdown
+    assert "`swift_text.decode_batch_size` | 1.00" in markdown
+    assert "`swift_text.model_eval_batch_size` | 1.00" in markdown
+    assert "`swift_text.per_batch_output_token_count` | 16.00" in markdown
+    assert "`swift_text.per_batch_output_tokens_per_second` | 8.00" in markdown
+    assert "`swift_text.decode_batch_observation_count` | 1.00" in markdown
     assert "`control_plane.text_first_load_ms` | 8547.46" in markdown
     assert "`swift_text.prefill_ms` | 3447.17" in markdown
     assert "`swift_text.decode_ttft_ms` | 8554.38" in markdown

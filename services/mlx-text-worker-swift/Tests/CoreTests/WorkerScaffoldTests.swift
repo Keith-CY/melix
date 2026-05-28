@@ -3981,6 +3981,11 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(recorded.last?.completed.finishReason, "stop")
         let storedAfterDecode = await services.registry.prefillContext(for: prefillResponse.decodeHandle)
         XCTAssertNil(storedAfterDecode)
+        XCTAssertEqual(services.metrics.counters["swift_text.decode_batch_size"], 1)
+        XCTAssertEqual(services.metrics.counters["swift_text.model_eval_batch_size"], 1)
+        XCTAssertEqual(services.metrics.counters["swift_text.decode_batch_observation_count"], 1)
+        XCTAssertEqual(services.metrics.counters["swift_text.per_batch_output_token_count"], 1)
+        XCTAssertEqual(services.metrics.counters["swift_text.per_batch_output_tokens_per_second"], 8)
         XCTAssertEqual(services.metrics.counters["swift_text.decode_tokens_per_second"], 8)
     }
 

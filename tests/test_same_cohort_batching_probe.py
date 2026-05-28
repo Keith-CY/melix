@@ -17,12 +17,19 @@ MODULE_SPEC.loader.exec_module(probe)
 def raw_probe_payload(*, admission_batch_size: int, worker_batch_size: int) -> dict:
     return {
         "admission": {
+            "scheduler_admission_cohort_size": admission_batch_size,
+            "scheduler_admission_active_cohorts": 1,
             "scheduler_continuous_batch_size": admission_batch_size,
             "scheduler_continuous_batch_active_cohorts": 1,
         },
         "worker": {
             "decode_request_ids": ["req-same-cohort-1", "req-same-cohort-2"],
+            "decode_batch_size": worker_batch_size,
+            "model_eval_batch_size": worker_batch_size,
             "max_model_step_batch_size": worker_batch_size,
+            "decode_batch_observation_count": 2,
+            "per_batch_output_token_count": 1,
+            "per_batch_output_tokens_per_second": 8,
         },
         "request_links": [
             {
@@ -48,6 +55,9 @@ def test_warns_when_admission_batches_but_worker_batch_size_is_singleton() -> No
 
     assert analyzed["status"] == "warning"
     assert analyzed["warnings"][0]["code"] == "admission_batch_without_worker_model_batch"
+    assert analyzed["warnings"][0]["scheduler_admission_cohort_size"] == 2.0
+    assert analyzed["warnings"][0]["decode_batch_size"] == 1.0
+    assert analyzed["warnings"][0]["model_eval_batch_size"] == 1.0
     assert analyzed["failures"] == []
 
 
@@ -105,13 +115,37 @@ def test_fails_when_scheduler_batch_is_not_observed() -> None:
     assert analyzed["failures"][0]["code"] == "admission_batch_not_observed"
 
 
-def test_fails_when_worker_model_step_batch_is_missing() -> None:
+def test_non_cohort_fallback_keeps_admission_and_worker_batches_separate() -> None:
     analyzed = probe.analyze_probe(
-        raw_probe_payload(admission_batch_size=2, worker_batch_size=0)
+        raw_probe_payload(admission_batch_size=1, worker_batch_size=1)
     )
+
+    metrics = probe.probe_metrics(analyzed)
+
+    assert metrics["scheduler_admission_cohort_size"] == 1.0
+    assert metrics["worker_decode_batch_size"] == 1.0
+    assert metrics["worker_model_eval_batch_size"] == 1.0
+    assert metrics["scheduler_to_worker_batch_delta"] == 0.0
+
+
+def test_fails_when_worker_model_step_batch_is_missing() -> None:
+    raw = raw_probe_payload(admission_batch_size=2, worker_batch_size=1)
+    raw["worker"]["model_eval_batch_size"] = 0
+    raw["worker"]["max_model_step_batch_size"] = 0
+    analyzed = probe.analyze_probe(raw)
 
     assert analyzed["status"] == "failed"
     assert analyzed["failures"][0]["code"] == "worker_model_step_batch_missing"
+
+
+def test_fails_when_worker_decode_batch_is_missing() -> None:
+    raw = raw_probe_payload(admission_batch_size=2, worker_batch_size=1)
+    raw["worker"]["decode_batch_size"] = 0
+
+    analyzed = probe.analyze_probe(raw)
+
+    assert analyzed["status"] == "failed"
+    assert analyzed["failures"][0]["code"] == "worker_decode_batch_missing"
 
 
 def test_main_analyzes_input_file_and_writes_output(tmp_path, monkeypatch) -> None:
@@ -172,12 +206,34 @@ def test_probe_metrics_flattens_warning_evidence() -> None:
         "warning_count": 1.0,
         "failure_count": 0.0,
         "scheduler_continuous_batch_size": 2.0,
+        "scheduler_admission_cohort_size": 2.0,
         "scheduler_active_cohorts": 1.0,
+        "scheduler_admission_active_cohorts": 1.0,
+        "worker_decode_batch_size": 1.0,
+        "worker_model_eval_batch_size": 1.0,
         "worker_max_model_step_batch_size": 1.0,
         "worker_decode_loop_iterations": 2.0,
+        "worker_decode_batch_observation_count": 2.0,
+        "worker_per_batch_output_token_count": 1.0,
+        "worker_per_batch_output_tokens_per_second": 8.0,
         "linked_request_count": 2.0,
         "scheduler_to_worker_batch_delta": 1.0,
     }
+
+
+def test_probe_metrics_accepts_legacy_batch_fields() -> None:
+    raw = raw_probe_payload(admission_batch_size=2, worker_batch_size=1)
+    del raw["admission"]["scheduler_admission_cohort_size"]
+    del raw["admission"]["scheduler_admission_active_cohorts"]
+    del raw["worker"]["decode_batch_size"]
+    del raw["worker"]["model_eval_batch_size"]
+
+    metrics = probe.probe_metrics(probe.analyze_probe(raw))
+
+    assert metrics["scheduler_admission_cohort_size"] == 2.0
+    assert metrics["scheduler_admission_active_cohorts"] == 1.0
+    assert metrics["worker_model_eval_batch_size"] == 1.0
+    assert metrics["worker_max_model_step_batch_size"] == 1.0
 
 
 def test_probe_metrics_clamps_scheduler_to_worker_batch_delta() -> None:
@@ -257,7 +313,10 @@ def test_main_returns_failure_status_for_invalid_probe(tmp_path, monkeypatch) ->
 
 def test_non_numeric_batch_fields_are_treated_as_missing() -> None:
     raw = raw_probe_payload(admission_batch_size=2, worker_batch_size=1)
+    raw["admission"]["scheduler_admission_cohort_size"] = "two"
     raw["admission"]["scheduler_continuous_batch_size"] = "two"
+    raw["worker"]["decode_batch_size"] = True
+    raw["worker"]["model_eval_batch_size"] = True
     raw["worker"]["max_model_step_batch_size"] = True
 
     analyzed = probe.analyze_probe(raw)
@@ -265,6 +324,7 @@ def test_non_numeric_batch_fields_are_treated_as_missing() -> None:
     assert analyzed["status"] == "failed"
     failure_codes = {failure["code"] for failure in analyzed["failures"]}
     assert "admission_batch_not_observed" in failure_codes
+    assert "worker_decode_batch_missing" in failure_codes
     assert "worker_model_step_batch_missing" in failure_codes
 
 

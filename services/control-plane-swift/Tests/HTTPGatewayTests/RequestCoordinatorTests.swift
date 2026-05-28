@@ -2709,6 +2709,8 @@ struct RequestCoordinatorTests {
             "probe": "same_cohort_batching_probe",
             "request_ids": requestIDs,
             "admission": [
+                "scheduler_admission_cohort_size": metrics.values["scheduler.admission_cohort_size"] ?? 0,
+                "scheduler_admission_active_cohorts": metrics.values["scheduler.admission_active_cohorts"] ?? 0,
                 "scheduler_continuous_batch_size": metrics.values["scheduler.continuous_batch_size"] ?? 0,
                 "scheduler_continuous_batch_active_cohorts": metrics.values["scheduler.continuous_batch_active_cohorts"] ?? 0,
                 "scheduler_continuous_batch_merge_rate": metrics.values["scheduler.continuous_batch_merge_rate"] ?? 0,
@@ -2723,10 +2725,18 @@ struct RequestCoordinatorTests {
                 "prefill_lanes": prefillRequests.map(\.lane),
                 "decode_request_ids": decodeRequests.map(\.requestID),
                 "decode_handles": decodeRequests.map(\.decodeHandle),
+                "decode_batch_observation_count": decodeRequests.count,
                 "decode_loop_iterations": decodeRequests.count,
                 "decode_loop_iterations_source": "deterministic_phase_aware_worker_decode_request_stream_count",
+                "decode_batch_size": 1,
+                "decode_batch_size_source": "deterministic_phase_aware_worker_single_decode_stream_per_request",
                 "max_model_step_batch_size": 1,
+                "model_eval_batch_size": 1,
                 "model_step_batch_size_source": "deterministic_phase_aware_worker_single_decode_stream_per_request",
+                "per_batch_output_token_count": 1,
+                "per_batch_output_token_count_source": "deterministic_phase_aware_worker_one_token_per_decode_stream",
+                "per_batch_output_tokens_per_second": 1,
+                "per_batch_output_tokens_per_second_source": "deterministic_phase_aware_worker_one_token_per_decode_stream",
                 "aggregate_output_tokens_per_second": aggregateOutputTokensPerSecond,
                 "aggregate_output_tokens_per_second_source": "deterministic_phase_aware_worker_wall_clock",
             ],
@@ -2745,6 +2755,8 @@ struct RequestCoordinatorTests {
         #expect(Set(decodeRequestIDs).isSuperset(of: requestIDs))
         #expect(metrics.values["scheduler.continuous_batch_size"] == 2)
         #expect(metrics.values["scheduler.continuous_batch_active_cohorts"] == 1)
+        #expect(metrics.values["scheduler.admission_cohort_size"] == 2)
+        #expect(metrics.values["scheduler.admission_active_cohorts"] == 1)
         #expect(prefillRequests.map(\.requestID) == requestIDs)
         #expect(decodeRequests.map(\.requestID) == requestIDs)
         #expect(decodeRequests.map(\.decodeHandle) == requestIDs.map { "decode-\($0)" })

@@ -4603,18 +4603,25 @@
   {
     "id": "same-cohort-batching-probe-evidence",
     "name": "Same-cohort batching probe evidence",
-    "description": "Run the deterministic same-cohort Swift batching probe and expose scheduler-to-worker batch evidence as flat numeric metrics; scheduler_to_worker_batch_delta is the non-negative admission-to-worker batch gap.",
+    "description": "Run the deterministic same-cohort Swift batching probe and expose separate admission cohort, worker decode batch, and model eval batch evidence as flat numeric metrics; scheduler_to_worker_batch_delta is the non-negative admission-to-worker execution gap.",
     "runner": "macos-15",
     "watch_globs": [
       "scripts/same_cohort_batching_probe.py",
       "tests/test_same_cohort_batching_probe.py",
       "services/control-plane-swift/Tests/HTTPGatewayTests/RequestCoordinatorTests.swift",
+      "services/control-plane-swift/Sources/EnginePool/SchedulerReadModel.swift",
+      "services/mlx-text-worker-swift/Sources/Core/Inference/TextDecodeEngine.swift",
+      "services/mlx-text-worker-swift/Sources/Core/MetricsStore.swift",
+      "services/mlx-text-worker-swift/Tests/CoreTests/WorkerScaffoldTests.swift",
+      "scripts/omlx_melix_compare_benchmark.py",
+      "scripts/three_way_serving_compare.py",
       "docs/plans/2026-05-29-issue-1652-same-cohort-batching-probe.md",
+      "docs/plans/2026-05-29-issue-1653-batch-metrics.md",
       "infra/perf/pr_scoped_probes.json"
     ],
-    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q tests/test_same_cohort_batching_probe.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_same_cohort_batching_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_same_cohort_batching_probe_metrics_are_numeric services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_same_cohort_batching_probe_registry_command_has_base_fallback services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs && HOME=\"$PWD/.swift-home/same-cohort-focused\" CLANG_MODULE_CACHE_PATH=\"$PWD/.build/ModuleCache.noindex/same-cohort-focused\" swift test --package-path services/control-plane-swift --filter 'RequestCoordinatorTests/sameCohortBatchingProbeEmitsLinkedAdmissionAndWorkerEvidence()'",
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q tests/test_same_cohort_batching_probe.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_same_cohort_batching_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_same_cohort_batching_probe_metrics_are_numeric services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_same_cohort_batching_probe_registry_command_has_base_fallback services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs && HOME=\"$PWD/.swift-home/same-cohort-focused\" CLANG_MODULE_CACHE_PATH=\"$PWD/.build/ModuleCache.noindex/same-cohort-focused\" swift test --package-path services/control-plane-swift --filter 'RequestCoordinatorTests/sameCohortBatchingProbeEmitsLinkedAdmissionAndWorkerEvidence()' && HOME=\"$PWD/.swift-home/same-cohort-text-worker-focused\" CLANG_MODULE_CACHE_PATH=\"$PWD/.build/ModuleCache.noindex/same-cohort-text-worker-focused\" swift test --package-path services/mlx-text-worker-swift --filter 'WorkerScaffoldTests/testDecodeStreamingRpcStreamsTokensAndCleansUpStoredContext()'",
     "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run --branch --include='*/scripts/same_cohort_batching_probe.py' -m pytest -q tests/test_same_cohort_batching_probe.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_same_cohort_batching_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_same_cohort_batching_probe_metrics_are_numeric services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_same_cohort_batching_probe_registry_command_has_base_fallback services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json scripts/same_cohort_batching_probe.py",
-    "probe_command": "if [ -f scripts/same_cohort_batching_probe.py ]; then python3 scripts/same_cohort_batching_probe.py --metrics; else python3 -c 'import json; print(json.dumps({\"failure_count\": 0.0, \"linked_request_count\": 0.0, \"scheduler_active_cohorts\": 0.0, \"scheduler_continuous_batch_size\": 0.0, \"scheduler_to_worker_batch_delta\": 0.0, \"status_failed\": 0.0, \"status_passed\": 0.0, \"status_warning\": 1.0, \"warning_count\": 1.0, \"worker_decode_loop_iterations\": 0.0, \"worker_max_model_step_batch_size\": 0.0}, sort_keys=True))'; fi",
+    "probe_command": "if [ -f scripts/same_cohort_batching_probe.py ]; then python3 scripts/same_cohort_batching_probe.py --metrics; else python3 -c 'import json; print(json.dumps({\"failure_count\": 0.0, \"linked_request_count\": 0.0, \"scheduler_active_cohorts\": 0.0, \"scheduler_admission_active_cohorts\": 0.0, \"scheduler_admission_cohort_size\": 0.0, \"scheduler_continuous_batch_size\": 0.0, \"scheduler_to_worker_batch_delta\": 0.0, \"status_failed\": 0.0, \"status_passed\": 0.0, \"status_warning\": 1.0, \"warning_count\": 1.0, \"worker_decode_batch_observation_count\": 0.0, \"worker_decode_batch_size\": 0.0, \"worker_decode_loop_iterations\": 0.0, \"worker_model_eval_batch_size\": 0.0, \"worker_max_model_step_batch_size\": 0.0, \"worker_per_batch_output_token_count\": 0.0, \"worker_per_batch_output_tokens_per_second\": 0.0}, sort_keys=True))'; fi",
     "probe_impl": "command_json",
     "coverage_replays_tests": true,
     "metrics": [
@@ -4647,15 +4654,38 @@
         "warn_abs": 1.0
       },
       {
+        "key": "scheduler_admission_cohort_size",
+        "unit": "count",
+        "direction": "higher_is_better",
+        "warn_pct": 0.0
+      },
+      {
         "key": "scheduler_continuous_batch_size",
         "unit": "count",
         "direction": "higher_is_better",
         "warn_pct": 0.0
       },
       {
+        "key": "scheduler_admission_active_cohorts",
+        "unit": "count",
+        "direction": "informational"
+      },
+      {
         "key": "scheduler_active_cohorts",
         "unit": "count",
         "direction": "informational"
+      },
+      {
+        "key": "worker_decode_batch_size",
+        "unit": "count",
+        "direction": "higher_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "worker_model_eval_batch_size",
+        "unit": "count",
+        "direction": "higher_is_better",
+        "warn_pct": 0.0
       },
       {
         "key": "worker_max_model_step_batch_size",
@@ -4666,6 +4696,21 @@
       {
         "key": "worker_decode_loop_iterations",
         "unit": "count",
+        "direction": "informational"
+      },
+      {
+        "key": "worker_decode_batch_observation_count",
+        "unit": "count",
+        "direction": "informational"
+      },
+      {
+        "key": "worker_per_batch_output_token_count",
+        "unit": "count",
+        "direction": "informational"
+      },
+      {
+        "key": "worker_per_batch_output_tokens_per_second",
+        "unit": "tokens/s",
         "direction": "informational"
       },
       {

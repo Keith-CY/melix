@@ -1089,6 +1089,42 @@ def enrich_hints_with_metrics(
                 "unknown",
             ),
         })
+    admission_cohort_size = _numeric_metric(values, "scheduler.admission_cohort_size")
+    if admission_cohort_size is None:
+        admission_cohort_size = _numeric_metric(values, "scheduler.continuous_batch_size")
+    worker_decode_batch_size = _numeric_metric(values, "swift_text.decode_batch_size")
+    model_eval_batch_size = _numeric_metric(values, "swift_text.model_eval_batch_size")
+    per_batch_output_tokens_per_second = _numeric_metric(
+        values,
+        "swift_text.per_batch_output_tokens_per_second",
+    )
+    worker_execution_batch_size = max(
+        value
+        for value in (
+            worker_decode_batch_size,
+            model_eval_batch_size,
+            0.0,
+        )
+        if value is not None
+    )
+    if (
+        admission_cohort_size is not None
+        and admission_cohort_size > 1
+        and worker_execution_batch_size <= 1
+    ):
+        hints.append({
+            "scenario": {"source": "melix_metrics_snapshot"},
+            "area": "continuous_batching",
+            "severity": "medium",
+            "message": (
+                "Melix admitted a multi-request cohort, but worker/model batch "
+                "metrics still show singleton execution."
+            ),
+            "melix_admission_cohort_size": admission_cohort_size,
+            "melix_worker_decode_batch_size": worker_decode_batch_size,
+            "melix_model_eval_batch_size": model_eval_batch_size,
+            "melix_per_batch_output_tokens_per_second": per_batch_output_tokens_per_second,
+        })
     return hints
 
 
@@ -1722,15 +1758,23 @@ def render_markdown_summary(
             lines.append("| Metric | Value |")
             lines.append("|---|---:|")
             for key in (
+                "scheduler.admission_cohort_size",
+                "scheduler.admission_active_cohorts",
                 "scheduler.multimodal_continuous_batch_enabled",
                 "scheduler.multimodal_continuous_batch_requested_capacity",
                 "scheduler.multimodal_continuous_batch_effective_capacity",
                 "scheduler.multimodal_continuous_batch_blocked_count",
                 "scheduler.multimodal_continuous_batch_blocked_reason_code",
                 "scheduler.continuous_batch_size",
+                "scheduler.continuous_batch_active_cohorts",
                 "control_plane.text_first_load_ms",
                 "control_plane.text_first_load_estimated_resident_bytes",
                 "control_plane.text_first_load_resident_bytes",
+                "swift_text.decode_batch_size",
+                "swift_text.model_eval_batch_size",
+                "swift_text.per_batch_output_token_count",
+                "swift_text.per_batch_output_tokens_per_second",
+                "swift_text.decode_batch_observation_count",
                 "swift_text.prefill_ms",
                 "swift_text.prefill_prompt_tokens",
                 "swift_text.decode_ttft_ms",

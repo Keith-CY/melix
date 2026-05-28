@@ -254,10 +254,19 @@ struct TextDecodeEngine: Sendable {
                 )
             }
             metrics.recordMilliseconds("swift_text.decode_ms", value: elapsedMilliseconds(since: startedAt))
+            let roundedTokensPerSecond = max(0, Int((tokensPerSecond ?? 0).rounded()))
             metrics.set("swift_text.decode_stream_event_count", value: outputState.eventCount)
+            metrics.set("swift_text.decode_batch_size", value: 1)
+            metrics.set("swift_text.model_eval_batch_size", value: 1)
+            metrics.increment("swift_text.decode_batch_observation_count")
+            metrics.set("swift_text.per_batch_output_token_count", value: max(0, completionTokens))
             metrics.set(
                 "swift_text.decode_tokens_per_second",
-                value: max(0, Int((tokensPerSecond ?? 0).rounded()))
+                value: roundedTokensPerSecond
+            )
+            metrics.set(
+                "swift_text.per_batch_output_tokens_per_second",
+                value: roundedTokensPerSecond
             )
             metrics.set(
                 "swift_text.active_kv_quantization_ratio",
