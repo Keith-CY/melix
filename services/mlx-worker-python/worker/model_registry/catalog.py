@@ -1377,7 +1377,12 @@ def _has_renamed_projector_tensor(
     if tensor_evidence.status != "ok":
         return False
     for name in _weight_map_tensor_names(model_dir, json_cache=json_cache):
-        if _tensor_name_is_text(name) or _tensor_name_is_vision(name) or _tensor_name_is_audio(name) or _tensor_name_is_video(name):
+        if (
+            _tensor_name_is_text(name)
+            or _tensor_name_is_vision(name)
+            or _tensor_name_is_audio(name)
+            or _tensor_name_is_video(name)
+        ):
             continue
         # Reuse a single lowercase form across the projector/draft helpers and the
         # connector/projector substring check below.
