@@ -102,9 +102,29 @@ def test_built_in_tool_schemas_are_object_contracts_with_required_arguments() ->
         assert "x-melix-observation-kind" not in parsed
 
 
+def test_tool_descriptor_schema_byte_count_uses_ascii_json_length() -> None:
+    tool = ToolDescriptor(
+        name="summarize",
+        description="Résumé summarizer",
+        tool_kind="local_compute",
+        observation_kind="text",
+        arguments=(
+            ToolArgumentDescriptor(
+                name="text",
+                json_type="string",
+                description="Résumé input",
+            ),
+        ),
+    )
+
+    schema = tool.json_schema()
+    assert schema.isascii()
+    assert tool.schema_byte_count() == len(schema) == len(schema.encode("utf-8"))
+
+
 def test_tool_registry_metrics_reuses_cached_schema_byte_counts(monkeypatch: pytest.MonkeyPatch) -> None:
     registry = built_in_tool_registry()
-    expected_schema_bytes = sum(len(tool.json_schema().encode("utf-8")) for tool in registry.tools)
+    expected_schema_bytes = sum(tool.schema_byte_count() for tool in registry.tools)
 
     def fail_json_schema(self: ToolDescriptor) -> str:
         raise AssertionError("metrics() should not re-encode cached JSON schemas")

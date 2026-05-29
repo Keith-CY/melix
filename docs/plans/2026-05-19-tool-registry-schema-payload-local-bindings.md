@@ -80,6 +80,24 @@ Expected effect:
 - leave registry selection, schema payload construction, and protobuf config
   serialization unchanged.
 
+## Follow-up Slice: Schema Byte Count ASCII Length
+
+The 2026-05-29 follow-up keeps tool schema serialization unchanged but avoids
+allocating UTF-8 bytes while caching `ToolDescriptor.schema_byte_count()`. The
+compact JSON encoder uses the default `ensure_ascii=True`, so the cached schema
+string is ASCII-only and `len(cached_schema)` is equivalent to
+`len(cached_schema.encode("utf-8"))` without the extra encode allocation during
+descriptor construction.
+
+Expected effect:
+
+- reduce descriptor initialization overhead included in the registered
+  `tool-registry-schema-bytes-cache` probe;
+- keep reported `schema_bytes` identical, including descriptors whose source
+  descriptions contain non-ASCII text;
+- leave schema payload shape, registry selection, and protobuf serialization
+  unchanged.
+
 ## Validation Plan
 
 1. Run the registered focused test command locally on Linux.
