@@ -94,6 +94,7 @@ actor TextDecodeBatchCoordinator {
     }
 
     private struct PendingCohort: @unchecked Sendable {
+        let id: UInt64
         var capacity: Int
         var items: [PendingItem]
     }
@@ -101,6 +102,7 @@ actor TextDecodeBatchCoordinator {
     private let registry: WorkerRuntimeRegistry
     private let pendingWindowNanos: UInt64
     private var pendingByKey: [TextDecodeBatchEligibilityKey: PendingCohort] = [:]
+    private var nextCohortID: UInt64 = 1
 
     init(
         registry: WorkerRuntimeRegistry,
@@ -113,10 +115,20 @@ actor TextDecodeBatchCoordinator {
     func enqueue(_ candidate: TextDecodeBatchCandidate) async -> TextDecodeBatchAssignment {
         await withCheckedContinuation { continuation in
             let item = PendingItem(candidate: candidate, continuation: continuation)
-            var cohort = pendingByKey[candidate.key] ?? PendingCohort(
-                capacity: max(2, candidate.maxBatchSize),
-                items: []
-            )
+            let shouldScheduleFlush: Bool
+            var cohort: PendingCohort
+            if let pending = pendingByKey[candidate.key] {
+                cohort = pending
+                shouldScheduleFlush = false
+            } else {
+                cohort = PendingCohort(
+                    id: nextCohortID,
+                    capacity: max(2, candidate.maxBatchSize),
+                    items: []
+                )
+                nextCohortID &+= 1
+                shouldScheduleFlush = true
+            }
             cohort.capacity = max(2, min(cohort.capacity, candidate.maxBatchSize))
             cohort.items.append(item)
 
@@ -126,28 +138,28 @@ actor TextDecodeBatchCoordinator {
                 return
             }
 
-            let shouldScheduleFlush = cohort.items.count == 1
             pendingByKey[candidate.key] = cohort
 
             if shouldScheduleFlush {
-                scheduleFlush(for: candidate.key)
+                scheduleFlush(for: candidate.key, cohortID: cohort.id)
             }
         }
     }
 
-    private func scheduleFlush(for key: TextDecodeBatchEligibilityKey) {
+    private func scheduleFlush(for key: TextDecodeBatchEligibilityKey, cohortID: UInt64) {
         Task { [pendingWindowNanos] in
             if pendingWindowNanos > 0 {
                 try? await Task.sleep(nanoseconds: pendingWindowNanos)
             }
-            self.flush(key: key)
+            self.flush(key: key, cohortID: cohortID)
         }
     }
 
-    private func flush(key: TextDecodeBatchEligibilityKey) {
-        guard let cohort = pendingByKey.removeValue(forKey: key) else {
+    private func flush(key: TextDecodeBatchEligibilityKey, cohortID: UInt64) {
+        guard let cohort = pendingByKey[key], cohort.id == cohortID else {
             return
         }
+        pendingByKey.removeValue(forKey: key)
         dispatch(cohort)
     }
 
@@ -170,7 +182,7 @@ actor TextDecodeBatchCoordinator {
         let items = cohort.items.map(\.candidate)
         let continuations = streams.map(\.continuation)
         let registry = self.registry
-        Task {
+        Task.detached {
             do {
                 let runtimeStream = try await registry.decodeBatchEvents(
                     items: items.map(\.workerItem)

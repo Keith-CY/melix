@@ -4057,7 +4057,6 @@ final class WorkerScaffoldTests: XCTestCase {
         request1.execution.scheduling.lane = "text.decode.batch"
         request1.execution.ext["melix.gateway.concurrent_processing"] = "true"
         request1.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
-        request1.execution.ext["melix.gateway.completion_batch_size"] = "2"
         request1.decodeHandle = prefillResponse1.decodeHandle
         request1.sampling = sampling
         request1.maxOutputTokens = 2
@@ -4070,7 +4069,6 @@ final class WorkerScaffoldTests: XCTestCase {
         request2.execution.scheduling.lane = "text.decode.batch"
         request2.execution.ext["melix.gateway.concurrent_processing"] = "true"
         request2.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
-        request2.execution.ext["melix.gateway.completion_batch_size"] = "2"
         request2.decodeHandle = prefillResponse2.decodeHandle
         request2.sampling = sampling
         request2.maxOutputTokens = 2

@@ -440,7 +440,7 @@ struct TextDecodeEngine: Sendable {
         )
         let completionBatchSize = parsePositiveInt(
             executionExt["melix.gateway.completion_batch_size"],
-            fallback: 1
+            fallback: maxConcurrent
         )
         return max(1, min(maxConcurrent, completionBatchSize))
     }
