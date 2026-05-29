@@ -39,3 +39,12 @@ keeps invalid/labeled values on the existing generic parser fallback path.
 - Preserve all existing size-hint parsing behavior by falling back to `_size_hint_from_text(...)` when the direct parser cannot handle the value.
 - Keep `_size_hint_from_text(...)` call counts unchanged for this bounded-split follow-up.
 - Improve or hold steady `elapsed_ms_mean` in the local registered probe.
+
+## 2026-05-29 Follow-up: Direct Parser Bounded Split Implementation
+
+This slice implements the bounded split in `_direct_size_hint_from_text(...)` by
+using `text.split(maxsplit=2)` and rejecting any shape that does not produce
+exactly two tokens. Two-token values keep the existing integer/float multiplier
+semantics, while values with extra words still return `0` so callers can fall
+back to the regex parser when appropriate. The registered
+`hub-catalog-size-hint-regex-precompile` probe remains the validation gate.

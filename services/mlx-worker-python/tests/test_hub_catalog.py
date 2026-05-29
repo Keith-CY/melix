@@ -16,6 +16,7 @@ from worker.model_ops.hub_catalog import (
     HubModelSummaryRecord,
     HubSearchPage,
     _bytes_per_parameter,
+    _direct_size_hint_from_text,
     _is_mlx_compatible,
     _local_fit_evidence,
     _payload_is_mlx_compatible,
@@ -173,6 +174,11 @@ def test_payload_mlx_tag_match_stays_exact_and_case_insensitive() -> None:
     assert _payload_is_mlx_compatible({"tags": "MLX", "cardData": {}}) is True
     assert _payload_is_mlx_compatible({"tags": ["mlx-compatible"], "cardData": {}}) is False
     assert _payload_is_mlx_compatible({"tags": ["ammlx"], "cardData": {}}) is False
+
+
+def test_direct_size_hint_rejects_extra_tokens_without_full_split() -> None:
+    assert _direct_size_hint_from_text("12 GB extra") == 0
+    assert _direct_size_hint_from_text("12 GB") == 12 * 1024 * 1024 * 1024
 
 
 def test_search_models_with_mlx_only_prefilters_payloads_before_local_fit(monkeypatch: pytest.MonkeyPatch) -> None:
