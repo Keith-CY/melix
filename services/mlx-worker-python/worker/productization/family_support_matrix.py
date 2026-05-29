@@ -354,8 +354,10 @@ def build_family_support_matrix() -> dict[str, Any]:
         )
 
     live_verified_count = 0
-    # Tally every capability that appears so a future capability added to
-    # FAMILY_SPECS can't be silently dropped; missing keys read back as 0.
+    # Count capabilities in a single pass instead of seven separate sum() scans.
+    # The summary below still emits a fixed set of *_family_count keys, so a new
+    # capability would also need a key added there; Counter just supplies a 0
+    # default for any of those keys that has no matching rows.
     capability_counts: Counter[str] = Counter()
     for row in families:
         if row["live_path"]["status"] == "verified":
