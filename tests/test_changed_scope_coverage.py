@@ -34,6 +34,17 @@ assert EMPTY_PROBE_MODULE_SPEC.loader is not None
 changed_scope_coverage_probe = importlib.util.module_from_spec(EMPTY_PROBE_MODULE_SPEC)
 EMPTY_PROBE_MODULE_SPEC.loader.exec_module(changed_scope_coverage_probe)
 
+MEASURED_PROBE_MODULE_PATH = (
+    Path(__file__).resolve().parents[1] / "scripts" / "changed_scope_coverage_measured_probe.py"
+)
+MEASURED_PROBE_MODULE_SPEC = importlib.util.spec_from_file_location(
+    "changed_scope_coverage_measured_probe", MEASURED_PROBE_MODULE_PATH
+)
+assert MEASURED_PROBE_MODULE_SPEC is not None
+assert MEASURED_PROBE_MODULE_SPEC.loader is not None
+changed_scope_coverage_measured_probe = importlib.util.module_from_spec(MEASURED_PROBE_MODULE_SPEC)
+MEASURED_PROBE_MODULE_SPEC.loader.exec_module(changed_scope_coverage_measured_probe)
+
 
 @pytest.fixture(autouse=True)
 def clear_probe_coverage_path_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -407,10 +418,46 @@ def test_measurable_changed_lines_skips_empty_measured_lines(monkeypatch, tmp_pa
     assert missed == []
 
 
+def test_measurable_changed_lines_handles_large_measured_sets_without_union(tmp_path: Path) -> None:
+    source_path = tmp_path / "foo.py"
+    source_path.write_text("\n".join(f"line_{line_no}" for line_no in range(1, 101)), encoding="utf-8")
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": list(range(1, 100, 2)),
+                "missing_lines": list(range(2, 101, 2)),
+            }
+        }
+    }
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        {2, 51, 102},
+    )
+
+    assert measurable == [2, 51]
+    assert covered == [51]
+    assert missed == [2]
+
+
 def test_changed_scope_coverage_probe_emits_empty_path_metrics() -> None:
     metrics = changed_scope_coverage_probe.run_probe(Path(__file__).resolve().parents[1], path_count=5, samples=2)
 
     assert metrics["path_count"] == 5.0
+    assert metrics["sample_count"] == 2.0
+    assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["source_read_calls_mean"] == 0.0
+
+
+def test_changed_scope_coverage_measured_probe_emits_large_measured_metrics() -> None:
+    metrics = changed_scope_coverage_measured_probe.run_probe(
+        Path(__file__).resolve().parents[1], path_count=5, measured_lines_per_path=10, samples=2
+    )
+
+    assert metrics["path_count"] == 5.0
+    assert metrics["measured_lines_per_path"] == 10.0
     assert metrics["sample_count"] == 2.0
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["source_read_calls_mean"] == 0.0

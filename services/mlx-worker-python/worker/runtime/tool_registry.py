@@ -128,7 +128,9 @@ class ToolDescriptor:
         object.__setattr__(self, "_cached_schema_properties", schema_properties)
         cached_schema = _COMPACT_SORTED_JSON_ENCODER.encode(self.schema_payload())
         object.__setattr__(self, "_cached_schema", cached_schema)
-        object.__setattr__(self, "_cached_schema_bytes", len(cached_schema.encode("utf-8")))
+        # The registry encoder keeps ensure_ascii=True, so the compact schema
+        # string is ASCII-only and its character length matches UTF-8 bytes.
+        object.__setattr__(self, "_cached_schema_bytes", len(cached_schema))
 
     @property
     def required_arguments(self) -> tuple[str, ...]:
