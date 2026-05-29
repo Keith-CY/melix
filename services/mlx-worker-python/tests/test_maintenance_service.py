@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -5917,6 +5918,27 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
     assert core._benchmark_whitespace_token_count(unicode_space_prompt) == 3
     assert unicode_space_prompt.split_calls == 1
     default_prompt_suite = SimpleNamespace(prompt_batches=(normalized_prompt,), title="unused")
+
+    class EmptyTrackingParameters(dict[str, str]):
+        def __init__(self) -> None:
+            super().__init__()
+            self.get_calls = 0
+
+        def get(
+            self,
+            key: str,
+            default: Any = None,
+        ) -> Any:  # pragma: no cover - proves fast path skips lookup
+            self.get_calls += 1
+            return super().get(key, default)
+
+    empty_tracking_parameters = EmptyTrackingParameters()
+    assert MaintenanceCore._benchmark_context_lengths(
+        suite=default_prompt_suite,  # type: ignore[arg-type]
+        parameters=empty_tracking_parameters,
+    ) == (3,)
+    assert empty_tracking_parameters.get_calls == 0
+    assert normalized_prompt.split_calls == 0
     assert MaintenanceCore._benchmark_context_lengths(suite=default_prompt_suite, parameters={}) == (
         3,
     )

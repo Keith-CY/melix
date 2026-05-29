@@ -4155,10 +4155,10 @@ class MaintenanceCore:
         suite: ResolvedBenchmarkSuite,
         parameters: dict[str, str],
     ) -> tuple[int, ...]:
-        raw_value = parameters.get("context_lengths", "").strip()
-        if not raw_value and not parameters:
+        if not parameters:
             default_prompt = suite.prompt_batches[0] if suite.prompt_batches else suite.title
             return (MaintenanceCore._benchmark_prompt_token_count(default_prompt),)
+        raw_value = parameters.get("context_lengths", "").strip()
         values: list[int] = []
         if raw_value:
             for token in raw_value.split(","):
