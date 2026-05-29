@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from typing import Any
 
 from worker.model_registry.catalog import WorkerModelCatalog
@@ -353,20 +354,13 @@ def build_family_support_matrix() -> dict[str, Any]:
         )
 
     live_verified_count = 0
-    capability_counts: dict[str, int] = {
-        "text": 0,
-        "transcription": 0,
-        "speech": 0,
-        "embedding": 0,
-        "rerank": 0,
-        "image": 0,
-    }
+    # Tally every capability that appears so a future capability added to
+    # FAMILY_SPECS can't be silently dropped; missing keys read back as 0.
+    capability_counts: Counter[str] = Counter()
     for row in families:
         if row["live_path"]["status"] == "verified":
             live_verified_count += 1
-        capability = row["capability"]
-        if capability in capability_counts:
-            capability_counts[capability] += 1
+        capability_counts[row["capability"]] += 1
     contract_only_count = len(families) - live_verified_count
 
     return {

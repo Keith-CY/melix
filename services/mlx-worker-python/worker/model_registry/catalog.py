@@ -318,10 +318,8 @@ def _tensor_name_is_projector(name: str, lowered: str | None = None) -> bool:
     )
 
 
-def _tensor_name_is_gemma4_vision_weight_remap(name: str, lowered: str | None = None) -> bool:
-    if lowered is None:
-        lowered = name.lower()
-    return name.startswith("embed_vision.proj.") or ".embed_vision.proj." in lowered
+def _tensor_name_is_gemma4_vision_weight_remap(name: str) -> bool:
+    return name.startswith("embed_vision.proj.") or ".embed_vision.proj." in name.lower()
 
 
 def _tensor_name_is_draft(name: str, lowered: str | None = None) -> bool:
