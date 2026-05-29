@@ -650,10 +650,10 @@ def _direct_size_hint_from_text(text: str) -> int:
         value_text = text[:-3]
         if value_text.isdecimal():
             return int(value_text) * _SIZE_HINT_KB
-    try:
-        value_text, unit_text = text.split()
-    except ValueError:
+    parts = text.split(maxsplit=2)
+    if len(parts) != 2:
         return 0
+    value_text, unit_text = parts
     multiplier = _SIZE_HINT_MULTIPLIERS.get(unit_text.lower())
     if multiplier is None:
         return 0
