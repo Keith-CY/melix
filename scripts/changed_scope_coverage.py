@@ -158,8 +158,9 @@ def _measurable_changed_lines(
     else:
         executed = set(executed_lines)
         missing = set(missing_lines)
-        measured = executed | missing
-        measured_changed = changed & measured
+        measured_changed = [
+            line_no for line_no in changed if line_no in executed or line_no in missing
+        ]
         executed_lookup = executed
         missing_lookup = missing
     if not measured_changed:
