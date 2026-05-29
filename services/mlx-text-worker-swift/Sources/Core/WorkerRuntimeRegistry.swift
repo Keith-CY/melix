@@ -45,6 +45,16 @@ struct WorkerDecodeSession: @unchecked Sendable {
     let prefill: StoredPrefillContext
 }
 
+struct WorkerDecodeBatchItem: @unchecked Sendable {
+    let session: WorkerDecodeSession
+    let sampling: Melix_Worker_V1_SamplingConfig
+    let maxOutputTokens: UInt32
+    let decodeStepSize: UInt32
+    let prefillToken: String
+    let acceleration: Melix_Worker_V1_AccelerationPolicy
+    let shouldAbort: @Sendable () -> Bool
+}
+
 struct SpeculativeDraftModelReadiness: Sendable {
     let available: Bool
     let compatible: Bool
@@ -631,6 +641,32 @@ actor WorkerRuntimeRegistry {
             acceleration: acceleration,
             shouldAbort: shouldAbort
         )
+    }
+
+    func supportsHomogeneousBatchDecode() -> Bool {
+        runtime.supportsHomogeneousBatchDecode
+    }
+
+    func decodeBatchEvents(
+        items: [WorkerDecodeBatchItem]
+    ) async throws -> AsyncThrowingStream<TextBatchGenerationEvent, Error> {
+        let requests = items.map { item in
+            TextRuntimeDecodeRequest(
+                model: item.session.loadedModel.runtimeModel,
+                draftModel: loadedDraftModel(
+                    id: item.acceleration.draftModelID,
+                    excludingModelHandle: item.session.loadedModel.handle
+                )?.runtimeModel,
+                context: item.session.prefill.context,
+                sampling: item.sampling,
+                maxOutputTokens: item.maxOutputTokens,
+                decodeStepSize: item.decodeStepSize,
+                prefillToken: item.prefillToken,
+                acceleration: item.acceleration,
+                shouldAbort: item.shouldAbort
+            )
+        }
+        return try await runtime.decodeBatchEvents(requests: requests)
     }
 
     func supportsSpeculativeDecoding() -> Bool {

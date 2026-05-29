@@ -239,7 +239,12 @@ final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceP
         self.metrics = metrics
         self.generationEngine = TextGenerationEngine(registry: registry, abortRegistry: abortRegistry, metrics: metrics)
         self.prefillEngine = TextPrefillEngine(registry: registry, abortRegistry: abortRegistry, metrics: metrics)
-        self.decodeEngine = TextDecodeEngine(registry: registry, abortRegistry: abortRegistry, metrics: metrics)
+        self.decodeEngine = TextDecodeEngine(
+            registry: registry,
+            abortRegistry: abortRegistry,
+            metrics: metrics,
+            batchCoordinator: TextDecodeBatchCoordinator(registry: registry)
+        )
     }
 
     func generate(

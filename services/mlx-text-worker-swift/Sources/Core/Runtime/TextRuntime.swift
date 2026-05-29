@@ -302,6 +302,11 @@ struct TextGenerationSummary: Sendable {
     let promptTokens: Int
     let completionTokens: Int
     let tokensPerSecond: Double?
+    let decodeBatchSize: Int?
+    let modelEvalBatchSize: Int?
+    let decodeLoopIterations: Int?
+    let perBatchOutputTokenCount: Int?
+    let perBatchOutputTokensPerSecond: Double?
     let speculativeAcceptedTokens: Int?
     let speculativeRejectedTokens: Int?
     let speculativeFallbackCount: Int?
@@ -317,6 +322,11 @@ struct TextGenerationSummary: Sendable {
         promptTokens: Int,
         completionTokens: Int,
         tokensPerSecond: Double?,
+        decodeBatchSize: Int? = nil,
+        modelEvalBatchSize: Int? = nil,
+        decodeLoopIterations: Int? = nil,
+        perBatchOutputTokenCount: Int? = nil,
+        perBatchOutputTokensPerSecond: Double? = nil,
         speculativeAcceptedTokens: Int? = nil,
         speculativeRejectedTokens: Int? = nil,
         speculativeFallbackCount: Int? = nil,
@@ -331,6 +341,11 @@ struct TextGenerationSummary: Sendable {
         self.promptTokens = promptTokens
         self.completionTokens = completionTokens
         self.tokensPerSecond = tokensPerSecond
+        self.decodeBatchSize = decodeBatchSize
+        self.modelEvalBatchSize = modelEvalBatchSize
+        self.decodeLoopIterations = decodeLoopIterations
+        self.perBatchOutputTokenCount = perBatchOutputTokenCount
+        self.perBatchOutputTokensPerSecond = perBatchOutputTokensPerSecond
         self.speculativeAcceptedTokens = speculativeAcceptedTokens
         self.speculativeRejectedTokens = speculativeRejectedTokens
         self.speculativeFallbackCount = speculativeFallbackCount
@@ -350,8 +365,35 @@ enum TextGenerationEvent: Sendable {
     case summary(TextGenerationSummary)
 }
 
+struct TextRuntimeDecodeRequest: @unchecked Sendable {
+    let model: LoadedTextModel
+    let draftModel: LoadedTextModel?
+    let context: TextPrefillContext
+    let sampling: Melix_Worker_V1_SamplingConfig
+    let maxOutputTokens: UInt32
+    let decodeStepSize: UInt32
+    let prefillToken: String
+    let acceleration: Melix_Worker_V1_AccelerationPolicy
+    let shouldAbort: @Sendable () -> Bool
+}
+
+struct TextBatchGenerationSummary: Sendable {
+    let decodeBatchSize: Int
+    let modelEvalBatchSize: Int
+    let decodeLoopIterations: Int
+    let outputTokenCount: Int
+    let tokensPerSecond: Double?
+}
+
+enum TextBatchGenerationEvent: Sendable {
+    case token(requestIndex: Int, text: String)
+    case summary(requestIndex: Int, TextGenerationSummary)
+    case batchSummary(TextBatchGenerationSummary)
+}
+
 protocol TextRuntimeBackend: Sendable {
     var runtimeName: String { get }
+    var supportsHomogeneousBatchDecode: Bool { get }
     func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> LoadedTextModel
     func unloadModel(_ model: LoadedTextModel) async
     func prefill(
@@ -379,9 +421,14 @@ protocol TextRuntimeBackend: Sendable {
         acceleration: Melix_Worker_V1_AccelerationPolicy,
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error>
+    func decodeBatchEvents(
+        requests: [TextRuntimeDecodeRequest]
+    ) async throws -> AsyncThrowingStream<TextBatchGenerationEvent, Error>
 }
 
 extension TextRuntimeBackend {
+    var supportsHomogeneousBatchDecode: Bool { false }
+
     func unloadModel(_ model: LoadedTextModel) async {}
 
     func prefill(
@@ -423,6 +470,14 @@ extension TextRuntimeBackend {
             message: "Decode is not available for the current backend."
         )
     }
+
+    func decodeBatchEvents(
+        requests: [TextRuntimeDecodeRequest]
+    ) async throws -> AsyncThrowingStream<TextBatchGenerationEvent, Error> {
+        throw RuntimeUnavailableError(
+            message: "Homogeneous batch decode is not available for the current backend."
+        )
+    }
 }
 
 struct TextRuntime: Sendable {
@@ -439,6 +494,10 @@ struct TextRuntime: Sendable {
 
     var runtimeName: String {
         backend.runtimeName
+    }
+
+    var supportsHomogeneousBatchDecode: Bool {
+        backend.supportsHomogeneousBatchDecode
     }
 
     func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> RuntimeLoadResult {
@@ -510,6 +569,28 @@ struct TextRuntime: Sendable {
             acceleration: acceleration,
             shouldAbort: shouldAbort
         )
+    }
+
+    func decodeEvents(
+        request: TextRuntimeDecodeRequest
+    ) async throws -> AsyncThrowingStream<TextGenerationEvent, Error> {
+        try await decodeEvents(
+            model: request.model,
+            draftModel: request.draftModel,
+            context: request.context,
+            sampling: request.sampling,
+            maxOutputTokens: request.maxOutputTokens,
+            decodeStepSize: request.decodeStepSize,
+            prefillToken: request.prefillToken,
+            acceleration: request.acceleration,
+            shouldAbort: request.shouldAbort
+        )
+    }
+
+    func decodeBatchEvents(
+        requests: [TextRuntimeDecodeRequest]
+    ) async throws -> AsyncThrowingStream<TextBatchGenerationEvent, Error> {
+        try await backend.decodeBatchEvents(requests: requests)
     }
 }
 

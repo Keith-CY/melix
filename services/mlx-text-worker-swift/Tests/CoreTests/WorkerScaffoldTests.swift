@@ -3984,9 +3984,211 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(services.metrics.counters["swift_text.decode_batch_size"], 1)
         XCTAssertEqual(services.metrics.counters["swift_text.model_eval_batch_size"], 1)
         XCTAssertEqual(services.metrics.counters["swift_text.decode_batch_observation_count"], 1)
+        XCTAssertEqual(services.metrics.counters["swift_text.decode_loop_iterations"], 1)
         XCTAssertEqual(services.metrics.counters["swift_text.per_batch_output_token_count"], 1)
         XCTAssertEqual(services.metrics.counters["swift_text.per_batch_output_tokens_per_second"], 8)
         XCTAssertEqual(services.metrics.counters["swift_text.decode_tokens_per_second"], 8)
+    }
+
+    func testDecodeStreamingRpcBatchesHomogeneousDeterministicDecodeRequests() async throws {
+        let services = makeServices(
+            environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit",
+                "MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE": "deterministic",
+            ],
+            backend: DeterministicTextBackend(tokenDelayNanos: 0)
+        )
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefillRequest1 = Melix_Worker_V1_PrefillRequest()
+        prefillRequest1.execution.id.requestID = "req-batch-decode-1"
+        prefillRequest1.execution.modelHandle = loadResponse.modelHandle
+        prefillRequest1.returnDecodeHandle = true
+        prefillRequest1.messages = [makeUserMessage("batch decode alpha")]
+
+        var prefillRequest2 = Melix_Worker_V1_PrefillRequest()
+        prefillRequest2.execution.id.requestID = "req-batch-decode-2"
+        prefillRequest2.execution.modelHandle = loadResponse.modelHandle
+        prefillRequest2.returnDecodeHandle = true
+        prefillRequest2.messages = [makeUserMessage("batch decode beta")]
+
+        let prefillResponse1 = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest1,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        let prefillResponse2 = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest2,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.maxOutputTokens = 2
+
+        let writer1 = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request1 = Melix_Worker_V1_DecodeRequest()
+        request1.execution.id.requestID = "req-batch-decode-1"
+        request1.execution.modelHandle = loadResponse.modelHandle
+        request1.execution.scheduling.lane = "text.decode.batch"
+        request1.execution.ext["melix.gateway.concurrent_processing"] = "true"
+        request1.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
+        request1.decodeHandle = prefillResponse1.decodeHandle
+        request1.sampling = sampling
+        request1.maxOutputTokens = 2
+        request1.returnUsage = true
+
+        let writer2 = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request2 = Melix_Worker_V1_DecodeRequest()
+        request2.execution.id.requestID = "req-batch-decode-2"
+        request2.execution.modelHandle = loadResponse.modelHandle
+        request2.execution.scheduling.lane = "text.decode.batch"
+        request2.execution.ext["melix.gateway.concurrent_processing"] = "true"
+        request2.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
+        request2.decodeHandle = prefillResponse2.decodeHandle
+        request2.sampling = sampling
+        request2.maxOutputTokens = 2
+        request2.returnUsage = true
+
+        async let decode1: Void = withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request1,
+                response: RPCWriter(wrapping: writer1),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        async let decode2: Void = withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request2,
+                response: RPCWriter(wrapping: writer2),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        _ = try await (decode1, decode2)
+
+        let recorded1 = await writer1.snapshot()
+        let recorded2 = await writer2.snapshot()
+        XCTAssertEqual(recorded1.first?.decodeStarted.decodeHandle, prefillResponse1.decodeHandle)
+        XCTAssertEqual(recorded2.first?.decodeStarted.decodeHandle, prefillResponse2.decodeHandle)
+        XCTAssertTrue(recorded1.contains(where: { matches($0.payload, .tokenDelta) }))
+        XCTAssertTrue(recorded2.contains(where: { matches($0.payload, .tokenDelta) }))
+        XCTAssertEqual(recorded1.first { matches($0.payload, .usageDelta) }?.usageDelta.completionTokens, 2)
+        XCTAssertEqual(recorded2.first { matches($0.payload, .usageDelta) }?.usageDelta.completionTokens, 2)
+        XCTAssertEqual(recorded1.last?.completed.finishReason, "stop")
+        XCTAssertEqual(recorded2.last?.completed.finishReason, "stop")
+
+        let metrics = services.metrics.counters
+        XCTAssertEqual(metrics["swift_text.decode_batch_size"], 2)
+        XCTAssertEqual(metrics["swift_text.model_eval_batch_size"], 2)
+        XCTAssertEqual(metrics["swift_text.decode_batch_observation_count"], 2)
+        XCTAssertEqual(metrics["swift_text.decode_loop_iterations"], 2)
+        XCTAssertEqual(metrics["swift_text.per_batch_output_token_count"], 4)
+        XCTAssertGreaterThan(metrics["swift_text.per_batch_output_tokens_per_second"] ?? 0, 0)
+    }
+
+    func testDecodeStreamingRpcFallsBackWhenHomogeneousBatchDecodeUnsupported() async throws {
+        let services = makeServices(
+            environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit",
+            ],
+            backend: FakeRuntimeBackend(decodedChunks: ["one"])
+        )
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefillRequest = Melix_Worker_V1_PrefillRequest()
+        prefillRequest.execution.id.requestID = "req-unsupported-batch"
+        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        prefillRequest.returnDecodeHandle = true
+        prefillRequest.messages = [makeUserMessage("unsupported batch")]
+        let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request = Melix_Worker_V1_DecodeRequest()
+        request.execution.id.requestID = "req-unsupported-batch"
+        request.execution.modelHandle = loadResponse.modelHandle
+        request.execution.ext["melix.gateway.concurrent_processing"] = "true"
+        request.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
+        request.execution.ext["melix.gateway.completion_batch_size"] = "2"
+        request.decodeHandle = prefillResponse.decodeHandle
+        request.maxOutputTokens = 1
+        request.returnUsage = true
+
+        try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let recorded = await writer.snapshot()
+        XCTAssertEqual(recorded.first?.decodeStarted.decodeHandle, prefillResponse.decodeHandle)
+        XCTAssertTrue(recorded.contains(where: { matches($0.payload, .tokenDelta) }))
+        XCTAssertEqual(recorded.last?.completed.finishReason, "stop")
+        XCTAssertEqual(services.metrics.counters["swift_text.decode_batch_size"], 1)
+        XCTAssertEqual(services.metrics.counters["swift_text.model_eval_batch_size"], 1)
+        XCTAssertEqual(services.metrics.counters["swift_text.decode_batch_observation_count"], 1)
     }
 
     func testDecodeStreamingRpcReturnsStructuredNotFoundForMissingDecodeHandle() async throws {

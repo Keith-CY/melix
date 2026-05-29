@@ -122,6 +122,7 @@ final class MetricsStore: @unchecked Sendable {
         "swift_text.decode_stream_event_count": 0,
         "swift_text.decode_batch_size": 0,
         "swift_text.model_eval_batch_size": 0,
+        "swift_text.decode_loop_iterations": 0,
         "swift_text.decode_batch_observation_count": 0,
         "swift_text.per_batch_output_token_count": 0,
         "swift_text.per_batch_output_tokens_per_second": 0,
