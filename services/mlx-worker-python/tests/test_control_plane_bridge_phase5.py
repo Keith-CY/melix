@@ -259,7 +259,7 @@ class FakeMaintenanceStub:
 
 
 def test_bridge_helper_forwards_phase5_unary_and_streaming_commands(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target: FakeChannel())
+    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target, options=None: FakeChannel())
     monkeypatch.setattr(control_plane_bridge.inference_pb2_grpc, "InferenceServiceStub", lambda channel: FakeInferenceStub())
     monkeypatch.setattr(control_plane_bridge.maintenance_pb2_grpc, "MaintenanceServiceStub", lambda channel: FakeMaintenanceStub())
 
@@ -547,7 +547,7 @@ def test_bridge_helper_forwards_phase5_unary_and_streaming_commands(monkeypatch,
 
 
 def test_bridge_helper_forwards_download_stream_manifest_events(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target: FakeChannel())
+    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target, options=None: FakeChannel())
     monkeypatch.setattr(control_plane_bridge.maintenance_pb2_grpc, "MaintenanceServiceStub", lambda channel: FakeMaintenanceStub())
 
     convert_request = maintenance_pb2.ConvertModelRequest(
@@ -584,7 +584,7 @@ def test_bridge_helper_forwards_download_stream_manifest_events(monkeypatch, cap
 
 
 def test_bridge_helper_forwards_phase6_audio_unary_commands(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target: FakeChannel())
+    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target, options=None: FakeChannel())
     monkeypatch.setattr(control_plane_bridge.inference_pb2_grpc, "InferenceServiceStub", lambda channel: FakeInferenceStub())
 
     transcribe_request = inference_pb2.TranscribeRequest(
@@ -640,7 +640,7 @@ def test_bridge_helper_forwards_phase6_audio_unary_commands(monkeypatch, capsys)
 
 
 def test_bridge_helper_forwards_phase7_image_unary_commands(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target: FakeChannel())
+    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target, options=None: FakeChannel())
     stub = FakeInferenceStub()
     monkeypatch.setattr(control_plane_bridge.inference_pb2_grpc, "InferenceServiceStub", lambda channel: stub)
 

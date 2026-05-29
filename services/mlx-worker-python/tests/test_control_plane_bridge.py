@@ -150,7 +150,7 @@ class FakeRpcError(grpc.RpcError):
 
 
 def test_bridge_helper_handles_health_load_and_generate(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target: FakeChannel())
+    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target, options=None: FakeChannel())
     monkeypatch.setattr(control_plane_bridge.runtime_pb2_grpc, "RuntimeServiceStub", lambda channel: FakeRuntimeStub())
     monkeypatch.setattr(control_plane_bridge.cache_pb2_grpc, "CacheServiceStub", lambda channel: FakeCacheStub())
     monkeypatch.setattr(control_plane_bridge.inference_pb2_grpc, "InferenceServiceStub", lambda channel: FakeInferenceStub())
@@ -292,7 +292,7 @@ def test_bridge_helper_handles_health_load_and_generate(monkeypatch, capsys) -> 
 
 
 def test_bridge_helper_forwards_abort(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target: FakeChannel())
+    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target, options=None: FakeChannel())
     monkeypatch.setattr(control_plane_bridge.inference_pb2_grpc, "InferenceServiceStub", lambda channel: FakeInferenceStub())
 
     abort_request = inference_pb2.AbortRequest(request_id="req-abort")
@@ -316,7 +316,7 @@ def test_bridge_helper_forwards_abort(monkeypatch, capsys) -> None:
 
 
 def test_bridge_helper_forwards_prefill_and_decode(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target: FakeChannel())
+    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target, options=None: FakeChannel())
     monkeypatch.setattr(control_plane_bridge.inference_pb2_grpc, "InferenceServiceStub", lambda channel: FakeInferenceStub())
 
     prefill_request = inference_pb2.PrefillRequest(
@@ -373,7 +373,7 @@ def test_bridge_helper_forwards_prefill_and_decode(monkeypatch, capsys) -> None:
 
 
 def test_bridge_helper_forwards_speak_stream(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target: FakeChannel())
+    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target, options=None: FakeChannel())
     monkeypatch.setattr(control_plane_bridge.inference_pb2_grpc, "InferenceServiceStub", lambda channel: FakeInferenceStub())
 
     request = inference_pb2.SpeakRequest(
@@ -416,7 +416,7 @@ def test_bridge_helper_emits_error_payloads_for_rpc_failures(monkeypatch, capsys
         def Abort(self, request):
             raise FakeRpcError()
 
-    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target: FakeChannel())
+    monkeypatch.setattr(control_plane_bridge.grpc, "insecure_channel", lambda target, options=None: FakeChannel())
     monkeypatch.setattr(control_plane_bridge.inference_pb2_grpc, "InferenceServiceStub", lambda channel: FailingInferenceStub())
 
     abort_request = inference_pb2.AbortRequest(request_id="req-abort")

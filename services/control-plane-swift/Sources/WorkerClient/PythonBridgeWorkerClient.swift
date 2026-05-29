@@ -1835,7 +1835,9 @@ public struct GRPCPythonWorkerRunner: PythonWorkerRPCRunning, Sendable {
             let task = Task {
                 do {
                     try await withRPCClients(socketPath: socketPath) { _, _, _, maintenanceClient in
-                        try await maintenanceClient.convertModel(request) { response in
+                        var convertModelOptions = GRPCCore.CallOptions.defaults
+                        convertModelOptions.maxRequestMessageBytes = 64 * 1024 * 1024
+                        try await maintenanceClient.convertModel(request, options: convertModelOptions) { response in
                             for try await event in response.messages {
                                 continuation.yield(event)
                             }
