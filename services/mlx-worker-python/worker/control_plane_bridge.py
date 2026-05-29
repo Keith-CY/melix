@@ -61,7 +61,7 @@ def main() -> None:
     request_bytes = base64.b64decode(args.request_b64)
 
     try:
-        with grpc.insecure_channel(f"unix://{socket_path}") as channel:
+        with grpc.insecure_channel(f"unix://{socket_path}", options=[("grpc.max_receive_message_length", 64 * 1024 * 1024)]) as channel:
             if args.command == "handshake":
                 stub = runtime_pb2_grpc.RuntimeServiceStub(channel)
                 request = runtime_pb2.HandshakeRequest.FromString(request_bytes)
