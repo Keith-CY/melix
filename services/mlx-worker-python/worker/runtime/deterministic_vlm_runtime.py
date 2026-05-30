@@ -151,6 +151,8 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
         self._last_fast_path_signature: tuple[str, ...] | None = None
         self._last_attention_policy_signature: tuple[str, ...] | None = None
         self._last_attention_policy: AttentionPrefillPolicyDecision | None = None
+        self._last_completion_token_text = ""
+        self._last_completion_token_count = 0
 
     def load_model(self, model_spec):
         ext = dict(model_spec.ext)
@@ -274,7 +276,7 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
             prepared_request=prepared_request,
             prompt_tokens=prompt_tokens,
             response_text=response_text,
-            completion_tokens=max(1, _whitespace_token_count(response_text)),
+            completion_tokens=self._completion_token_count(response_text),
             tool_call_event=tool_call_event,
             cache_identity=cache_identity,
             scope_id=scope_id,
@@ -423,7 +425,7 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
             yield RuntimeTokenEvent(
                 text=response,
                 prompt_tokens=self.prompt_token_count(prepared_request, loaded_model=loaded_model),
-                completion_tokens=max(1, _whitespace_token_count(response)),
+                completion_tokens=self._completion_token_count(response),
                 finish_reason="stop",
             )
             return
@@ -448,7 +450,7 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
             yield RuntimeTokenEvent(
                 text=response,
                 prompt_tokens=self.prompt_token_count(prepared_request, loaded_model=loaded_model),
-                completion_tokens=max(1, _whitespace_token_count(response)),
+                completion_tokens=self._completion_token_count(response),
                 finish_reason="stop",
             )
         finally:
@@ -460,6 +462,14 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
                 temp_media_cleanup_latency_ms=cleanup_report.cleanup_latency_ms,
                 temp_media_cleanup_failure_count=cleanup_report.cleanup_failure_count,
             )
+
+    def _completion_token_count(self, response_text: str) -> int:
+        if response_text == self._last_completion_token_text:
+            return self._last_completion_token_count
+        token_count = max(1, _whitespace_token_count(response_text))
+        self._last_completion_token_text = response_text
+        self._last_completion_token_count = token_count
+        return token_count
 
     def _ensure_fast_path_probe(
         self,
