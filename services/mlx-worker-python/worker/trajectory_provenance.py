@@ -6,6 +6,9 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+_JSON_LOADS = json.loads
+_PATH_READ_BYTES = Path.read_bytes
+
 
 TRAJECTORY_PROVENANCE_FIELDS = (
     "trajectory_dataset_id",
@@ -110,10 +113,11 @@ def trajectory_provenance_from_snapshot_manifest(
 
 
 def load_trajectory_provenance_from_snapshot_manifest(
-    manifest_path: Path,
+    manifest_path: Path | str,
 ) -> dict[str, Any]:
-    manifest_path = Path(manifest_path)
-    payload = json.loads(manifest_path.read_bytes())
+    if not isinstance(manifest_path, Path):
+        manifest_path = Path(manifest_path)
+    payload = _JSON_LOADS(_PATH_READ_BYTES(manifest_path))
     if not isinstance(payload, dict):
         return {}
     return trajectory_provenance_from_snapshot_manifest(
