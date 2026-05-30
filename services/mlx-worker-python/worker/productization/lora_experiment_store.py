@@ -43,7 +43,7 @@ def _iter_lora_run_dirs(train_root: Path) -> tuple[Path, ...]:
 
     run_dir_names.sort()
     root_join = train_root.__truediv__
-    return tuple(root_join(name) for name in run_dir_names)
+    return tuple(map(root_join, run_dir_names))
 
 
 class LoraExperimentStore:
