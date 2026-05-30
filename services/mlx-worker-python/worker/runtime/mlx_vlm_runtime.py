@@ -55,7 +55,7 @@ _GEMMA4_PRESENCE_AUDIO = (False, True)
 _GEMMA4_PRESENCE_BOTH = (True, True)
 # Gemma model types that require `add_special_tokens` to follow the chat-template
 # presence. Frozenset gives O(1) membership instead of scanning a list literal.
-_GEMMA_CHAT_TEMPLATE_MODEL_TYPES = frozenset({"gemma3", "gemma3n", "gemma4"})
+_GEMMA_CHAT_TEMPLATE_MODEL_TYPES = frozenset(("gemma3", "gemma3n", "gemma4"))
 
 _TEXT_ONLY_BATCH_GENERATOR_EXT_KEY = "melix.vlm.text_only_batch_generator"
 _TEXT_ONLY_STEP_COOPERATIVE_EXT_KEY = "melix.vlm.text_only_step_cooperative"
