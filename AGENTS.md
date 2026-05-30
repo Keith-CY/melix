@@ -251,3 +251,17 @@ replace the required PR evidence.
 - `docs/product-brief.md` remains intentionally ignored and untracked unless the user explicitly changes that policy.
 - Keep canonical top-level specs in place unless there is an explicit reorganization task.
 - New architecture, decision, and runbook material should use the structure documented in `docs/README.md`.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (`github.com/Keith-CY/melix`). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context repo: one `CONTEXT.md` at root + `docs/decisions/` for decision records. See `docs/agents/domain.md`.
