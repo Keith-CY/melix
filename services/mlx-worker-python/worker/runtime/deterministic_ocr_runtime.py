@@ -28,6 +28,9 @@ class DeterministicOCRRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
 
     def __init__(self) -> None:
         self._last_probe = VisionProbeSnapshot(0.0, 0, 0, 0.0)
+        self._last_single_prompt_text = ""
+        self._last_single_prompt_input_bytes = -1
+        self._last_single_prompt_token_count = 0
 
     def load_model(self, model_spec):
         return {
@@ -67,10 +70,22 @@ class DeterministicOCRRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
 
     def prompt_token_count(self, prepared_request: PreparedVisionRequest) -> int:
         images = prepared_request.images
-        prompt_tokens = _whitespace_token_count(prepared_request.prompt_text)
         if not prepared_request.videos and len(images) == 1:
-            input_tokens = prepared_request.preprocess_input_bytes // 8
-            return prompt_tokens + (input_tokens if input_tokens > 0 else 1)
+            prompt_text = prepared_request.prompt_text
+            input_bytes = prepared_request.preprocess_input_bytes
+            if (
+                prompt_text == self._last_single_prompt_text
+                and input_bytes == self._last_single_prompt_input_bytes
+            ):
+                return self._last_single_prompt_token_count
+            prompt_tokens = _whitespace_token_count(prompt_text)
+            input_tokens = input_bytes // 8
+            token_count = prompt_tokens + (input_tokens if input_tokens > 0 else 1)
+            self._last_single_prompt_text = prompt_text
+            self._last_single_prompt_input_bytes = input_bytes
+            self._last_single_prompt_token_count = token_count
+            return token_count
+        prompt_tokens = _whitespace_token_count(prepared_request.prompt_text)
         image_tokens = sum(max(1, image.byte_length // 8) for image in images)
         if image_tokens:
             return prompt_tokens + image_tokens

@@ -27,3 +27,17 @@ This is a Python runtime slice and is locally verifiable on Linux. The PR-scoped
 The single-image OCR prompt-token path now reuses `PreparedVisionRequest.preprocess_input_bytes` for image-token accounting instead of reading the image `byte_length` property again. `prepare_vision_request(...)` already accumulates this byte total while constructing the immutable request, and OCR render validation keeps the normal runtime path to one image with no videos. Multi-image or malformed mixed-media inputs retain the existing per-image fallback summation.
 
 The same registered `deterministic-ocr-token-count-scan` probe covers this follow-up because it repeatedly calls `DeterministicOCRRuntime.prompt_token_count(...)` for a single-image OCR request and reports elapsed time plus peak bytes.
+
+## 2026-05-30 follow-up slice
+
+The single-image/no-video OCR prompt-token path now keeps a one-entry per-runtime
+cache keyed by the prompt text and precomputed input byte total. This preserves
+the existing token-count formula while avoiding repeated whitespace-token cache
+lookups and arithmetic when callers ask for the same prepared OCR request more
+than once during deterministic probe and streaming usage accounting.
+
+The registered `deterministic-ocr-token-count-scan` probe remains the governing
+probe for this follow-up because it repeatedly calls
+`DeterministicOCRRuntime.prompt_token_count(...)` on one prepared OCR request and
+reports `elapsed_ms_mean` plus `peak_bytes_mean`. The focused OCR unit test also
+checks that a changed input-byte total invalidates the one-entry cache.

@@ -253,9 +253,35 @@ def test_ocr_single_image_token_count_reuses_precomputed_input_bytes() -> None:
     runtime = DeterministicOCRRuntime()
 
     assert runtime.prompt_token_count(request) == len(request.prompt_text.split()) + 16
+    assert runtime.prompt_token_count(request) == len(request.prompt_text.split()) + 16
     assert image.byte_length_reads == 0
     assert image.byte_length == 128
     assert image.byte_length_reads == 1
+
+    changed_input_request = PreparedVisionRequest(
+        prompt_text="extract the receipt",
+        images=[
+            PreparedImageInput(
+                bytes_data=b"Receipt Total 42" * 4,
+                source_kind="inline",
+                reference="inline:receipt.txt",
+                mime_type="text/plain",
+                format="txt",
+                filename="receipt.txt",
+                sha256_hex="a" * 64,
+            )
+        ],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=64,
+        preprocess_peak_memory_bytes=64,
+        prompt_hash_hex="p" * 64,
+        multimodal_hash_hex="m" * 64,
+    )
+    assert runtime.prompt_token_count(changed_input_request) == len(
+        changed_input_request.prompt_text.split()
+    ) + 8
 
 
 def test_vlm_completion_token_count_scans_without_split_list(monkeypatch: pytest.MonkeyPatch) -> None:
