@@ -11,8 +11,9 @@ from worker.grpc_server import WorkerCacheService, WorkerInferenceService, Worke
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
 from worker.runtime.deterministic_ocr_runtime import DeterministicOCRRuntime
+from worker.runtime import deterministic_vlm_runtime as deterministic_vlm_runtime_module
 from worker.runtime.deterministic_vlm_runtime import DeterministicVLMRuntime
-from worker.runtime.mlx_text_runtime import MLXTextRuntime
+from worker.runtime.mlx_text_runtime import MLXTextRuntime, RuntimeTokenEvent
 from worker.runtime import multimodal_preprocessing
 from worker.runtime import vision_family_adapters as vision_family_adapters_module
 from worker.runtime.multimodal_fast_paths import fast_path_probe_signature
@@ -345,6 +346,71 @@ def test_vlm_completion_token_count_scans_without_split_list(monkeypatch: pytest
     assert prefill_session.completion_tokens == 4
     assert token_events[-1].completion_tokens == 4
     assert SplitTrackingText.split_calls == 0
+
+
+def test_vlm_completion_token_count_reuses_last_response_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response_text = "alpha beta\tgamma\n  delta"
+    request = PreparedVisionRequest(
+        prompt_text="Describe the image.",
+        images=[],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=0,
+        preprocess_peak_memory_bytes=0,
+        prompt_hash_hex="p" * 64,
+        multimodal_hash_hex="m" * 64,
+    )
+    runtime = DeterministicVLMRuntime()
+    call_count = 0
+
+    def counting_token_count(text: str) -> int:
+        nonlocal call_count
+        call_count += 1
+        return whitespace_token_count(text)
+
+    monkeypatch.setattr(
+        deterministic_vlm_runtime_module,
+        "_whitespace_token_count",
+        counting_token_count,
+    )
+    monkeypatch.setattr(
+        DeterministicVLMRuntime,
+        "_response_text",
+        staticmethod(lambda prepared_request: response_text),
+    )
+
+    for _ in range(3):
+        token_events = list(
+            runtime.generate_tokens(
+                {},
+                request,
+                sampling=None,
+                cancel_event=Event(),
+            )
+        )
+        token_event = next(event for event in token_events if isinstance(event, RuntimeTokenEvent))
+        assert token_event.completion_tokens == 4
+
+    monkeypatch.setattr(
+        DeterministicVLMRuntime,
+        "_response_text",
+        staticmethod(lambda prepared_request: f"{response_text} epsilon"),
+    )
+    token_events = list(
+        runtime.generate_tokens(
+            {},
+            request,
+            sampling=None,
+            cancel_event=Event(),
+        )
+    )
+
+    token_event = next(event for event in token_events if isinstance(event, RuntimeTokenEvent))
+    assert token_event.completion_tokens == 5
+    assert call_count == 2
 
 
 def test_vision_family_prompt_token_count_clamps_media_minimums() -> None:

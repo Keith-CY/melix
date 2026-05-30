@@ -5751,6 +5751,7 @@ def test_deterministic_vlm_completion_token_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["elapsed_ms_mean"] > 0
     assert metrics["split_calls_mean"] == 0.0
+    assert metrics["token_count_calls_mean"] == 1.0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["samples"] == 1
     assert metrics["iterations"] == 10
