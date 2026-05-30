@@ -19,7 +19,7 @@ Single-context repo:
 ├── docs/decisions/
 │   ├── 2026-03-27-swift-text-runtime.md
 │   └── ...
-└── src/
+└── packages/
 ```
 
 ## Use the glossary's vocabulary
