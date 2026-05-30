@@ -30,6 +30,13 @@ Register `code-eval-count-tests-line-scan` in the PR-scoped performance registry
 - Changed-scope coverage is at least 95%.
 - Local base-vs-head probe shows lower peak allocation and no severe latency regression on the fallback line-count path.
 
+## 2026-05-30 regex fallback slice
+
+The follow-up slice keeps the same registered probe and replaces the manual
+character-by-character fallback line counter with a compiled regex that matches
+each line containing at least one non-whitespace character while preserving LF,
+CRLF, CR, and Unicode whitespace behavior.
+
 ## Verification commands
 
 ```bash
