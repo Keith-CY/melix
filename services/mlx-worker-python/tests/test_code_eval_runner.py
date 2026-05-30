@@ -443,11 +443,16 @@ def test_count_assert_nodes_returns_zero_without_asserts() -> None:
 
 
 def test_count_nonblank_test_lines_matches_splitlines_semantics() -> None:
-    test_code = "\n assert one\r\n\t\rassert two\n   \nassert three"
+    samples = [
+        "\n assert one\r\n\t\rassert two\n   \nassert three",
+        "\r\n\t\r\nassert one\rassert two\n\u2003assert three\n",
+        "   \n\t\r\n\r",
+    ]
 
-    assert code_eval_runner._count_nonblank_test_lines(test_code) == len(
-        [line for line in test_code.splitlines() if line.strip()]
-    )
+    for test_code in samples:
+        assert code_eval_runner._count_nonblank_test_lines(test_code) == len(
+            [line for line in test_code.splitlines() if line.strip()]
+        )
 
 
 class _SplitlinesGuard(str):
