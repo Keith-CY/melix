@@ -27,6 +27,7 @@ _SIZE_HINT_MULTIPLIERS = {
 _BARE_SIZE_HINT_RE = re.compile(r"(?:model\s+size\s*[:|]?\s*)?(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
 _EXPLICIT_SIZE_HINT_RE = re.compile(r"\bmodel\s+size\s*[:|]?\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
 _NEXT_LINK_REL_MARKER = 'rel="next"'
+_LOWERCASE_WEIGHT_OR_CONFIG_SUFFIXES = (".safetensors", ".npz", ".gguf", "config.json", "tokenizer.json")
 @dataclass(frozen=True, slots=True)
 class HubModelSummaryRecord:
     repo_id: str
@@ -585,8 +586,10 @@ def _sibling_file_bytes(value: Any) -> int:
 
 
 def _is_weight_or_config_file(filename: str) -> bool:
+    if filename.endswith(_LOWERCASE_WEIGHT_OR_CONFIG_SUFFIXES):
+        return True
     lowered = filename.lower()
-    return lowered.endswith((".safetensors", ".npz", ".gguf", "config.json", "tokenizer.json"))
+    return lowered.endswith(_LOWERCASE_WEIGHT_OR_CONFIG_SUFFIXES)
 
 
 def _size_hint_bytes(payload: dict[str, Any]) -> int:
