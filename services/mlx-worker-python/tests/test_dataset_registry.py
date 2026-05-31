@@ -883,6 +883,23 @@ def test_dataset_catalog_split_matching_skips_stem_for_direct_prefix_hits(
     assert stem_calls == []
 
 
+def test_dataset_catalog_split_alias_skips_lower_for_common_lowercase_prefix() -> None:
+    class LowerCountingStr(str):
+        lower_calls = 0
+
+        def lower(self) -> str:
+            type(self).lower_calls += 1
+            return super().lower()
+
+    assert catalog._split_alias_from_candidate(LowerCountingStr("validation")) == "validation"
+    assert LowerCountingStr.lower_calls == 0
+
+    assert catalog._split_alias_from_candidate(LowerCountingStr("Validation")) == "validation"
+    assert LowerCountingStr.lower_calls == 1
+    assert catalog._split_alias_from_candidate("validation-00000") == "validation"
+    assert catalog._split_alias_from_candidate("Validation-00000") == "validation"
+
+
 def test_dataset_catalog_string_stem_matches_pathlib_for_split_names() -> None:
     expected = {
         "train.jsonl": "train",
