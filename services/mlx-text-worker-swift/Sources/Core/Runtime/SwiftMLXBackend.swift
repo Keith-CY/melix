@@ -1690,22 +1690,26 @@ private func updatePendingTokensFromBatchLogits(
     }
 
     let sampleStartedAt = Date.timeIntervalSinceReferenceDate
-    let tokenIDs = argMax(logits[0..., -1, 0...], axis: -1)
+    let tokenIDs = batchedArgMaxTokenIDs(from: logits)
     decodeSampleCallCount += activeIndices.count
     decodeSampleTotalMicros += elapsedMicros(since: sampleStartedAt)
     let tokenIDStartedAt = Date.timeIntervalSinceReferenceDate
-    let ids = tokenIDs.asArray(Int.self)
+    let ids = tokenIDs.asArray(UInt32.self)
     decodeTokenIDCallCount += 1
     decodeTokenIDTotalMicros += elapsedMicros(since: tokenIDStartedAt)
 
     for (batchIndex, requestIndex) in activeIndices.enumerated() {
-        let tokenID = ids[batchIndex]
+        let tokenID = Int(ids[batchIndex])
         states[requestIndex].output = LMOutput(
             logits: logits[batchIndex ..< (batchIndex + 1), 0..., 0...]
         )
         states[requestIndex].pendingToken = MLXArray([tokenID])
         states[requestIndex].pendingTokenID = tokenID
     }
+}
+
+private func batchedArgMaxTokenIDs(from logits: MLXArray) -> MLXArray {
+    argMax(logits[0..., -1, 0...], axis: -1)
 }
 
 private final class BatchPositionedKVCacheAdapter: KVCache, BatchPositionedKVCache {
@@ -1720,6 +1724,7 @@ private final class BatchPositionedKVCacheAdapter: KVCache, BatchPositionedKVCac
     }
 
     var offset: Int { wrapped.offset }
+    fileprivate var underlyingLayer: KVCache { wrapped }
     var batchOffset: MLXArray { currentBatchOffset }
     var maxSize: Int? { wrapped.maxSize }
     var state: [MLXArray] {
@@ -1848,6 +1853,7 @@ private func splitBatchDecodeCache(_ cache: [KVCache], batchSize: Int) -> [[KVCa
 
 private func splitBatchDecodeCacheLayer(_ layer: KVCache, batchIndex: Int) -> KVCache {
     let adapter = layer as? BatchPositionedKVCacheAdapter
+    let underlyingLayer = adapter?.underlyingLayer ?? layer
     let state = layer.state
     let metaState = layer.metaState
     let splitState = state.map { array in
@@ -1855,14 +1861,14 @@ private func splitBatchDecodeCacheLayer(_ layer: KVCache, batchIndex: Int) -> KV
     }
 
     var split: KVCache
-    if layer is RotatingKVCache || metaState.count == 5 {
-        let maxSize = layer.maxSize ?? Int(metaState.dropFirst().first ?? "0") ?? 0
+    if underlyingLayer is RotatingKVCache {
+        let maxSize = underlyingLayer.maxSize ?? Int(metaState.dropFirst().first ?? "0") ?? 0
         split = RotatingKVCache(maxSize: max(1, maxSize))
     } else {
         let simple = KVCacheSimple()
         if let sourceStep = adapter?.sourceSimpleStep {
             simple.step = sourceStep
-        } else if let source = layer as? KVCacheSimple {
+        } else if let source = underlyingLayer as? KVCacheSimple {
             simple.step = source.step
         }
         split = simple
@@ -1873,6 +1879,18 @@ private func splitBatchDecodeCacheLayer(_ layer: KVCache, batchIndex: Int) -> KV
         split.metaState = metaState
     }
     return split
+}
+
+func melixTestingBatchedArgMaxTokenIDs(from logits: MLXArray) -> [Int] {
+    batchedArgMaxTokenIDs(from: logits).asArray(UInt32.self).map(Int.init)
+}
+
+func melixTestingMakeBatchDecodeCache(from caches: [[KVCache]]) -> [KVCache]? {
+    makeBatchDecodeCache(from: caches)
+}
+
+func melixTestingSplitBatchDecodeCache(_ cache: [KVCache], batchSize: Int) -> [[KVCache]] {
+    splitBatchDecodeCache(cache, batchSize: batchSize)
 }
 
 #if canImport(MLXLLM)
