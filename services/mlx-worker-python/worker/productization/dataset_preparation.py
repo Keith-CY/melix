@@ -563,21 +563,23 @@ def _iter_source_file_paths(input_path: Path) -> list[Path]:
 
 
 def _source_kind(path: Path) -> str | None:
-    suffix = path.suffix.lower()
-    if suffix == ".txt":
-        name = path.name.lower()
+    name = path.name.lower()
+    if name.endswith(".txt"):
         if name.endswith(".pdf.txt"):
             return "pdf"
         if name.endswith(".docx.txt"):
             return "docx"
         return "text"
-    if suffix == ".text":
+    if name.endswith(".text"):
         return "text"
-    if suffix in _TEXT_SOURCE_SUFFIXES:
+    if "." not in name:
+        return None
+    dotted_suffix = f".{name.rpartition('.')[2]}"
+    if dotted_suffix in _TEXT_SOURCE_SUFFIXES:
         return "markdown"
-    if suffix in _CODE_SOURCE_SUFFIXES:
+    if dotted_suffix in _CODE_SOURCE_SUFFIXES:
         return "code"
-    if suffix in _STRUCTURED_DATA_SOURCE_SUFFIXES:
+    if dotted_suffix in _STRUCTURED_DATA_SOURCE_SUFFIXES:
         return "structured_data"
     return None
 

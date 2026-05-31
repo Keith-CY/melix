@@ -363,10 +363,22 @@ def test_dataset_source_records_probe_script_emits_metrics(
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["elapsed_ms_mean"] >= 0.0
     assert metrics["elapsed_ms_p95"] >= 0.0
+    assert metrics["source_kind_elapsed_ms_mean"] >= 0.0
+    assert metrics["source_kind_elapsed_ms_p95"] >= 0.0
     assert metrics["sample_count"] == 1.0
     assert metrics["directory_count"] == 3.0
     assert metrics["files_per_directory"] == 4.0
     assert metrics["file_count_mean"] == 12.0
+
+
+def test_dataset_source_records_probe_rejects_changed_source_kind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/dataset_source_records_probe.py"))
+    monkeypatch.setattr(probe_script["dataset_preparation"], "_source_kind", lambda path: None)
+
+    with pytest.raises(RuntimeError, match="source kind classification changed"):
+        probe_script["measure"](directory_count=1, files_per_directory=1, samples=1)
 
 
 def test_scope_report_selects_tool_registry_schema_bytes_probe() -> None:
