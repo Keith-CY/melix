@@ -188,6 +188,14 @@ def test_direct_card_size_hint_preserves_case_insensitive_label_prefix() -> None
     assert hub_catalog_module._direct_card_size_hint_from_text("model-size: 2 GB") == 0
 
 
+def test_weight_or_config_file_preserves_case_insensitive_matches() -> None:
+    assert hub_catalog_module._is_weight_or_config_file("config.json") is True
+    assert hub_catalog_module._is_weight_or_config_file("model.safetensors") is True
+    assert hub_catalog_module._is_weight_or_config_file("Tokenizer.JSON") is True
+    assert hub_catalog_module._is_weight_or_config_file("weights.SAFETENSORS") is True
+    assert hub_catalog_module._is_weight_or_config_file("notes.json") is False
+
+
 def test_search_models_with_mlx_only_prefilters_payloads_before_local_fit(monkeypatch: pytest.MonkeyPatch) -> None:
     payload = [
         {
