@@ -453,7 +453,7 @@ def list_dataset_versions(
     versions_root = Path(output_root).expanduser() / dataset_id / "versions"
     versions: list[dict[str, Any]] = []
     for manifest_path in _iter_dataset_version_manifest_paths(versions_root):
-        version = _read_json(manifest_path)
+        version = _read_json_file(manifest_path)
         versions.append(
             {
                 "dataset_id": version.get("dataset_id", ""),
@@ -480,8 +480,8 @@ def list_dataset_versions(
     }
 
 
-def _iter_dataset_version_manifest_paths(versions_root: Path) -> list[Path]:
-    manifest_paths: list[Path] = []
+def _iter_dataset_version_manifest_paths(versions_root: Path) -> list[str]:
+    manifest_paths: list[str] = []
     try:
         with os.scandir(versions_root) as entries:
             for entry in entries:
@@ -489,7 +489,7 @@ def _iter_dataset_version_manifest_paths(versions_root: Path) -> list[Path]:
                     continue
                 manifest_path = os.path.join(entry.path, "dataset-version.json")
                 if os.path.isfile(manifest_path):
-                    manifest_paths.append(Path(manifest_path))
+                    manifest_paths.append(manifest_path)
     except OSError:
         return []
     return manifest_paths
@@ -807,6 +807,11 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_bytes())
+
+
+def _read_json_file(path: str) -> dict[str, Any]:
+    with open(path, "rb") as handle:
+        return json.load(handle)
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:

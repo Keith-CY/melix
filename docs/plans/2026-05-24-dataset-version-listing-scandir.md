@@ -1,6 +1,6 @@
 # Dataset version listing scandir slice
 
-This Python-only performance track keeps dataset-version listing behavior unchanged while reducing overhead in small, registered slices. The first slice replaced the one-level `Path.glob("*/dataset-version.json")` scan with an explicit `os.scandir()` pass. The current follow-up slice keeps the registered listing probe and changes shared JSON manifest loading from text decoding to direct byte loading for the listing hot path.
+This Python-only performance track keeps dataset-version listing behavior unchanged while reducing overhead in small, registered slices. The first slice replaced the one-level `Path.glob("*/dataset-version.json")` scan with an explicit `os.scandir()` pass. A follow-up changed shared JSON manifest loading from text decoding to byte loading. The current slice keeps the same registered listing probe and removes per-manifest `Path` construction from the listing hot path by carrying `os.scandir()` string paths into a direct binary JSON load.
 
 ## Scope
 
@@ -12,7 +12,7 @@ This Python-only performance track keeps dataset-version listing behavior unchan
 
 ## Registered probe
 
-This track uses `dataset-version-listing-scandir` in `infra/perf/pr_scoped_probes.json`. The probe includes focused `test_command`, `coverage_command`, and `probe_command` entries and runs on `ubuntu-latest`. The current JSON byte-loading follow-up is covered by the same registered probe because `list_dataset_versions(...)` reads every discovered `dataset-version.json` manifest through `_read_json(...)`.
+This track uses `dataset-version-listing-scandir` in `infra/perf/pr_scoped_probes.json`. The probe includes focused `test_command`, `coverage_command`, and `probe_command` entries and runs on `ubuntu-latest`. The current string-path JSON loading follow-up is covered by the same registered probe because `list_dataset_versions(...)` discovers and reads every `dataset-version.json` manifest in the listing workload.
 
 Metrics:
 
