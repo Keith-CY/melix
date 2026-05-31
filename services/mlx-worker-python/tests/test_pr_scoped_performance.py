@@ -5746,6 +5746,12 @@ def test_deterministic_ocr_token_count_probe_script_emits_metrics(
 ) -> None:
     monkeypatch.setenv("MELIX_OCR_TOKEN_COUNT_ITERATIONS", "10")
     monkeypatch.setenv("MELIX_OCR_TOKEN_COUNT_SAMPLES", "1")
+    from worker.runtime.token_counting import whitespace_token_count
+
+    def fail_cache_clear() -> None:  # pragma: no cover - exercised only on regression
+        raise AssertionError("probe should call the raw helper instead of clearing the shared LRU cache")
+
+    monkeypatch.setattr(whitespace_token_count, "cache_clear", fail_cache_clear)
 
     runpy.run_path(str(REPO_ROOT / "scripts/deterministic_ocr_token_count_probe.py"), run_name="__main__")
 

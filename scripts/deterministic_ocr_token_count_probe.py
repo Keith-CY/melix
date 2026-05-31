@@ -17,6 +17,9 @@ from worker.runtime.multimodal_preprocessing import PreparedImageInput, Prepared
 from worker.runtime.token_counting import whitespace_token_count  # noqa: E402
 
 
+_RAW_WHITESPACE_TOKEN_COUNT = getattr(whitespace_token_count, "__wrapped__", whitespace_token_count)
+
+
 def _request(prompt_text: str, image_bytes: bytes) -> PreparedVisionRequest:
     image = PreparedImageInput(
         bytes_data=image_bytes,
@@ -62,8 +65,7 @@ def main() -> None:
             if token_count != expected:
                 raise AssertionError(f"unexpected token count: {token_count} != {expected}")
             helper_index = _index % len(helper_texts)
-            whitespace_token_count.cache_clear()
-            helper_token_count = whitespace_token_count(helper_texts[helper_index])
+            helper_token_count = _RAW_WHITESPACE_TOKEN_COUNT(helper_texts[helper_index])
             if helper_token_count != helper_expected[helper_index]:
                 raise AssertionError("unexpected helper token count")
             checksum += token_count + helper_token_count
