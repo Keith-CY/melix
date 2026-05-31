@@ -87,6 +87,15 @@ _FINDING_CATEGORY_PRIORITY = {
     "release_gate_followup": 5,
     "scope_constraint": 6,
 }
+_FINDING_SEVERITY_METRIC_KEYS = {
+    "blocker": "closure_audit.blocker_count",
+    "accepted_risk": "closure_audit.accepted_risk_count",
+    "evidence_gap": "closure_audit.evidence_gap_count",
+    "deferred_work": "closure_audit.deferred_work_count",
+}
+_UNRESOLVED_FINDING_SEVERITIES = frozenset(
+    ("blocker", "evidence_gap", "deferred_work")
+)
 
 
 @dataclass(frozen=True)
@@ -296,25 +305,9 @@ def build_closure_audit(
             ),
         )
     )
-    metrics = {
-        "closure_audit.blocker_count": float(
-            sum(1 for finding in ordered_findings if finding.severity == "blocker")
-        ),
-        "closure_audit.accepted_risk_count": float(
-            sum(1 for finding in ordered_findings if finding.severity == "accepted_risk")
-        ),
-        "closure_audit.evidence_gap_count": float(
-            sum(1 for finding in ordered_findings if finding.severity == "evidence_gap")
-        ),
-        "closure_audit.deferred_work_count": float(
-            sum(1 for finding in ordered_findings if finding.severity == "deferred_work")
-        ),
-    }
-    unresolved_findings = [
-        finding.summary
-        for finding in ordered_findings
-        if finding.severity in {"blocker", "evidence_gap", "deferred_work"}
-    ]
+    metrics, unresolved_findings = _finding_metrics_and_unresolved_summaries(
+        ordered_findings
+    )
     summary = {
         "top_unresolved_findings": unresolved_findings[:3],
         "required_runbooks": list(_REQUIRED_RUNBOOKS),
@@ -332,6 +325,20 @@ def build_closure_audit(
         metrics=metrics,
         summary=summary,
     )
+
+
+def _finding_metrics_and_unresolved_summaries(
+    ordered_findings: tuple[ClosureAuditFinding, ...],
+) -> tuple[dict[str, float], list[str]]:
+    metrics = {metric_key: 0.0 for metric_key in _FINDING_SEVERITY_METRIC_KEYS.values()}
+    unresolved_findings: list[str] = []
+    for finding in ordered_findings:
+        metric_key = _FINDING_SEVERITY_METRIC_KEYS.get(finding.severity)
+        if metric_key is not None:
+            metrics[metric_key] += 1.0
+        if finding.severity in _UNRESOLVED_FINDING_SEVERITIES:
+            unresolved_findings.append(finding.summary)
+    return metrics, unresolved_findings
 
 
 def render_closure_audit_json(report: ClosureAuditReport) -> str:
