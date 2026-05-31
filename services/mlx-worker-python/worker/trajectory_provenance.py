@@ -104,17 +104,26 @@ def _trajectory_provenance_from_snapshot_manifest(
     ):
         return {}
 
-    provenance: dict[str, Any] = {
-        "trajectory_dataset_id": str(
-            manifest.get("source_dataset_id") or manifest.get("dataset_id") or ""
-        ).strip(),
-        "trajectory_dataset_version": str(manifest.get("version") or "").strip(),
-        "trajectory_schema_version": str(
-            manifest.get("trajectory_schema_version") or "melix.agentic_tool_trace.v1"
-        ).strip(),
-        "trajectory_split": str(manifest.get("trajectory_split") or "train").strip(),
-        "trajectory_trace_digest": str(manifest.get("trajectory_trace_digest") or "").strip(),
-    }
+    provenance: dict[str, Any] = {}
+    dataset_id = str(
+        manifest.get("source_dataset_id") or manifest.get("dataset_id") or ""
+    ).strip()
+    if dataset_id:
+        provenance["trajectory_dataset_id"] = dataset_id
+    dataset_version = str(manifest.get("version") or "").strip()
+    if dataset_version:
+        provenance["trajectory_dataset_version"] = dataset_version
+    schema_version = str(
+        manifest.get("trajectory_schema_version") or "melix.agentic_tool_trace.v1"
+    ).strip()
+    if schema_version:
+        provenance["trajectory_schema_version"] = schema_version
+    split = str(manifest.get("trajectory_split") or "train").strip()
+    if split:
+        provenance["trajectory_split"] = split
+    trace_digest = str(manifest.get("trajectory_trace_digest") or "").strip()
+    if trace_digest:
+        provenance["trajectory_trace_digest"] = trace_digest
     if snapshot_manifest_path is not None:
         provenance["trajectory_snapshot_manifest_path"] = str(snapshot_manifest_path)
     for source_field, output_field in _TRAJECTORY_MANIFEST_OPTIONAL_FIELD_MAP:
@@ -124,7 +133,7 @@ def _trajectory_provenance_from_snapshot_manifest(
         provenance[output_field] = value
     if copy_nested:
         return normalize_trajectory_provenance(provenance)
-    return {key: value for key, value in provenance.items() if value not in ("", None)}
+    return provenance
 
 
 def load_trajectory_provenance_from_snapshot_manifest(

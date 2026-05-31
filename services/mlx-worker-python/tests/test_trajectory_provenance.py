@@ -254,6 +254,18 @@ def test_trajectory_provenance_helpers_ignore_empty_or_unrelated_inputs(
     assert trajectory_provenance_from_snapshot_manifest({"format": "text"}) == {}
     assert load_trajectory_provenance_from_snapshot_manifest(non_mapping_manifest) == {}
     assert load_trajectory_provenance_from_snapshot_manifest(str(non_mapping_manifest)) == {}
+    assert trajectory_provenance_from_snapshot_manifest(
+        {
+            "format": "agentic_tool_trace",
+            "source_dataset_id": "",
+            "version": "",
+            "trajectory_trace_digest": "abc123",
+        }
+    ) == {
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_split": "train",
+        "trajectory_trace_digest": "abc123",
+    }
     assert (
         load_trajectory_provenance_from_normalized_snapshot(
             format_name="text",
