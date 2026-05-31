@@ -504,6 +504,8 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
                     continue
                 if not is_dir and not is_file:
                     continue
+                if is_file and name in _README_NAMES:
+                    continue
                 best_name = name
                 best_path = Path(entry.path)
                 best_is_dir = is_dir

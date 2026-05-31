@@ -328,6 +328,22 @@ def test_dataset_catalog_row_reader_respects_limit(tmp_path: Path) -> None:
     assert rows == [{"prompt": "first", "answer": "a"}]
 
 
+def test_dataset_catalog_first_preview_scan_skips_readme_without_rescan(tmp_path: Path) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    data_dir = snapshot_dir / "data"
+    data_dir.mkdir(parents=True)
+    readme_path = snapshot_dir / "README.md"
+    train_path = data_dir / "train.json"
+    readme_path.write_text("# Dataset\n", encoding="utf-8")
+    train_path.write_text('{"rows":[{"prompt":"first"}]}', encoding="utf-8")
+
+    first_entry = catalog._next_supported_scan_entry(snapshot_dir, after="")
+
+    assert first_entry is not None
+    assert first_entry[1] == data_dir
+    assert catalog._first_supported_dataset_file(snapshot_dir) == train_path
+
+
 def test_dataset_catalog_json_row_reader_limit_uses_incremental_decode(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
