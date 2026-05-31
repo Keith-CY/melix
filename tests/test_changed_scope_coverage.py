@@ -418,6 +418,64 @@ def test_measurable_changed_lines_skips_empty_measured_lines(monkeypatch, tmp_pa
     assert missed == []
 
 
+def test_measurable_changed_lines_skips_source_read_when_changed_range_is_outside_coverage(
+    monkeypatch, tmp_path: Path
+) -> None:
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": list(range(1, 50, 2)),
+                "missing_lines": list(range(2, 51, 2)),
+            }
+        }
+    }
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
+        raise AssertionError("source file should not be read when changed lines are outside coverage")
+
+    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        {100, 101},
+    )
+
+    assert measurable == []
+    assert covered == []
+    assert missed == []
+
+
+def test_measurable_changed_lines_skips_source_read_when_missing_range_is_outside_coverage(
+    monkeypatch, tmp_path: Path
+) -> None:
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": [],
+                "missing_lines": list(range(2, 51, 2)),
+            }
+        }
+    }
+
+    def fail_read_text(self: Path, *args: object, **kwargs: object) -> str:  # pragma: no cover
+        raise AssertionError("source file should not be read when changed lines are outside missing coverage")
+
+    monkeypatch.setattr(changed_scope_coverage.Path, "read_text", fail_read_text)
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        {100, 101},
+    )
+
+    assert measurable == []
+    assert covered == []
+    assert missed == []
+
+
 def test_measurable_changed_lines_handles_large_measured_sets_without_union(tmp_path: Path) -> None:
     source_path = tmp_path / "foo.py"
     source_path.write_text("\n".join(f"line_{line_no}" for line_no in range(1, 101)), encoding="utf-8")

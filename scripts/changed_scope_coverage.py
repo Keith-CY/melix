@@ -156,6 +156,19 @@ def _measurable_changed_lines(
         executed_lookup = (executed_line,)
         missing_lookup = (missing_line,)
     else:
+        if executed_lines and missing_lines:
+            coverage_min = min(executed_lines[0], missing_lines[0])
+            coverage_max = max(executed_lines[-1], missing_lines[-1])
+        elif executed_lines:
+            coverage_min = executed_lines[0]
+            coverage_max = executed_lines[-1]
+        elif missing_lines:
+            coverage_min = missing_lines[0]
+            coverage_max = missing_lines[-1]
+        else:
+            return [], [], []
+        if max(changed) < coverage_min or min(changed) > coverage_max:
+            return [], [], []
         executed = set(executed_lines)
         missing = set(missing_lines)
         measured_changed = [
