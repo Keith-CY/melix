@@ -4489,8 +4489,7 @@
       {
         "key": "old_mean_ms",
         "unit": "ms",
-        "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "direction": "informational"
       },
       {
         "key": "new_mean_ms",
@@ -4512,8 +4511,7 @@
       {
         "key": "old_peak_bytes_mean",
         "unit": "bytes",
-        "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "direction": "informational"
       },
       {
         "key": "new_peak_bytes_mean",

@@ -85,6 +85,19 @@ def trajectory_provenance_from_snapshot_manifest(
     *,
     snapshot_manifest_path: Path | str | None = None,
 ) -> dict[str, Any]:
+    return _trajectory_provenance_from_snapshot_manifest(
+        manifest,
+        snapshot_manifest_path=snapshot_manifest_path,
+        copy_nested=True,
+    )
+
+
+def _trajectory_provenance_from_snapshot_manifest(
+    manifest: Mapping[str, Any],
+    *,
+    snapshot_manifest_path: Path | str | None = None,
+    copy_nested: bool,
+) -> dict[str, Any]:
     if (
         str(manifest.get("format", "")).strip() != "agentic_tool_trace"
         and not str(manifest.get("trajectory_trace_digest", "")).strip()
@@ -109,7 +122,9 @@ def trajectory_provenance_from_snapshot_manifest(
         if value in ("", None):
             continue
         provenance[output_field] = value
-    return normalize_trajectory_provenance(provenance)
+    if copy_nested:
+        return normalize_trajectory_provenance(provenance)
+    return {key: value for key, value in provenance.items() if value not in ("", None)}
 
 
 def load_trajectory_provenance_from_snapshot_manifest(
@@ -120,9 +135,10 @@ def load_trajectory_provenance_from_snapshot_manifest(
     payload = _JSON_LOADS(_PATH_READ_BYTES(manifest_path))
     if not isinstance(payload, dict):
         return {}
-    return trajectory_provenance_from_snapshot_manifest(
+    return _trajectory_provenance_from_snapshot_manifest(
         payload,
         snapshot_manifest_path=manifest_path,
+        copy_nested=False,
     )
 
 
