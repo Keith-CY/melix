@@ -65,6 +65,14 @@ def test_extract_candidate_code_handles_empty_plaintext_and_code_blocks() -> Non
     )
 
 
+def test_code_block_content_start_matches_ascii_python_tag_without_lowercase_slice() -> None:
+    assert code_eval_runner._is_python_code_block_tag("```python\n", 3) is True
+    assert code_eval_runner._is_python_code_block_tag("```PyThOn\n", 3) is True
+    assert code_eval_runner._is_python_code_block_tag("```PYTHON\n", 3) is True
+    assert code_eval_runner._is_python_code_block_tag("```pytho\n", 3) is False
+    assert code_eval_runner._is_python_code_block_tag("```javascript\n", 3) is False
+
+
 def test_is_code_execution_policy_supported_requires_sandboxed_policy_and_binary(monkeypatch) -> None:
     monkeypatch.setattr(code_eval_runner.shutil, "which", lambda _: "/usr/bin/sandbox-exec")
     assert code_eval_runner.is_code_execution_policy_supported(" sandboxed ") is True

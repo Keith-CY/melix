@@ -4,7 +4,7 @@
 
 This Python-only performance slice narrows the code-evaluation response parser hot path in `services/mlx-worker-python/worker/engine/code_eval_runner.py`.
 
-The change keeps the existing behavior that treats any ASCII case spelling of the `python` code-fence language tag as a Python block, while avoiding a per-call six-character lowercase allocation when locating the candidate code content start. The current slice adds a direct lowercase `python` tag branch before the mixed-case tuple fallback, matching the probe's common lowercase fence workload without changing non-Python tag behavior.
+The change keeps the existing behavior that treats any ASCII case spelling of the `python` code-fence language tag as a Python block, while avoiding a per-call six-character lowercase allocation when locating the candidate code content start. The current slice replaces the slice-and-lowercase comparison with a direct ASCII character check, matching the probe's common lowercase fence workload without changing non-Python tag behavior.
 
 ## Registered probe
 
