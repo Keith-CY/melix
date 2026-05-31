@@ -941,8 +941,14 @@ def _inferred_split_and_config(relative_path: str) -> tuple[str, str]:
 
 def _split_alias_from_candidate(candidate: str) -> str:
     delimiter_index = _first_split_alias_delimiter(candidate)
-    prefix = candidate[:delimiter_index].lower() if delimiter_index >= 0 else candidate.lower()
-    return _SPLIT_ALIASES.get(prefix, "")
+    prefix = candidate[:delimiter_index] if delimiter_index >= 0 else candidate
+    split = _SPLIT_ALIASES.get(prefix)
+    if split is not None:
+        return split
+    lowered = prefix.lower()
+    if lowered == prefix:
+        return ""
+    return _SPLIT_ALIASES.get(lowered, "")
 
 
 def _first_split_alias_delimiter(candidate: str) -> int:
