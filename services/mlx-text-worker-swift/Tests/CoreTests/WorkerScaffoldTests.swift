@@ -261,6 +261,9 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(counters["swift_text.active_kv_cache_materialize_total_us"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_cache_materialize_call_count"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_estimated_memory_savings_pct"], 0)
+        XCTAssertEqual(counters["swift_text.decode_batch_token_eval_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.decode_batch_token_eval_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.decode_batch_token_eval_avg_us"], 0)
     }
 
     func testWorkerServicesPublishMemoryEnforcementAndInitialCacheMetrics() {
@@ -1361,7 +1364,8 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(Set(recorder.cacheIdentifiers).count, 1)
 
         let batchProbe = try XCTUnwrap(summaries[0]?.decodeBatchProbe)
-        XCTAssertEqual(batchProbe.decodeTokenIDCallCount, 4)
+        XCTAssertEqual(batchProbe.decodeTokenEvalCallCount, 4)
+        XCTAssertEqual(batchProbe.decodeTokenIDCallCount, 6)
     }
 
     func testAutoSwiftMLXBackendDecodeBatchFallsBackForSingleRequest() async throws {
@@ -1558,6 +1562,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let batchProbe = try XCTUnwrap(summaries[0]?.decodeBatchProbe)
         XCTAssertEqual(summaries[0]?.completionTokens, 2)
         XCTAssertEqual(summaries[1]?.completionTokens, 2)
+        XCTAssertEqual(batchProbe.decodeTokenEvalCallCount, 4)
         XCTAssertEqual(batchProbe.decodeTokenIDCallCount, 4)
         XCTAssertGreaterThanOrEqual(batchProbe.decodeModelEvalSyncCallCount, 1)
         XCTAssertEqual(recorder.batchSizes, [2, 2])
@@ -4768,6 +4773,9 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(metrics["swift_text.decode_batch_model_eval_sync_call_count"], 0)
         XCTAssertGreaterThan(metrics["swift_text.decode_batch_sample_total_us"] ?? 0, 0)
         XCTAssertEqual(metrics["swift_text.decode_batch_sample_call_count"], 4)
+        XCTAssertGreaterThan(metrics["swift_text.decode_batch_token_eval_total_us"] ?? 0, 0)
+        XCTAssertEqual(metrics["swift_text.decode_batch_token_eval_call_count"], 4)
+        XCTAssertGreaterThan(metrics["swift_text.decode_batch_token_eval_avg_us"] ?? 0, 0)
         XCTAssertGreaterThan(metrics["swift_text.decode_batch_token_id_total_us"] ?? 0, 0)
         XCTAssertEqual(metrics["swift_text.decode_batch_token_id_call_count"], 4)
         XCTAssertGreaterThan(metrics["swift_text.decode_batch_detokenize_total_us"] ?? 0, 0)

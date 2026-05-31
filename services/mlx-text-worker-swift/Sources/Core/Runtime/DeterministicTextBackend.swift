@@ -284,6 +284,8 @@ struct DeterministicTextBackend: TextRuntimeBackend {
                     decodeModelCallCount: decodeLoopIterations,
                     decodeSampleTotalMicros: max(1, totalCompletionTokens),
                     decodeSampleCallCount: totalCompletionTokens,
+                    decodeTokenEvalTotalMicros: max(1, totalCompletionTokens),
+                    decodeTokenEvalCallCount: totalCompletionTokens,
                     decodeTokenIDTotalMicros: max(1, totalCompletionTokens),
                     decodeTokenIDCallCount: totalCompletionTokens,
                     decodeDetokenizeTotalMicros: max(1, totalCompletionTokens),

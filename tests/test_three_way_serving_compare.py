@@ -871,6 +871,9 @@ def test_three_way_markdown_surfaces_melix_first_load_metrics() -> None:
                 "swift_text.per_batch_output_token_count": 16,
                 "swift_text.per_batch_output_tokens_per_second": 8,
                 "swift_text.decode_batch_observation_count": 1,
+                "swift_text.decode_batch_token_eval_total_us": 64000,
+                "swift_text.decode_batch_token_eval_call_count": 4,
+                "swift_text.decode_batch_token_eval_avg_us": 16000,
                 "swift_text.prefill_ms": 3447.17,
                 "swift_text.decode_ttft_ms": 8554.38,
             },
@@ -891,6 +894,9 @@ def test_three_way_markdown_surfaces_melix_first_load_metrics() -> None:
     assert "`swift_text.per_batch_output_token_count` | 16.00" in markdown
     assert "`swift_text.per_batch_output_tokens_per_second` | 8.00" in markdown
     assert "`swift_text.decode_batch_observation_count` | 1.00" in markdown
+    assert "`swift_text.decode_batch_token_eval_total_us` | 64000.00" in markdown
+    assert "`swift_text.decode_batch_token_eval_call_count` | 4.00" in markdown
+    assert "`swift_text.decode_batch_token_eval_avg_us` | 16000.00" in markdown
     assert "`control_plane.text_first_load_ms` | 8547.46" in markdown
     assert "`swift_text.prefill_ms` | 3447.17" in markdown
     assert "`swift_text.decode_ttft_ms` | 8554.38" in markdown
