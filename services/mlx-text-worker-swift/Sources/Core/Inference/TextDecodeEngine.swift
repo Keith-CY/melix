@@ -1,6 +1,9 @@
 import Foundation
 import GRPCCore
 import MelixWorkerProtocol
+#if canImport(MLXLMCommon)
+@preconcurrency import MLXLMCommon
+#endif
 
 struct TextDecodeEngine: Sendable {
     let registry: WorkerRuntimeRegistry
@@ -402,6 +405,14 @@ struct TextDecodeEngine: Sendable {
         guard maxBatchSize > 1 else {
             return nil
         }
+
+        #if canImport(MLXLMCommon)
+        if let decodeState = session.prefill.context.storage as? PreparedDecodeState {
+            guard decodeState.cache.allSatisfy({ $0 is KVCacheSimple }) else {
+                return nil
+            }
+        }
+        #endif
 
         let key = TextDecodeBatchEligibilityKey(
             modelHandle: session.loadedModel.handle,
