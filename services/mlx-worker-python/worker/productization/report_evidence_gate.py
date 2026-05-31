@@ -291,15 +291,22 @@ def _rule_matches_report(
     if run_kinds:
         run_kind_set = _string_frozenset(run_kinds)
         run_kind_key = "run_kind"
-        to_string = str
         for run in runs:
-            if to_string(run.get(run_kind_key, "")) in run_kind_set:
+            run_kind = run.get(run_kind_key, "")
+            if run_kind in run_kind_set:
+                return True
+        for run in runs:
+            run_kind = run.get(run_kind_key, "")
+            if type(run_kind) is not str and str(run_kind) in run_kind_set:
                 return True
     metric_prefixes = rule.get("metric_prefixes", ())
     if metric_prefixes:
         metric_prefix_tuple = _string_tuple(metric_prefixes)
-        if any(str(metric.get("metric", "")).startswith(metric_prefix_tuple) for metric in metrics):
-            return True
+        metric_key = "metric"
+        to_string = str
+        for metric in metrics:
+            if to_string(metric.get(metric_key, "")).startswith(metric_prefix_tuple):
+                return True
     target_fields = rule.get("target_fields", ())
     if target_fields:
         target_field_set = _string_frozenset(target_fields)

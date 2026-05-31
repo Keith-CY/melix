@@ -188,6 +188,16 @@ def test_report_evidence_gate_run_kind_tuple_rules_reuse_normalized_set() -> Non
     assert cache_info.misses == 1
 
 
+def test_report_evidence_gate_run_kind_non_string_values_still_match_by_string() -> None:
+    assert report_evidence_gate_module._rule_matches_report(
+        rule={"run_kinds": ("42",)},
+        runs=[{"run_kind": 42}],
+        targets=[],
+        metrics=[],
+        probe_phases=set(),
+    )
+
+
 def test_report_evidence_gate_metric_prefix_tuple_rules_reuse_normalized_tuple() -> None:
     report_evidence_gate_module._string_tuple_from_tuple.cache_clear()
     rule = {"metric_prefixes": ("adapter.", "runtime.")}
