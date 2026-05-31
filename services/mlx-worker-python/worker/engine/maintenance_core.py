@@ -4475,9 +4475,16 @@ class MaintenanceCore:
 
     @staticmethod
     def _ordered_percentile(ordered: list[float], percentile: float) -> float:
-        if len(ordered) == 1:
+        ordered_count = len(ordered)
+        if ordered_count == 1:
             return round(ordered[0], 2)
-        rank = (len(ordered) - 1) * max(0.0, min(percentile, 100.0)) / 100.0
+        if percentile <= 0.0:
+            clamped_percentile = 0.0
+        elif percentile >= 100.0:
+            clamped_percentile = 100.0
+        else:
+            clamped_percentile = percentile
+        rank = (ordered_count - 1) * clamped_percentile / 100.0
         lower_index = math.floor(rank)
         upper_index = math.ceil(rank)
         lower_value = ordered[lower_index]

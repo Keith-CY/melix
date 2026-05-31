@@ -5129,8 +5129,13 @@ def test_percentiles_reuse_one_sorted_vector_and_preserve_interpolation(
     assert MaintenanceCore._percentiles(values) == ()
     assert MaintenanceCore._percentiles([], 50.0, 95.0) == (0.0, 0.0)
     assert MaintenanceCore._percentiles(values, 50.0, 95.0) == (6.0, 8.7)
+    assert MaintenanceCore._percentiles(values, -25.0, 125.0) == (1.0, 9.0)
     assert MaintenanceCore._percentile(values, 95.0) == 8.7
-    assert sorted_calls == [[1.0, 5.0, 7.0, 9.0], [1.0, 5.0, 7.0, 9.0]]
+    assert sorted_calls == [
+        [1.0, 5.0, 7.0, 9.0],
+        [1.0, 5.0, 7.0, 9.0],
+        [1.0, 5.0, 7.0, 9.0],
+    ]
 
 
 def test_run_bench_latency_and_summary_reuse_single_sorted_request_latency_vector(
