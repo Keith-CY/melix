@@ -297,6 +297,44 @@ def test_snapshot_manifest_copies_nested_fields_once_via_normalization(
     assert copy_calls == 1
 
 
+def test_load_snapshot_manifest_reuses_fresh_json_nested_fields(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_copy(value: object) -> object:
+        raise AssertionError(
+            "manifest loading should not deep-copy nested fields from fresh JSON payloads"
+        )
+
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_copy_trajectory_provenance_value",
+        fail_copy,
+    )
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(
+        json.dumps(
+            {
+                "format": "agentic_tool_trace",
+                "source_dataset_id": "agentic-snapshot",
+                "version": "2026-05-25",
+                "trajectory_trace_digest": "abc123",
+                "trajectory_quality_metrics": {
+                    "reward_coverage_count": 1,
+                    "components": [{"name": "format", "score": 1.0}],
+                },
+            }
+        ).encode("utf-8")
+    )
+
+    provenance = load_trajectory_provenance_from_snapshot_manifest(manifest_path)
+
+    assert provenance["trajectory_quality_metrics"] == {
+        "reward_coverage_count": 1,
+        "components": [{"name": "format", "score": 1.0}],
+    }
+
+
 def test_normalize_trajectory_provenance_copies_nested_json_containers() -> None:
     source = {
         "trajectory_quality_metrics": {
