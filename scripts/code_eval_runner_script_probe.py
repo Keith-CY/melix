@@ -78,17 +78,42 @@ def _measure_config_load(iterations: int) -> tuple[float, int]:
     return elapsed_ms, checksum
 
 
+def _measure_result_allocations(iterations: int) -> tuple[float, int, int]:
+    started = time.perf_counter()
+    passed_count = 0
+    dict_count = 0
+    for index in range(iterations):
+        result = code_eval_runner.CodeEvaluationResult(
+            compile_status="compiled",
+            runtime_status="ok",
+            timeout_status="ok",
+            test_status="passed" if (index % 2) == 0 else "failed",
+            tests_passed=1,
+            tests_total=1,
+            failure_detail="",
+        )
+        passed_count += int(result.passed)
+        dict_count += int(hasattr(result, "__dict__"))
+    elapsed_ms = (time.perf_counter() - started) * 1000.0
+    return elapsed_ms, passed_count, dict_count
+
+
 def main() -> int:
     iterations = 20000
     config_iterations = 5000
+    result_iterations = 30000
     sample_count = 7
     elapsed_samples: list[float] = []
     dedent_calls: list[float] = []
     peak_samples: list[float] = []
     identity_reuse: list[float] = []
     config_load_samples: list[float] = []
+    result_elapsed_samples: list[float] = []
+    result_peak_samples: list[float] = []
+    result_dict_counts: list[float] = []
     checksum = 0
     config_checksum = 0
+    result_passed_count = 0
 
     for _ in range(sample_count):
         tracemalloc.start()
@@ -96,11 +121,20 @@ def main() -> int:
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         config_elapsed_ms, config_checksum = _measure_config_load(config_iterations)
+        tracemalloc.start()
+        result_elapsed_ms, result_passed_count, result_dict_count = _measure_result_allocations(
+            result_iterations
+        )
+        _, result_peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
         elapsed_samples.append(elapsed_ms)
         dedent_calls.append(float(calls))
         peak_samples.append(float(peak))
         identity_reuse.append(float(reused_identity))
         config_load_samples.append(config_elapsed_ms)
+        result_elapsed_samples.append(result_elapsed_ms)
+        result_peak_samples.append(float(result_peak))
+        result_dict_counts.append(float(result_dict_count))
 
     print(
         json.dumps(
@@ -110,10 +144,14 @@ def main() -> int:
                 "peak_bytes_mean": statistics.fmean(peak_samples),
                 "identity_reuse_mean": statistics.fmean(identity_reuse),
                 "config_load_elapsed_ms_mean": statistics.fmean(config_load_samples),
+                "result_alloc_elapsed_ms_mean": statistics.fmean(result_elapsed_samples),
+                "result_alloc_peak_bytes_mean": statistics.fmean(result_peak_samples),
+                "result_instance_dict_count_mean": statistics.fmean(result_dict_counts),
                 "iteration_count": float(iterations),
                 "config_load_iteration_count": float(config_iterations),
+                "result_alloc_iteration_count": float(result_iterations),
                 "sample_count": float(sample_count),
-                "checksum": float(checksum + config_checksum),
+                "checksum": float(checksum + config_checksum + result_passed_count),
             },
             sort_keys=True,
         )

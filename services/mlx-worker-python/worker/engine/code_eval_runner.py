@@ -21,7 +21,7 @@ _PYTHON_CODE_BLOCK_TAG_LENGTH = len(_PYTHON_CODE_BLOCK_TAG)
 _PYTHON_SPLITLINE_BOUNDARIES = "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CodeEvaluationResult:
     compile_status: str
     runtime_status: str

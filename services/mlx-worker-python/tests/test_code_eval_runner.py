@@ -12,6 +12,21 @@ from worker.engine import code_eval_runner
 from worker.engine.code_eval_runner import run_python_code_evaluation
 
 
+def test_code_evaluation_result_uses_slots_without_instance_dict() -> None:
+    result = code_eval_runner.CodeEvaluationResult(
+        compile_status="compiled",
+        runtime_status="ok",
+        timeout_status="ok",
+        test_status="passed",
+        tests_passed=1,
+        tests_total=1,
+        failure_detail="",
+    )
+
+    assert result.passed is True
+    assert not hasattr(result, "__dict__")
+
+
 def test_extract_candidate_code_handles_empty_plaintext_and_code_blocks() -> None:
     assert code_eval_runner.extract_candidate_code("   ") == ("", "empty_prediction")
     assert code_eval_runner.extract_candidate_code("print('hi')") == ("print('hi')", "parsed_code")

@@ -3737,6 +3737,10 @@ def test_code_eval_runner_script_probe_script_emits_metrics(
     assert metrics["dedent_calls_mean"] == 1.0
     assert metrics["identity_reuse_mean"] == 1.0
     assert metrics["peak_bytes_mean"] > 0
+    assert metrics["result_alloc_elapsed_ms_mean"] > 0
+    assert metrics["result_alloc_peak_bytes_mean"] > 0
+    assert metrics["result_alloc_iteration_count"] == 30000.0
+    assert metrics["result_instance_dict_count_mean"] == 0.0
     assert metrics["iteration_count"] == 20000.0
     assert metrics["sample_count"] == 7.0
 
