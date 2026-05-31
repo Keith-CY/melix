@@ -870,19 +870,26 @@ public actor RequestCoordinator {
             return await makeCancelledExecution(requestID: request.requestID, modelID: request.modelID)
         }
 
+        var workerRequest = request.workerRequest
+        annotateAdmissionBatchMetadata(
+            on: &workerRequest,
+            admission: admission,
+            plan: plan
+        )
+
         do {
             let upstream: AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error>
             if plan.cacheRouteEligible,
                let phaseAwareClient = workerClient as? any PhaseAwareWorkerClientProtocol,
-               shouldUsePhaseAwareExecution(for: request.workerRequest) {
+               shouldUsePhaseAwareExecution(for: workerRequest) {
                 upstream = makePhaseAwareUpstream(
                     client: phaseAwareClient,
-                    request: request.workerRequest,
+                    request: workerRequest,
                     modelID: request.modelID,
                     prefillLane: plan.prefillLane
                 )
             } else {
-                upstream = try await workerClient.generate(request: request.workerRequest)
+                upstream = try await workerClient.generate(request: workerRequest)
             }
             if !(await abortRegistry.contains(request.requestID)) {
                 _ = try? await workerClient.abort(requestID: request.requestID)
@@ -906,13 +913,14 @@ public actor RequestCoordinator {
             let metricsStore = self.metricsStore
             let now = self.now
             let isBufferedChatCompletionsResponse =
-                request.workerRequest.execution.ext["melix.http.response_mode"] == "chat_completions_non_stream"
+                workerRequest.execution.ext["melix.http.response_mode"] == "chat_completions_non_stream"
             let structuredOutputConfiguration = StructuredOutputConfiguration(
-                executionExt: request.workerRequest.execution.ext
+                executionExt: workerRequest.execution.ext
             )
             let structuredOutputValidator = StructuredOutputValidator()
-            let initialReasoningBudget = ReasoningBudgetState(execution: request.workerRequest.execution)
-            let requestAccelerationProfileID = request.workerRequest.execution.acceleration.profileID
+            let initialReasoningBudget = ReasoningBudgetState(execution: workerRequest.execution)
+            let requestIdentity = workerRequest.execution.id
+            let requestAccelerationProfileID = workerRequest.execution.acceleration.profileID
             Task {
                 var firstDeltaRecorded = false
                 var firstSemanticEventRecorded = false
@@ -984,7 +992,7 @@ public actor RequestCoordinator {
                             await self.recordPhaseObservability(
                                 requestID: requestID,
                                 fallbackLane: plan.decodeLane,
-                                requestIdentity: request.workerRequest.execution.id,
+                                requestIdentity: requestIdentity,
                                 routeKind: plan.routeKind,
                                 accelerationProfileID: requestAccelerationProfileID,
                                 event: outputEvent,
@@ -1022,7 +1030,7 @@ public actor RequestCoordinator {
                                 await metricsStore.increment("http.tool_result_delta_count")
                             case .completed(let completed):
                                 await self.preserveReasoningContinuity(
-                                    requestIdentity: request.workerRequest.execution.id,
+                                    requestIdentity: requestIdentity,
                                     completed: completed
                                 )
                                 for (metricName, rawValue) in completed.parserMetrics {
@@ -2181,6 +2189,21 @@ public actor RequestCoordinator {
         decode.maxOutputTokens = request.sampling.maxOutputTokens
         decode.returnUsage = request.returnUsage
         return decode
+    }
+
+    private func annotateAdmissionBatchMetadata(
+        on request: inout Melix_Worker_V1_GenerateRequest,
+        admission: AdmissionGrant,
+        plan: SchedulingPlan
+    ) {
+        guard plan.continuousBatchEligible, admission.batchCapacity > 1 else {
+            return
+        }
+        request.execution.ext["melix.scheduler.admission_cohort_id"] = plan.batchCohortID
+        request.execution.ext["melix.scheduler.admission_batch_position"] = String(admission.batchPosition)
+        request.execution.ext["melix.scheduler.admission_cohort_size"] = String(admission.batchSize)
+        request.execution.ext["melix.scheduler.admission_batch_capacity"] = String(admission.batchCapacity)
+        request.execution.ext["melix.scheduler.admission_merged_into_batch"] = admission.mergedIntoBatch ? "true" : "false"
     }
 
     private func makePrefillStartedEvent(

@@ -317,6 +317,7 @@ struct TextGenerationSummary: Sendable {
     let dflashRollbackCount: Int?
     let dflashTargetHiddenLayers: Int?
     let activeKVProbe: ActiveKVProbeSummary?
+    let decodeBatchProbe: DecodeBatchProbeSummary?
 
     init(
         promptTokens: Int,
@@ -336,7 +337,8 @@ struct TextGenerationSummary: Sendable {
         dflashBlockSize: Int? = nil,
         dflashRollbackCount: Int? = nil,
         dflashTargetHiddenLayers: Int? = nil,
-        activeKVProbe: ActiveKVProbeSummary? = nil
+        activeKVProbe: ActiveKVProbeSummary? = nil,
+        decodeBatchProbe: DecodeBatchProbeSummary? = nil
     ) {
         self.promptTokens = promptTokens
         self.completionTokens = completionTokens
@@ -356,6 +358,90 @@ struct TextGenerationSummary: Sendable {
         self.dflashRollbackCount = dflashRollbackCount
         self.dflashTargetHiddenLayers = dflashTargetHiddenLayers
         self.activeKVProbe = activeKVProbe
+        self.decodeBatchProbe = decodeBatchProbe
+    }
+}
+
+struct DecodeBatchProbeSummary: Sendable {
+    let decodeLoopTotalMicros: Int
+    let decodeModelTotalMicros: Int
+    let decodeModelCallCount: Int
+    let decodeModelEvalSyncTotalMicros: Int
+    let decodeModelEvalSyncCallCount: Int
+    let decodeModelEvalSyncFirstMicros: Int
+    let decodeModelEvalSyncMaxMicros: Int
+    let decodeSampleTotalMicros: Int
+    let decodeSampleCallCount: Int
+    let decodeTokenIDTotalMicros: Int
+    let decodeTokenIDCallCount: Int
+    let decodeDetokenizeTotalMicros: Int
+    let decodeDetokenizeCallCount: Int
+    let decodeStreamYieldTotalMicros: Int
+    let decodeStreamYieldCallCount: Int
+
+    init(
+        decodeLoopTotalMicros: Int,
+        decodeModelTotalMicros: Int,
+        decodeModelCallCount: Int,
+        decodeModelEvalSyncTotalMicros: Int = 0,
+        decodeModelEvalSyncCallCount: Int = 0,
+        decodeModelEvalSyncFirstMicros: Int = 0,
+        decodeModelEvalSyncMaxMicros: Int = 0,
+        decodeSampleTotalMicros: Int,
+        decodeSampleCallCount: Int,
+        decodeTokenIDTotalMicros: Int,
+        decodeTokenIDCallCount: Int,
+        decodeDetokenizeTotalMicros: Int,
+        decodeDetokenizeCallCount: Int,
+        decodeStreamYieldTotalMicros: Int,
+        decodeStreamYieldCallCount: Int
+    ) {
+        self.decodeLoopTotalMicros = max(0, decodeLoopTotalMicros)
+        self.decodeModelTotalMicros = max(0, decodeModelTotalMicros)
+        self.decodeModelCallCount = max(0, decodeModelCallCount)
+        self.decodeModelEvalSyncTotalMicros = max(0, decodeModelEvalSyncTotalMicros)
+        self.decodeModelEvalSyncCallCount = max(0, decodeModelEvalSyncCallCount)
+        self.decodeModelEvalSyncFirstMicros = max(0, decodeModelEvalSyncFirstMicros)
+        self.decodeModelEvalSyncMaxMicros = max(0, decodeModelEvalSyncMaxMicros)
+        self.decodeSampleTotalMicros = max(0, decodeSampleTotalMicros)
+        self.decodeSampleCallCount = max(0, decodeSampleCallCount)
+        self.decodeTokenIDTotalMicros = max(0, decodeTokenIDTotalMicros)
+        self.decodeTokenIDCallCount = max(0, decodeTokenIDCallCount)
+        self.decodeDetokenizeTotalMicros = max(0, decodeDetokenizeTotalMicros)
+        self.decodeDetokenizeCallCount = max(0, decodeDetokenizeCallCount)
+        self.decodeStreamYieldTotalMicros = max(0, decodeStreamYieldTotalMicros)
+        self.decodeStreamYieldCallCount = max(0, decodeStreamYieldCallCount)
+    }
+
+    var decodeModelAverageMicros: Int {
+        averageMicros(total: decodeModelTotalMicros, count: decodeModelCallCount)
+    }
+
+    var decodeModelEvalSyncAverageMicros: Int {
+        averageMicros(total: decodeModelEvalSyncTotalMicros, count: decodeModelEvalSyncCallCount)
+    }
+
+    var decodeSampleAverageMicros: Int {
+        averageMicros(total: decodeSampleTotalMicros, count: decodeSampleCallCount)
+    }
+
+    var decodeTokenIDAverageMicros: Int {
+        averageMicros(total: decodeTokenIDTotalMicros, count: decodeTokenIDCallCount)
+    }
+
+    var decodeDetokenizeAverageMicros: Int {
+        averageMicros(total: decodeDetokenizeTotalMicros, count: decodeDetokenizeCallCount)
+    }
+
+    var decodeStreamYieldAverageMicros: Int {
+        averageMicros(total: decodeStreamYieldTotalMicros, count: decodeStreamYieldCallCount)
+    }
+
+    private func averageMicros(total: Int, count: Int) -> Int {
+        guard count > 0 else {
+            return 0
+        }
+        return max(0, total / count)
     }
 }
 

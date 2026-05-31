@@ -24,6 +24,14 @@ struct WorkerServices: Sendable {
         self.metrics = metrics
         metrics.set("swift_text.memory_enforcement_disabled", value: configuration.memoryEnforcementDisabled ? 1 : 0)
         metrics.set("swift_text.cache_initial_block_target", value: Int(clamping: configuration.initialCacheBlocks))
+        metrics.set(
+            "swift_text.decode_batch_pending_window_ms",
+            value: Int(clamping: configuration.decodeBatchPendingWindowNanos / 1_000_000)
+        )
+        metrics.set(
+            "swift_text.decode_batch_cohort_pending_window_ms",
+            value: Int(clamping: configuration.decodeBatchCohortPendingWindowNanos / 1_000_000)
+        )
         self.runtime = RuntimeRPCService(configuration: configuration, registry: registry, metrics: metrics)
         self.inference = InferenceRPCService(
             configuration: configuration,
@@ -243,7 +251,11 @@ final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceP
             registry: registry,
             abortRegistry: abortRegistry,
             metrics: metrics,
-            batchCoordinator: TextDecodeBatchCoordinator(registry: registry)
+            batchCoordinator: TextDecodeBatchCoordinator(
+                registry: registry,
+                pendingWindowNanos: configuration.decodeBatchPendingWindowNanos,
+                cohortPendingWindowNanos: configuration.decodeBatchCohortPendingWindowNanos
+            )
         )
     }
 

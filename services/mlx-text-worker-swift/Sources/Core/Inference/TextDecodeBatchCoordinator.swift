@@ -61,6 +61,7 @@ struct TextDecodeBatchCandidate: @unchecked Sendable {
     let requestID: String
     let key: TextDecodeBatchEligibilityKey
     let maxBatchSize: Int
+    let schedulerCohortSize: Int
     let session: WorkerDecodeSession
     let sampling: Melix_Worker_V1_SamplingConfig
     let maxOutputTokens: UInt32
@@ -96,20 +97,24 @@ actor TextDecodeBatchCoordinator {
     private struct PendingCohort: @unchecked Sendable {
         let id: UInt64
         var capacity: Int
+        var flushWindowNanos: UInt64
         var items: [PendingItem]
     }
 
     private let registry: WorkerRuntimeRegistry
     private let pendingWindowNanos: UInt64
+    private let cohortPendingWindowNanos: UInt64
     private var pendingByKey: [TextDecodeBatchEligibilityKey: PendingCohort] = [:]
     private var nextCohortID: UInt64 = 1
 
     init(
         registry: WorkerRuntimeRegistry,
-        pendingWindowNanos: UInt64 = 2_000_000
+        pendingWindowNanos: UInt64 = 2_000_000,
+        cohortPendingWindowNanos: UInt64 = 2_000_000_000
     ) {
         self.registry = registry
         self.pendingWindowNanos = pendingWindowNanos
+        self.cohortPendingWindowNanos = cohortPendingWindowNanos
     }
 
     func enqueue(_ candidate: TextDecodeBatchCandidate) async -> TextDecodeBatchAssignment {
@@ -124,6 +129,7 @@ actor TextDecodeBatchCoordinator {
                 cohort = PendingCohort(
                     id: nextCohortID,
                     capacity: max(2, candidate.maxBatchSize),
+                    flushWindowNanos: flushWindowNanos(for: candidate),
                     items: []
                 )
                 nextCohortID &+= 1
@@ -141,15 +147,30 @@ actor TextDecodeBatchCoordinator {
             pendingByKey[candidate.key] = cohort
 
             if shouldScheduleFlush {
-                scheduleFlush(for: candidate.key, cohortID: cohort.id)
+                scheduleFlush(
+                    for: candidate.key,
+                    cohortID: cohort.id,
+                    windowNanos: cohort.flushWindowNanos
+                )
             }
         }
     }
 
-    private func scheduleFlush(for key: TextDecodeBatchEligibilityKey, cohortID: UInt64) {
-        Task { [pendingWindowNanos] in
-            if pendingWindowNanos > 0 {
-                try? await Task.sleep(nanoseconds: pendingWindowNanos)
+    private func flushWindowNanos(for candidate: TextDecodeBatchCandidate) -> UInt64 {
+        guard candidate.schedulerCohortSize > 1 else {
+            return pendingWindowNanos
+        }
+        return max(pendingWindowNanos, cohortPendingWindowNanos)
+    }
+
+    private func scheduleFlush(
+        for key: TextDecodeBatchEligibilityKey,
+        cohortID: UInt64,
+        windowNanos: UInt64
+    ) {
+        Task {
+            if windowNanos > 0 {
+                try? await Task.sleep(nanoseconds: windowNanos)
             }
             self.flush(key: key, cohortID: cohortID)
         }

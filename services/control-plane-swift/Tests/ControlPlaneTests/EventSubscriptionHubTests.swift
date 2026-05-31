@@ -309,7 +309,7 @@ struct CoreUtilityTests {
 
     @Test("admission gate serializes active requests and admits the next queued request")
     func admissionGateSerializesActiveRequestsAndAdmitsTheNextQueuedRequest() async {
-        let gate = AdmissionGate()
+        let gate = AdmissionGate(batchFormationWindowNanos: 0)
 
         let first = await gate.acquire(requestID: "req-1")
         #expect(first.outcome == .admitted)
@@ -336,7 +336,7 @@ struct CoreUtilityTests {
 
     @Test("admission gate batches compatible requests without skipping queued cohorts")
     func admissionGateBatchesCompatibleRequestsWithoutSkippingQueuedCohorts() async {
-        let gate = AdmissionGate()
+        let gate = AdmissionGate(batchFormationWindowNanos: 0)
 
         let first = await gate.acquire(
             requestID: "req-batch-1",
@@ -409,6 +409,93 @@ struct CoreUtilityTests {
         #expect(hotGrant.batchSize == 1)
         #expect(finalSnapshot.activeRequestIDs == ["req-hot-queued"])
         #expect(finalSnapshot.queuedRequestIDs.isEmpty)
+    }
+
+    @Test("admission gate forms a compatible cohort before releasing the first batchable request")
+    func admissionGateFormsCompatibleCohortBeforeReleasingFirstBatchableRequest() async {
+        let gate = AdmissionGate(batchFormationWindowNanos: 100_000_000)
+
+        let firstTask = Task {
+            await gate.acquire(
+                requestID: "req-forming-1",
+                cohortID: "swift-text|forming",
+                maxBatchSize: 2
+            )
+        }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+
+        let snapshotBeforeSecond = await gate.snapshot()
+        #expect(snapshotBeforeSecond.activeRequestIDs.isEmpty)
+        #expect(snapshotBeforeSecond.queuedRequestIDs == ["req-forming-1"])
+        #expect(await gate.nextQueuePosition(cohortID: "swift-text|forming", maxBatchSize: 2) == 2)
+
+        let secondTask = Task {
+            await gate.acquire(
+                requestID: "req-forming-2",
+                cohortID: "swift-text|forming",
+                maxBatchSize: 2
+            )
+        }
+
+        let first = await firstTask.value
+        let second = await secondTask.value
+        let snapshotAfterRelease = await gate.snapshot()
+
+        #expect(first.outcome == .admitted)
+        #expect(first.batchPosition == 1)
+        #expect(first.batchSize == 2)
+        #expect(first.batchCapacity == 2)
+        #expect(first.mergedIntoBatch == false)
+        #expect(second.outcome == .admitted)
+        #expect(second.batchPosition == 2)
+        #expect(second.batchSize == 2)
+        #expect(second.batchCapacity == 2)
+        #expect(second.mergedIntoBatch)
+        #expect(snapshotAfterRelease.activeRequestIDs == ["req-forming-1", "req-forming-2"])
+    }
+
+    @Test("admission gate honors narrower queued capacity during cohort formation")
+    func admissionGateHonorsNarrowerQueuedCapacityDuringCohortFormation() async {
+        let gate = AdmissionGate(batchFormationWindowNanos: 100_000_000)
+
+        let firstTask = Task {
+            await gate.acquire(
+                requestID: "req-forming-wide",
+                cohortID: "swift-text|forming",
+                maxBatchSize: 2
+            )
+        }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+
+        let secondTask = Task {
+            await gate.acquire(
+                requestID: "req-forming-narrow",
+                cohortID: "swift-text|forming",
+                maxBatchSize: 1
+            )
+        }
+
+        let first = await firstTask.value
+        let snapshotAfterFirstAdmission = await gate.snapshot()
+
+        #expect(first.outcome == .admitted)
+        #expect(first.batchPosition == 1)
+        #expect(first.batchSize == 1)
+        #expect(first.batchCapacity == 2)
+        #expect(snapshotAfterFirstAdmission.activeRequestIDs == ["req-forming-wide"])
+        #expect(snapshotAfterFirstAdmission.queuedRequestIDs == ["req-forming-narrow"])
+
+        await gate.release(requestID: "req-forming-wide")
+        let second = await secondTask.value
+        let snapshotAfterSecondAdmission = await gate.snapshot()
+
+        #expect(second.outcome == .admitted)
+        #expect(second.batchPosition == 1)
+        #expect(second.batchSize == 1)
+        #expect(second.batchCapacity == 1)
+        #expect(second.mergedIntoBatch == false)
+        #expect(snapshotAfterSecondAdmission.activeRequestIDs == ["req-forming-narrow"])
+        #expect(snapshotAfterSecondAdmission.queuedRequestIDs.isEmpty)
     }
 
     @Test("dev text model has the expected defaults")

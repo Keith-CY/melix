@@ -292,6 +292,22 @@ def request_optional_json(base_url: str, path: str, *, headers: dict[str, str], 
         return {"ok": False, "status_code": 0, "url": url, "error": f"{type(exc).__name__}: {exc}"}
 
 
+def load_run_evidence(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+
+    evidence_path = path.expanduser()
+    try:
+        payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ValueError(f"--run-evidence does not exist: {evidence_path}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"--run-evidence is not valid JSON: {evidence_path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("--run-evidence must point to a JSON object")
+    return payload
+
+
 def capture_runtime_snapshots(
     endpoints: list[base.EndpointConfig],
     *,
@@ -375,6 +391,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, Any]:
         warmup_requests=args.warmup_requests,
         operator_note=args.measurement_profile_note,
     )
+    run_evidence = load_run_evidence(args.run_evidence)
 
     if args.dry_run:
         preflight = [
@@ -493,6 +510,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, Any]:
         dry_run=args.dry_run,
         target_endpoint=args.target_endpoint,
         measurement_profile=measurement_profile,
+        run_evidence=run_evidence,
     )
     exported_to = None if args.no_export else export_bundle(staging_dir, args.export_dir)
     return {
@@ -536,6 +554,7 @@ def write_artifacts(
     dry_run: bool,
     target_endpoint: str,
     measurement_profile: dict[str, Any],
+    run_evidence: dict[str, Any] | None,
 ) -> dict[str, str]:
     staging_dir.mkdir(parents=True, exist_ok=True)
     generated_at = datetime.now(timezone.utc).isoformat()
@@ -554,6 +573,8 @@ def write_artifacts(
         paths["warmups"] = staging_dir / "warmups.jsonl"
     if metrics_snapshot is not None:
         paths["melix_metrics"] = staging_dir / "melix-metrics.json"
+    if run_evidence is not None:
+        paths["run_evidence"] = staging_dir / "run-evidence.json"
 
     manifest = {
         "schema_version": REPORT_SCHEMA_VERSION,
@@ -581,6 +602,7 @@ def write_artifacts(
         "peer_delta_row_count": len(peer_delta_rows),
         "threshold_status": threshold_status,
         "preflight": preflight,
+        "run_evidence": run_evidence,
         "artifacts": {key: path.name for key, path in paths.items()},
     }
     paths["manifest"].write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -591,6 +613,11 @@ def write_artifacts(
     if metrics_snapshot is not None:
         paths["melix_metrics"].write_text(
             json.dumps(metrics_snapshot, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    if run_evidence is not None:
+        paths["run_evidence"].write_text(
+            json.dumps(run_evidence, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
     if warmups:
@@ -627,6 +654,7 @@ def write_artifacts(
         "peer_delta_rows": peer_delta_rows,
         "threshold_status": threshold_status,
         "optimization_hints": hints,
+        "run_evidence": run_evidence,
     }
     paths["summary_json"].write_text(
         json.dumps(summary_payload, indent=2, sort_keys=True) + "\n",
@@ -649,6 +677,7 @@ def write_artifacts(
             dry_run=dry_run,
             target_endpoint=target_endpoint,
             measurement_profile=measurement_profile,
+            run_evidence=run_evidence,
         ),
         encoding="utf-8",
     )
@@ -671,6 +700,7 @@ def render_markdown_summary(
     dry_run: bool,
     target_endpoint: str,
     measurement_profile: dict[str, Any],
+    run_evidence: dict[str, Any] | None = None,
 ) -> str:
     lines = ["# Three-Way Gemma 4 31B 128K Serving Comparison", ""]
     lines.append(f"- Dry run: `{str(dry_run).lower()}`")
@@ -680,7 +710,35 @@ def render_markdown_summary(
         lines.append(f"- Measurement note: {measurement_profile['operator_note']}")
     if threshold_status is not None:
         lines.append(f"- Threshold status: `{threshold_status.get('status', 'unknown')}`")
+    if run_evidence is not None:
+        lines.append("- Run evidence artifact: `run-evidence.json`")
     lines.append("")
+    if run_evidence is not None:
+        lines.append("## Run Evidence")
+        lines.append("")
+        lines.append("| Field | Value |")
+        lines.append("|---|---|")
+        for key in (
+            "build_mode",
+            "melix_git_head",
+            "melix_worker_binary",
+            "melix_worker_sha256",
+            "melix_control_binary",
+            "melix_control_sha256",
+            "swiftlm_git_head",
+            "swiftlm_binary",
+            "swiftlm_sha256",
+            "omlx_git_head",
+            "omlx_binary",
+            "omlx_sha256",
+            "model_id",
+            "model_snapshot",
+            "measurement_profile",
+            "ports",
+        ):
+            if key in run_evidence:
+                lines.append(f"| `{key}` | {_format_run_evidence_markdown_value(run_evidence[key])} |")
+        lines.append("")
     lines.append("## Preflight")
     lines.append("")
     lines.append("| Endpoint | Status | Model | Model Listed | Model Count |")
@@ -803,10 +861,33 @@ def render_markdown_summary(
                 "control_plane.text_first_load_estimated_resident_bytes",
                 "control_plane.text_first_load_resident_bytes",
                 "swift_text.decode_batch_size",
+                "swift_text.decode_batch_size_max",
                 "swift_text.model_eval_batch_size",
+                "swift_text.model_eval_batch_size_max",
                 "swift_text.per_batch_output_token_count",
                 "swift_text.per_batch_output_tokens_per_second",
                 "swift_text.decode_batch_observation_count",
+                "swift_text.decode_batch_loop_total_us",
+                "swift_text.decode_batch_model_total_us",
+                "swift_text.decode_batch_model_call_count",
+                "swift_text.decode_batch_model_avg_us",
+                "swift_text.decode_batch_model_eval_sync_total_us",
+                "swift_text.decode_batch_model_eval_sync_call_count",
+                "swift_text.decode_batch_model_eval_sync_avg_us",
+                "swift_text.decode_batch_model_eval_sync_first_us",
+                "swift_text.decode_batch_model_eval_sync_max_us",
+                "swift_text.decode_batch_sample_total_us",
+                "swift_text.decode_batch_sample_call_count",
+                "swift_text.decode_batch_sample_avg_us",
+                "swift_text.decode_batch_token_id_total_us",
+                "swift_text.decode_batch_token_id_call_count",
+                "swift_text.decode_batch_token_id_avg_us",
+                "swift_text.decode_batch_detokenize_total_us",
+                "swift_text.decode_batch_detokenize_call_count",
+                "swift_text.decode_batch_detokenize_avg_us",
+                "swift_text.decode_batch_stream_yield_total_us",
+                "swift_text.decode_batch_stream_yield_call_count",
+                "swift_text.decode_batch_stream_yield_avg_us",
                 "swift_text.prefill_ms",
                 "swift_text.prefill_prompt_tokens",
                 "swift_text.decode_ttft_ms",
@@ -836,6 +917,14 @@ def render_markdown_summary(
         lines.append("No target endpoint bottleneck hints were generated.")
     lines.append("")
     return "\n".join(lines)
+
+
+def _format_run_evidence_markdown_value(value: Any) -> str:
+    if isinstance(value, (dict, list)):
+        rendered = json.dumps(value, sort_keys=True)
+    else:
+        rendered = str(value)
+    return "`" + rendered.replace("|", "\\|") + "`"
 
 
 def export_bundle(staging_dir: Path, export_dir: Path | None) -> Path | None:
@@ -919,6 +1008,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--measurement-profile-note",
         default="",
         help="Optional note describing how endpoint residency was prepared before measurement.",
+    )
+    parser.add_argument(
+        "--run-evidence",
+        type=Path,
+        default=None,
+        help="Optional JSON object copied into the staging bundle as run-evidence.json.",
     )
     parser.add_argument("--allow-failed-preflight", action="store_true")
     parser.add_argument("--preflight-only", action="store_true")
