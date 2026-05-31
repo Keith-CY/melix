@@ -9,6 +9,7 @@ import pytest
 
 from worker.productization import closure_audit as closure_audit_module
 from worker.productization.closure_audit import (
+    ClosureAuditFinding,
     build_closure_audit,
     render_closure_audit_json,
 )
@@ -37,6 +38,55 @@ def test_build_closure_audit_classifies_accepted_risk_and_deferred_work(
     emitted = render_closure_audit_json(report)
     assert emitted == render_closure_audit_json(report)
     assert json.loads(emitted) == payload
+
+
+def test_finding_metrics_and_unresolved_summaries_share_single_pass() -> None:
+    findings = (
+        ClosureAuditFinding(
+            finding_id="blocker",
+            severity="blocker",
+            category="milestone_status",
+            summary="Blocker summary",
+            evidence_sources=("progress.md",),
+            probe_coverage=(),
+        ),
+        ClosureAuditFinding(
+            finding_id="risk",
+            severity="accepted_risk",
+            category="scope_constraint",
+            summary="Risk summary",
+            evidence_sources=("docs/scope.md",),
+            probe_coverage=(),
+        ),
+        ClosureAuditFinding(
+            finding_id="gap",
+            severity="evidence_gap",
+            category="runbook",
+            summary="Gap summary",
+            evidence_sources=("docs/runbooks/missing.md",),
+            probe_coverage=(),
+        ),
+        ClosureAuditFinding(
+            finding_id="deferred",
+            severity="deferred_work",
+            category="release_gate_followup",
+            summary="Deferred summary",
+            evidence_sources=("docs/plans/index.md",),
+            probe_coverage=(),
+        ),
+    )
+
+    metrics, unresolved = closure_audit_module._finding_metrics_and_unresolved_summaries(
+        findings
+    )
+
+    assert metrics == {
+        "closure_audit.blocker_count": 1.0,
+        "closure_audit.accepted_risk_count": 1.0,
+        "closure_audit.evidence_gap_count": 1.0,
+        "closure_audit.deferred_work_count": 1.0,
+    }
+    assert unresolved == ["Blocker summary", "Gap summary", "Deferred summary"]
 
 
 def test_build_closure_audit_reports_evidence_gap_for_missing_runbook_and_probe(
