@@ -671,7 +671,9 @@ def _direct_card_size_hint_from_text(text: str) -> int:
 
 
 def _strip_model_size_label(text: str) -> str:
-    if len(text) < 10 or text[:10].lower() != "model size":
+    if text.startswith("Model size: "):
+        return text[12:]
+    if not _starts_with_model_size_label(text):
         return ""
     cursor = 10
     text_length = len(text)
@@ -682,6 +684,22 @@ def _strip_model_size_label(text: str) -> str:
     while cursor < text_length and text[cursor].isspace():
         cursor += 1
     return text[cursor:]
+
+
+def _starts_with_model_size_label(text: str) -> bool:
+    return (
+        len(text) >= 10
+        and (text[0] == "m" or text[0] == "M")
+        and (text[1] == "o" or text[1] == "O")
+        and (text[2] == "d" or text[2] == "D")
+        and (text[3] == "e" or text[3] == "E")
+        and (text[4] == "l" or text[4] == "L")
+        and text[5] == " "
+        and (text[6] == "s" or text[6] == "S")
+        and (text[7] == "i" or text[7] == "I")
+        and (text[8] == "z" or text[8] == "Z")
+        and (text[9] == "e" or text[9] == "E")
+    )
 
 
 def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:

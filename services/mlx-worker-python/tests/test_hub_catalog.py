@@ -181,6 +181,13 @@ def test_direct_size_hint_rejects_extra_tokens_without_full_split() -> None:
     assert _direct_size_hint_from_text("12 GB") == 12 * 1024 * 1024 * 1024
 
 
+def test_direct_card_size_hint_preserves_case_insensitive_label_prefix() -> None:
+    assert hub_catalog_module._direct_card_size_hint_from_text("Model size: 12 MB") == 12 * MB
+    assert hub_catalog_module._direct_card_size_hint_from_text("MODEL SIZE | 7 kb") == 7 * KB
+    assert hub_catalog_module._direct_card_size_hint_from_text("model size 2 GB") == 2 * GB
+    assert hub_catalog_module._direct_card_size_hint_from_text("model-size: 2 GB") == 0
+
+
 def test_search_models_with_mlx_only_prefilters_payloads_before_local_fit(monkeypatch: pytest.MonkeyPatch) -> None:
     payload = [
         {
