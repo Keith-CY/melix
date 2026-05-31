@@ -2247,11 +2247,8 @@ def _dirty_sample_reasons(sample: dict[str, Any], *, format_name: str = "") -> l
         if _agentic_trace_leakage_terms(sample):
             reasons.append("leakage_terms")
 
-    unique_reasons: list[str] = []
-    for reason in reasons:
-        if reason not in unique_reasons:
-            unique_reasons.append(reason)
-    return unique_reasons
+    # dict.fromkeys deduplicates while preserving first-seen order in O(n).
+    return list(dict.fromkeys(reasons))
 
 
 def _prompt_completion_dirty_sample_reasons(sample: dict[str, Any]) -> list[str]:

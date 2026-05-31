@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from typing import Any
 
 from worker.model_registry.catalog import WorkerModelCatalog
@@ -352,18 +353,27 @@ def build_family_support_matrix() -> dict[str, Any]:
             }
         )
 
-    live_verified_count = sum(1 for row in families if row["live_path"]["status"] == "verified")
+    live_verified_count = 0
+    # Count capabilities in a single pass instead of seven separate sum() scans.
+    # The summary below still emits a fixed set of *_family_count keys, so a new
+    # capability would also need a key added there; Counter just supplies a 0
+    # default for any of those keys that has no matching rows.
+    capability_counts: Counter[str] = Counter()
+    for row in families:
+        if row["live_path"]["status"] == "verified":
+            live_verified_count += 1
+        capability_counts[row["capability"]] += 1
     contract_only_count = len(families) - live_verified_count
 
     return {
         "summary": {
             "family_count": len(families),
-            "text_family_count": sum(1 for row in families if row["capability"] == "text"),
-            "transcription_family_count": sum(1 for row in families if row["capability"] == "transcription"),
-            "speech_family_count": sum(1 for row in families if row["capability"] == "speech"),
-            "embedding_family_count": sum(1 for row in families if row["capability"] == "embedding"),
-            "rerank_family_count": sum(1 for row in families if row["capability"] == "rerank"),
-            "image_family_count": sum(1 for row in families if row["capability"] == "image"),
+            "text_family_count": capability_counts["text"],
+            "transcription_family_count": capability_counts["transcription"],
+            "speech_family_count": capability_counts["speech"],
+            "embedding_family_count": capability_counts["embedding"],
+            "rerank_family_count": capability_counts["rerank"],
+            "image_family_count": capability_counts["image"],
             "live_verified_count": live_verified_count,
             "contract_only_count": contract_only_count,
         },

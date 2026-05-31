@@ -2246,11 +2246,18 @@ public struct ControlPlaneBenchmarkExportBundle: Codable, Equatable, Sendable {
         results: [ControlPlaneBenchmarkResultRecord]
     ) -> [String] {
         var suiteIDs = job.suites
-        for suiteID in job.suiteMetadata.keys.sorted() where suiteIDs.contains(suiteID) == false {
-            suiteIDs.append(suiteID)
+        // Track membership in a Set so dedup stays O(1) per check instead of
+        // scanning the growing suiteIDs array on every candidate.
+        var seen = Set(suiteIDs)
+        for suiteID in job.suiteMetadata.keys.sorted() {
+            if seen.insert(suiteID).inserted {
+                suiteIDs.append(suiteID)
+            }
         }
-        for suiteID in results.map(\.suite).sorted() where suiteIDs.contains(suiteID) == false {
-            suiteIDs.append(suiteID)
+        for suiteID in results.map(\.suite).sorted() {
+            if seen.insert(suiteID).inserted {
+                suiteIDs.append(suiteID)
+            }
         }
         return suiteIDs
     }
