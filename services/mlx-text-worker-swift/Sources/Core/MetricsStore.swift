@@ -121,9 +121,32 @@ final class MetricsStore: @unchecked Sendable {
         "swift_text.decode_tokens_per_second": 0,
         "swift_text.decode_stream_event_count": 0,
         "swift_text.decode_batch_size": 0,
+        "swift_text.decode_batch_size_max": 0,
         "swift_text.model_eval_batch_size": 0,
+        "swift_text.model_eval_batch_size_max": 0,
         "swift_text.decode_loop_iterations": 0,
         "swift_text.decode_batch_observation_count": 0,
+        "swift_text.decode_batch_loop_total_us": 0,
+        "swift_text.decode_batch_model_total_us": 0,
+        "swift_text.decode_batch_model_call_count": 0,
+        "swift_text.decode_batch_model_avg_us": 0,
+        "swift_text.decode_batch_model_eval_sync_total_us": 0,
+        "swift_text.decode_batch_model_eval_sync_call_count": 0,
+        "swift_text.decode_batch_model_eval_sync_avg_us": 0,
+        "swift_text.decode_batch_model_eval_sync_first_us": 0,
+        "swift_text.decode_batch_model_eval_sync_max_us": 0,
+        "swift_text.decode_batch_sample_total_us": 0,
+        "swift_text.decode_batch_sample_call_count": 0,
+        "swift_text.decode_batch_sample_avg_us": 0,
+        "swift_text.decode_batch_token_id_total_us": 0,
+        "swift_text.decode_batch_token_id_call_count": 0,
+        "swift_text.decode_batch_token_id_avg_us": 0,
+        "swift_text.decode_batch_detokenize_total_us": 0,
+        "swift_text.decode_batch_detokenize_call_count": 0,
+        "swift_text.decode_batch_detokenize_avg_us": 0,
+        "swift_text.decode_batch_stream_yield_total_us": 0,
+        "swift_text.decode_batch_stream_yield_call_count": 0,
+        "swift_text.decode_batch_stream_yield_avg_us": 0,
         "swift_text.per_batch_output_token_count": 0,
         "swift_text.per_batch_output_tokens_per_second": 0,
         "swift_text.speculative_acceptance_rate": 0,
@@ -146,6 +169,8 @@ final class MetricsStore: @unchecked Sendable {
         "swift_text.stream_event_count": 0,
         "swift_text.memory_enforcement_disabled": 0,
         "swift_text.cache_initial_block_target": 0,
+        "swift_text.decode_batch_pending_window_ms": 0,
+        "swift_text.decode_batch_cohort_pending_window_ms": 0,
         "swift_text.peak_resident_bytes": 0,
         "swift_text.loaded_model_count": 0,
         "swift_text.rpc_error_count": 0,
@@ -177,6 +202,14 @@ final class MetricsStore: @unchecked Sendable {
     func set(_ key: String, value: Int) {
         lock.lock()
         storage[key] = value
+        let snapshot = storage
+        lock.unlock()
+        writeExportIfNeeded(snapshot)
+    }
+
+    func setMax(_ key: String, value: Int) {
+        lock.lock()
+        storage[key] = max(storage[key, default: 0], value)
         let snapshot = storage
         lock.unlock()
         writeExportIfNeeded(snapshot)

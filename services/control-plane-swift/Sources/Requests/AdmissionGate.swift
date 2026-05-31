@@ -26,23 +26,35 @@ public struct AdmissionGrant: Equatable, Sendable {
 }
 
 public actor AdmissionGate {
+    public static let defaultBatchFormationWindowNanos: UInt64 = 20_000_000
+
     private struct QueueEntry: Sendable {
         let requestID: String
         let cohortID: String
         let maxBatchSize: UInt32
     }
 
+    private struct FrontBatch: Sendable {
+        let entries: [QueueEntry]
+        let capacity: UInt32
+    }
+
+    private let batchFormationWindowNanos: UInt64
     private var activeRequestIDs: [String]
     private var activeCohortID: String?
     private var activeBatchCapacity: UInt32
     private var queuedEntries: [QueueEntry]
     private var waiters: [String: CheckedContinuation<AdmissionGrant, Never>]
+    private var pendingFormationID: UInt64?
+    private var nextFormationID: UInt64
 
-    public init() {
+    public init(batchFormationWindowNanos: UInt64 = AdmissionGate.defaultBatchFormationWindowNanos) {
+        self.batchFormationWindowNanos = batchFormationWindowNanos
         self.activeRequestIDs = []
         self.activeBatchCapacity = 1
         self.queuedEntries = []
         self.waiters = [:]
+        self.nextFormationID = 1
     }
 
     public func nextQueuePosition(
@@ -50,7 +62,7 @@ public actor AdmissionGate {
         maxBatchSize: UInt32 = 1
     ) -> UInt32 {
         if activeRequestIDs.isEmpty {
-            return 1
+            return UInt32(queuedEntries.count + 1)
         }
         if canJoinActiveBatch(cohortID: cohortID, maxBatchSize: maxBatchSize) {
             return 1
@@ -63,8 +75,27 @@ public actor AdmissionGate {
         cohortID: String = "",
         maxBatchSize: UInt32 = 1
     ) async -> AdmissionGrant {
+        let normalizedCapacity = normalizedBatchCapacity(maxBatchSize)
+        if activeRequestIDs.isEmpty,
+           !queuedEntries.isEmpty {
+            return await enqueueQueuedRequest(
+                requestID: requestID,
+                cohortID: cohortID,
+                maxBatchSize: normalizedCapacity
+            )
+        }
+
         if activeRequestIDs.isEmpty {
-            let normalizedCapacity = normalizedBatchCapacity(maxBatchSize)
+            if shouldFormBatchBeforeAdmission(
+                cohortID: cohortID,
+                maxBatchSize: normalizedCapacity
+            ) {
+                return await enqueueQueuedRequest(
+                    requestID: requestID,
+                    cohortID: cohortID,
+                    maxBatchSize: normalizedCapacity
+                )
+            }
             activeRequestIDs = [requestID]
             activeCohortID = cohortID
             activeBatchCapacity = normalizedCapacity
@@ -118,6 +149,11 @@ public actor AdmissionGate {
         if let index = queuedEntries.firstIndex(where: { $0.requestID == requestID }) {
             queuedEntries.remove(at: index)
             waiters.removeValue(forKey: requestID)?.resume(returning: AdmissionGrant(outcome: .cancelled))
+            if queuedEntries.isEmpty {
+                pendingFormationID = nil
+            } else if activeRequestIDs.isEmpty, index == 0 {
+                scheduleFormationFlushIfNeeded()
+            }
         }
     }
 
@@ -140,25 +176,17 @@ public actor AdmissionGate {
             return
         }
 
-        while let next = queuedEntries.first {
-            queuedEntries.removeFirst()
-            guard waiters[next.requestID] != nil else {
+        while let frontBatch = frontCompatibleBatch() {
+            queuedEntries.removeFirst(frontBatch.entries.count)
+            let admittedBatch = frontBatch.entries.filter { waiters[$0.requestID] != nil }
+            guard !admittedBatch.isEmpty else {
                 continue
             }
 
-            let cohortID = next.cohortID
-            let batchCapacity = next.maxBatchSize
-            var admittedBatch: [QueueEntry] = [next]
-            while admittedBatch.count < Int(batchCapacity),
-                  let queued = queuedEntries.first,
-                  queued.cohortID == cohortID {
-                queuedEntries.removeFirst()
-                admittedBatch.append(queued)
-            }
-
             activeRequestIDs = admittedBatch.map(\.requestID)
-            activeCohortID = cohortID
-            activeBatchCapacity = batchCapacity
+            activeCohortID = admittedBatch.first?.cohortID
+            activeBatchCapacity = frontBatch.capacity
+            pendingFormationID = nil
 
             for (index, entry) in admittedBatch.enumerated() {
                 guard let waiter = waiters.removeValue(forKey: entry.requestID) else {
@@ -169,13 +197,110 @@ public actor AdmissionGate {
                         outcome: .admitted,
                         batchPosition: UInt32(index + 1),
                         batchSize: UInt32(admittedBatch.count),
-                        batchCapacity: batchCapacity,
+                        batchCapacity: frontBatch.capacity,
                         mergedIntoBatch: index > 0
                     )
                 )
             }
             break
         }
+    }
+
+    private func enqueueQueuedRequest(
+        requestID: String,
+        cohortID: String,
+        maxBatchSize: UInt32
+    ) async -> AdmissionGrant {
+        await withCheckedContinuation { continuation in
+            if !queuedEntries.contains(where: { $0.requestID == requestID }) {
+                queuedEntries.append(
+                    QueueEntry(
+                        requestID: requestID,
+                        cohortID: cohortID,
+                        maxBatchSize: maxBatchSize
+                    )
+                )
+            }
+            waiters[requestID] = continuation
+
+            if queuedFrontCohortIsFull() {
+                admitNextIfPossible()
+            } else {
+                scheduleFormationFlushIfNeeded()
+            }
+        }
+    }
+
+    private func shouldFormBatchBeforeAdmission(
+        cohortID: String,
+        maxBatchSize: UInt32
+    ) -> Bool {
+        batchFormationWindowNanos > 0
+            && maxBatchSize > 1
+            && !cohortID.isEmpty
+    }
+
+    private func queuedFrontCohortIsFull() -> Bool {
+        guard let frontBatch = frontCompatibleBatch() else {
+            return false
+        }
+        if UInt32(frontBatch.entries.count) >= frontBatch.capacity {
+            return true
+        }
+        return queuedEntries.count > frontBatch.entries.count
+    }
+
+    private func frontCompatibleBatch() -> FrontBatch? {
+        guard let first = queuedEntries.first else {
+            return nil
+        }
+
+        var entries = [first]
+        var capacity = first.maxBatchSize
+        for entry in queuedEntries.dropFirst() {
+            guard entry.cohortID == first.cohortID else {
+                break
+            }
+            let nextCapacity = min(capacity, entry.maxBatchSize)
+            guard entries.count + 1 <= Int(nextCapacity) else {
+                break
+            }
+            entries.append(entry)
+            capacity = nextCapacity
+            if entries.count >= Int(capacity) {
+                break
+            }
+        }
+
+        return FrontBatch(entries: entries, capacity: capacity)
+    }
+
+    private func scheduleFormationFlushIfNeeded() {
+        guard pendingFormationID == nil,
+              let first = queuedEntries.first,
+              shouldFormBatchBeforeAdmission(
+                  cohortID: first.cohortID,
+                  maxBatchSize: first.maxBatchSize
+              )
+        else {
+            return
+        }
+
+        let formationID = nextFormationID
+        nextFormationID &+= 1
+        pendingFormationID = formationID
+        let windowNanos = batchFormationWindowNanos
+        Task {
+            try? await Task.sleep(nanoseconds: windowNanos)
+            self.flushFormationIfCurrent(formationID)
+        }
+    }
+
+    private func flushFormationIfCurrent(_ formationID: UInt64) {
+        guard pendingFormationID == formationID else {
+            return
+        }
+        admitNextIfPossible()
     }
 
     private func normalizedBatchCapacity(_ capacity: UInt32) -> UInt32 {

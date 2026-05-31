@@ -2641,15 +2641,14 @@ struct RequestCoordinatorTests {
             "melix.gateway.completion_batch_size": "2",
         ]
 
-        let execution1 = try await coordinator.startChatCompletion(
-            makeTranslatedChatRequest(
-                requestID: requestIDs[0],
-                saveBoundarySnapshot: true,
-                executionExt: batchingExt
+        let firstTask = Task {
+            try await coordinator.startChatCompletion(
+                makeTranslatedChatRequest(
+                    requestID: requestIDs[0],
+                    saveBoundarySnapshot: true,
+                    executionExt: batchingExt
+                )
             )
-        )
-        let consumer1 = Task {
-            try await collectRequestCoordinatorEvents(execution1.stream)
         }
         let secondTask = Task {
             try await coordinator.startChatCompletion(
@@ -2665,6 +2664,10 @@ struct RequestCoordinatorTests {
             workerClient: workerClient,
             requestIDs: requestIDs
         )
+        let execution1 = try await firstTask.value
+        let consumer1 = Task {
+            try await collectRequestCoordinatorEvents(execution1.stream)
+        }
         let execution2 = try await secondTask.value
         let consumer2 = Task {
             try await collectRequestCoordinatorEvents(execution2.stream)
@@ -2757,9 +2760,15 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["scheduler.continuous_batch_active_cohorts"] == 1)
         #expect(metrics.values["scheduler.admission_cohort_size"] == 2)
         #expect(metrics.values["scheduler.admission_active_cohorts"] == 1)
-        #expect(prefillRequests.map(\.requestID) == requestIDs)
-        #expect(decodeRequests.map(\.requestID) == requestIDs)
-        #expect(decodeRequests.map(\.decodeHandle) == requestIDs.map { "decode-\($0)" })
+        #expect(Set(prefillRequests.map(\.requestID)) == Set(requestIDs))
+        #expect(Set(decodeRequests.map(\.requestID)) == Set(requestIDs))
+        #expect(Set(decodeRequests.map(\.decodeHandle)) == Set(requestIDs.map { "decode-\($0)" }))
+        let decodeRequestsByID = Dictionary(uniqueKeysWithValues: decodeRequests.map { ($0.requestID, $0) })
+        #expect(decodeRequestsByID[requestIDs[0]]?.admissionCohortSize == "2")
+        #expect(decodeRequestsByID[requestIDs[1]]?.admissionCohortSize == "2")
+        #expect(decodeRequestsByID[requestIDs[0]]?.admissionBatchCapacity == "2")
+        #expect(decodeRequestsByID[requestIDs[1]]?.admissionBatchCapacity == "2")
+        #expect(Set(decodeRequests.compactMap(\.admissionBatchPosition)) == Set(["1", "2"]))
         #expect(payload["request_links"] != nil)
 
         if ProcessInfo.processInfo.environment["MELIX_SAME_COHORT_BATCHING_PROBE"] == "1" {
@@ -4823,7 +4832,10 @@ private actor PhaseAwareWorkerClient:
                 lane: $0.execution.scheduling.lane,
                 modelHandle: $0.execution.modelHandle,
                 decodeHandle: $0.decodeHandle,
-                maxOutputTokens: $0.maxOutputTokens
+                maxOutputTokens: $0.maxOutputTokens,
+                admissionCohortSize: $0.execution.ext["melix.scheduler.admission_cohort_size"],
+                admissionBatchCapacity: $0.execution.ext["melix.scheduler.admission_batch_capacity"],
+                admissionBatchPosition: $0.execution.ext["melix.scheduler.admission_batch_position"]
             )
         }
     }
@@ -4873,6 +4885,9 @@ private struct WorkerDecodeRequestObservation: Sendable {
     let modelHandle: String
     let decodeHandle: String
     let maxOutputTokens: UInt32
+    let admissionCohortSize: String?
+    let admissionBatchCapacity: String?
+    let admissionBatchPosition: String?
 }
 
 private actor FailingGenerateWorkerClient: WorkerRoutingClient {

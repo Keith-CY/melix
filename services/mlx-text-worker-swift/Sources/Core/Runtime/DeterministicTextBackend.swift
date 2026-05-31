@@ -274,6 +274,23 @@ struct DeterministicTextBackend: TextRuntimeBackend {
                 let batchTokensPerSecond = totalCompletionTokens > 0
                     ? Double(totalCompletionTokens) / elapsedSeconds
                     : 0
+                let loopMicros = max(
+                    1,
+                    Int((elapsedSeconds * 1_000_000).rounded())
+                )
+                let batchProbe = DecodeBatchProbeSummary(
+                    decodeLoopTotalMicros: loopMicros,
+                    decodeModelTotalMicros: max(1, decodeLoopIterations),
+                    decodeModelCallCount: decodeLoopIterations,
+                    decodeSampleTotalMicros: max(1, totalCompletionTokens),
+                    decodeSampleCallCount: totalCompletionTokens,
+                    decodeTokenIDTotalMicros: max(1, totalCompletionTokens),
+                    decodeTokenIDCallCount: totalCompletionTokens,
+                    decodeDetokenizeTotalMicros: max(1, totalCompletionTokens),
+                    decodeDetokenizeCallCount: totalCompletionTokens,
+                    decodeStreamYieldTotalMicros: max(1, totalCompletionTokens),
+                    decodeStreamYieldCallCount: totalCompletionTokens
+                )
 
                 for index in prepared.indices {
                     let emitted = emittedByRequest[index]
@@ -292,7 +309,8 @@ struct DeterministicTextBackend: TextRuntimeBackend {
                             perBatchOutputTokenCount: totalCompletionTokens,
                             perBatchOutputTokensPerSecond: batchTokensPerSecond,
                             speculativeAcceptedTokens: speculativeAccepted,
-                            speculativeRejectedTokens: speculativeRejected
+                            speculativeRejectedTokens: speculativeRejected,
+                            decodeBatchProbe: batchProbe
                         )
                     ))
                 }

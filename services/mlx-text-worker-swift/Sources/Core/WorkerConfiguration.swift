@@ -2,6 +2,8 @@ import Foundation
 
 package struct WorkerConfiguration: Sendable, Equatable {
     private static let runtimeCacheFingerprintSchemaVersion = "cache-v1"
+    static let defaultDecodeBatchPendingWindowNanos: UInt64 = 2_000_000
+    static let defaultDecodeBatchCohortPendingWindowNanos: UInt64 = 2_000_000_000
 
     var workerID: String
     var socketPath: String
@@ -16,6 +18,8 @@ package struct WorkerConfiguration: Sendable, Equatable {
     var prefillMemoryHeadroomBytes: UInt64
     var prefillQuadraticGuardTokenThreshold: UInt32
     var initialCacheBlocks: UInt32
+    var decodeBatchPendingWindowNanos: UInt64
+    var decodeBatchCohortPendingWindowNanos: UInt64
     var turboQuantCandidateProbeEnabled: Bool
 
     init(
@@ -32,6 +36,8 @@ package struct WorkerConfiguration: Sendable, Equatable {
         prefillMemoryHeadroomBytes: UInt64 = 0,
         prefillQuadraticGuardTokenThreshold: UInt32 = 0,
         initialCacheBlocks: UInt32 = 0,
+        decodeBatchPendingWindowNanos: UInt64 = WorkerConfiguration.defaultDecodeBatchPendingWindowNanos,
+        decodeBatchCohortPendingWindowNanos: UInt64 = WorkerConfiguration.defaultDecodeBatchCohortPendingWindowNanos,
         turboQuantCandidateProbeEnabled: Bool = false
     ) {
         self.workerID = workerID
@@ -50,6 +56,8 @@ package struct WorkerConfiguration: Sendable, Equatable {
         self.prefillMemoryHeadroomBytes = prefillMemoryHeadroomBytes
         self.prefillQuadraticGuardTokenThreshold = prefillQuadraticGuardTokenThreshold
         self.initialCacheBlocks = initialCacheBlocks
+        self.decodeBatchPendingWindowNanos = decodeBatchPendingWindowNanos
+        self.decodeBatchCohortPendingWindowNanos = decodeBatchCohortPendingWindowNanos
         self.turboQuantCandidateProbeEnabled = turboQuantCandidateProbeEnabled
     }
 
@@ -87,6 +95,15 @@ package struct WorkerConfiguration: Sendable, Equatable {
             ),
             initialCacheBlocks: positiveUInt32(
                 from: environment["MELIX_SWIFT_TEXT_WORKER_INITIAL_CACHE_BLOCKS"]
+            ),
+            decodeBatchPendingWindowNanos: millisecondsToNanoseconds(
+                from: environment["MELIX_SWIFT_TEXT_WORKER_DECODE_BATCH_PENDING_WINDOW_MS"],
+                fallback: defaultDecodeBatchPendingWindowNanos
+            ),
+            decodeBatchCohortPendingWindowNanos: millisecondsToNanoseconds(
+                from: environment["MELIX_SWIFT_TEXT_WORKER_DECODE_BATCH_COHORT_PENDING_WINDOW_MS"],
+                fallback: defaultDecodeBatchCohortPendingWindowNanos,
+                maxMilliseconds: 10_000
             ),
             turboQuantCandidateProbeEnabled: truthyBool(
                 from: environment["MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE"]
@@ -133,6 +150,18 @@ package struct WorkerConfiguration: Sendable, Equatable {
             return 0
         }
         return parsed
+    }
+
+    private static func millisecondsToNanoseconds(
+        from rawValue: String?,
+        fallback: UInt64,
+        maxMilliseconds: UInt64 = 1_000
+    ) -> UInt64 {
+        guard let rawValue, let parsed = UInt64(rawValue), parsed > 0 else {
+            return fallback
+        }
+        let clamped = min(parsed, maxMilliseconds)
+        return clamped * 1_000_000
     }
 
     private static func positiveUInt32(from rawValue: String?) -> UInt32 {

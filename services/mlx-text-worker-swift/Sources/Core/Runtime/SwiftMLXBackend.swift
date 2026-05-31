@@ -50,6 +50,14 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
     let runtimeName: String
     let turboQuantCandidateProbeEnabled: Bool
 
+    var supportsHomogeneousBatchDecode: Bool {
+        #if canImport(MLXLMCommon)
+        true
+        #else
+        false
+        #endif
+    }
+
     private let directLoader: (@Sendable (String) async throws -> LoadedTextModel)?
     private let directoryLoader: @Sendable (URL) async throws -> LoadedTextModel
     private let identifierLoader: @Sendable (String, String) async throws -> LoadedTextModel
@@ -275,55 +283,6 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
         }
     }
 
-    var supportsHomogeneousBatchDecode: Bool {
-        #if canImport(MLXLMCommon)
-        return true
-        #else
-        return false
-        #endif
-    }
-
-    func decodeBatchEvents(
-        requests: [TextRuntimeDecodeRequest]
-    ) async throws -> AsyncThrowingStream<TextBatchGenerationEvent, Error> {
-        #if canImport(MLXLMCommon)
-        guard !requests.isEmpty else {
-            throw RuntimeUnavailableError(message: "Batch decode requires at least one request.")
-        }
-        guard let container = requests[0].model.storage as? ModelContainer else {
-            throw RuntimeUnavailableError(
-                message: "Batch decode requires a Swift MLX model container.")
-        }
-        var decodeStates: [PreparedDecodeState] = []
-        for request in requests {
-            guard let state = request.context.storage as? PreparedDecodeState,
-                  state.cache.allSatisfy({ $0 is KVCacheSimple }) else {
-                throw RuntimeUnavailableError(
-                    message: "Batch decode requires KVCacheSimple caches for all sessions.")
-            }
-            decodeStates.append(state)
-        }
-        let batchedCaches = buildBatchedKVCaches(from: decodeStates)
-        guard !batchedCaches.isEmpty else {
-            throw RuntimeUnavailableError(
-                message: "Batch decode: failed to build KV caches — empty or mismatched cache state.")
-        }
-        return await container.perform(
-            values: (requests, decodeStates, batchedCaches)
-        ) { context, values in
-            let (requests, decodeStates, batchedCaches) = values
-            return makeBatchDecodeStream(
-                context: context,
-                requests: requests,
-                decodeStates: decodeStates,
-                batchedCaches: batchedCaches
-            )
-        }
-        #else
-        throw RuntimeUnavailableError(message: "Batch decode requires MLXLMCommon.")
-        #endif
-    }
-
     func decodeEvents(
         model: LoadedTextModel,
         draftModel: LoadedTextModel? = nil,
@@ -393,6 +352,29 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
                 }
             }
         }
+    }
+
+    func decodeBatchEvents(
+        requests: [TextRuntimeDecodeRequest]
+    ) async throws -> AsyncThrowingStream<TextBatchGenerationEvent, Error> {
+        #if canImport(MLXLMCommon)
+        guard let batchInput = makeSwiftMLXBatchDecodeInput(from: requests) else {
+            return try await makeFallbackDecodeBatchEvents(requests: requests, backend: self)
+        }
+
+        let runtimeStream = try await batchInput.container.perform(values: batchInput) { modelContext, batchInput in
+            try makePreparedBatchDecodeEvents(
+                batchInput: batchInput,
+                context: modelContext
+            )
+        }
+        return runtimeStream
+        #else
+        _ = requests
+        throw RuntimeUnavailableError(
+            message: "MLXLMCommon is not available in this build. Install the Swift MLX runtime dependencies before batch decoding."
+        )
+        #endif
     }
 }
 
@@ -779,6 +761,35 @@ private struct SpeculativeDecodeRuntimeState: @unchecked Sendable {
     let prefillQuantizeMicros: Int
 }
 
+private struct BatchDecodeRequestState: @unchecked Sendable {
+    let request: TextRuntimeDecodeRequest
+    var output: LMOutput
+    var processor: (any LogitProcessor)?
+    let sampler: any LogitSampler
+    var detokenizer: NaiveStreamingDetokenizer
+    var pendingToken: MLXArray?
+    var pendingTokenID: Int?
+    var generatedTokenCount: Int
+    var isFinished: Bool
+}
+
+private struct SwiftMLXBatchDecodeInput: @unchecked Sendable {
+    let container: ModelContainer
+    let requests: [TextRuntimeDecodeRequest]
+    let states: [PreparedDecodeState]
+    let parameters: GenerateParameters
+    let acceleration: Melix_Worker_V1_AccelerationPolicy
+
+    var supportsBatchedArgMaxTokenIDs: Bool {
+        parameters.temperature == 0 && parameters.repetitionPenalty == nil
+    }
+}
+
+private struct BatchDecodeCacheState: @unchecked Sendable {
+    var cache: [KVCache]?
+    var sourceRequestIndices: [Int]
+}
+
 private struct DFlashTargetDecodeState: @unchecked Sendable {
     let state: SpeculativeDecodeRuntimeState
     let logits: MLXArray
@@ -1137,6 +1148,731 @@ private func makePreparedSpeculativeDecodeEvents(
     }
 
     return stream
+}
+
+private func makeSwiftMLXBatchDecodeInput(
+    from requests: [TextRuntimeDecodeRequest]
+) -> SwiftMLXBatchDecodeInput? {
+    guard requests.count > 1,
+          let firstRequest = requests.first,
+          firstRequest.draftModel == nil,
+          normalizedAccelerationPolicy(firstRequest.acceleration).mode == .baseline,
+          let container = firstRequest.model.storage as? ModelContainer,
+          let firstState = firstRequest.context.storage as? PreparedDecodeState,
+          isTextOnlyBatchDecodeState(firstState)
+    else {
+        return nil
+    }
+
+    let parameters = makeDecodeParameters(
+        from: firstRequest.sampling,
+        maxOutputTokens: firstRequest.maxOutputTokens,
+        decodeStepSize: firstRequest.decodeStepSize,
+        acceleration: firstRequest.acceleration
+    )
+    var states = [firstState]
+
+    for request in requests.dropFirst() {
+        guard request.draftModel == nil,
+              normalizedAccelerationPolicy(request.acceleration).mode == .baseline,
+              let requestContainer = request.model.storage as? ModelContainer,
+              requestContainer === container,
+              let state = request.context.storage as? PreparedDecodeState,
+              request.sampling == firstRequest.sampling,
+              request.maxOutputTokens == firstRequest.maxOutputTokens,
+              request.decodeStepSize == firstRequest.decodeStepSize,
+              request.prefillToken == firstRequest.prefillToken,
+              isTextOnlyBatchDecodeState(state),
+              state.activeKVQuantizationRatio == 0
+        else {
+            return nil
+        }
+        states.append(state)
+    }
+
+    guard firstState.activeKVQuantizationRatio == 0,
+          statesCanShareBatchDecodeCacheShape(states)
+    else {
+        return nil
+    }
+
+    return SwiftMLXBatchDecodeInput(
+        container: container,
+        requests: requests,
+        states: states,
+        parameters: parameters,
+        acceleration: firstRequest.acceleration
+    )
+}
+
+private func statesCanShareBatchDecodeCacheShape(_ states: [PreparedDecodeState]) -> Bool {
+    guard states.count > 1,
+          let first = states.first
+    else {
+        return false
+    }
+
+    guard let firstCacheSignature = cacheBatchSignature(first.cache),
+          !firstCacheSignature.isEmpty
+    else {
+        return false
+    }
+
+    return states.dropFirst().allSatisfy { state in
+        state.input.text.tokens.size == first.input.text.tokens.size
+            && cacheBatchSignature(state.cache) == firstCacheSignature
+    }
+}
+
+private func isTextOnlyBatchDecodeState(_ state: PreparedDecodeState) -> Bool {
+    guard state.input.image == nil,
+          state.input.video == nil
+    else {
+        return false
+    }
+    if case .tokens = state.prepared {
+        return true
+    }
+    return false
+}
+
+private func cacheBatchSignature(_ cache: [KVCache]) -> [String]? {
+    var signature: [String] = []
+    for layer in cache {
+        guard layer is KVCacheSimple || layer is RotatingKVCache else {
+            return nil
+        }
+        signature.append(
+            "\(type(of: layer)):\(layer.offset):\(layer.maxSize ?? -1):\(layer.state.map(\.shape)):\(layer.metaState)"
+        )
+    }
+    return signature
+}
+
+private func makeFallbackDecodeBatchEvents(
+    requests: [TextRuntimeDecodeRequest],
+    backend: AutoSwiftMLXBackend
+) async throws -> AsyncThrowingStream<TextBatchGenerationEvent, Error> {
+    let (stream, continuation) = AsyncThrowingStream<TextBatchGenerationEvent, Error>.makeStream()
+    let task = Task {
+        do {
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                for (requestIndex, request) in requests.enumerated() {
+                    group.addTask {
+                        let fallbackStream = try await backend.decodeEvents(
+                            model: request.model,
+                            draftModel: request.draftModel,
+                            context: request.context,
+                            sampling: request.sampling,
+                            maxOutputTokens: request.maxOutputTokens,
+                            decodeStepSize: request.decodeStepSize,
+                            prefillToken: request.prefillToken,
+                            acceleration: request.acceleration,
+                            shouldAbort: request.shouldAbort
+                        )
+                        for try await event in fallbackStream {
+                            switch event {
+                            case .prefillStarted:
+                                continue
+                            case .token(let text):
+                                continuation.yield(.token(requestIndex: requestIndex, text: text))
+                            case .summary(let summary):
+                                continuation.yield(.summary(requestIndex: requestIndex, summary))
+                            }
+                        }
+                    }
+                }
+                try await group.waitForAll()
+            }
+            continuation.finish()
+        } catch {
+            continuation.finish(throwing: error)
+        }
+    }
+
+    continuation.onTermination = { _ in
+        task.cancel()
+    }
+
+    return stream
+}
+
+private func makeInitialBatchDecodeOutputs(
+    batchInput: SwiftMLXBatchDecodeInput,
+    context: ModelContext,
+    cacheState: inout BatchDecodeCacheState,
+    requestCaches: inout [[KVCache]]
+) throws -> [LMOutput] {
+    if let batchCache = cacheState.cache,
+       let tokens = makeInitialBatchDecodeTokens(for: batchInput.states) {
+        let output = context.model(
+            tokens,
+            cache: batchCache,
+            state: nil
+        )
+        eval(output.logits)
+        return batchInput.requests.indices.map { requestIndex in
+            LMOutput(logits: output.logits[requestIndex ..< (requestIndex + 1), 0..., 0...])
+        }
+    }
+
+    cacheState = BatchDecodeCacheState(cache: nil, sourceRequestIndices: [])
+    return try batchInput.states.indices.map { requestIndex in
+        try makeInitialDecodeOutput(
+            decodeState: batchInput.states[requestIndex],
+            context: context,
+            cache: requestCaches[requestIndex]
+        )
+    }
+}
+
+private func makeInitialBatchDecodeTokens(for states: [PreparedDecodeState]) -> LMInput.Text? {
+    var tokenArrays: [MLXArray] = []
+    for state in states {
+        guard case .tokens(let tokens) = state.prepared,
+              tokens.tokens.dim(0) == 1
+        else {
+            return nil
+        }
+        tokenArrays.append(tokens.tokens)
+    }
+    return LMInput.Text(tokens: stacked(tokenArrays, axis: 0))
+}
+
+private func makePreparedBatchDecodeEvents(
+    batchInput: SwiftMLXBatchDecodeInput,
+    context: ModelContext
+) throws -> AsyncThrowingStream<TextBatchGenerationEvent, Error> {
+    let (stream, continuation) = AsyncThrowingStream<TextBatchGenerationEvent, Error>.makeStream()
+
+    let task = Task {
+        do {
+            var requestCaches = batchInput.states.map(\.cache)
+            for index in requestCaches.indices where batchInput.parameters.kvBits != nil {
+                maybeQuantizeKVCache(
+                    cache: &requestCaches[index],
+                    kvBits: batchInput.parameters.kvBits,
+                    kvGroupSize: batchInput.parameters.kvGroupSize,
+                    quantizedKVStart: batchInput.parameters.quantizedKVStart
+                )
+            }
+            var batchCacheState = BatchDecodeCacheState(
+                cache: makeBatchDecodeCache(from: requestCaches),
+                sourceRequestIndices: batchInput.requests.indices.map { $0 }
+            )
+            let initialOutputs = try makeInitialBatchDecodeOutputs(
+                batchInput: batchInput,
+                context: context,
+                cacheState: &batchCacheState,
+                requestCaches: &requestCaches
+            )
+
+            var states: [BatchDecodeRequestState] = batchInput.requests.enumerated().map { requestIndex, request in
+                var processor = batchInput.parameters.processor()
+                processor?.prompt(batchInput.states[requestIndex].input.text.tokens)
+                return BatchDecodeRequestState(
+                    request: request,
+                    output: initialOutputs[requestIndex],
+                    processor: processor,
+                    sampler: batchInput.parameters.sampler(),
+                    detokenizer: NaiveStreamingDetokenizer(tokenizer: context.tokenizer),
+                    pendingToken: nil,
+                    pendingTokenID: nil,
+                    generatedTokenCount: 0,
+                    isFinished: false
+                )
+            }
+
+            let additionalEOSTokenIds = Set(
+                context.configuration.extraEOSTokens.compactMap {
+                    context.tokenizer.convertTokenToId($0)
+                }
+            )
+            var decodeModelTotalMicros = 0
+            var decodeModelCallCount = 0
+            var decodeModelEvalSyncTotalMicros = 0
+            var decodeModelEvalSyncCallCount = 0
+            var decodeModelEvalSyncFirstMicros = 0
+            var decodeModelEvalSyncMaxMicros = 0
+            var decodeSampleTotalMicros = 0
+            var decodeSampleCallCount = 0
+            var decodeTokenIDTotalMicros = 0
+            var decodeTokenIDCallCount = 0
+            var decodeDetokenizeTotalMicros = 0
+            var decodeDetokenizeCallCount = 0
+            var decodeStreamYieldTotalMicros = 0
+            var decodeStreamYieldCallCount = 0
+            let shouldForceBatchModelEvalProbe =
+                ProcessInfo.processInfo.environment["MELIX_SWIFT_BATCH_DECODE_FORCE_MODEL_EVAL_PROBE"] == "1"
+            let startedAt = Date.timeIntervalSinceReferenceDate
+            var decodeLoopIterations = 0
+            var maxModelEvalBatchSize = max(1, batchCacheState.sourceRequestIndices.count)
+
+            for index in states.indices {
+                guard batchInput.parameters.maxTokens.map({ $0 > 0 }) ?? true,
+                      !states[index].request.shouldAbort()
+                else {
+                    states[index].isFinished = true
+                    continue
+                }
+                let sampleStartedAt = Date.timeIntervalSinceReferenceDate
+                let token = sampleNextToken(
+                    logits: states[index].output.logits,
+                    processor: &states[index].processor,
+                    sampler: states[index].sampler
+                )
+                decodeSampleCallCount += 1
+                decodeSampleTotalMicros += elapsedMicros(since: sampleStartedAt)
+                asyncEval(token)
+                states[index].pendingToken = token
+            }
+
+            while states.contains(where: { !$0.isFinished && $0.pendingToken != nil }) {
+                if Task.isCancelled {
+                    break
+                }
+
+                var activeIndices: [Int] = []
+                var activeTokenIDs: [Int] = []
+                for index in states.indices {
+                    guard !states[index].isFinished,
+                          let token = states[index].pendingToken
+                    else {
+                        continue
+                    }
+
+                    if states[index].request.shouldAbort() {
+                        states[index].isFinished = true
+                        states[index].pendingToken = nil
+                        states[index].pendingTokenID = nil
+                        continue
+                    }
+
+                    let tokenID: Int
+                    if let pendingTokenID = states[index].pendingTokenID {
+                        tokenID = pendingTokenID
+                        states[index].pendingTokenID = nil
+                    } else {
+                        let tokenIDStartedAt = Date.timeIntervalSinceReferenceDate
+                        tokenID = token.item(Int.self)
+                        decodeTokenIDCallCount += 1
+                        decodeTokenIDTotalMicros += elapsedMicros(since: tokenIDStartedAt)
+                    }
+                    if tokenID == context.tokenizer.unknownTokenId
+                        || tokenID == context.tokenizer.eosTokenId
+                        || additionalEOSTokenIds.contains(tokenID)
+                    {
+                        states[index].isFinished = true
+                        states[index].pendingToken = nil
+                        continue
+                    }
+
+                    states[index].generatedTokenCount += 1
+                    let detokenizeStartedAt = Date.timeIntervalSinceReferenceDate
+                    states[index].detokenizer.append(token: tokenID)
+                    let chunk = states[index].detokenizer.next()
+                    decodeDetokenizeCallCount += 1
+                    decodeDetokenizeTotalMicros += elapsedMicros(since: detokenizeStartedAt)
+                    if let chunk, !chunk.isEmpty {
+                        let yieldStartedAt = Date.timeIntervalSinceReferenceDate
+                        continuation.yield(.token(requestIndex: index, text: chunk))
+                        decodeStreamYieldCallCount += 1
+                        decodeStreamYieldTotalMicros += elapsedMicros(since: yieldStartedAt)
+                    }
+
+                    if batchInput.parameters.maxTokens.map({ states[index].generatedTokenCount >= $0 }) ?? false {
+                        states[index].isFinished = true
+                        states[index].pendingToken = nil
+                        continue
+                    }
+
+                    activeIndices.append(index)
+                    activeTokenIDs.append(tokenID)
+                }
+
+                guard !activeIndices.isEmpty else {
+                    break
+                }
+
+                decodeLoopIterations += 1
+                if activeIndices == batchCacheState.sourceRequestIndices,
+                   let batchCache = batchCacheState.cache {
+                    maxModelEvalBatchSize = max(maxModelEvalBatchSize, activeIndices.count)
+                    let nextInput = MLXArray(activeTokenIDs, [activeTokenIDs.count, 1])
+                    let modelStartedAt = Date.timeIntervalSinceReferenceDate
+                    let logits = context.model(nextInput, cache: batchCache)
+                    decodeModelCallCount += 1
+                    decodeModelTotalMicros += elapsedMicros(since: modelStartedAt)
+                    if shouldForceBatchModelEvalProbe {
+                        let modelEvalStartedAt = Date.timeIntervalSinceReferenceDate
+                        eval(logits)
+                        decodeModelEvalSyncCallCount += 1
+                        let modelEvalSyncMicros = elapsedMicros(since: modelEvalStartedAt)
+                        if decodeModelEvalSyncCallCount == 1 {
+                            decodeModelEvalSyncFirstMicros = modelEvalSyncMicros
+                        }
+                        decodeModelEvalSyncTotalMicros += modelEvalSyncMicros
+                        decodeModelEvalSyncMaxMicros = max(
+                            decodeModelEvalSyncMaxMicros,
+                            modelEvalSyncMicros
+                        )
+                    }
+
+                    updatePendingTokensFromBatchLogits(
+                        logits,
+                        activeIndices: activeIndices,
+                        states: &states,
+                        supportsBatchedArgMaxTokenIDs: batchInput.supportsBatchedArgMaxTokenIDs,
+                        decodeSampleTotalMicros: &decodeSampleTotalMicros,
+                        decodeSampleCallCount: &decodeSampleCallCount,
+                        decodeTokenIDTotalMicros: &decodeTokenIDTotalMicros,
+                        decodeTokenIDCallCount: &decodeTokenIDCallCount
+                    )
+                } else {
+                    materializeBatchCacheState(&batchCacheState, into: &requestCaches)
+                    if activeIndices.count > 1,
+                       let rebuiltCache = makeBatchDecodeCache(from: activeIndices.map { requestCaches[$0] }) {
+                        batchCacheState = BatchDecodeCacheState(
+                            cache: rebuiltCache,
+                            sourceRequestIndices: activeIndices
+                        )
+                        maxModelEvalBatchSize = max(maxModelEvalBatchSize, activeIndices.count)
+                        let nextInput = MLXArray(activeTokenIDs, [activeTokenIDs.count, 1])
+                        let modelStartedAt = Date.timeIntervalSinceReferenceDate
+                        let logits = context.model(nextInput, cache: rebuiltCache)
+                        decodeModelCallCount += 1
+                        decodeModelTotalMicros += elapsedMicros(since: modelStartedAt)
+                        if shouldForceBatchModelEvalProbe {
+                            let modelEvalStartedAt = Date.timeIntervalSinceReferenceDate
+                            eval(logits)
+                            decodeModelEvalSyncCallCount += 1
+                            let modelEvalSyncMicros = elapsedMicros(since: modelEvalStartedAt)
+                            if decodeModelEvalSyncCallCount == 1 {
+                                decodeModelEvalSyncFirstMicros = modelEvalSyncMicros
+                            }
+                            decodeModelEvalSyncTotalMicros += modelEvalSyncMicros
+                            decodeModelEvalSyncMaxMicros = max(
+                                decodeModelEvalSyncMaxMicros,
+                                modelEvalSyncMicros
+                            )
+                        }
+
+                        updatePendingTokensFromBatchLogits(
+                            logits,
+                            activeIndices: activeIndices,
+                            states: &states,
+                            supportsBatchedArgMaxTokenIDs: batchInput.supportsBatchedArgMaxTokenIDs,
+                            decodeSampleTotalMicros: &decodeSampleTotalMicros,
+                            decodeSampleCallCount: &decodeSampleCallCount,
+                            decodeTokenIDTotalMicros: &decodeTokenIDTotalMicros,
+                            decodeTokenIDCallCount: &decodeTokenIDCallCount
+                        )
+                    } else {
+                        for (tokenIndex, requestIndex) in activeIndices.enumerated() {
+                            let nextInput = LMInput.Text(tokens: MLXArray([activeTokenIDs[tokenIndex]]))
+                            let modelStartedAt = Date.timeIntervalSinceReferenceDate
+                            let nextOutput = context.model(
+                                nextInput[text: .newAxis],
+                                cache: requestCaches[requestIndex].isEmpty ? nil : requestCaches[requestIndex],
+                                state: states[requestIndex].output.state
+                            )
+                            decodeModelCallCount += 1
+                            decodeModelTotalMicros += elapsedMicros(since: modelStartedAt)
+                            states[requestIndex].output = nextOutput
+                            let sampleStartedAt = Date.timeIntervalSinceReferenceDate
+                            let token = sampleNextToken(
+                                logits: nextOutput.logits,
+                                processor: &states[requestIndex].processor,
+                                sampler: states[requestIndex].sampler
+                            )
+                            decodeSampleCallCount += 1
+                            decodeSampleTotalMicros += elapsedMicros(since: sampleStartedAt)
+                            asyncEval(token)
+                            states[requestIndex].pendingToken = token
+                            states[requestIndex].pendingTokenID = nil
+                        }
+                    }
+                }
+            }
+
+            let decodeLoopTotalMicros = elapsedMicros(since: startedAt)
+            Stream().synchronize()
+            let elapsed = max(Double(decodeLoopTotalMicros) / 1_000_000, 0.000_001)
+            let totalCompletionTokens = states.reduce(0) { $0 + $1.generatedTokenCount }
+            let batchTokensPerSecond = Double(totalCompletionTokens) / elapsed
+            let decodeBatchProbe = DecodeBatchProbeSummary(
+                decodeLoopTotalMicros: decodeLoopTotalMicros,
+                decodeModelTotalMicros: decodeModelTotalMicros,
+                decodeModelCallCount: decodeModelCallCount,
+                decodeModelEvalSyncTotalMicros: decodeModelEvalSyncTotalMicros,
+                decodeModelEvalSyncCallCount: decodeModelEvalSyncCallCount,
+                decodeModelEvalSyncFirstMicros: decodeModelEvalSyncFirstMicros,
+                decodeModelEvalSyncMaxMicros: decodeModelEvalSyncMaxMicros,
+                decodeSampleTotalMicros: decodeSampleTotalMicros,
+                decodeSampleCallCount: decodeSampleCallCount,
+                decodeTokenIDTotalMicros: decodeTokenIDTotalMicros,
+                decodeTokenIDCallCount: decodeTokenIDCallCount,
+                decodeDetokenizeTotalMicros: decodeDetokenizeTotalMicros,
+                decodeDetokenizeCallCount: decodeDetokenizeCallCount,
+                decodeStreamYieldTotalMicros: decodeStreamYieldTotalMicros,
+                decodeStreamYieldCallCount: decodeStreamYieldCallCount
+            )
+
+            for (requestIndex, state) in states.enumerated() {
+                continuation.yield(.summary(
+                    requestIndex: requestIndex,
+                    TextGenerationSummary(
+                        promptTokens: batchInput.states[requestIndex].input.text.tokens.size,
+                        completionTokens: state.generatedTokenCount,
+                        tokensPerSecond: Double(state.generatedTokenCount) / elapsed,
+                        decodeBatchSize: maxModelEvalBatchSize,
+                        modelEvalBatchSize: maxModelEvalBatchSize,
+                        decodeLoopIterations: decodeLoopIterations,
+                        perBatchOutputTokenCount: totalCompletionTokens,
+                        perBatchOutputTokensPerSecond: batchTokensPerSecond,
+                        decodeBatchProbe: decodeBatchProbe
+                    )
+                ))
+            }
+
+            continuation.yield(.batchSummary(
+                TextBatchGenerationSummary(
+                    decodeBatchSize: maxModelEvalBatchSize,
+                    modelEvalBatchSize: maxModelEvalBatchSize,
+                    decodeLoopIterations: decodeLoopIterations,
+                    outputTokenCount: totalCompletionTokens,
+                    tokensPerSecond: batchTokensPerSecond
+                )
+            ))
+            continuation.finish()
+        } catch {
+            continuation.finish(throwing: error)
+        }
+    }
+
+    continuation.onTermination = { _ in
+        task.cancel()
+    }
+
+    return stream
+}
+
+private func updatePendingTokensFromBatchLogits(
+    _ logits: MLXArray,
+    activeIndices: [Int],
+    states: inout [BatchDecodeRequestState],
+    supportsBatchedArgMaxTokenIDs: Bool,
+    decodeSampleTotalMicros: inout Int,
+    decodeSampleCallCount: inout Int,
+    decodeTokenIDTotalMicros: inout Int,
+    decodeTokenIDCallCount: inout Int
+) {
+    guard supportsBatchedArgMaxTokenIDs,
+          activeIndices.allSatisfy({ states[$0].processor == nil })
+    else {
+        for (batchIndex, requestIndex) in activeIndices.enumerated() {
+            states[requestIndex].output = LMOutput(
+                logits: logits[batchIndex ..< (batchIndex + 1), 0..., 0...]
+            )
+            let sampleStartedAt = Date.timeIntervalSinceReferenceDate
+            let token = sampleNextToken(
+                logits: states[requestIndex].output.logits,
+                processor: &states[requestIndex].processor,
+                sampler: states[requestIndex].sampler
+            )
+            decodeSampleCallCount += 1
+            decodeSampleTotalMicros += elapsedMicros(since: sampleStartedAt)
+            asyncEval(token)
+            states[requestIndex].pendingToken = token
+            states[requestIndex].pendingTokenID = nil
+        }
+        return
+    }
+
+    let sampleStartedAt = Date.timeIntervalSinceReferenceDate
+    let tokenIDs = argMax(logits[0..., -1, 0...], axis: -1)
+    decodeSampleCallCount += activeIndices.count
+    decodeSampleTotalMicros += elapsedMicros(since: sampleStartedAt)
+    let tokenIDStartedAt = Date.timeIntervalSinceReferenceDate
+    let ids = tokenIDs.asArray(Int.self)
+    decodeTokenIDCallCount += 1
+    decodeTokenIDTotalMicros += elapsedMicros(since: tokenIDStartedAt)
+
+    for (batchIndex, requestIndex) in activeIndices.enumerated() {
+        let tokenID = ids[batchIndex]
+        states[requestIndex].output = LMOutput(
+            logits: logits[batchIndex ..< (batchIndex + 1), 0..., 0...]
+        )
+        states[requestIndex].pendingToken = MLXArray([tokenID])
+        states[requestIndex].pendingTokenID = tokenID
+    }
+}
+
+private final class BatchPositionedKVCacheAdapter: KVCache, BatchPositionedKVCache {
+    private var wrapped: KVCache
+    private var currentBatchOffset: MLXArray
+    let sourceSimpleStep: Int?
+
+    init(wrapped: KVCache, batchOffset: MLXArray) {
+        self.wrapped = wrapped
+        self.currentBatchOffset = batchOffset
+        self.sourceSimpleStep = (wrapped as? KVCacheSimple)?.step
+    }
+
+    var offset: Int { wrapped.offset }
+    var batchOffset: MLXArray { currentBatchOffset }
+    var maxSize: Int? { wrapped.maxSize }
+    var state: [MLXArray] {
+        get { wrapped.state }
+        set {
+            wrapped.state = newValue
+            currentBatchOffset = MLXArray(
+                Array(repeating: Int32(wrapped.offset), count: newValue.first?.dim(0) ?? 1)
+            )
+        }
+    }
+    var metaState: [String] {
+        get { wrapped.metaState }
+        set { wrapped.metaState = newValue }
+    }
+    var isTrimmable: Bool { wrapped.isTrimmable }
+
+    func innerState() -> [MLXArray] {
+        wrapped.innerState()
+    }
+
+    func update(keys: MLXArray, values: MLXArray) -> (MLXArray, MLXArray) {
+        let result = wrapped.update(keys: keys, values: values)
+        currentBatchOffset = currentBatchOffset + keys.dim(2)
+        return result
+    }
+
+    @discardableResult
+    func trim(_ n: Int) -> Int {
+        wrapped.trim(n)
+    }
+
+    func makeMask(
+        n: Int,
+        windowSize: Int?,
+        returnArray: Bool
+    ) -> MLXFast.ScaledDotProductAttentionMaskMode {
+        wrapped.makeMask(n: n, windowSize: windowSize, returnArray: returnArray)
+    }
+}
+
+private func makeBatchDecodeCache(from caches: [[KVCache]]) -> [KVCache]? {
+    guard let first = caches.first,
+          !first.isEmpty
+    else {
+        return nil
+    }
+
+    var result: [KVCache] = []
+    for layerIndex in first.indices {
+        let layers = caches.map { $0[layerIndex] }
+        guard let batchedLayer = makeBatchDecodeCacheLayer(from: layers) else {
+            return nil
+        }
+        result.append(batchedLayer)
+    }
+    return result
+}
+
+private func makeBatchDecodeCacheLayer(from layers: [KVCache]) -> KVCache? {
+    guard let first = layers.first,
+          layers.allSatisfy({ type(of: $0) == type(of: first) && $0.offset == first.offset && $0.metaState == first.metaState })
+    else {
+        return nil
+    }
+
+    let stateCount = first.state.count
+    guard stateCount > 0 else {
+        return nil
+    }
+    let batchedState = (0 ..< stateCount).map { stateIndex in
+        concatenated(layers.map { $0.state[stateIndex] }, axis: 0)
+    }
+
+    var batched: KVCache
+    switch first {
+    case is RotatingKVCache:
+        guard let maxSize = first.maxSize else {
+            return nil
+        }
+        batched = RotatingKVCache(maxSize: maxSize)
+    default:
+        let simple = KVCacheSimple()
+        if let firstSimple = first as? KVCacheSimple {
+            simple.step = firstSimple.step
+        }
+        batched = simple
+    }
+
+    batched.state = batchedState
+    if !first.metaState.isEmpty {
+        batched.metaState = first.metaState
+    }
+    let batchOffset = MLXArray(layers.map { Int32($0.offset) })
+    return BatchPositionedKVCacheAdapter(wrapped: batched, batchOffset: batchOffset)
+}
+
+private func materializeBatchCacheState(
+    _ cacheState: inout BatchDecodeCacheState,
+    into requestCaches: inout [[KVCache]]
+) {
+    guard let cache = cacheState.cache,
+          !cacheState.sourceRequestIndices.isEmpty
+    else {
+        cacheState = BatchDecodeCacheState(cache: nil, sourceRequestIndices: [])
+        return
+    }
+
+    let splitCaches = splitBatchDecodeCache(
+        cache,
+        batchSize: cacheState.sourceRequestIndices.count
+    )
+    for (batchIndex, requestIndex) in cacheState.sourceRequestIndices.enumerated()
+        where requestCaches.indices.contains(requestIndex)
+    {
+        requestCaches[requestIndex] = splitCaches[batchIndex]
+    }
+    cacheState = BatchDecodeCacheState(cache: nil, sourceRequestIndices: [])
+}
+
+private func splitBatchDecodeCache(_ cache: [KVCache], batchSize: Int) -> [[KVCache]] {
+    (0 ..< batchSize).map { batchIndex in
+        cache.map { splitBatchDecodeCacheLayer($0, batchIndex: batchIndex) }
+    }
+}
+
+private func splitBatchDecodeCacheLayer(_ layer: KVCache, batchIndex: Int) -> KVCache {
+    let adapter = layer as? BatchPositionedKVCacheAdapter
+    let state = layer.state
+    let metaState = layer.metaState
+    let splitState = state.map { array in
+        array[batchIndex ..< (batchIndex + 1), 0..., 0..., 0...]
+    }
+
+    var split: KVCache
+    if layer is RotatingKVCache || metaState.count == 5 {
+        let maxSize = layer.maxSize ?? Int(metaState.dropFirst().first ?? "0") ?? 0
+        split = RotatingKVCache(maxSize: max(1, maxSize))
+    } else {
+        let simple = KVCacheSimple()
+        if let sourceStep = adapter?.sourceSimpleStep {
+            simple.step = sourceStep
+        } else if let source = layer as? KVCacheSimple {
+            simple.step = source.step
+        }
+        split = simple
+    }
+
+    split.state = splitState
+    if !metaState.isEmpty {
+        split.metaState = metaState
+    }
+    return split
 }
 
 #if canImport(MLXLLM)
@@ -2661,244 +3397,6 @@ func activeKVModelEvalSyncMicrosIfNeeded(enabled: Bool, logits: MLXArray) -> Int
     eval(logits)
     return elapsedMicros(since: startedAt)
 }
-
-#if canImport(MLXLMCommon)
-// Wraps a non-Sendable value for safe single-use transfer across task boundaries.
-private final class BatchDecodeBox<T>: @unchecked Sendable {
-    private var value: T?
-    init(_ value: consuming T) { self.value = consume value }
-    consuming func take() -> T {
-        defer { value = nil }
-        return value!
-    }
-}
-
-// Build a single batched KVCache per layer from N individual KVCacheSimple caches.
-// Shorter sessions are left-padded with zeros to max_offset. Attention over padding
-// positions is unmasked — an accepted approximation for small batch sizes (2-4).
-private func buildBatchedKVCaches(from decodeStates: [PreparedDecodeState]) -> [KVCache] {
-    guard let first = decodeStates.first, !first.cache.isEmpty else {
-        return []
-    }
-    let maxOffset = decodeStates.compactMap { $0.cache.first?.offset }.max() ?? 0
-    let layerCount = first.cache.count
-    var batchedCaches: [KVCache] = []
-    for layerIdx in 0..<layerCount {
-        let batchedCache = KVCacheSimple()
-        var layerKeys: [MLXArray] = []
-        var layerValues: [MLXArray] = []
-        for state in decodeStates {
-            guard state.cache.indices.contains(layerIdx) else { return [] }
-            let cacheState = state.cache[layerIdx].state
-            guard cacheState.count == 2 else { return [] }
-            let keys = cacheState[0]    // [1, kvHeads, offset_i, headDim]
-            let values = cacheState[1]
-            let offset = state.cache[layerIdx].offset
-            if offset < maxOffset {
-                let padLen = maxOffset - offset
-                let kPad = MLXArray.zeros([1, keys.dim(1), padLen, keys.dim(3)], dtype: keys.dtype)
-                let vPad = MLXArray.zeros([1, values.dim(1), padLen, values.dim(3)], dtype: values.dtype)
-                layerKeys.append(concatenated([kPad, keys], axis: 2))
-                layerValues.append(concatenated([vPad, values], axis: 2))
-            } else {
-                layerKeys.append(keys)
-                layerValues.append(values)
-            }
-        }
-        guard layerKeys.count == decodeStates.count else { return [] }
-        batchedCache.state = [
-            concatenated(layerKeys, axis: 0),    // [N, kvHeads, maxOffset, headDim]
-            concatenated(layerValues, axis: 0),
-        ]
-        batchedCaches.append(batchedCache)
-    }
-    return batchedCaches
-}
-
-private func makeBatchDecodeStream(
-    context: ModelContext,
-    requests: [TextRuntimeDecodeRequest],
-    decodeStates: [PreparedDecodeState],
-    batchedCaches: [KVCache]
-) -> AsyncThrowingStream<TextBatchGenerationEvent, Error> {
-    let batchSize = requests.count
-    let additionalEOSTokenIds = Set(
-        context.configuration.extraEOSTokens.compactMap { context.tokenizer.convertTokenToId($0) }
-    )
-    let eosTokenId = context.tokenizer.eosTokenId
-    let unknownTokenId = context.tokenizer.unknownTokenId
-    let eosArr = MLXArray([eosTokenId ?? 0])  // shape [1] to match sampled token shape
-
-    // Per-request decode parameters, samplers, processors, detokenizers
-    let parameters: [GenerateParameters] = requests.map { request in
-        makeDecodeParameters(
-            from: request.sampling,
-            maxOutputTokens: request.maxOutputTokens,
-            decodeStepSize: request.decodeStepSize,
-            acceleration: request.acceleration
-        )
-    }
-    var processors: [(any LogitProcessor)?] = parameters.map { $0.processor() }
-    let samplers: [any LogitSampler] = parameters.map { $0.sampler() }
-    var detokenizers: [NaiveStreamingDetokenizer] = requests.map { _ in
-        NaiveStreamingDetokenizer(tokenizer: context.tokenizer)
-    }
-
-    // Get initial logits per request from their PrepareResult
-    var initialLogits: [MLXArray] = []
-    for state in decodeStates {
-        switch state.prepared {
-        case .logits(let output):
-            initialLogits.append(output.logits)
-        case .tokens(let text):
-            let out = context.model(
-                text[text: .newAxis],
-                cache: state.cache.isEmpty ? nil : state.cache,
-                state: nil
-            )
-            eval(out.logits)
-            initialLogits.append(out.logits)
-        }
-    }
-
-    // Sample first pending token per request
-    var currentTokens: [MLXArray?] = (0..<batchSize).map { i in
-        guard parameters[i].maxTokens.map({ $0 > 0 }) ?? true else { return nil }
-        var proc = processors[i]
-        let token = sampleNextToken(logits: initialLogits[i], processor: &proc, sampler: samplers[i])
-        processors[i] = proc
-        asyncEval(token)
-        return token
-    }
-
-    let (stream, continuation) = AsyncThrowingStream<TextBatchGenerationEvent, Error>.makeStream()
-    let contextBox = BatchDecodeBox(context)
-    let processorsBox = BatchDecodeBox(processors)
-    let samplersBox = BatchDecodeBox(samplers)
-    let detokenizersBox = BatchDecodeBox(detokenizers)
-    let batchedCachesBox = BatchDecodeBox(batchedCaches)
-
-    let task = Task {
-        let context = contextBox.take()
-        var processors = processorsBox.take()
-        let samplers = samplersBox.take()
-        var detokenizers = detokenizersBox.take()
-        let batchedCaches = batchedCachesBox.take()
-        do {
-            var active = (0..<batchSize).map { currentTokens[$0] != nil }
-            var tokenCountByRequest = Array(repeating: 0, count: batchSize)
-            var emittedByRequest = Array(repeating: 0, count: batchSize)
-            var decodeLoopIterations = 0
-            let startedAt = Date.timeIntervalSinceReferenceDate
-
-            while active.contains(true) {
-                if Task.isCancelled { break }
-
-                // Step 1: materialize pending tokens, yield text, check termination
-                for i in 0..<batchSize where active[i] {
-                    guard let tok = currentTokens[i] else { active[i] = false; continue }
-                    let tokenID = tok.item(Int.self)
-
-                    let isEOS = (eosTokenId.map { tokenID == $0 } ?? false)
-                        || (unknownTokenId.map { tokenID == $0 } ?? false)
-                        || additionalEOSTokenIds.contains(tokenID)
-                    if isEOS || requests[i].shouldAbort() {
-                        active[i] = false
-                        continue
-                    }
-
-                    tokenCountByRequest[i] += 1
-                    detokenizers[i].append(token: tokenID)
-                    if let chunk = detokenizers[i].next() {
-                        emittedByRequest[i] += 1
-                        continuation.yield(.token(requestIndex: i, text: chunk))
-                    }
-
-                    if let max = parameters[i].maxTokens, tokenCountByRequest[i] >= max {
-                        active[i] = false
-                    }
-                }
-
-                if !active.contains(true) { break }
-
-                decodeLoopIterations += 1
-
-                // Step 2: build batched token input [N, 1]
-                // Dead slots receive the EOS token as a dummy — their output is ignored.
-                let stackedTokens = concatenated(
-                    (0..<batchSize).map { i -> MLXArray in
-                        let tok = active[i] ? (currentTokens[i] ?? eosArr) : eosArr
-                        return tok.expandedDimensions(axis: 0)  // [1] -> [1, 1]
-                    },
-                    axis: 0
-                )  // [N, 1]
-
-                // Step 3: single batched model forward pass
-                let batchInput = LMInput.Text(tokens: stackedTokens)
-                let nextOutput = context.model(
-                    batchInput,
-                    cache: batchedCaches.isEmpty ? nil : batchedCaches,
-                    state: nil
-                )
-                eval(nextOutput.logits)
-
-                // Step 4: sample next token per active request from logits[i] slice
-                for i in 0..<batchSize where active[i] {
-                    let requestLogits = nextOutput.logits[i..<(i + 1), 0...]  // [1, 1, vocab]
-                    var proc = processors[i]
-                    let nextTok = sampleNextToken(
-                        logits: requestLogits,
-                        processor: &proc,
-                        sampler: samplers[i]
-                    )
-                    processors[i] = proc
-                    asyncEval(nextTok)
-                    currentTokens[i] = nextTok
-                }
-            }
-
-            // Emit per-request summaries
-            let elapsed = max(Date.timeIntervalSinceReferenceDate - startedAt, 0.000_001)
-            let totalTokens = emittedByRequest.reduce(0, +)
-            let batchTPS = Double(totalTokens) / elapsed
-
-            for i in 0..<batchSize {
-                // Flush any remaining detokenizer buffer
-                if let chunk = detokenizers[i].next() {
-                    emittedByRequest[i] += 1
-                    continuation.yield(.token(requestIndex: i, text: chunk))
-                }
-                continuation.yield(.summary(
-                    requestIndex: i,
-                    TextGenerationSummary(
-                        promptTokens: decodeStates[i].input.text.tokens.size,
-                        completionTokens: emittedByRequest[i],
-                        tokensPerSecond: Double(emittedByRequest[i]) / elapsed,
-                        decodeBatchSize: batchSize,
-                        modelEvalBatchSize: batchSize,
-                        decodeLoopIterations: decodeLoopIterations,
-                        perBatchOutputTokenCount: totalTokens,
-                        perBatchOutputTokensPerSecond: batchTPS
-                    )
-                ))
-            }
-            continuation.yield(.batchSummary(TextBatchGenerationSummary(
-                decodeBatchSize: batchSize,
-                modelEvalBatchSize: batchSize,
-                decodeLoopIterations: decodeLoopIterations,
-                outputTokenCount: totalTokens,
-                tokensPerSecond: batchTPS
-            )))
-            continuation.finish()
-        } catch {
-            continuation.finish(throwing: error)
-        }
-    }
-
-    continuation.onTermination = { _ in task.cancel() }
-    return stream
-}
-#endif
 
 private func elapsedMicros(since startedAt: TimeInterval) -> Int {
     max(0, Int(((Date.timeIntervalSinceReferenceDate - startedAt) * 1_000_000).rounded()))

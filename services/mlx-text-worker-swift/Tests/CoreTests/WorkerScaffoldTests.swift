@@ -59,6 +59,8 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(configuration.prefillMemoryHeadroomBytes, 0)
         XCTAssertEqual(configuration.prefillQuadraticGuardTokenThreshold, 0)
         XCTAssertEqual(configuration.initialCacheBlocks, 0)
+        XCTAssertEqual(configuration.decodeBatchPendingWindowNanos, 2_000_000)
+        XCTAssertEqual(configuration.decodeBatchCohortPendingWindowNanos, 2_000_000_000)
         XCTAssertFalse(configuration.turboQuantCandidateProbeEnabled)
     }
 
@@ -92,6 +94,8 @@ final class WorkerScaffoldTests: XCTestCase {
             "MELIX_SWIFT_TEXT_WORKER_PREFILL_MEMORY_HEADROOM_BYTES": "4096",
             "MELIX_SWIFT_TEXT_WORKER_PREFILL_QUADRATIC_GUARD_TOKEN_THRESHOLD": "1024",
             "MELIX_SWIFT_TEXT_WORKER_INITIAL_CACHE_BLOCKS": "4",
+            "MELIX_SWIFT_TEXT_WORKER_DECODE_BATCH_PENDING_WINDOW_MS": "7",
+            "MELIX_SWIFT_TEXT_WORKER_DECODE_BATCH_COHORT_PENDING_WINDOW_MS": "50",
             "MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE": "true",
         ])
 
@@ -108,7 +112,17 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(configuration.prefillMemoryHeadroomBytes, 4_096)
         XCTAssertEqual(configuration.prefillQuadraticGuardTokenThreshold, 1_024)
         XCTAssertEqual(configuration.initialCacheBlocks, 4)
+        XCTAssertEqual(configuration.decodeBatchPendingWindowNanos, 7_000_000)
+        XCTAssertEqual(configuration.decodeBatchCohortPendingWindowNanos, 50_000_000)
         XCTAssertTrue(configuration.turboQuantCandidateProbeEnabled)
+    }
+
+    func testConfigurationAllowsLongDecodeBatchCohortPendingWindowOverride() {
+        let configuration = WorkerConfiguration.fromEnvironment([
+            "MELIX_SWIFT_TEXT_WORKER_DECODE_BATCH_COHORT_PENDING_WINDOW_MS": "2000",
+        ])
+
+        XCTAssertEqual(configuration.decodeBatchCohortPendingWindowNanos, 2_000_000_000)
     }
 
     func testConfigurationFallsBackToDefaultsForEmptyEnvironment() {
@@ -971,6 +985,10 @@ final class WorkerScaffoldTests: XCTestCase {
     }
 
     #if canImport(MLX) && canImport(MLXLMCommon) && canImport(MLXLLM) && canImport(Tokenizers)
+    func testAutoSwiftMLXBackendReportsHomogeneousBatchDecodeSupport() {
+        XCTAssertTrue(AutoSwiftMLXBackend().supportsHomogeneousBatchDecode)
+    }
+
     func testAutoSwiftMLXBackendDefaultPreparedGenerationFactoryUsesLiveModelContainerBridge() async throws {
         let backend = AutoSwiftMLXBackend()
         let promptTokens = [1, 2, 3, 4]
@@ -1188,6 +1206,586 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(summary.promptTokens, promptTokens.count)
         XCTAssertGreaterThan(summary.completionTokens, 0)
         XCTAssertNotNil(summary.tokensPerSecond)
+    }
+
+    func testAutoSwiftMLXBackendBatchesLiveHomogeneousDecodeRequests() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let promptTokens = [1, 2, 3, 4, 5]
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 2
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .baseline
+
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(
+                    storage: makeLiveSwiftMLXModelContainer(promptTokens: promptTokens)
+                )
+                let prefill1 = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("batch decode live path")],
+                    prefillStepSize: 32,
+                    resumeHint: "live-batch-decode-1",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let prefill2 = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("batch decode live path")],
+                    prefillStepSize: 32,
+                    resumeHint: "live-batch-decode-2",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let stream = try await backend.decodeBatchEvents(
+                    requests: [
+                        TextRuntimeDecodeRequest(
+                            model: model,
+                            draftModel: nil,
+                            context: prefill1.context,
+                            sampling: sampling,
+                            maxOutputTokens: 2,
+                            decodeStepSize: 1,
+                            prefillToken: "",
+                            acceleration: acceleration,
+                            shouldAbort: { false }
+                        ),
+                        TextRuntimeDecodeRequest(
+                            model: model,
+                            draftModel: nil,
+                            context: prefill2.context,
+                            sampling: sampling,
+                            maxOutputTokens: 2,
+                            decodeStepSize: 1,
+                            prefillToken: "",
+                            acceleration: acceleration,
+                            shouldAbort: { false }
+                        ),
+                    ]
+                )
+                return try await collectTextBatchGenerationEvents(from: stream)
+            }
+        }
+
+        let summaries = renderedBatchRequestSummaries(from: events)
+        XCTAssertEqual(summaries.count, 2)
+        XCTAssertEqual(summaries[0]?.promptTokens, promptTokens.count)
+        XCTAssertEqual(summaries[1]?.promptTokens, promptTokens.count)
+        XCTAssertEqual(summaries[0]?.completionTokens, 2)
+        XCTAssertEqual(summaries[1]?.completionTokens, 2)
+        XCTAssertEqual(summaries[0]?.decodeBatchSize, 2)
+        XCTAssertEqual(summaries[1]?.modelEvalBatchSize, 2)
+        XCTAssertTrue(events.contains { event in
+            guard case .batchSummary(let summary) = event else {
+                return false
+            }
+            return summary.decodeBatchSize == 2
+                && summary.modelEvalBatchSize == 2
+                && summary.outputTokenCount == 4
+        })
+    }
+
+    func testAutoSwiftMLXBackendReusesBatchCacheAcrossHomogeneousDecodeSteps() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let recorder = BatchCacheIdentityRecorder()
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 3
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .baseline
+
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(
+                    storage: makeBatchCacheIdentityModelContainer(recorder: recorder)
+                )
+                let prefill1 = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("batch cache reuse")],
+                    prefillStepSize: 32,
+                    resumeHint: "batch-cache-reuse-1",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let prefill2 = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("batch cache reuse")],
+                    prefillStepSize: 32,
+                    resumeHint: "batch-cache-reuse-2",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let stream = try await backend.decodeBatchEvents(
+                    requests: [
+                        TextRuntimeDecodeRequest(
+                            model: model,
+                            draftModel: nil,
+                            context: prefill1.context,
+                            sampling: sampling,
+                            maxOutputTokens: 3,
+                            decodeStepSize: 1,
+                            prefillToken: "",
+                            acceleration: acceleration,
+                            shouldAbort: { false }
+                        ),
+                        TextRuntimeDecodeRequest(
+                            model: model,
+                            draftModel: nil,
+                            context: prefill2.context,
+                            sampling: sampling,
+                            maxOutputTokens: 3,
+                            decodeStepSize: 1,
+                            prefillToken: "",
+                            acceleration: acceleration,
+                            shouldAbort: { false }
+                        ),
+                    ]
+                )
+                return try await collectTextBatchGenerationEvents(from: stream)
+            }
+        }
+
+        let summaries = renderedBatchRequestSummaries(from: events)
+        XCTAssertEqual(summaries[0]?.completionTokens, 3)
+        XCTAssertEqual(summaries[1]?.completionTokens, 3)
+        XCTAssertEqual(summaries[0]?.decodeBatchSize, 2)
+        XCTAssertEqual(summaries[1]?.modelEvalBatchSize, 2)
+        XCTAssertEqual(recorder.batchSizes, [2, 2, 2])
+        XCTAssertEqual(recorder.sequenceLengths, [1, 1, 1])
+        XCTAssertEqual(recorder.cacheOffsets, [5, 6, 7])
+        XCTAssertEqual(Set(recorder.cacheIdentifiers).count, 1)
+
+        let batchProbe = try XCTUnwrap(summaries[0]?.decodeBatchProbe)
+        XCTAssertEqual(batchProbe.decodeTokenIDCallCount, 4)
+    }
+
+    func testAutoSwiftMLXBackendDecodeBatchFallsBackForSingleRequest() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let recorder = BatchCacheIdentityRecorder()
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 2
+
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(
+                    storage: makeBatchCacheIdentityModelContainer(recorder: recorder)
+                )
+                let prefill = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("single fallback")],
+                    prefillStepSize: 32,
+                    resumeHint: "single-batch-fallback",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let stream = try await backend.decodeBatchEvents(
+                    requests: [
+                        TextRuntimeDecodeRequest(
+                            model: model,
+                            draftModel: nil,
+                            context: prefill.context,
+                            sampling: sampling,
+                            maxOutputTokens: 2,
+                            decodeStepSize: 1,
+                            prefillToken: "",
+                            acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                            shouldAbort: { false }
+                        ),
+                    ]
+                )
+                return try await collectTextBatchGenerationEvents(from: stream)
+            }
+        }
+
+        let summaries = renderedBatchRequestSummaries(from: events)
+        XCTAssertEqual(summaries.count, 1)
+        XCTAssertEqual(summaries[0]?.completionTokens, 2)
+        XCTAssertNil(summaries[0]?.decodeBatchSize)
+        XCTAssertFalse(events.contains { event in
+            if case .batchSummary = event { return true }
+            return false
+        })
+        XCTAssertEqual(recorder.batchSizes, [1, 1])
+    }
+
+    func testAutoSwiftMLXBackendDecodeBatchFallbackPropagatesPerRequestFailure() async throws {
+        let backend = AutoSwiftMLXBackend()
+
+        let stream = try await backend.decodeBatchEvents(
+            requests: [
+                TextRuntimeDecodeRequest(
+                    model: LoadedTextModel(storage: ["kind": "not-a-swift-mlx-container"]),
+                    draftModel: nil,
+                    context: TextPrefillContext(storage: [:], promptTokens: 1),
+                    sampling: Melix_Worker_V1_SamplingConfig(),
+                    maxOutputTokens: 1,
+                    decodeStepSize: 1,
+                    prefillToken: "",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                ),
+            ]
+        )
+
+        await XCTAssertThrowsErrorAsync(try await collectTextBatchGenerationEvents(from: stream))
+    }
+
+    func testAutoSwiftMLXBackendDecodeBatchFallsBackForUnsupportedCacheSignature() async throws {
+        let backend = AutoSwiftMLXBackend()
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 1
+
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(storage: makeConstantTokenModelContainer())
+                let request1 = TextRuntimeDecodeRequest(
+                    model: model,
+                    draftModel: nil,
+                    context: makePreparedDecodeContext(
+                        prepared: .tokens(LMInput.Text(tokens: MLXArray([2]))),
+                        cache: [QuantizedKVCache(groupSize: 64, bits: 4)]
+                    ),
+                    sampling: sampling,
+                    maxOutputTokens: 1,
+                    decodeStepSize: 1,
+                    prefillToken: "",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let request2 = TextRuntimeDecodeRequest(
+                    model: model,
+                    draftModel: nil,
+                    context: makePreparedDecodeContext(
+                        prepared: .tokens(LMInput.Text(tokens: MLXArray([2]))),
+                        cache: [QuantizedKVCache(groupSize: 64, bits: 4)]
+                    ),
+                    sampling: sampling,
+                    maxOutputTokens: 1,
+                    decodeStepSize: 1,
+                    prefillToken: "",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let stream = try await backend.decodeBatchEvents(requests: [request1, request2])
+                return try await collectTextBatchGenerationEvents(from: stream)
+            }
+        }
+
+        let summaries = renderedBatchRequestSummaries(from: events)
+        XCTAssertEqual(summaries.count, 2)
+        XCTAssertEqual(summaries[0]?.completionTokens, 1)
+        XCTAssertEqual(summaries[1]?.completionTokens, 1)
+        XCTAssertNil(summaries[0]?.decodeBatchSize)
+        XCTAssertFalse(events.contains { event in
+            if case .batchSummary = event { return true }
+            return false
+        })
+    }
+
+    func testAutoSwiftMLXBackendBatchDecodeUsesProcessorPathForRepetitionPenalty() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let recorder = BatchCacheIdentityRecorder()
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.frequencyPenalty = 1.1
+        sampling.maxOutputTokens = 2
+
+        setenv("MELIX_SWIFT_BATCH_DECODE_FORCE_MODEL_EVAL_PROBE", "1", 1)
+        defer { unsetenv("MELIX_SWIFT_BATCH_DECODE_FORCE_MODEL_EVAL_PROBE") }
+
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(
+                    storage: makeBatchCacheIdentityModelContainer(recorder: recorder)
+                )
+                let prefill1 = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("processor batch")],
+                    prefillStepSize: 32,
+                    resumeHint: "processor-batch-1",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let prefill2 = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("processor batch")],
+                    prefillStepSize: 32,
+                    resumeHint: "processor-batch-2",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let stream = try await backend.decodeBatchEvents(
+                    requests: [
+                        TextRuntimeDecodeRequest(
+                            model: model,
+                            draftModel: nil,
+                            context: prefill1.context,
+                            sampling: sampling,
+                            maxOutputTokens: 2,
+                            decodeStepSize: 1,
+                            prefillToken: "",
+                            acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                            shouldAbort: { false }
+                        ),
+                        TextRuntimeDecodeRequest(
+                            model: model,
+                            draftModel: nil,
+                            context: prefill2.context,
+                            sampling: sampling,
+                            maxOutputTokens: 2,
+                            decodeStepSize: 1,
+                            prefillToken: "",
+                            acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                            shouldAbort: { false }
+                        ),
+                    ]
+                )
+                return try await collectTextBatchGenerationEvents(from: stream)
+            }
+        }
+
+        let summaries = renderedBatchRequestSummaries(from: events)
+        let batchProbe = try XCTUnwrap(summaries[0]?.decodeBatchProbe)
+        XCTAssertEqual(summaries[0]?.completionTokens, 2)
+        XCTAssertEqual(summaries[1]?.completionTokens, 2)
+        XCTAssertEqual(batchProbe.decodeTokenIDCallCount, 4)
+        XCTAssertGreaterThanOrEqual(batchProbe.decodeModelEvalSyncCallCount, 1)
+        XCTAssertEqual(recorder.batchSizes, [2, 2])
+    }
+
+    func testAutoSwiftMLXBackendBatchDecodeRebuildsCacheWhenOneOfThreePeersAborts() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let recorder = BatchCacheIdentityRecorder()
+        let abortingPeer = AbortAfterPoll(falsePollsBeforeAbort: 1)
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 2
+
+        setenv("MELIX_SWIFT_BATCH_DECODE_FORCE_MODEL_EVAL_PROBE", "1", 1)
+        defer { unsetenv("MELIX_SWIFT_BATCH_DECODE_FORCE_MODEL_EVAL_PROBE") }
+
+        let events = try await collectThreePeerBatchDecodeEvents(
+            backend: backend,
+            recorder: recorder,
+            sampling: sampling,
+            abortingPeer: abortingPeer
+        )
+
+        let summaries = renderedBatchRequestSummaries(from: events)
+        XCTAssertEqual(summaries[0]?.completionTokens, 0)
+        XCTAssertEqual(summaries[1]?.completionTokens, 2)
+        XCTAssertEqual(summaries[2]?.completionTokens, 2)
+        XCTAssertEqual(recorder.batchSizes, [3, 2])
+        XCTAssertEqual(recorder.sequenceLengths, [1, 1])
+        XCTAssertGreaterThanOrEqual(summaries[1]?.decodeBatchProbe?.decodeModelEvalSyncCallCount ?? 0, 1)
+    }
+
+    func testAutoSwiftMLXBackendBatchDecodeMaterializesCacheForSingleRemainingPeer() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let recorder = BatchCacheIdentityRecorder()
+        let abortingPeer = AbortAfterPoll(falsePollsBeforeAbort: 1)
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 2
+
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(
+                    storage: makeBatchCacheIdentityModelContainer(recorder: recorder)
+                )
+                let prefill1 = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("two-way shrink one")],
+                    prefillStepSize: 32,
+                    resumeHint: "two-way-shrink-1",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let prefill2 = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("two-way shrink two")],
+                    prefillStepSize: 32,
+                    resumeHint: "two-way-shrink-2",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let stream = try await backend.decodeBatchEvents(
+                    requests: [
+                        TextRuntimeDecodeRequest(
+                            model: model,
+                            draftModel: nil,
+                            context: prefill1.context,
+                            sampling: sampling,
+                            maxOutputTokens: 2,
+                            decodeStepSize: 1,
+                            prefillToken: "",
+                            acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                            shouldAbort: { abortingPeer.shouldAbort() }
+                        ),
+                        TextRuntimeDecodeRequest(
+                            model: model,
+                            draftModel: nil,
+                            context: prefill2.context,
+                            sampling: sampling,
+                            maxOutputTokens: 2,
+                            decodeStepSize: 1,
+                            prefillToken: "",
+                            acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                            shouldAbort: { false }
+                        ),
+                    ]
+                )
+                return try await collectTextBatchGenerationEvents(from: stream)
+            }
+        }
+
+        let summaries = renderedBatchRequestSummaries(from: events)
+        XCTAssertEqual(summaries[0]?.completionTokens, 0)
+        XCTAssertEqual(summaries[1]?.completionTokens, 2)
+        XCTAssertEqual(recorder.batchSizes, [2, 1])
+        XCTAssertEqual(recorder.sequenceLengths, [1, 1])
+    }
+
+    func testAutoSwiftMLXBackendBatchDecodeSupportsRotatingCacheState() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let recorder = BatchCacheIdentityRecorder()
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 2
+
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(
+                    storage: makeBatchCacheIdentityModelContainer(
+                        recorder: recorder,
+                        cacheKind: .rotating(maxSize: 8)
+                    )
+                )
+                let prefill1 = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("rotating batch")],
+                    prefillStepSize: 32,
+                    resumeHint: "rotating-batch-1",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let prefill2 = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("rotating batch")],
+                    prefillStepSize: 32,
+                    resumeHint: "rotating-batch-2",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let stream = try await backend.decodeBatchEvents(
+                    requests: [
+                        TextRuntimeDecodeRequest(
+                            model: model,
+                            draftModel: nil,
+                            context: prefill1.context,
+                            sampling: sampling,
+                            maxOutputTokens: 2,
+                            decodeStepSize: 1,
+                            prefillToken: "",
+                            acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                            shouldAbort: { false }
+                        ),
+                        TextRuntimeDecodeRequest(
+                            model: model,
+                            draftModel: nil,
+                            context: prefill2.context,
+                            sampling: sampling,
+                            maxOutputTokens: 2,
+                            decodeStepSize: 1,
+                            prefillToken: "",
+                            acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                            shouldAbort: { false }
+                        ),
+                    ]
+                )
+                return try await collectTextBatchGenerationEvents(from: stream)
+            }
+        }
+
+        let summaries = renderedBatchRequestSummaries(from: events)
+        XCTAssertEqual(summaries[0]?.completionTokens, 2)
+        XCTAssertEqual(summaries[1]?.completionTokens, 2)
+        XCTAssertEqual(summaries[0]?.decodeBatchSize, 2)
+        XCTAssertEqual(recorder.cacheMaxSizes, [8, 8])
+    }
+
+    func testAutoSwiftMLXBackendBatchDecodeStopsOnAdditionalEOSToken() async throws {
+        let backend = AutoSwiftMLXBackend()
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 2
+
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(
+                    storage: makeConstantTokenModelContainer(extraEOSTokens: ["tok3"])
+                )
+                let context1 = makePreparedDecodeContext(
+                    prepared: .tokens(LMInput.Text(tokens: MLXArray([2]))),
+                    cache: makeSimpleKVCache(sequenceLength: 3)
+                )
+                let context2 = makePreparedDecodeContext(
+                    prepared: .tokens(LMInput.Text(tokens: MLXArray([2]))),
+                    cache: makeSimpleKVCache(sequenceLength: 3)
+                )
+                let stream = try await backend.decodeBatchEvents(
+                    requests: [
+                        TextRuntimeDecodeRequest(
+                            model: model,
+                            draftModel: nil,
+                            context: context1,
+                            sampling: sampling,
+                            maxOutputTokens: 2,
+                            decodeStepSize: 1,
+                            prefillToken: "",
+                            acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                            shouldAbort: { false }
+                        ),
+                        TextRuntimeDecodeRequest(
+                            model: model,
+                            draftModel: nil,
+                            context: context2,
+                            sampling: sampling,
+                            maxOutputTokens: 2,
+                            decodeStepSize: 1,
+                            prefillToken: "",
+                            acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                            shouldAbort: { false }
+                        ),
+                    ]
+                )
+                return try await collectTextBatchGenerationEvents(from: stream)
+            }
+        }
+
+        let summaries = renderedBatchRequestSummaries(from: events)
+        XCTAssertEqual(summaries[0]?.completionTokens, 0)
+        XCTAssertEqual(summaries[1]?.completionTokens, 0)
+        XCTAssertTrue(events.contains { event in
+            guard case .batchSummary(let summary) = event else {
+                return false
+            }
+            return summary.outputTokenCount == 0
+        })
     }
 
     func testAutoSwiftMLXBackendDecodeUsesLiveSpeculativeDraftBridge() async throws {
@@ -4057,6 +4655,8 @@ final class WorkerScaffoldTests: XCTestCase {
         request1.execution.scheduling.lane = "text.decode.batch"
         request1.execution.ext["melix.gateway.concurrent_processing"] = "true"
         request1.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
+        request1.execution.ext["melix.scheduler.admission_batch_capacity"] = "2"
+        request1.execution.ext["melix.scheduler.admission_cohort_size"] = "2"
         request1.decodeHandle = prefillResponse1.decodeHandle
         request1.sampling = sampling
         request1.maxOutputTokens = 2
@@ -4069,6 +4669,8 @@ final class WorkerScaffoldTests: XCTestCase {
         request2.execution.scheduling.lane = "text.decode.batch"
         request2.execution.ext["melix.gateway.concurrent_processing"] = "true"
         request2.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
+        request2.execution.ext["melix.scheduler.admission_batch_capacity"] = "2"
+        request2.execution.ext["melix.scheduler.admission_cohort_size"] = "2"
         request2.decodeHandle = prefillResponse2.decodeHandle
         request2.sampling = sampling
         request2.maxOutputTokens = 2
@@ -4113,11 +4715,434 @@ final class WorkerScaffoldTests: XCTestCase {
 
         let metrics = services.metrics.counters
         XCTAssertEqual(metrics["swift_text.decode_batch_size"], 2)
+        XCTAssertEqual(metrics["swift_text.decode_batch_size_max"], 2)
         XCTAssertEqual(metrics["swift_text.model_eval_batch_size"], 2)
+        XCTAssertEqual(metrics["swift_text.model_eval_batch_size_max"], 2)
         XCTAssertEqual(metrics["swift_text.decode_batch_observation_count"], 2)
         XCTAssertEqual(metrics["swift_text.decode_loop_iterations"], 2)
         XCTAssertEqual(metrics["swift_text.per_batch_output_token_count"], 4)
         XCTAssertGreaterThan(metrics["swift_text.per_batch_output_tokens_per_second"] ?? 0, 0)
+        XCTAssertGreaterThan(metrics["swift_text.decode_batch_loop_total_us"] ?? 0, 0)
+        XCTAssertGreaterThan(metrics["swift_text.decode_batch_model_total_us"] ?? 0, 0)
+        XCTAssertEqual(metrics["swift_text.decode_batch_model_call_count"], 2)
+        XCTAssertGreaterThan(metrics["swift_text.decode_batch_model_avg_us"] ?? 0, 0)
+        XCTAssertEqual(metrics["swift_text.decode_batch_model_eval_sync_call_count"], 0)
+        XCTAssertGreaterThan(metrics["swift_text.decode_batch_sample_total_us"] ?? 0, 0)
+        XCTAssertEqual(metrics["swift_text.decode_batch_sample_call_count"], 4)
+        XCTAssertGreaterThan(metrics["swift_text.decode_batch_token_id_total_us"] ?? 0, 0)
+        XCTAssertEqual(metrics["swift_text.decode_batch_token_id_call_count"], 4)
+        XCTAssertGreaterThan(metrics["swift_text.decode_batch_detokenize_total_us"] ?? 0, 0)
+        XCTAssertEqual(metrics["swift_text.decode_batch_detokenize_call_count"], 4)
+        XCTAssertGreaterThan(metrics["swift_text.decode_batch_stream_yield_total_us"] ?? 0, 0)
+        XCTAssertEqual(metrics["swift_text.decode_batch_stream_yield_call_count"], 4)
+    }
+
+    func testDecodeStreamingRpcBatchesHomogeneousRequestsAcrossConfiguredPendingWindow() async throws {
+        let services = makeServices(
+            environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit",
+                "MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE": "deterministic",
+                "MELIX_SWIFT_TEXT_WORKER_DECODE_BATCH_PENDING_WINDOW_MS": "50",
+            ],
+            backend: DeterministicTextBackend(tokenDelayNanos: 0)
+        )
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefillRequest1 = Melix_Worker_V1_PrefillRequest()
+        prefillRequest1.execution.id.requestID = "req-batch-window-1"
+        prefillRequest1.execution.modelHandle = loadResponse.modelHandle
+        prefillRequest1.returnDecodeHandle = true
+        prefillRequest1.messages = [makeUserMessage("batch window alpha")]
+
+        var prefillRequest2 = Melix_Worker_V1_PrefillRequest()
+        prefillRequest2.execution.id.requestID = "req-batch-window-2"
+        prefillRequest2.execution.modelHandle = loadResponse.modelHandle
+        prefillRequest2.returnDecodeHandle = true
+        prefillRequest2.messages = [makeUserMessage("batch window beta")]
+
+        let prefillResponse1 = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest1,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        let prefillResponse2 = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest2,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.maxOutputTokens = 2
+
+        let writer1 = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request1 = Melix_Worker_V1_DecodeRequest()
+        request1.execution.id.requestID = "req-batch-window-1"
+        request1.execution.modelHandle = loadResponse.modelHandle
+        request1.execution.scheduling.lane = "text.decode.batch"
+        request1.execution.ext["melix.gateway.concurrent_processing"] = "true"
+        request1.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
+        request1.decodeHandle = prefillResponse1.decodeHandle
+        request1.sampling = sampling
+        request1.maxOutputTokens = 2
+        request1.returnUsage = true
+
+        let writer2 = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request2 = Melix_Worker_V1_DecodeRequest()
+        request2.execution.id.requestID = "req-batch-window-2"
+        request2.execution.modelHandle = loadResponse.modelHandle
+        request2.execution.scheduling.lane = "text.decode.batch"
+        request2.execution.ext["melix.gateway.concurrent_processing"] = "true"
+        request2.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
+        request2.decodeHandle = prefillResponse2.decodeHandle
+        request2.sampling = sampling
+        request2.maxOutputTokens = 2
+        request2.returnUsage = true
+
+        async let decode1: Void = withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request1,
+                response: RPCWriter(wrapping: writer1),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        try await Task.sleep(nanoseconds: 10_000_000)
+        async let decode2: Void = withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request2,
+                response: RPCWriter(wrapping: writer2),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        _ = try await (decode1, decode2)
+
+        let recorded1 = await writer1.snapshot()
+        let recorded2 = await writer2.snapshot()
+        XCTAssertEqual(recorded1.first?.decodeStarted.decodeHandle, prefillResponse1.decodeHandle)
+        XCTAssertEqual(recorded2.first?.decodeStarted.decodeHandle, prefillResponse2.decodeHandle)
+        XCTAssertTrue(recorded1.contains(where: { matches($0.payload, .tokenDelta) }))
+        XCTAssertTrue(recorded2.contains(where: { matches($0.payload, .tokenDelta) }))
+
+        let metrics = services.metrics.counters
+        XCTAssertEqual(metrics["swift_text.decode_batch_size"], 2)
+        XCTAssertEqual(metrics["swift_text.decode_batch_size_max"], 2)
+        XCTAssertEqual(metrics["swift_text.model_eval_batch_size"], 2)
+        XCTAssertEqual(metrics["swift_text.model_eval_batch_size_max"], 2)
+    }
+
+    func testDecodeStreamingRpcCancelsOneBatchedRequestWhilePeerCompletes() async throws {
+        let services = makeServices(
+            environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit",
+                "MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE": "deterministic",
+                "MELIX_SWIFT_TEXT_WORKER_DECODE_BATCH_PENDING_WINDOW_MS": "50",
+            ],
+            backend: DeterministicTextBackend(tokenDelayNanos: 40_000_000)
+        )
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefillRequest1 = Melix_Worker_V1_PrefillRequest()
+        prefillRequest1.execution.id.requestID = "req-batch-cancel-1"
+        prefillRequest1.execution.modelHandle = loadResponse.modelHandle
+        prefillRequest1.returnDecodeHandle = true
+        prefillRequest1.messages = [makeUserMessage("batch cancel alpha")]
+
+        var prefillRequest2 = Melix_Worker_V1_PrefillRequest()
+        prefillRequest2.execution.id.requestID = "req-batch-cancel-2"
+        prefillRequest2.execution.modelHandle = loadResponse.modelHandle
+        prefillRequest2.returnDecodeHandle = true
+        prefillRequest2.messages = [makeUserMessage("batch cancel beta")]
+
+        let prefillResponse1 = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest1,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        let prefillResponse2 = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest2,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.maxOutputTokens = 3
+
+        let writer1 = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request1 = Melix_Worker_V1_DecodeRequest()
+        request1.execution.id.requestID = "req-batch-cancel-1"
+        request1.execution.modelHandle = loadResponse.modelHandle
+        request1.execution.scheduling.lane = "text.decode.batch"
+        request1.execution.ext["melix.gateway.concurrent_processing"] = "true"
+        request1.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
+        request1.execution.ext["melix.scheduler.admission_cohort_id"] = "cohort-batch-cancel"
+        request1.execution.ext["melix.scheduler.admission_cohort_size"] = "2"
+        request1.execution.ext["melix.scheduler.admission_batch_capacity"] = "2"
+        request1.decodeHandle = prefillResponse1.decodeHandle
+        request1.sampling = sampling
+        request1.maxOutputTokens = 3
+        request1.returnUsage = true
+
+        let writer2 = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request2 = Melix_Worker_V1_DecodeRequest()
+        request2.execution.id.requestID = "req-batch-cancel-2"
+        request2.execution.modelHandle = loadResponse.modelHandle
+        request2.execution.scheduling.lane = "text.decode.batch"
+        request2.execution.ext["melix.gateway.concurrent_processing"] = "true"
+        request2.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
+        request2.execution.ext["melix.scheduler.admission_cohort_id"] = "cohort-batch-cancel"
+        request2.execution.ext["melix.scheduler.admission_cohort_size"] = "2"
+        request2.execution.ext["melix.scheduler.admission_batch_capacity"] = "2"
+        request2.decodeHandle = prefillResponse2.decodeHandle
+        request2.sampling = sampling
+        request2.maxOutputTokens = 3
+        request2.returnUsage = true
+
+        async let decode1: Void = withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request1,
+                response: RPCWriter(wrapping: writer1),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        async let decode2: Void = withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request2,
+                response: RPCWriter(wrapping: writer2),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        try await Task.sleep(nanoseconds: 75_000_000)
+        _ = try await withTestServerContextRPCCancellationHandle { handle in
+            var abortRequest = Melix_Worker_V1_AbortRequest()
+            abortRequest.requestID = "req-batch-cancel-1"
+            return try await services.inference.abort(
+                request: abortRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Abort.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        _ = try await (decode1, decode2)
+
+        let recorded1 = await writer1.snapshot()
+        let recorded2 = await writer2.snapshot()
+        let cancelledKinds = payloadKinds(recorded1)
+        XCTAssertEqual(cancelledKinds.first, .decodeStarted)
+        XCTAssertEqual(cancelledKinds.last, .completed)
+        XCTAssertFalse(cancelledKinds.contains(.usageDelta))
+        XCTAssertEqual(payloadKinds(recorded2), [.decodeStarted, .tokenDelta, .tokenDelta, .tokenDelta, .usageDelta, .completed])
+        XCTAssertEqual(recorded1.last?.completed.finishReason, "cancelled")
+        XCTAssertFalse(recorded1.contains(where: { matches($0.payload, .usageDelta) }))
+        XCTAssertEqual(recorded2.first { matches($0.payload, .usageDelta) }?.usageDelta.completionTokens, 3)
+        XCTAssertEqual(recorded2.last?.completed.finishReason, "stop")
+
+        let metrics = services.metrics.counters
+        XCTAssertEqual(metrics["swift_text.decode_batch_size"], 2)
+        XCTAssertEqual(metrics["swift_text.decode_batch_size_max"], 2)
+        XCTAssertEqual(metrics["swift_text.model_eval_batch_size"], 2)
+        XCTAssertEqual(metrics["swift_text.model_eval_batch_size_max"], 2)
+    }
+
+    func testDecodeStreamingRpcWaitsForSchedulerCohortBeyondOrdinaryPendingWindow() async throws {
+        let services = makeServices(
+            environment: [
+                "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit",
+                "MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE": "deterministic",
+                "MELIX_SWIFT_TEXT_WORKER_DECODE_BATCH_PENDING_WINDOW_MS": "10",
+            ],
+            backend: DeterministicTextBackend(tokenDelayNanos: 0)
+        )
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefillRequest1 = Melix_Worker_V1_PrefillRequest()
+        prefillRequest1.execution.id.requestID = "req-scheduler-cohort-1"
+        prefillRequest1.execution.modelHandle = loadResponse.modelHandle
+        prefillRequest1.returnDecodeHandle = true
+        prefillRequest1.messages = [makeUserMessage("scheduler cohort alpha")]
+
+        var prefillRequest2 = Melix_Worker_V1_PrefillRequest()
+        prefillRequest2.execution.id.requestID = "req-scheduler-cohort-2"
+        prefillRequest2.execution.modelHandle = loadResponse.modelHandle
+        prefillRequest2.returnDecodeHandle = true
+        prefillRequest2.messages = [makeUserMessage("scheduler cohort beta")]
+
+        let prefillResponse1 = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest1,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        let prefillResponse2 = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest2,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.maxOutputTokens = 2
+
+        let writer1 = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request1 = Melix_Worker_V1_DecodeRequest()
+        request1.execution.id.requestID = "req-scheduler-cohort-1"
+        request1.execution.modelHandle = loadResponse.modelHandle
+        request1.execution.scheduling.lane = "text.decode.batch"
+        request1.execution.ext["melix.gateway.concurrent_processing"] = "true"
+        request1.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
+        request1.execution.ext["melix.scheduler.admission_cohort_id"] = "cohort-delayed-decode"
+        request1.execution.ext["melix.scheduler.admission_cohort_size"] = "2"
+        request1.execution.ext["melix.scheduler.admission_batch_capacity"] = "2"
+        request1.decodeHandle = prefillResponse1.decodeHandle
+        request1.sampling = sampling
+        request1.maxOutputTokens = 2
+        request1.returnUsage = true
+
+        let writer2 = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request2 = Melix_Worker_V1_DecodeRequest()
+        request2.execution.id.requestID = "req-scheduler-cohort-2"
+        request2.execution.modelHandle = loadResponse.modelHandle
+        request2.execution.scheduling.lane = "text.decode.batch"
+        request2.execution.ext["melix.gateway.concurrent_processing"] = "true"
+        request2.execution.ext["melix.gateway.max_concurrent_sequences"] = "2"
+        request2.execution.ext["melix.scheduler.admission_cohort_id"] = "cohort-delayed-decode"
+        request2.execution.ext["melix.scheduler.admission_cohort_size"] = "2"
+        request2.execution.ext["melix.scheduler.admission_batch_capacity"] = "2"
+        request2.decodeHandle = prefillResponse2.decodeHandle
+        request2.sampling = sampling
+        request2.maxOutputTokens = 2
+        request2.returnUsage = true
+
+        async let decode1: Void = withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request1,
+                response: RPCWriter(wrapping: writer1),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        async let decode2: Void = withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request2,
+                response: RPCWriter(wrapping: writer2),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        _ = try await (decode1, decode2)
+
+        let recorded1 = await writer1.snapshot()
+        let recorded2 = await writer2.snapshot()
+        XCTAssertTrue(recorded1.contains(where: { matches($0.payload, .tokenDelta) }))
+        XCTAssertTrue(recorded2.contains(where: { matches($0.payload, .tokenDelta) }))
+
+        let metrics = services.metrics.counters
+        XCTAssertEqual(metrics["swift_text.decode_batch_size"], 2)
+        XCTAssertEqual(metrics["swift_text.decode_batch_size_max"], 2)
+        XCTAssertEqual(metrics["swift_text.model_eval_batch_size"], 2)
+        XCTAssertEqual(metrics["swift_text.model_eval_batch_size_max"], 2)
     }
 
     func testDecodeStreamingRpcFallsBackWhenHomogeneousBatchDecodeUnsupported() async throws {
@@ -9787,6 +10812,35 @@ private func matches(
 }
 
 @available(macOS 15.0, *)
+private func payloadKinds(
+    _ events: [Melix_Worker_V1_ExecuteEvent]
+) -> [ExecuteEventPayloadMatcher] {
+    events.compactMap { event in
+        guard let payload = event.payload else {
+            return nil
+        }
+        switch payload {
+        case .prefillStarted:
+            return .prefillStarted
+        case .decodeStarted:
+            return .decodeStarted
+        case .accelerationApplied:
+            return .accelerationApplied
+        case .tokenDelta:
+            return .tokenDelta
+        case .usageDelta:
+            return .usageDelta
+        case .completed:
+            return .completed
+        case .error:
+            return .error
+        default:
+            return nil
+        }
+    }
+}
+
+@available(macOS 15.0, *)
 private enum ExecuteEventPayloadMatcher {
     case prefillStarted
     case decodeStarted
@@ -9970,6 +11024,69 @@ private func collectTextGenerationEvents(
 }
 
 @available(macOS 15.0, *)
+private func collectTextBatchGenerationEvents(
+    from stream: AsyncThrowingStream<TextBatchGenerationEvent, Error>
+) async throws -> [TextBatchGenerationEvent] {
+    var events: [TextBatchGenerationEvent] = []
+    for try await event in stream {
+        events.append(event)
+    }
+    return events
+}
+
+@available(macOS 15.0, *)
+private func collectThreePeerBatchDecodeEvents(
+    backend: AutoSwiftMLXBackend,
+    recorder: BatchCacheIdentityRecorder,
+    sampling: Melix_Worker_V1_SamplingConfig,
+    abortingPeer: AbortAfterPoll
+) async throws -> [TextBatchGenerationEvent] {
+    try await withTemporaryDefaultMetallib {
+        try await Device.withDefaultDevice(.cpu) {
+            let model = LoadedTextModel(
+                storage: makeBatchCacheIdentityModelContainer(recorder: recorder)
+            )
+            var prefills: [RuntimePrefillResult] = []
+            for index in 0 ..< 3 {
+                let prefill = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("three-way shrink \(index)")],
+                    prefillStepSize: 32,
+                    resumeHint: "three-way-shrink-\(index)",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                prefills.append(prefill)
+            }
+
+            var requests: [TextRuntimeDecodeRequest] = []
+            for (index, prefill) in prefills.enumerated() {
+                let shouldAbort: @Sendable () -> Bool
+                if index == 0 {
+                    shouldAbort = { abortingPeer.shouldAbort() }
+                } else {
+                    shouldAbort = { false }
+                }
+                requests.append(TextRuntimeDecodeRequest(
+                    model: model,
+                    draftModel: nil,
+                    context: prefill.context,
+                    sampling: sampling,
+                    maxOutputTokens: 2,
+                    decodeStepSize: 1,
+                    prefillToken: "",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: shouldAbort
+                ))
+            }
+
+            let stream = try await backend.decodeBatchEvents(requests: requests)
+            return try await collectTextBatchGenerationEvents(from: stream)
+        }
+    }
+}
+
+@available(macOS 15.0, *)
 private func renderedPromptTokens(from events: [TextGenerationEvent]) -> Int? {
     for event in events {
         if case .prefillStarted(let promptTokens) = event {
@@ -9977,6 +11094,19 @@ private func renderedPromptTokens(from events: [TextGenerationEvent]) -> Int? {
         }
     }
     return nil
+}
+
+@available(macOS 15.0, *)
+private func renderedBatchRequestSummaries(
+    from events: [TextBatchGenerationEvent]
+) -> [Int: TextGenerationSummary] {
+    var summaries: [Int: TextGenerationSummary] = [:]
+    for event in events {
+        if case .summary(let requestIndex, let summary) = event {
+            summaries[requestIndex] = summary
+        }
+    }
+    return summaries
 }
 
 @available(macOS 15.0, *)
@@ -10113,6 +11243,251 @@ private func makeCountingPreparedLogitsModelContainer(counter: CountingLanguageM
         tokenizer: DeterministicTokenizer(vocabularySize: vocabularySize)
     )
     return ModelContainer(context: context)
+}
+
+@available(macOS 15.0, *)
+private final class BatchCacheIdentityRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var retainedCaches: [AnyObject] = []
+    private var recordedCacheIdentifiers: [ObjectIdentifier] = []
+    private var recordedBatchSizes: [Int] = []
+    private var recordedSequenceLengths: [Int] = []
+    private var recordedCacheOffsets: [Int] = []
+    private var recordedCacheMaxSizes: [Int] = []
+
+    var cacheIdentifiers: [ObjectIdentifier] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedCacheIdentifiers
+    }
+
+    var batchSizes: [Int] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedBatchSizes
+    }
+
+    var sequenceLengths: [Int] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedSequenceLengths
+    }
+
+    var cacheOffsets: [Int] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedCacheOffsets
+    }
+
+    var cacheMaxSizes: [Int] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedCacheMaxSizes
+    }
+
+    func record(cache: (any KVCache)?, batchSize: Int, sequenceLength: Int) {
+        guard let cacheObject = cache as AnyObject? else {
+            return
+        }
+        lock.lock()
+        retainedCaches.append(cacheObject)
+        recordedCacheIdentifiers.append(ObjectIdentifier(cacheObject))
+        recordedBatchSizes.append(batchSize)
+        recordedSequenceLengths.append(sequenceLength)
+        recordedCacheOffsets.append(cache?.offset ?? -1)
+        if let maxSize = cache?.maxSize {
+            recordedCacheMaxSizes.append(maxSize)
+        }
+        lock.unlock()
+    }
+}
+
+@available(macOS 15.0, *)
+private enum TestBatchCacheKind {
+    case simple
+    case rotating(maxSize: Int)
+}
+
+@available(macOS 15.0, *)
+private final class BatchCacheIdentityLanguageModel: Module, LanguageModel {
+    let recorder: BatchCacheIdentityRecorder
+    let cacheKind: TestBatchCacheKind
+    let vocabularySize = 32
+
+    init(recorder: BatchCacheIdentityRecorder, cacheKind: TestBatchCacheKind = .simple) {
+        self.recorder = recorder
+        self.cacheKind = cacheKind
+        super.init()
+    }
+
+    func prepare(_ input: LMInput, cache: [KVCache], windowSize: Int?) throws -> PrepareResult {
+        if let simpleCache = cache.first {
+            let sequenceLength = max(1, input.text.tokens.size)
+            let keys = MLXArray.zeros([1, 1, sequenceLength, 4])
+            let values = MLXArray.zeros([1, 1, sequenceLength, 4])
+            _ = simpleCache.update(keys: keys, values: values)
+        }
+        return .tokens(LMInput.Text(tokens: MLXArray([2])))
+    }
+
+    func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
+        let batchSize = inputs.dim(0)
+        let sequenceLength = inputs.dim(1)
+        recorder.record(cache: cache?.first, batchSize: batchSize, sequenceLength: sequenceLength)
+        if let cache = cache?.first {
+            let keys = MLXArray.zeros([batchSize, 1, sequenceLength, 4])
+            let values = MLXArray.zeros([batchSize, 1, sequenceLength, 4])
+            _ = cache.update(keys: keys, values: values)
+        }
+        return logitsForToken(3, batchSize: batchSize)
+    }
+
+    func callAsFunction(_ input: LMInput.Text, cache: [KVCache]?, state: LMOutput.State?) -> LMOutput {
+        let batchSize = input.tokens.dim(0)
+        let sequenceLength = input.tokens.dim(1)
+        recorder.record(cache: cache?.first, batchSize: batchSize, sequenceLength: sequenceLength)
+        if let cache = cache?.first {
+            let keys = MLXArray.zeros([batchSize, 1, sequenceLength, 4])
+            let values = MLXArray.zeros([batchSize, 1, sequenceLength, 4])
+            _ = cache.update(keys: keys, values: values)
+        }
+        return LMOutput(logits: logitsForToken(3, batchSize: batchSize))
+    }
+
+    func newCache(parameters: GenerateParameters?) -> [KVCache] {
+        switch cacheKind {
+        case .simple:
+            [KVCacheSimple()]
+        case .rotating(let maxSize):
+            [RotatingKVCache(maxSize: maxSize)]
+        }
+    }
+
+    private func logitsForToken(_ tokenID: Int, batchSize: Int) -> MLXArray {
+        let row = (0 ..< vocabularySize).map { index in
+            index == tokenID ? Float(10) : Float(-10)
+        }
+        return MLXArray(Array(repeating: row, count: batchSize).flatMap { $0 }, [batchSize, 1, vocabularySize])
+    }
+}
+
+@available(macOS 15.0, *)
+private func makeBatchCacheIdentityModelContainer(
+    recorder: BatchCacheIdentityRecorder,
+    cacheKind: TestBatchCacheKind = .simple
+) -> ModelContainer {
+    let vocabularySize = 32
+    let context = ModelContext(
+        configuration: ModelConfiguration(id: "melix-tests/batch-cache-identity"),
+        model: BatchCacheIdentityLanguageModel(recorder: recorder, cacheKind: cacheKind),
+        processor: DeterministicUserInputProcessor(promptTokens: [1, 2, 3, 4, 5]),
+        tokenizer: DeterministicTokenizer(vocabularySize: vocabularySize)
+    )
+    return ModelContainer(context: context)
+}
+
+@available(macOS 15.0, *)
+private final class ConstantTokenLanguageModel: Module, LanguageModel {
+    let vocabularySize = 32
+    let tokenID: Int
+
+    init(tokenID: Int = 3) {
+        self.tokenID = tokenID
+        super.init()
+    }
+
+    func prepare(_ input: LMInput, cache: [KVCache], windowSize: Int?) throws -> PrepareResult {
+        .tokens(LMInput.Text(tokens: MLXArray([2])))
+    }
+
+    func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
+        logits(batchSize: inputs.dim(0), length: inputs.dim(1))
+    }
+
+    func callAsFunction(_ input: LMInput.Text, cache: [KVCache]?, state: LMOutput.State?) -> LMOutput {
+        LMOutput(logits: logits(batchSize: input.tokens.dim(0), length: input.tokens.dim(1)))
+    }
+
+    func newCache(parameters: GenerateParameters?) -> [KVCache] {
+        [KVCacheSimple()]
+    }
+
+    private func logits(batchSize: Int, length: Int) -> MLXArray {
+        let row = (0 ..< vocabularySize).map { index in
+            index == tokenID ? Float(10) : Float(-10)
+        }
+        return MLXArray(Array(repeating: row, count: batchSize * length).flatMap { $0 }, [batchSize, length, vocabularySize])
+    }
+}
+
+@available(macOS 15.0, *)
+private func makeConstantTokenModelContainer(
+    tokenID: Int = 3,
+    extraEOSTokens: Set<String> = []
+) -> ModelContainer {
+    let vocabularySize = 32
+    let context = ModelContext(
+        configuration: ModelConfiguration(
+            id: "melix-tests/constant-token",
+            extraEOSTokens: extraEOSTokens
+        ),
+        model: ConstantTokenLanguageModel(tokenID: tokenID),
+        processor: DeterministicUserInputProcessor(promptTokens: [1, 2, 3]),
+        tokenizer: DeterministicTokenizer(vocabularySize: vocabularySize)
+    )
+    return ModelContainer(context: context)
+}
+
+@available(macOS 15.0, *)
+private func makeSimpleKVCache(sequenceLength: Int) -> [KVCache] {
+    let cache = KVCacheSimple()
+    let keys = MLXArray.zeros([1, 1, sequenceLength, 4])
+    let values = MLXArray.zeros([1, 1, sequenceLength, 4])
+    _ = cache.update(keys: keys, values: values)
+    return [cache]
+}
+
+@available(macOS 15.0, *)
+private func makePreparedDecodeContext(
+    prepared: PrepareResult,
+    cache: [KVCache],
+    activeKVQuantizationRatio: Int = 0
+) -> TextPrefillContext {
+    let input: LMInput
+    switch prepared {
+    case .tokens(let tokens):
+        input = LMInput(tokens: tokens.tokens)
+    case .logits:
+        input = LMInput(tokens: MLXArray([1]))
+    }
+
+    let state = PreparedDecodeState(
+        input: input,
+        prepared: prepared,
+        cache: cache,
+        promptPrefillTime: 0,
+        prefillQuantizeMicros: 0,
+        activeKVQuantizationRatio: activeKVQuantizationRatio
+    )
+    return TextPrefillContext(storage: state, promptTokens: input.text.tokens.size)
+}
+
+@available(macOS 15.0, *)
+private final class AbortAfterPoll: @unchecked Sendable {
+    private let lock = NSLock()
+    private let falsePollsBeforeAbort: Int
+    private var pollCount = 0
+
+    init(falsePollsBeforeAbort: Int) {
+        self.falsePollsBeforeAbort = falsePollsBeforeAbort
+    }
+
+    func shouldAbort() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        pollCount += 1
+        return pollCount > falsePollsBeforeAbort
+    }
 }
 
 @available(macOS 15.0, *)

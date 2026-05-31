@@ -1,9 +1,6 @@
 import Foundation
 import GRPCCore
 import MelixWorkerProtocol
-#if canImport(MLXLMCommon)
-@preconcurrency import MLXLMCommon
-#endif
 
 struct TextDecodeEngine: Sendable {
     let registry: WorkerRuntimeRegistry
@@ -84,6 +81,7 @@ struct TextDecodeEngine: Sendable {
             var dflashRollbackCount: Int?
             var dflashTargetHiddenLayers: Int?
             var activeKVProbe: ActiveKVProbeSummary?
+            var decodeBatchProbe: DecodeBatchProbeSummary?
 
             func writeOutput(_ output: HarmonyChannelOutputFilter.Output) async throws {
                 try await writeFilteredTextOutput(
@@ -192,6 +190,7 @@ struct TextDecodeEngine: Sendable {
                     dflashRollbackCount = summary.dflashRollbackCount
                     dflashTargetHiddenLayers = summary.dflashTargetHiddenLayers
                     activeKVProbe = summary.activeKVProbe
+                    decodeBatchProbe = summary.decodeBatchProbe
                 }
             }
 
@@ -280,7 +279,9 @@ struct TextDecodeEngine: Sendable {
             )
             metrics.set("swift_text.decode_stream_event_count", value: outputState.eventCount)
             metrics.set("swift_text.decode_batch_size", value: max(1, decodeBatchSize))
+            metrics.setMax("swift_text.decode_batch_size_max", value: max(1, decodeBatchSize))
             metrics.set("swift_text.model_eval_batch_size", value: max(1, modelEvalBatchSize))
+            metrics.setMax("swift_text.model_eval_batch_size_max", value: max(1, modelEvalBatchSize))
             metrics.increment("swift_text.decode_batch_observation_count")
             metrics.set("swift_text.decode_loop_iterations", value: max(1, decodeLoopIterations))
             metrics.set(
@@ -300,6 +301,7 @@ struct TextDecodeEngine: Sendable {
                 value: activeKVQuantizationRatioPercent(for: acceleration)
             )
             recordActiveKVProbeMetrics(activeKVProbe)
+            recordDecodeBatchProbeMetrics(decodeBatchProbe)
             recordSpeculativeMetrics(
                 accepted: speculativeAccepted,
                 rejected: speculativeRejected,
@@ -406,15 +408,6 @@ struct TextDecodeEngine: Sendable {
             return nil
         }
 
-        #if canImport(MLXLMCommon)
-        if let decodeState = session.prefill.context.storage as? PreparedDecodeState {
-            guard !decodeState.cache.isEmpty,
-                  decodeState.cache.allSatisfy({ $0 is KVCacheSimple }) else {
-                return nil
-            }
-        }
-        #endif
-
         let key = TextDecodeBatchEligibilityKey(
             modelHandle: session.loadedModel.handle,
             lane: lane,
@@ -428,6 +421,7 @@ struct TextDecodeEngine: Sendable {
             requestID: requestID,
             key: key,
             maxBatchSize: maxBatchSize,
+            schedulerCohortSize: schedulerCohortSize(from: request.execution.ext),
             session: session,
             sampling: sampling,
             maxOutputTokens: request.maxOutputTokens,
@@ -435,6 +429,13 @@ struct TextDecodeEngine: Sendable {
             prefillToken: request.prefillToken,
             acceleration: acceleration,
             shouldAbort: shouldAbort
+        )
+    }
+
+    private func schedulerCohortSize(from executionExt: [String: String]) -> Int {
+        parsePositiveInt(
+            executionExt["melix.scheduler.admission_cohort_size"],
+            fallback: 1
         )
     }
 
@@ -622,6 +623,49 @@ struct TextDecodeEngine: Sendable {
             "swift_text.active_kv_candidate_eligibility_check_count",
             value: probe.candidateEligibilityCheckCount
         )
+    }
+
+    private func recordDecodeBatchProbeMetrics(_ probe: DecodeBatchProbeSummary?) {
+        guard let probe else {
+            return
+        }
+
+        metrics.set("swift_text.decode_batch_loop_total_us", value: probe.decodeLoopTotalMicros)
+        metrics.set("swift_text.decode_batch_model_total_us", value: probe.decodeModelTotalMicros)
+        metrics.set("swift_text.decode_batch_model_call_count", value: probe.decodeModelCallCount)
+        metrics.set("swift_text.decode_batch_model_avg_us", value: probe.decodeModelAverageMicros)
+        metrics.set(
+            "swift_text.decode_batch_model_eval_sync_total_us",
+            value: probe.decodeModelEvalSyncTotalMicros
+        )
+        metrics.set(
+            "swift_text.decode_batch_model_eval_sync_call_count",
+            value: probe.decodeModelEvalSyncCallCount
+        )
+        metrics.set(
+            "swift_text.decode_batch_model_eval_sync_avg_us",
+            value: probe.decodeModelEvalSyncAverageMicros
+        )
+        metrics.set(
+            "swift_text.decode_batch_model_eval_sync_first_us",
+            value: probe.decodeModelEvalSyncFirstMicros
+        )
+        metrics.set(
+            "swift_text.decode_batch_model_eval_sync_max_us",
+            value: probe.decodeModelEvalSyncMaxMicros
+        )
+        metrics.set("swift_text.decode_batch_sample_total_us", value: probe.decodeSampleTotalMicros)
+        metrics.set("swift_text.decode_batch_sample_call_count", value: probe.decodeSampleCallCount)
+        metrics.set("swift_text.decode_batch_sample_avg_us", value: probe.decodeSampleAverageMicros)
+        metrics.set("swift_text.decode_batch_token_id_total_us", value: probe.decodeTokenIDTotalMicros)
+        metrics.set("swift_text.decode_batch_token_id_call_count", value: probe.decodeTokenIDCallCount)
+        metrics.set("swift_text.decode_batch_token_id_avg_us", value: probe.decodeTokenIDAverageMicros)
+        metrics.set("swift_text.decode_batch_detokenize_total_us", value: probe.decodeDetokenizeTotalMicros)
+        metrics.set("swift_text.decode_batch_detokenize_call_count", value: probe.decodeDetokenizeCallCount)
+        metrics.set("swift_text.decode_batch_detokenize_avg_us", value: probe.decodeDetokenizeAverageMicros)
+        metrics.set("swift_text.decode_batch_stream_yield_total_us", value: probe.decodeStreamYieldTotalMicros)
+        metrics.set("swift_text.decode_batch_stream_yield_call_count", value: probe.decodeStreamYieldCallCount)
+        metrics.set("swift_text.decode_batch_stream_yield_avg_us", value: probe.decodeStreamYieldAverageMicros)
     }
 }
 

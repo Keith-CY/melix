@@ -441,6 +441,73 @@ def test_dry_run_writes_three_way_artifacts(tmp_path: Path) -> None:
     assert manifest["scenario_count"] == 3
 
 
+def test_dry_run_copies_run_evidence_into_artifacts(tmp_path: Path) -> None:
+    evidence_path = tmp_path / "input-run-evidence.json"
+    evidence = {
+        "build_mode": "release",
+        "melix_git_head": "abc123",
+        "melix_worker_binary": "/tmp/melix-text-worker-swift",
+        "melix_worker_sha256": "worker-sha",
+        "melix_control_binary": "/tmp/melix-control-plane",
+        "melix_control_sha256": "control-sha",
+        "model_id": "unsloth/gemma-4-E4B-it-MLX-8bit",
+        "measurement_profile": {
+            "profile": "warm",
+            "prompt_token_targets": [128, 1024],
+        },
+    }
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+    args = three_way.build_arg_parser().parse_args(
+        [
+            "--endpoint",
+            "melix=http://127.0.0.1:12441/v1::model",
+            "--endpoint",
+            "omlx=http://127.0.0.1:18061/v1::model",
+            "--dry-run",
+            "--run-id",
+            "three-way-run-evidence",
+            "--staging-root",
+            str(tmp_path),
+            "--run-evidence",
+            str(evidence_path),
+            "--no-export",
+        ]
+    )
+    three_way.validate_args(args)
+
+    result = three_way.run_comparison(args)
+
+    staging_dir = tmp_path / "three-way-run-evidence"
+    manifest = json.loads((staging_dir / "manifest.json").read_text(encoding="utf-8"))
+    summary = json.loads((staging_dir / "summary.json").read_text(encoding="utf-8"))
+    markdown = (staging_dir / "summary.md").read_text(encoding="utf-8")
+    copied_evidence = json.loads((staging_dir / "run-evidence.json").read_text(encoding="utf-8"))
+
+    assert result["artifacts"]["run_evidence"].endswith("run-evidence.json")
+    assert manifest["artifacts"]["run_evidence"] == "run-evidence.json"
+    assert manifest["run_evidence"] == evidence
+    assert summary["run_evidence"] == evidence
+    assert copied_evidence == evidence
+    assert "- Run evidence artifact: `run-evidence.json`" in markdown
+    assert "## Run Evidence" in markdown
+    assert "`melix_worker_sha256` | `worker-sha`" in markdown
+
+
+def test_load_run_evidence_rejects_missing_invalid_and_non_object(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="does not exist"):
+        three_way.load_run_evidence(tmp_path / "missing.json")
+
+    invalid_json = tmp_path / "invalid.json"
+    invalid_json.write_text("{not-json", encoding="utf-8")
+    with pytest.raises(ValueError, match="not valid JSON"):
+        three_way.load_run_evidence(invalid_json)
+
+    list_json = tmp_path / "list.json"
+    list_json.write_text("[]", encoding="utf-8")
+    with pytest.raises(ValueError, match="JSON object"):
+        three_way.load_run_evidence(list_json)
+
+
 def test_preflight_only_captures_runtime_snapshots_without_requests(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
