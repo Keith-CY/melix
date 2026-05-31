@@ -27,6 +27,11 @@ _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 _PHONE_RE = re.compile(r"\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b")
 _TOKEN_RE = re.compile(r"\b(?:sk|pk|rk|ghp|github_pat)-[A-Za-z0-9._-]{8,}\b")
 _WORD_RE = re.compile(r"[A-Za-z0-9]+")
+_TEXT_SOURCE_SUFFIXES = frozenset((".md", ".markdown"))
+_CODE_SOURCE_SUFFIXES = frozenset(
+    (".py", ".swift", ".js", ".ts", ".java", ".go", ".rs", ".cpp", ".c", ".h")
+)
+_STRUCTURED_DATA_SOURCE_SUFFIXES = frozenset((".jsonl", ".json", ".csv", ".tsv"))
 
 
 @dataclass(frozen=True)
@@ -568,11 +573,11 @@ def _source_kind(path: Path) -> str | None:
         return "text"
     if suffix == ".text":
         return "text"
-    if suffix in {".md", ".markdown"}:
+    if suffix in _TEXT_SOURCE_SUFFIXES:
         return "markdown"
-    if suffix in {".py", ".swift", ".js", ".ts", ".java", ".go", ".rs", ".cpp", ".c", ".h"}:
+    if suffix in _CODE_SOURCE_SUFFIXES:
         return "code"
-    if suffix in {".jsonl", ".json", ".csv", ".tsv"}:
+    if suffix in _STRUCTURED_DATA_SOURCE_SUFFIXES:
         return "structured_data"
     return None
 
