@@ -31,14 +31,14 @@ def _is_mtp_weight_key(key: Any) -> bool:
 def _model_safetensor_files(model_path: Path) -> list[str]:
     """Return top-level ``model*.safetensors`` paths without glob allocation."""
 
+    weight_files: list[str] = []
+    append_weight_file = weight_files.append
     try:
         with os.scandir(model_path) as entries:
-            weight_files = [
-                entry.path
-                for entry in entries
-                if entry.name.startswith("model")
-                and entry.name.endswith(".safetensors")
-            ]
+            for entry in entries:
+                name = entry.name
+                if name.startswith("model") and name.endswith(".safetensors"):
+                    append_weight_file(entry.path)
     except FileNotFoundError:
         return []
     weight_files.sort()

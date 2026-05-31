@@ -321,6 +321,9 @@ def test_native_mtp_loader_safetensor_scandir_probe_script_emits_metrics(
     assert metrics["old_mean_ms"] >= 0.0
     assert metrics["new_mean_ms"] >= 0.0
     assert metrics["result_count"] == 24
+    assert metrics["model_listing_old_mean_ms"] >= 0.0
+    assert metrics["model_listing_new_mean_ms"] >= 0.0
+    assert metrics["model_listing_result_count"] == 10
     assert metrics["extra_result_count"] == 8
     assert metrics["model_files"] == 8
     assert metrics["distractor_files"] == 8
@@ -3187,10 +3190,15 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
         "old_peak_bytes_mean",
         "extra_old_mean_ms",
         "extra_old_peak_bytes_mean",
+        "model_listing_old_mean_ms",
+        "model_listing_old_peak_bytes_mean",
         "key_old_mean_ms",
     ):
         assert native_mtp_metrics[metric_key]["direction"] == "informational"
         assert "warn_pct" not in native_mtp_metrics[metric_key]
+    assert native_mtp_metrics["model_listing_new_mean_ms"]["direction"] == "lower_is_better"
+    assert native_mtp_metrics["model_listing_delta_ms"]["direction"] == "lower_is_better"
+    assert native_mtp_metrics["model_listing_speedup"]["direction"] == "higher_is_better"
     assert native_mtp_metrics["key_new_mean_ms"]["direction"] == "lower_is_better"
     assert native_mtp_metrics["key_delta_ms"]["direction"] == "lower_is_better"
     assert native_mtp_metrics["key_speedup"]["direction"] == "higher_is_better"
