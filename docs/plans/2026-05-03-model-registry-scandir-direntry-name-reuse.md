@@ -6,6 +6,8 @@ This performance slice keeps model registry discovery behavior unchanged while n
 
 The scan loop already uses `os.scandir()` and `DirEntry` descriptor checks. This slice reuses each entry name once per loop iteration and hoists the pruned directory-name collection out of the loop so large registry roots avoid repeated `DirEntry.name` lookups and per-directory set allocation.
 
+The 2026-05-31 follow-up slice keeps the same registered probe and narrows the remaining child-directory scheduling cost by sorting the collected child names in place before extending the DFS stack, avoiding the extra list allocated by `sorted(...)` while preserving deterministic traversal order.
+
 ## Registered probe
 
 The affected path is covered by the existing PR-scoped probe `model-registry-plain-local-manifest-stat-elision` in `infra/perf/pr_scoped_probes.json`.

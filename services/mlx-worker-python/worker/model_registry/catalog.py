@@ -2134,7 +2134,8 @@ class WorkerModelCatalog:
                     )
                 )
                 continue
-            stack.extend(current / name for name in sorted(child_names, reverse=True))
+            child_names.sort(reverse=True)
+            stack.extend(current / name for name in child_names)
         return tuple(manifest_paths), tuple(plain_local_model_dirs), tuple(sorted(hf_cache_repo_dirs))
 
     @staticmethod
