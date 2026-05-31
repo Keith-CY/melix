@@ -196,6 +196,57 @@ def test_image_generation_and_edit_probe_bytes_do_not_rescan_images(
     assert runtime.last_probe_snapshot().output_bytes == expected_edited_bytes
 
 
+def test_image_generation_and_edit_bind_model_id_once_per_loop(tmp_path: Path) -> None:
+    class CountingLoadedModel:
+        get_calls = 0
+
+        def get(self, key: str, default: object = None) -> object:
+            if key == "model_id":
+                type(self).get_calls += 1
+                return "melix-dev-image"
+            return default
+
+    runtime = DeterministicImageGenerationRuntime()
+    loaded_model = CountingLoadedModel()
+    assert loaded_model.get("other", "fallback") == "fallback"
+
+    generated = runtime.generate_images(
+        loaded_model,
+        inference_pb2.ImageGenerateRequest(
+            prompt="red fox in snow",
+            size="128x128",
+            response_format="png",
+            artifact_namespace="tests",
+            n=5,
+        ),
+        job_id="image-generate-model-id-once",
+        images_root=tmp_path,
+        cancel_event=Event(),
+    )
+
+    assert len(generated.images) == 5
+    assert CountingLoadedModel.get_calls == 1
+
+    CountingLoadedModel.get_calls = 0
+    edited = runtime.edit_image(
+        loaded_model,
+        inference_pb2.ImageEditRequest(
+            prompt="add stars",
+            image=b"SOURCE_IMAGE",
+            mask=b"MASK_IMAGE",
+            size="128x128",
+            response_format="png",
+            n=5,
+        ),
+        job_id="image-edit-model-id-once",
+        images_root=tmp_path,
+        cancel_event=Event(),
+    )
+
+    assert len(edited.images) == 5
+    assert CountingLoadedModel.get_calls == 1
+
+
 def test_image_artifact_metadata_reuses_supplied_payload_byte_length(tmp_path: Path) -> None:
     class CountingBytes(bytes):
         len_calls = 0

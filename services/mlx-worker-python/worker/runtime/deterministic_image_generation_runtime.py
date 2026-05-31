@@ -72,25 +72,30 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
         artifacts: list[common_pb2.ImageArtifactMetadata] = []
         artifact_publish_ms = 0.0
         total_output_bytes = 0
+        model_id = str(loaded_model.get("model_id", "image-model"))
+        render_payload = self._render_payload
+        sha256_hex = hashlib.sha256
+        append_image = images.append
+        append_artifact = artifacts.append
 
         for index in range(image_count):
             if cancel_event.is_set():
                 raise ImageGenerationCancelled("Image generation was canceled.")
 
             sleep_if_configured("image")
-            payload = self._render_payload(
+            payload = render_payload(
                 prompt=request.prompt,
                 width=width,
                 height=height,
                 variant=index,
-                model_id=str(loaded_model.get("model_id", "image-model")),
+                model_id=model_id,
             )
             artifact_path = output_dir / f"output-{index}.{image_format}"
             artifact_started = time.monotonic()
             artifact_path.write_bytes(payload)
             artifact_publish_ms += (time.monotonic() - artifact_started) * 1000.0
 
-            digest = hashlib.sha256(payload).hexdigest()
+            digest = sha256_hex(payload).hexdigest()
             payload_byte_length = len(payload)
             artifact = common_pb2.ImageArtifactMetadata(
                 artifact_id=f"{job_id}::artifact-{index}",
@@ -105,9 +110,9 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
                 sha256=digest,
                 variant_index=index,
             )
-            images.append(payload)
+            append_image(payload)
             total_output_bytes += payload_byte_length
-            artifacts.append(artifact)
+            append_artifact(artifact)
 
         peak_memory_bytes = max(total_output_bytes, width * height)
         self._last_probe = ImageGenerationProbeSnapshot(
@@ -214,28 +219,34 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
 
         images: list[bytes] = []
         total_output_bytes = 0
+        model_id = str(loaded_model.get("model_id", "image-model"))
+        render_edit_payload = self._render_edit_payload
+        write_bytes = self._write_bytes
+        artifact_metadata = self._artifact_metadata
+        append_image = images.append
+        append_artifact = artifacts.append
         for index in range(image_count):
             if cancel_event.is_set():
                 raise ImageGenerationCancelled("Image edit was canceled.")
 
             sleep_if_configured("image")
-            payload = self._render_edit_payload(
+            payload = render_edit_payload(
                 prompt=request.prompt,
                 width=width,
                 height=height,
                 variant=index,
-                model_id=str(loaded_model.get("model_id", "image-model")),
+                model_id=model_id,
                 strength=float(request.strength or 0.0),
                 source_digest=source_digest,
                 mask_digest=mask_digest,
             )
             artifact_path = output_dir / f"output-{index}.{image_format}"
-            artifact_publish_ms += self._write_bytes(artifact_path, payload)
+            artifact_publish_ms += write_bytes(artifact_path, payload)
             payload_byte_length = len(payload)
-            images.append(payload)
+            append_image(payload)
             total_output_bytes += payload_byte_length
-            artifacts.append(
-                self._artifact_metadata(
+            append_artifact(
+                artifact_metadata(
                     job_id=job_id,
                     artifact_id=f"{job_id}::artifact-{index}",
                     role=common_pb2.IMAGE_ARTIFACT_GENERATED,
