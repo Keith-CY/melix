@@ -6,7 +6,6 @@ from functools import lru_cache
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -19,8 +18,7 @@ _JSON_LOADS = json.loads
 _JSON_DECODE_ERROR = json.JSONDecodeError
 _PYTHON_CODE_BLOCK_TAG = "python"
 _PYTHON_CODE_BLOCK_TAG_LENGTH = len(_PYTHON_CODE_BLOCK_TAG)
-_NONBLANK_TEST_LINE_LF_PATTERN = re.compile(r"(?m)^[^\S\n]*[^\s]")
-_NONBLANK_TEST_LINE_CR_PATTERN = re.compile(r"(?:^|[\r\n])[^\S\r\n]*[^\s]")
+_PYTHON_SPLITLINE_BOUNDARIES = "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
 
 
 @dataclass(frozen=True)
@@ -285,12 +283,15 @@ def _count_assert_nodes(
 
 
 def _count_nonblank_test_lines(test_code: str) -> int:
-    pattern = (
-        _NONBLANK_TEST_LINE_CR_PATTERN
-        if "\r" in test_code
-        else _NONBLANK_TEST_LINE_LF_PATTERN
-    )
-    return sum(1 for _ in pattern.finditer(test_code))
+    count = 0
+    line_has_content = False
+    for character in test_code:
+        if character in _PYTHON_SPLITLINE_BOUNDARIES:
+            line_has_content = False
+        elif not line_has_content and not character.isspace():
+            count += 1
+            line_has_content = True
+    return count
 
 
 def _load_payload_file(

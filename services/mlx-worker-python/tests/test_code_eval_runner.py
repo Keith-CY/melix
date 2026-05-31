@@ -446,6 +446,7 @@ def test_count_nonblank_test_lines_matches_splitlines_semantics() -> None:
     samples = [
         "\n assert one\r\n\t\rassert two\n   \nassert three",
         "\r\n\t\r\nassert one\rassert two\n\u2003assert three\n",
+        "case one\vcase two\fcase three\x1ccase four\x1dcase five\x1ecase six\x85case seven\u2028case eight\u2029case nine",
         "   \n\t\r\n\r",
     ]
 

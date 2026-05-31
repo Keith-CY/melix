@@ -10,7 +10,7 @@ The affected path is covered by the registered PR-scoped probe `code-eval-test-c
 
 ## Optimization
 
-Replace the regular-expression `finditer` count with a streaming character scan that counts a line once when the first non-whitespace character is seen. This avoids regex match object allocation on large fallback test payloads while preserving `splitlines`-compatible nonblank-line semantics for spaces, tabs, `\n`, and `\r\n` inputs.
+Replace the regular-expression `finditer` count with a streaming character scan that counts a line once when the first non-whitespace character is seen. This avoids regex match object allocation on large fallback test payloads while preserving `splitlines`-compatible nonblank-line semantics for Python line boundaries including LF, CRLF/CR, VT, FF, file/group/record separators, NEL, LS, and PS.
 
 ## Verification Plan
 
@@ -21,3 +21,12 @@ Run the registered focused test command, changed-scope coverage command, and reg
 - Focused code-eval tests pass.
 - Changed executable line coverage for touched Python scope is at least 95%.
 - The registered `code-eval-test-count-nonblank-streaming` probe preserves `nonblank_line_count_mean=48000` and lowers `peak_bytes_mean` versus the origin/main baseline samples. The probe's elapsed metric is informational for this slice.
+
+## 2026-05-31 Implementation Note
+
+The registered probe coverage command now includes the splitlines-semantics test so
+all Python line boundary branches remain measured by changed-scope coverage after
+review follow-up. Local Linux base-vs-head probe evidence showed the streaming
+counter kept `nonblank_line_count_mean=48000` while reducing `peak_bytes_mean`
+from `2117.0` to `112.0` bytes; `elapsed_ms_mean` increased from `45.36` to
+`77.21` ms and remains informational for this allocation-focused slice.
