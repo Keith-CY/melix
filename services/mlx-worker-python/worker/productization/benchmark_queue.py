@@ -11,13 +11,12 @@ import stat
 _RECORD_SORT_KEY = attrgetter("created_at_unix_ms", "queue_item_id")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _RecordCacheEntry:
     metadata_key: tuple[int, int, int, int]
     record: BenchmarkQueueRecord
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BenchmarkQueueRecord:
     queue_item_id: str
     job_kind: str
