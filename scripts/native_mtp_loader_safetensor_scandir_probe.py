@@ -160,6 +160,16 @@ def run_probe() -> dict[str, float | int | str]:
         candidate = candidate_callback(model_dir)
         if baseline != candidate:
             raise SystemExit("candidate safetensor listing differs from glob baseline")
+        model_listing_old_ms, model_listing_old_peaks, model_listing_result_count = _measure(
+            _glob_model_safetensors,
+            model_dir,
+            samples=samples,
+        )
+        model_listing_new_ms, model_listing_new_peaks, _ = _measure(
+            candidate_callback,
+            model_dir,
+            samples=samples,
+        )
 
         index_path = model_dir / "model.safetensors.index.json"
         old_payload = _read_text_json_payload(index_path)
@@ -220,8 +230,11 @@ def run_probe() -> dict[str, float | int | str]:
     extra_new_mean = statistics.mean(extra_new_ms)
     key_old_mean = statistics.mean(key_old_ms)
     key_new_mean = statistics.mean(key_new_ms)
+    model_listing_old_mean = statistics.mean(model_listing_old_ms)
+    model_listing_new_mean = statistics.mean(model_listing_new_ms)
     return {
         "result_count": result_count,
+        "model_listing_result_count": model_listing_result_count,
         "extra_result_count": extra_result_count,
         "model_files": model_files,
         "distractor_files": distractor_files,
@@ -234,6 +247,14 @@ def run_probe() -> dict[str, float | int | str]:
         "key_new_mean_ms": key_new_mean,
         "key_delta_ms": key_new_mean - key_old_mean,
         "key_speedup": key_old_mean / key_new_mean if key_new_mean else 0.0,
+        "model_listing_old_mean_ms": model_listing_old_mean,
+        "model_listing_new_mean_ms": model_listing_new_mean,
+        "model_listing_delta_ms": model_listing_new_mean - model_listing_old_mean,
+        "model_listing_speedup": model_listing_old_mean / model_listing_new_mean
+        if model_listing_new_mean
+        else 0.0,
+        "model_listing_old_peak_bytes_mean": statistics.mean(model_listing_old_peaks),
+        "model_listing_new_peak_bytes_mean": statistics.mean(model_listing_new_peaks),
         "old_mean_ms": old_mean,
         "new_mean_ms": new_mean,
         "delta_ms": new_mean - old_mean,

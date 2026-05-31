@@ -4583,6 +4583,46 @@
         "warn_pct": 0.0
       },
       {
+        "key": "model_listing_old_mean_ms",
+        "unit": "ms",
+        "direction": "informational"
+      },
+      {
+        "key": "model_listing_new_mean_ms",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "model_listing_delta_ms",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "model_listing_speedup",
+        "unit": "x",
+        "direction": "higher_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "model_listing_old_peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "informational"
+      },
+      {
+        "key": "model_listing_new_peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "model_listing_result_count",
+        "unit": "count",
+        "direction": "higher_is_better",
+        "warn_pct": 0.0
+      },
+      {
         "key": "extra_old_mean_ms",
         "unit": "ms",
         "direction": "informational"
