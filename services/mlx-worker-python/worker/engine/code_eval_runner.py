@@ -18,6 +18,7 @@ _JSON_LOADS = json.loads
 _JSON_DECODE_ERROR = json.JSONDecodeError
 _PYTHON_CODE_BLOCK_TAG = "python"
 _PYTHON_CODE_BLOCK_TAG_LENGTH = len(_PYTHON_CODE_BLOCK_TAG)
+_PYTHON_SPLITLINE_BOUNDARIES = "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
 
 
 @dataclass(frozen=True)
@@ -285,7 +286,7 @@ def _count_nonblank_test_lines(test_code: str) -> int:
     count = 0
     line_has_content = False
     for character in test_code:
-        if character == "\n" or character == "\r":
+        if character in _PYTHON_SPLITLINE_BOUNDARIES:
             line_has_content = False
         elif not line_has_content and not character.isspace():
             count += 1
