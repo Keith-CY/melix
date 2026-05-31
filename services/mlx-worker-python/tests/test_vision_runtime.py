@@ -169,6 +169,8 @@ def test_ocr_token_count_scans_whitespace_without_split_list() -> None:
     runtime = DeterministicOCRRuntime()
 
     assert whitespace_token_count(prompt_text) == len(prompt_text.split())
+    assert whitespace_token_count("alpha beta\v gamma\fdelta") == 4
+    assert whitespace_token_count("alpha\u2003beta gamma") == 3
     assert runtime.prompt_token_count(request) == len(prompt_text.split()) + max(
         1,
         request.images[0].byte_length // 8,

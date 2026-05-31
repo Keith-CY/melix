@@ -5755,6 +5755,7 @@ def test_deterministic_ocr_token_count_probe_script_emits_metrics(
     assert metrics["sample_count"] == 1.0
     assert metrics["iterations"] == 10.0
     assert metrics["token_count"] > 0
+    assert metrics["helper_token_count"] > 0
 
 
 def test_deterministic_vlm_completion_token_probe_script_emits_metrics(

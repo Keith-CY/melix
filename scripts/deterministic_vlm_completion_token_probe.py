@@ -57,6 +57,7 @@ def _run_once(*, iterations: int, word_count: int) -> tuple[float, int, float, i
     def counting_token_count(text: str) -> int:
         nonlocal token_count_calls
         token_count_calls += 1
+        original_token_count.cache_clear()
         return original_token_count(text)
 
     try:
