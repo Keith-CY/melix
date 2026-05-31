@@ -408,7 +408,8 @@ struct TextDecodeEngine: Sendable {
 
         #if canImport(MLXLMCommon)
         if let decodeState = session.prefill.context.storage as? PreparedDecodeState {
-            guard decodeState.cache.allSatisfy({ $0 is KVCacheSimple }) else {
+            guard !decodeState.cache.isEmpty,
+                  decodeState.cache.allSatisfy({ $0 is KVCacheSimple }) else {
                 return nil
             }
         }

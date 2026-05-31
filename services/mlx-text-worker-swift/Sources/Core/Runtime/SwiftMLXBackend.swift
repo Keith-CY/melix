@@ -304,6 +304,10 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
             decodeStates.append(state)
         }
         let batchedCaches = buildBatchedKVCaches(from: decodeStates)
+        guard !batchedCaches.isEmpty else {
+            throw RuntimeUnavailableError(
+                message: "Batch decode: failed to build KV caches — empty or mismatched cache state.")
+        }
         return await container.perform(
             values: (requests, decodeStates, batchedCaches)
         ) { context, values in
@@ -2676,15 +2680,17 @@ private func buildBatchedKVCaches(from decodeStates: [PreparedDecodeState]) -> [
     guard let first = decodeStates.first, !first.cache.isEmpty else {
         return []
     }
-    let maxOffset = decodeStates.map { $0.cache[0].offset }.max() ?? 0
+    let maxOffset = decodeStates.compactMap { $0.cache.first?.offset }.max() ?? 0
     let layerCount = first.cache.count
-    return (0..<layerCount).map { layerIdx in
+    var batchedCaches: [KVCache] = []
+    for layerIdx in 0..<layerCount {
         let batchedCache = KVCacheSimple()
         var layerKeys: [MLXArray] = []
         var layerValues: [MLXArray] = []
         for state in decodeStates {
+            guard state.cache.indices.contains(layerIdx) else { return [] }
             let cacheState = state.cache[layerIdx].state
-            guard cacheState.count == 2 else { continue }
+            guard cacheState.count == 2 else { return [] }
             let keys = cacheState[0]    // [1, kvHeads, offset_i, headDim]
             let values = cacheState[1]
             let offset = state.cache[layerIdx].offset
@@ -2699,13 +2705,14 @@ private func buildBatchedKVCaches(from decodeStates: [PreparedDecodeState]) -> [
                 layerValues.append(values)
             }
         }
-        guard !layerKeys.isEmpty else { return batchedCache }
+        guard layerKeys.count == decodeStates.count else { return [] }
         batchedCache.state = [
             concatenated(layerKeys, axis: 0),    // [N, kvHeads, maxOffset, headDim]
             concatenated(layerValues, axis: 0),
         ]
-        return batchedCache
+        batchedCaches.append(batchedCache)
     }
+    return batchedCaches
 }
 
 private func makeBatchDecodeStream(
@@ -2720,7 +2727,7 @@ private func makeBatchDecodeStream(
     )
     let eosTokenId = context.tokenizer.eosTokenId
     let unknownTokenId = context.tokenizer.unknownTokenId
-    let eosArr = MLXArray(eosTokenId ?? 0)
+    let eosArr = MLXArray([eosTokenId ?? 0])  // shape [1] to match sampled token shape
 
     // Per-request decode parameters, samplers, processors, detokenizers
     let parameters: [GenerateParameters] = requests.map { request in
