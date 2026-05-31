@@ -10,6 +10,7 @@ from worker.engine.maintenance_core import MaintenanceCore
 from worker.grpc_server import WorkerCacheService, WorkerInferenceService, WorkerRuntimeService
 from worker.model_registry.catalog import WorkerModelCatalog
 from worker.registry import WorkerRegistry
+from worker.runtime import deterministic_ocr_runtime as deterministic_ocr_runtime_module
 from worker.runtime.deterministic_ocr_runtime import DeterministicOCRRuntime
 from worker.runtime import deterministic_vlm_runtime as deterministic_vlm_runtime_module
 from worker.runtime.deterministic_vlm_runtime import DeterministicVLMRuntime
@@ -283,6 +284,75 @@ def test_ocr_single_image_token_count_reuses_precomputed_input_bytes() -> None:
     assert runtime.prompt_token_count(changed_input_request) == len(
         changed_input_request.prompt_text.split()
     ) + 8
+
+
+def test_ocr_single_image_token_count_reuses_same_request_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompt_text = "extract the receipt total"
+    request = PreparedVisionRequest(
+        prompt_text=prompt_text,
+        images=[
+            PreparedImageInput(
+                bytes_data=b"Receipt Total 42" * 8,
+                source_kind="inline",
+                reference="inline:receipt.txt",
+                mime_type="text/plain",
+                format="txt",
+                filename="receipt.txt",
+                sha256_hex="a" * 64,
+            )
+        ],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=128,
+        preprocess_peak_memory_bytes=128,
+        prompt_hash_hex="p" * 64,
+        multimodal_hash_hex="m" * 64,
+    )
+    token_count_calls = 0
+
+    def tracked_whitespace_token_count(text: str) -> int:
+        nonlocal token_count_calls
+        token_count_calls += 1
+        return whitespace_token_count(text)
+
+    monkeypatch.setattr(
+        deterministic_ocr_runtime_module,
+        "_whitespace_token_count",
+        tracked_whitespace_token_count,
+    )
+    runtime = DeterministicOCRRuntime()
+
+    assert runtime.prompt_token_count(request) == len(prompt_text.split()) + 16
+    assert runtime.prompt_token_count(request) == len(prompt_text.split()) + 16
+    assert runtime.prompt_token_count(request) == len(prompt_text.split()) + 16
+
+    equivalent_request = PreparedVisionRequest(
+        prompt_text=prompt_text,
+        images=[
+            PreparedImageInput(
+                bytes_data=b"different bytes but same precomputed count",
+                source_kind="inline",
+                reference="inline:receipt-copy.txt",
+                mime_type="text/plain",
+                format="txt",
+                filename="receipt-copy.txt",
+                sha256_hex="b" * 64,
+            )
+        ],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=128,
+        preprocess_peak_memory_bytes=128,
+        prompt_hash_hex="q" * 64,
+        multimodal_hash_hex="n" * 64,
+    )
+    assert runtime.prompt_token_count(equivalent_request) == len(prompt_text.split()) + 16
+    assert runtime.prompt_token_count(equivalent_request) == len(prompt_text.split()) + 16
+    assert token_count_calls == 1
 
 
 def test_vlm_completion_token_count_scans_without_split_list(monkeypatch: pytest.MonkeyPatch) -> None:
