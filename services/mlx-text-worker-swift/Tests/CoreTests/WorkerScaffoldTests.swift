@@ -1727,6 +1727,45 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(recorder.cacheMaxSizes, [8, 8])
     }
 
+    func testAutoSwiftMLXBackendBatchArgMaxTokenIDsBridgeThroughUInt32() async throws {
+        try await withTemporaryDefaultMetallib {
+            Device.withDefaultDevice(.cpu) {
+                let logits = MLXArray([
+                    Float(-3), Float(1), Float(8), Float(0),
+                    Float(2), Float(4), Float(-1), Float(9),
+                ], [2, 1, 4])
+
+                XCTAssertEqual(argMax(logits[0..., -1, 0...], axis: -1).dtype, .uint32)
+                XCTAssertEqual(melixTestingBatchedArgMaxTokenIDs(from: logits), [2, 3])
+            }
+        }
+    }
+
+    func testAutoSwiftMLXBackendBatchDecodeSplitsRotatingAdapterByUnderlyingCacheType() async throws {
+        try await withTemporaryDefaultMetallib {
+            try Device.withDefaultDevice(.cpu) {
+                let cache1 = RotatingKVCache(maxSize: 8)
+                let cache2 = RotatingKVCache(maxSize: 8)
+                let keys1 = MLXArray.zeros([1, 1, 3, 4])
+                let values1 = MLXArray.zeros([1, 1, 3, 4])
+                let keys2 = MLXArray.zeros([1, 1, 3, 4])
+                let values2 = MLXArray.zeros([1, 1, 3, 4])
+                _ = cache1.update(keys: keys1, values: values1)
+                _ = cache2.update(keys: keys2, values: values2)
+
+                let batchedCache = try XCTUnwrap(melixTestingMakeBatchDecodeCache(from: [[cache1], [cache2]]))
+                let splitCaches = melixTestingSplitBatchDecodeCache(batchedCache, batchSize: 2)
+
+                XCTAssertEqual(splitCaches.count, 2)
+                for splitCache in splitCaches {
+                    let splitLayer = try XCTUnwrap(splitCache.first)
+                    XCTAssertTrue(splitLayer is RotatingKVCache)
+                    XCTAssertEqual(splitLayer.maxSize, 8)
+                }
+            }
+        }
+    }
+
     func testAutoSwiftMLXBackendBatchDecodeStopsOnAdditionalEOSToken() async throws {
         let backend = AutoSwiftMLXBackend()
         var sampling = Melix_Worker_V1_SamplingConfig()
