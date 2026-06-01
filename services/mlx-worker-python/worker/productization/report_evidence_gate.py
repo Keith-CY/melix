@@ -314,10 +314,8 @@ def _rule_matches_report(
         for target in targets:
             if target_fields_are_disjoint(target):
                 continue
-            for field in target_field_set:
-                try:
-                    value = target[field]
-                except KeyError:
+            for field, value in target.items():
+                if field not in target_field_set:
                     continue
                 if isinstance(value, str):
                     if value.strip():
