@@ -24,6 +24,18 @@ PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" MELIX_HUB_CATALOG_SIZE_HINT_RE
 - Preserve the existing case-insensitive `Model size` / `MODEL SIZE` / `model size` behavior and existing `:` / `|` / whitespace separator handling.
 - Keep the change limited to direct `cardData.model_size` label parsing; regex-based README/description parsing remains unchanged.
 
+## 2026-06-01 Follow-up: Separator Branch Allocation Elision
+
+This follow-up keeps the same registered probe and narrows the remaining hot
+separator branch in `_strip_model_size_label(...)`: after the no-allocation
+ASCII label match, test `:` and `|` with direct character comparisons instead
+of constructing a two-element set for every labeled `cardData.model_size` value.
+The behavior remains unchanged for `Model size: 12 MB`, `MODEL SIZE | 7 kb`,
+and compact separator forms such as `MODEL SIZE:7 kb`. The registered
+`hub-catalog-size-hint-regex-precompile` script now exercises that compact
+separator branch directly so PR-scoped performance validation covers the changed
+path instead of relying only on the exact `Model size: ` shortcut.
+
 ## Success Metrics
 
 - Focused hub catalog tests pass.
