@@ -102,6 +102,34 @@ def test_build_paired_statistical_evidence_summarizes_outcomes_once(
     assert evidence["delta_accuracy"] == 0.25
 
 
+def test_build_paired_statistical_evidence_reuses_summary_for_analytical_variance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_sum = builtins.sum
+
+    def fail_sum(iterable: object, start: object = 0) -> object:  # pragma: no cover - regression guard
+        raise AssertionError(f"analytical variance rescanned outcomes with sum({iterable!r}, {start!r})")
+
+    monkeypatch.setattr(builtins, "sum", fail_sum)
+
+    evidence = build_paired_statistical_evidence(
+        paired_outcomes=(1.0, 0.0, -1.0, 1.0),
+        confidence_level=0.95,
+        bootstrap_iterations=0,
+        bootstrap_seed=17,
+    )
+
+    monkeypatch.setattr(builtins, "sum", original_sum)
+    baseline = build_paired_statistical_evidence(
+        paired_outcomes=(1.0, 0.0, -1.0, 1.0),
+        confidence_level=0.95,
+        bootstrap_iterations=0,
+        bootstrap_seed=17,
+    )
+
+    assert evidence["analytical"] == baseline["analytical"]
+
+
 def test_build_paired_statistical_evidence_reports_bootstrap_and_analytical_intervals() -> None:
     evidence = build_paired_statistical_evidence(
         paired_outcomes=(1, 1, 1, 0, 1, 1),

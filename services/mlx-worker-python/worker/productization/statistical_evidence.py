@@ -17,7 +17,7 @@ def build_paired_statistical_evidence(
 ) -> dict[str, object]:
     outcomes = _normalized_outcomes(paired_outcomes)
     sample_size = len(outcomes)
-    mean_value, all_values_equal = _outcome_summary(outcomes)
+    mean_value, all_values_equal, sum_squares = _outcome_summary(outcomes)
     delta_accuracy = _rounded(mean_value)
     bootstrap_interval = _paired_bootstrap_interval(
         outcomes=outcomes,
@@ -30,6 +30,7 @@ def build_paired_statistical_evidence(
         outcomes=outcomes,
         confidence_level=confidence_level,
         mean_value=mean_value,
+        sum_squares=sum_squares,
         all_values_equal=all_values_equal,
     )
     return {
@@ -195,21 +196,23 @@ def _outcome_values_equal(values: tuple[float, ...]) -> bool:
     return _all_values_equal(values)
 
 
-def _outcome_summary(values: tuple[float, ...]) -> tuple[float, bool]:
+def _outcome_summary(values: tuple[float, ...]) -> tuple[float, bool, float]:
     iterator = iter(values)
     try:
         first_value = next(iterator)
     except StopIteration:
-        return 0.0, False
+        return 0.0, False, 0.0
     total = first_value
+    sum_squares = first_value * first_value
     all_values_equal = True
     sample_size = 1
     for value in iterator:
         sample_size += 1
         total += value
+        sum_squares += value * value
         if value != first_value:
             all_values_equal = False
-    return total / sample_size, all_values_equal
+    return total / sample_size, all_values_equal, sum_squares
 
 
 def _all_values_equal(values: tuple[float, ...]) -> bool:
@@ -223,6 +226,7 @@ def _paired_analytical_interval(
     outcomes: tuple[float, ...],
     confidence_level: float,
     mean_value: float | None = None,
+    sum_squares: float | None = None,
     all_values_equal: bool | None = None,
 ) -> dict[str, object]:
     if not outcomes:
@@ -238,8 +242,18 @@ def _paired_analytical_interval(
     if len(outcomes) == 1 or values_equal:
         margin = 0.0
     else:
-        variance = sum((value - resolved_mean) ** 2 for value in outcomes) / (len(outcomes) - 1)
-        standard_error = math.sqrt(variance) / math.sqrt(len(outcomes))
+        sample_size = len(outcomes)
+        resolved_sum_squares = (
+            sum(value * value for value in outcomes)
+            if sum_squares is None
+            else sum_squares
+        )
+        variance = max(
+            (resolved_sum_squares - sample_size * resolved_mean * resolved_mean)
+            / (sample_size - 1),
+            0.0,
+        )
+        standard_error = math.sqrt(variance) / math.sqrt(sample_size)
         z_value = _two_sided_normal_z_value(confidence_level)
         margin = z_value * standard_error
 
