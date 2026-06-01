@@ -267,6 +267,28 @@ def test_report_evidence_gate_target_field_tuple_rules_reuse_normalized_tuple() 
     assert cache_info.misses == 1
 
 
+def test_report_evidence_gate_target_field_rules_skip_unrelated_target_items() -> None:
+    class ItemsCountingDict(dict[str, object]):
+        items_calls = 0
+
+        def items(self):  # type: ignore[override]  # pragma: no cover
+            type(self).items_calls += 1
+            return super().items()
+
+    unrelated_targets: list[dict[str, object]] = [
+        ItemsCountingDict({f"unrelated_{index}": index}) for index in range(8)
+    ]
+
+    assert not report_evidence_gate_module._rule_matches_report(
+        rule={"target_fields": ("adapter_id", "adapter_snapshot")},
+        runs=[],
+        targets=unrelated_targets,
+        metrics=[],
+        probe_phases=set(),
+    )
+    assert ItemsCountingDict.items_calls == 0
+
+
 def test_report_evidence_gate_target_field_list_rules_reflect_mutation() -> None:
     target_fields = ["adapter_id"]
     rule = {"target_fields": target_fields}

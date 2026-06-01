@@ -853,6 +853,7 @@ def test_active_derived_model_row_cache_reuses_rows_and_invalidates() -> None:
     second_manifests = registry.active_derived_model_manifests()
 
     assert first_rows is second_rows
+    assert not hasattr(first_rows[0][0], "__dict__")
     assert first_manifests is registry._active_derived_model_manifests_cache
     assert first_manifests is second_manifests
     assert first_manifests == (
@@ -914,6 +915,10 @@ def test_resolve_derived_model_target_reuses_active_row_cache(
 
     assert registry.resolve_derived_model_target(derived_model_id="melix-dev-active") is not None
     assert registry.resolve_derived_model_target(derived_model_id="melix-dev-active") is not None
+    by_id_cache = registry._active_derived_model_by_id_cache
+    assert by_id_cache is not None
+    cached_lookup = by_id_cache["melix-dev-active"]
+    assert not hasattr(cached_lookup, "__dict__")
     assert build_calls == 1
 
 

@@ -310,9 +310,14 @@ def _rule_matches_report(
     target_fields = rule.get("target_fields", ())
     if target_fields:
         target_field_set = _string_frozenset(target_fields)
+        target_fields_are_disjoint = target_field_set.isdisjoint
         for target in targets:
-            for field, value in target.items():
-                if field not in target_field_set:
+            if target_fields_are_disjoint(target):
+                continue
+            for field in target_field_set:
+                try:
+                    value = target[field]
+                except KeyError:
                     continue
                 if isinstance(value, str):
                     if value.strip():

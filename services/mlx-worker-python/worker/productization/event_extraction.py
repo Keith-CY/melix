@@ -79,6 +79,8 @@ Rules:
 """
 SEMANTIC_JUDGE_PROMPT_HASH = f"sha256:{sha256(SEMANTIC_JUDGE_SYSTEM_PROMPT.encode('utf-8')).hexdigest()}"
 _JSON_DECODER = json.JSONDecoder()
+_JSON_FENCE_PREFIX = "```json\n"
+_JSON_FENCE_PREFIX_LENGTH = len(_JSON_FENCE_PREFIX)
 _CLOSING_FENCE_WITH_LEADING_NEWLINE = "\n```"
 _CLOSING_FENCE_WITH_LEADING_NEWLINE_LENGTH = len(_CLOSING_FENCE_WITH_LEADING_NEWLINE)
 
@@ -2852,6 +2854,17 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
     response_length = len(response_text)
     while response_start < response_length and response_text[response_start].isspace():
         response_start += 1
+
+    if response_text.startswith(_JSON_FENCE_PREFIX, response_start):
+        parsed, end_index = _JSON_DECODER.raw_decode(
+            response_text,
+            response_start + _JSON_FENCE_PREFIX_LENGTH,
+        )
+        if not _has_only_optional_closing_fence(response_text, end_index, response_length):
+            raise json.JSONDecodeError("Extra data", response_text, end_index)
+        if not isinstance(parsed, dict):
+            raise ValueError("LLM response must be a JSON object")
+        return parsed
 
     if response_text.startswith("```", response_start):
         newline_index = response_text.find("\n", response_start)
