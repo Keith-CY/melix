@@ -140,6 +140,31 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertTrue(configuration.memoryEnforcementEnabled)
     }
 
+    func testDecodeOutputCadencePolicyScopesDefaultToGemmaAndHonorsOverrides() {
+        var gemmaModel = Melix_Worker_V1_ModelSpec()
+        gemmaModel.modelID = "unsloth/gemma-4-E4B-it-MLX-8bit"
+
+        var execution = Melix_Worker_V1_ExecutionMetadata()
+        XCTAssertEqual(
+            decodeOutputCadencePolicy(model: gemmaModel, execution: execution),
+            .gemmaDecodeDefault
+        )
+
+        execution.ext["melix.output_cadence"] = "off"
+        XCTAssertEqual(
+            decodeOutputCadencePolicy(model: gemmaModel, execution: execution),
+            .immediate
+        )
+
+        var nonGemmaModel = Melix_Worker_V1_ModelSpec()
+        nonGemmaModel.modelID = "melix-dev-text"
+        execution.ext["melix.output_cadence"] = "coalesced"
+        XCTAssertEqual(
+            decodeOutputCadencePolicy(model: nonGemmaModel, execution: execution),
+            .gemmaDecodeDefault
+        )
+    }
+
     func testDFlashSpeculativeProbeLoggerWritesJsonLinesWhenEnabled() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-dflash-probe-\(UUID().uuidString)", isDirectory: true)
@@ -4469,6 +4494,261 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertGreaterThan(metrics["swift_text.generate_grpc_write_total_us"] ?? 0, 0)
         XCTAssertEqual(metrics["swift_text.generate_grpc_write_call_count"], recorded.count)
         XCTAssertGreaterThan(metrics["swift_text.generate_grpc_write_avg_us"] ?? 0, 0)
+    }
+
+    func testDecodeCoalescesGemmaVisibleTokenDeltasAfterFirstToken() async throws {
+        let services = makeServices(
+            backend: FakeRuntimeBackend(
+                generatedChunks: ["unused"],
+                decodedChunks: ["A", "B", "C", "D", "E", "F"]
+            )
+        )
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "unsloth/gemma-4-E4B-it-MLX-8bit"
+            request.model.modelPath = "unsloth/gemma-4-E4B-it-MLX-8bit"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefillRequest = Melix_Worker_V1_PrefillRequest()
+        prefillRequest.execution.id.requestID = "req-gemma-cadence-prefill"
+        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        prefillRequest.returnDecodeHandle = true
+        var message = Melix_Worker_V1_ChatMessage()
+        message.role = "user"
+        var part = Melix_Worker_V1_MessagePart()
+        part.text = "Continue."
+        message.parts = [part]
+        prefillRequest.messages = [message]
+
+        let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request = Melix_Worker_V1_DecodeRequest()
+        request.execution.id.requestID = "req-gemma-cadence"
+        request.execution.modelHandle = loadResponse.modelHandle
+        request.decodeHandle = prefillResponse.decodeHandle
+        request.maxOutputTokens = 6
+        request.returnUsage = true
+
+        try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let recorded = await writer.snapshot()
+        let tokenText = recorded.compactMap { event -> String? in
+            guard case .tokenDelta(let token) = event.payload else {
+                return nil
+            }
+            return token.text
+        }
+        let usage = try XCTUnwrap(recorded.first { event in
+            matches(event.payload, .usageDelta)
+        }?.usageDelta)
+
+        XCTAssertEqual(tokenText, ["A", "BCDE", "F"])
+        XCTAssertEqual(usage.completionTokens, 6)
+        XCTAssertEqual(recorded.last?.completed.assistantText, "ABCDEF")
+        XCTAssertEqual(recorded.last?.completed.finishReason, "stop")
+        let metrics = services.metrics.counters
+        XCTAssertEqual(metrics["swift_text.decode_stream_event_count"], recorded.count)
+        XCTAssertEqual(metrics["swift_text.decode_grpc_write_call_count"], recorded.count)
+        XCTAssertEqual(recorded.count, 6)
+    }
+
+    func testDecodeDoesNotCoalesceNonGemmaVisibleTokenDeltas() async throws {
+        let services = makeServices(
+            environment: ["MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit"],
+            backend: FakeRuntimeBackend(
+                generatedChunks: ["unused"],
+                decodedChunks: ["A", "B", "C", "D", "E", "F"]
+            )
+        )
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefillRequest = Melix_Worker_V1_PrefillRequest()
+        prefillRequest.execution.id.requestID = "req-non-gemma-cadence-prefill"
+        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        prefillRequest.returnDecodeHandle = true
+        var message = Melix_Worker_V1_ChatMessage()
+        message.role = "user"
+        var part = Melix_Worker_V1_MessagePart()
+        part.text = "Continue."
+        message.parts = [part]
+        prefillRequest.messages = [message]
+
+        let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request = Melix_Worker_V1_DecodeRequest()
+        request.execution.id.requestID = "req-non-gemma-cadence"
+        request.execution.modelHandle = loadResponse.modelHandle
+        request.decodeHandle = prefillResponse.decodeHandle
+        request.maxOutputTokens = 6
+        request.returnUsage = true
+
+        try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let recorded = await writer.snapshot()
+        let tokenText = recorded.compactMap { event -> String? in
+            guard case .tokenDelta(let token) = event.payload else {
+                return nil
+            }
+            return token.text
+        }
+        let usage = try XCTUnwrap(recorded.first { event in
+            matches(event.payload, .usageDelta)
+        }?.usageDelta)
+
+        XCTAssertEqual(tokenText, ["A", "B", "C", "D", "E", "F"])
+        XCTAssertEqual(usage.completionTokens, 6)
+        XCTAssertEqual(recorded.last?.completed.assistantText, "ABCDEF")
+        XCTAssertEqual(recorded.count, 9)
+    }
+
+    func testDecodeFlushesPendingVisibleDeltasBeforeReasoningDeltas() async throws {
+        let services = makeServices(
+            backend: FakeRuntimeBackend(
+                generatedChunks: ["unused"],
+                decodedChunks: [
+                    "A",
+                    "B",
+                    "<|channel>thought\n<channel|>R",
+                    "<|channel>final\n<channel|>C",
+                ]
+            )
+        )
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "unsloth/gemma-4-E4B-it-MLX-8bit"
+            request.model.modelPath = "unsloth/gemma-4-E4B-it-MLX-8bit"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefillRequest = Melix_Worker_V1_PrefillRequest()
+        prefillRequest.execution.id.requestID = "req-gemma-reasoning-cadence-prefill"
+        prefillRequest.execution.modelHandle = loadResponse.modelHandle
+        prefillRequest.returnDecodeHandle = true
+        var message = Melix_Worker_V1_ChatMessage()
+        message.role = "user"
+        var part = Melix_Worker_V1_MessagePart()
+        part.text = "Think and answer."
+        message.parts = [part]
+        prefillRequest.messages = [message]
+
+        let prefillResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefillRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        var request = Melix_Worker_V1_DecodeRequest()
+        request.execution.id.requestID = "req-gemma-reasoning-cadence"
+        request.execution.modelHandle = loadResponse.modelHandle
+        request.decodeHandle = prefillResponse.decodeHandle
+        request.maxOutputTokens = 4
+        request.returnUsage = true
+
+        try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.decode(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Decode.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let payloadText = (await writer.snapshot()).compactMap { event -> String? in
+            switch event.payload {
+            case .tokenDelta(let token):
+                return "token:\(token.text)"
+            case .reasoningDelta(let reasoning):
+                return "reasoning:\(reasoning.text)"
+            default:
+                return nil
+            }
+        }
+
+        XCTAssertEqual(payloadText, ["token:A", "token:B", "reasoning:R", "token:C"])
     }
 
     func testGenerateReturnsNotFoundErrorEventForUnknownModelHandle() async throws {
