@@ -5114,7 +5114,8 @@ final class WorkerScaffoldTests: XCTestCase {
             environment: [
                 "MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/melix-dev-text-4bit",
                 "MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE": "deterministic",
-                "MELIX_SWIFT_TEXT_WORKER_DECODE_BATCH_PENDING_WINDOW_MS": "50",
+                // Keep the window above CI scheduling jitter; this test asserts batching, not a timing SLA.
+                "MELIX_SWIFT_TEXT_WORKER_DECODE_BATCH_PENDING_WINDOW_MS": "1000",
             ],
             backend: DeterministicTextBackend(tokenDelayNanos: 0)
         )
