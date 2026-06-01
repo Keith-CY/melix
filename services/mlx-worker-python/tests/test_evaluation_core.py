@@ -3361,6 +3361,8 @@ def test_normalized_answer_skips_extractors_for_free_text(monkeypatch: pytest.Mo
     assert EvaluationCore._normalized_answer("+9.00") == "9"
     assert EvaluationCore._normalized_answer("b") == "B"
     assert EvaluationCore._normalized_answer("Option C is correct") == "option c is correct"
+    assert EvaluationCore._normalized_answer("STRASSE") == "strasse"
+    assert EvaluationCore._normalized_answer("Straße") == "strasse"
 
     assert numeric_calls == 0
     assert option_calls == 0
