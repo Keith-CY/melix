@@ -682,7 +682,7 @@ def _strip_model_size_label(text: str) -> str:
     text_length = len(text)
     while cursor < text_length and text[cursor].isspace():
         cursor += 1
-    if cursor < text_length and text[cursor] in {":", "|"}:
+    if cursor < text_length and (text[cursor] == ":" or text[cursor] == "|"):
         cursor += 1
     while cursor < text_length and text[cursor].isspace():
         cursor += 1
