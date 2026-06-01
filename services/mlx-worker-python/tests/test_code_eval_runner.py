@@ -471,28 +471,28 @@ def test_count_nonblank_test_lines_matches_splitlines_semantics() -> None:
         )
 
 
-class _SplitlinesGuard(str):
-    def splitlines(self, *args, **kwargs):
-        raise AssertionError("fallback test counting should not materialize splitlines")
+def test_count_tests_fallback_uses_splitlines_fast_path() -> None:
+    assert code_eval_runner._count_tests("def broken(:\nassert one\nassert two") == 3
 
 
-def test_count_tests_fallback_avoids_splitlines_materialization() -> None:
-    assert code_eval_runner._count_tests(_SplitlinesGuard("def broken(:\nassert one\nassert two")) == 3
+def test_count_tests_no_assert_fallback_uses_splitlines_fast_path() -> None:
+    test_code = textwrap.dedent(
+        """
+        def check(candidate):
+            return candidate(1)
 
-
-def test_count_tests_no_assert_fallback_avoids_splitlines_materialization() -> None:
-    test_code = _SplitlinesGuard(
-        textwrap.dedent(
-            """
-            def check(candidate):
-                return candidate(1)
-
-            check(identity)
-            """
-        ).strip()
-    )
+        check(identity)
+        """
+    ).strip()
 
     assert code_eval_runner._count_tests(test_code) == 3
+
+
+class _SplitlinesGuard(str):
+    def splitlines(self, *args, **kwargs):
+        raise AssertionError(  # pragma: no cover - regression-only failure path
+            "large fallback test counting should stream without splitlines"
+        )
 
 
 def test_count_tests_no_assert_fast_path_skips_ast_parse(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -525,9 +525,11 @@ def test_count_tests_syntax_error_fallback_uses_nonblank_line_counter(
 
 
 def test_count_nonblank_lines_streams_without_filtered_list() -> None:
-    test_code = "\n".join("assert value" if index % 3 else "   " for index in range(10_000))
+    test_code = _SplitlinesGuard(
+        "\n".join("assert value" if index % 3 else "   " for index in range(100_000))
+    )
 
-    assert code_eval_runner._count_nonblank_test_lines(test_code) == 6_666
+    assert code_eval_runner._count_nonblank_test_lines(test_code) == 66_666
 
 
 def test_read_limited_text_handles_missing_and_oversized_files(tmp_path: Path) -> None:

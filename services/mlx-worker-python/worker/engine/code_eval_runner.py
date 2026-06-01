@@ -19,6 +19,7 @@ _JSON_DECODE_ERROR = json.JSONDecodeError
 _PYTHON_CODE_BLOCK_TAG = "python"
 _PYTHON_CODE_BLOCK_TAG_LENGTH = len(_PYTHON_CODE_BLOCK_TAG)
 _PYTHON_SPLITLINE_BOUNDARIES = "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
+_COUNT_TESTS_SPLITLINES_MAX_CHARS = 500_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,6 +284,8 @@ def _count_assert_nodes(
 
 
 def _count_nonblank_test_lines(test_code: str) -> int:
+    if len(test_code) <= _COUNT_TESTS_SPLITLINES_MAX_CHARS:
+        return sum(1 for line in test_code.splitlines() if line.strip())
     count = 0
     line_has_content = False
     for character in test_code:
