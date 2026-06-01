@@ -41,6 +41,15 @@ _TRAJECTORY_MANIFEST_OPTIONAL_FIELD_MAP = (
 
 
 def _copy_trajectory_provenance_value(value: Any) -> Any:
+    value_type = type(value)
+    if value_type is dict:
+        return {key: _copy_trajectory_provenance_value(item) for key, item in value.items()}
+    if value_type is list:
+        return [_copy_trajectory_provenance_value(item) for item in value]
+    if value_type is tuple:
+        return tuple(_copy_trajectory_provenance_value(item) for item in value)
+    if value_type in _JSON_IMMUTABLE_TYPES:
+        return value
     if isinstance(value, dict):
         return {key: _copy_trajectory_provenance_value(item) for key, item in value.items()}
     if isinstance(value, list):
