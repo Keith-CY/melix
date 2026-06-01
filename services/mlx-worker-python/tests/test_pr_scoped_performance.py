@@ -912,8 +912,21 @@ def test_scope_report_selects_release_gates_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/productization/release_gates.py"],
     )
 
+    assert scope["selected_count"] == 2
+    assert _selected_probe_ids(scope) == [
+        "gemma-e4b-profile-release-gate",
+        "release-gates-m9-failure-count-single-pass",
+    ]
+
+
+def test_scope_report_selects_gemma_e4b_profile_gate_probe() -> None:
+    scope = build_scope_report(
+        registry_path=REGISTRY_PATH,
+        changed_files=["services/mlx-worker-python/worker/productization/gemma_e4b_profile_gate.py"],
+    )
+
     assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "release-gates-m9-failure-count-single-pass"
+    assert _selected_probe_ids(scope) == ["gemma-e4b-profile-release-gate"]
 
 
 def test_scope_report_selects_real_model_support_probe() -> None:
@@ -2845,6 +2858,71 @@ def test_release_gates_m9_failure_count_probe_script_emits_metrics(
     assert metrics["failures_per_section"] == 4.0
 
 
+def test_gemma_e4b_profile_gate_probe_script_emits_metrics() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "gemma-e4b-profile-release-gate"
+    )
+
+    metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["release_gate_passed"] == 1.0
+    assert metrics["failure_count"] == 0.0
+    assert metrics["selected_profile_receipt_passed"] == 1.0
+    assert metrics["capability_receipt_supported"] == 1.0
+    assert metrics["unsupported_selected_route_count"] == 0.0
+    assert metrics["benchmark_threshold_passed"] == 1.0
+
+
+def test_gemma_e4b_profile_gate_probe_script_main_covers_checked_in_file(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    script_path = REPO_ROOT / "scripts" / "gemma_e4b_profile_gate_probe.py"
+    spec = importlib.util.spec_from_file_location("gemma_e4b_profile_gate_probe_test", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(sys, "argv", ["gemma_e4b_profile_gate_probe.py", "--metrics"])
+
+    assert module.main() == 0
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["release_gate_passed"] == 1.0
+    assert metrics["failure_count"] == 0.0
+
+    input_path = tmp_path / "evidence.json"
+    input_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.gemma_e4b_profile_gate.v1",
+                "artifact_status": "missing",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys, "argv", ["gemma_e4b_profile_gate_probe.py", "--input", str(input_path)])
+
+    assert module.main() == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "failed"
+    assert report["artifact_status"] == "missing"
+
+
+def test_gemma_e4b_profile_gate_probe_rejects_non_object_input(tmp_path: Path) -> None:
+    script_path = REPO_ROOT / "scripts" / "gemma_e4b_profile_gate_probe.py"
+    spec = importlib.util.spec_from_file_location("gemma_e4b_profile_gate_probe_test_input", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    input_path = tmp_path / "bad.json"
+    input_path.write_text(json.dumps(["bad"]), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        module.load_evidence(input_path)
+
+
 def test_scope_report_selects_text_family_config_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -2927,6 +3005,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "evaluation-final-result-materialization-streaming",
         "evaluation-final-result-json-typed-score-aggregate",
         "evaluation-final-result-text-fallback-tail-scan",
+        "gemma-e4b-profile-release-gate",
         "evaluation-latency-percentile-vector-reuse",
         "evaluation-sample-probe-aggregation",
         "evaluation-compare-target-lookup-short-circuit",
