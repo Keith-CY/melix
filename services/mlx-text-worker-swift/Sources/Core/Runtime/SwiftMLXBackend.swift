@@ -1396,6 +1396,8 @@ private func makePreparedBatchDecodeEvents(
             var decodeModelEvalSyncMaxMicros = 0
             var decodeSampleTotalMicros = 0
             var decodeSampleCallCount = 0
+            var decodeTokenEvalTotalMicros = 0
+            var decodeTokenEvalCallCount = 0
             var decodeTokenIDTotalMicros = 0
             var decodeTokenIDCallCount = 0
             var decodeDetokenizeTotalMicros = 0
@@ -1455,8 +1457,11 @@ private func makePreparedBatchDecodeEvents(
                     } else {
                         let tokenIDStartedAt = Date.timeIntervalSinceReferenceDate
                         tokenID = token.item(Int.self)
+                        let tokenIDMicros = elapsedMicros(since: tokenIDStartedAt)
+                        decodeTokenEvalCallCount += 1
+                        decodeTokenEvalTotalMicros += tokenIDMicros
                         decodeTokenIDCallCount += 1
-                        decodeTokenIDTotalMicros += elapsedMicros(since: tokenIDStartedAt)
+                        decodeTokenIDTotalMicros += tokenIDMicros
                     }
                     if tokenID == context.tokenizer.unknownTokenId
                         || tokenID == context.tokenizer.eosTokenId
@@ -1525,6 +1530,8 @@ private func makePreparedBatchDecodeEvents(
                         supportsBatchedArgMaxTokenIDs: batchInput.supportsBatchedArgMaxTokenIDs,
                         decodeSampleTotalMicros: &decodeSampleTotalMicros,
                         decodeSampleCallCount: &decodeSampleCallCount,
+                        decodeTokenEvalTotalMicros: &decodeTokenEvalTotalMicros,
+                        decodeTokenEvalCallCount: &decodeTokenEvalCallCount,
                         decodeTokenIDTotalMicros: &decodeTokenIDTotalMicros,
                         decodeTokenIDCallCount: &decodeTokenIDCallCount
                     )
@@ -1564,6 +1571,8 @@ private func makePreparedBatchDecodeEvents(
                             supportsBatchedArgMaxTokenIDs: batchInput.supportsBatchedArgMaxTokenIDs,
                             decodeSampleTotalMicros: &decodeSampleTotalMicros,
                             decodeSampleCallCount: &decodeSampleCallCount,
+                            decodeTokenEvalTotalMicros: &decodeTokenEvalTotalMicros,
+                            decodeTokenEvalCallCount: &decodeTokenEvalCallCount,
                             decodeTokenIDTotalMicros: &decodeTokenIDTotalMicros,
                             decodeTokenIDCallCount: &decodeTokenIDCallCount
                         )
@@ -1610,6 +1619,8 @@ private func makePreparedBatchDecodeEvents(
                 decodeModelEvalSyncMaxMicros: decodeModelEvalSyncMaxMicros,
                 decodeSampleTotalMicros: decodeSampleTotalMicros,
                 decodeSampleCallCount: decodeSampleCallCount,
+                decodeTokenEvalTotalMicros: decodeTokenEvalTotalMicros,
+                decodeTokenEvalCallCount: decodeTokenEvalCallCount,
                 decodeTokenIDTotalMicros: decodeTokenIDTotalMicros,
                 decodeTokenIDCallCount: decodeTokenIDCallCount,
                 decodeDetokenizeTotalMicros: decodeDetokenizeTotalMicros,
@@ -1664,6 +1675,8 @@ private func updatePendingTokensFromBatchLogits(
     supportsBatchedArgMaxTokenIDs: Bool,
     decodeSampleTotalMicros: inout Int,
     decodeSampleCallCount: inout Int,
+    decodeTokenEvalTotalMicros: inout Int,
+    decodeTokenEvalCallCount: inout Int,
     decodeTokenIDTotalMicros: inout Int,
     decodeTokenIDCallCount: inout Int
 ) {
@@ -1693,13 +1706,16 @@ private func updatePendingTokensFromBatchLogits(
     let tokenIDs = batchedArgMaxTokenIDs(from: logits)
     decodeSampleCallCount += activeIndices.count
     decodeSampleTotalMicros += elapsedMicros(since: sampleStartedAt)
-    let tokenIDStartedAt = Date.timeIntervalSinceReferenceDate
+    let tokenEvalStartedAt = Date.timeIntervalSinceReferenceDate
     let ids = tokenIDs.asArray(UInt32.self)
-    decodeTokenIDCallCount += 1
-    decodeTokenIDTotalMicros += elapsedMicros(since: tokenIDStartedAt)
+    decodeTokenEvalCallCount += 1
+    decodeTokenEvalTotalMicros += elapsedMicros(since: tokenEvalStartedAt)
 
     for (batchIndex, requestIndex) in activeIndices.enumerated() {
+        let tokenIDStartedAt = Date.timeIntervalSinceReferenceDate
         let tokenID = Int(ids[batchIndex])
+        decodeTokenIDCallCount += 1
+        decodeTokenIDTotalMicros += elapsedMicros(since: tokenIDStartedAt)
         states[requestIndex].output = LMOutput(
             logits: logits[batchIndex ..< (batchIndex + 1), 0..., 0...]
         )
