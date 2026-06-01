@@ -57,6 +57,7 @@ public struct SwiftTextWorkerClient:
     WorkerRoutingClient,
     PhaseAwareWorkerClientProtocol,
     CacheIntrospectingWorkerClientProtocol,
+    RuntimeIntrospectingWorkerClientProtocol,
     Sendable
 {
     private let socketPath: String

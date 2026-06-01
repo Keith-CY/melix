@@ -58,6 +58,16 @@ public actor ModelCatalog {
         var requiredBytes: UInt64
     }
 
+    private struct DispatchHandleKey: Hashable, Sendable {
+        let modelID: String
+        let routeKind: String
+
+        init(modelID: String, routeKind: WorkerRouteKind? = nil) {
+            self.modelID = modelID
+            self.routeKind = routeKind?.rawValue ?? ""
+        }
+    }
+
     public struct MemoryBudgetEvidence: Equatable, Sendable {
         public let memoryBudgetBytes: UInt64
         public let memoryHeadroomBytes: UInt64
@@ -127,6 +137,7 @@ public actor ModelCatalog {
 
     private var models: [String: Melix_Controlplane_V1_ModelSummary]
     private var dispatchHandles: [String: String]
+    private var routeDispatchHandles: [DispatchHandleKey: String]
     private var residencyLedger: [String: ResidencyLedger]
     private var activeRequestCountByModelID: [String: UInt32]
     private let seedModelIDs: Set<String>
@@ -156,8 +167,7 @@ public actor ModelCatalog {
                 requiredBytes: 0
             )
         }
-        self.models = Dictionary(uniqueKeysWithValues: normalizedSeedModels.map { ($0.modelID, $0) })
-        self.dispatchHandles = Dictionary(
+        let seededDispatchHandles: [String: String] = Dictionary(
             uniqueKeysWithValues: normalizedSeedModels.compactMap { model in
                 guard model.state == .modelWarm || model.state == .modelPinned else {
                     return nil
@@ -165,6 +175,9 @@ public actor ModelCatalog {
                 return (model.modelID, ModelCatalog.defaultDispatchHandle(for: model.modelID))
             }
         )
+        self.models = Dictionary(uniqueKeysWithValues: normalizedSeedModels.map { ($0.modelID, $0) })
+        self.dispatchHandles = seededDispatchHandles
+        self.routeDispatchHandles = [:]
         self.residencyLedger = ledger
         self.activeRequestCountByModelID = [:]
         self.seedModelIDs = Set(normalizedSeedModels.map(\.modelID))
@@ -203,7 +216,8 @@ public actor ModelCatalog {
         pinRequested: Bool = false,
         workerResidency: Melix_Worker_V1_ResidencyInfo? = nil,
         loadTrust: Melix_Controlplane_V1_ModelLoadTrustPolicy? = nil,
-        reason: String? = nil
+        reason: String? = nil,
+        routeKind: WorkerRouteKind? = nil
     ) -> Melix_Controlplane_V1_ModelSummary? {
         guard var model = models[id] else {
             return nil
@@ -239,8 +253,9 @@ public actor ModelCatalog {
 
         if loadedState == .modelWarm || loadedState == .modelPinned {
             dispatchHandles[id] = dispatchHandle
+            routeDispatchHandles[DispatchHandleKey(modelID: id, routeKind: routeKind)] = dispatchHandle
         } else {
-            dispatchHandles.removeValue(forKey: id)
+            removeDispatchHandles(for: id)
         }
 
         return model
@@ -268,7 +283,7 @@ public actor ModelCatalog {
             model.loadTrust = loadTrust
         }
         models[id] = model
-        dispatchHandles.removeValue(forKey: id)
+        removeDispatchHandles(for: id)
         return model
     }
 
@@ -303,7 +318,7 @@ public actor ModelCatalog {
         model.pinned = false
         model = synchronized(model)
         models[id] = model
-        dispatchHandles.removeValue(forKey: id)
+        removeDispatchHandles(for: id)
         return model
     }
 
@@ -323,7 +338,7 @@ public actor ModelCatalog {
         model.pinned = false
         model = synchronized(model)
         models[id] = model
-        dispatchHandles.removeValue(forKey: id)
+        removeDispatchHandles(for: id)
         return model
     }
 
@@ -438,7 +453,7 @@ public actor ModelCatalog {
 
         for staleID in registryModelIDs.subtracting(discoveredIDs) {
             models.removeValue(forKey: staleID)
-            dispatchHandles.removeValue(forKey: staleID)
+            removeDispatchHandles(for: staleID)
             residencyLedger.removeValue(forKey: staleID)
         }
 
@@ -512,9 +527,10 @@ public actor ModelCatalog {
         let model = synchronized(source)
         models[source.modelID] = model
         if model.state == .modelWarm || model.state == .modelPinned {
-            dispatchHandles[source.modelID] = dispatchHandles[source.modelID] ?? ModelCatalog.defaultDispatchHandle(for: source.modelID)
+            let defaultHandle = ModelCatalog.defaultDispatchHandle(for: source.modelID)
+            dispatchHandles[source.modelID] = dispatchHandles[source.modelID] ?? defaultHandle
         } else {
-            dispatchHandles.removeValue(forKey: source.modelID)
+            removeDispatchHandles(for: source.modelID)
         }
         return model
     }
@@ -529,7 +545,7 @@ public actor ModelCatalog {
         }
 
         models.removeValue(forKey: id)
-        dispatchHandles.removeValue(forKey: id)
+        removeDispatchHandles(for: id)
         residencyLedger.removeValue(forKey: id)
         registryModelIDs.remove(id)
         _ = reason
@@ -598,8 +614,25 @@ public actor ModelCatalog {
         return dispatchHandles[id]
     }
 
+    public func dispatchHandle(for id: String, routeKind: WorkerRouteKind) -> String? {
+        guard let model = models[id] else {
+            return nil
+        }
+        guard model.state == .modelWarm || model.state == .modelPinned else {
+            return nil
+        }
+        if let routeHandle = routeDispatchHandles[DispatchHandleKey(modelID: id, routeKind: routeKind)] {
+            return routeHandle
+        }
+        return routeWorkerFamilies(for: model).count <= 1 ? dispatchHandles[id] : nil
+    }
+
     public func storedDispatchHandle(for id: String) -> String? {
         dispatchHandles[id]
+    }
+
+    public func storedDispatchHandle(for id: String, routeKind: WorkerRouteKind) -> String? {
+        routeDispatchHandles[DispatchHandleKey(modelID: id, routeKind: routeKind)]
     }
 
     private struct CapabilityAdapterMetadata: Sendable {
@@ -830,6 +863,28 @@ public actor ModelCatalog {
         model.supportedModalities = adapter.supportedModalities
         model.supportedTasks = adapter.supportedTasks
         model.settings.ext.merge(adapter.ext) { _, new in new }
+    }
+
+    private static func requestRoute(
+        task: Melix_Controlplane_V1_InferenceTask,
+        supportedModalities: [Melix_Controlplane_V1_RouteModality],
+        requiresAnyModality: [Melix_Controlplane_V1_RouteModality] = [],
+        supportsNativeVideo: Bool = false,
+        workerFamily: Melix_Controlplane_V1_WorkerFamily,
+        modelFamilyTarget: String,
+        residencyPolicy: Melix_Controlplane_V1_RouteResidencyPolicy,
+        isTextCompanion: Bool = false
+    ) -> Melix_Controlplane_V1_RequestRouteDeclaration {
+        var route = Melix_Controlplane_V1_RequestRouteDeclaration()
+        route.task = task
+        route.supportedModalities = supportedModalities
+        route.requiresAnyModality = requiresAnyModality
+        route.supportsNativeVideo = supportsNativeVideo
+        route.workerFamily = workerFamily
+        route.modelFamilyTarget = modelFamilyTarget
+        route.residencyPolicy = residencyPolicy
+        route.isTextCompanion = isTextCompanion
+        return route
     }
 
     private static func workerRouteClass(
@@ -1186,6 +1241,15 @@ public actor ModelCatalog {
         model.settings.ext["melix.tokenizer_hash"] = "tok-dev"
         applyCapabilityAdapter(capabilityAdapter, to: &model)
         model.settings.ext["melix.capability.route_kind"] = capabilityAdapter.routeKind.metadataIdentifier
+        model.requestRoutes = [
+            requestRoute(
+                task: .generateText,
+                supportedModalities: [.text],
+                workerFamily: .text,
+                modelFamilyTarget: "text.\(detected.familyID)",
+                residencyPolicy: .singleResidency
+            ),
+        ]
         return withSynchronizedResidency(model)
     }
 
@@ -1356,6 +1420,24 @@ public actor ModelCatalog {
         model.settings.ext["ocr_default_temperature"] = "0.0"
         model.settings.ext["ocr_default_top_p"] = "1.0"
         model.settings.ext["ocr_default_max_tokens"] = "256"
+        model.requestRoutes = [
+            requestRoute(
+                task: .generateText,
+                supportedModalities: [.text],
+                workerFamily: .text,
+                modelFamilyTarget: "vision.ocr-default.text_companion",
+                residencyPolicy: .allowMultiResidency,
+                isTextCompanion: true
+            ),
+            requestRoute(
+                task: .generateMultimodal,
+                supportedModalities: [.text, .image],
+                requiresAnyModality: [.image],
+                workerFamily: .vision,
+                modelFamilyTarget: "vision.ocr-default",
+                residencyPolicy: .singleResidency
+            ),
+        ]
         return withSynchronizedResidency(model)
     }
 
@@ -1380,6 +1462,25 @@ public actor ModelCatalog {
         applyCapabilityAdapter(capabilityAdapter, to: &model)
         model.supportedModalities = ["text", "image", "video"]
         model.settings.ext["melix.capability.supported_modalities"] = "text,image,video"
+        model.requestRoutes = [
+            requestRoute(
+                task: .generateText,
+                supportedModalities: [.text],
+                workerFamily: .text,
+                modelFamilyTarget: "vision.\(familyID).text_companion",
+                residencyPolicy: .allowMultiResidency,
+                isTextCompanion: true
+            ),
+            requestRoute(
+                task: .generateMultimodal,
+                supportedModalities: [.text, .image, .video],
+                requiresAnyModality: [.image, .video],
+                supportsNativeVideo: true,
+                workerFamily: .vision,
+                modelFamilyTarget: "vision.\(familyID)",
+                residencyPolicy: .allowMultiResidency
+            ),
+        ]
         return withSynchronizedResidency(model)
     }
 
@@ -1406,6 +1507,16 @@ public actor ModelCatalog {
             )
         ) { _, new in new }
         applyCapabilityAdapter(capabilityAdapter, to: &model)
+        model.requestRoutes = [
+            requestRoute(
+                task: .transcribeAudio,
+                supportedModalities: [.audio],
+                requiresAnyModality: [.audio],
+                workerFamily: .audio,
+                modelFamilyTarget: "audio.\(familyID)",
+                residencyPolicy: .singleResidency
+            ),
+        ]
         return withSynchronizedResidency(model)
     }
 
@@ -1440,6 +1551,16 @@ public actor ModelCatalog {
             )
         ) { _, new in new }
         applyCapabilityAdapter(capabilityAdapter, to: &model)
+        model.requestRoutes = [
+            requestRoute(
+                task: .speakText,
+                supportedModalities: [.text],
+                requiresAnyModality: [.text],
+                workerFamily: .audio,
+                modelFamilyTarget: "audio.\(familyID)",
+                residencyPolicy: .singleResidency
+            ),
+        ]
         return withSynchronizedResidency(model)
     }
 
@@ -1466,6 +1587,16 @@ public actor ModelCatalog {
             )
         ) { _, new in new }
         applyCapabilityAdapter(capabilityAdapter, to: &model)
+        model.requestRoutes = [
+            requestRoute(
+                task: .transcribeAudio,
+                supportedModalities: [.audio],
+                requiresAnyModality: [.audio],
+                workerFamily: .audio,
+                modelFamilyTarget: "audio.\(familyID)",
+                residencyPolicy: .singleResidency
+            ),
+        ]
         return withSynchronizedResidency(model)
     }
 
@@ -1492,6 +1623,16 @@ public actor ModelCatalog {
             )
         ) { _, new in new }
         applyCapabilityAdapter(capabilityAdapter, to: &model)
+        model.requestRoutes = [
+            requestRoute(
+                task: .transcribeAudio,
+                supportedModalities: [.audio],
+                requiresAnyModality: [.audio],
+                workerFamily: .audio,
+                modelFamilyTarget: "audio.\(familyID)",
+                residencyPolicy: .singleResidency
+            ),
+        ]
         return withSynchronizedResidency(model)
     }
 
@@ -1526,6 +1667,16 @@ public actor ModelCatalog {
             )
         ) { _, new in new }
         applyCapabilityAdapter(capabilityAdapter, to: &model)
+        model.requestRoutes = [
+            requestRoute(
+                task: .speakText,
+                supportedModalities: [.text],
+                requiresAnyModality: [.text],
+                workerFamily: .audio,
+                modelFamilyTarget: "audio.\(familyID)",
+                residencyPolicy: .singleResidency
+            ),
+        ]
         return withSynchronizedResidency(model)
     }
 
@@ -1563,6 +1714,16 @@ public actor ModelCatalog {
             )
         ) { _, new in new }
         applyCapabilityAdapter(capabilityAdapter, to: &model)
+        model.requestRoutes = [
+            requestRoute(
+                task: .speakText,
+                supportedModalities: [.text],
+                requiresAnyModality: [.text],
+                workerFamily: .audio,
+                modelFamilyTarget: "audio.\(familyID)",
+                residencyPolicy: .singleResidency
+            ),
+        ]
         return withSynchronizedResidency(model)
     }
 
@@ -1622,6 +1783,32 @@ public actor ModelCatalog {
         model.settings.ext["melix.model_revision"] = "dev"
         model.settings.ext["melix.tokenizer_hash"] = "tok-image-dev"
         applyCapabilityAdapter(capabilityAdapter, to: &model)
+        var routes: [Melix_Controlplane_V1_RequestRouteDeclaration] = []
+        if supportsGeneration {
+            routes.append(
+                requestRoute(
+                    task: .imageGenerate,
+                    supportedModalities: [.text],
+                    requiresAnyModality: [.text],
+                    workerFamily: .image,
+                    modelFamilyTarget: "image.\(detected.familyID)",
+                    residencyPolicy: .singleResidency
+                )
+            )
+        }
+        if supportsEdit {
+            routes.append(
+                requestRoute(
+                    task: .imageEdit,
+                    supportedModalities: [.text, .image],
+                    requiresAnyModality: [.image],
+                    workerFamily: .image,
+                    modelFamilyTarget: "image.\(detected.familyID)",
+                    residencyPolicy: .singleResidency
+                )
+            )
+        }
+        model.requestRoutes = routes
         return withSynchronizedResidency(model)
     }
 
@@ -2058,6 +2245,19 @@ public actor ModelCatalog {
             ledger.requiredBytes = memoryBudgetEvidence.requiredBytes
         }
         residencyLedger[id] = ledger
+    }
+
+    private func removeDispatchHandles(for modelID: String) {
+        dispatchHandles.removeValue(forKey: modelID)
+        routeDispatchHandles = routeDispatchHandles.filter { entry in
+            entry.key.modelID != modelID
+        }
+    }
+
+    private func routeWorkerFamilies(
+        for model: Melix_Controlplane_V1_ModelSummary
+    ) -> Set<Melix_Controlplane_V1_WorkerFamily> {
+        Set(model.requestRoutes.map(\.workerFamily).filter { $0 != .unspecified })
     }
 
     private func memoryBudgetEvidence(for modelID: String) -> MemoryBudgetEvidence {

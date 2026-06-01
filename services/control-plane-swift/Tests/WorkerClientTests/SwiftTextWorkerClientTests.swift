@@ -898,6 +898,8 @@ private func makeHandshakeResponse() -> Melix_Worker_V1_HandshakeResponse {
     var response = Melix_Worker_V1_HandshakeResponse()
     response.protocolVersion = "melix.worker.v1"
     response.runtimeVersion = "melix-swift-text-worker/test"
+    response.workerFamily = .text
+    response.workerInstanceID = "swift-text-worker-test"
     return response
 }
 
@@ -942,7 +944,18 @@ private func makeDevModel() -> Melix_Worker_V1_ModelSpec {
     model.parserMode = "text"
     model.reasoningMode = "off"
     model.maxContext = 8192
+    model.requestRoutes = [makeTextRequestRoute()]
     return model
+}
+
+private func makeTextRequestRoute() -> Melix_Worker_V1_RequestRouteDeclaration {
+    var route = Melix_Worker_V1_RequestRouteDeclaration()
+    route.task = .generateText
+    route.supportedModalities = [.text]
+    route.workerFamily = .text
+    route.modelFamilyTarget = "text.test"
+    route.residencyPolicy = .singleResidency
+    return route
 }
 
 private func makeTokenEvent(

@@ -46,9 +46,11 @@ class LiveMelixStack:
         self.repo_root = repo_root
         token = uuid.uuid4().hex[:10]
         self.swift_socket_path = Path("/tmp") / f"melix-swift-{token}.sock"
+        self.swift_vision_socket_path = Path("/tmp") / f"melix-swift-vision-{token}.sock"
         self.python_socket_path = Path("/tmp") / f"melix-python-{token}.sock"
         self.control_plane_metrics_path = Path("/tmp") / f"melix-control-plane-{token}.json"
         self.swift_text_worker_metrics_path = Path("/tmp") / f"melix-swift-metrics-{token}.json"
+        self.swift_vision_worker_metrics_path = Path("/tmp") / f"melix-swift-vision-metrics-{token}.json"
         self.python_worker_metrics_path = Path("/tmp") / f"melix-python-metrics-{token}.json"
         self.runtime_state_root = Path("/tmp") / f"melix-home-{token}"
         self.gateway_config_store_path = self.runtime_state_root / "state" / "gateway-config.json"
@@ -58,6 +60,8 @@ class LiveMelixStack:
         self.http_port = reserve_port()
         self.swift_text_worker_stdout_path = Path("/tmp") / f"melix-swift-worker-{token}.stdout.log"
         self.swift_text_worker_stderr_path = Path("/tmp") / f"melix-swift-worker-{token}.stderr.log"
+        self.swift_vision_worker_stdout_path = Path("/tmp") / f"melix-swift-vision-worker-{token}.stdout.log"
+        self.swift_vision_worker_stderr_path = Path("/tmp") / f"melix-swift-vision-worker-{token}.stderr.log"
         self.python_worker_stdout_path = Path("/tmp") / f"melix-python-worker-{token}.stdout.log"
         self.python_worker_stderr_path = Path("/tmp") / f"melix-python-worker-{token}.stderr.log"
         self.control_plane_stdout_path = Path("/tmp") / f"melix-control-plane-{token}.stdout.log"
@@ -71,16 +75,20 @@ class LiveMelixStack:
         self.should_start_swift_text_worker = start_swift_text_worker
         self.should_start_python_worker = start_python_worker
         self.swift_text_worker: subprocess.Popen[str] | None = None
+        self.swift_vision_worker: subprocess.Popen[str] | None = None
         self.python_worker: subprocess.Popen[str] | None = None
         self.control_plane: subprocess.Popen[str] | None = None
         self.swift_text_worker_stdout = None
         self.swift_text_worker_stderr = None
+        self.swift_vision_worker_stdout = None
+        self.swift_vision_worker_stderr = None
         self.python_worker_stdout = None
         self.python_worker_stderr = None
         self.control_plane_stdout = None
         self.control_plane_stderr = None
         self.startup_timings: dict[str, float] = {
             "swift_text_worker_ready_ms": 0.0,
+            "swift_vision_worker_ready_ms": 0.0,
             "python_worker_ready_ms": 0.0,
             "control_plane_spawn_to_ready_ms": 0.0,
         }
@@ -88,6 +96,7 @@ class LiveMelixStack:
     def start(self) -> None:
         self.startup_timings = {
             "swift_text_worker_ready_ms": 0.0,
+            "swift_vision_worker_ready_ms": 0.0,
             "python_worker_ready_ms": 0.0,
             "control_plane_spawn_to_ready_ms": 0.0,
         }
@@ -125,6 +134,44 @@ class LiveMelixStack:
             )
             self.startup_timings["swift_text_worker_ready_ms"] = (
                 time.perf_counter() - swift_started_at
+            ) * 1_000.0
+            swift_vision_started_at = time.perf_counter()
+            swift_vision_env = os.environ.copy()
+            swift_vision_env.update(self.environment_overrides)
+            swift_vision_env["MELIX_SWIFT_WORKER_FAMILY"] = "vision"
+            swift_vision_env["MELIX_SWIFT_VISION_WORKER_ID"] = "swift-vision-worker-integration"
+            swift_vision_env["MELIX_SWIFT_VISION_WORKER_SOCKET_PATH"] = os.fspath(self.swift_vision_socket_path)
+            swift_vision_env["MELIX_SWIFT_VISION_WORKER_BACKEND_MODE"] = self.swift_backend_mode
+            swift_vision_env["MELIX_SWIFT_VISION_WORKER_METRICS_PATH"] = os.fspath(
+                self.swift_vision_worker_metrics_path
+            )
+            swift_vision_env["MELIX_SWIFT_VISION_WORKER_CACHE_ROOT"] = os.fspath(
+                self.swift_cache_root / "vision"
+            )
+            swift_vision_env["MELIX_SWIFT_VISION_PAYLOAD_RECEIPT_PATH"] = os.fspath(
+                self.runtime_state_root / "receipts" / "vision-payload.jsonl"
+            )
+            swift_vision_env["MELIX_SWIFT_TEXT_WORKER_STARTUP_T0_NS"] = str(time.perf_counter_ns())
+            self.swift_vision_worker_stdout = self.swift_vision_worker_stdout_path.open("w", encoding="utf-8")
+            self.swift_vision_worker_stderr = self.swift_vision_worker_stderr_path.open("w", encoding="utf-8")
+            self.swift_vision_worker = subprocess.Popen(
+                [os.fspath(swift_text_worker_binary)],
+                cwd=self.repo_root,
+                stdout=self.swift_vision_worker_stdout,
+                stderr=self.swift_vision_worker_stderr,
+                text=True,
+                env=swift_vision_env,
+                start_new_session=True,
+            )
+            wait_for_worker_handshake(
+                self.swift_vision_socket_path,
+                worker=self.swift_vision_worker,
+                stdout_path=self.swift_vision_worker_stdout_path,
+                stderr_path=self.swift_vision_worker_stderr_path,
+                timeout_seconds=120,
+            )
+            self.startup_timings["swift_vision_worker_ready_ms"] = (
+                time.perf_counter() - swift_vision_started_at
             ) * 1_000.0
 
         if self.should_start_python_worker:
@@ -199,6 +246,7 @@ class LiveMelixStack:
             control_plane_env["MELIX_HTTP_PORT"] = str(self.http_port)
             control_plane_env["MELIX_WORKER_SOCKET_PATH"] = os.fspath(self.python_socket_path)
             control_plane_env["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] = os.fspath(self.swift_socket_path)
+            control_plane_env["MELIX_SWIFT_VISION_WORKER_SOCKET_PATH"] = os.fspath(self.swift_vision_socket_path)
             control_plane_env["MELIX_CONTROL_PLANE_METRICS_PATH"] = os.fspath(self.control_plane_metrics_path)
             control_plane_env["MELIX_REPO_ROOT"] = os.fspath(self.repo_root)
             self.control_plane_stdout = self.control_plane_stdout_path.open("w", encoding="utf-8")
@@ -221,6 +269,9 @@ class LiveMelixStack:
                     swift_text_worker=self.swift_text_worker,
                     swift_text_worker_stdout_path=self.swift_text_worker_stdout_path,
                     swift_text_worker_stderr_path=self.swift_text_worker_stderr_path,
+                    swift_vision_worker=self.swift_vision_worker,
+                    swift_vision_worker_stdout_path=self.swift_vision_worker_stdout_path,
+                    swift_vision_worker_stderr_path=self.swift_vision_worker_stderr_path,
                     python_worker=self.python_worker,
                     python_worker_stdout_path=self.python_worker_stdout_path,
                     python_worker_stderr_path=self.python_worker_stderr_path,
@@ -242,6 +293,7 @@ class LiveMelixStack:
     def stop(self) -> None:
         self.stop_control_plane()
         self.stop_python_worker()
+        self.stop_swift_vision_worker()
         self.stop_swift_text_worker()
         if self.cleanup_runtime_state_root:
             self._remove_tree(self.runtime_state_root)
@@ -261,6 +313,13 @@ class LiveMelixStack:
         self.swift_text_worker_metrics_path.unlink(missing_ok=True)
         if self.cleanup_swift_cache_root:
             self._remove_tree(self.swift_cache_root)
+
+    def stop_swift_vision_worker(self) -> None:
+        self._stop_process("swift vision worker", self.swift_vision_worker)
+        self.swift_vision_worker = None
+        self._close_logs("swift_vision_worker")
+        self.swift_vision_socket_path.unlink(missing_ok=True)
+        self.swift_vision_worker_metrics_path.unlink(missing_ok=True)
 
     def stop_control_plane(self) -> None:
         self._stop_process("control plane", self.control_plane)
@@ -297,6 +356,9 @@ class LiveMelixStack:
             swift_text_worker=self.swift_text_worker,
             swift_text_worker_stdout_path=self.swift_text_worker_stdout_path,
             swift_text_worker_stderr_path=self.swift_text_worker_stderr_path,
+            swift_vision_worker=self.swift_vision_worker,
+            swift_vision_worker_stdout_path=self.swift_vision_worker_stdout_path,
+            swift_vision_worker_stderr_path=self.swift_vision_worker_stderr_path,
             python_worker=self.python_worker,
             python_worker_stdout_path=self.python_worker_stdout_path,
             python_worker_stderr_path=self.python_worker_stderr_path,
@@ -583,6 +645,9 @@ def wait_for_http_models(
     swift_text_worker: subprocess.Popen[str] | None = None,
     swift_text_worker_stdout_path: Path | None = None,
     swift_text_worker_stderr_path: Path | None = None,
+    swift_vision_worker: subprocess.Popen[str] | None = None,
+    swift_vision_worker_stdout_path: Path | None = None,
+    swift_vision_worker_stderr_path: Path | None = None,
     python_worker: subprocess.Popen[str] | None = None,
     python_worker_stdout_path: Path | None = None,
     python_worker_stderr_path: Path | None = None,
@@ -597,6 +662,9 @@ def wait_for_http_models(
         swift_text_worker=swift_text_worker,
         swift_text_worker_stdout_path=swift_text_worker_stdout_path,
         swift_text_worker_stderr_path=swift_text_worker_stderr_path,
+        swift_vision_worker=swift_vision_worker,
+        swift_vision_worker_stdout_path=swift_vision_worker_stdout_path,
+        swift_vision_worker_stderr_path=swift_vision_worker_stderr_path,
         python_worker=python_worker,
         python_worker_stdout_path=python_worker_stdout_path,
         python_worker_stderr_path=python_worker_stderr_path,
@@ -613,6 +681,9 @@ def wait_for_http_ready(
     swift_text_worker: subprocess.Popen[str] | None = None,
     swift_text_worker_stdout_path: Path | None = None,
     swift_text_worker_stderr_path: Path | None = None,
+    swift_vision_worker: subprocess.Popen[str] | None = None,
+    swift_vision_worker_stdout_path: Path | None = None,
+    swift_vision_worker_stderr_path: Path | None = None,
     python_worker: subprocess.Popen[str] | None = None,
     python_worker_stdout_path: Path | None = None,
     python_worker_stderr_path: Path | None = None,
@@ -628,6 +699,9 @@ def wait_for_http_ready(
         swift_text_worker=swift_text_worker,
         swift_text_worker_stdout_path=swift_text_worker_stdout_path,
         swift_text_worker_stderr_path=swift_text_worker_stderr_path,
+        swift_vision_worker=swift_vision_worker,
+        swift_vision_worker_stdout_path=swift_vision_worker_stdout_path,
+        swift_vision_worker_stderr_path=swift_vision_worker_stderr_path,
         python_worker=python_worker,
         python_worker_stdout_path=python_worker_stdout_path,
         python_worker_stderr_path=python_worker_stderr_path,
@@ -646,6 +720,9 @@ def wait_for_http_model_states(
     swift_text_worker: subprocess.Popen[str] | None = None,
     swift_text_worker_stdout_path: Path | None = None,
     swift_text_worker_stderr_path: Path | None = None,
+    swift_vision_worker: subprocess.Popen[str] | None = None,
+    swift_vision_worker_stdout_path: Path | None = None,
+    swift_vision_worker_stderr_path: Path | None = None,
     python_worker: subprocess.Popen[str] | None = None,
     python_worker_stdout_path: Path | None = None,
     python_worker_stderr_path: Path | None = None,
@@ -664,6 +741,14 @@ def wait_for_http_model_states(
                     "Swift text worker exited before warm model was visible",
                     swift_text_worker_stdout_path,
                     swift_text_worker_stderr_path,
+                )
+            )
+        if swift_vision_worker is not None and swift_vision_worker.poll() is not None:
+            raise AssertionError(
+                _format_process_failure(
+                    "Swift vision worker exited before warm model was visible",
+                    swift_vision_worker_stdout_path,
+                    swift_vision_worker_stderr_path,
                 )
             )
         if python_worker is not None and python_worker.poll() is not None:

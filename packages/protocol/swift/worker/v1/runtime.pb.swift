@@ -54,6 +54,10 @@ public nonisolated struct Melix_Worker_V1_HandshakeResponse: Sendable {
   /// Clears the value of `capabilities`. Subsequent reads from it will return its default value.
   public mutating func clearCapabilities() {self._capabilities = nil}
 
+  public var workerFamily: Melix_Worker_V1_WorkerFamily = .unspecified
+
+  public var workerInstanceID: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -841,7 +845,7 @@ nonisolated extension Melix_Worker_V1_HandshakeRequest: SwiftProtobuf.Message, S
 
 nonisolated extension Melix_Worker_V1_HandshakeResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".HandshakeResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_version\0\u{3}runtime_version\0\u{1}capabilities\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_version\0\u{3}runtime_version\0\u{1}capabilities\0\u{3}worker_family\0\u{3}worker_instance_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -852,6 +856,8 @@ nonisolated extension Melix_Worker_V1_HandshakeResponse: SwiftProtobuf.Message, 
       case 1: try { try decoder.decodeSingularStringField(value: &self.protocolVersion) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.runtimeVersion) }()
       case 3: try { try decoder.decodeSingularMessageField(value: &self._capabilities) }()
+      case 4: try { try decoder.decodeSingularEnumField(value: &self.workerFamily) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.workerInstanceID) }()
       default: break
       }
     }
@@ -871,6 +877,12 @@ nonisolated extension Melix_Worker_V1_HandshakeResponse: SwiftProtobuf.Message, 
     try { if let v = self._capabilities {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
     } }()
+    if self.workerFamily != .unspecified {
+      try visitor.visitSingularEnumField(value: self.workerFamily, fieldNumber: 4)
+    }
+    if !self.workerInstanceID.isEmpty {
+      try visitor.visitSingularStringField(value: self.workerInstanceID, fieldNumber: 5)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -878,6 +890,8 @@ nonisolated extension Melix_Worker_V1_HandshakeResponse: SwiftProtobuf.Message, 
     if lhs.protocolVersion != rhs.protocolVersion {return false}
     if lhs.runtimeVersion != rhs.runtimeVersion {return false}
     if lhs._capabilities != rhs._capabilities {return false}
+    if lhs.workerFamily != rhs.workerFamily {return false}
+    if lhs.workerInstanceID != rhs.workerInstanceID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

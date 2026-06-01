@@ -414,7 +414,7 @@ struct ControlPlaneServiceTests {
                         "melix.model_path": importedModelPath,
                         "melix.hf_repo_id": importedModelID,
                         "melix.capability.class": "text",
-                        "melix.capability.route_kind": "python_text_compatibility",
+                        "melix.capability.route_kind": "swift_text",
                         "melix.capability.supported_modalities": "text",
                         "melix.capability.supported_tasks": "generate",
                     ],
@@ -1561,8 +1561,7 @@ struct ControlPlaneServiceTests {
         let service = ControlPlaneService(
             modelCatalog: catalog,
             workerRegistry: WorkerRegistry(
-                defaultTextClient: NullWorkerClient(),
-                pythonCompatibilityClient: textClient,
+                defaultTextClient: textClient,
                 modelOperationsClient: modelOpsClient,
                 modelCatalog: catalog
             ),
@@ -1842,7 +1841,7 @@ struct ControlPlaneServiceTests {
 
         #expect(response.ok)
         #expect(derived.kind == "text")
-        #expect(derived.routeClass == .workerRoutePythonTextCompatibility)
+        #expect(derived.routeClass == .workerRouteSwiftText)
         #expect(derived.capabilityClass == .modelCapabilityText)
         #expect(derived.supportedTasks == ["generate"])
         #expect(derived.settings.ext["melix.model_path"] == "/tmp/melix-derived/model")
@@ -8771,7 +8770,7 @@ struct ControlPlaneServiceTests {
         ])
         let service = ControlPlaneService(
             modelCatalog: modelCatalog,
-            workerRegistry: WorkerRegistry(defaultTextClient: textClient),
+            workerRegistry: WorkerRegistry(defaultTextClient: textClient, modelCatalog: modelCatalog),
             chatTranslator: ChatRequestTranslator(requestIDGenerator: { "chat-ocr-service" })
         )
 
@@ -8785,7 +8784,7 @@ struct ControlPlaneServiceTests {
         let generated = try #require(await textClient.lastGenerateRequest)
 
         #expect(execution.modelID == "melix-dev-ocr")
-        #expect(generated.execution.modelHandle == "melix-dev-ocr::local")
+        #expect(generated.execution.modelHandle == "melix-dev-ocr")
         #expect(generated.sampling.stop == ["<ocr:end>"])
         #expect(generated.execution.ext["melix.ocr.prompt_profile_id"] == "ocr-default-v1")
         #expect(generated.execution.ext["melix.ocr.prompt_source"] == "request")
@@ -8998,8 +8997,7 @@ struct ControlPlaneServiceTests {
     @Test("startChat lazily loads text-capable VLM models before streaming")
     func startChatLazilyLoadsTextCapableVLMModel() async throws {
         let modelCatalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), ModelCatalog.devVLMModel()])
-        let textClient = ScriptedChatWorkerClient(events: [])
-        let vlmClient = ScriptedChatWorkerClient(events: [
+        let textClient = ScriptedChatWorkerClient(events: [
             makeQueuedExecuteEvent(requestID: "chat-vlm-lazy"),
             makeTokenExecuteEvent(requestID: "chat-vlm-lazy", text: "vlm"),
             makeCompletedExecuteEvent(
@@ -9013,7 +9011,6 @@ struct ControlPlaneServiceTests {
             modelCatalog: modelCatalog,
             workerRegistry: WorkerRegistry(
                 defaultTextClient: textClient,
-                pythonCompatibilityClient: vlmClient,
                 modelCatalog: modelCatalog
             ),
             chatTranslator: ChatRequestTranslator(requestIDGenerator: { "chat-vlm-lazy" })
@@ -9028,17 +9025,16 @@ struct ControlPlaneServiceTests {
 
         _ = try await Array(execution.stream)
 
-        let loadRequest = try #require(await vlmClient.lastLoadModelRequest)
-        let generated = try #require(await vlmClient.lastGenerateRequest)
+        let loadRequest = try #require(await textClient.lastLoadModelRequest)
+        let generated = try #require(await textClient.lastGenerateRequest)
         let model = await modelCatalog.model(id: "melix-dev-vlm")
 
         #expect(loadRequest.model.modelID == "melix-dev-vlm")
         #expect(loadRequest.model.modelKind == "vlm")
-        #expect(loadRequest.model.ext["melix.capability.route_kind"] == "python_vlm")
+        #expect(loadRequest.model.ext["melix.capability.route_kind"] == "swift_text")
         // ScriptedChatWorkerClient echoes the loaded handle; loader tests cover suffixed Python handles.
         #expect(generated.execution.modelHandle == "melix-dev-vlm")
         #expect(model?.state == .modelWarm)
-        #expect(await textClient.lastGenerateRequest == nil)
     }
 
     @Test("startChat lazy text loads preserve adapter-set hash in worker requests")

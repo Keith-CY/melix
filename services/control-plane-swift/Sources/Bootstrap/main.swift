@@ -87,11 +87,15 @@ enum MelixControlPlaneBootstrap {
         let swiftTextWorkerClient = SwiftTextWorkerClient(
             socketPath: bootstrapEnvironment.swiftTextWorkerSocketPath
         )
+        let swiftVisionWorkerClient = SwiftTextWorkerClient(
+            socketPath: bootstrapEnvironment.swiftVisionWorkerSocketPath
+        )
         let pythonCompatibilityClient = PythonBridgeWorkerClient(
             socketPath: bootstrapEnvironment.pythonWorkerSocketPath
         )
         let workerRegistry = WorkerRegistry(
             defaultTextClient: swiftTextWorkerClient,
+            visionClient: swiftVisionWorkerClient,
             pythonCompatibilityClient: pythonCompatibilityClient,
             modelCatalog: modelCatalog
         )
@@ -163,6 +167,7 @@ private struct BootstrapEnvironment {
     let repoRoot: String
     let pythonWorkerSocketPath: String
     let swiftTextWorkerSocketPath: String
+    let swiftVisionWorkerSocketPath: String
     let controlPlaneMetricsPath: String?
     let mcpConfigPath: String?
 
@@ -175,6 +180,8 @@ private struct BootstrapEnvironment {
         self.pythonWorkerSocketPath = environment["MELIX_WORKER_SOCKET_PATH"] ?? "/tmp/melix-worker.sock"
         self.swiftTextWorkerSocketPath =
             environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] ?? "/var/run/melix/swift-text-worker.sock"
+        self.swiftVisionWorkerSocketPath =
+            environment["MELIX_SWIFT_VISION_WORKER_SOCKET_PATH"] ?? "/var/run/melix/swift-vision-worker.sock"
         self.controlPlaneMetricsPath = environment["MELIX_CONTROL_PLANE_METRICS_PATH"]
         self.mcpConfigPath = environment["MELIX_MCP_CONFIG_PATH"]
     }

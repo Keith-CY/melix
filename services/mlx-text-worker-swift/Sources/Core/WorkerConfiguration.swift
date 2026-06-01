@@ -1,4 +1,5 @@
 import Foundation
+import MelixWorkerProtocol
 
 package struct WorkerConfiguration: Sendable, Equatable {
     private static let runtimeCacheFingerprintSchemaVersion = "cache-v1"
@@ -6,6 +7,7 @@ package struct WorkerConfiguration: Sendable, Equatable {
     static let defaultDecodeBatchCohortPendingWindowNanos: UInt64 = 2_000_000_000
 
     var workerID: String
+    var workerFamily: Melix_Worker_V1_WorkerFamily
     var socketPath: String
     var backendMode: String
     var runtimeVersion: String
@@ -21,9 +23,11 @@ package struct WorkerConfiguration: Sendable, Equatable {
     var decodeBatchPendingWindowNanos: UInt64
     var decodeBatchCohortPendingWindowNanos: UInt64
     var turboQuantCandidateProbeEnabled: Bool
+    var visionPayloadReceiptPath: String?
 
     init(
         workerID: String = "swift-text-worker-001",
+        workerFamily: Melix_Worker_V1_WorkerFamily = .text,
         socketPath: String = "/var/run/melix/swift-text-worker.sock",
         backendMode: String = "swift",
         runtimeVersion: String = "melix-swift-text-worker/dev",
@@ -38,9 +42,11 @@ package struct WorkerConfiguration: Sendable, Equatable {
         initialCacheBlocks: UInt32 = 0,
         decodeBatchPendingWindowNanos: UInt64 = WorkerConfiguration.defaultDecodeBatchPendingWindowNanos,
         decodeBatchCohortPendingWindowNanos: UInt64 = WorkerConfiguration.defaultDecodeBatchCohortPendingWindowNanos,
-        turboQuantCandidateProbeEnabled: Bool = false
+        turboQuantCandidateProbeEnabled: Bool = false,
+        visionPayloadReceiptPath: String? = nil
     ) {
         self.workerID = workerID
+        self.workerFamily = workerFamily
         self.socketPath = socketPath
         self.backendMode = backendMode
         self.runtimeVersion = runtimeVersion
@@ -59,25 +65,70 @@ package struct WorkerConfiguration: Sendable, Equatable {
         self.decodeBatchPendingWindowNanos = decodeBatchPendingWindowNanos
         self.decodeBatchCohortPendingWindowNanos = decodeBatchCohortPendingWindowNanos
         self.turboQuantCandidateProbeEnabled = turboQuantCandidateProbeEnabled
+        self.visionPayloadReceiptPath = visionPayloadReceiptPath
     }
 
     package static func fromEnvironment(
         _ environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> WorkerConfiguration {
-        let backendMode = environment["MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE"] ?? "swift"
-        let runtimeVersion = environment["MELIX_SWIFT_TEXT_WORKER_RUNTIME_VERSION"] ?? "melix-swift-text-worker/dev"
+        let workerFamily = Self.workerFamily(
+            from: environment["MELIX_SWIFT_WORKER_FAMILY"] ?? environment["MELIX_SWIFT_TEXT_WORKER_FAMILY"]
+        )
+        let isVisionWorker = workerFamily == .vision
+        let backendMode = if isVisionWorker {
+            firstNonEmpty(
+                environment["MELIX_SWIFT_VISION_WORKER_BACKEND_MODE"],
+                environment["MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE"],
+                "deterministic"
+            )
+        } else {
+            firstNonEmpty(environment["MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE"], "swift")
+        }
+        let runtimeVersion = if isVisionWorker {
+            firstNonEmpty(
+                environment["MELIX_SWIFT_VISION_WORKER_RUNTIME_VERSION"],
+                environment["MELIX_SWIFT_TEXT_WORKER_RUNTIME_VERSION"],
+                "melix-swift-vision-worker/dev"
+            )
+        } else {
+            firstNonEmpty(environment["MELIX_SWIFT_TEXT_WORKER_RUNTIME_VERSION"], "melix-swift-text-worker/dev")
+        }
         return WorkerConfiguration(
-            workerID: environment["MELIX_SWIFT_TEXT_WORKER_ID"] ?? "swift-text-worker-001",
-            socketPath: environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"] ?? "/var/run/melix/swift-text-worker.sock",
+            workerID: isVisionWorker
+                ? firstNonEmpty(
+                    environment["MELIX_SWIFT_VISION_WORKER_ID"],
+                    environment["MELIX_SWIFT_TEXT_WORKER_ID"],
+                    "swift-vision-worker-001"
+                )
+                : firstNonEmpty(environment["MELIX_SWIFT_TEXT_WORKER_ID"], "swift-text-worker-001"),
+            workerFamily: workerFamily,
+            socketPath: isVisionWorker
+                ? firstNonEmpty(
+                    environment["MELIX_SWIFT_VISION_WORKER_SOCKET_PATH"],
+                    "/var/run/melix/swift-vision-worker.sock"
+                )
+                : firstNonEmpty(environment["MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH"], "/var/run/melix/swift-text-worker.sock"),
             backendMode: backendMode,
             runtimeVersion: runtimeVersion,
             runtimeCacheFingerprint: runtimeCacheFingerprint(
-                environmentOverride: environment["MELIX_SWIFT_TEXT_WORKER_RUNTIME_CACHE_FINGERPRINT"],
+                environmentOverride: isVisionWorker
+                    ? firstNonEmpty(
+                        environment["MELIX_SWIFT_VISION_WORKER_RUNTIME_CACHE_FINGERPRINT"],
+                        environment["MELIX_SWIFT_TEXT_WORKER_RUNTIME_CACHE_FINGERPRINT"]
+                    )
+                    : environment["MELIX_SWIFT_TEXT_WORKER_RUNTIME_CACHE_FINGERPRINT"],
                 backendMode: backendMode,
                 runtimeVersion: runtimeVersion
             ),
-            metricsExportPath: environment["MELIX_SWIFT_TEXT_WORKER_METRICS_PATH"],
-            cacheRootPath: environment["MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT"] ?? ".runtime/swift-text-worker-cache",
+            metricsExportPath: isVisionWorker
+                ? firstNonEmptyOptional(
+                    environment["MELIX_SWIFT_VISION_WORKER_METRICS_PATH"],
+                    environment["MELIX_SWIFT_TEXT_WORKER_METRICS_PATH"]
+                )
+                : environment["MELIX_SWIFT_TEXT_WORKER_METRICS_PATH"],
+            cacheRootPath: isVisionWorker
+                ? firstNonEmpty(environment["MELIX_SWIFT_VISION_WORKER_CACHE_ROOT"], ".runtime/swift-vision-worker-cache")
+                : firstNonEmpty(environment["MELIX_SWIFT_TEXT_WORKER_CACHE_ROOT"], ".runtime/swift-text-worker-cache"),
             memoryEnforcementDisabled: truthyBool(
                 from: environment["MELIX_SWIFT_TEXT_WORKER_DISABLE_MEMORY_ENFORCEMENT"]
             ),
@@ -107,7 +158,8 @@ package struct WorkerConfiguration: Sendable, Equatable {
             ),
             turboQuantCandidateProbeEnabled: truthyBool(
                 from: environment["MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE"]
-            )
+            ),
+            visionPayloadReceiptPath: firstNonEmptyOptional(environment["MELIX_SWIFT_VISION_PAYLOAD_RECEIPT_PATH"])
         )
     }
 
@@ -181,5 +233,33 @@ package struct WorkerConfiguration: Sendable, Equatable {
         default:
             return false
         }
+    }
+
+    private static func workerFamily(from rawValue: String?) -> Melix_Worker_V1_WorkerFamily {
+        switch rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "vision":
+            return .vision
+        default:
+            return .text
+        }
+    }
+
+    private static func firstNonEmpty(_ values: String?...) -> String {
+        firstNonEmpty(Array(values))
+    }
+
+    private static func firstNonEmpty(_ values: [String?]) -> String {
+        for value in values {
+            let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+        return ""
+    }
+
+    private static func firstNonEmptyOptional(_ values: String?...) -> String? {
+        let value = firstNonEmpty(Array(values))
+        return value.isEmpty ? nil : value
     }
 }

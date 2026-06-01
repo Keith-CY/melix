@@ -40,8 +40,10 @@ PY
 }
 PYTHON_SOCKET_PATH="${MELIX_WORKER_SOCKET_PATH:-$(default_socket_path python)}"
 SWIFT_TEXT_WORKER_SOCKET_PATH="${MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH:-$(default_socket_path swift)}"
+SWIFT_VISION_WORKER_SOCKET_PATH="${MELIX_SWIFT_VISION_WORKER_SOCKET_PATH:-$(default_socket_path swift-vision)}"
 CONTROL_PLANE_METRICS_PATH="${MELIX_CONTROL_PLANE_METRICS_PATH:-$RUNTIME_DIR/control-plane-metrics.json}"
 SWIFT_TEXT_WORKER_METRICS_PATH="${MELIX_SWIFT_TEXT_WORKER_METRICS_PATH:-$RUNTIME_DIR/swift-text-worker-metrics.json}"
+SWIFT_VISION_WORKER_METRICS_PATH="${MELIX_SWIFT_VISION_WORKER_METRICS_PATH:-$RUNTIME_DIR/swift-vision-worker-metrics.json}"
 PYTHON_WORKER_METRICS_PATH="${MELIX_PYTHON_WORKER_METRICS_PATH:-$RUNTIME_DIR/python-worker-metrics.json}"
 
 stop_pid_file() {
@@ -71,13 +73,16 @@ stop_pid_file() {
 stop_pid_file "$RUNTIME_DIR/menubar.pid"
 stop_pid_file "$RUNTIME_DIR/control-plane.pid"
 stop_pid_file "$RUNTIME_DIR/python-worker.pid"
+stop_pid_file "$RUNTIME_DIR/swift-vision-worker.pid"
 stop_pid_file "$RUNTIME_DIR/swift-text-worker.pid"
 
 rm -f \
   "$PYTHON_SOCKET_PATH" \
   "$SWIFT_TEXT_WORKER_SOCKET_PATH" \
+  "$SWIFT_VISION_WORKER_SOCKET_PATH" \
   "$CONTROL_PLANE_METRICS_PATH" \
   "$SWIFT_TEXT_WORKER_METRICS_PATH" \
+  "$SWIFT_VISION_WORKER_METRICS_PATH" \
   "$PYTHON_WORKER_METRICS_PATH" \
   "$RUNTIME_DIR/env.sh"
 

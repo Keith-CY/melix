@@ -1,0 +1,148 @@
+{
+  "schema_version": "melix.route_contract_fixture_manifest.v1",
+  "fixture_suite_id": "swift-vision-parity.dev.v1",
+  "scope": "request route contract plus Swift Text and Swift Vision worker selection",
+  "model_fixtures": [
+    {
+      "model_id": "melix-dev-text",
+      "request_routes": [
+        {
+          "task": "generate_text",
+          "supported_modalities": ["text"],
+          "requires_any_modality": [],
+          "worker_family": "text",
+          "residency_policy": "single_residency",
+          "model_family_target": "text.llama"
+        }
+      ]
+    },
+    {
+      "model_id": "melix-dev-vlm",
+      "request_routes": [
+        {
+          "task": "generate_text",
+          "supported_modalities": ["text"],
+          "requires_any_modality": [],
+          "worker_family": "text",
+          "residency_policy": "allow_multi_residency",
+          "model_family_target": "vision.llava-v1.text_companion",
+          "is_text_companion": true
+        },
+        {
+          "task": "generate_multimodal",
+          "supported_modalities": ["text", "image", "video"],
+          "requires_any_modality": ["image", "video"],
+          "supports_native_video": true,
+          "worker_family": "vision",
+          "residency_policy": "allow_multi_residency",
+          "model_family_target": "vision.llava-v1"
+        }
+      ]
+    }
+  ],
+  "worker_fixtures": [
+    {
+      "worker_instance_id": "swift-text-worker",
+      "worker_family": "text",
+      "ready": true
+    },
+    {
+      "worker_instance_id": "swift-vision-worker",
+      "worker_family": "vision",
+      "ready": true
+    }
+  ],
+  "route_contract_cases": [
+    {
+      "case_id": "text.generate.text.swift-text",
+      "model_id": "melix-dev-text",
+      "task": "generate_text",
+      "request_modalities": ["text"],
+      "expected_worker_family": "text",
+      "expected_worker_instance_id": "swift-text-worker",
+      "expected_error": null
+    },
+    {
+      "case_id": "vlm.generate-text.text-companion.swift-text",
+      "model_id": "melix-dev-vlm",
+      "task": "generate_text",
+      "request_modalities": ["text"],
+      "expected_worker_family": "text",
+      "expected_worker_instance_id": "swift-text-worker",
+      "expected_error": null
+    },
+    {
+      "case_id": "vlm.generate-multimodal.image.swift-vision",
+      "model_id": "melix-dev-vlm",
+      "task": "generate_multimodal",
+      "request_modalities": ["text", "image"],
+      "expected_worker_family": "vision",
+      "expected_worker_instance_id": "swift-vision-worker",
+      "expected_error": null
+    },
+    {
+      "case_id": "vlm.generate-multimodal.video.native.swift-vision",
+      "model_id": "melix-dev-vlm",
+      "task": "generate_multimodal",
+      "request_modalities": ["text", "video"],
+      "expected_worker_family": "vision",
+      "expected_worker_instance_id": "swift-vision-worker",
+      "expected_error": null
+    },
+    {
+      "case_id": "vlm.generate-multimodal.audio.rejected",
+      "model_id": "melix-dev-vlm",
+      "task": "generate_multimodal",
+      "request_modalities": ["text", "audio"],
+      "expected_worker_family": null,
+      "expected_worker_instance_id": null,
+      "expected_error": {
+        "code": "route_not_supported",
+        "reason": "no_route_for_modalities"
+      }
+    },
+    {
+      "case_id": "legacy-route-fields-without-request-routes.rejected",
+      "model_id": "legacy-vlm",
+      "task": "generate_multimodal",
+      "request_modalities": ["text", "image"],
+      "expected_worker_family": null,
+      "expected_worker_instance_id": null,
+      "expected_error": {
+        "code": "route_not_supported",
+        "reason": "missing_request_routes"
+      }
+    },
+    {
+      "case_id": "vlm.generate-multimodal.image.vision-unavailable",
+      "model_id": "melix-dev-vlm",
+      "task": "generate_multimodal",
+      "request_modalities": ["text", "image"],
+      "worker_overrides": [
+        {
+          "worker_instance_id": "swift-vision-worker",
+          "ready": false
+        }
+      ],
+      "expected_worker_family": null,
+      "expected_worker_instance_id": null,
+      "expected_error": {
+        "code": "route_not_supported",
+        "reason": "worker_family_unavailable"
+      }
+    }
+  ],
+  "receipt_artifacts": {
+    "route_selection": "receipts/route-selection.jsonl",
+    "worker_defensive_validation": "errors/route-rejections.jsonl",
+    "vision_payload": "receipts/vision-payload.jsonl"
+  },
+  "metrics_policy": {
+    "observability_mode": "minimal",
+    "required_counters": [
+      "scheduler.route_selection_receipt_emitted",
+      "scheduler.multimodal_continuous_batch_requested_capacity"
+    ],
+    "probe_overhead": "N/A: manifest-only first slice; runtime overhead is measured by existing scheduler and worker metrics tests."
+  }
+}

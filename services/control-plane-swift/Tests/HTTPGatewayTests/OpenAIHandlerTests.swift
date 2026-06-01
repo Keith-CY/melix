@@ -1637,14 +1637,13 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["http.openai_chat_tools_configured_count"] == 1)
     }
 
-    @Test("POST /v1/chat/completions lazy-loads text-only VLM requests through the Python VLM route")
-    func postChatCompletionsLazyLoadsTextOnlyVLMRequestsThroughPythonVLMRoute() async throws {
+    @Test("POST /v1/chat/completions lazy-loads text-only VLM requests through the Swift text route")
+    func postChatCompletionsLazyLoadsTextOnlyVLMRequestsThroughSwiftTextRoute() async throws {
         var vlmModel = ModelCatalog.devVLMModel()
         vlmModel.settings.ext["melix.vlm.text_only_step_cooperative"] = "true"
         vlmModel.settings.ext["melix.vlm.text_only_batch_generator"] = "true"
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), vlmModel])
-        let textClient = ScriptedWorkerClient(events: [])
-        let vlmClient = ScriptedWorkerClient(
+        let textClient = ScriptedWorkerClient(
             events: [
                 makeTokenEvent(requestID: "req-http-vlm-text", seq: 1, text: "vlm"),
                 makeCompletedEvent(
@@ -1654,8 +1653,9 @@ struct OpenAIHandlerTests {
                     assistantText: "vlm"
                 ),
             ],
-            loadModelHandle: "melix-dev-vlm::python"
+            loadModelHandle: "melix-dev-vlm::swift"
         )
+        let vlmClient = ScriptedWorkerClient(events: [])
         let workerRegistry = WorkerRegistry(
             defaultTextClient: textClient,
             pythonCompatibilityClient: vlmClient,
@@ -1694,18 +1694,18 @@ struct OpenAIHandlerTests {
             )
         )
         let payload = try await collectBody(response.body)
-        let loadRequest = try #require(await vlmClient.lastLoadModelRequest)
-        let generateRequest = try #require(await vlmClient.lastGenerateRequest)
+        let loadRequest = try #require(await textClient.lastLoadModelRequest)
+        let generateRequest = try #require(await textClient.lastGenerateRequest)
 
         #expect(response.statusCode == 200)
         #expect(payload.contains("\"content\":\"vlm\""))
         #expect(payload.contains("data: [DONE]"))
         #expect(loadRequest.model.modelKind == "vlm")
-        #expect(loadRequest.model.ext["melix.capability.route_kind"] == "python_vlm")
-        #expect(generateRequest.execution.modelHandle == "melix-dev-vlm::python")
-        #expect(generateRequest.execution.ext["melix.vlm.text_only_step_cooperative"] == "true")
-        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == "true")
-        #expect(await textClient.lastGenerateRequest == nil)
+        #expect(loadRequest.model.ext["melix.capability.route_kind"] == "swift_text")
+        #expect(generateRequest.execution.modelHandle == "melix-dev-vlm::swift")
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_step_cooperative"] == nil)
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == nil)
+        #expect(await vlmClient.lastGenerateRequest == nil)
     }
 
     @Test("POST /v1/chat/completions copies imported VLM batch-generator metadata by route metadata")
@@ -1718,8 +1718,7 @@ struct OpenAIHandlerTests {
         vlmModel.settings.ext["melix.vlm.text_only_step_cooperative"] = "false"
         vlmModel.settings.ext["melix.vlm.text_only_batch_generator"] = "true"
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), vlmModel])
-        let textClient = ScriptedWorkerClient(events: [])
-        let vlmClient = ScriptedWorkerClient(
+        let textClient = ScriptedWorkerClient(
             events: [
                 makeTokenEvent(requestID: "req-http-imported-vlm-text", seq: 1, text: "vlm"),
                 makeCompletedEvent(
@@ -1729,8 +1728,9 @@ struct OpenAIHandlerTests {
                     assistantText: "vlm"
                 ),
             ],
-            loadModelHandle: "imported-gemma-vlm::python"
+            loadModelHandle: "imported-gemma-vlm::swift"
         )
+        let vlmClient = ScriptedWorkerClient(events: [])
         let workerRegistry = WorkerRegistry(
             defaultTextClient: textClient,
             pythonCompatibilityClient: vlmClient,
@@ -1769,15 +1769,15 @@ struct OpenAIHandlerTests {
                 body: body
             )
         )
-        let generateRequest = try #require(await vlmClient.lastGenerateRequest)
+        let generateRequest = try #require(await textClient.lastGenerateRequest)
 
         #expect(response.statusCode == 200)
         #expect(generateRequest.execution.ext["melix.vlm.text_only_step_cooperative"] == nil)
-        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == "true")
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == nil)
         #expect(generateRequest.sampling.temperature == 0)
         #expect(generateRequest.sampling.topP == 1)
         #expect(generateRequest.sampling.topK == 0)
-        #expect(await textClient.lastGenerateRequest == nil)
+        #expect(await vlmClient.lastGenerateRequest == nil)
     }
 
     @Test("POST /v1/chat/completions auto-enables Gemma4 text-only VLM batch-generator admission")
@@ -1807,20 +1807,20 @@ struct OpenAIHandlerTests {
         )
         let payload = try await collectBody(response.body)
         let generateRequest = try #require(
-            await harness.vlmClient.lastGenerateRequest,
+            await harness.textClient.lastGenerateRequest,
             Comment(rawValue: payload)
         )
 
         #expect(response.statusCode == 200, Comment(rawValue: payload))
-        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == "true")
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == nil)
         #expect(generateRequest.sampling.temperature == 0)
         #expect(generateRequest.sampling.topP == 1)
         #expect(generateRequest.sampling.topK == 0)
-        #expect(await harness.textClient.lastGenerateRequest == nil)
+        #expect(await harness.vlmClient.lastGenerateRequest == nil)
     }
 
-    @Test("POST /v1/chat/completions suppresses model-default tool parser on VLM text-only batch-generator requests")
-    func postChatCompletionsSuppressesModelDefaultToolParserOnVLMTextOnlyBatchGeneratorRequests() async throws {
+    @Test("POST /v1/chat/completions preserves model-default tool parser on Swift text-routed VLM requests")
+    func postChatCompletionsPreservesModelDefaultToolParserOnSwiftTextRoutedVLMRequests() async throws {
         let harness = makeGemma4VLMOpenAIHandler(requestID: "req-http-gemma4-vlm-auto-batch-parser-suppressed")
 
         let body = try #require(
@@ -1845,19 +1845,19 @@ struct OpenAIHandlerTests {
             )
         )
         _ = try await collectBody(response.body)
-        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
+        let generateRequest = try #require(await harness.textClient.lastGenerateRequest)
         let metrics = await harness.metricsStore.snapshot()
 
         #expect(response.statusCode == 200)
-        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == "true")
-        #expect(generateRequest.execution.ext["melix.tool_parser.mode"] == nil)
-        #expect(generateRequest.execution.ext["melix.tool_parser.namespaces"] == nil)
-        #expect(generateRequest.execution.ext["melix.tool_parser.fallback_mode"] == nil)
-        #expect(generateRequest.execution.ext["melix.tool_parser.suppressed_reason"] == "vlm_text_only_batch_generator_no_tools")
-        #expect(generateRequest.execution.scope.parserMode.isEmpty)
-        #expect(generateRequest.execution.scope.toolParserMode.isEmpty)
-        #expect(metrics.values["http.tool_parser_request_count", default: 0] == 0)
-        #expect(metrics.values["http.tool_parser_qwen_request_count", default: 0] == 0)
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == nil)
+        #expect(generateRequest.execution.ext["melix.tool_parser.mode"] == "qwen")
+        #expect(generateRequest.execution.ext["melix.tool_parser.namespaces"] == "tools.vision")
+        #expect(generateRequest.execution.ext["melix.tool_parser.fallback_mode"] == "xml")
+        #expect(generateRequest.execution.ext["melix.tool_parser.suppressed_reason"] == nil)
+        #expect(!generateRequest.execution.scope.parserMode.isEmpty)
+        #expect(!generateRequest.execution.scope.toolParserMode.isEmpty)
+        #expect(metrics.values["http.tool_parser_request_count", default: 0] == 1)
+        #expect(metrics.values["http.tool_parser_qwen_request_count", default: 0] == 1)
     }
 
     @Test("POST /v1/chat/completions keeps Gemma4 VLM batch-generator disabled for non-greedy requests")
@@ -1885,7 +1885,7 @@ struct OpenAIHandlerTests {
                 body: body
             )
         )
-        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
+        let generateRequest = try #require(await harness.textClient.lastGenerateRequest)
 
         #expect(response.statusCode == 200)
         #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == nil)
@@ -1922,13 +1922,13 @@ struct OpenAIHandlerTests {
                 body: body
             )
         )
-        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
+        let generateRequest = try #require(await harness.textClient.lastGenerateRequest)
 
         #expect(response.statusCode == 200)
-        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == "true")
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == nil)
         #expect(abs(Double(generateRequest.sampling.temperature) - 0.7) < 1e-6)
         #expect(abs(Double(generateRequest.sampling.topP) - 0.8) < 1e-6)
-        #expect(await harness.textClient.lastGenerateRequest == nil)
+        #expect(await harness.vlmClient.lastGenerateRequest == nil)
     }
 
     @Test("POST /v1/chat/completions auto-enables Gemma4 VLM batch-generator with explicit greedy top-p")
@@ -1957,10 +1957,10 @@ struct OpenAIHandlerTests {
                 body: body
             )
         )
-        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
+        let generateRequest = try #require(await harness.textClient.lastGenerateRequest)
 
         #expect(response.statusCode == 200)
-        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == "true")
+        #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == nil)
         #expect(generateRequest.sampling.topP == 1)
     }
 
@@ -2006,7 +2006,7 @@ struct OpenAIHandlerTests {
                 body: body
             )
         )
-        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
+        let generateRequest = try #require(await harness.textClient.lastGenerateRequest)
 
         #expect(response.statusCode == 200)
         #expect(generateRequest.execution.ext["melix.vlm.text_only_batch_generator"] == nil)
@@ -2059,7 +2059,7 @@ struct OpenAIHandlerTests {
                 body: body
             )
         )
-        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
+        let generateRequest = try #require(await harness.textClient.lastGenerateRequest)
 
         #expect(response.statusCode == 200)
         #expect(generateRequest.execution.hasToolConfig)
@@ -2416,10 +2416,11 @@ struct OpenAIHandlerTests {
                     assistantText: "done"
                 ),
             ],
-            loadModelHandle: "melix-dev-vlm::python"
+            loadModelHandle: "melix-dev-vlm::swift-vision"
         )
         let workerRegistry = WorkerRegistry(
             defaultTextClient: textClient,
+            visionClient: vlmClient,
             pythonCompatibilityClient: vlmClient,
             modelCatalog: catalog
         )
@@ -2750,8 +2751,8 @@ struct OpenAIHandlerTests {
         #expect(loadRequest.model.maxContext == 262_144)
     }
 
-    @Test("POST /v1/chat/completions keeps Gemma4 VLM media requests on the Python VLM route")
-    func postChatCompletionsKeepsGemma4VLMMediaRequestsOnPythonVLMRoute() async throws {
+    @Test("POST /v1/chat/completions keeps Gemma4 VLM media requests on the Swift vision route")
+    func postChatCompletionsKeepsGemma4VLMMediaRequestsOnSwiftVisionRoute() async throws {
         let harness = makeGemma4VLMOpenAIHandler(
             requestID: "req-http-gemma4-vlm-image-route",
             configureModel: { model in
@@ -2798,18 +2799,20 @@ struct OpenAIHandlerTests {
             await harness.vlmClient.lastLoadModelRequest,
             Comment(rawValue: payload)
         )
-        let generateRequest = try #require(
-            await harness.vlmClient.lastGenerateRequest,
+        let prefillRequest = try #require(
+            await harness.vlmClient.lastPrefillRequest,
             Comment(rawValue: payload)
         )
+        let decodeRequest = try #require(await harness.vlmClient.lastDecodeRequest, Comment(rawValue: payload))
 
         #expect(loadRequest.model.modelKind == "vlm")
-        #expect(generateRequest.execution.modelHandle == "melix-dev-vlm::python")
-        #expect(generateRequest.execution.ext["melix.media_parts.count"] == "1")
-        #expect(generateRequest.messages[0].parts.count == 2)
-        #expect(generateRequest.messages[0].parts[1].imageBytes == Data("image fixture".utf8))
+        #expect(prefillRequest.execution.modelHandle == "melix-dev-vlm::swift-vision")
+        #expect(prefillRequest.execution.ext["melix.media_parts.count"] == "1")
+        #expect(prefillRequest.messages[0].parts.count == 2)
+        #expect(prefillRequest.messages[0].parts[1].imageBytes == Data("image fixture".utf8))
+        #expect(decodeRequest.execution.modelHandle == "melix-dev-vlm::swift-vision")
         #expect(await harness.textClient.lastLoadModelRequest == nil)
-        #expect(await harness.textClient.lastGenerateRequest == nil)
+        #expect(await harness.vlmClient.lastGenerateRequest == nil)
         #expect(await harness.catalog.model(id: "melix-dev-vlm#text") == nil)
     }
 
@@ -2855,10 +2858,11 @@ struct OpenAIHandlerTests {
                     assistantText: "done"
                 ),
             ],
-            loadModelHandle: "melix-dev-vlm::python"
+            loadModelHandle: "melix-dev-vlm::swift-vision"
         )
         let workerRegistry = WorkerRegistry(
             defaultTextClient: textClient,
+            visionClient: vlmClient,
             pythonCompatibilityClient: vlmClient,
             modelCatalog: catalog
         )
@@ -2902,12 +2906,13 @@ struct OpenAIHandlerTests {
         )
         let payload = try await collectBody(response.body)
         #expect(response.statusCode == 200, Comment(rawValue: payload))
-        let generateRequest = try #require(await vlmClient.lastGenerateRequest)
-        #expect(generateRequest.execution.modelHandle == "melix-dev-vlm::python")
-        #expect(generateRequest.execution.ext["melix.gateway.acceleration_mode"] == "baseline")
-        #expect(generateRequest.execution.ext["melix.media_parts.count"] == "1")
+        let prefillRequest = try #require(await vlmClient.lastPrefillRequest)
+        #expect(prefillRequest.execution.modelHandle == "melix-dev-vlm::swift-vision")
+        #expect(prefillRequest.execution.ext["melix.gateway.acceleration_mode"] == "baseline")
+        #expect(prefillRequest.execution.ext["melix.media_parts.count"] == "1")
         #expect(await textClient.lastLoadModelRequest == nil)
         #expect(await textClient.lastGenerateRequest == nil)
+        #expect(await vlmClient.lastGenerateRequest == nil)
     }
 
     @Test("POST /v1/chat/completions reports both tool and speculative media refusals")
@@ -2952,10 +2957,11 @@ struct OpenAIHandlerTests {
                     assistantText: "done"
                 ),
             ],
-            loadModelHandle: "melix-dev-vlm::python"
+            loadModelHandle: "melix-dev-vlm::swift-vision"
         )
         let workerRegistry = WorkerRegistry(
             defaultTextClient: textClient,
+            visionClient: vlmClient,
             pythonCompatibilityClient: vlmClient,
             modelCatalog: catalog
         )
@@ -3044,10 +3050,11 @@ struct OpenAIHandlerTests {
                     assistantText: "ready"
                 ),
             ],
-            loadModelHandle: "melix-dev-vlm::python"
+            loadModelHandle: "melix-dev-vlm::swift-vision"
         )
         let workerRegistry = WorkerRegistry(
             defaultTextClient: textClient,
+            visionClient: vlmClient,
             pythonCompatibilityClient: vlmClient,
             modelCatalog: catalog
         )
@@ -3092,13 +3099,14 @@ struct OpenAIHandlerTests {
         )
         let payload = try await collectBody(response.body)
         #expect(payload.contains("data: [DONE]"), Comment(rawValue: payload))
-        let generateRequest = try #require(await vlmClient.lastGenerateRequest)
+        let prefillRequest = try #require(await vlmClient.lastPrefillRequest)
 
         #expect(response.statusCode == 200)
-        #expect(generateRequest.execution.modelHandle == "melix-dev-vlm::python")
-        #expect(generateRequest.execution.ext["melix.media_parts.count"] == "1")
-        #expect(generateRequest.messages[0].parts[1].imageBytes == Data("image".utf8))
+        #expect(prefillRequest.execution.modelHandle == "melix-dev-vlm::swift-vision")
+        #expect(prefillRequest.execution.ext["melix.media_parts.count"] == "1")
+        #expect(prefillRequest.messages[0].parts[1].imageBytes == Data("image".utf8))
         #expect(await textClient.lastGenerateRequest == nil)
+        #expect(await vlmClient.lastGenerateRequest == nil)
     }
 
     @Test("POST /v1/chat/completions dispatches valid non-stream media to VLM workers")
@@ -3126,10 +3134,11 @@ struct OpenAIHandlerTests {
                     assistantText: "ready"
                 ),
             ],
-            loadModelHandle: "melix-dev-vlm::python"
+            loadModelHandle: "melix-dev-vlm::swift-vision"
         )
         let workerRegistry = WorkerRegistry(
             defaultTextClient: textClient,
+            visionClient: vlmClient,
             pythonCompatibilityClient: vlmClient,
             modelCatalog: catalog
         )
@@ -3174,15 +3183,16 @@ struct OpenAIHandlerTests {
         let payload = try await jsonPayload(from: response.body)
         let choice = try #require((payload["choices"] as? [[String: Any]])?.first)
         let message = try #require(choice["message"] as? [String: Any])
-        let generateRequest = try #require(await vlmClient.lastGenerateRequest)
+        let prefillRequest = try #require(await vlmClient.lastPrefillRequest)
 
         #expect(response.statusCode == 200)
         #expect(payload["object"] as? String == "chat.completion")
         #expect(message["content"] as? String == "ready")
-        #expect(generateRequest.execution.modelHandle == "melix-dev-vlm::python")
-        #expect(generateRequest.execution.ext["melix.media_parts.count"] == "1")
-        #expect(generateRequest.messages[0].parts[1].imageBytes == Data("image".utf8))
+        #expect(prefillRequest.execution.modelHandle == "melix-dev-vlm::swift-vision")
+        #expect(prefillRequest.execution.ext["melix.media_parts.count"] == "1")
+        #expect(prefillRequest.messages[0].parts[1].imageBytes == Data("image".utf8))
         #expect(await textClient.lastGenerateRequest == nil)
+        #expect(await vlmClient.lastGenerateRequest == nil)
     }
 
     @Test("model sparse-prefill policy is applied to generated worker requests")
@@ -4259,7 +4269,8 @@ struct OpenAIHandlerTests {
         )
         _ = await harness.catalog.recordLoadSucceeded(
             id: "melix-dev-vlm",
-            dispatchHandle: "melix-dev-vlm::python"
+            dispatchHandle: "melix-dev-vlm::swift-vision",
+            routeKind: .swiftVision
         )
 
         let body = try #require(
@@ -4295,17 +4306,17 @@ struct OpenAIHandlerTests {
             )
         )
         let payload = try await collectBody(response.body)
-        let request = try #require(await harness.vlmClient.lastGenerateRequest)
+        let request = try #require(await harness.vlmClient.lastPrefillRequest)
 
         #expect(response.statusCode == 200)
         #expect(payload.contains("data: [DONE]"))
-        #expect(request.execution.modelHandle == "melix-dev-vlm::python")
+        #expect(request.execution.modelHandle == "melix-dev-vlm::swift-vision")
         #expect(await harness.textClient.lastLoadModelRequest == nil)
-        #expect(await harness.textClient.lastGenerateRequest == nil)
+        #expect(await harness.vlmClient.lastGenerateRequest == nil)
     }
 
-    @Test("POST /v1/chat/completions derives legacy OCR media support from capability class")
-    func postChatCompletionsDerivesLegacyOCRMediaSupportFromCapabilityClass() async throws {
+    @Test("POST /v1/chat/completions derives legacy OCR media support through the Swift vision route")
+    func postChatCompletionsDerivesLegacyOCRMediaSupportThroughSwiftVisionRoute() async throws {
         var model = warmOCRModel()
         model.supportedModalities = []
         model.settings.ext["melix.capability.supported_modalities"] = ""
@@ -4319,24 +4330,22 @@ struct OpenAIHandlerTests {
                     assistantText: "done"
                 ),
             ],
-            loadModelHandle: "melix-dev-ocr::python"
+            loadModelHandle: "melix-dev-ocr::swift-vision"
+        )
+        let workerRegistry = WorkerRegistry(
+            defaultTextClient: ScriptedWorkerClient(events: []),
+            visionClient: workerClient,
+            pythonCompatibilityClient: workerClient,
+            modelCatalog: catalog
         )
         let handler = OpenAIHandler(
             modelCatalog: catalog,
             requestCoordinator: RequestCoordinator(
-                workerRegistry: WorkerRegistry(
-                    defaultTextClient: ScriptedWorkerClient(events: []),
-                    pythonCompatibilityClient: workerClient,
-                    modelCatalog: catalog
-                ),
+                workerRegistry: workerRegistry,
                 abortRegistry: AbortRegistry(),
                 modelCatalog: catalog
             ),
-            workerRegistry: WorkerRegistry(
-                defaultTextClient: ScriptedWorkerClient(events: []),
-                pythonCompatibilityClient: workerClient,
-                modelCatalog: catalog
-            ),
+            workerRegistry: workerRegistry,
             translator: ChatRequestTranslator(requestIDGenerator: { "req-legacy-ocr-image" }),
             sseWriter: SSEStreamWriter(now: { Date(timeIntervalSince1970: 123) })
         )
@@ -4374,11 +4383,13 @@ struct OpenAIHandlerTests {
             )
         )
         let payload = try await collectBody(response.body)
-        let request = try #require(await workerClient.lastGenerateRequest)
+        let request = try #require(await workerClient.lastPrefillRequest)
 
         #expect(response.statusCode == 200)
         #expect(payload.contains("data: [DONE]"))
-        #expect(request.execution.modelHandle == "melix-dev-ocr::local")
+        #expect(request.execution.modelHandle == "melix-dev-ocr::swift-vision")
+        #expect(request.execution.ext["melix.media_parts.count"] == "1")
+        #expect(await workerClient.lastGenerateRequest == nil)
     }
 
     @Test("POST /v1/chat/completions derives legacy capability media fallbacks before endpoint validation")
@@ -4739,7 +4750,7 @@ struct OpenAIHandlerTests {
         #expect(await harness.vlmClient.lastLoadModelRequest == nil)
         #expect(await harness.vlmClient.lastGenerateRequest == nil)
         #expect(await harness.textClient.lastLoadModelRequest == nil)
-        #expect(await harness.textClient.lastGenerateRequest == nil)
+        #expect(await harness.vlmClient.lastGenerateRequest == nil)
     }
 
     @Test("POST /v1/chat/completions rejects media with explicit tool parser before worker dispatch")
@@ -4796,7 +4807,7 @@ struct OpenAIHandlerTests {
         #expect(await harness.vlmClient.lastLoadModelRequest == nil)
         #expect(await harness.vlmClient.lastGenerateRequest == nil)
         #expect(await harness.textClient.lastLoadModelRequest == nil)
-        #expect(await harness.textClient.lastGenerateRequest == nil)
+        #expect(await harness.vlmClient.lastGenerateRequest == nil)
     }
 
     @Test("POST /v1/chat/completions rejects media with MCP tool injection before worker dispatch")
@@ -4904,7 +4915,7 @@ struct OpenAIHandlerTests {
                 body: body
             )
         )
-        let request = try #require(await harness.vlmClient.lastGenerateRequest)
+        let request = try #require(await harness.vlmClient.lastPrefillRequest)
         let payload = try await collectBody(response.body)
 
         #expect(response.statusCode == 200)
@@ -4918,6 +4929,7 @@ struct OpenAIHandlerTests {
         #expect(request.execution.ext["melix.cache.fingerprint.parser_mode"] == "")
         #expect(await harness.textClient.lastLoadModelRequest == nil)
         #expect(await harness.textClient.lastGenerateRequest == nil)
+        #expect(await harness.vlmClient.lastGenerateRequest == nil)
     }
 
     @Test("POST /v1/chat/completions disables speculative defaults for media before VLM generation")
@@ -4986,15 +4998,16 @@ struct OpenAIHandlerTests {
                 body: body
             )
         )
-        let generateRequest = try #require(await harness.vlmClient.lastGenerateRequest)
+        let prefillRequest = try #require(await harness.vlmClient.lastPrefillRequest)
 
         #expect(response.statusCode == 200)
-        #expect(generateRequest.execution.modelHandle == "melix-dev-vlm::python")
-        #expect(generateRequest.execution.ext["melix.gateway.acceleration_mode"] == "baseline")
-        #expect(generateRequest.execution.ext["melix.gateway.draft_model_id"] == nil)
-        #expect(generateRequest.execution.ext["melix.gateway.num_draft_tokens"] == "0")
+        #expect(prefillRequest.execution.modelHandle == "melix-dev-vlm::swift-vision")
+        #expect(prefillRequest.execution.ext["melix.gateway.acceleration_mode"] == "baseline")
+        #expect(prefillRequest.execution.ext["melix.gateway.draft_model_id"] == nil)
+        #expect(prefillRequest.execution.ext["melix.gateway.num_draft_tokens"] == "0")
         #expect(await harness.textClient.lastLoadModelRequest == nil)
         #expect(await harness.textClient.lastGenerateRequest == nil)
+        #expect(await harness.vlmClient.lastGenerateRequest == nil)
     }
 
     @Test("POST /v1/chat/completions rejects media when speculative defaults remain active")
@@ -5126,7 +5139,7 @@ struct OpenAIHandlerTests {
                     assistantText: "video"
                 ),
             ],
-            loadModelHandle: "melix-dev-vlm::python",
+            loadModelHandle: "melix-dev-vlm::swift-vision",
             runtimeStatsResponseOverride: runtimeStats
         )
         let metricsStore = MetricsStore()
@@ -5135,9 +5148,14 @@ struct OpenAIHandlerTests {
         videoModel.supportedModalities = ["text", "image", "video"]
         videoModel.settings.ext["melix.capability.supported_modalities"] = "text,image,video"
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), videoModel])
-        _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::python")
+        _ = await catalog.recordLoadSucceeded(
+            id: "melix-dev-vlm",
+            dispatchHandle: "melix-dev-vlm::swift-vision",
+            routeKind: .swiftVision
+        )
         let workerRegistry = WorkerRegistry(
             defaultTextClient: textClient,
+            visionClient: vlmClient,
             pythonCompatibilityClient: vlmClient,
             modelCatalog: catalog
         )
@@ -5203,7 +5221,7 @@ struct OpenAIHandlerTests {
 
         #expect(response.statusCode == 200)
         #expect(payload.contains("data: [DONE]"))
-        #expect(request.execution.modelHandle == "melix-dev-vlm::python")
+        #expect(request.execution.modelHandle == "melix-dev-vlm::swift-vision")
         #expect(request.messages[0].parts.count == 2)
         #expect(request.messages[0].parts[1].videoBytes == Data("video fixture".utf8))
         #expect(request.messages[0].parts[1].media.frameBudget == 6)
@@ -5221,11 +5239,6 @@ struct OpenAIHandlerTests {
         #expect(metrics.values["vision.temp_media_artifact_bytes", default: -1] == 2_048)
         #expect(metrics.values["vision.temp_media_cleanup_latency_ms", default: -1] == 4)
         #expect(metrics.values["vision.temp_media_cleanup_failure_count", default: -1] == 1)
-        #expect(metrics.values["python_worker.generation_stream_owner_mode_code", default: -1] == 1)
-        #expect(metrics.values["python_worker.worker_thread_init_latency_ms", default: -1] == 7)
-        #expect(metrics.values["python_worker.stream_sync_fallback_count", default: -1] == 0)
-        #expect(metrics.values["worker.model_load_trust_policy_resolution_ms", default: -1] == 0.75)
-        #expect(metrics.values["worker.model_load_trust_blocked_count", default: -1] == 1)
         #expect(metrics.values["vision.multimodal_decode_mode_code", default: -1] == 3)
         #expect(metrics.values["vision.multimodal_fallback_reason_code", default: -1] == 0)
         #expect(metrics.values["vision.multimodal_decode_sync_mode_code", default: -1] == 1)
@@ -5868,15 +5881,26 @@ struct OpenAIHandlerTests {
     @Test("POST /v1/chat/completions applies model OCR defaults for OCR models")
     func postChatCompletionsAppliesModelOCRDefaultsForOCRModels() async throws {
         let catalog = ModelCatalog(seedModels: [warmOCRModel()])
-        let workerClient = ScriptedWorkerClient(events: [
-            makeCompletedEvent(requestID: "req-ocr-http", seq: 1, finishReason: "stop", assistantText: "done"),
-        ])
+        let workerClient = ScriptedWorkerClient(
+            events: [
+                makeCompletedEvent(requestID: "req-ocr-http", seq: 1, finishReason: "stop", assistantText: "done"),
+            ],
+            loadModelHandle: "melix-dev-ocr::swift-vision"
+        )
+        let workerRegistry = WorkerRegistry(
+            defaultTextClient: ScriptedWorkerClient(events: []),
+            visionClient: workerClient,
+            pythonCompatibilityClient: workerClient,
+            modelCatalog: catalog
+        )
         let handler = OpenAIHandler(
             modelCatalog: catalog,
             requestCoordinator: RequestCoordinator(
-                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
-                abortRegistry: AbortRegistry()
+                workerRegistry: workerRegistry,
+                abortRegistry: AbortRegistry(),
+                modelCatalog: catalog
             ),
+            workerRegistry: workerRegistry,
             translator: ChatRequestTranslator(requestIDGenerator: { "req-ocr-http" })
         )
 
@@ -5886,7 +5910,13 @@ struct OpenAIHandlerTests {
               "model": "melix-dev-ocr",
               "stream": true,
               "messages": [
-                { "role": "user", "content": "Read this image." }
+                {
+                  "role": "user",
+                  "content": [
+                    { "type": "text", "text": "Read this image." },
+                    { "type": "input_image", "input_image": { "data": "aW1hZ2U=", "mime_type": "image/png" } }
+                  ]
+                }
               ]
             }
             """.data(using: .utf8)
@@ -5900,14 +5930,16 @@ struct OpenAIHandlerTests {
                 body: body
             )
         )
-        let request = try #require(await workerClient.lastGenerateRequest)
+        let request = try #require(await workerClient.lastPrefillRequest)
+        let decodeRequest = try #require(await workerClient.lastDecodeRequest)
 
         #expect(response.statusCode == 200)
-        #expect(request.execution.modelHandle == "melix-dev-ocr::local")
-        #expect(request.sampling.stop == ["<ocr:end>"])
+        #expect(request.execution.modelHandle == "melix-dev-ocr::swift-vision")
+        #expect(decodeRequest.sampling.stop == ["<ocr:end>"])
         #expect(request.execution.ext["melix.ocr.prompt_profile_id"] == "ocr-default-v1")
         #expect(request.execution.ext["melix.ocr.prompt_source"] == "request")
         #expect(request.execution.ext["melix.ocr.sampling_source"] == "model")
+        #expect(await workerClient.lastGenerateRequest == nil)
     }
 
     @Test("POST /v1/chat/completions dispatches media-bearing OCR requests")
@@ -5934,7 +5966,8 @@ struct OpenAIHandlerTests {
             loadModelHandle: "melix-dev-ocr::local"
         )
         let workerRegistry = WorkerRegistry(
-            defaultTextClient: workerClient,
+            defaultTextClient: ScriptedWorkerClient(events: []),
+            visionClient: workerClient,
             pythonCompatibilityClient: workerClient,
             modelCatalog: catalog
         )
@@ -5978,11 +6011,12 @@ struct OpenAIHandlerTests {
         let payload = try await collectBody(response.body)
 
         #expect(response.statusCode == 200, Comment(rawValue: payload))
-        let request = try #require(await workerClient.lastGenerateRequest)
+        let request = try #require(await workerClient.lastPrefillRequest)
 
         #expect(request.execution.modelHandle == "melix-dev-ocr::local")
         #expect(request.execution.ext["melix.media_parts.count"] == "1")
         #expect(request.execution.ext["melix.ocr.prompt_profile_id"] == "ocr-default-v1")
+        #expect(await workerClient.lastGenerateRequest == nil)
     }
 
     @Test("POST /v1/chat/completions applies gateway serving defaults when request and model omit sampling")
@@ -11344,8 +11378,8 @@ struct OpenAIHandlerTests {
         #expect(payload.contains("\"code\":\"worker_unavailable\""))
     }
 
-    @Test("POST /v1/chat/completions does not text-route reject audio-capable media routes")
-    func postChatCompletionsDoesNotTextRouteRejectAudioCapableMediaRoutes() async throws {
+    @Test("POST /v1/chat/completions returns route rejection for audio media before the audio worker slice")
+    func postChatCompletionsReturnsRouteRejectionForAudioMediaBeforeAudioWorkerSlice() async throws {
         var speechModel = ModelCatalog.devSpeechModel()
         speechModel.state = .modelWarm
         speechModel.supportedTasks = ["generate", "speak"]
@@ -11410,14 +11444,17 @@ struct OpenAIHandlerTests {
                 body: body
             )
         )
-        let payload = try await collectBody(response.body)
-        let request = try #require(await audioClient.lastGenerateRequest)
+        let responseData = try await collectBodyData(response.body)
+        let payload = try #require(String(data: responseData, encoding: .utf8))
+        let responsePayload = try #require(JSONSerialization.jsonObject(with: responseData) as? [String: Any])
+        let error = try #require(responsePayload["error"] as? [String: Any])
 
-        #expect(response.statusCode == 200, Comment(rawValue: payload))
+        #expect(response.statusCode == 400, Comment(rawValue: payload))
+        #expect(error["code"] as? String == "route_not_supported")
+        #expect(["no_route_for_task", "no_route_for_modalities"].contains(error["reason"] as? String ?? ""))
         #expect(!payload.contains("text_only_runtime"))
-        #expect(request.execution.modelHandle == "melix-dev-speech::local")
-        #expect(request.execution.ext["melix.media_parts.count"] == "1")
-        #expect(request.execution.ext["melix.media_parts.0.kind"] == "audio")
+        #expect(await audioClient.lastLoadModelRequest == nil)
+        #expect(await audioClient.lastGenerateRequest == nil)
     }
 
     @Test("second chat request waits in queue until the active request is cancelled")
@@ -11644,7 +11681,7 @@ struct OpenAIHandlerTests {
         requestID: String,
         finishReason: String = "stop",
         assistantText: String = "ready",
-        textEvents: [Melix_Worker_V1_ExecuteEvent] = [],
+        textEvents: [Melix_Worker_V1_ExecuteEvent]? = nil,
         textLoadModelHandle: String = "melix-dev-text::swift",
         gatewayServingDefaultsStore: GatewayServingDefaultsStore? = nil,
         mcpToolCatalog: MCPToolCatalog = .empty,
@@ -11663,8 +11700,16 @@ struct OpenAIHandlerTests {
         vlmModel.settings.ext["melix.vlm.text_companion.enabled"] = "false"
         configureModel(&vlmModel)
         let catalog = ModelCatalog(seedModels: [ModelCatalog.devTextModel(), vlmModel])
+        let resolvedTextEvents = textEvents ?? [
+            makeCompletedEvent(
+                requestID: requestID,
+                seq: 1,
+                finishReason: finishReason,
+                assistantText: assistantText
+            ),
+        ]
         let textClient = ScriptedWorkerClient(
-            events: textEvents,
+            events: resolvedTextEvents,
             loadModelHandle: textLoadModelHandle
         )
         let vlmClient = ScriptedWorkerClient(
@@ -11676,10 +11721,11 @@ struct OpenAIHandlerTests {
                     assistantText: assistantText
                 ),
             ],
-            loadModelHandle: "melix-dev-vlm::python"
+            loadModelHandle: "melix-dev-vlm::swift-vision"
         )
         let workerRegistry = WorkerRegistry(
             defaultTextClient: textClient,
+            visionClient: vlmClient,
             pythonCompatibilityClient: vlmClient,
             modelCatalog: catalog
         )

@@ -377,6 +377,206 @@ public nonisolated enum Melix_Controlplane_V1_WorkerRouteClass: SwiftProtobuf.En
 
 }
 
+public nonisolated enum Melix_Controlplane_V1_InferenceTask: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case generateText // = 1
+  case generateMultimodal // = 2
+  case embedText // = 3
+  case rerankText // = 4
+  case transcribeAudio // = 5
+  case speakText // = 6
+  case imageGenerate // = 7
+  case imageEdit // = 8
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .generateText
+    case 2: self = .generateMultimodal
+    case 3: self = .embedText
+    case 4: self = .rerankText
+    case 5: self = .transcribeAudio
+    case 6: self = .speakText
+    case 7: self = .imageGenerate
+    case 8: self = .imageEdit
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .generateText: return 1
+    case .generateMultimodal: return 2
+    case .embedText: return 3
+    case .rerankText: return 4
+    case .transcribeAudio: return 5
+    case .speakText: return 6
+    case .imageGenerate: return 7
+    case .imageEdit: return 8
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_InferenceTask] = [
+    .unspecified,
+    .generateText,
+    .generateMultimodal,
+    .embedText,
+    .rerankText,
+    .transcribeAudio,
+    .speakText,
+    .imageGenerate,
+    .imageEdit,
+  ]
+
+}
+
+public nonisolated enum Melix_Controlplane_V1_RouteModality: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case text // = 1
+  case image // = 2
+  case audio // = 3
+  case video // = 4
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .text
+    case 2: self = .image
+    case 3: self = .audio
+    case 4: self = .video
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .text: return 1
+    case .image: return 2
+    case .audio: return 3
+    case .video: return 4
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_RouteModality] = [
+    .unspecified,
+    .text,
+    .image,
+    .audio,
+    .video,
+  ]
+
+}
+
+public nonisolated enum Melix_Controlplane_V1_WorkerFamily: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case text // = 1
+  case vision // = 2
+  case audio // = 3
+  case image // = 4
+  case retrieval // = 5
+  case omni // = 6
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .text
+    case 2: self = .vision
+    case 3: self = .audio
+    case 4: self = .image
+    case 5: self = .retrieval
+    case 6: self = .omni
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .text: return 1
+    case .vision: return 2
+    case .audio: return 3
+    case .image: return 4
+    case .retrieval: return 5
+    case .omni: return 6
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_WorkerFamily] = [
+    .unspecified,
+    .text,
+    .vision,
+    .audio,
+    .image,
+    .retrieval,
+    .omni,
+  ]
+
+}
+
+public nonisolated enum Melix_Controlplane_V1_RouteResidencyPolicy: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case singleResidency // = 1
+  case allowMultiResidency // = 2
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .singleResidency
+    case 2: self = .allowMultiResidency
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .singleResidency: return 1
+    case .allowMultiResidency: return 2
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Melix_Controlplane_V1_RouteResidencyPolicy] = [
+    .unspecified,
+    .singleResidency,
+    .allowMultiResidency,
+  ]
+
+}
+
 public nonisolated enum Melix_Controlplane_V1_ModelLoadTrustMode: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -4549,6 +4749,32 @@ public nonisolated struct Melix_Controlplane_V1_ImportPreset: Sendable {
   public init() {}
 }
 
+public nonisolated struct Melix_Controlplane_V1_RequestRouteDeclaration: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var task: Melix_Controlplane_V1_InferenceTask = .unspecified
+
+  public var supportedModalities: [Melix_Controlplane_V1_RouteModality] = []
+
+  public var requiresAnyModality: [Melix_Controlplane_V1_RouteModality] = []
+
+  public var supportsNativeVideo: Bool = false
+
+  public var workerFamily: Melix_Controlplane_V1_WorkerFamily = .unspecified
+
+  public var modelFamilyTarget: String = String()
+
+  public var residencyPolicy: Melix_Controlplane_V1_RouteResidencyPolicy = .unspecified
+
+  public var isTextCompanion: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 public nonisolated struct Melix_Controlplane_V1_TaskCapabilityReceipt: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -6046,6 +6272,10 @@ public nonisolated struct Melix_Controlplane_V1_WorkerSummary: Sendable {
 
   public var recentErrors: [Melix_Controlplane_V1_RecentError] = []
 
+  public var workerFamily: Melix_Controlplane_V1_WorkerFamily = .unspecified
+
+  public var workerInstanceID: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -6177,6 +6407,11 @@ public nonisolated struct Melix_Controlplane_V1_ModelSummary: @unchecked Sendabl
   public var hasCapabilityReceipt: Bool {_storage._capabilityReceipt != nil}
   /// Clears the value of `capabilityReceipt`. Subsequent reads from it will return its default value.
   public mutating func clearCapabilityReceipt() {_uniqueStorage()._capabilityReceipt = nil}
+
+  public var requestRoutes: [Melix_Controlplane_V1_RequestRouteDeclaration] {
+    get {_storage._requestRoutes}
+    set {_uniqueStorage()._requestRoutes = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -7484,6 +7719,22 @@ nonisolated extension Melix_Controlplane_V1_ModelCapabilityClass: SwiftProtobuf.
 
 nonisolated extension Melix_Controlplane_V1_WorkerRouteClass: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0WORKER_ROUTE_CLASS_UNSPECIFIED\0\u{1}WORKER_ROUTE_SWIFT_TEXT\0\u{1}WORKER_ROUTE_PYTHON_TEXT_COMPATIBILITY\0\u{1}WORKER_ROUTE_PYTHON_EMBEDDING\0\u{1}WORKER_ROUTE_PYTHON_RERANK\0\u{1}WORKER_ROUTE_PYTHON_MODEL_OPERATIONS\0\u{1}WORKER_ROUTE_PYTHON_OCR\0\u{1}WORKER_ROUTE_PYTHON_VLM\0\u{1}WORKER_ROUTE_PYTHON_TRANSCRIPTION\0\u{1}WORKER_ROUTE_PYTHON_SPEECH\0\u{1}WORKER_ROUTE_PYTHON_IMAGE\0")
+}
+
+nonisolated extension Melix_Controlplane_V1_InferenceTask: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0INFERENCE_TASK_UNSPECIFIED\0\u{1}GENERATE_TEXT\0\u{1}GENERATE_MULTIMODAL\0\u{1}EMBED_TEXT\0\u{1}RERANK_TEXT\0\u{1}TRANSCRIBE_AUDIO\0\u{1}SPEAK_TEXT\0\u{1}IMAGE_GENERATE\0\u{1}IMAGE_EDIT\0")
+}
+
+nonisolated extension Melix_Controlplane_V1_RouteModality: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ROUTE_MODALITY_UNSPECIFIED\0\u{1}ROUTE_MODALITY_TEXT\0\u{1}ROUTE_MODALITY_IMAGE\0\u{1}ROUTE_MODALITY_AUDIO\0\u{1}ROUTE_MODALITY_VIDEO\0")
+}
+
+nonisolated extension Melix_Controlplane_V1_WorkerFamily: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0WORKER_FAMILY_UNSPECIFIED\0\u{1}WORKER_FAMILY_TEXT\0\u{1}WORKER_FAMILY_VISION\0\u{1}WORKER_FAMILY_AUDIO\0\u{1}WORKER_FAMILY_IMAGE\0\u{1}WORKER_FAMILY_RETRIEVAL\0\u{1}WORKER_FAMILY_OMNI\0")
+}
+
+nonisolated extension Melix_Controlplane_V1_RouteResidencyPolicy: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ROUTE_RESIDENCY_POLICY_UNSPECIFIED\0\u{1}SINGLE_RESIDENCY\0\u{1}ALLOW_MULTI_RESIDENCY\0")
 }
 
 nonisolated extension Melix_Controlplane_V1_ModelLoadTrustMode: SwiftProtobuf._ProtoNameProviding {
@@ -13668,6 +13919,71 @@ nonisolated extension Melix_Controlplane_V1_ImportPreset: SwiftProtobuf.Message,
   }
 }
 
+nonisolated extension Melix_Controlplane_V1_RequestRouteDeclaration: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RequestRouteDeclaration"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}task\0\u{3}supported_modalities\0\u{3}requires_any_modality\0\u{3}supports_native_video\0\u{3}worker_family\0\u{3}model_family_target\0\u{3}residency_policy\0\u{3}is_text_companion\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.task) }()
+      case 2: try { try decoder.decodeRepeatedEnumField(value: &self.supportedModalities) }()
+      case 3: try { try decoder.decodeRepeatedEnumField(value: &self.requiresAnyModality) }()
+      case 4: try { try decoder.decodeSingularBoolField(value: &self.supportsNativeVideo) }()
+      case 5: try { try decoder.decodeSingularEnumField(value: &self.workerFamily) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.modelFamilyTarget) }()
+      case 7: try { try decoder.decodeSingularEnumField(value: &self.residencyPolicy) }()
+      case 8: try { try decoder.decodeSingularBoolField(value: &self.isTextCompanion) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.task != .unspecified {
+      try visitor.visitSingularEnumField(value: self.task, fieldNumber: 1)
+    }
+    if !self.supportedModalities.isEmpty {
+      try visitor.visitPackedEnumField(value: self.supportedModalities, fieldNumber: 2)
+    }
+    if !self.requiresAnyModality.isEmpty {
+      try visitor.visitPackedEnumField(value: self.requiresAnyModality, fieldNumber: 3)
+    }
+    if self.supportsNativeVideo != false {
+      try visitor.visitSingularBoolField(value: self.supportsNativeVideo, fieldNumber: 4)
+    }
+    if self.workerFamily != .unspecified {
+      try visitor.visitSingularEnumField(value: self.workerFamily, fieldNumber: 5)
+    }
+    if !self.modelFamilyTarget.isEmpty {
+      try visitor.visitSingularStringField(value: self.modelFamilyTarget, fieldNumber: 6)
+    }
+    if self.residencyPolicy != .unspecified {
+      try visitor.visitSingularEnumField(value: self.residencyPolicy, fieldNumber: 7)
+    }
+    if self.isTextCompanion != false {
+      try visitor.visitSingularBoolField(value: self.isTextCompanion, fieldNumber: 8)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Controlplane_V1_RequestRouteDeclaration, rhs: Melix_Controlplane_V1_RequestRouteDeclaration) -> Bool {
+    if lhs.task != rhs.task {return false}
+    if lhs.supportedModalities != rhs.supportedModalities {return false}
+    if lhs.requiresAnyModality != rhs.requiresAnyModality {return false}
+    if lhs.supportsNativeVideo != rhs.supportsNativeVideo {return false}
+    if lhs.workerFamily != rhs.workerFamily {return false}
+    if lhs.modelFamilyTarget != rhs.modelFamilyTarget {return false}
+    if lhs.residencyPolicy != rhs.residencyPolicy {return false}
+    if lhs.isTextCompanion != rhs.isTextCompanion {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
 nonisolated extension Melix_Controlplane_V1_TaskCapabilityReceipt: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".TaskCapabilityReceipt"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}capability\0\u{1}state\0\u{3}unsupported_reason\0\u{1}provenance\0\u{3}recovery_hint\0\u{1}metadata\0")
@@ -16543,7 +16859,7 @@ nonisolated extension Melix_Controlplane_V1_ServerSnapshot: SwiftProtobuf.Messag
 
 nonisolated extension Melix_Controlplane_V1_WorkerSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".WorkerSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_id\0\u{3}worker_kind\0\u{1}state\0\u{3}loaded_model_handles\0\u{3}inflight_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{1}resources\0\u{3}recent_errors\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}worker_id\0\u{3}worker_kind\0\u{1}state\0\u{3}loaded_model_handles\0\u{3}inflight_requests\0\u{3}active_prefills\0\u{3}active_decodes\0\u{1}resources\0\u{3}recent_errors\0\u{3}worker_family\0\u{3}worker_instance_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -16560,6 +16876,8 @@ nonisolated extension Melix_Controlplane_V1_WorkerSummary: SwiftProtobuf.Message
       case 7: try { try decoder.decodeSingularUInt64Field(value: &self.activeDecodes) }()
       case 8: try { try decoder.decodeSingularMessageField(value: &self._resources) }()
       case 9: try { try decoder.decodeRepeatedMessageField(value: &self.recentErrors) }()
+      case 10: try { try decoder.decodeSingularEnumField(value: &self.workerFamily) }()
+      case 11: try { try decoder.decodeSingularStringField(value: &self.workerInstanceID) }()
       default: break
       }
     }
@@ -16597,6 +16915,12 @@ nonisolated extension Melix_Controlplane_V1_WorkerSummary: SwiftProtobuf.Message
     if !self.recentErrors.isEmpty {
       try visitor.visitRepeatedMessageField(value: self.recentErrors, fieldNumber: 9)
     }
+    if self.workerFamily != .unspecified {
+      try visitor.visitSingularEnumField(value: self.workerFamily, fieldNumber: 10)
+    }
+    if !self.workerInstanceID.isEmpty {
+      try visitor.visitSingularStringField(value: self.workerInstanceID, fieldNumber: 11)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -16610,6 +16934,8 @@ nonisolated extension Melix_Controlplane_V1_WorkerSummary: SwiftProtobuf.Message
     if lhs.activeDecodes != rhs.activeDecodes {return false}
     if lhs._resources != rhs._resources {return false}
     if lhs.recentErrors != rhs.recentErrors {return false}
+    if lhs.workerFamily != rhs.workerFamily {return false}
+    if lhs.workerInstanceID != rhs.workerInstanceID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -16617,7 +16943,7 @@ nonisolated extension Melix_Controlplane_V1_WorkerSummary: SwiftProtobuf.Message
 
 nonisolated extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ModelSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}kind\0\u{1}state\0\u{1}pinned\0\u{3}inflight_requests\0\u{3}estimated_bytes\0\u{3}quant_profile_id\0\u{3}max_context\0\u{1}features\0\u{3}capability_class\0\u{3}route_class\0\u{1}settings\0\u{3}supported_modalities\0\u{3}supported_tasks\0\u{1}residency\0\u{3}cache_policy\0\u{3}runtime_mode\0\u{3}load_trust\0\u{3}capability_receipt\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}model_id\0\u{1}kind\0\u{1}state\0\u{1}pinned\0\u{3}inflight_requests\0\u{3}estimated_bytes\0\u{3}quant_profile_id\0\u{3}max_context\0\u{1}features\0\u{3}capability_class\0\u{3}route_class\0\u{1}settings\0\u{3}supported_modalities\0\u{3}supported_tasks\0\u{1}residency\0\u{3}cache_policy\0\u{3}runtime_mode\0\u{3}load_trust\0\u{3}capability_receipt\0\u{3}request_routes\0")
 
   fileprivate class _StorageClass {
     var _modelID: String = String()
@@ -16639,6 +16965,7 @@ nonisolated extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message,
     var _runtimeMode: String = String()
     var _loadTrust: Melix_Controlplane_V1_ModelLoadTrustPolicy? = nil
     var _capabilityReceipt: Melix_Controlplane_V1_ModelCapabilityReceipt? = nil
+    var _requestRoutes: [Melix_Controlplane_V1_RequestRouteDeclaration] = []
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -16668,6 +16995,7 @@ nonisolated extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message,
       _runtimeMode = source._runtimeMode
       _loadTrust = source._loadTrust
       _capabilityReceipt = source._capabilityReceipt
+      _requestRoutes = source._requestRoutes
     }
   }
 
@@ -16705,6 +17033,7 @@ nonisolated extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message,
         case 17: try { try decoder.decodeSingularStringField(value: &_storage._runtimeMode) }()
         case 18: try { try decoder.decodeSingularMessageField(value: &_storage._loadTrust) }()
         case 19: try { try decoder.decodeSingularMessageField(value: &_storage._capabilityReceipt) }()
+        case 20: try { try decoder.decodeRepeatedMessageField(value: &_storage._requestRoutes) }()
         default: break
         }
       }
@@ -16774,6 +17103,9 @@ nonisolated extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message,
       try { if let v = _storage._capabilityReceipt {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 19)
       } }()
+      if !_storage._requestRoutes.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._requestRoutes, fieldNumber: 20)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -16802,6 +17134,7 @@ nonisolated extension Melix_Controlplane_V1_ModelSummary: SwiftProtobuf.Message,
         if _storage._runtimeMode != rhs_storage._runtimeMode {return false}
         if _storage._loadTrust != rhs_storage._loadTrust {return false}
         if _storage._capabilityReceipt != rhs_storage._capabilityReceipt {return false}
+        if _storage._requestRoutes != rhs_storage._requestRoutes {return false}
         return true
       }
       if !storagesAreEqual {return false}

@@ -233,6 +233,7 @@ enum RegistrySnapshotSync {
         }
         model.supportedModalities = supportedModalities(metadata: metadata, kind: model.kind)
         model.supportedTasks = supportedTasks(metadata: metadata, kind: model.kind)
+        model.requestRoutes = requestRoutes(metadata: model.settings.ext, kind: model.kind)
         return model
     }
 
@@ -304,7 +305,7 @@ enum RegistrySnapshotSync {
             metadata["melix.capability.class"] = "text"
         }
         if metadata["melix.capability.route_kind"] == nil {
-            metadata["melix.capability.route_kind"] = "python_text_compatibility"
+            metadata["melix.capability.route_kind"] = "swift_text"
         }
         if metadata["melix.capability.supported_modalities"] == nil {
             metadata["melix.capability.supported_modalities"] = "text"
@@ -327,6 +328,7 @@ enum RegistrySnapshotSync {
         model.routeClass = routeClass(routeKind: metadata["melix.capability.route_kind"], kind: model.kind)
         model.supportedModalities = supportedModalities(metadata: metadata, kind: model.kind)
         model.supportedTasks = supportedTasks(metadata: metadata, kind: model.kind)
+        model.requestRoutes = requestRoutes(metadata: metadata, kind: model.kind)
         // Mirror the activation mode onto the ModelSummary.runtime_mode
         // field so operator surfaces (CLI, menubar) see the authoritative
         // serving mode without re-parsing ext strings.
@@ -475,6 +477,73 @@ enum RegistrySnapshotSync {
             "model_ops": ["quantize", "download", "upload"],
         ]
         return defaults[normalizedMetadataValue(kind)] ?? ["generate"]
+    }
+
+    private static func requestRoutes(
+        metadata: [String: String],
+        kind: String
+    ) -> [Melix_Controlplane_V1_RequestRouteDeclaration] {
+        let normalizedKind = normalizedMetadataValue(kind)
+        let routeKind = WorkerRouteKind(metadataIdentifier: metadata["melix.capability.route_kind"])
+            ?? WorkerRouteKind(capabilityIdentifier: metadata["melix.capability.class"])
+            ?? WorkerRouteKind(capabilityIdentifier: kind)
+        if routeKind == .swiftText || normalizedKind == "text" {
+            return [
+                requestRoute(
+                    task: .generateText,
+                    supportedModalities: [.text],
+                    workerFamily: .text,
+                    modelFamilyTarget: "text.registry",
+                    residencyPolicy: .singleResidency
+                ),
+            ]
+        }
+        if routeKind == .swiftVision || normalizedKind == "vlm" || normalizedKind == "ocr" {
+            let family = normalizedMetadataValue(metadata["vision_family_id"])
+            let targetFamily = family.isEmpty ? "registry" : family
+            return [
+                requestRoute(
+                    task: .generateText,
+                    supportedModalities: [.text],
+                    workerFamily: .text,
+                    modelFamilyTarget: "vision.\(targetFamily).text_companion",
+                    residencyPolicy: .allowMultiResidency,
+                    isTextCompanion: true
+                ),
+                requestRoute(
+                    task: .generateMultimodal,
+                    supportedModalities: [.text, .image, .video],
+                    requiresAnyModality: [.image, .video],
+                    supportsNativeVideo: true,
+                    workerFamily: .vision,
+                    modelFamilyTarget: "vision.\(targetFamily)",
+                    residencyPolicy: .allowMultiResidency
+                ),
+            ]
+        }
+        return []
+    }
+
+    private static func requestRoute(
+        task: Melix_Controlplane_V1_InferenceTask,
+        supportedModalities: [Melix_Controlplane_V1_RouteModality],
+        requiresAnyModality: [Melix_Controlplane_V1_RouteModality] = [],
+        supportsNativeVideo: Bool = false,
+        workerFamily: Melix_Controlplane_V1_WorkerFamily,
+        modelFamilyTarget: String,
+        residencyPolicy: Melix_Controlplane_V1_RouteResidencyPolicy,
+        isTextCompanion: Bool = false
+    ) -> Melix_Controlplane_V1_RequestRouteDeclaration {
+        var route = Melix_Controlplane_V1_RequestRouteDeclaration()
+        route.task = task
+        route.supportedModalities = supportedModalities
+        route.requiresAnyModality = requiresAnyModality
+        route.supportsNativeVideo = supportsNativeVideo
+        route.workerFamily = workerFamily
+        route.modelFamilyTarget = modelFamilyTarget
+        route.residencyPolicy = residencyPolicy
+        route.isTextCompanion = isTextCompanion
+        return route
     }
 
     private static func splitMetadataValues(_ rawValue: String?) -> [String] {

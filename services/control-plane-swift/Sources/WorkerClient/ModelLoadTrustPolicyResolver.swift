@@ -43,6 +43,8 @@ enum ModelLoadTrustPolicyResolver {
         switch route {
         case .swiftText:
             return .workerRouteSwiftText
+        case .swiftVision:
+            return .workerRoutePythonVlm
         case .pythonCompatibility:
             return .workerRoutePythonTextCompatibility
         case .pythonEmbedding:

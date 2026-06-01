@@ -375,6 +375,7 @@ public actor ControlPlaneService {
                 chatTemplateKwargs: request.chatTemplateKwargs
             )
         )
+        let routeKindOverride = await startChatLoadRouteKindOverride(for: normalized)
         let modelHandle: String
         do {
             modelHandle = try await OnDemandModelLoader.ensureTextModelReady(
@@ -382,7 +383,8 @@ public actor ControlPlaneService {
                 modelCatalog: modelCatalog,
                 workerRegistry: workerRegistry,
                 metricsStore: metricsStore,
-                evictBeforeReadyHandle: true
+                evictBeforeReadyHandle: true,
+                routeKindOverride: routeKindOverride
             )
         } catch OnDemandModelLoadError.runtimeCacheMissing {
             throw ControlPlaneChatExecutionError.requestFailed(
@@ -433,6 +435,64 @@ public actor ControlPlaneService {
             stream: mappedChatStream(from: execution.stream),
             lifecycle: execution.lifecycle
         )
+    }
+
+    private func startChatLoadRouteKindOverride(
+        for request: NormalizedTextRequest
+    ) async -> WorkerRouteKind? {
+        guard let model = await modelCatalog.model(id: request.model) else {
+            return nil
+        }
+        let modalities = routeModalities(for: request)
+        let task: Melix_Controlplane_V1_InferenceTask = modalities.contains(.image)
+            || modalities.contains(.video)
+            || modalities.contains(.audio)
+            ? .generateMultimodal
+            : .generateText
+        let matchingRoutes = model.requestRoutes.filter { route in
+            route.task == task && routeModalities(modalities, match: route)
+        }
+        guard matchingRoutes.count == 1, let route = matchingRoutes.first else {
+            return nil
+        }
+        return WorkerRouteKind(workerFamily: route.workerFamily)
+    }
+
+    private func routeModalities(
+        for request: NormalizedTextRequest
+    ) -> Set<Melix_Controlplane_V1_RouteModality> {
+        var modalities: Set<Melix_Controlplane_V1_RouteModality> = []
+        for message in request.messages {
+            for part in message.parts {
+                switch part.part {
+                case .text(let text):
+                    if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        modalities.insert(.text)
+                    }
+                case .imageUri, .imageBytes:
+                    modalities.insert(.image)
+                case .audioUri, .audioBytes:
+                    modalities.insert(.audio)
+                case .videoUri, .videoBytes:
+                    modalities.insert(.video)
+                case nil:
+                    break
+                }
+            }
+        }
+        return modalities.isEmpty ? [.text] : modalities
+    }
+
+    private func routeModalities(
+        _ requestModalities: Set<Melix_Controlplane_V1_RouteModality>,
+        match route: Melix_Controlplane_V1_RequestRouteDeclaration
+    ) -> Bool {
+        let supported = Set(route.supportedModalities.filter { $0 != .unspecified })
+        guard requestModalities.isSubset(of: supported) else {
+            return false
+        }
+        let required = Set(route.requiresAnyModality.filter { $0 != .unspecified })
+        return required.isEmpty || !requestModalities.isDisjoint(with: required)
     }
 
     private func startRemoteChat(
