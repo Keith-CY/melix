@@ -9,6 +9,7 @@ from typing import Any
 SCHEMA_VERSION = "melix.gemma_e4b_profile_gate.v1"
 DEFAULT_MODEL_ID = "unsloth/gemma-4-E4B-it-MLX-8bit"
 PERSISTED_EVIDENCE_PATH = Path("gemma_e4b_profile_gate") / "evidence.json"
+LEGACY_EVIDENCE_PATH = Path("gemma-e4b-profile-gate.json")
 
 DEFAULT_GEMMA_E4B_PROFILE_GATE_POLICY: dict[str, dict[str, dict[str, float]]] = {
     "metrics": {
@@ -101,7 +102,7 @@ def load_persisted_evidence(jobs_root: str | Path) -> dict[str, Any] | None:
     root = Path(jobs_root)
     for path in (
         root / PERSISTED_EVIDENCE_PATH,
-        root / "gemma-e4b-profile-gate.json",
+        root / LEGACY_EVIDENCE_PATH,
     ):
         if path.exists():
             try:
@@ -145,7 +146,7 @@ def evaluate_gemma_e4b_profile_gate_evidence(evidence: dict[str, Any]) -> dict[s
     }
 
 
-def evaluate_gemma_e4b_profile_gate(report: Any, policy: dict[str, Any] | None = None) -> list[str]:
+def evaluate_gemma_e4b_profile_gate(report: Any, policy: Any = None) -> list[str]:
     if not isinstance(report, dict):
         return ["gemma_e4b_profile evidence is missing"]
     failures = [str(failure) for failure in _as_list(report.get("failures"))]
@@ -261,7 +262,7 @@ def _evaluate_metrics_and_failures(evidence: dict[str, Any]) -> tuple[dict[str, 
             continue
         route_name = _text(route.get("route")) or "unknown"
         route_status = _normalized_text(route.get("status"))
-        route_selected = _bool(route.get("selected")) or route_status == "selected"
+        route_selected = _route_selected_flag(route.get("selected")) or route_status == "selected"
         route_reason = _text(route.get("reason"))
         if route_selected:
             unsupported_selected_route_count += 1.0
@@ -368,7 +369,7 @@ def _number(value: Any) -> float:
     return 0.0
 
 
-def _bool(value: Any) -> bool:
+def _route_selected_flag(value: Any) -> bool:
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
