@@ -50,6 +50,14 @@ struct TextPrefillEngine: Sendable {
                 value: Int(clamping: request.prefillStepSize)
             )
             metrics.set(
+                "swift_text.worker_prefill_requested_step_tokens",
+                value: result.requestedPrefillStepTokens
+            )
+            metrics.set(
+                "swift_text.worker_prefill_effective_window_tokens",
+                value: result.effectivePrefillWindowTokens
+            )
+            metrics.set(
                 "swift_text.prefill_last_chunk_tokens",
                 value: Int(clamping: prefillChunkBoundaries.last ?? 0)
             )

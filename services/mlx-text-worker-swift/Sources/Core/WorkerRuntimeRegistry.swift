@@ -33,6 +33,8 @@ struct WorkerPrefillResult: Sendable {
     let restoredSnapshotID: String
     let appliedAcceleration: Melix_Worker_V1_AccelerationPolicy
     let acceleratedPrefillGainPct: Int
+    let requestedPrefillStepTokens: Int
+    let effectivePrefillWindowTokens: Int
     let activeKVQuantizationRatio: Int
     let cacheStats: Melix_Worker_V1_CacheStats
     let hotPrefixCount: Int
@@ -474,6 +476,8 @@ actor WorkerRuntimeRegistry {
                     restoredSnapshotID: restored.snapshot.snapshotID,
                     appliedAcceleration: runtimePrefill.appliedAcceleration,
                     acceleratedPrefillGainPct: runtimePrefill.acceleratedPrefillGainPct,
+                    requestedPrefillStepTokens: runtimePrefill.requestedPrefillStepTokens,
+                    effectivePrefillWindowTokens: runtimePrefill.effectivePrefillWindowTokens,
                     activeKVQuantizationRatio: runtimePrefill.activeKVQuantizationRatio,
                     cacheStats: cacheStats,
                     hotPrefixCount: cacheSnapshot.hotPrefixes.count,
@@ -541,6 +545,8 @@ actor WorkerRuntimeRegistry {
             restoredSnapshotID: "",
             appliedAcceleration: result.appliedAcceleration,
             acceleratedPrefillGainPct: result.acceleratedPrefillGainPct,
+            requestedPrefillStepTokens: result.requestedPrefillStepTokens,
+            effectivePrefillWindowTokens: result.effectivePrefillWindowTokens,
             activeKVQuantizationRatio: result.activeKVQuantizationRatio,
             cacheStats: cacheStats,
             hotPrefixCount: cacheSnapshot.hotPrefixes.count,

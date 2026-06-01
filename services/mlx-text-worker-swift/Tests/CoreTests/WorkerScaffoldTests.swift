@@ -257,6 +257,8 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(counters["swift_text.unimplemented_rpc_count"], 1)
         XCTAssertEqual(counters["swift_text.custom_counter"], 3)
         XCTAssertEqual(counters["swift_text.runtime_stats_ms"], 12)
+        XCTAssertEqual(counters["swift_text.worker_prefill_requested_step_tokens"], 0)
+        XCTAssertEqual(counters["swift_text.worker_prefill_effective_window_tokens"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_backend_code"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_kernel_path_code"], 0)
         XCTAssertEqual(counters["swift_text.active_kv_runtime_route_code"], 0)
@@ -1159,6 +1161,8 @@ final class WorkerScaffoldTests: XCTestCase {
 
         XCTAssertEqual(result.promptTokens, promptTokens.count)
         XCTAssertEqual(result.context.promptTokens, promptTokens.count)
+        XCTAssertEqual(result.requestedPrefillStepTokens, 32)
+        XCTAssertEqual(result.effectivePrefillWindowTokens, 32)
     }
 
     func testAutoSwiftMLXBackendPrefillAppliesAcceleratedPrefillPolicyForLiveBridge() async throws {
@@ -1185,6 +1189,8 @@ final class WorkerScaffoldTests: XCTestCase {
 
         XCTAssertEqual(result.appliedAcceleration.mode, .acceleratedPrefill)
         XCTAssertEqual(result.appliedAcceleration.prefillHint, "json-schema")
+        XCTAssertEqual(result.requestedPrefillStepTokens, 4)
+        XCTAssertGreaterThan(result.effectivePrefillWindowTokens, result.requestedPrefillStepTokens)
         XCTAssertGreaterThan(result.acceleratedPrefillGainPct, 0)
         XCTAssertEqual(result.activeKVQuantizationRatio, 0)
     }
@@ -2438,6 +2444,8 @@ final class WorkerScaffoldTests: XCTestCase {
 
         XCTAssertEqual(result.promptTokens, 1)
         XCTAssertEqual(result.context.promptTokens, 1)
+        XCTAssertEqual(result.requestedPrefillStepTokens, 8)
+        XCTAssertEqual(result.effectivePrefillWindowTokens, 8)
         XCTAssertEqual((result.context.storage as? [String: String])?["resume_hint"], "runtime-resume")
         XCTAssertEqual((result.context.storage as? [String: String])?["prefill_step_size"], "8")
 
@@ -10793,6 +10801,98 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(metrics["swift_text.prefill_chunk_target_tokens"], 16)
         XCTAssertEqual(metrics["swift_text.prefill_last_chunk_tokens"], 24)
     }
+
+    func testPrefillMetricsSeparateTextWorkerWindowFromChunkCompatibility() async throws {
+        let services = makeServices(
+            backend: DeterministicTextBackend(tokenDelayNanos: 0)
+        )
+
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let prompt = (1...24).map { "token\($0)" }.joined(separator: " ")
+        var prefill = Melix_Worker_V1_PrefillRequest()
+        prefill.execution.id.requestID = "req-text-window-prefill"
+        prefill.execution.modelHandle = loadResponse.modelHandle
+        prefill.prefillStepSize = 512
+        prefill.returnDecodeHandle = true
+        prefill.messages = [makeUserMessage(prompt)]
+
+        let response = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefill,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        XCTAssertTrue(response.ok, response.error.message)
+
+        let metrics = services.metrics.counters
+        XCTAssertEqual(metrics["swift_text.prefill_chunk_target_tokens"], 512)
+        XCTAssertEqual(metrics["swift_text.worker_prefill_requested_step_tokens"], 512)
+        XCTAssertEqual(metrics["swift_text.worker_prefill_effective_window_tokens"], 512)
+    }
+
+    func testPrefillMetricsRecordVisionWorkerWindow() async throws {
+        let services = makeServices(
+            backend: FakeRuntimeBackend()
+        )
+
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            var request = Melix_Worker_V1_LoadModelRequest()
+            request.model.modelID = "melix-dev-text"
+            request.model.maxContext = 1024
+            return try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        var prefill = Melix_Worker_V1_PrefillRequest()
+        prefill.execution.id.requestID = "req-vision-window-prefill"
+        prefill.execution.modelHandle = loadResponse.modelHandle
+        prefill.prefillStepSize = 16
+        prefill.returnDecodeHandle = false
+        prefill.messages = [makeVisionBearingMessage("describe this image")]
+
+        let response = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.prefill(
+                request: prefill,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Prefill.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        XCTAssertTrue(response.ok, response.error.message)
+
+        let metrics = services.metrics.counters
+        XCTAssertEqual(metrics["swift_text.prefill_chunk_target_tokens"], 16)
+        XCTAssertEqual(metrics["swift_text.worker_prefill_requested_step_tokens"], 16)
+        XCTAssertEqual(metrics["swift_text.worker_prefill_effective_window_tokens"], 16)
+    }
 }
 
 @available(macOS 15.0, *)
@@ -10982,6 +11082,8 @@ private final class FakeRuntimeBackend: TextRuntimeBackend, @unchecked Sendable 
                 promptTokens: promptTokens
             ),
             promptTokens: promptTokens,
+            requestedPrefillStepTokens: Int(clamping: prefillStepSize),
+            effectivePrefillWindowTokens: Int(clamping: max(prefillStepSize, 1)),
             appliedAcceleration: normalizedAccelerationPolicy(acceleration),
             acceleratedPrefillGainPct: acceleration.mode == .acceleratedPrefill ? 50 : 0,
             activeKVQuantizationRatio: activeKVQuantizationRatioPercent(for: acceleration)
@@ -11263,6 +11365,15 @@ private func makeMediaRichMessage() -> Melix_Worker_V1_ChatMessage {
 
     let empty = Melix_Worker_V1_MessagePart()
     message.parts = [imageURI, imageBytes, audioURI, audioBytes, videoURI, videoBytes, empty]
+    return message
+}
+
+@available(macOS 15.0, *)
+private func makeVisionBearingMessage(_ text: String) -> Melix_Worker_V1_ChatMessage {
+    var message = makeUserMessage(text)
+    var imageURI = Melix_Worker_V1_MessagePart()
+    imageURI.imageUri = "file:///tmp/image.png"
+    message.parts.append(imageURI)
     return message
 }
 

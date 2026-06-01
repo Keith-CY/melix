@@ -48,6 +48,8 @@ enum ActiveKVQuantizationProfiles {
 struct RuntimePrefillResult: Sendable {
     let context: TextPrefillContext
     let promptTokens: Int
+    let requestedPrefillStepTokens: Int
+    let effectivePrefillWindowTokens: Int
     let appliedAcceleration: Melix_Worker_V1_AccelerationPolicy
     let acceleratedPrefillGainPct: Int
     let activeKVQuantizationRatio: Int
