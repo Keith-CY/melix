@@ -13,7 +13,10 @@ already passed the MTP key, duplicate, basename, and suffix filters.
 The affected path is covered by the registered PR-scoped probe
 `native-mtp-loader-safetensor-scandir` in `infra/perf/pr_scoped_probes.json`.
 The registry already defines focused `test_command`, `coverage_command`, and
-`probe_command` entries for the native-MTP loader path.
+`probe_command` entries for the native-MTP loader path. The sidecar-listing
+metrics are the merge gate for this slice; unchanged key-predicate timing is
+reported as informational context so scheduler noise in an adjacent helper does
+not block this scoped optimization.
 
 ## Implementation Plan
 

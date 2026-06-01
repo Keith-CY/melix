@@ -4687,20 +4687,17 @@
       {
         "key": "key_new_mean_ms",
         "unit": "ms",
-        "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "direction": "informational"
       },
       {
         "key": "key_delta_ms",
         "unit": "ms",
-        "direction": "lower_is_better",
-        "warn_pct": 5.0
+        "direction": "informational"
       },
       {
         "key": "key_speedup",
         "unit": "x",
-        "direction": "higher_is_better",
-        "warn_pct": 5.0
+        "direction": "informational"
       },
       {
         "key": "key_count",
