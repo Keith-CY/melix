@@ -53,6 +53,12 @@ graph synchronization time from host token-id extraction time.
 - A future real Gemma E4B rerun should inspect whether
   `decode_batch_token_eval_total_us` rather than `decode_batch_token_id_total_us`
   dominates the decode loop before implementing #1660 cadence optimizations.
+- Dashboard readers should compare the two average counters with their call-count
+  grain in mind: `decode_batch_token_eval_avg_us` is averaged over one MLX
+  materialization call per batch step, while `decode_batch_token_id_avg_us` is
+  averaged over the per-request host `UInt32` to `Int` extraction calls inside
+  each batch step. Average batch size is therefore required before comparing the
+  two averages directly.
 
 ## Verification
 
