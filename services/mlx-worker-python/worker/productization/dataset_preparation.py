@@ -485,8 +485,7 @@ def list_dataset_versions(
     }
 
 
-def _iter_dataset_version_manifest_paths(versions_root: Path) -> list[str]:
-    manifest_paths: list[str] = []
+def _iter_dataset_version_manifest_paths(versions_root: Path) -> Iterable[str]:
     try:
         with os.scandir(versions_root) as entries:
             for entry in entries:
@@ -494,10 +493,9 @@ def _iter_dataset_version_manifest_paths(versions_root: Path) -> list[str]:
                     continue
                 manifest_path = os.path.join(entry.path, "dataset-version.json")
                 if os.path.isfile(manifest_path):
-                    manifest_paths.append(manifest_path)
+                    yield manifest_path
     except OSError:
-        return []
-    return manifest_paths
+        return
 
 
 def _iter_source_records(
@@ -818,7 +816,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _read_json_file(path: str) -> dict[str, Any]:
     with open(path, "rb") as handle:
-        return json.load(handle)
+        return json.loads(handle.read())
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
