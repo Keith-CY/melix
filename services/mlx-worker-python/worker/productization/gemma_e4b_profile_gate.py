@@ -104,7 +104,10 @@ def load_persisted_evidence(jobs_root: str | Path) -> dict[str, Any] | None:
         root / "gemma-e4b-profile-gate.json",
     ):
         if path.exists():
-            payload = json.loads(path.read_text(encoding="utf-8"))
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                return {"schema_version": SCHEMA_VERSION, "artifact_status": "malformed"}
             if isinstance(payload, dict):
                 return payload
             return {"schema_version": SCHEMA_VERSION, "artifact_status": "malformed"}
@@ -147,7 +150,8 @@ def evaluate_gemma_e4b_profile_gate(report: Any, policy: dict[str, Any] | None =
         return ["gemma_e4b_profile evidence is missing"]
     failures = [str(failure) for failure in _as_list(report.get("failures"))]
     metrics = _as_dict(report.get("metrics"))
-    rules = _as_dict((policy or {}).get("metrics")) or _as_dict(policy)
+    policy_dict = _as_dict(policy)
+    rules = _as_dict(policy_dict.get("metrics")) or policy_dict
     for failure in _evaluate_metric_rules(metrics, rules):
         if failure not in failures:
             failures.append(failure)

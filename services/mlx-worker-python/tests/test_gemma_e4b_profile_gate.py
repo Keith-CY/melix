@@ -225,6 +225,12 @@ def test_gemma_e4b_profile_gate_evaluator_applies_policy_rules() -> None:
     ]
 
 
+def test_gemma_e4b_profile_gate_evaluator_ignores_non_dict_policy() -> None:
+    report = evaluate_gemma_e4b_profile_gate_evidence(default_passing_evidence())
+
+    assert evaluate_gemma_e4b_profile_gate(report, "not-a-policy") == []
+
+
 def test_collect_gemma_e4b_profile_gate_loads_persisted_evidence(tmp_path: Path) -> None:
     evidence = default_passing_evidence()
     gate_dir = tmp_path / "jobs" / "gemma_e4b_profile_gate"
@@ -252,6 +258,12 @@ def test_collect_gemma_e4b_profile_gate_loads_legacy_path_and_malformed_payload(
 
     assert malformed_report["status"] == "failed"
     assert malformed_report["artifact_status"] == "malformed"
+
+    legacy_path.write_text("{invalid_json", encoding="utf-8")
+    invalid_report = collect_gemma_e4b_profile_gate_evidence(tmp_path / "jobs")
+
+    assert invalid_report["status"] == "failed"
+    assert invalid_report["artifact_status"] == "malformed"
 
 
 def test_collect_gemma_e4b_profile_gate_fails_when_artifact_is_missing(tmp_path: Path) -> None:
