@@ -9,6 +9,16 @@ struct FilteredTextOutputState {
     var sawFirstToken = false
 }
 
+struct FilteredTextOutputWriteSummary {
+    var grpcWriteTotalMicros = 0
+    var grpcWriteCallCount = 0
+
+    mutating func record(_ elapsedMicros: Int) {
+        grpcWriteTotalMicros += max(1, elapsedMicros)
+        grpcWriteCallCount += 1
+    }
+}
+
 func writeFilteredTextOutput(
     _ output: HarmonyChannelOutputFilter.Output,
     response: GRPCCore.RPCWriter<Melix_Worker_V1_ExecuteEvent>,
@@ -20,7 +30,8 @@ func writeFilteredTextOutput(
     ttftMetricName: String,
     startedAt: Date,
     decorateEvent: (inout Melix_Worker_V1_ExecuteEvent) -> Void = { _ in }
-) async throws {
+) async throws -> FilteredTextOutputWriteSummary {
+    var summary = FilteredTextOutputWriteSummary()
     if !output.reasoningText.isEmpty {
         state.reasoningText += output.reasoningText
 
@@ -34,12 +45,14 @@ func writeFilteredTextOutput(
         var payload = Melix_Worker_V1_ReasoningDelta()
         payload.text = output.reasoningText
         event.reasoningDelta = payload
+        let writeStartedAt = Date()
         try await response.write(event)
+        summary.record(filteredOutputElapsedMicros(since: writeStartedAt))
         state.eventCount += 1
     }
 
     guard !output.visibleText.isEmpty else {
-        return
+        return summary
     }
 
     if !state.sawFirstToken {
@@ -62,10 +75,17 @@ func writeFilteredTextOutput(
     var payload = Melix_Worker_V1_TokenDelta()
     payload.text = output.visibleText
     event.tokenDelta = payload
+    let writeStartedAt = Date()
     try await response.write(event)
+    summary.record(filteredOutputElapsedMicros(since: writeStartedAt))
     state.eventCount += 1
+    return summary
 }
 
 private func filteredOutputElapsedMilliseconds(since startedAt: Date) -> Int {
     max(0, Int(Date().timeIntervalSince(startedAt) * 1_000.0))
+}
+
+private func filteredOutputElapsedMicros(since startedAt: Date) -> Int {
+    max(1, Int(Date().timeIntervalSince(startedAt) * 1_000_000.0))
 }

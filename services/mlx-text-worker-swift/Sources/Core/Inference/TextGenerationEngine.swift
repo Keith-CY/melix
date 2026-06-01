@@ -35,9 +35,13 @@ struct TextGenerationEngine: Sendable {
             var outputState = FilteredTextOutputState()
             var tokensPerSecond: Double?
             var outputFilter = HarmonyChannelOutputFilter()
+            var harmonyFilterTotalMicros = 0
+            var harmonyFilterCallCount = 0
+            var grpcWriteTotalMicros = 0
+            var grpcWriteCallCount = 0
 
             func writeOutput(_ output: HarmonyChannelOutputFilter.Output) async throws {
-                try await writeFilteredTextOutput(
+                let writeSummary = try await writeFilteredTextOutput(
                     output,
                     response: response,
                     requestID: requestID,
@@ -48,6 +52,31 @@ struct TextGenerationEngine: Sendable {
                     ttftMetricName: "swift_text.ttft_ms",
                     startedAt: startedAt
                 )
+                grpcWriteTotalMicros += writeSummary.grpcWriteTotalMicros
+                grpcWriteCallCount += writeSummary.grpcWriteCallCount
+            }
+
+            func writeEvent(_ event: Melix_Worker_V1_ExecuteEvent) async throws {
+                let writeStartedAt = Date()
+                try await response.write(event)
+                grpcWriteTotalMicros += elapsedMicroseconds(since: writeStartedAt)
+                grpcWriteCallCount += 1
+            }
+
+            func acceptFilteredOutput(_ text: String) -> HarmonyChannelOutputFilter.Output {
+                let filterStartedAt = Date()
+                let output = outputFilter.accept(text)
+                harmonyFilterTotalMicros += elapsedMicroseconds(since: filterStartedAt)
+                harmonyFilterCallCount += 1
+                return output
+            }
+
+            func finishFilteredOutput() -> HarmonyChannelOutputFilter.Output {
+                let filterStartedAt = Date()
+                let output = outputFilter.finish()
+                harmonyFilterTotalMicros += elapsedMicroseconds(since: filterStartedAt)
+                harmonyFilterCallCount += 1
+                return output
             }
 
             for try await runtimeEvent in runtimeStream {
@@ -63,11 +92,11 @@ struct TextGenerationEngine: Sendable {
                     var payload = Melix_Worker_V1_PrefillStarted()
                     payload.inputTokens = UInt32(max(0, inputTokens))
                     event.prefillStarted = payload
-                    try await response.write(event)
+                    try await writeEvent(event)
                     outputState.eventCount += 1
                 case .token(let text):
                     completionTokens += 1
-                    let filtered = outputFilter.accept(text)
+                    let filtered = acceptFilteredOutput(text)
                     try await writeOutput(filtered)
                 case .summary(let summary):
                     promptTokens = max(promptTokens, summary.promptTokens)
@@ -76,7 +105,7 @@ struct TextGenerationEngine: Sendable {
                 }
             }
 
-            let finalFiltered = outputFilter.finish()
+            let finalFiltered = finishFilteredOutput()
             try await writeOutput(finalFiltered)
 
             if request.returnUsage && !abortHandle.isAborted {
@@ -90,7 +119,7 @@ struct TextGenerationEngine: Sendable {
                 payload.promptTokens = UInt32(max(0, promptTokens))
                 payload.completionTokens = UInt32(max(0, completionTokens))
                 event.usageDelta = payload
-                try await response.write(event)
+                try await writeEvent(event)
                 outputState.eventCount += 1
             }
 
@@ -104,9 +133,19 @@ struct TextGenerationEngine: Sendable {
             completedEvent.executionKind = "generate"
             completedEvent.seq = seq
             completedEvent.completed = completed
-            try await response.write(completedEvent)
+            try await writeEvent(completedEvent)
             outputState.eventCount += 1
 
+            metrics.addMicrosecondTiming(
+                prefix: "swift_text.generate_harmony_filter",
+                totalMicros: harmonyFilterTotalMicros,
+                callCount: harmonyFilterCallCount
+            )
+            metrics.addMicrosecondTiming(
+                prefix: "swift_text.generate_grpc_write",
+                totalMicros: grpcWriteTotalMicros,
+                callCount: grpcWriteCallCount
+            )
             if !outputState.sawFirstToken {
                 metrics.recordMilliseconds(
                     "swift_text.ttft_ms",
@@ -171,4 +210,8 @@ private func makeGenerateErrorExecuteEvent(
 
 private func elapsedMilliseconds(since startedAt: Date) -> Int {
     max(0, Int(Date().timeIntervalSince(startedAt) * 1_000.0))
+}
+
+private func elapsedMicroseconds(since startedAt: Date) -> Int {
+    max(1, Int(Date().timeIntervalSince(startedAt) * 1_000_000.0))
 }

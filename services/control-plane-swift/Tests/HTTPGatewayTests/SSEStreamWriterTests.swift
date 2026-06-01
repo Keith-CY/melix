@@ -151,6 +151,40 @@ struct SSEStreamWriterTests {
         #expect(metrics.values["disconnect.keepalive_gap_ms", default: 0] > 0)
     }
 
+    @Test("SSE records write metrics for emitted data frames")
+    func recordsSSEWriteMetricsForDataFrames() async throws {
+        let metricsStore = MetricsStore()
+        let writer = SSEStreamWriter(
+            now: { Date(timeIntervalSince1970: 456) },
+            keepaliveInterval: nil,
+            metricsStore: metricsStore
+        )
+
+        let stream = AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> { continuation in
+            continuation.yield(makeTokenEvent(requestID: "req-sse-write", seq: 1, text: "A"))
+            continuation.yield(makeCompletedEvent(
+                requestID: "req-sse-write",
+                seq: 2,
+                finishReason: "stop",
+                assistantText: "A"
+            ))
+            continuation.finish()
+        }
+
+        _ = try await collectChunks(
+            writer.encode(
+                stream: stream,
+                requestID: "req-sse-write",
+                modelID: "melix-dev-text"
+            )
+        )
+
+        let metrics = await metricsStore.snapshot()
+        #expect(metrics.values["http.sse_write_total_us", default: 0] > 0)
+        #expect(metrics.values["http.sse_write_call_count", default: 0] == 3)
+        #expect(metrics.values["http.sse_write_avg_us", default: 0] > 0)
+    }
+
     @Test("SSE invokes disconnect handler when the client stream is cancelled")
     func invokesDisconnectHandlerWhenClientStreamIsCancelled() async throws {
         let writer = SSEStreamWriter(

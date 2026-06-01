@@ -264,6 +264,18 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(counters["swift_text.decode_batch_token_eval_total_us"], 0)
         XCTAssertEqual(counters["swift_text.decode_batch_token_eval_call_count"], 0)
         XCTAssertEqual(counters["swift_text.decode_batch_token_eval_avg_us"], 0)
+        XCTAssertEqual(counters["swift_text.decode_harmony_filter_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.decode_harmony_filter_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.decode_harmony_filter_avg_us"], 0)
+        XCTAssertEqual(counters["swift_text.decode_grpc_write_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.decode_grpc_write_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.decode_grpc_write_avg_us"], 0)
+        XCTAssertEqual(counters["swift_text.generate_harmony_filter_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.generate_harmony_filter_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.generate_harmony_filter_avg_us"], 0)
+        XCTAssertEqual(counters["swift_text.generate_grpc_write_total_us"], 0)
+        XCTAssertEqual(counters["swift_text.generate_grpc_write_call_count"], 0)
+        XCTAssertEqual(counters["swift_text.generate_grpc_write_avg_us"], 0)
     }
 
     func testWorkerServicesPublishMemoryEnforcementAndInitialCacheMetrics() {
@@ -4450,6 +4462,13 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(recorded.last?.completed.assistantText, "\nRepository reviewed.")
         XCTAssertFalse(recorded.last?.completed.assistantText.contains("<|channel>") ?? true)
         XCTAssertFalse(recorded.last?.completed.assistantText.contains("pwd") ?? true)
+        let metrics = services.metrics.counters
+        XCTAssertGreaterThan(metrics["swift_text.generate_harmony_filter_total_us"] ?? 0, 0)
+        XCTAssertEqual(metrics["swift_text.generate_harmony_filter_call_count"], 3)
+        XCTAssertGreaterThan(metrics["swift_text.generate_harmony_filter_avg_us"] ?? 0, 0)
+        XCTAssertGreaterThan(metrics["swift_text.generate_grpc_write_total_us"] ?? 0, 0)
+        XCTAssertEqual(metrics["swift_text.generate_grpc_write_call_count"], recorded.count)
+        XCTAssertGreaterThan(metrics["swift_text.generate_grpc_write_avg_us"] ?? 0, 0)
     }
 
     func testGenerateReturnsNotFoundErrorEventForUnknownModelHandle() async throws {
@@ -4776,6 +4795,12 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertGreaterThan(metrics["swift_text.decode_batch_token_eval_total_us"] ?? 0, 0)
         XCTAssertEqual(metrics["swift_text.decode_batch_token_eval_call_count"], 4)
         XCTAssertGreaterThan(metrics["swift_text.decode_batch_token_eval_avg_us"] ?? 0, 0)
+        XCTAssertGreaterThan(metrics["swift_text.decode_harmony_filter_total_us"] ?? 0, 0)
+        XCTAssertEqual(metrics["swift_text.decode_harmony_filter_call_count"], 6)
+        XCTAssertGreaterThan(metrics["swift_text.decode_harmony_filter_avg_us"] ?? 0, 0)
+        XCTAssertGreaterThan(metrics["swift_text.decode_grpc_write_total_us"] ?? 0, 0)
+        XCTAssertEqual(metrics["swift_text.decode_grpc_write_call_count"], 10)
+        XCTAssertGreaterThan(metrics["swift_text.decode_grpc_write_avg_us"] ?? 0, 0)
         XCTAssertGreaterThan(metrics["swift_text.decode_batch_token_id_total_us"] ?? 0, 0)
         XCTAssertEqual(metrics["swift_text.decode_batch_token_id_call_count"], 4)
         XCTAssertGreaterThan(metrics["swift_text.decode_batch_detokenize_total_us"] ?? 0, 0)

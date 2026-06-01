@@ -874,8 +874,20 @@ def test_three_way_markdown_surfaces_melix_first_load_metrics() -> None:
                 "swift_text.decode_batch_token_eval_total_us": 64000,
                 "swift_text.decode_batch_token_eval_call_count": 4,
                 "swift_text.decode_batch_token_eval_avg_us": 16000,
+                "swift_text.decode_harmony_filter_total_us": 2000,
+                "swift_text.decode_harmony_filter_call_count": 6,
+                "swift_text.decode_harmony_filter_avg_us": 333,
+                "swift_text.decode_grpc_write_total_us": 3000,
+                "swift_text.decode_grpc_write_call_count": 10,
+                "swift_text.decode_grpc_write_avg_us": 300,
                 "swift_text.prefill_ms": 3447.17,
                 "swift_text.decode_ttft_ms": 8554.38,
+                "http.worker_event_handle_total_us": 5000,
+                "http.worker_event_handle_call_count": 4,
+                "http.worker_event_handle_avg_us": 1250,
+                "http.sse_write_total_us": 7000,
+                "http.sse_write_call_count": 3,
+                "http.sse_write_avg_us": 2333,
             },
         },
         dry_run=False,
@@ -897,9 +909,21 @@ def test_three_way_markdown_surfaces_melix_first_load_metrics() -> None:
     assert "`swift_text.decode_batch_token_eval_total_us` | 64000.00" in markdown
     assert "`swift_text.decode_batch_token_eval_call_count` | 4.00" in markdown
     assert "`swift_text.decode_batch_token_eval_avg_us` | 16000.00" in markdown
+    assert "`swift_text.decode_harmony_filter_total_us` | 2000.00" in markdown
+    assert "`swift_text.decode_harmony_filter_call_count` | 6.00" in markdown
+    assert "`swift_text.decode_harmony_filter_avg_us` | 333.00" in markdown
+    assert "`swift_text.decode_grpc_write_total_us` | 3000.00" in markdown
+    assert "`swift_text.decode_grpc_write_call_count` | 10.00" in markdown
+    assert "`swift_text.decode_grpc_write_avg_us` | 300.00" in markdown
     assert "`control_plane.text_first_load_ms` | 8547.46" in markdown
     assert "`swift_text.prefill_ms` | 3447.17" in markdown
     assert "`swift_text.decode_ttft_ms` | 8554.38" in markdown
+    assert "`http.worker_event_handle_total_us` | 5000.00" in markdown
+    assert "`http.worker_event_handle_call_count` | 4.00" in markdown
+    assert "`http.worker_event_handle_avg_us` | 1250.00" in markdown
+    assert "`http.sse_write_total_us` | 7000.00" in markdown
+    assert "`http.sse_write_call_count` | 3.00" in markdown
+    assert "`http.sse_write_avg_us` | 2333.00" in markdown
 
 
 def test_three_way_markdown_lists_token_count_sources() -> None:
