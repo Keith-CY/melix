@@ -36,6 +36,21 @@ def test_enqueue_persists_benchmark_queue_record_with_parameters(tmp_path: Path)
     assert json.loads(persisted.read_text(encoding="utf-8")) == record.to_dict()
 
 
+def test_benchmark_queue_record_uses_slots_without_instance_dict() -> None:
+    record = BenchmarkQueueRecord(
+        queue_item_id="queue-1",
+        job_kind="benchmark",
+        model_id="melix-dev-text",
+        suite_ids=("smoke",),
+        parameters={"sample_size": "32"},
+        status="queued",
+        created_at_unix_ms=100,
+        updated_at_unix_ms=100,
+    )
+
+    assert hasattr(record, "__dict__") is False
+
+
 def test_list_records_is_stable_by_created_time_then_id(tmp_path: Path) -> None:
     store = BenchmarkQueueStore()
     queue_root = tmp_path / "queue"
