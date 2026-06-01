@@ -849,6 +849,7 @@ public enum BootstrapWorkerPreparation {
         }
         applyContextOverride(from: summary, to: &spec)
         applySettingsOverride(from: summary, to: &spec)
+        spec.requestRoutes = summary.requestRoutes.map(workerRouteDeclaration(from:))
         return spec
     }
 
@@ -997,6 +998,25 @@ public enum BootstrapWorkerPreparation {
             return
         }
         spec.maxContext = max(explicitContext, inferred)
+    }
+
+    private static func workerRouteDeclaration(
+        from route: Melix_Controlplane_V1_RequestRouteDeclaration
+    ) -> Melix_Worker_V1_RequestRouteDeclaration {
+        var workerRoute = Melix_Worker_V1_RequestRouteDeclaration()
+        workerRoute.task = Melix_Worker_V1_InferenceTask(rawValue: route.task.rawValue) ?? .unspecified
+        workerRoute.supportedModalities = route.supportedModalities.map {
+            Melix_Worker_V1_RouteModality(rawValue: $0.rawValue) ?? .unspecified
+        }
+        workerRoute.requiresAnyModality = route.requiresAnyModality.map {
+            Melix_Worker_V1_RouteModality(rawValue: $0.rawValue) ?? .unspecified
+        }
+        workerRoute.supportsNativeVideo = route.supportsNativeVideo
+        workerRoute.workerFamily = Melix_Worker_V1_WorkerFamily(rawValue: route.workerFamily.rawValue) ?? .unspecified
+        workerRoute.modelFamilyTarget = route.modelFamilyTarget
+        workerRoute.residencyPolicy = Melix_Worker_V1_RouteResidencyPolicy(rawValue: route.residencyPolicy.rawValue) ?? .unspecified
+        workerRoute.isTextCompanion = route.isTextCompanion
+        return workerRoute
     }
 
     private static func inferredMaxContext(fromModelPath modelPath: String) -> UInt32? {

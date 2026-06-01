@@ -117,6 +117,30 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertTrue(configuration.turboQuantCandidateProbeEnabled)
     }
 
+    func testConfigurationReadsVisionWorkerEnvironmentOverrides() {
+        let configuration = WorkerConfiguration.fromEnvironment([
+            "MELIX_SWIFT_WORKER_FAMILY": "vision",
+            "MELIX_SWIFT_VISION_WORKER_ID": "swift-vision-worker-dev",
+            "MELIX_SWIFT_VISION_WORKER_SOCKET_PATH": "/tmp/melix-swift-vision-worker.sock",
+            "MELIX_SWIFT_VISION_WORKER_BACKEND_MODE": "deterministic",
+            "MELIX_SWIFT_VISION_WORKER_RUNTIME_VERSION": "melix-swift-vision-worker/test",
+            "MELIX_SWIFT_VISION_WORKER_RUNTIME_CACHE_FINGERPRINT": "vision-runtime-fingerprint-test",
+            "MELIX_SWIFT_VISION_WORKER_METRICS_PATH": "/tmp/melix-swift-vision-worker-metrics.json",
+            "MELIX_SWIFT_VISION_WORKER_CACHE_ROOT": "/tmp/melix-swift-vision-worker-cache",
+            "MELIX_SWIFT_VISION_PAYLOAD_RECEIPT_PATH": "/tmp/melix-swift-vision-payload.jsonl",
+        ])
+
+        XCTAssertEqual(configuration.workerFamily, .vision)
+        XCTAssertEqual(configuration.workerID, "swift-vision-worker-dev")
+        XCTAssertEqual(configuration.socketPath, "/tmp/melix-swift-vision-worker.sock")
+        XCTAssertEqual(configuration.backendMode, "deterministic")
+        XCTAssertEqual(configuration.runtimeVersion, "melix-swift-vision-worker/test")
+        XCTAssertEqual(configuration.runtimeCacheFingerprint, "vision-runtime-fingerprint-test")
+        XCTAssertEqual(configuration.metricsExportPath, "/tmp/melix-swift-vision-worker-metrics.json")
+        XCTAssertEqual(configuration.cacheRootPath, "/tmp/melix-swift-vision-worker-cache")
+        XCTAssertEqual(configuration.visionPayloadReceiptPath, "/tmp/melix-swift-vision-payload.jsonl")
+    }
+
     func testConfigurationAllowsLongDecodeBatchCohortPendingWindowOverride() {
         let configuration = WorkerConfiguration.fromEnvironment([
             "MELIX_SWIFT_TEXT_WORKER_DECODE_BATCH_COHORT_PENDING_WINDOW_MS": "2000",
@@ -655,6 +679,8 @@ final class WorkerScaffoldTests: XCTestCase {
 
         XCTAssertEqual(response.protocolVersion, "melix.worker.v1")
         XCTAssertEqual(response.runtimeVersion, "melix-swift-text-worker/dev")
+        XCTAssertEqual(response.workerFamily, .text)
+        XCTAssertEqual(response.workerInstanceID, "swift-text-worker-001")
         XCTAssertTrue(response.capabilities.cache.supportsPrefixCache)
         XCTAssertEqual(response.capabilities.cache.kvQuantProfiles, ["turboquant-q4", "q4", "q8"])
         XCTAssertEqual(
@@ -672,6 +698,31 @@ final class WorkerScaffoldTests: XCTestCase {
             ["engine_family", "accelerated_prefill", "sparse_prefill", "active_kv_quantized"]
         )
         XCTAssertEqual(response.capabilities.ext.last?.metadata["profiles"], "turboquant-q4,q4,q8")
+    }
+
+    func testVisionHandshakeReturnsVisionWorkerFamilyMetadata() async throws {
+        let services = makeServices(environment: [
+            "MELIX_SWIFT_WORKER_FAMILY": "vision",
+            "MELIX_SWIFT_VISION_WORKER_ID": "swift-vision-worker-dev",
+        ])
+        var request = Melix_Worker_V1_HandshakeRequest()
+        request.protocolVersion = "melix.worker.v1"
+
+        let response = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.runtime.handshake(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.Handshake.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        XCTAssertEqual(response.workerFamily, .vision)
+        XCTAssertEqual(response.workerInstanceID, "swift-vision-worker-dev")
+        XCTAssertEqual(response.runtimeVersion, "melix-swift-vision-worker/dev")
     }
 
     func testCacheModePolicyResolvesPolicyStringsAndMapsMetrics() {
@@ -2562,6 +2613,65 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(found?.handle, loaded.handle)
         XCTAssertNil(missing)
         XCTAssertEqual(WorkerRuntimeRegistryError.unknownModelHandle.errorDescription, "Unknown model handle.")
+    }
+
+    func testRuntimeRegistryVisionWorkerAcceptsVLMRouteAndRejectsTextOnlyRoutes() async throws {
+        let registry = WorkerRuntimeRegistry(
+            configuration: WorkerConfiguration(workerID: "vision-test", workerFamily: .vision),
+            modelCatalog: WorkerModelCatalog(environment: [
+                "MELIX_DEV_VLM_MODEL_PATH": "mlx-community/melix-dev-vlm-4bit"
+            ]),
+            runtime: TextRuntime(backend: FakeRuntimeBackend())
+        )
+
+        var vlmRequest = Melix_Worker_V1_ModelSpec()
+        vlmRequest.modelID = "melix-dev-vlm"
+        let loaded = try await registry.loadModel(vlmRequest)
+        XCTAssertEqual(loaded.spec.modelID, "melix-dev-vlm")
+        XCTAssertEqual(loaded.spec.requestRoutes.first?.workerFamily, .vision)
+
+        var textRequest = Melix_Worker_V1_ModelSpec()
+        textRequest.modelID = "melix-dev-text"
+        do {
+            _ = try await registry.loadModel(textRequest)
+            XCTFail("expected requestRouteUnsupported")
+        } catch {
+            guard case let WorkerRuntimeRegistryError.requestRouteUnsupported(modelID, workerFamily, reason) = error else {
+                return XCTFail("expected requestRouteUnsupported, got \(error)")
+            }
+            XCTAssertEqual(modelID, "melix-dev-text")
+            XCTAssertEqual(workerFamily, .vision)
+            XCTAssertEqual(reason, "worker_family_mismatch")
+        }
+    }
+
+    func testWorkerServiceDefensiveRouteValidationReturnsStructuredRouteError() async throws {
+        let services = makeServices(environment: [
+            "MELIX_SWIFT_WORKER_FAMILY": "vision",
+        ])
+
+        var request = Melix_Worker_V1_LoadModelRequest()
+        request.model.modelID = "melix-dev-text"
+
+        let response = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.runtime.loadModel(
+                request: request,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(response.error.code, "route_not_supported")
+        XCTAssertFalse(response.error.retriable)
+        XCTAssertTrue(response.error.message.contains("Worker defensive validation"))
+        XCTAssertEqual(response.error.details["model_id"], "melix-dev-text")
+        XCTAssertEqual(response.error.details["worker_family_candidates"], "vision")
+        XCTAssertEqual(response.error.details["reason"], "worker_family_mismatch")
     }
 
     func testRuntimeRegistryTracksBusyStateAndGenerateEventsForLoadedModel() async throws {
@@ -4527,6 +4637,7 @@ final class WorkerScaffoldTests: XCTestCase {
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "unsloth/gemma-4-E4B-it-MLX-8bit"
             request.model.modelPath = "unsloth/gemma-4-E4B-it-MLX-8bit"
+            request.model.requestRoutes = [makeTextRequestRoute()]
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -4702,6 +4813,7 @@ final class WorkerScaffoldTests: XCTestCase {
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "unsloth/gemma-4-E4B-it-MLX-8bit"
             request.model.modelPath = "unsloth/gemma-4-E4B-it-MLX-8bit"
+            request.model.requestRoutes = [makeTextRequestRoute()]
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -5901,6 +6013,7 @@ final class WorkerScaffoldTests: XCTestCase {
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "melix-dev-text-draft"
             request.model.tokenizerHash = "tok-dev"
+            request.model.requestRoutes = [makeTextRequestRoute()]
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -5987,6 +6100,7 @@ final class WorkerScaffoldTests: XCTestCase {
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "melix-dev-text-draft"
             request.model.tokenizerHash = "tok-draft"
+            request.model.requestRoutes = [makeTextRequestRoute()]
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -6070,6 +6184,7 @@ final class WorkerScaffoldTests: XCTestCase {
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "z-lab/Qwen3.5-27B-DFlash"
             request.model.ext["melix.draft.runtime_kind"] = "dflash"
+            request.model.requestRoutes = [makeTextRequestRoute()]
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -6152,6 +6267,7 @@ final class WorkerScaffoldTests: XCTestCase {
             var request = Melix_Worker_V1_LoadModelRequest()
             request.model.modelID = "melix-dev-text-draft"
             request.model.tokenizerHash = "tok-shared"
+            request.model.requestRoutes = [makeTextRequestRoute()]
             return try await services.runtime.loadModel(
                 request: request,
                 context: ServerContext(
@@ -10708,6 +10824,141 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(renderedSummary(from: events)?.completionTokens, 5)
     }
 
+    func testDeterministicVisionBackendGeneratesImageAndVideoResponses() async throws {
+        let backend = DeterministicVisionBackend(tokenDelayNanos: 0)
+        var spec = WorkerModelCatalog.devVisionModel()
+        spec.modelID = "melix-dev-vlm"
+        let loaded = try await backend.loadModel(spec: spec)
+
+        let imageEvents = try await collectTextGenerationEvents(
+            from: try await backend.generateEvents(
+                model: loaded,
+                messages: [
+                    makeVisionMessage(
+                        prompt: "Summarize the image.",
+                        imageBytes: Data("swift vision image".utf8),
+                        imageFilename: "fixture.png"
+                    )
+                ],
+                sampling: Melix_Worker_V1_SamplingConfig(),
+                shouldAbort: { false }
+            )
+        )
+
+        XCTAssertEqual(
+            renderedTokenChunks(from: imageEvents).joined(),
+            "Image content: swift vision image\nPrompt: Summarize the image."
+        )
+
+        var videoSampling = Melix_Worker_V1_SamplingConfig()
+        videoSampling.maxOutputTokens = 64
+        let videoEvents = try await collectTextGenerationEvents(
+            from: try await backend.generateEvents(
+                model: loaded,
+                messages: [
+                    makeVisionMessage(
+                        prompt: "Summarize the clip.",
+                        videoBytes: Data("swift video".utf8),
+                        videoFilename: "clip.mp4",
+                        frameBudget: 5,
+                        startMs: 400,
+                        endMs: 2_400
+                    )
+                ],
+                sampling: videoSampling,
+                shouldAbort: { false }
+            )
+        )
+
+        XCTAssertEqual(
+            renderedTokenChunks(from: videoEvents).joined(),
+            """
+            Video content: clip.mp4
+            Frame policy: uniform_sample 5 frame(s) from 400ms to 2400ms
+            Prompt: Summarize the clip.
+            """
+        )
+        let optionalStats = await backend.runtimeStatsOverlay()
+        let stats = try XCTUnwrap(optionalStats)
+        XCTAssertEqual(stats.lastProbeKind, "vlm")
+        XCTAssertEqual(stats.lastVideoEffectiveFrameCount, 5)
+        XCTAssertEqual(stats.lastVideoRequestedFrameBudget, 5)
+        XCTAssertEqual(stats.lastVideoWindowMs, 2_000)
+    }
+
+    func testDeterministicVisionBackendAppliesOCRStopSequences() async throws {
+        let backend = DeterministicVisionBackend(tokenDelayNanos: 0)
+        let loaded = try await backend.loadModel(spec: WorkerModelCatalog.devOCRModel())
+        var sampling = Melix_Worker_V1_SamplingConfig()
+
+        let defaultEvents = try await collectTextGenerationEvents(
+            from: try await backend.generateEvents(
+                model: loaded,
+                messages: [
+                    makeVisionMessage(
+                        imageBytes: Data("title<ocr:end>body".utf8),
+                        imageFilename: "ocr.png"
+                    )
+                ],
+                sampling: sampling,
+                shouldAbort: { false }
+            )
+        )
+        XCTAssertEqual(renderedTokenChunks(from: defaultEvents).joined(), "title")
+
+        sampling.stop = ["body"]
+        let overrideEvents = try await collectTextGenerationEvents(
+            from: try await backend.generateEvents(
+                model: loaded,
+                messages: [
+                    makeVisionMessage(
+                        imageBytes: Data("title<ocr:end>body".utf8),
+                        imageFilename: "ocr.png"
+                    )
+                ],
+                sampling: sampling,
+                shouldAbort: { false }
+            )
+        )
+        XCTAssertEqual(renderedTokenChunks(from: overrideEvents).joined(), "title<ocr:end>")
+    }
+
+    func testDeterministicVisionBackendPrefillDecodePreservesVisionPayload() async throws {
+        let backend = DeterministicVisionBackend(tokenDelayNanos: 0)
+        let loaded = try await backend.loadModel(spec: WorkerModelCatalog.devVisionModel())
+        let prefill = try await backend.prefill(
+            model: loaded,
+            messages: [
+                makeVisionMessage(
+                    prompt: "Caption the image.",
+                    imageBytes: Data("phase aware image".utf8),
+                    imageFilename: "phase.png"
+                )
+            ],
+            prefillStepSize: 16,
+            resumeHint: "",
+            acceleration: Melix_Worker_V1_AccelerationPolicy(),
+            shouldAbort: { false }
+        )
+        let events = try await collectTextGenerationEvents(
+            from: try await backend.decodeEvents(
+                model: loaded,
+                context: prefill.context,
+                sampling: Melix_Worker_V1_SamplingConfig(),
+                maxOutputTokens: 64,
+                decodeStepSize: 1,
+                prefillToken: "",
+                acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                shouldAbort: { false }
+            )
+        )
+
+        XCTAssertEqual(
+            renderedTokenChunks(from: events).joined(),
+            "Image content: phase aware image\nPrompt: Caption the image."
+        )
+    }
+
     func testAutoSwiftMLXBackendDefaultPrefillRejectsNonMLXContainers() async {
         let backend = AutoSwiftMLXBackend()
 
@@ -11379,6 +11630,57 @@ private func makeVisionBearingMessage(_ text: String) -> Melix_Worker_V1_ChatMes
 }
 
 @available(macOS 15.0, *)
+private func makeVisionMessage(
+    prompt: String = "",
+    imageBytes: Data? = nil,
+    imageFilename: String = "image.png",
+    videoBytes: Data? = nil,
+    videoFilename: String = "video.mp4",
+    frameBudget: UInt32 = 0,
+    startMs: UInt32 = 0,
+    endMs: UInt32 = 0
+) -> Melix_Worker_V1_ChatMessage {
+    var message = Melix_Worker_V1_ChatMessage()
+    message.role = "user"
+    var parts: [Melix_Worker_V1_MessagePart] = []
+
+    if !prompt.isEmpty {
+        var promptPart = Melix_Worker_V1_MessagePart()
+        promptPart.text = prompt
+        parts.append(promptPart)
+    }
+
+    if let imageBytes {
+        var imagePart = Melix_Worker_V1_MessagePart()
+        imagePart.imageBytes = imageBytes
+        imagePart.media.mediaType = .image
+        imagePart.media.sourceKind = .mediaSourceInlineBytes
+        imagePart.media.mimeType = "image/png"
+        imagePart.media.filename = imageFilename
+        imagePart.media.byteLength = UInt64(imageBytes.count)
+        parts.append(imagePart)
+    }
+
+    if let videoBytes {
+        var videoPart = Melix_Worker_V1_MessagePart()
+        videoPart.videoBytes = videoBytes
+        videoPart.media.mediaType = .video
+        videoPart.media.sourceKind = .mediaSourceInlineBytes
+        videoPart.media.mimeType = "video/mp4"
+        videoPart.media.format = "mp4"
+        videoPart.media.filename = videoFilename
+        videoPart.media.frameBudget = frameBudget
+        videoPart.media.startMs = startMs
+        videoPart.media.endMs = endMs
+        videoPart.media.byteLength = UInt64(videoBytes.count)
+        parts.append(videoPart)
+    }
+
+    message.parts = parts
+    return message
+}
+
+@available(macOS 15.0, *)
 private func makeSystemMessage(_ text: String) -> Melix_Worker_V1_ChatMessage {
     var message = Melix_Worker_V1_ChatMessage()
     message.role = "system"
@@ -11474,7 +11776,19 @@ private func makeModelSpec(modelID: String) -> Melix_Worker_V1_ModelSpec {
     var model = Melix_Worker_V1_ModelSpec()
     model.modelID = modelID
     model.modelPath = modelID
+    model.requestRoutes = [makeTextRequestRoute()]
     return model
+}
+
+@available(macOS 15.0, *)
+private func makeTextRequestRoute() -> Melix_Worker_V1_RequestRouteDeclaration {
+    var route = Melix_Worker_V1_RequestRouteDeclaration()
+    route.task = .generateText
+    route.supportedModalities = [.text]
+    route.workerFamily = .text
+    route.modelFamilyTarget = "text.test"
+    route.residencyPolicy = .singleResidency
+    return route
 }
 
 @available(macOS 15.0, *)

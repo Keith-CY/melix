@@ -25,6 +25,54 @@ message ModelSpec {
   ModelSettings settings = 13;
   repeated string features = 14;
   RuntimeMode runtime_mode = 15;
+  repeated RequestRouteDeclaration request_routes = 16;
+}
+
+enum InferenceTask {
+  INFERENCE_TASK_UNSPECIFIED = 0;
+  GENERATE_TEXT = 1;
+  GENERATE_MULTIMODAL = 2;
+  EMBED_TEXT = 3;
+  RERANK_TEXT = 4;
+  TRANSCRIBE_AUDIO = 5;
+  SPEAK_TEXT = 6;
+  IMAGE_GENERATE = 7;
+  IMAGE_EDIT = 8;
+}
+
+enum RouteModality {
+  ROUTE_MODALITY_UNSPECIFIED = 0;
+  ROUTE_MODALITY_TEXT = 1;
+  ROUTE_MODALITY_IMAGE = 2;
+  ROUTE_MODALITY_AUDIO = 3;
+  ROUTE_MODALITY_VIDEO = 4;
+}
+
+enum WorkerFamily {
+  WORKER_FAMILY_UNSPECIFIED = 0;
+  WORKER_FAMILY_TEXT = 1;
+  WORKER_FAMILY_VISION = 2;
+  WORKER_FAMILY_AUDIO = 3;
+  WORKER_FAMILY_IMAGE = 4;
+  WORKER_FAMILY_RETRIEVAL = 5;
+  WORKER_FAMILY_OMNI = 6;
+}
+
+enum RouteResidencyPolicy {
+  ROUTE_RESIDENCY_POLICY_UNSPECIFIED = 0;
+  SINGLE_RESIDENCY = 1;
+  ALLOW_MULTI_RESIDENCY = 2;
+}
+
+message RequestRouteDeclaration {
+  InferenceTask task = 1;
+  repeated RouteModality supported_modalities = 2;
+  repeated RouteModality requires_any_modality = 3;
+  bool supports_native_video = 4;
+  WorkerFamily worker_family = 5;
+  string model_family_target = 6;
+  RouteResidencyPolicy residency_policy = 7;
+  bool is_text_companion = 8;
 }
 
 enum RuntimeMode {

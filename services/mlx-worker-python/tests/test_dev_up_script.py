@@ -73,12 +73,14 @@ def make_layout(dev_up, tmp_path: Path):
         runtime_dir=tmp_path / "runtime",
         python_socket_path=tmp_path / "runtime/python.sock",
         swift_text_worker_socket_path=tmp_path / "runtime/swift.sock",
+        swift_vision_worker_socket_path=tmp_path / "runtime/swift-vision.sock",
         managed_models_dir=tmp_path / "home/models/default-managed",
         audio_runtime_packs_dir=tmp_path / "home/runtime-packs/audio",
         model_ops_jobs_root=tmp_path / "home/jobs/model-ops",
         evaluation_jobs_root=tmp_path / "home/jobs/evaluation",
         control_plane_metrics_path=tmp_path / "runtime/control-plane.json",
         swift_text_worker_metrics_path=tmp_path / "runtime/swift-metrics.json",
+        swift_vision_worker_metrics_path=tmp_path / "runtime/swift-vision-metrics.json",
         python_worker_metrics_path=tmp_path / "runtime/python-metrics.json",
         gateway_config_store_path=tmp_path / "home/config/gateway-config.json",
         gateway_serving_defaults_store_path=tmp_path / "home/config/gateway-serving-defaults.json",
@@ -312,6 +314,7 @@ def test_compute_runtime_layout_uses_environment_overrides(monkeypatch: pytest.M
     assert layout.swift_text_worker_backend_mode == "swift"
     assert layout.python_socket_path.parent == Path("/tmp").resolve()
     assert layout.swift_text_worker_socket_path.parent == Path("/tmp").resolve()
+    assert layout.swift_vision_worker_socket_path.parent == Path("/tmp").resolve()
 
 
 def test_compute_runtime_layout_uses_short_default_worker_sockets(
@@ -330,11 +333,14 @@ def test_compute_runtime_layout_uses_short_default_worker_sockets(
 
     assert layout.python_socket_path.parent == Path("/tmp").resolve()
     assert layout.swift_text_worker_socket_path.parent == Path("/tmp").resolve()
+    assert layout.swift_vision_worker_socket_path.parent == Path("/tmp").resolve()
     assert "team-a" in layout.python_socket_path.name
     assert layout.python_socket_path.name.endswith("-python.sock")
     assert layout.swift_text_worker_socket_path.name.endswith("-swift.sock")
+    assert layout.swift_vision_worker_socket_path.name.endswith("-swift-vision.sock")
     assert len(os.fspath(layout.python_socket_path)) < 103
     assert len(os.fspath(layout.swift_text_worker_socket_path)) < 103
+    assert len(os.fspath(layout.swift_vision_worker_socket_path)) < 103
 
 
 def test_compute_runtime_layout_honors_explicit_worker_socket_overrides(
@@ -344,13 +350,16 @@ def test_compute_runtime_layout_honors_explicit_worker_socket_overrides(
     dev_up = load_dev_up_module()
     python_socket = tmp_path / "runtime/python-worker.sock"
     swift_socket = tmp_path / "runtime/swift-text-worker.sock"
+    swift_vision_socket = tmp_path / "runtime/swift-vision-worker.sock"
     monkeypatch.setenv("MELIX_WORKER_SOCKET_PATH", os.fspath(python_socket))
     monkeypatch.setenv("MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH", os.fspath(swift_socket))
+    monkeypatch.setenv("MELIX_SWIFT_VISION_WORKER_SOCKET_PATH", os.fspath(swift_vision_socket))
 
     layout = dev_up.compute_runtime_layout(tmp_path)
 
     assert layout.python_socket_path == python_socket
     assert layout.swift_text_worker_socket_path == swift_socket
+    assert layout.swift_vision_worker_socket_path == swift_vision_socket
 
 
 def test_compute_runtime_layout_defaults_to_real_backends(tmp_path: Path) -> None:
@@ -487,8 +496,10 @@ def test_runtime_layout_helpers_manage_directories_and_artifacts(
     for artifact in (
         layout.python_socket_path,
         layout.swift_text_worker_socket_path,
+        layout.swift_vision_worker_socket_path,
         layout.control_plane_metrics_path,
         layout.swift_text_worker_metrics_path,
+        layout.swift_vision_worker_metrics_path,
         layout.python_worker_metrics_path,
     ):
         artifact.parent.mkdir(parents=True, exist_ok=True)
@@ -501,8 +512,10 @@ def test_runtime_layout_helpers_manage_directories_and_artifacts(
     assert all(not artifact.exists() for artifact in (
         layout.python_socket_path,
         layout.swift_text_worker_socket_path,
+        layout.swift_vision_worker_socket_path,
         layout.control_plane_metrics_path,
         layout.swift_text_worker_metrics_path,
+        layout.swift_vision_worker_metrics_path,
         layout.python_worker_metrics_path,
     ))
     assert gateway_config.read_text(encoding="utf-8") == "persist"
@@ -579,8 +592,66 @@ def test_resolve_local_mlx_metallib_uses_scandir_stack_without_path_rglob(
 def test_read_mlx_metal_dist_info_version_uses_scandir_without_path_glob(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     dev_up = load_dev_up_module()
+
+    def tmp_case(name: str) -> Path:
+        path = tmp_path / name
+        path.mkdir()
+        return path
+
+    with pytest.MonkeyPatch.context() as nested_monkeypatch:
+        test_compute_runtime_layout_uses_environment_overrides(
+            nested_monkeypatch,
+            tmp_case("layout-env"),
+        )
+    with pytest.MonkeyPatch.context() as nested_monkeypatch:
+        test_compute_runtime_layout_uses_short_default_worker_sockets(
+            nested_monkeypatch,
+            tmp_case("layout-sockets"),
+        )
+    with pytest.MonkeyPatch.context() as nested_monkeypatch:
+        test_compute_runtime_layout_honors_explicit_worker_socket_overrides(
+            nested_monkeypatch,
+            tmp_case("layout-explicit-sockets"),
+        )
+    with pytest.MonkeyPatch.context() as nested_monkeypatch:
+        test_runtime_layout_helpers_manage_directories_and_artifacts(
+            nested_monkeypatch,
+            tmp_case("runtime-artifacts"),
+        )
+    test_dev_down_sources_runtime_env_for_socket_cleanup(tmp_case("dev-down"))
+    with pytest.MonkeyPatch.context() as nested_monkeypatch:
+        test_start_stack_orchestrates_processes_and_emits_runtime_env(
+            nested_monkeypatch,
+            tmp_case("start-stack"),
+            capsys,
+        )
+    with pytest.MonkeyPatch.context() as nested_monkeypatch:
+        test_start_stack_wraps_http_timeout_with_log_paths(
+            nested_monkeypatch,
+            tmp_case("http-timeout"),
+        )
+    with pytest.MonkeyPatch.context() as nested_monkeypatch:
+        test_start_stack_control_plane_gateway_config_store_overrides_parent_environment(
+            nested_monkeypatch,
+            tmp_case("control-plane-env"),
+        )
+    with pytest.MonkeyPatch.context() as nested_monkeypatch:
+        launch_root = tmp_case("launch-cwd")
+        launch_layout = make_layout(dev_up, launch_root)
+        launch_layout.runtime_dir.mkdir(parents=True)
+        configured_metallib = launch_root / "configured.metallib"
+        configured_metallib.write_text("mlx", encoding="utf-8")
+        nested_monkeypatch.setenv(dev_up.SWIFT_MLX_METALLIB_PATH_ENV, os.fspath(configured_metallib))
+
+        assert dev_up.prepare_swift_worker_launch_cwd(
+            launch_layout,
+            launch_root,
+            worker_name="swift-vision-worker",
+        ) == launch_layout.runtime_dir / "swift-vision-worker-cwd"
+
     metallib_path = write_mlx_metal_fixture(tmp_path / "site-packages", "0.29.1")
 
     def fail_glob(self: Path, pattern: str):  # pragma: no cover - exercised only on regression
@@ -1076,10 +1147,20 @@ def test_dev_down_sources_runtime_env_for_socket_cleanup(tmp_path: Path) -> None
     runtime_dir.mkdir(parents=True)
     python_socket = tmp_path / "short-python.sock"
     swift_socket = tmp_path / "short-swift.sock"
+    swift_vision_socket = tmp_path / "short-swift-vision.sock"
     control_metrics = tmp_path / "control-plane-metrics.json"
     swift_metrics = tmp_path / "swift-text-worker-metrics.json"
+    swift_vision_metrics = tmp_path / "swift-vision-worker-metrics.json"
     python_metrics = tmp_path / "python-worker-metrics.json"
-    for artifact in (python_socket, swift_socket, control_metrics, swift_metrics, python_metrics):
+    for artifact in (
+        python_socket,
+        swift_socket,
+        swift_vision_socket,
+        control_metrics,
+        swift_metrics,
+        swift_vision_metrics,
+        python_metrics,
+    ):
         artifact.write_text("stale", encoding="utf-8")
     (runtime_dir / "env.sh").write_text(
         "\n".join(
@@ -1087,8 +1168,10 @@ def test_dev_down_sources_runtime_env_for_socket_cleanup(tmp_path: Path) -> None
                 "#!/usr/bin/env bash",
                 f"export MELIX_WORKER_SOCKET_PATH={shlex.quote(os.fspath(python_socket))}",
                 f"export MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH={shlex.quote(os.fspath(swift_socket))}",
+                f"export MELIX_SWIFT_VISION_WORKER_SOCKET_PATH={shlex.quote(os.fspath(swift_vision_socket))}",
                 f"export MELIX_CONTROL_PLANE_METRICS_PATH={shlex.quote(os.fspath(control_metrics))}",
                 f"export MELIX_SWIFT_TEXT_WORKER_METRICS_PATH={shlex.quote(os.fspath(swift_metrics))}",
+                f"export MELIX_SWIFT_VISION_WORKER_METRICS_PATH={shlex.quote(os.fspath(swift_vision_metrics))}",
                 f"export MELIX_PYTHON_WORKER_METRICS_PATH={shlex.quote(os.fspath(python_metrics))}",
                 "",
             ]
@@ -1109,8 +1192,10 @@ def test_dev_down_sources_runtime_env_for_socket_cleanup(tmp_path: Path) -> None
     assert result.stdout.strip() == "Melix local stack is stopped."
     assert not python_socket.exists()
     assert not swift_socket.exists()
+    assert not swift_vision_socket.exists()
     assert not control_metrics.exists()
     assert not swift_metrics.exists()
+    assert not swift_vision_metrics.exists()
     assert not python_metrics.exists()
     assert not (runtime_dir / "env.sh").exists()
 
@@ -1128,7 +1213,7 @@ def test_start_stack_orchestrates_processes_and_emits_runtime_env(
         python_bridge_executable=bridge_python,
     )
     calls: list[tuple[str, object]] = []
-    pid_values = iter([101, 202, 303])
+    pid_values = iter([101, 202, 303, 404])
     monkeypatch.setenv("MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE", "1")
     monkeypatch.setenv("MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE", "1")
 
@@ -1141,7 +1226,7 @@ def test_start_stack_orchestrates_processes_and_emits_runtime_env(
     monkeypatch.setattr(
         dev_up,
         "prepare_swift_worker_launch_cwd",
-        lambda layout, repo_root: layout.runtime_dir / "swift-text-worker-cwd",
+        lambda layout, repo_root, worker_name="swift-text-worker": layout.runtime_dir / f"{worker_name}-cwd",
     )
     monkeypatch.setattr(
         dev_up,
@@ -1163,8 +1248,9 @@ def test_start_stack_orchestrates_processes_and_emits_runtime_env(
     dev_up.start_stack(dev_up.DevUpOptions(prefer_built=True))
 
     assert (layout.runtime_dir / "swift-text-worker.pid").read_text(encoding="utf-8") == "101"
-    assert (layout.runtime_dir / "python-worker.pid").read_text(encoding="utf-8") == "202"
-    assert (layout.runtime_dir / "control-plane.pid").read_text(encoding="utf-8") == "303"
+    assert (layout.runtime_dir / "swift-vision-worker.pid").read_text(encoding="utf-8") == "202"
+    assert (layout.runtime_dir / "python-worker.pid").read_text(encoding="utf-8") == "303"
+    assert (layout.runtime_dir / "control-plane.pid").read_text(encoding="utf-8") == "404"
     output = capsys.readouterr().out
     assert "Melix local stack is ready." in output
     assert "Service instance: team-a" in output
@@ -1173,14 +1259,24 @@ def test_start_stack_orchestrates_processes_and_emits_runtime_env(
     assert any(kind == "wait" for kind, _ in calls)
     assert ("http", "12436") in calls
     wait_calls = [payload for kind, payload in calls if kind == "wait"]
-    assert len(wait_calls) == 2
+    assert len(wait_calls) == 3
     assert all(payload["python_executable"] == bridge_python for payload in wait_calls)
-    swift_spawn = next(
+    swift_spawns = [
         payload for kind, payload in calls if kind == "spawn" and payload["command"] == ["melix-text-worker-swift"]
-    )
+    ]
+    assert len(swift_spawns) == 2
+    swift_spawn = next(payload for payload in swift_spawns if payload["env_overrides"].get("MELIX_SWIFT_WORKER_FAMILY") != "vision")
+    swift_vision_spawn = next(payload for payload in swift_spawns if payload["env_overrides"].get("MELIX_SWIFT_WORKER_FAMILY") == "vision")
     assert swift_spawn["cwd"] == layout.runtime_dir / "swift-text-worker-cwd"
+    assert swift_vision_spawn["cwd"] == layout.runtime_dir / "swift-vision-worker-cwd"
     assert swift_spawn["env_overrides"]["MELIX_SWIFT_TURBOQUANT_CANDIDATE_PROBE"] == "1"
     assert swift_spawn["env_overrides"]["MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE"] == "1"
+    assert swift_vision_spawn["env_overrides"]["MELIX_SWIFT_VISION_WORKER_SOCKET_PATH"] == str(
+        layout.swift_vision_worker_socket_path
+    )
+    assert swift_vision_spawn["env_overrides"]["MELIX_SWIFT_VISION_PAYLOAD_RECEIPT_PATH"].endswith(
+        "receipts/vision-payload.jsonl"
+    )
     python_spawn = next(
         payload for kind, payload in calls if kind == "spawn" and "worker.bootstrap" in payload["command"]
     )
@@ -1191,6 +1287,9 @@ def test_start_stack_orchestrates_processes_and_emits_runtime_env(
         payload for kind, payload in calls if kind == "spawn" and payload["command"] == ["melix-control-plane"]
     )
     assert control_plane_spawn["env_overrides"]["MELIX_HOME"] == str(layout.melix_home_dir)
+    assert control_plane_spawn["env_overrides"]["MELIX_SWIFT_VISION_WORKER_SOCKET_PATH"] == str(
+        layout.swift_vision_worker_socket_path
+    )
     assert control_plane_spawn["env_overrides"]["MELIX_GATEWAY_CONFIG_STORE_PATH"] == str(
         layout.gateway_config_store_path
     )
@@ -1213,7 +1312,7 @@ def test_start_stack_wraps_http_timeout_with_log_paths(
     monkeypatch.setattr(
         dev_up,
         "prepare_swift_worker_launch_cwd",
-        lambda layout, repo_root: layout.runtime_dir / "swift-text-worker-cwd",
+        lambda layout, repo_root, worker_name="swift-text-worker": layout.runtime_dir / f"{worker_name}-cwd",
     )
     monkeypatch.setattr(
         dev_up,
@@ -1246,7 +1345,7 @@ def test_start_stack_control_plane_gateway_config_store_overrides_parent_environ
     dev_up = load_dev_up_module()
     layout = make_layout(dev_up, tmp_path)
     captured_env: dict[tuple[str, ...], dict[str, str]] = {}
-    pid_values = iter([101, 202, 303])
+    pid_values = iter([101, 202, 303, 404])
 
     class FakeProcess:
         def __init__(self, pid: int) -> None:
@@ -1261,7 +1360,7 @@ def test_start_stack_control_plane_gateway_config_store_overrides_parent_environ
     monkeypatch.setattr(
         dev_up,
         "prepare_swift_worker_launch_cwd",
-        lambda layout, repo_root: layout.runtime_dir / "swift-text-worker-cwd",
+        lambda layout, repo_root, worker_name="swift-text-worker": layout.runtime_dir / f"{worker_name}-cwd",
     )
     monkeypatch.setattr(
         dev_up,
@@ -1278,6 +1377,9 @@ def test_start_stack_control_plane_gateway_config_store_overrides_parent_environ
     control_plane_env = captured_env[("melix-control-plane",)]
     assert control_plane_env["MELIX_HOME"] == str(layout.melix_home_dir)
     assert control_plane_env["MELIX_GATEWAY_CONFIG_STORE_PATH"] == str(layout.gateway_config_store_path)
+    assert control_plane_env["MELIX_SWIFT_VISION_WORKER_SOCKET_PATH"] == str(
+        layout.swift_vision_worker_socket_path
+    )
 
 
 def test_main_returns_zero_on_success(monkeypatch: pytest.MonkeyPatch) -> None:

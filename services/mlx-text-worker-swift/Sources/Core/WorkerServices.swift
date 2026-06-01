@@ -73,6 +73,8 @@ final class RuntimeRPCService: Melix_Worker_V1_RuntimeService.SimpleServiceProto
         var response = Melix_Worker_V1_HandshakeResponse()
         response.protocolVersion = request.protocolVersion
         response.runtimeVersion = configuration.runtimeVersion
+        response.workerFamily = configuration.workerFamily
+        response.workerInstanceID = configuration.workerID
         response.capabilities = await registry.capabilities()
         return response
     }
@@ -138,6 +140,29 @@ final class RuntimeRPCService: Melix_Worker_V1_RuntimeService.SimpleServiceProto
                     "headroom_bytes": String(headroomBytes),
                     "projected_resident_bytes": String(projectedResidentBytes),
                     "required_bytes": String(requiredBytes),
+                ]
+            )
+            response.resolvedCapabilities = await registry.capabilities()
+            return response
+        } catch let WorkerRuntimeRegistryError.requestRouteUnsupported(modelID, workerFamily, reason) {
+            metrics.increment("swift_text.rpc_error_count")
+            metrics.recordMilliseconds("swift_text.load_model_ms", value: elapsedMilliseconds(since: startedAt))
+            metrics.set("swift_text.loaded_model_count", value: await registry.loadedModelCount())
+
+            var response = Melix_Worker_V1_LoadModelResponse()
+            response.ok = false
+            response.error = makeErrorStatus(
+                code: "route_not_supported",
+                message: "Worker defensive validation rejected ModelSpec.request_routes for model \(modelID).",
+                details: [
+                    "model_id": modelID,
+                    "task": "",
+                    "requested_modalities": "",
+                    "required_modality_suite": "",
+                    "available_routes": "",
+                    "available_modality_suites": "",
+                    "worker_family_candidates": workerFamilyName(workerFamily),
+                    "reason": reason,
                 ]
             )
             response.resolvedCapabilities = await registry.capabilities()
@@ -264,6 +289,9 @@ final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceP
         response: GRPCCore.RPCWriter<Melix_Worker_V1_ExecuteEvent>,
         context: GRPCCore.ServerContext
     ) async throws {
+        if configuration.workerFamily == .vision {
+            appendVisionPayloadReceipt(for: request)
+        }
         try await generationEngine.runGenerate(request: request, response: response)
     }
 
@@ -745,6 +773,95 @@ private func makeErrorStatus(
     status.retriable = false
     status.details = details
     return status
+}
+
+private func workerFamilyName(_ workerFamily: Melix_Worker_V1_WorkerFamily) -> String {
+    switch workerFamily {
+    case .text:
+        return "text"
+    case .vision:
+        return "vision"
+    case .audio:
+        return "audio"
+    case .image:
+        return "image"
+    case .retrieval:
+        return "retrieval"
+    case .omni:
+        return "omni"
+    case .unspecified, .UNRECOGNIZED:
+        return "unspecified"
+    }
+}
+
+private extension InferenceRPCService {
+    func appendVisionPayloadReceipt(for request: Melix_Worker_V1_GenerateRequest) {
+        guard let path = configuration.visionPayloadReceiptPath else {
+            return
+        }
+        let mediaParts = request.messages.enumerated().flatMap { messageIndex, message in
+            message.parts.enumerated().compactMap { partIndex, part -> [String: Any]? in
+                guard let summary = visionMediaPartSummary(part) else {
+                    return nil
+                }
+                return [
+                    "message_index": messageIndex,
+                    "part_index": partIndex,
+                    "role": message.role,
+                    "kind": summary.kind,
+                    "byte_length": summary.byteLength,
+                    "uri_present": summary.uriPresent,
+                ]
+            }
+        }
+        let payload: [String: Any] = [
+            "request_id": request.execution.id.requestID,
+            "model_handle": request.execution.modelHandle,
+            "worker_instance_id": configuration.workerID,
+            "worker_family": workerFamilyName(configuration.workerFamily),
+            "media_parts": mediaParts,
+        ]
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else {
+            return
+        }
+        let url = URL(fileURLWithPath: path)
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        if !FileManager.default.fileExists(atPath: path) {
+            FileManager.default.createFile(atPath: path, contents: nil)
+        }
+        guard let handle = try? FileHandle(forWritingTo: url) else {
+            return
+        }
+        defer { try? handle.close() }
+        do {
+            try handle.seekToEnd()
+            try handle.write(contentsOf: data)
+            try handle.write(contentsOf: Data("\n".utf8))
+        } catch {
+            return
+        }
+    }
+
+    private func visionMediaPartSummary(
+        _ part: Melix_Worker_V1_MessagePart
+    ) -> (kind: String, byteLength: Int, uriPresent: Bool)? {
+        switch part.part {
+        case .imageBytes(let bytes):
+            return ("image", bytes.count, false)
+        case .imageUri(let uri):
+            return ("image", 0, !uri.isEmpty)
+        case .videoBytes(let bytes):
+            return ("video", bytes.count, false)
+        case .videoUri(let uri):
+            return ("video", 0, !uri.isEmpty)
+        default:
+            return nil
+        }
+    }
 }
 
 private func makeUnimplementedExecuteEvent(

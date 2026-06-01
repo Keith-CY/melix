@@ -2,6 +2,7 @@ import MelixControlPlaneProtocol
 
 public enum WorkerRouteKind: String, Sendable, Equatable {
     case swiftText = "swift_text"
+    case swiftVision = "swift_vision"
     case pythonCompatibility = "python_compatibility"
     case pythonEmbedding = "python_embedding"
     case pythonRerank = "python_rerank"
@@ -32,6 +33,8 @@ public enum WorkerRouteKind: String, Sendable, Equatable {
         switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "text":
             self = .swiftText
+        case "vision":
+            self = .swiftVision
         case "embedding":
             self = .pythonEmbedding
         case "rerank":
@@ -80,10 +83,23 @@ public enum WorkerRouteKind: String, Sendable, Equatable {
         }
     }
 
+    public init?(workerFamily: Melix_Controlplane_V1_WorkerFamily) {
+        switch workerFamily {
+        case .text:
+            self = .swiftText
+        case .vision:
+            self = .swiftVision
+        case .UNRECOGNIZED, .unspecified, .audio, .image, .retrieval, .omni:
+            return nil
+        }
+    }
+
     public var routeClass: Melix_Controlplane_V1_WorkerRouteClass {
         switch self {
         case .swiftText:
             return .workerRouteSwiftText
+        case .swiftVision:
+            return .workerRoutePythonVlm
         case .pythonCompatibility:
             return .workerRoutePythonTextCompatibility
         case .pythonEmbedding:
@@ -116,7 +132,7 @@ public enum WorkerRouteKind: String, Sendable, Equatable {
 
     public var defaultSchedulingLane: String {
         switch self {
-        case .pythonOCR, .pythonVLM:
+        case .swiftVision, .pythonOCR, .pythonVLM:
             return "multimodal.vision.background"
         case .pythonTranscription:
             return "multimodal.audio.transcription.background"
@@ -133,6 +149,8 @@ public enum WorkerRouteKind: String, Sendable, Equatable {
         switch self {
         case .swiftText:
             return "swift-text-worker"
+        case .swiftVision:
+            return "swift-vision-worker"
         case .pythonOCR, .pythonVLM, .pythonTranscription, .pythonSpeech:
             return "python-multimodal-worker"
         case .pythonImage:
@@ -144,7 +162,7 @@ public enum WorkerRouteKind: String, Sendable, Equatable {
 
     public var isMultimodalBackgroundRoute: Bool {
         switch self {
-        case .pythonOCR, .pythonVLM, .pythonTranscription, .pythonSpeech, .pythonImage:
+        case .swiftVision, .pythonOCR, .pythonVLM, .pythonTranscription, .pythonSpeech, .pythonImage:
             return true
         default:
             return false
@@ -162,7 +180,7 @@ public enum WorkerRouteKind: String, Sendable, Equatable {
 
     public var supportsPhaseAwareExecution: Bool {
         switch self {
-        case .swiftText, .pythonVLM:
+        case .swiftText, .swiftVision, .pythonVLM:
             return true
         default:
             return false

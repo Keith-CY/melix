@@ -492,6 +492,7 @@ enum TextBatchGenerationEvent: Sendable {
 protocol TextRuntimeBackend: Sendable {
     var runtimeName: String { get }
     var supportsHomogeneousBatchDecode: Bool { get }
+    func runtimeStatsOverlay() async -> Melix_Worker_V1_RuntimeStats?
     func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> LoadedTextModel
     func unloadModel(_ model: LoadedTextModel) async
     func prefill(
@@ -526,6 +527,10 @@ protocol TextRuntimeBackend: Sendable {
 
 extension TextRuntimeBackend {
     var supportsHomogeneousBatchDecode: Bool { false }
+
+    func runtimeStatsOverlay() async -> Melix_Worker_V1_RuntimeStats? {
+        nil
+    }
 
     func unloadModel(_ model: LoadedTextModel) async {}
 
@@ -596,6 +601,10 @@ struct TextRuntime: Sendable {
 
     var supportsHomogeneousBatchDecode: Bool {
         backend.supportsHomogeneousBatchDecode
+    }
+
+    func runtimeStatsOverlay() async -> Melix_Worker_V1_RuntimeStats? {
+        await backend.runtimeStatsOverlay()
     }
 
     func loadModel(spec: Melix_Worker_V1_ModelSpec) async throws -> RuntimeLoadResult {
@@ -696,6 +705,15 @@ func makeTextRuntime(
     for configuration: WorkerConfiguration,
     residentMemoryReader: @escaping @Sendable () -> UInt64 = processResidentMemoryBytes
 ) -> TextRuntime {
+    if configuration.workerFamily == .vision {
+        return TextRuntime(
+            backend: DeterministicVisionBackend(
+                tokenDelayNanos: deterministicVisionDelayNanos()
+            ),
+            residentMemoryReader: residentMemoryReader
+        )
+    }
+
     switch configuration.backendMode.lowercased() {
     case "deterministic":
         return TextRuntime(
@@ -710,6 +728,25 @@ func makeTextRuntime(
             residentMemoryReader: residentMemoryReader
         )
     }
+}
+
+private func deterministicVisionDelayNanos(
+    environment: [String: String] = ProcessInfo.processInfo.environment
+) -> UInt64 {
+    let candidates = [
+        environment["MELIX_SWIFT_VISION_WORKER_DETERMINISTIC_DELAY_MS"],
+        environment["MELIX_DETERMINISTIC_VLM_DELAY_MS"],
+    ]
+    for candidate in candidates {
+        guard let candidate,
+              let milliseconds = UInt64(candidate.trimmingCharacters(in: .whitespacesAndNewlines)),
+              milliseconds > 0
+        else {
+            continue
+        }
+        return milliseconds * 1_000_000
+    }
+    return 20_000_000
 }
 
 private func processResidentMemoryBytes() -> UInt64 {
