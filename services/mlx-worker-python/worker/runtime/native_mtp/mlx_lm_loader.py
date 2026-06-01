@@ -22,10 +22,9 @@ def _load_json_payload(path: Path) -> dict[str, Any]:
 
 
 def _is_mtp_weight_key(key: Any) -> bool:
-    try:
-        return key.startswith(_MTP_WEIGHT_KEY_PREFIXES)
-    except (AttributeError, TypeError):
-        return str(key).startswith(_MTP_WEIGHT_KEY_PREFIXES)
+    if isinstance(key, str):
+        return key.startswith("language_model.mtp.") or key.startswith("mtp.")
+    return str(key).startswith(_MTP_WEIGHT_KEY_PREFIXES)
 
 
 def _model_safetensor_files(model_path: Path) -> list[str]:
@@ -52,22 +51,29 @@ def extra_mtp_safetensor_files(model_path: Path) -> list[Path]:
         return []
 
     extra_files: list[Path] = []
+    append_extra_file = extra_files.append
     seen: set[str] = set()
+    seen_add = seen.add
+    model_path_text = os.fspath(model_path)
+    path_join = os.path.join
+    path_exists = os.path.exists
+    path_basename = os.path.basename
     for key, file_name in weight_map.items():
         if not _is_mtp_weight_key(key):
             continue
         file_name_text = str(file_name)
         if file_name_text in seen:
             continue
-        seen.add(file_name_text)
-        file_basename = os.path.basename(file_name_text)
-        if file_basename.startswith("model") or not file_name_text.endswith(".safetensors"):
+        seen_add(file_name_text)
+        if not file_name_text.endswith(".safetensors") or path_basename(
+            file_name_text
+        ).startswith("model"):
             continue
-        path = model_path / file_name_text
-        if not path.exists():
-            logger.warning("MTP shard listed in index is missing: %s", path)
+        path_text = path_join(model_path_text, file_name_text)
+        if not path_exists(path_text):
+            logger.warning("MTP shard listed in index is missing: %s", path_text)
             continue
-        extra_files.append(path)
+        append_extra_file(Path(path_text))
     return extra_files
 
 
