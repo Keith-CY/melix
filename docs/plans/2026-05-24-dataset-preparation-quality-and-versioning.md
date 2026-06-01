@@ -318,10 +318,11 @@ retry. `retry_failed_dataset_version(...)` reads the base version manifest and
 failed-segment file, copies successful sample rows unchanged into a new version,
 regenerates only failed segment ids, and writes `dataset-retry-receipt.json`
 with `rewritten_successful_sample_count` fixed at `0`. `list_dataset_versions(...)`
-reads version manifests from the dataset root, sorts by `created_at` and
-`version_id`, and records listing latency. The matching operator surface adds
-`melix dataset prepare version`, `retry-failed`, and `list-versions`, plus
-Desktop decoders for dataset version, retry receipt, and quality summary states.
+reads version manifests from the dataset root with streamed scandir manifest paths
+and whole-file byte JSON loads, sorts by `created_at` and `version_id`, and records
+listing latency. The matching operator surface adds `melix dataset prepare version`,
+`retry-failed`, and `list-versions`, plus Desktop decoders for dataset version,
+retry receipt, and quality summary states.
 Report evidence consumes the same schema-backed paths by rendering
 `dataset_version_path`, `dataset_quality_summary_path`,
 `dataset_ingest_receipt_path`, and `workspace_preflight_receipt_path` artifact
