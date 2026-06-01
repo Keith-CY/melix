@@ -72,12 +72,15 @@ struct DeterministicTextBackend: TextRuntimeBackend {
         try throwIfTextRuntimeCancellationRequested(shouldAbort)
 
         storage["prefill_step_size"] = String(prefillStepSize)
+        let effectiveWindowSize = Int(clamping: max(prefillStepSize, 1))
         return RuntimePrefillResult(
             context: TextPrefillContext(
                 storage: storage,
                 promptTokens: promptTokens
             ),
             promptTokens: promptTokens,
+            requestedPrefillStepTokens: Int(clamping: prefillStepSize),
+            effectivePrefillWindowTokens: effectiveWindowSize,
             appliedAcceleration: appliedAcceleration,
             acceleratedPrefillGainPct: prefillGainPct,
             activeKVQuantizationRatio: activeKVRatio

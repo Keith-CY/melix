@@ -27,6 +27,7 @@ struct PreparedTextGeneration: Sendable {
 struct PreparedPrefillContext: @unchecked Sendable {
     let preparedInput: Any
     let promptTokens: Int
+    let effectivePrefillWindowTokens: Int
     let activeKVQuantizationRatio: Int
 }
 
@@ -201,12 +202,7 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
         shouldAbort: @escaping @Sendable () -> Bool
     ) async throws -> RuntimePrefillResult {
         let appliedAcceleration = resolveSwiftPrefillAcceleration(acceleration, messages: messages)
-        let baseWindowSize = Int(max(prefillStepSize, 1))
-        let effectiveWindowSize = acceleratedPrefillWindowSize(
-            baseWindowSize: baseWindowSize,
-            policy: appliedAcceleration,
-            messages: messages
-        )
+        let baseWindowSize = Int(clamping: max(prefillStepSize, 1))
         let prepared = try await makePreparedPromptContext(
             model: model,
             messages: messages,
@@ -220,10 +216,12 @@ struct AutoSwiftMLXBackend: TextRuntimeBackend {
                 promptTokens: prepared.promptTokens
             ),
             promptTokens: prepared.promptTokens,
+            requestedPrefillStepTokens: Int(clamping: prefillStepSize),
+            effectivePrefillWindowTokens: prepared.effectivePrefillWindowTokens,
             appliedAcceleration: appliedAcceleration,
             acceleratedPrefillGainPct: estimatedPrefillGainPercent(
                 baselineWindowSize: baseWindowSize,
-                effectiveWindowSize: effectiveWindowSize
+                effectiveWindowSize: prepared.effectivePrefillWindowTokens
             ),
             activeKVQuantizationRatio: prepared.activeKVQuantizationRatio
         )
@@ -509,7 +507,7 @@ private func makePreparedPromptContext(
     let chat = try convertChatMessages(messages)
     let userInput = UserInput(chat: chat)
     let effectiveWindowSize = acceleratedPrefillWindowSize(
-        baseWindowSize: Int(max(prefillStepSize, 1)),
+        baseWindowSize: Int(clamping: max(prefillStepSize, 1)),
         policy: acceleration,
         messages: messages
     )
@@ -549,6 +547,7 @@ private func makePreparedPromptContext(
     return PreparedPrefillContext(
         preparedInput: preparedState,
         promptTokens: preparedState.input.text.tokens.size,
+        effectivePrefillWindowTokens: effectiveWindowSize,
         activeKVQuantizationRatio: preparedState.activeKVQuantizationRatio
     )
     #else

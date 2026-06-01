@@ -17,6 +17,8 @@ final class MetricsStore: @unchecked Sendable {
         "swift_text.prefill_prompt_tokens": 0,
         "swift_text.prefill_chunk_count": 0,
         "swift_text.prefill_chunk_target_tokens": 0,
+        "swift_text.worker_prefill_requested_step_tokens": 0,
+        "swift_text.worker_prefill_effective_window_tokens": 0,
         "swift_text.prefill_last_chunk_tokens": 0,
         "swift_text.prefill_context_count": 0,
         "swift_text.prefill_guard_rejection_count": 0,
