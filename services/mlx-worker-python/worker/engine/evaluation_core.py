@@ -3953,6 +3953,8 @@ class EvaluationCore:
             )
         ):
             stripped = " ".join(stripped.split())
+        if stripped.isascii():
+            return stripped.lower()
         return stripped.casefold()
 
     @staticmethod
