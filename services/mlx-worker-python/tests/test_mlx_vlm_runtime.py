@@ -1581,6 +1581,7 @@ def test_native_mtp_extra_safetensor_files_filters_names_before_path_join(
             "language_model.mtp.layers.2.weight": "notes.txt",
             "language_model.mtp.layers.2.duplicate_weight": "notes.txt",
             "language_model.mtp.layers.3.weight": "mtp-00001.safetensors",
+            "language_model.mtp.layers.4.weight": "mtp-missing.safetensors",
             "language_model.layers.0.weight": "ignored-mtp.safetensors",
         }
     }
@@ -1592,27 +1593,36 @@ def test_native_mtp_extra_safetensor_files_filters_names_before_path_join(
     sidecar_path.write_bytes(b"mtp")
 
     original_join = Path.__truediv__
-    joined_names: list[str] = []
+    joined_path_names: list[str] = []
     original_basename = native_mtp_loader_module.os.path.basename
     basename_names: list[str] = []
+    original_exists = native_mtp_loader_module.os.path.exists
+    exists_names: list[str] = []
 
-    def tracked_join(self: Path, key: object) -> Path:
-        joined_names.append(str(key))
+    def tracked_path_join(self: Path, key: object) -> Path:
+        joined_path_names.append(str(key))
         return original_join(self, key)
 
     def tracked_basename(path: str) -> str:
-        basename_names.append(path)
+        if "/" not in path:
+            basename_names.append(path)
         return original_basename(path)
 
-    monkeypatch.setattr(Path, "__truediv__", tracked_join)
+    def tracked_exists(path: str) -> bool:
+        exists_names.append(Path(path).name)
+        return original_exists(path)
+
+    monkeypatch.setattr(Path, "__truediv__", tracked_path_join)
     monkeypatch.setattr(native_mtp_loader_module.os.path, "basename", tracked_basename)
+    monkeypatch.setattr(native_mtp_loader_module.os.path, "exists", tracked_exists)
 
     assert extra_mtp_safetensor_files(model_dir) == [sidecar_path]
-    assert joined_names == ["model.safetensors.index.json", "mtp-00001.safetensors"]
+    assert joined_path_names == ["model.safetensors.index.json"]
+    assert exists_names == ["mtp-00001.safetensors", "mtp-missing.safetensors"]
     assert basename_names == [
         "model-00001-of-00002.safetensors",
         "mtp-00001.safetensors",
-        "notes.txt",
+        "mtp-missing.safetensors",
     ]
 
 
