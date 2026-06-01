@@ -147,6 +147,14 @@ def test_parse_response_json_accepts_leading_whitespace_before_fence() -> None:
     }
 
 
+def test_parse_response_json_accepts_generic_fence_after_fast_json_prefix() -> None:
+    response = '```javascript\n{"events": [{"event_type": "generic"}]}\n```'
+
+    assert event_extraction_module._parse_response_json(response) == {
+        "events": [{"event_type": "generic"}]
+    }
+
+
 def test_parse_response_json_accepts_unfenced_json_without_pretrim_copy() -> None:
     response = '  {"events": [{"event_type": "pickup"}]}  '
 
