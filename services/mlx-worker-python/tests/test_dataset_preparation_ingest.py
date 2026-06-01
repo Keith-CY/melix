@@ -49,9 +49,15 @@ def test_dataset_ingest_source_file_paths_use_scandir_without_rglob(
 
 
 def test_dataset_ingest_source_kind_uses_single_suffix_fast_path() -> None:
+    assert _source_kind(Path("paper.pdf.txt")) == "pdf"
+    assert _source_kind(Path("paper.PdF.txt")) == "pdf"
     assert _source_kind(Path("paper.PDF.TXT")) == "pdf"
+    assert _source_kind(Path("brief.docx.txt")) == "docx"
     assert _source_kind(Path("brief.DOCX.txt")) == "docx"
+    assert _source_kind(Path("brief.DOCX.TXT")) == "docx"
+    assert _source_kind(Path("Brief.TXT")) == "text"
     assert _source_kind(Path("notes.text")) == "text"
+    assert _source_kind(Path("NOTES.TEXT")) == "text"
     assert _source_kind(Path("script.PY")) == "code"
     assert _source_kind(Path("records.JSONL")) == "structured_data"
     assert _source_kind(Path("README")) is None
