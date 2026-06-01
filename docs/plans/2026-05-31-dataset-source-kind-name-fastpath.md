@@ -30,8 +30,9 @@ remain attached to the same registry entry.
 1. Preserve the current source-kind behavior for compound `.pdf.txt` and
    `.docx.txt`, ordinary text, markdown, code, structured data, and unsupported
    extensionless/archive names.
-2. Classify from one lower-cased filename string and a cheap `rpartition('.')`
-   fallback instead of constructing `Path.suffix`.
+2. Classify common lowercase `.txt` and `.text` source names before allocating
+   a lowercase copy, while preserving the mixed-case fallback for compound
+   `.pdf.txt`, `.docx.txt`, code, markdown, and structured-data suffixes.
 3. Extend the registered local probe and probe tests so CI validates the new
    classifier metrics.
 4. Run focused tests, changed-scope coverage, and the registered probe locally
