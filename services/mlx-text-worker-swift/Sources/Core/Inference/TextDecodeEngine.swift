@@ -87,6 +87,10 @@ struct TextDecodeEngine: Sendable {
             var grpcWriteTotalMicros = 0
             var grpcWriteCallCount = 0
             var outputFilter = HarmonyChannelOutputFilter()
+            let outputCadencePolicy = decodeOutputCadencePolicy(
+                model: session.loadedModel.spec,
+                execution: request.execution
+            )
 
             func writeOutput(_ output: HarmonyChannelOutputFilter.Output) async throws {
                 let writeSummary = try await writeFilteredTextOutput(
@@ -99,6 +103,25 @@ struct TextDecodeEngine: Sendable {
                     metrics: metrics,
                     ttftMetricName: "swift_text.decode_ttft_ms",
                     startedAt: startedAt,
+                    cadencePolicy: outputCadencePolicy,
+                    decorateEvent: { event in
+                        event.phase = .executionDecoding
+                        event.admissionState = .admissionAdmitted
+                        event.lane = lane
+                        event.accelerationMode = acceleration.mode
+                    }
+                )
+                grpcWriteTotalMicros += writeSummary.grpcWriteTotalMicros
+                grpcWriteCallCount += writeSummary.grpcWriteCallCount
+            }
+
+            func flushOutput() async throws {
+                let writeSummary = try await flushPendingFilteredTextOutput(
+                    response: response,
+                    requestID: requestID,
+                    executionKind: "decode",
+                    seq: &seq,
+                    state: &outputState,
                     decorateEvent: { event in
                         event.phase = .executionDecoding
                         event.admissionState = .admissionAdmitted
@@ -225,6 +248,7 @@ struct TextDecodeEngine: Sendable {
 
             let finalFiltered = finishFilteredOutput()
             try await writeOutput(finalFiltered)
+            try await flushOutput()
 
             if request.returnUsage && !(abortHandle?.isAborted ?? false) {
                 var event = Melix_Worker_V1_ExecuteEvent()
@@ -805,6 +829,45 @@ private func isGreedySpeculativeSampling(_ sampling: Melix_Worker_V1_SamplingCon
     return sampling.temperature <= 0
         && effectiveTopP >= 1
         && sampling.topK == 0
+}
+
+func decodeOutputCadencePolicy(
+    model: Melix_Worker_V1_ModelSpec,
+    execution: Melix_Worker_V1_ExecutionMetadata
+) -> FilteredTextOutputCadencePolicy {
+    switch normalizedOutputCadenceOverride(execution.ext["melix.output_cadence"]) {
+    case "immediate", "off", "disabled", "none":
+        return .immediate
+    case "coalesced", "coalesce", "gemma":
+        return .gemmaDecodeDefault
+    default:
+        break
+    }
+    return isGemmaOutputCadenceCandidate(model) ? .gemmaDecodeDefault : .immediate
+}
+
+private func normalizedOutputCadenceOverride(_ rawValue: String?) -> String {
+    rawValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+}
+
+private func isGemmaOutputCadenceCandidate(_ model: Melix_Worker_V1_ModelSpec) -> Bool {
+    let metadataValues = [
+        model.modelID,
+        model.modelPath,
+        model.ext["text_family_id"] ?? "",
+        model.ext["detected_family_id"] ?? "",
+        model.ext["model_architecture"] ?? "",
+        model.ext["detected_architecture"] ?? "",
+        model.settings.ext["text_family_id"] ?? "",
+        model.settings.ext["detected_family_id"] ?? "",
+        model.settings.ext["model_architecture"] ?? "",
+        model.settings.ext["detected_architecture"] ?? "",
+    ]
+    return metadataValues.contains { value in
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .contains("gemma")
+    }
 }
 
 private func parseBool(_ rawValue: String?, fallback: Bool) -> Bool {
