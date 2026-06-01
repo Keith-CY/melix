@@ -618,7 +618,7 @@ public actor RequestCoordinator {
     private let sessionGraphStore: SessionGraphStore?
     private let reasoningContinuityStore: ReasoningContinuityStore?
     private let cacheMetadataStore: CacheMetadataStore?
-    private let routeSelectionReceiptPath: String?
+    private let routeSelectionReceiptWriter: JSONLReceiptWriter?
     private let now: @Sendable () -> Date
     private let lifecyclePolicy: ConnectionLifecyclePolicy
     private var activeWorkerClients: [String: any WorkerClient]
@@ -663,7 +663,9 @@ public actor RequestCoordinator {
         self.reasoningContinuityStore = reasoningContinuityStore
         self.cacheMetadataStore = cacheMetadataStore
         let trimmedReceiptPath = routeSelectionReceiptPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        self.routeSelectionReceiptPath = trimmedReceiptPath.isEmpty ? nil : trimmedReceiptPath
+        self.routeSelectionReceiptWriter = trimmedReceiptPath.isEmpty
+            ? nil
+            : JSONLReceiptWriter(path: trimmedReceiptPath)
         self.lifecyclePolicy = lifecyclePolicy
         self.now = now
         self.activeWorkerClients = [:]
@@ -783,7 +785,7 @@ public actor RequestCoordinator {
         }
         requestPlans[request.requestID] = plan
         await recordSchedulingMetrics(for: plan)
-        appendRouteSelectionReceipt(plan.routeSelectionReceipt)
+        enqueueRouteSelectionReceipt(plan.routeSelectionReceipt)
         await hydrateSessionGraph(for: request.workerRequest.execution.id)
         let lane = plan.admissionLane
         let priority = request.workerRequest.execution.scheduling.priority
@@ -2520,8 +2522,8 @@ public actor RequestCoordinator {
         await recordMultimodalBatchingMetrics(for: plan)
     }
 
-    private func appendRouteSelectionReceipt(_ receipt: RouteSelectionReceipt) {
-        guard let routeSelectionReceiptPath else {
+    private func enqueueRouteSelectionReceipt(_ receipt: RouteSelectionReceipt) {
+        guard let routeSelectionReceiptWriter else {
             return
         }
         let payload: [String: Any] = [
@@ -2554,25 +2556,7 @@ public actor RequestCoordinator {
               let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else {
             return
         }
-        let url = URL(fileURLWithPath: routeSelectionReceiptPath)
-        try? FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        if !FileManager.default.fileExists(atPath: routeSelectionReceiptPath) {
-            FileManager.default.createFile(atPath: routeSelectionReceiptPath, contents: nil)
-        }
-        guard let handle = try? FileHandle(forWritingTo: url) else {
-            return
-        }
-        defer { try? handle.close() }
-        do {
-            try handle.seekToEnd()
-            try handle.write(contentsOf: data)
-            try handle.write(contentsOf: Data("\n".utf8))
-        } catch {
-            return
-        }
+        routeSelectionReceiptWriter.append(data)
     }
 
     private func recordMultimodalBatchingMetrics(for plan: SchedulingPlan) async {

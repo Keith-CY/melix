@@ -364,23 +364,13 @@ private struct DeterministicVisionVideo: Sendable {
         reference: String,
         metadata: Melix_Worker_V1_MediaMetadata
     ) throws {
-        let resolvedFormat = try resolveVideoFormat(metadata: metadata, filename: metadata.filename, reference: reference)
-        let startMs = max(0, Int(metadata.startMs))
-        let endMs = effectiveClipEndMs(startMs: startMs, durationMs: Int(metadata.durationMs), endMs: Int(metadata.endMs))
-        let clipDurationMs = max(0, endMs - startMs)
-        let frameBudget = max(0, Int(metadata.frameBudget))
-        self.bytes = bytes
-        self.reference = reference
-        self.filename = metadata.filename.isEmpty ? "inline-video.\(resolvedFormat)" : metadata.filename
-        self.format = resolvedFormat
-        self.mimeType = metadata.mimeType
-        self.byteLength = bytes.count
-        self.durationMs = Int(metadata.durationMs)
-        self.requestedFrameBudget = frameBudget
-        self.effectiveFrameCount = frameBudget > 0 ? frameBudget : defaultFrameCount(clipDurationMs: clipDurationMs)
-        self.clipStartMs = startMs
-        self.clipEndMs = endMs
-        self.clipDurationMs = clipDurationMs
+        try self.init(
+            bytes: bytes,
+            reference: reference,
+            filename: metadata.filename,
+            byteLengthFallback: bytes.count,
+            metadata: metadata
+        )
     }
 
     init(
@@ -388,69 +378,57 @@ private struct DeterministicVisionVideo: Sendable {
         metadata: Melix_Worker_V1_MediaMetadata
     ) throws {
         let trimmed = uri.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedURL: URL
+        let defaultFilename: String
         if let url = URL(string: trimmed), let scheme = url.scheme, !scheme.isEmpty {
             switch scheme.lowercased() {
             case "file":
-                let resolvedFormat = try resolveVideoFormat(
-                    metadata: metadata,
-                    filename: metadata.filename.isEmpty ? url.lastPathComponent : metadata.filename,
-                    reference: trimmed
-                )
-                let startMs = max(0, Int(metadata.startMs))
-                let endMs = effectiveClipEndMs(
-                    startMs: startMs,
-                    durationMs: Int(metadata.durationMs),
-                    endMs: Int(metadata.endMs)
-                )
-                let clipDurationMs = max(0, endMs - startMs)
-                let frameBudget = max(0, Int(metadata.frameBudget))
-                let bytes = (try? Data(contentsOf: url)) ?? Data()
-                self.bytes = bytes
-                self.reference = trimmed
-                self.filename = metadata.filename.isEmpty ? url.lastPathComponent : metadata.filename
-                self.format = resolvedFormat
-                self.mimeType = metadata.mimeType
-                self.byteLength = bytes.isEmpty ? Int(metadata.byteLength) : bytes.count
-                self.durationMs = Int(metadata.durationMs)
-                self.requestedFrameBudget = frameBudget
-                self.effectiveFrameCount = frameBudget > 0 ? frameBudget : defaultFrameCount(clipDurationMs: clipDurationMs)
-                self.clipStartMs = startMs
-                self.clipEndMs = endMs
-                self.clipDurationMs = clipDurationMs
+                resolvedURL = url
+                defaultFilename = url.lastPathComponent
             case "http", "https":
                 throw RuntimeUnavailableError(message: "Unsupported video URI scheme: \(scheme).")
             default:
                 throw RuntimeUnavailableError(message: "Unsupported video URI scheme: \(scheme).")
             }
         } else {
-            let fileURL = URL(fileURLWithPath: trimmed)
-            let resolvedFormat = try resolveVideoFormat(
-                metadata: metadata,
-                filename: metadata.filename.isEmpty ? fileURL.lastPathComponent : metadata.filename,
-                reference: trimmed
-            )
-            let startMs = max(0, Int(metadata.startMs))
-            let endMs = effectiveClipEndMs(
-                startMs: startMs,
-                durationMs: Int(metadata.durationMs),
-                endMs: Int(metadata.endMs)
-            )
-            let clipDurationMs = max(0, endMs - startMs)
-            let frameBudget = max(0, Int(metadata.frameBudget))
-            let bytes = (try? Data(contentsOf: fileURL)) ?? Data()
-            self.bytes = bytes
-            self.reference = trimmed
-            self.filename = metadata.filename.isEmpty ? fileURL.lastPathComponent : metadata.filename
-            self.format = resolvedFormat
-            self.mimeType = metadata.mimeType
-            self.byteLength = bytes.isEmpty ? Int(metadata.byteLength) : bytes.count
-            self.durationMs = Int(metadata.durationMs)
-            self.requestedFrameBudget = frameBudget
-            self.effectiveFrameCount = frameBudget > 0 ? frameBudget : defaultFrameCount(clipDurationMs: clipDurationMs)
-            self.clipStartMs = startMs
-            self.clipEndMs = endMs
-            self.clipDurationMs = clipDurationMs
+            resolvedURL = URL(fileURLWithPath: trimmed)
+            defaultFilename = resolvedURL.lastPathComponent
         }
+        let bytes = (try? Data(contentsOf: resolvedURL)) ?? Data()
+        try self.init(
+            bytes: bytes,
+            reference: trimmed,
+            filename: metadata.filename.isEmpty ? defaultFilename : metadata.filename,
+            byteLengthFallback: Int(clamping: metadata.byteLength),
+            metadata: metadata
+        )
+    }
+
+    private init(
+        bytes: Data,
+        reference: String,
+        filename: String,
+        byteLengthFallback: Int,
+        metadata: Melix_Worker_V1_MediaMetadata
+    ) throws {
+        let resolvedFormat = try resolveVideoFormat(metadata: metadata, filename: filename, reference: reference)
+        let startMs = max(0, Int(metadata.startMs))
+        let endMs = effectiveClipEndMs(startMs: startMs, durationMs: Int(metadata.durationMs), endMs: Int(metadata.endMs))
+        let clipDurationMs = max(0, endMs - startMs)
+        let frameBudget = max(0, Int(metadata.frameBudget))
+        let resolvedFilename = filename.isEmpty ? "inline-video.\(resolvedFormat)" : filename
+        self.bytes = bytes
+        self.reference = reference
+        self.filename = resolvedFilename
+        self.format = resolvedFormat
+        self.mimeType = metadata.mimeType
+        self.byteLength = bytes.isEmpty ? max(0, byteLengthFallback) : bytes.count
+        self.durationMs = Int(metadata.durationMs)
+        self.requestedFrameBudget = frameBudget
+        self.effectiveFrameCount = frameBudget > 0 ? frameBudget : defaultFrameCount(clipDurationMs: clipDurationMs)
+        self.clipStartMs = startMs
+        self.clipEndMs = endMs
+        self.clipDurationMs = clipDurationMs
     }
 }
 

@@ -63,6 +63,33 @@ The governing domain terms are defined in `CONTEXT.md`:
 
 ## Fixture Layers
 
+## Slice 1 Review Follow-Up
+
+After the first request-route contract slice, the next follow-up hardens the
+same contract without changing the public route schema:
+
+- Route selection receipts and Vision payload receipts must enqueue JSONL
+  writes onto a serial utility queue. Request admission and worker generation
+  paths may construct the receipt payload, but they must not synchronously open,
+  seek, or append to receipt files on cooperative request executors.
+- `RequestRouteResolver` keeps route conflict reporting at the semantic
+  selection boundary: after task, modality, and native-video filtering, any
+  remaining route count other than one is a conflict. It must not maintain a
+  second redundant duplicate-key conflict predicate that can drift from registry
+  load validation.
+- The deterministic Swift Vision backend must share video metadata
+  normalization for inline video bytes and local video URI inputs so frame
+  budget, clip window, byte length, filename, MIME type, and format behavior
+  stay identical across source kinds.
+- Swift Vision Worker defensive validation accepts image-only, image/video, and
+  video-only Vision routes when the declaration requires image or video
+  presence. Video-required routes must still declare `supports_native_video`.
+
+Performance probe for this follow-up is the existing PR-scoped route-contract
+coverage and full local test gate. Success means the route-contract tests still
+pass, the receipt tests prove eventual JSONL artifact creation, and the scoped
+performance report has no in-scope regression.
+
 ## Fixture Layout
 
 The first gate uses one suite manifest plus separate artifact files:

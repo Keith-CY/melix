@@ -141,10 +141,6 @@ public enum RequestRouteResolver {
         let nativeCompatibleRoutes = input.requestModalities.contains(.video)
             ? modalityRoutes.filter(\.supportsNativeVideo)
             : modalityRoutes
-        let distinctRouteKeys = Set(nativeCompatibleRoutes.map(routeConflictKey))
-        guard distinctRouteKeys.count == nativeCompatibleRoutes.count else {
-            return .rejected(routeError(input: input, reason: .routeConflict, candidateRoutes: nativeCompatibleRoutes))
-        }
         guard nativeCompatibleRoutes.count == 1, let selectedRoute = nativeCompatibleRoutes.first else {
             return .rejected(routeError(input: input, reason: .routeConflict, candidateRoutes: nativeCompatibleRoutes))
         }
@@ -254,14 +250,6 @@ public enum RequestRouteResolver {
             "reason": reason.rawValue,
         ]
         return error
-    }
-
-    private static func routeConflictKey(_ route: Melix_Controlplane_V1_RequestRouteDeclaration) -> String {
-        [
-            canonicalName(route.task),
-            canonicalModalities(Set(route.supportedModalities)).map(canonicalName).joined(separator: ","),
-            canonicalModalities(Set(route.requiresAnyModality)).map(canonicalName).joined(separator: ","),
-        ].joined(separator: "|")
     }
 
     private static func availableRoutesJSON(_ routes: [Melix_Controlplane_V1_RequestRouteDeclaration]) -> String {
