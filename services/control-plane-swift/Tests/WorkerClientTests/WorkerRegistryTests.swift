@@ -137,6 +137,7 @@ struct WorkerRegistryTests {
 
         let capabilityCases: [(String, WorkerRouteKind)] = [
             ("text", .swiftText),
+            ("vision", .swiftVision),
             ("embedding", .pythonEmbedding),
             ("rerank", .pythonRerank),
             ("model_operations", .pythonModelOperations),
@@ -154,6 +155,8 @@ struct WorkerRegistryTests {
         }
 
         #expect(WorkerRouteKind(metadataIdentifier: "unsupported") == nil)
+        #expect(WorkerRouteKind(metadataIdentifier: "swift_vision") == .swiftVision)
+        #expect(WorkerRouteKind.swiftVision.routeClass == .workerRoutePythonVlm)
         #expect(WorkerRouteKind(capabilityIdentifier: "unsupported") == nil)
         #expect(WorkerRouteKind(routeClass: .unspecified) == nil)
     }
@@ -278,6 +281,88 @@ struct WorkerRegistryTests {
         #expect(await registry.client(for: .pythonTranscription) == nil)
         #expect(await registry.client(for: .pythonSpeech) == nil)
         #expect(await registry.client(for: .pythonImage) == nil)
+    }
+
+    @Test("structured text inference admission selects the Swift text worker instance")
+    func structuredTextInferenceAdmissionSelectsSwiftTextWorker() async throws {
+        let textClient = RouteTestingWorkerClient()
+        let registry = WorkerRegistry(defaultTextClient: textClient)
+
+        let resolution = await registry.admitInferenceRoute(
+            requestID: "req-text-route",
+            modelID: "melix-dev-text",
+            task: .generateText,
+            requestModalities: [.text]
+        )
+        guard case .selected(let selection) = resolution else {
+            Issue.record("Expected text route admission to select a Swift text worker.")
+            return
+        }
+        let admission = try #require(await registry.admission(for: selection))
+
+        #expect(selection.route.workerFamily == Melix_Controlplane_V1_WorkerFamily.text)
+        #expect(selection.workerInstance.instanceID == "swift-text-worker")
+        #expect(selection.receipt.selectionReason == RequestRouteSelectionReason.onlyReadyCandidate)
+        #expect(admission.routeKind == WorkerRouteKind.swiftText)
+        #expect((admission.client as? RouteTestingWorkerClient) === textClient)
+    }
+
+    @Test("structured VLM media admission selects the Swift vision worker instance")
+    func structuredVLMMediaAdmissionSelectsSwiftVisionWorker() async throws {
+        let visionClient = RouteTestingWorkerClient()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devVLMModel()])
+        let registry = WorkerRegistry(
+            defaultTextClient: RouteTestingWorkerClient(),
+            visionClient: visionClient,
+            modelCatalog: catalog
+        )
+
+        let resolution = await registry.admitInferenceRoute(
+            requestID: "req-vlm-route",
+            modelID: "melix-dev-vlm",
+            task: .generateMultimodal,
+            requestModalities: [.text, .image]
+        )
+        guard case .selected(let selection) = resolution else {
+            Issue.record("Expected VLM media route admission to select a Swift vision worker.")
+            return
+        }
+        let admission = try #require(await registry.admission(for: selection))
+
+        #expect(selection.route.workerFamily == Melix_Controlplane_V1_WorkerFamily.vision)
+        #expect(selection.workerInstance.instanceID == "swift-vision-worker")
+        #expect(
+            selection.receipt.requestModalities == [
+                Melix_Controlplane_V1_RouteModality.text,
+                Melix_Controlplane_V1_RouteModality.image,
+            ]
+        )
+        #expect(admission.routeKind == WorkerRouteKind.swiftVision)
+        #expect((admission.client as? RouteTestingWorkerClient) === visionClient)
+    }
+
+    @Test("structured VLM media admission rejects when Swift vision worker is unavailable")
+    func structuredVLMMediaAdmissionRejectsWhenSwiftVisionWorkerIsUnavailable() async throws {
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devVLMModel()])
+        let registry = WorkerRegistry(
+            defaultTextClient: RouteTestingWorkerClient(),
+            modelCatalog: catalog
+        )
+
+        let resolution = await registry.admitInferenceRoute(
+            requestID: "req-vlm-unavailable",
+            modelID: "melix-dev-vlm",
+            task: .generateMultimodal,
+            requestModalities: [.text, .image]
+        )
+        guard case .rejected(let error) = resolution else {
+            Issue.record("Expected VLM media route admission to reject unavailable Swift vision worker.")
+            return
+        }
+
+        #expect(error.code == "route_not_supported")
+        #expect(error.details["reason"] == "worker_family_unavailable")
+        #expect(error.details["worker_family_candidates"] == "vision")
     }
 }
 

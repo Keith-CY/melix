@@ -202,6 +202,7 @@ actor WorkerRuntimeRegistry {
         let resolved = modelCatalog.get(requested.modelID).map { catalogModel in
             mergeModelSpec(requested, fallback: catalogModel)
         } ?? requested
+        try validateRequestRoutes(for: resolved, workerFamily: configuration.workerFamily)
         let requestedDiskStreamingMode = effectiveDiskStreamingMode(
             for: resolved,
             requestMode: diskStreamingMode
@@ -785,6 +786,9 @@ actor WorkerRuntimeRegistry {
         stats.l2CacheBytes = cacheStats.l2Bytes
         stats.l1HitRate = cacheStats.l1HitRate
         stats.l2HitRate = cacheStats.l2HitRate
+        if let overlay = await runtime.runtimeStatsOverlay() {
+            applyRuntimeStatsOverlay(overlay, to: &stats)
+        }
         return stats
     }
 
@@ -1127,6 +1131,11 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
         tokenLimit: UInt32,
         accelerationMode: String
     )
+    case requestRouteUnsupported(
+        modelID: String,
+        workerFamily: Melix_Worker_V1_WorkerFamily,
+        reason: String
+    )
 
     var errorDescription: String? {
         switch self {
@@ -1150,6 +1159,8 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
             return "Projected prefill memory would exceed the process budget."
         case .quadraticPrefillGuardExceeded:
             return "Prefill request exceeds the configured quadratic fallback threshold."
+        case .requestRouteUnsupported:
+            return "Worker defensive validation rejected the request route declaration."
         }
     }
 
@@ -1209,6 +1220,8 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
         switch self {
         case .unknownDecodeHandle, .unknownSnapshotID, .unknownModelHandle:
             return "not_found"
+        case .requestRouteUnsupported:
+            return "request_route_unsupported"
         case .snapshotModelNotLoaded, .snapshotScopeMismatch:
             return "failed_precondition"
         case .diskStreamingUnsupported:
@@ -1296,6 +1309,21 @@ enum WorkerRuntimeRegistryError: Error, LocalizedError, Equatable {
             return lhsPromptTokens == rhsPromptTokens &&
                 lhsTokenLimit == rhsTokenLimit &&
                 lhsAccelerationMode == rhsAccelerationMode
+        case let (
+            .requestRouteUnsupported(
+                modelID: lhsModelID,
+                workerFamily: lhsWorkerFamily,
+                reason: lhsReason
+            ),
+            .requestRouteUnsupported(
+                modelID: rhsModelID,
+                workerFamily: rhsWorkerFamily,
+                reason: rhsReason
+            )
+        ):
+            return lhsModelID == rhsModelID &&
+                lhsWorkerFamily == rhsWorkerFamily &&
+                lhsReason == rhsReason
         default:
             return false
         }
@@ -1366,10 +1394,56 @@ private func mergeModelSpec(
     if resolved.modelID.isEmpty {
         resolved.modelID = fallback.modelID
     }
+    if resolved.requestRoutes.isEmpty {
+        resolved.requestRoutes = fallback.requestRoutes
+    }
     for (key, value) in fallback.ext where resolved.ext[key] == nil {
         resolved.ext[key] = value
     }
     return resolved
+}
+
+private func validateRequestRoutes(
+    for spec: Melix_Worker_V1_ModelSpec,
+    workerFamily: Melix_Worker_V1_WorkerFamily
+) throws {
+    let matchingRoutes = spec.requestRoutes.filter { route in
+        route.workerFamily == workerFamily
+    }
+    guard !matchingRoutes.isEmpty else {
+        throw WorkerRuntimeRegistryError.requestRouteUnsupported(
+            modelID: spec.modelID,
+            workerFamily: workerFamily,
+            reason: "worker_family_mismatch"
+        )
+    }
+    if workerFamily == .text {
+        guard matchingRoutes.contains(where: { route in
+            route.task == .generateText
+                && Set(route.supportedModalities) == [.text]
+                && route.requiresAnyModality.isEmpty
+                && !route.supportsNativeVideo
+        }) else {
+            throw WorkerRuntimeRegistryError.requestRouteUnsupported(
+                modelID: spec.modelID,
+                workerFamily: workerFamily,
+                reason: "no_route_for_modalities"
+            )
+        }
+    }
+    if workerFamily == .vision {
+        guard matchingRoutes.contains(where: { route in
+            route.task == .generateMultimodal
+                && route.supportedModalities.contains(.image)
+                && route.requiresAnyModality.contains(where: { $0 == .image || $0 == .video })
+        }) else {
+            throw WorkerRuntimeRegistryError.requestRouteUnsupported(
+                modelID: spec.modelID,
+                workerFamily: workerFamily,
+                reason: "no_route_for_modalities"
+            )
+        }
+    }
 }
 
 private func speculativeDraftCompatibilityIssue(
@@ -1499,4 +1573,51 @@ private func sanitizeHandleComponent(_ raw: String) -> String {
         }
     }
     return String(normalized.prefix(24))
+}
+
+private func applyRuntimeStatsOverlay(
+    _ overlay: Melix_Worker_V1_RuntimeStats,
+    to stats: inout Melix_Worker_V1_RuntimeStats
+) {
+    if !overlay.lastProbeKind.isEmpty {
+        stats.lastProbeKind = overlay.lastProbeKind
+    }
+    if overlay.lastPreprocessLatencyMs > 0 {
+        stats.lastPreprocessLatencyMs = overlay.lastPreprocessLatencyMs
+    }
+    if overlay.lastPreprocessInputBytes > 0 {
+        stats.lastPreprocessInputBytes = overlay.lastPreprocessInputBytes
+    }
+    if overlay.lastPreprocessPeakMemoryBytes > 0 {
+        stats.lastPreprocessPeakMemoryBytes = overlay.lastPreprocessPeakMemoryBytes
+    }
+    if overlay.lastFirstTokenLatencyMs > 0 {
+        stats.lastFirstTokenLatencyMs = overlay.lastFirstTokenLatencyMs
+    }
+    if overlay.lastVideoEffectiveFrameCount > 0 {
+        stats.lastVideoEffectiveFrameCount = overlay.lastVideoEffectiveFrameCount
+    }
+    if overlay.lastVideoRequestedFrameBudget > 0 {
+        stats.lastVideoRequestedFrameBudget = overlay.lastVideoRequestedFrameBudget
+    }
+    if overlay.lastVideoWindowMs > 0 {
+        stats.lastVideoWindowMs = overlay.lastVideoWindowMs
+    }
+    if overlay.lastTempMediaArtifactCount > 0 {
+        stats.lastTempMediaArtifactCount = overlay.lastTempMediaArtifactCount
+    }
+    if overlay.lastTempMediaArtifactBytes > 0 {
+        stats.lastTempMediaArtifactBytes = overlay.lastTempMediaArtifactBytes
+    }
+    stats.lastTempMediaCleanupLatencyMs = overlay.lastTempMediaCleanupLatencyMs
+    stats.lastTempMediaCleanupFailureCount = overlay.lastTempMediaCleanupFailureCount
+    if !overlay.lastMultimodalDecodeMode.isEmpty {
+        stats.lastMultimodalDecodeMode = overlay.lastMultimodalDecodeMode
+    }
+    if !overlay.lastMultimodalFallbackReason.isEmpty {
+        stats.lastMultimodalFallbackReason = overlay.lastMultimodalFallbackReason
+    }
+    if !overlay.lastMultimodalDecodeSyncMode.isEmpty {
+        stats.lastMultimodalDecodeSyncMode = overlay.lastMultimodalDecodeSyncMode
+    }
 }

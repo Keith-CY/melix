@@ -53,12 +53,14 @@ class RuntimeLayout:
     runtime_dir: Path
     python_socket_path: Path
     swift_text_worker_socket_path: Path
+    swift_vision_worker_socket_path: Path
     managed_models_dir: Path
     audio_runtime_packs_dir: Path
     model_ops_jobs_root: Path
     evaluation_jobs_root: Path
     control_plane_metrics_path: Path
     swift_text_worker_metrics_path: Path
+    swift_vision_worker_metrics_path: Path
     python_worker_metrics_path: Path
     gateway_config_store_path: Path
     gateway_serving_defaults_store_path: Path
@@ -272,6 +274,13 @@ def compute_runtime_layout(repo_root: Path) -> RuntimeLayout:
             role="swift",
             socket_dir=socket_dir,
         ),
+        swift_vision_worker_socket_path=_configured_path("MELIX_SWIFT_VISION_WORKER_SOCKET_PATH")
+        or default_worker_socket_path(
+            repo_root,
+            service_instance_name=service_instance_name,
+            role="swift-vision",
+            socket_dir=socket_dir,
+        ),
         managed_models_dir=Path(
             os.environ.get("MELIX_MANAGED_MODEL_ROOT", melix_home_dir / "models" / "default-managed")
         ).expanduser(),
@@ -287,6 +296,9 @@ def compute_runtime_layout(repo_root: Path) -> RuntimeLayout:
         ).expanduser(),
         swift_text_worker_metrics_path=Path(
             os.environ.get("MELIX_SWIFT_TEXT_WORKER_METRICS_PATH", runtime_dir / "swift-text-worker-metrics.json")
+        ).expanduser(),
+        swift_vision_worker_metrics_path=Path(
+            os.environ.get("MELIX_SWIFT_VISION_WORKER_METRICS_PATH", runtime_dir / "swift-vision-worker-metrics.json")
         ).expanduser(),
         python_worker_metrics_path=Path(
             os.environ.get("MELIX_PYTHON_WORKER_METRICS_PATH", runtime_dir / "python-worker-metrics.json")
@@ -324,6 +336,7 @@ def ensure_runtime_directories(layout: RuntimeLayout) -> None:
         layout.runtime_dir,
         layout.python_socket_path.parent,
         layout.swift_text_worker_socket_path.parent,
+        layout.swift_vision_worker_socket_path.parent,
         layout.uv_cache_dir,
         layout.swift_home,
         layout.clang_module_cache_path,
@@ -332,12 +345,13 @@ def ensure_runtime_directories(layout: RuntimeLayout) -> None:
         layout.model_ops_jobs_root,
         layout.evaluation_jobs_root,
         layout.runtime_dir / "swift-text-worker-cache",
+        layout.runtime_dir / "swift-vision-worker-cache",
     ):
         directory.mkdir(parents=True, exist_ok=True)
 
 
 def ensure_runtime_is_stopped(layout: RuntimeLayout) -> None:
-    for pid_name in ("swift-text-worker.pid", "python-worker.pid", "control-plane.pid"):
+    for pid_name in ("swift-text-worker.pid", "swift-vision-worker.pid", "python-worker.pid", "control-plane.pid"):
         if (layout.runtime_dir / pid_name).exists():
             raise RuntimeError(
                 f"Melix runtime metadata already exists in {layout.runtime_dir}. Run scripts/dev_down.sh first."
@@ -346,17 +360,25 @@ def ensure_runtime_is_stopped(layout: RuntimeLayout) -> None:
 
 def cleanup_runtime_artifacts(layout: RuntimeLayout) -> None:
     swift_worker_launch_dir = layout.runtime_dir / "swift-text-worker-cwd"
+    swift_vision_worker_launch_dir = layout.runtime_dir / "swift-vision-worker-cwd"
     for artifact in (
         layout.python_socket_path,
         layout.swift_text_worker_socket_path,
+        layout.swift_vision_worker_socket_path,
         layout.control_plane_metrics_path,
         layout.swift_text_worker_metrics_path,
+        layout.swift_vision_worker_metrics_path,
         layout.python_worker_metrics_path,
         swift_worker_launch_dir / "default.metallib",
+        swift_vision_worker_launch_dir / "default.metallib",
     ):
         artifact.unlink(missing_ok=True)
     try:
         swift_worker_launch_dir.rmdir()
+    except OSError:
+        pass
+    try:
+        swift_vision_worker_launch_dir.rmdir()
     except OSError:
         pass
 
@@ -553,7 +575,12 @@ def swift_text_backend_requires_mlx_metallib(backend_mode: str) -> bool:
     return backend_mode.strip().lower() != "deterministic"
 
 
-def prepare_swift_worker_launch_cwd(layout: RuntimeLayout, repo_root: Path) -> Path:
+def prepare_swift_worker_launch_cwd(
+    layout: RuntimeLayout,
+    repo_root: Path,
+    *,
+    worker_name: str = "swift-text-worker",
+) -> Path:
     if not swift_text_backend_requires_mlx_metallib(layout.swift_text_worker_backend_mode):
         return repo_root
 
@@ -563,7 +590,7 @@ def prepare_swift_worker_launch_cwd(layout: RuntimeLayout, repo_root: Path) -> P
     if metallib_path is None:
         return repo_root
 
-    launch_dir = layout.runtime_dir / "swift-text-worker-cwd"
+    launch_dir = layout.runtime_dir / f"{worker_name}-cwd"
     launch_dir.mkdir(parents=True, exist_ok=True)
     default_metallib_path = launch_dir / "default.metallib"
     default_metallib_path.unlink(missing_ok=True)
@@ -680,11 +707,13 @@ def write_runtime_environment(layout: RuntimeLayout) -> Path:
         "MELIX_EVALUATION_JOBS_ROOT": os.fspath(layout.evaluation_jobs_root),
         "MELIX_WORKER_SOCKET_PATH": os.fspath(layout.python_socket_path),
         "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": os.fspath(layout.swift_text_worker_socket_path),
+        "MELIX_SWIFT_VISION_WORKER_SOCKET_PATH": os.fspath(layout.swift_vision_worker_socket_path),
         "MELIX_HTTP_PORT": layout.http_port,
         "MELIX_BACKEND_MODE": layout.python_backend_mode,
         "MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE": layout.swift_text_worker_backend_mode,
         "MELIX_CONTROL_PLANE_METRICS_PATH": os.fspath(layout.control_plane_metrics_path),
         "MELIX_SWIFT_TEXT_WORKER_METRICS_PATH": os.fspath(layout.swift_text_worker_metrics_path),
+        "MELIX_SWIFT_VISION_WORKER_METRICS_PATH": os.fspath(layout.swift_vision_worker_metrics_path),
         "MELIX_PYTHON_WORKER_METRICS_PATH": os.fspath(layout.python_worker_metrics_path),
         "MELIX_GATEWAY_CONFIG_STORE_PATH": os.fspath(layout.gateway_config_store_path),
         "MELIX_GATEWAY_SERVING_DEFAULTS_STORE_PATH": os.fspath(layout.gateway_serving_defaults_store_path),
@@ -742,6 +771,37 @@ def start_stack(options: DevUpOptions) -> None:
         python_executable=layout.python_bridge_executable,
     )
 
+    swift_vision_cwd = prepare_swift_worker_launch_cwd(layout, repo_root, worker_name="swift-vision-worker")
+    swift_vision_pid = spawn_background_process(
+        cwd=swift_vision_cwd,
+        log_path=layout.runtime_dir / "swift-vision-worker.log",
+        env_overrides={
+            "MELIX_SWIFT_WORKER_FAMILY": "vision",
+            "MELIX_SWIFT_VISION_WORKER_ID": "swift-vision-worker-001",
+            "MELIX_SWIFT_VISION_WORKER_SOCKET_PATH": os.fspath(layout.swift_vision_worker_socket_path),
+            "MELIX_SWIFT_VISION_WORKER_BACKEND_MODE": "deterministic",
+            "MELIX_SWIFT_VISION_WORKER_METRICS_PATH": os.fspath(layout.swift_vision_worker_metrics_path),
+            "MELIX_SWIFT_VISION_WORKER_CACHE_ROOT": os.fspath(layout.runtime_dir / "swift-vision-worker-cache"),
+            "MELIX_SWIFT_VISION_PAYLOAD_RECEIPT_PATH": os.fspath(
+                layout.runtime_dir / "receipts" / "vision-payload.jsonl"
+            ),
+            "MELIX_SWIFT_TEXT_WORKER_STARTUP_T0_NS": str(time.perf_counter_ns()),
+            "MELIX_DEV_VLM_MODEL_PATH": os.environ.get("MELIX_DEV_VLM_MODEL_PATH", ""),
+            "HOME": os.fspath(layout.swift_home),
+            "CLANG_MODULE_CACHE_PATH": os.fspath(layout.clang_module_cache_path),
+            **optional_parent_environment_exports(SWIFT_OPTIONAL_PARENT_ENV),
+        },
+        command=swift_text_command,
+    )
+    write_pid_file(layout.runtime_dir / "swift-vision-worker.pid", swift_vision_pid)
+    run_wait_for_worker_ready(
+        repo_root,
+        uv_cache_dir=layout.uv_cache_dir,
+        socket_path=layout.swift_vision_worker_socket_path,
+        output_path=layout.runtime_dir / "swift-vision-worker.ready.log",
+        python_executable=layout.python_bridge_executable,
+    )
+
     python_worker_pid = spawn_background_process(
         cwd=repo_root,
         log_path=layout.runtime_dir / "python-worker.log",
@@ -787,6 +847,7 @@ def start_stack(options: DevUpOptions) -> None:
             "MELIX_HOME": os.fspath(layout.melix_home_dir),
             "MELIX_WORKER_SOCKET_PATH": os.fspath(layout.python_socket_path),
             "MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH": os.fspath(layout.swift_text_worker_socket_path),
+            "MELIX_SWIFT_VISION_WORKER_SOCKET_PATH": os.fspath(layout.swift_vision_worker_socket_path),
             "MELIX_REPO_ROOT": os.fspath(repo_root),
             "MELIX_CONTROL_PLANE_METRICS_PATH": os.fspath(layout.control_plane_metrics_path),
             "MELIX_MANAGED_MODEL_ROOT": os.fspath(layout.managed_models_dir),
@@ -815,9 +876,11 @@ def start_stack(options: DevUpOptions) -> None:
     print("Melix local stack is ready.")
     print(f"HTTP: http://127.0.0.1:{layout.http_port}")
     print(f"Swift text worker socket: {layout.swift_text_worker_socket_path}")
+    print(f"Swift vision worker socket: {layout.swift_vision_worker_socket_path}")
     print(f"Python compatibility worker socket: {layout.python_socket_path}")
     print(f"Control plane metrics: {layout.control_plane_metrics_path}")
     print(f"Swift text worker metrics: {layout.swift_text_worker_metrics_path}")
+    print(f"Swift vision worker metrics: {layout.swift_vision_worker_metrics_path}")
     print(f"Python worker metrics: {layout.python_worker_metrics_path}")
     print(f"Runtime env file: {env_path}")
     if layout.service_instance_name:

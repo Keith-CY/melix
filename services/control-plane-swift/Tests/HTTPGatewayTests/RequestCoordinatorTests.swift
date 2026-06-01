@@ -471,26 +471,31 @@ struct RequestCoordinatorTests {
     func multimodalVisionRequestsUseBackgroundLanes() async throws {
         let visionClient = BlockingWorkerClient()
         let schedulerReadModel = SchedulerReadModel()
-        let catalog = ModelCatalog(seedModels: [ModelCatalog.devOCRModel()])
-        _ = await catalog.loadModel(id: "melix-dev-ocr", dispatchHandle: "melix-dev-ocr::python")
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devVLMModel()])
+        _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::swift-vision")
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: BlockingWorkerClient(),
-                pythonCompatibilityClient: visionClient,
+                visionClient: visionClient,
                 modelCatalog: catalog
             ),
             abortRegistry: AbortRegistry(),
-            schedulerReadModel: schedulerReadModel
+            schedulerReadModel: schedulerReadModel,
+            modelCatalog: catalog
         )
 
         let execution = try await coordinator.startChatCompletion(
-            makeTranslatedChatRequest(requestID: "req-ocr", modelID: "melix-dev-ocr")
+            makeTranslatedChatRequest(
+                requestID: "req-vlm-background",
+                modelID: "melix-dev-vlm",
+                messages: [makeWorkerVisionMessage(text: "Summarize the image.", imageBytes: Data("vision fixture".utf8))]
+            )
         )
 
         let queuedOrAdmitted: Melix_Controlplane_V1_RequestProgressEvent?
         if let admitted = await waitForProgress(
             schedulerReadModel: schedulerReadModel,
-            requestID: "req-ocr",
+            requestID: "req-vlm-background",
             phase: .requestAdmitted,
             lane: "multimodal.vision.background"
         ) {
@@ -498,7 +503,7 @@ struct RequestCoordinatorTests {
         } else {
             queuedOrAdmitted = await waitForProgress(
                 schedulerReadModel: schedulerReadModel,
-                requestID: "req-ocr",
+                requestID: "req-vlm-background",
                 phase: .requestQueued,
                 lane: "multimodal.vision.background"
             )
@@ -506,7 +511,8 @@ struct RequestCoordinatorTests {
 
         #expect(queuedOrAdmitted?.lane == "multimodal.vision.background")
 
-        #expect(try await coordinator.cancel(requestID: "req-ocr"))
+        #expect(await visionClient.generatedRequestIDs == ["req-vlm-background"])
+        #expect(try await coordinator.cancel(requestID: "req-vlm-background"))
         let consumer = Task {
             do {
                 for try await _ in execution.stream {}
@@ -525,7 +531,7 @@ struct RequestCoordinatorTests {
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: BlockingWorkerClient(),
-                pythonCompatibilityClient: workerClient,
+                visionClient: workerClient,
                 modelCatalog: catalog
             ),
             abortRegistry: AbortRegistry(),
@@ -597,6 +603,53 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["scheduler.prefill_chunk_count", default: -1] >= 1)
     }
 
+    @Test("route selection receipts record concrete Swift worker instance selection")
+    func routeSelectionReceiptsRecordConcreteSwiftWorkerInstanceSelection() async throws {
+        let workerClient = BlockingWorkerClient()
+        let metricsStore = MetricsStore()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-route-receipt-\(UUID().uuidString)", isDirectory: true)
+        let receiptPath = directory.appendingPathComponent("route-selection.jsonl").path
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            metricsStore: metricsStore,
+            routeSelectionReceiptPath: receiptPath
+        )
+
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(requestID: "req-route-receipt")
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {}
+            } catch {}
+        }
+
+        #expect(await workerClient.generatedRequestIDs == ["req-route-receipt"])
+        #expect(try await coordinator.cancel(requestID: "req-route-receipt"))
+        _ = await consumer.result
+
+        let contents = try String(contentsOfFile: receiptPath, encoding: .utf8)
+        let firstLine = try #require(contents.split(separator: "\n").first)
+        let payload = try #require(
+            JSONSerialization.jsonObject(with: Data(firstLine.utf8)) as? [String: Any]
+        )
+        let selectedRoute = try #require(payload["selected_route"] as? [String: Any])
+        let metrics = await metricsStore.snapshot()
+
+        #expect(payload["request_id"] as? String == "req-route-receipt")
+        #expect(payload["selected_worker_instance_id"] as? String == "swift-text-worker")
+        #expect(payload["selection_reason"] as? String == "only_ready_candidate")
+        #expect(selectedRoute["worker_family"] as? String == "text")
+        #expect(selectedRoute["task"] as? String == "generate_text")
+        #expect(payload["request_modalities"] as? [String] == ["text"])
+        #expect(metrics.values["scheduler.route_selection_receipt_emitted", default: 0] == 1)
+    }
+
     @Test("python text compatibility sessions use generate instead of phase-aware prefill")
     func pythonTextCompatibilitySessionsUseGenerateInsteadOfPhaseAwarePrefill() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -610,6 +663,7 @@ struct RequestCoordinatorTests {
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: BlockingWorkerClient(),
+                visionClient: workerClient,
                 pythonCompatibilityClient: workerClient,
                 modelCatalog: catalog
             ),
@@ -690,6 +744,7 @@ struct RequestCoordinatorTests {
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: BlockingWorkerClient(),
+                visionClient: workerClient,
                 pythonCompatibilityClient: workerClient,
                 modelCatalog: catalog
             ),
@@ -758,6 +813,7 @@ struct RequestCoordinatorTests {
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: BlockingWorkerClient(),
+                visionClient: workerClient,
                 pythonCompatibilityClient: workerClient,
                 modelCatalog: catalog
             ),
@@ -817,6 +873,7 @@ struct RequestCoordinatorTests {
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: BlockingWorkerClient(),
+                visionClient: workerClient,
                 pythonCompatibilityClient: workerClient,
                 modelCatalog: catalog
             ),
@@ -861,15 +918,22 @@ struct RequestCoordinatorTests {
     @Test("video-bearing VLM requests stay dispatchable during ingress-only rollout")
     func videoBearingVLMRequestsStayDispatchableDuringIngressOnlyRollout() async throws {
         let workerClient = BlockingWorkerClient()
+        let catalog = ModelCatalog(seedModels: [ModelCatalog.devVLMModel()])
+        _ = await catalog.loadModel(id: "melix-dev-vlm", dispatchHandle: "melix-dev-vlm::swift-vision")
         let coordinator = RequestCoordinator(
-            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
-            abortRegistry: AbortRegistry()
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: BlockingWorkerClient(),
+                visionClient: workerClient,
+                modelCatalog: catalog
+            ),
+            abortRegistry: AbortRegistry(),
+            modelCatalog: catalog
         )
 
         let execution = try await coordinator.startChatCompletion(
             makeTranslatedChatRequest(
                 requestID: "req-video-ingress",
-                modelID: "melix-dev-text",
+                modelID: "melix-dev-vlm",
                 messages: [makeWorkerVideoMessage(text: "Summarize the clip.", videoBytes: Data("video fixture".utf8))]
             )
         )
@@ -965,6 +1029,7 @@ struct RequestCoordinatorTests {
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: BlockingWorkerClient(),
+                visionClient: workerClient,
                 pythonCompatibilityClient: workerClient,
                 modelCatalog: catalog
             ),
@@ -974,13 +1039,22 @@ struct RequestCoordinatorTests {
         )
 
         let execution = try await coordinator.startChatCompletion(
-            makeTranslatedChatRequest(requestID: "req-ocr-metrics", modelID: "melix-dev-ocr")
+            makeTranslatedChatRequest(
+                requestID: "req-ocr-metrics",
+                modelID: "melix-dev-ocr",
+                messages: [makeWorkerVisionMessage(text: "Extract text.", imageBytes: Data("ocr fixture".utf8))]
+            )
         )
         let consumer = Task {
             for try await _ in execution.stream {}
         }
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.emitDecodeStarted(
+            requestID: "req-ocr-metrics",
+            decodeHandle: decodeRequest.decodeHandle
+        )
         await workerClient.emitToken(requestID: "req-ocr-metrics", text: "ocr")
-        await workerClient.finish(requestID: "req-ocr-metrics")
+        await workerClient.finishDecode(requestID: "req-ocr-metrics", assistantText: "ocr")
         _ = try await consumer.value
 
         let metrics = await metricsStore.snapshot()
@@ -1063,6 +1137,7 @@ struct RequestCoordinatorTests {
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: BlockingWorkerClient(),
+                visionClient: workerClient,
                 pythonCompatibilityClient: workerClient,
                 modelCatalog: catalog
             ),
@@ -1072,13 +1147,22 @@ struct RequestCoordinatorTests {
         )
 
         let execution = try await coordinator.startChatCompletion(
-            makeTranslatedChatRequest(requestID: "req-vlm-metrics", modelID: "melix-dev-vlm")
+            makeTranslatedChatRequest(
+                requestID: "req-vlm-metrics",
+                modelID: "melix-dev-vlm",
+                messages: [makeWorkerVisionMessage(text: "Summarize.", imageBytes: Data("vision fixture".utf8))]
+            )
         )
         let consumer = Task {
             for try await _ in execution.stream {}
         }
+        let decodeRequest = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        await workerClient.emitDecodeStarted(
+            requestID: "req-vlm-metrics",
+            decodeHandle: decodeRequest.decodeHandle
+        )
         await workerClient.emitToken(requestID: "req-vlm-metrics", text: "vlm")
-        await workerClient.finish(requestID: "req-vlm-metrics")
+        await workerClient.finishDecode(requestID: "req-vlm-metrics", assistantText: "vlm")
         _ = try await consumer.value
 
         let metrics = await metricsStore.snapshot()
@@ -1095,11 +1179,6 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["vision.cache_memory_bytes", default: -1] == 2048)
         #expect(metrics.values["vision.cache_hit_rate", default: -1] == 50)
         #expect(metrics.values["cache.memory_bytes", default: -1] == 2048)
-        #expect(metrics.values["python_worker.generation_stream_owner_mode_code", default: -1] == 2)
-        #expect(metrics.values["python_worker.worker_thread_init_latency_ms", default: -1] == 4)
-        #expect(metrics.values["python_worker.stream_sync_fallback_count", default: -1] == 2)
-        #expect(metrics.values["worker.model_load_trust_policy_resolution_ms", default: -1] == 1.25)
-        #expect(metrics.values["worker.model_load_trust_blocked_count", default: -1] == 3)
         #expect(metrics.values["vision.multimodal_decode_mode_code", default: -1] == 7)
         #expect(metrics.values["vision.multimodal_fallback_reason_code", default: -1] == 0)
         #expect(metrics.values["vision.multimodal_decode_sync_mode_code", default: -1] == 4)
@@ -1132,7 +1211,7 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["scheduler.multimodal_continuous_batch_effective_capacity", default: -1] == 1)
         #expect(metrics.values["scheduler.multimodal_continuous_batch_enabled", default: -1] == 0)
         #expect(metrics.values["scheduler.multimodal_continuous_batch_blocked_count", default: -1] == 1)
-        #expect(metrics.values["scheduler.multimodal_continuous_batch_blocked_reason_code", default: -1] == 2)
+        #expect(metrics.values["scheduler.multimodal_continuous_batch_blocked_reason_code", default: -1] == 0)
     }
 
     @Test("text-only cooperative python VLM requests can enter multimodal continuous batch admission")
@@ -1148,6 +1227,7 @@ struct RequestCoordinatorTests {
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: BlockingWorkerClient(),
+                visionClient: workerClient,
                 pythonCompatibilityClient: workerClient,
                 modelCatalog: catalog
             ),
@@ -1231,6 +1311,7 @@ struct RequestCoordinatorTests {
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: BlockingWorkerClient(),
+                visionClient: workerClient,
                 pythonCompatibilityClient: workerClient,
                 modelCatalog: catalog
             ),
@@ -1313,6 +1394,7 @@ struct RequestCoordinatorTests {
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: BlockingWorkerClient(),
+                visionClient: workerClient,
                 pythonCompatibilityClient: workerClient,
                 modelCatalog: catalog
             ),
@@ -1450,6 +1532,7 @@ struct RequestCoordinatorTests {
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: BlockingWorkerClient(),
+                visionClient: workerClient,
                 pythonCompatibilityClient: workerClient,
                 modelCatalog: catalog
             ),
@@ -1945,6 +2028,7 @@ struct RequestCoordinatorTests {
         let coordinator = RequestCoordinator(
             workerRegistry: WorkerRegistry(
                 defaultTextClient: BlockingWorkerClient(),
+                visionClient: workerClient,
                 pythonCompatibilityClient: workerClient,
                 modelCatalog: catalog
             ),

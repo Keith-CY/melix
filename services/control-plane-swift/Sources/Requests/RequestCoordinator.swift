@@ -5,6 +5,7 @@ import MelixWorkerProtocol
 public enum RequestCoordinatorError: Error, Equatable {
     case requestAlreadyActive
     case workerUnavailable
+    case routeNotSupported(Melix_Controlplane_V1_ErrorStatus)
     case requestNotResumable
     case unsupportedAcceleration(
         reason: Melix_Controlplane_V1_UnsupportedCapabilityReason,
@@ -432,6 +433,8 @@ private struct GatewaySpeculativeExecutionDefaults: Sendable {
 private struct SchedulingPlan: Sendable {
     let translatedRequest: TranslatedChatRequest
     let routeKind: WorkerRouteKind
+    let routeSelectionReceipt: RouteSelectionReceipt
+    let workerClient: any WorkerRoutingClient
     let admissionLane: String
     let prefillLane: String
     let decodeLane: String
@@ -448,6 +451,11 @@ private struct SchedulingPlan: Sendable {
 private struct ModelAccelerationResolution: Sendable {
     let request: TranslatedChatRequest
     let accelerationRefusal: AccelerationReceiptValidation?
+}
+
+private struct RequestRouteRequest: Sendable, Equatable {
+    let task: Melix_Controlplane_V1_InferenceTask
+    let modalities: Set<Melix_Controlplane_V1_RouteModality>
 }
 
 private struct StructuredOutputValidationEvent: Sendable {
@@ -610,6 +618,7 @@ public actor RequestCoordinator {
     private let sessionGraphStore: SessionGraphStore?
     private let reasoningContinuityStore: ReasoningContinuityStore?
     private let cacheMetadataStore: CacheMetadataStore?
+    private let routeSelectionReceiptPath: String?
     private let now: @Sendable () -> Date
     private let lifecyclePolicy: ConnectionLifecyclePolicy
     private var activeWorkerClients: [String: any WorkerClient]
@@ -640,6 +649,7 @@ public actor RequestCoordinator {
         sessionGraphStore: SessionGraphStore? = nil,
         reasoningContinuityStore: ReasoningContinuityStore? = ReasoningContinuityStore(),
         cacheMetadataStore: CacheMetadataStore? = nil,
+        routeSelectionReceiptPath: String? = ProcessInfo.processInfo.environment["MELIX_ROUTE_SELECTION_RECEIPT_PATH"],
         lifecyclePolicy: ConnectionLifecyclePolicy = ConnectionLifecyclePolicy.fromEnvironment(),
         now: @escaping @Sendable () -> Date = Date.init
     ) {
@@ -652,6 +662,8 @@ public actor RequestCoordinator {
         self.sessionGraphStore = sessionGraphStore
         self.reasoningContinuityStore = reasoningContinuityStore
         self.cacheMetadataStore = cacheMetadataStore
+        let trimmedReceiptPath = routeSelectionReceiptPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.routeSelectionReceiptPath = trimmedReceiptPath.isEmpty ? nil : trimmedReceiptPath
         self.lifecyclePolicy = lifecyclePolicy
         self.now = now
         self.activeWorkerClients = [:]
@@ -754,7 +766,7 @@ public actor RequestCoordinator {
             throw RequestCoordinatorError.workerUnavailable
         }
         let requestMetricStartedAt = requestStartedAt ?? now()
-        let plan = await resolvedSchedulingPlan(translatedRequest)
+        let plan = try await resolvedSchedulingPlan(translatedRequest)
         let request = plan.translatedRequest
         if let accelerationRefusal = plan.accelerationRefusal {
             await metricsStore.increment("control_plane.acceleration_refusal_count")
@@ -771,6 +783,7 @@ public actor RequestCoordinator {
         }
         requestPlans[request.requestID] = plan
         await recordSchedulingMetrics(for: plan)
+        appendRouteSelectionReceipt(plan.routeSelectionReceipt)
         await hydrateSessionGraph(for: request.workerRequest.execution.id)
         let lane = plan.admissionLane
         let priority = request.workerRequest.execution.scheduling.priority
@@ -793,20 +806,7 @@ public actor RequestCoordinator {
             queuePosition: initialQueuePosition
         )
         let routeStartedAt = now()
-        let routedWorkerClient = await workerRegistry.client(for: plan.routeKind)
-        let fallbackWorkerClient = routedWorkerClient == nil
-            ? await workerRegistry.client(forModelID: request.modelID)
-            : nil
-        guard let workerClient = routedWorkerClient ?? fallbackWorkerClient else {
-            await abortRegistry.finish(requestID: request.requestID)
-            requestPlans.removeValue(forKey: request.requestID)
-            _ = await schedulerReadModel.recordRejected(
-                requestID: request.requestID,
-                laneHint: lane,
-                priority: priority
-            )
-            throw RequestCoordinatorError.workerUnavailable
-        }
+        let workerClient = plan.workerClient
         await metricsStore.set(
             now().timeIntervalSince(routeStartedAt) * 1000,
             forKey: "control_plane.worker_route_ms"
@@ -1676,13 +1676,33 @@ public actor RequestCoordinator {
 
     private func resolvedSchedulingPlan(
         _ translatedRequest: TranslatedChatRequest
-    ) async -> SchedulingPlan {
+    ) async throws -> SchedulingPlan {
         let recoveredRequest = await resolvedRecoveryRequest(translatedRequest)
         let accelerationResolution = await resolvedModelAccelerationRequest(recoveredRequest)
         let request = accelerationResolution.request
         let accelerationRefusal = accelerationResolution.accelerationRefusal
         let batchingDefaults = GatewayBatchingExecutionDefaults(executionExt: request.workerRequest.execution.ext)
-        let routeKind = await workerRegistry.route(forModelID: request.modelID) ?? .swiftText
+        let routeRequest = requestRouteRequest(for: request.workerRequest)
+        let routeResolution = await workerRegistry.admitInferenceRoute(
+            requestID: request.requestID,
+            modelID: request.modelID,
+            task: routeRequest.task,
+            requestModalities: routeRequest.modalities,
+            preferredWorkerInstanceID: request.workerRequest.execution.ext["melix.route.preferred_worker_instance_id"],
+            selectedAtUnixMs: Int64(now().timeIntervalSince1970 * 1_000),
+            checkReadiness: false
+        )
+        let routeSelection: RequestRouteSelection
+        switch routeResolution {
+        case .selected(let selection):
+            routeSelection = selection
+        case .rejected(let error):
+            throw RequestCoordinatorError.routeNotSupported(error)
+        }
+        guard let routeAdmission = await workerRegistry.admission(for: routeSelection) else {
+            throw RequestCoordinatorError.routeNotSupported(routeFamilyUnavailableError(from: routeSelection, request: request))
+        }
+        let routeKind = routeAdmission.routeKind
         let phaseAwareEligible = await canUsePhaseAwareExecution(
             routeKind: routeKind,
             modelID: request.modelID,
@@ -1699,6 +1719,8 @@ public actor RequestCoordinator {
             return SchedulingPlan(
                 translatedRequest: request,
                 routeKind: routeKind,
+                routeSelectionReceipt: routeSelection.receipt,
+                workerClient: routeAdmission.client,
                 admissionLane: lane,
                 prefillLane: lane,
                 decodeLane: lane,
@@ -1739,6 +1761,8 @@ public actor RequestCoordinator {
             return SchedulingPlan(
                 translatedRequest: request,
                 routeKind: routeKind,
+                routeSelectionReceipt: routeSelection.receipt,
+                workerClient: routeAdmission.client,
                 admissionLane: prefillLane,
                 prefillLane: prefillLane,
                 decodeLane: decodeLane,
@@ -1814,6 +1838,8 @@ public actor RequestCoordinator {
         return SchedulingPlan(
             translatedRequest: request,
             routeKind: routeKind,
+            routeSelectionReceipt: routeSelection.receipt,
+            workerClient: routeAdmission.client,
             admissionLane: prefillLane,
             prefillLane: prefillLane,
             decodeLane: decodeLane,
@@ -1940,6 +1966,35 @@ public actor RequestCoordinator {
             ),
             accelerationRefusal: accelerationRefusal
         )
+    }
+
+    private func routeFamilyUnavailableError(
+        from selection: RequestRouteSelection,
+        request: TranslatedChatRequest
+    ) -> Melix_Controlplane_V1_ErrorStatus {
+        var error = Melix_Controlplane_V1_ErrorStatus()
+        error.code = "route_not_supported"
+        error.retriable = false
+        error.message = "Request route admission failed for model \(request.modelID) with reason worker_family_unavailable."
+        error.details = [
+            "model_id": request.modelID,
+            "task": RequestRouteResolver.canonicalName(selection.route.task),
+            "requested_modalities": selection.receipt.requestModalities
+                .map(RequestRouteResolver.canonicalName)
+                .joined(separator: ","),
+            "required_modality_suite": selection.route.requiresAnyModality
+                .filter { $0 != .unspecified }
+                .map(RequestRouteResolver.canonicalName)
+                .joined(separator: ","),
+            "available_routes": "",
+            "available_modality_suites": selection.route.supportedModalities
+                .filter { $0 != .unspecified }
+                .map(RequestRouteResolver.canonicalName)
+                .joined(separator: "+"),
+            "worker_family_candidates": RequestRouteResolver.canonicalName(selection.route.workerFamily),
+            "reason": RequestRouteRejectionReason.workerFamilyUnavailable.rawValue,
+        ]
+        return error
     }
 
     private func activeKVQuantProfile(from rawProfileID: String) -> String {
@@ -2458,7 +2513,66 @@ public actor RequestCoordinator {
             plan.cacheRouteClass == .cold ? 0 : 1,
             forKey: "scheduler.warm_route_preferred"
         )
+        await metricsStore.set(
+            Double(plan.routeSelectionReceipt.selectedWorkerInstanceID.isEmpty ? 0 : 1),
+            forKey: "scheduler.route_selection_receipt_emitted"
+        )
         await recordMultimodalBatchingMetrics(for: plan)
+    }
+
+    private func appendRouteSelectionReceipt(_ receipt: RouteSelectionReceipt) {
+        guard let routeSelectionReceiptPath else {
+            return
+        }
+        let payload: [String: Any] = [
+            "request_id": receipt.requestID,
+            "model_id": receipt.modelID,
+            "task": RequestRouteResolver.canonicalName(receipt.task),
+            "request_modalities": receipt.requestModalities.map(RequestRouteResolver.canonicalName),
+            "selected_route": [
+                "task": RequestRouteResolver.canonicalName(receipt.selectedRoute.task),
+                "supported_modalities": receipt.selectedRoute.supportedModalities
+                    .filter { $0 != .unspecified }
+                    .map(RequestRouteResolver.canonicalName),
+                "requires_any_modality": receipt.selectedRoute.requiresAnyModality
+                    .filter { $0 != .unspecified }
+                    .map(RequestRouteResolver.canonicalName),
+                "worker_family": RequestRouteResolver.canonicalName(receipt.selectedRoute.workerFamily),
+                "model_family_target": receipt.selectedRoute.modelFamilyTarget,
+                "supports_native_video": receipt.selectedRoute.supportsNativeVideo,
+                "is_text_companion": receipt.selectedRoute.isTextCompanion,
+            ],
+            "selected_worker_instance_id": receipt.selectedWorkerInstanceID,
+            "selection_reason": receipt.selectionReason.rawValue,
+            "preferred_worker_instance_id": receipt.preferredWorkerInstanceID,
+            "preferred_instance_used": receipt.preferredInstanceUsed,
+            "active_requests_snapshot": receipt.activeRequestsSnapshot,
+            "selection_snapshot_id": receipt.selectionSnapshotID,
+            "selected_at_unix_ms": receipt.selectedAtUnixMs,
+        ]
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else {
+            return
+        }
+        let url = URL(fileURLWithPath: routeSelectionReceiptPath)
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        if !FileManager.default.fileExists(atPath: routeSelectionReceiptPath) {
+            FileManager.default.createFile(atPath: routeSelectionReceiptPath, contents: nil)
+        }
+        guard let handle = try? FileHandle(forWritingTo: url) else {
+            return
+        }
+        defer { try? handle.close() }
+        do {
+            try handle.seekToEnd()
+            try handle.write(contentsOf: data)
+            try handle.write(contentsOf: Data("\n".utf8))
+        } catch {
+            return
+        }
     }
 
     private func recordMultimodalBatchingMetrics(for plan: SchedulingPlan) async {
@@ -2724,9 +2838,12 @@ public actor RequestCoordinator {
         }
 
         let stats = runtimeStats.stats
-        await recordPythonWorkerStreamOwnershipMetrics(from: stats, metricsStore: metricsStore)
         switch routeKind {
+        case .swiftVision:
+            await recordVisionRuntimeMetrics(from: stats, metricsStore: metricsStore)
+            await recordPythonVLMRuntimeProbeMetrics(from: stats, metricsStore: metricsStore)
         case .pythonOCR:
+            await recordPythonWorkerStreamOwnershipMetrics(from: stats, metricsStore: metricsStore)
             await metricsStore.set(stats.lastPreprocessLatencyMs, forKey: "vision.preprocess_latency_ms")
             await metricsStore.set(
                 Double(stats.lastPreprocessPeakMemoryBytes),
@@ -2752,50 +2869,11 @@ public actor RequestCoordinator {
             await metricsStore.set(Double(stats.l1CacheBytes), forKey: "vision.cache_memory_bytes")
             await metricsStore.set(stats.l1HitRate * 100, forKey: "vision.cache_hit_rate")
         case .pythonVLM:
-            await metricsStore.set(stats.lastPreprocessLatencyMs, forKey: "vision.preprocess_latency_ms")
-            await metricsStore.set(
-                Double(stats.lastPreprocessPeakMemoryBytes),
-                forKey: "vision.preprocess_peak_memory_bytes"
-            )
-            await metricsStore.set(stats.lastFirstTokenLatencyMs, forKey: "vision.vlm_first_token_ms")
+            await recordPythonWorkerStreamOwnershipMetrics(from: stats, metricsStore: metricsStore)
+            await recordVisionRuntimeMetrics(from: stats, metricsStore: metricsStore)
             await recordPythonVLMRuntimeProbeMetrics(from: stats, metricsStore: metricsStore)
-            await metricsStore.set(
-                Double(stats.lastTempMediaArtifactCount),
-                forKey: "vision.temp_media_artifact_count"
-            )
-            await metricsStore.set(
-                Double(stats.lastTempMediaArtifactBytes),
-                forKey: "vision.temp_media_artifact_bytes"
-            )
-            await metricsStore.set(
-                stats.lastTempMediaCleanupLatencyMs,
-                forKey: "vision.temp_media_cleanup_latency_ms"
-            )
-            await metricsStore.set(
-                Double(stats.lastTempMediaCleanupFailureCount),
-                forKey: "vision.temp_media_cleanup_failure_count"
-            )
-            if stats.lastVideoEffectiveFrameCount > 0 {
-                await metricsStore.set(
-                    Double(stats.lastVideoEffectiveFrameCount),
-                    forKey: "vision.video_frame_count"
-                )
-                await metricsStore.set(
-                    Double(stats.lastVideoRequestedFrameBudget),
-                    forKey: "vision.video_frame_budget"
-                )
-                await metricsStore.set(
-                    Double(stats.lastVideoWindowMs),
-                    forKey: "vision.video_window_ms"
-                )
-                await metricsStore.set(
-                    stats.lastFirstTokenLatencyMs,
-                    forKey: "vision.video_first_token_ms"
-                )
-            }
-            await metricsStore.set(Double(stats.l1CacheBytes), forKey: "vision.cache_memory_bytes")
-            await metricsStore.set(stats.l1HitRate * 100, forKey: "vision.cache_hit_rate")
         case .pythonTranscription:
+            await recordPythonWorkerStreamOwnershipMetrics(from: stats, metricsStore: metricsStore)
             await metricsStore.set(stats.lastPreprocessLatencyMs, forKey: "audio.preprocess_latency_ms")
             await metricsStore.set(
                 Double(stats.lastPreprocessInputBytes),
@@ -2820,6 +2898,7 @@ public actor RequestCoordinator {
                 forKey: "audio.language_fallback_count"
             )
         case .pythonSpeech:
+            await recordPythonWorkerStreamOwnershipMetrics(from: stats, metricsStore: metricsStore)
             await metricsStore.set(stats.lastPreprocessLatencyMs, forKey: "audio.preprocess_latency_ms")
             await metricsStore.set(
                 Double(stats.lastPreprocessInputBytes),
@@ -3034,6 +3113,43 @@ private func resolvedWorkerPrefillStepSize(
         return resolvedPrefillProgressChunkTarget(for: messages)
     }
     return estimatedPromptTokens(for: messages) > 0 ? textWorkerPrefillWindowTargetTokens : 0
+}
+
+private func requestRouteRequest(
+    for request: Melix_Worker_V1_GenerateRequest
+) -> RequestRouteRequest {
+    let modalities = requestModalities(from: request.messages)
+    return RequestRouteRequest(
+        task: modalities.contains(.image) || modalities.contains(.video) || modalities.contains(.audio)
+            ? .generateMultimodal
+            : .generateText,
+        modalities: modalities.isEmpty ? [.text] : modalities
+    )
+}
+
+private func requestModalities(
+    from messages: [Melix_Worker_V1_ChatMessage]
+) -> Set<Melix_Controlplane_V1_RouteModality> {
+    var modalities: Set<Melix_Controlplane_V1_RouteModality> = []
+    for message in messages {
+        for part in message.parts {
+            switch part.part {
+            case .text(let text):
+                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    modalities.insert(.text)
+                }
+            case .imageUri, .imageBytes:
+                modalities.insert(.image)
+            case .audioUri, .audioBytes:
+                modalities.insert(.audio)
+            case .videoUri, .videoBytes:
+                modalities.insert(.video)
+            case nil:
+                break
+            }
+        }
+    }
+    return modalities
 }
 
 private func resolvedPrefillProgressChunkTarget(

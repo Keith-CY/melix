@@ -1295,6 +1295,22 @@ Slice 1 implementation work items:
 10. Add seed fixture manifest entries for the required Text Worker and Vision
     Worker route contract scenarios.
 
+Slice 1 PR status:
+
+- Request route declarations, typed `worker_family` handshake fields, and
+  generated Swift/Python protobuf artifacts are implemented for the Text Worker
+  and Vision Worker route contract path.
+- Control-plane inference admission resolves structured request routes, selects
+  concrete worker instances deterministically, emits route selection receipt
+  metadata, and returns structured admission errors for unsupported routes or
+  unavailable worker families.
+- The Swift Text Worker and Swift Vision Worker share worker-side route
+  validation. The Vision Worker path uses a deterministic Swift runtime for the
+  first real-worker fixture slice and records image/video/OCR receipt and metric
+  surfaces needed by the parity fixtures.
+- Real-model semantic judge acceptance and native-video real-model receipt
+  enforcement remain gated by later slices in this plan.
+
 Current implementation touch points:
 
 - `packages/protocol/schema/worker/v1/common.proto`: add the shared route

@@ -77,7 +77,8 @@ enum OnDemandModelLoader {
         workerRegistry: WorkerRegistry?,
         metricsStore: MetricsStore,
         memoryBudgetBytes: UInt64 = 0,
-        evictBeforeReadyHandle: Bool = false
+        evictBeforeReadyHandle: Bool = false,
+        routeKindOverride: WorkerRouteKind? = nil
     ) async throws -> String {
         try await ensureModelReady(
             modelID: modelID,
@@ -88,7 +89,8 @@ enum OnDemandModelLoader {
             evictBeforeReadyHandle: evictBeforeReadyHandle,
             loadReason: "lazy_text_load",
             metricsPrefix: "text",
-            requiresTextCapability: true
+            requiresTextCapability: true,
+            routeKindOverride: routeKindOverride
         )
     }
 
@@ -102,7 +104,8 @@ enum OnDemandModelLoader {
         loadReason: String = "lazy_model_load",
         metricsPrefix: String = "model",
         requiresTextCapability: Bool = false,
-        summaryOverride: Melix_Controlplane_V1_ModelSummary? = nil
+        summaryOverride: Melix_Controlplane_V1_ModelSummary? = nil,
+        routeKindOverride: WorkerRouteKind? = nil
     ) async throws -> String {
         let resolvedModel = if let summaryOverride {
             summaryOverride
@@ -123,7 +126,12 @@ enum OnDemandModelLoader {
                 metricsStore: metricsStore
             )
         }
-        if let handle = await modelCatalog.dispatchHandle(for: modelID) {
+        if let routeKindOverride {
+            if let handle = await modelCatalog.dispatchHandle(for: modelID, routeKind: routeKindOverride) {
+                _ = await modelCatalog.markModelUsed(id: modelID)
+                return handle
+            }
+        } else if let handle = await modelCatalog.dispatchHandle(for: modelID) {
             _ = await modelCatalog.markModelUsed(id: modelID)
             return handle
         }
@@ -143,12 +151,26 @@ enum OnDemandModelLoader {
             override: memoryBudgetBytes,
             model: model
         )
-        guard let modelSpec = BootstrapWorkerPreparation.modelSpec(for: model) else {
+        guard var modelSpec = BootstrapWorkerPreparation.modelSpec(for: model) else {
             throw OnDemandModelLoadError.modelNotReady
         }
-        guard let workerRegistry,
-              let route = await workerRegistry.route(for: model),
-              let workerClient = await workerRegistry.client(for: route) else {
+        guard let workerRegistry else {
+            throw OnDemandModelLoadError.workerUnavailable
+        }
+        let route: WorkerRouteKind
+        if let routeKindOverride {
+            route = routeKindOverride
+        } else if let inferredRoute = await workerRegistry.route(for: model) {
+            route = inferredRoute
+        } else {
+            throw OnDemandModelLoadError.workerUnavailable
+        }
+        applyRouteOverrideMetadata(route, model: model, to: &modelSpec)
+        if let handle = await modelCatalog.dispatchHandle(for: modelID, routeKind: route) {
+            _ = await modelCatalog.markModelUsed(id: modelID)
+            return handle
+        }
+        guard let workerClient = await workerRegistry.client(for: route) else {
             throw OnDemandModelLoadError.workerUnavailable
         }
         let trustStartedAt = Date()
@@ -245,7 +267,8 @@ enum OnDemandModelLoader {
             loadTrust: response.hasLoadTrust
                 ? ModelLoadTrustPolicyResolver.controlPlanePolicy(from: response.loadTrust, fallback: loadTrustPolicy)
                 : loadTrustPolicy,
-            reason: loadReason
+            reason: loadReason,
+            routeKind: route
         )
 
         let elapsedMs = Date().timeIntervalSince(startedAt) * 1000
@@ -268,6 +291,83 @@ enum OnDemandModelLoader {
         )
 
         return response.modelHandle
+    }
+
+    private static func applyRouteOverrideMetadata(
+        _ route: WorkerRouteKind,
+        model: Melix_Controlplane_V1_ModelSummary,
+        to spec: inout Melix_Worker_V1_ModelSpec
+    ) {
+        spec.ext["melix.capability.route_kind"] = route.metadataIdentifier
+        guard let declaration = routeDeclaration(for: route, model: model) else {
+            return
+        }
+        spec.ext["melix.capability.supported_modalities"] = declaration.supportedModalities
+            .filter { $0 != .unspecified }
+            .map(routeModalityIdentifier)
+            .joined(separator: ",")
+        spec.ext["melix.capability.supported_tasks"] = routeTaskIdentifier(declaration.task)
+        spec.ext["melix.route.model_family_target"] = declaration.modelFamilyTarget
+        spec.ext["melix.route.is_text_companion"] = declaration.isTextCompanion ? "true" : "false"
+    }
+
+    private static func routeDeclaration(
+        for route: WorkerRouteKind,
+        model: Melix_Controlplane_V1_ModelSummary
+    ) -> Melix_Controlplane_V1_RequestRouteDeclaration? {
+        guard let workerFamily = Melix_Controlplane_V1_WorkerFamily(workerRouteKind: route) else {
+            return nil
+        }
+        let candidates = model.requestRoutes.filter { $0.workerFamily == workerFamily }
+        if route == .swiftText {
+            return candidates.first(where: { $0.task == .generateText })
+        }
+        if route == .swiftVision {
+            return candidates.first(where: { $0.task == .generateMultimodal })
+        }
+        return candidates.first
+    }
+
+    private static func routeTaskIdentifier(
+        _ task: Melix_Controlplane_V1_InferenceTask
+    ) -> String {
+        switch task {
+        case .generateText:
+            return "generate"
+        case .generateMultimodal:
+            return "generate_multimodal"
+        case .embedText:
+            return "embed"
+        case .rerankText:
+            return "rerank"
+        case .transcribeAudio:
+            return "transcribe"
+        case .speakText:
+            return "speak"
+        case .imageGenerate:
+            return "image_generate"
+        case .imageEdit:
+            return "image_edit"
+        case .UNRECOGNIZED, .unspecified:
+            return ""
+        }
+    }
+
+    private static func routeModalityIdentifier(
+        _ modality: Melix_Controlplane_V1_RouteModality
+    ) -> String {
+        switch modality {
+        case .text:
+            return "text"
+        case .image:
+            return "image"
+        case .audio:
+            return "audio"
+        case .video:
+            return "video"
+        case .UNRECOGNIZED, .unspecified:
+            return ""
+        }
     }
 
     private static func supportsTextServing(
@@ -425,8 +525,15 @@ enum OnDemandModelLoader {
         workerRegistry: WorkerRegistry?
     ) async -> Melix_Controlplane_V1_ModelSummary {
         guard let workerRegistry,
-              let handle = await modelCatalog.storedDispatchHandle(for: modelID),
-              let workerClient = await workerRegistry.client(forModelID: modelID) else {
+              let route = await workerRegistry.route(for: fallbackSummary) else {
+            return await modelCatalog.recordUnloadSucceeded(id: modelID, reason: reason) ?? fallbackSummary
+        }
+        let routeHandle = await modelCatalog.storedDispatchHandle(for: modelID, routeKind: route)
+        let legacyHandle = routeHandle == nil
+            ? await modelCatalog.storedDispatchHandle(for: modelID)
+            : nil
+        guard let handle = routeHandle ?? legacyHandle,
+              let workerClient = await workerRegistry.client(for: route) else {
             return await modelCatalog.recordUnloadSucceeded(id: modelID, reason: reason) ?? fallbackSummary
         }
 
@@ -488,5 +595,18 @@ enum OnDemandModelLoader {
                 return "_"
             }
         })
+    }
+}
+
+private extension Melix_Controlplane_V1_WorkerFamily {
+    init?(workerRouteKind route: WorkerRouteKind) {
+        switch route {
+        case .swiftText:
+            self = .text
+        case .swiftVision:
+            self = .vision
+        default:
+            return nil
+        }
     }
 }

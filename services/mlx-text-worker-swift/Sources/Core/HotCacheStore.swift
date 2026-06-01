@@ -747,11 +747,43 @@ private func resolveCacheKey(
 private func renderPrompt(
     from messages: [Melix_Worker_V1_ChatMessage]
 ) throws -> String {
-    try messages
-        .map(flattenTextContent(from:))
+    messages
+        .map(renderCachePrompt(from:))
         .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         .filter { !$0.isEmpty }
         .joined(separator: "\n")
+}
+
+private func renderCachePrompt(
+    from message: Melix_Worker_V1_ChatMessage
+) -> String {
+    message.parts.compactMap { part in
+        switch part.part {
+        case .text(let text):
+            return text
+        case .imageUri(let uri):
+            return "image_uri:\(uri)"
+        case .imageBytes(let bytes):
+            return "image_bytes:\(sha256Hex(bytes))"
+        case .audioUri(let uri):
+            return "audio_uri:\(uri)"
+        case .audioBytes(let bytes):
+            return "audio_bytes:\(sha256Hex(bytes))"
+        case .videoUri(let uri):
+            return "video_uri:\(uri)"
+        case .videoBytes(let bytes):
+            return "video_bytes:\(sha256Hex(bytes))"
+        case nil:
+            return nil
+        }
+    }
+    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    .filter { !$0.isEmpty }
+    .joined(separator: "\n")
+}
+
+private func sha256Hex(_ data: Data) -> String {
+    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 }
 
 private func makeBlockTable(

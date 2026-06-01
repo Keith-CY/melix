@@ -25,6 +25,8 @@ message HandshakeResponse {
   string protocol_version = 1;
   string runtime_version = 2;
   RuntimeCapabilities capabilities = 3;
+  WorkerFamily worker_family = 4;
+  string worker_instance_id = 5;
 }
 
 message LoadModelRequest {

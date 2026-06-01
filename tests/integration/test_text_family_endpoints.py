@@ -59,7 +59,6 @@ def _assert_chat_stream(stack: LiveMelixStack, prompt: str) -> None:
 def test_text_generation_endpoint_supports_mistral4_python_compatibility_family_override() -> None:
     stack = LiveMelixStack(
         Path(__file__).resolve().parents[2],
-        start_swift_text_worker=False,
         environment_overrides={
             "MELIX_DEV_TEXT_FAMILY_ID": "mistral4",
             "MELIX_DEV_TEXT_MODEL_PATH": "models/mistral-small-4",
@@ -76,7 +75,6 @@ def test_text_generation_endpoint_supports_mistral4_python_compatibility_family_
 def test_text_generation_endpoint_supports_qwen3moe_family_override() -> None:
     stack = LiveMelixStack(
         Path(__file__).resolve().parents[2],
-        start_swift_text_worker=False,
         environment_overrides={
             "MELIX_DEV_TEXT_FAMILY_ID": "qwen3moe",
             "MELIX_DEV_TEXT_MODEL_PATH": "models/qwen3-moe-128e",
@@ -98,7 +96,6 @@ def test_text_generation_endpoint_supports_deepseek_mla_and_nemotron_h_family_ov
     ):
         stack = LiveMelixStack(
             repo_root,
-            start_swift_text_worker=False,
             environment_overrides={
                 "MELIX_DEV_TEXT_FAMILY_ID": family_id,
                 "MELIX_DEV_TEXT_MODEL_PATH": model_path,

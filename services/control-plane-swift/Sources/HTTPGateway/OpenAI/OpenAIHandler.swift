@@ -2212,7 +2212,12 @@ public struct OpenAIHandler: Sendable {
                 modelID: executionModelID,
                 modelCatalog: modelCatalog,
                 workerRegistry: workerRegistry,
-                metricsStore: metricsStore
+                metricsStore: metricsStore,
+                routeKindOverride: loadRouteKindOverride(
+                    for: executionRequest,
+                    originalModel: originalModel,
+                    resolvedModel: resolvedModel
+                )
             )
         } catch OnDemandModelLoadError.runtimeCacheMissing {
             throw HTTPRequestHandlingError.modelRuntimeMissing
@@ -2454,6 +2459,9 @@ public struct OpenAIHandler: Sendable {
     }
 
     private func mediaServingRouteKind(for model: Melix_Controlplane_V1_ModelSummary) -> WorkerRouteKind? {
+        if model.requestRoutes.contains(where: { $0.task == .generateMultimodal && $0.workerFamily == .vision }) {
+            return .swiftVision
+        }
         if let routeKind = modelRouteKind(for: model) {
             return routeKind
         }
@@ -2468,11 +2476,72 @@ public struct OpenAIHandler: Sendable {
 
     private func mediaServingRouteSupportsTextMedia(_ routeKind: WorkerRouteKind?) -> Bool {
         switch routeKind {
-        case .pythonOCR, .pythonVLM, .pythonTranscription, .pythonSpeech, .pythonImage:
+        case .swiftVision, .pythonOCR, .pythonVLM, .pythonTranscription, .pythonSpeech, .pythonImage:
             return true
         default:
             return false
         }
+    }
+
+    private func loadRouteKindOverride(
+        for request: NormalizedTextRequest,
+        originalModel: Melix_Controlplane_V1_ModelSummary?,
+        resolvedModel: Melix_Controlplane_V1_ModelSummary?
+    ) -> WorkerRouteKind? {
+        let model = resolvedModel ?? originalModel
+        guard let model else {
+            return nil
+        }
+        let modalities = routeModalities(for: request)
+        let task: Melix_Controlplane_V1_InferenceTask = modalities.contains(.image)
+            || modalities.contains(.video)
+            || modalities.contains(.audio)
+            ? .generateMultimodal
+            : .generateText
+        let matchingRoutes = model.requestRoutes.filter { route in
+            route.task == task && routeModalities(modalities, match: route)
+        }
+        guard matchingRoutes.count == 1, let route = matchingRoutes.first else {
+            return nil
+        }
+        return WorkerRouteKind(workerFamily: route.workerFamily)
+    }
+
+    private func routeModalities(
+        for request: NormalizedTextRequest
+    ) -> Set<Melix_Controlplane_V1_RouteModality> {
+        var modalities: Set<Melix_Controlplane_V1_RouteModality> = []
+        for message in request.messages {
+            for part in message.parts {
+                switch part.part {
+                case .text(let text):
+                    if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        modalities.insert(.text)
+                    }
+                case .imageUri, .imageBytes:
+                    modalities.insert(.image)
+                case .audioUri, .audioBytes:
+                    modalities.insert(.audio)
+                case .videoUri, .videoBytes:
+                    modalities.insert(.video)
+                case nil:
+                    break
+                }
+            }
+        }
+        return modalities.isEmpty ? [.text] : modalities
+    }
+
+    private func routeModalities(
+        _ requestModalities: Set<Melix_Controlplane_V1_RouteModality>,
+        match route: Melix_Controlplane_V1_RequestRouteDeclaration
+    ) -> Bool {
+        let supported = Set(route.supportedModalities.filter { $0 != .unspecified })
+        guard requestModalities.isSubset(of: supported) else {
+            return false
+        }
+        let required = Set(route.requiresAnyModality.filter { $0 != .unspecified })
+        return required.isEmpty || !requestModalities.isDisjoint(with: required)
     }
 
     private func gatewayAccelerationMode(
@@ -2732,6 +2801,7 @@ public struct OpenAIHandler: Sendable {
         guard
             let model,
             modelRouteKind(for: model) == .pythonVLM,
+            !hasSwiftTextRequestRoute(model),
             !normalizedRequestContainsNonTextMedia(normalizedRequest)
         else {
             return translated
@@ -2778,6 +2848,12 @@ public struct OpenAIHandler: Sendable {
             workerRequest: workerRequest,
             stream: translated.stream
         )
+    }
+
+    private func hasSwiftTextRequestRoute(_ model: Melix_Controlplane_V1_ModelSummary) -> Bool {
+        model.requestRoutes.contains { route in
+            route.task == .generateText && route.workerFamily == .text
+        }
     }
 
     private func shouldSuppressVLMTextOnlyBatchGeneratorModelToolParser(
@@ -5746,6 +5822,8 @@ private extension RequestCoordinatorError {
             return 409
         case .requestNotResumable:
             return 409
+        case .routeNotSupported:
+            return 400
         case .workerUnavailable:
             return 503
         case .unsupportedAcceleration:
@@ -5759,6 +5837,8 @@ private extension RequestCoordinatorError {
             return "request_already_active"
         case .requestNotResumable:
             return "request_not_resumable"
+        case .routeNotSupported(let error):
+            return error.code.isEmpty ? "route_not_supported" : error.code
         case .workerUnavailable:
             return "worker_unavailable"
         case .unsupportedAcceleration:
@@ -5772,6 +5852,8 @@ private extension RequestCoordinatorError {
             return "A text generation request is already active."
         case .requestNotResumable:
             return "The disconnected request is no longer eligible for resume."
+        case .routeNotSupported(let error):
+            return error.message.isEmpty ? "The requested model route is not supported." : error.message
         case .workerUnavailable:
             return "The worker cannot accept requests."
         case .unsupportedAcceleration(_, let message, _):
@@ -5787,6 +5869,11 @@ private extension RequestCoordinatorError {
         if case .unsupportedAcceleration(let reason, _, let recoveryHint) = self {
             error["unsupported_reason"] = ModelCapabilityReceipts.unsupportedReasonIdentifier(reason)
             error["recovery_hint"] = recoveryHint
+        }
+        if case .routeNotSupported(let status) = self {
+            for (key, value) in status.details {
+                error[key] = value
+            }
         }
         return ["error": error]
     }
