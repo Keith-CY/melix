@@ -91,6 +91,16 @@ public struct SSEStreamWriter: Sendable {
             let task = Task {
                 var emittedDataFrame = false
                 var chatTextSanitizer = ToolCallMarkupSanitizer.StreamingState()
+                var sseWriteTotalMicros = 0.0
+                var sseWriteCallCount = 0.0
+
+                func yieldDataFrame(_ data: Data) {
+                    let startedAt = DispatchTime.now()
+                    continuation.yield(data)
+                    sseWriteTotalMicros += sseElapsedMicros(since: startedAt)
+                    sseWriteCallCount += 1
+                }
+
                 do {
                     for try await event in stream {
                         if !options.includeUsage, case .usageDelta = event.payload {
@@ -107,7 +117,7 @@ public struct SSEStreamWriter: Sendable {
                         }
                         if !Self.shouldSuppressEmptyChatTokenDelta(encodedEvent, shape: shape) {
                             emittedDataFrame = true
-                            continuation.yield(
+                            yieldDataFrame(
                                 encode(
                                     event: encodedEvent,
                                     requestID: requestID,
@@ -120,14 +130,23 @@ public struct SSEStreamWriter: Sendable {
                     }
                 } catch {
                     emittedDataFrame = true
-                    continuation.yield(errorFrame(requestID: requestID, code: "transport_error", message: error.localizedDescription))
+                    yieldDataFrame(
+                        errorFrame(requestID: requestID, code: "transport_error", message: error.localizedDescription)
+                    )
                 }
 
                 if !emittedDataFrame {
-                    continuation.yield(emptyCompletionFrame(requestID: requestID, modelID: modelID, shape: shape))
+                    yieldDataFrame(emptyCompletionFrame(requestID: requestID, modelID: modelID, shape: shape))
                 }
                 keepaliveTask?.cancel()
-                continuation.yield(doneFrame())
+                yieldDataFrame(doneFrame())
+                if let metricsStore, sseWriteCallCount > 0 {
+                    await metricsStore.addMicrosecondTiming(
+                        prefix: "http.sse_write",
+                        totalMicros: sseWriteTotalMicros,
+                        callCount: sseWriteCallCount
+                    )
+                }
                 await completionNotifier.fireIfNeeded()
                 continuation.finish()
             }
@@ -895,4 +914,9 @@ public struct SSEStreamWriter: Sendable {
         let payload = String(decoding: payloadData, as: UTF8.self)
         return Data("event: \(event)\ndata: \(payload)\n\n".utf8)
     }
+}
+
+private func sseElapsedMicros(since startedAt: DispatchTime) -> Double {
+    let elapsed = DispatchTime.now().uptimeNanoseconds - startedAt.uptimeNanoseconds
+    return max(1, Double(elapsed) / 1_000.0)
 }

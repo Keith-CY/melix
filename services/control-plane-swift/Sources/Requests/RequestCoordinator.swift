@@ -927,9 +927,23 @@ public actor RequestCoordinator {
                 var decodingPhasePublished = false
                 var eventCount = 0.0
                 var reasoningBudget = initialReasoningBudget
+                var workerEventHandleTotalMicros = 0.0
+                var workerEventHandleCallCount = 0.0
+
+                func recordWorkerEventHandleMetric() async {
+                    guard workerEventHandleCallCount > 0 else {
+                        return
+                    }
+                    await metricsStore.addMicrosecondTiming(
+                        prefix: "http.worker_event_handle",
+                        totalMicros: workerEventHandleTotalMicros,
+                        callCount: workerEventHandleCallCount
+                    )
+                }
 
                 do {
                     for try await event in upstream {
+                        let eventHandleStartedAt = DispatchTime.now()
                         let validatedEvent = try self.validatedStructuredOutputEvent(
                             event,
                             requestID: requestID,
@@ -1050,11 +1064,14 @@ public actor RequestCoordinator {
                                 await hub.yield(outputEvent)
                             }
                         }
+                        workerEventHandleTotalMicros += requestCoordinatorElapsedMicros(since: eventHandleStartedAt)
+                        workerEventHandleCallCount += 1
                         if budgetOutcome.shouldStop {
                             _ = try? await workerClient.abort(requestID: requestID)
                             break
                         }
                     }
+                    await recordWorkerEventHandleMetric()
                     await metricsStore.decrement("requests.inflight")
                     let terminalPhase = await self.terminalPhase(
                         requestID: requestID,
@@ -1084,6 +1101,7 @@ public actor RequestCoordinator {
                         }
                     }
                 } catch {
+                    await recordWorkerEventHandleMetric()
                     await metricsStore.decrement("requests.inflight")
                     if plan.routeKind.isMultimodalBackgroundRoute {
                         _ = await self.refreshWorkerCacheObservability(using: workerClient)
@@ -3171,4 +3189,9 @@ private func messagesContainNonTextMedia(
             }
         })
     })
+}
+
+private func requestCoordinatorElapsedMicros(since startedAt: DispatchTime) -> Double {
+    let elapsed = DispatchTime.now().uptimeNanoseconds - startedAt.uptimeNanoseconds
+    return max(1, Double(elapsed) / 1_000.0)
 }

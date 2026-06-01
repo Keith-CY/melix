@@ -82,9 +82,14 @@ struct TextDecodeEngine: Sendable {
             var dflashTargetHiddenLayers: Int?
             var activeKVProbe: ActiveKVProbeSummary?
             var decodeBatchProbe: DecodeBatchProbeSummary?
+            var harmonyFilterTotalMicros = 0
+            var harmonyFilterCallCount = 0
+            var grpcWriteTotalMicros = 0
+            var grpcWriteCallCount = 0
+            var outputFilter = HarmonyChannelOutputFilter()
 
             func writeOutput(_ output: HarmonyChannelOutputFilter.Output) async throws {
-                try await writeFilteredTextOutput(
+                let writeSummary = try await writeFilteredTextOutput(
                     output,
                     response: response,
                     requestID: requestID,
@@ -101,6 +106,31 @@ struct TextDecodeEngine: Sendable {
                         event.accelerationMode = acceleration.mode
                     }
                 )
+                grpcWriteTotalMicros += writeSummary.grpcWriteTotalMicros
+                grpcWriteCallCount += writeSummary.grpcWriteCallCount
+            }
+
+            func writeEvent(_ event: Melix_Worker_V1_ExecuteEvent) async throws {
+                let writeStartedAt = Date()
+                try await response.write(event)
+                grpcWriteTotalMicros += elapsedMicroseconds(since: writeStartedAt)
+                grpcWriteCallCount += 1
+            }
+
+            func acceptFilteredOutput(_ text: String) -> HarmonyChannelOutputFilter.Output {
+                let filterStartedAt = Date()
+                let output = outputFilter.accept(text)
+                harmonyFilterTotalMicros += elapsedMicroseconds(since: filterStartedAt)
+                harmonyFilterCallCount += 1
+                return output
+            }
+
+            func finishFilteredOutput() -> HarmonyChannelOutputFilter.Output {
+                let filterStartedAt = Date()
+                let output = outputFilter.finish()
+                harmonyFilterTotalMicros += elapsedMicroseconds(since: filterStartedAt)
+                harmonyFilterCallCount += 1
+                return output
             }
 
             if acceleration.mode != .baseline {
@@ -116,7 +146,7 @@ struct TextDecodeEngine: Sendable {
                 var payload = Melix_Worker_V1_AccelerationApplied()
                 payload.policy = acceleration
                 accelerationEvent.accelerationApplied = payload
-                try await response.write(accelerationEvent)
+                try await writeEvent(accelerationEvent)
                 seq += 1
                 outputState.eventCount += 1
             }
@@ -135,7 +165,7 @@ struct TextDecodeEngine: Sendable {
             payload.maxOutputTokens = request.maxOutputTokens
             payload.resumedFromPrefill = true
             startedEvent.decodeStarted = payload
-            try await response.write(startedEvent)
+            try await writeEvent(startedEvent)
             seq += 1
             outputState.eventCount += 1
 
@@ -154,19 +184,18 @@ struct TextDecodeEngine: Sendable {
                 cacheDecision.restoredSnapshotID = session.prefill.restoredSnapshotID
                 cacheDecision.persistedToL2 = true
                 cacheDecisionEvent.cacheDecision = cacheDecision
-                try await response.write(cacheDecisionEvent)
+                try await writeEvent(cacheDecisionEvent)
                 seq += 1
                 outputState.eventCount += 1
             }
 
-            var outputFilter = HarmonyChannelOutputFilter()
             for try await runtimeEvent in runtimeStream {
                 switch runtimeEvent {
                 case .prefillStarted:
                     continue
                 case .token(let text):
                     completionTokens += 1
-                    let filtered = outputFilter.accept(text)
+                    let filtered = acceptFilteredOutput(text)
                     try await writeOutput(filtered)
                 case .summary(let summary):
                     completionTokens = max(completionTokens, summary.completionTokens)
@@ -194,7 +223,7 @@ struct TextDecodeEngine: Sendable {
                 }
             }
 
-            let finalFiltered = outputFilter.finish()
+            let finalFiltered = finishFilteredOutput()
             try await writeOutput(finalFiltered)
 
             if request.returnUsage && !(abortHandle?.isAborted ?? false) {
@@ -211,7 +240,7 @@ struct TextDecodeEngine: Sendable {
                 usage.promptTokens = UInt32(max(0, session.prefill.promptTokens))
                 usage.completionTokens = UInt32(max(0, completionTokens))
                 event.usageDelta = usage
-                try await response.write(event)
+                try await writeEvent(event)
                 seq += 1
                 outputState.eventCount += 1
             }
@@ -238,7 +267,7 @@ struct TextDecodeEngine: Sendable {
                 snapshotCreated.snapshotID = snapshot.snapshotID
                 snapshotCreated.tokenBoundary = boundary
                 snapshotEvent.snapshotCreated = snapshotCreated
-                try await response.write(snapshotEvent)
+                try await writeEvent(snapshotEvent)
                 seq += 1
                 outputState.eventCount += 1
 
@@ -262,9 +291,19 @@ struct TextDecodeEngine: Sendable {
             completedEvent.lane = lane
             completedEvent.accelerationMode = acceleration.mode
             completedEvent.completed = completed
-            try await response.write(completedEvent)
+            try await writeEvent(completedEvent)
             outputState.eventCount += 1
 
+            metrics.addMicrosecondTiming(
+                prefix: "swift_text.decode_harmony_filter",
+                totalMicros: harmonyFilterTotalMicros,
+                callCount: harmonyFilterCallCount
+            )
+            metrics.addMicrosecondTiming(
+                prefix: "swift_text.decode_grpc_write",
+                totalMicros: grpcWriteTotalMicros,
+                callCount: grpcWriteCallCount
+            )
             if !outputState.sawFirstToken {
                 metrics.recordMilliseconds(
                     "swift_text.decode_ttft_ms",
@@ -822,4 +861,8 @@ private func makeDecodeErrorExecuteEvent(
 
 private func elapsedMilliseconds(since startedAt: Date) -> Int {
     max(0, Int(Date().timeIntervalSince(startedAt) * 1_000.0))
+}
+
+private func elapsedMicroseconds(since startedAt: Date) -> Int {
+    max(1, Int(Date().timeIntervalSince(startedAt) * 1_000_000.0))
 }

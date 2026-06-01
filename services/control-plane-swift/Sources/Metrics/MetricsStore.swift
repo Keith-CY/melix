@@ -27,6 +27,12 @@ public actor MetricsStore {
             "http.stream_first_event_ms": 0,
             "http.abort_ms": 0,
             "http.stream_event_count": 0,
+            "http.worker_event_handle_total_us": 0,
+            "http.worker_event_handle_call_count": 0,
+            "http.worker_event_handle_avg_us": 0,
+            "http.sse_write_total_us": 0,
+            "http.sse_write_call_count": 0,
+            "http.sse_write_avg_us": 0,
             "http.reasoning_delta_count": 0,
             "http.tool_delta_count": 0,
             "http.preset_shaped_count": 0,
@@ -56,6 +62,22 @@ public actor MetricsStore {
 
     public func decrement(_ key: String, by amount: Double = 1) {
         values[key, default: 0] = max(0, values[key, default: 0] - amount)
+        scheduleExportIfNeeded()
+    }
+
+    public func addMicrosecondTiming(prefix: String, totalMicros: Double, callCount: Double) {
+        let normalizedTotal = max(0, totalMicros)
+        let normalizedCount = max(0, callCount)
+        let totalKey = "\(prefix)_total_us"
+        let countKey = "\(prefix)_call_count"
+        let avgKey = "\(prefix)_avg_us"
+
+        values[totalKey, default: 0] += normalizedTotal
+        values[countKey, default: 0] += normalizedCount
+        let cumulativeCount = values[countKey, default: 0]
+        values[avgKey] = cumulativeCount > 0
+            ? max(1, values[totalKey, default: 0] / cumulativeCount)
+            : 0
         scheduleExportIfNeeded()
     }
 

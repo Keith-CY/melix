@@ -150,6 +150,12 @@ final class MetricsStore: @unchecked Sendable {
         "swift_text.decode_batch_stream_yield_total_us": 0,
         "swift_text.decode_batch_stream_yield_call_count": 0,
         "swift_text.decode_batch_stream_yield_avg_us": 0,
+        "swift_text.decode_harmony_filter_total_us": 0,
+        "swift_text.decode_harmony_filter_call_count": 0,
+        "swift_text.decode_harmony_filter_avg_us": 0,
+        "swift_text.decode_grpc_write_total_us": 0,
+        "swift_text.decode_grpc_write_call_count": 0,
+        "swift_text.decode_grpc_write_avg_us": 0,
         "swift_text.per_batch_output_token_count": 0,
         "swift_text.per_batch_output_tokens_per_second": 0,
         "swift_text.speculative_acceptance_rate": 0,
@@ -168,6 +174,12 @@ final class MetricsStore: @unchecked Sendable {
         "swift_text.generate_ms": 0,
         "swift_text.ttft_ms": 0,
         "swift_text.tokens_per_second": 0,
+        "swift_text.generate_harmony_filter_total_us": 0,
+        "swift_text.generate_harmony_filter_call_count": 0,
+        "swift_text.generate_harmony_filter_avg_us": 0,
+        "swift_text.generate_grpc_write_total_us": 0,
+        "swift_text.generate_grpc_write_call_count": 0,
+        "swift_text.generate_grpc_write_avg_us": 0,
         "swift_text.abort_ms": 0,
         "swift_text.stream_event_count": 0,
         "swift_text.memory_enforcement_disabled": 0,
@@ -213,6 +225,25 @@ final class MetricsStore: @unchecked Sendable {
     func setMax(_ key: String, value: Int) {
         lock.lock()
         storage[key] = max(storage[key, default: 0], value)
+        let snapshot = storage
+        lock.unlock()
+        writeExportIfNeeded(snapshot)
+    }
+
+    func addMicrosecondTiming(prefix: String, totalMicros: Int, callCount: Int) {
+        let normalizedTotal = max(0, totalMicros)
+        let normalizedCount = max(0, callCount)
+        let totalKey = "\(prefix)_total_us"
+        let countKey = "\(prefix)_call_count"
+        let avgKey = "\(prefix)_avg_us"
+
+        lock.lock()
+        storage[totalKey, default: 0] += normalizedTotal
+        storage[countKey, default: 0] += normalizedCount
+        let cumulativeCount = storage[countKey, default: 0]
+        storage[avgKey] = cumulativeCount > 0
+            ? max(1, storage[totalKey, default: 0] / cumulativeCount)
+            : 0
         let snapshot = storage
         lock.unlock()
         writeExportIfNeeded(snapshot)

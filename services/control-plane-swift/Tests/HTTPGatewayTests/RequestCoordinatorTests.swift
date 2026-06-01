@@ -3408,6 +3408,15 @@ struct RequestCoordinatorTests {
         #expect(
             await waitForMetricValue(
                 metricsStore,
+                key: "http.worker_event_handle_call_count",
+                atLeast: 1
+            ) >= 1
+        )
+        #expect(await metricsStore.value(forKey: "http.worker_event_handle_total_us") > 0)
+        #expect(await metricsStore.value(forKey: "http.worker_event_handle_avg_us") > 0)
+        #expect(
+            await waitForMetricValue(
+                metricsStore,
                 key: "http.stream_event_count",
                 atLeast: 1
             ) >= 1
