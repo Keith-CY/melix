@@ -41,7 +41,7 @@ def _runtime_mode_from_activation(activation_mode: str) -> int:
     return int(common_pb2.RUNTIME_MODE_UNSPECIFIED)
 
 
-@dataclass
+@dataclass(slots=True)
 class ModelOpsJob:
     job_id: str
     operation: str
@@ -57,7 +57,7 @@ class ModelOpsJob:
     error_message: str = ""
 
 
-@dataclass
+@dataclass(slots=True)
 class _ActiveDerivedModelLookup:
     job: ModelOpsJob
     manifest: dict[str, Any]
