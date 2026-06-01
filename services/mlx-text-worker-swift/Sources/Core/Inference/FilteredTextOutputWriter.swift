@@ -45,13 +45,15 @@ struct FilteredTextOutputCadencePolicy: Sendable, Equatable {
 
     var shouldBufferVisibleDeltas: Bool {
         coalesceVisibleDeltas
-            && maxBufferedVisibleFragments > 1
-            && maxBufferedVisibleCharacters > 0
+            && (maxBufferedVisibleFragments > 1 || maxBufferedVisibleCharacters > 0)
     }
 
     func shouldFlush(fragmentCount: Int, characterCount: Int) -> Bool {
-        fragmentCount >= maxBufferedVisibleFragments
-            || characterCount >= maxBufferedVisibleCharacters
+        let reachedFragmentLimit = maxBufferedVisibleFragments > 1
+            && fragmentCount >= maxBufferedVisibleFragments
+        let reachedCharacterLimit = maxBufferedVisibleCharacters > 0
+            && characterCount >= maxBufferedVisibleCharacters
+        return reachedFragmentLimit || reachedCharacterLimit
     }
 }
 

@@ -118,6 +118,17 @@ Verification was run on June 1, 2026 from the
     deltas and six total events.
 - `swift test --package-path services/mlx-text-worker-swift --enable-code-coverage --filter 'WorkerScaffoldTests/testDecodeOutputCadencePolicyScopesDefaultToGemmaAndHonorsOverrides|WorkerScaffoldTests/testDecodeCoalescesGemmaVisibleTokenDeltasAfterFirstToken|WorkerScaffoldTests/testDecodeDoesNotCoalesceNonGemmaVisibleTokenDeltas|WorkerScaffoldTests/testDecodeFlushesPendingVisibleDeltasBeforeReasoningDeltas|WorkerScaffoldTests/testDecodeStreamingRpcBatchesHomogeneousDeterministicDecodeRequests|WorkerScaffoldTests/testGenerateSuppressesHarmonyThoughtChannelForLoadedModel'`
   - Result: passed, 6 tests, 0 failures.
+- Code review follow-up after PR #1721 merged:
+  - Added `WorkerScaffoldTests/testDecodeOutputCadencePolicyAllowsFragmentOnlyFlushLimit`
+    for cadence policies that intentionally disable the character cap while
+    keeping the fragment cap active. Initial red result on current `origin/main`:
+    the policy did not buffer and flushed immediately when
+    `maxBufferedVisibleCharacters` was `0`.
+  - `swift test --package-path services/mlx-text-worker-swift --enable-code-coverage --filter 'WorkerScaffoldTests/testDecodeOutputCadencePolicyAllowsFragmentOnlyFlushLimit|WorkerScaffoldTests/testDecodeOutputCadencePolicyScopesDefaultToGemmaAndHonorsOverrides|WorkerScaffoldTests/testDecodeCoalescesGemmaVisibleTokenDeltasAfterFirstToken|WorkerScaffoldTests/testDecodeDoesNotCoalesceNonGemmaVisibleTokenDeltas|WorkerScaffoldTests/testDecodeFlushesPendingVisibleDeltasBeforeReasoningDeltas'`
+    - Result: passed, 5 tests, 0 failures after making disabled limits
+      non-participating in the flush decision.
+  - `uv run --project services/mlx-worker-python --extra mlx python scripts/swift_changed_line_coverage.py --binary services/mlx-text-worker-swift/.build/arm64-apple-macosx/debug/MelixTextWorkerSwiftPackageTests.xctest/Contents/MacOS/MelixTextWorkerSwiftPackageTests --profdata services/mlx-text-worker-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata services/mlx-text-worker-swift/Sources/Core/Inference/FilteredTextOutputWriter.swift services/mlx-text-worker-swift/Tests/CoreTests/WorkerScaffoldTests.swift`
+    - Result for the follow-up staged delta: `TOTAL 100.00% 17/17`.
 - `uv run --project services/mlx-worker-python --extra mlx python scripts/swift_changed_line_coverage.py --binary services/mlx-text-worker-swift/.build/arm64-apple-macosx/debug/MelixTextWorkerSwiftPackageTests.xctest/Contents/MacOS/MelixTextWorkerSwiftPackageTests --profdata services/mlx-text-worker-swift/.build/arm64-apple-macosx/debug/codecov/default.profdata services/mlx-text-worker-swift/Sources/Core/Inference/FilteredTextOutputWriter.swift services/mlx-text-worker-swift/Sources/Core/Inference/TextDecodeEngine.swift services/mlx-text-worker-swift/Tests/CoreTests/WorkerScaffoldTests.swift`
   - Result: `TOTAL 99.77% 433/434`.
 - `uv run --project services/mlx-worker-python --extra mlx python scripts/same_cohort_batching_probe.py --metrics`

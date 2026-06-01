@@ -165,6 +165,18 @@ final class WorkerScaffoldTests: XCTestCase {
         )
     }
 
+    func testDecodeOutputCadencePolicyAllowsFragmentOnlyFlushLimit() {
+        let policy = FilteredTextOutputCadencePolicy(
+            coalesceVisibleDeltas: true,
+            maxBufferedVisibleFragments: 4,
+            maxBufferedVisibleCharacters: 0
+        )
+
+        XCTAssertTrue(policy.shouldBufferVisibleDeltas)
+        XCTAssertFalse(policy.shouldFlush(fragmentCount: 1, characterCount: 1))
+        XCTAssertTrue(policy.shouldFlush(fragmentCount: 4, characterCount: 4))
+    }
+
     func testDFlashSpeculativeProbeLoggerWritesJsonLinesWhenEnabled() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("melix-dflash-probe-\(UUID().uuidString)", isDirectory: true)
