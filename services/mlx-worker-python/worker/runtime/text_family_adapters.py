@@ -298,9 +298,9 @@ def resolve_text_family_config(
 
 def _detected_architecture(config_payload: Mapping[str, Any] | None) -> str:
     config_payload = _config_mapping(config_payload)
-    model_type = _model_type(config_payload)
+    model_type = _string(config_payload.get("model_type"))
     if model_type:
-        return model_type
+        return model_type.lower()
     architectures = config_payload.get("architectures")
     if isinstance(architectures, list):
         for item in architectures:
@@ -381,7 +381,19 @@ def _resolved_expert_count(
 
 def _expert_count_from_config(config_payload: Mapping[str, Any] | None) -> int | None:
     config_payload = _config_mapping(config_payload)
-    for key in ("num_local_experts", "num_experts", "moe_num_experts", "n_routed_experts"):
+    value = config_payload.get("num_local_experts")
+    if isinstance(value, bool):
+        pass
+    elif isinstance(value, int):
+        return max(0, value)
+    elif isinstance(value, float):
+        return max(0, int(value))
+    elif isinstance(value, str) and value.strip():
+        try:
+            return max(0, int(value.strip()))
+        except ValueError:
+            pass
+    for key in ("num_experts", "moe_num_experts", "n_routed_experts"):
         value = config_payload.get(key)
         if isinstance(value, bool):
             continue
@@ -399,7 +411,10 @@ def _expert_count_from_config(config_payload: Mapping[str, Any] | None) -> int |
 
 def _inferred_moe_gate_dequant(config_payload: Mapping[str, Any] | None, *, default: bool) -> bool:
     config_payload = _config_mapping(config_payload)
-    for key in ("moe_gate_dequant", "dequantize_router_logits", "moe_gate_requires_dequant"):
+    value = config_payload.get("moe_gate_dequant")
+    if value is not None:
+        return _bool_from_any(value)
+    for key in ("dequantize_router_logits", "moe_gate_requires_dequant"):
         value = config_payload.get(key)
         if value is not None:
             return _bool_from_any(value)
