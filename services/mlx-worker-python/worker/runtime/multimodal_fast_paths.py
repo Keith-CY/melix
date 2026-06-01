@@ -296,9 +296,20 @@ def fast_path_probe_signature(
 
 
 def _top_level_signature_repr(loaded_model: dict[str, Any]) -> str:
-    return _signature_pairs_repr(
-        (key, str(loaded_model.get(key, "")))
-        for key in _FAST_PATH_SIGNATURE_TOP_LEVEL_KEYS_SORTED
+    model_id = str(loaded_model.get("model_id", ""))
+    quant_profile_id = str(loaded_model.get("quant_profile_id", ""))
+    revision = str(loaded_model.get("revision", ""))
+    tokenizer_hash = str(loaded_model.get("tokenizer_hash", ""))
+    return (
+        "(('model_id', "
+        + repr(model_id)
+        + "), ('quant_profile_id', "
+        + repr(quant_profile_id)
+        + "), ('revision', "
+        + repr(revision)
+        + "), ('tokenizer_hash', "
+        + repr(tokenizer_hash)
+        + "))"
     )
 
 
