@@ -289,6 +289,31 @@ def test_report_evidence_gate_target_field_rules_skip_unrelated_target_items() -
     assert ItemsCountingDict.items_calls == 0
 
 
+def test_report_evidence_gate_target_field_sparse_match_scans_row_items() -> None:
+    class SparseTarget(dict[str, object]):
+        missing_getitem_calls = 0
+
+        def __getitem__(self, key: str) -> object:  # pragma: no cover - regression guard
+            if key not in self:
+                type(self).missing_getitem_calls += 1
+                raise AssertionError(f"unexpected missing target lookup: {key}")
+            return super().__getitem__(key)
+
+    rule: dict[str, object] = {
+        "target_fields": tuple(f"unused_{index}" for index in range(64)) + ("adapter_id",)
+    }
+    target = SparseTarget({"adapter_id": "adapter-a"})
+
+    assert report_evidence_gate_module._rule_matches_report(
+        rule=rule,
+        runs=[],
+        targets=[target],
+        metrics=[],
+        probe_phases=set(),
+    )
+    assert SparseTarget.missing_getitem_calls == 0
+
+
 def test_report_evidence_gate_target_field_list_rules_reflect_mutation() -> None:
     target_fields = ["adapter_id"]
     rule = {"target_fields": target_fields}
