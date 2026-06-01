@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from packages.protocol.python.worker.v1 import common_pb2
 
@@ -252,6 +252,39 @@ class ToolRegistry:
         elif names == self._tool_names_list:
             return self
 
+        if len(names) == 1:
+            raw_name = names[0]
+            normalized_name = raw_name.strip()
+            if normalized_name:
+                requested_names = (normalized_name,)
+                if requested_names == self._tool_names:
+                    return self
+                cached_selection = self._selection_cache.get(requested_names)
+                if cached_selection is not None:
+                    if isinstance(names, tuple) and names != requested_names:
+                        self._selection_cache[names] = cached_selection
+                    return cached_selection
+                tool = self._tool_by_name.get(normalized_name, _MISSING_TOOL_SENTINEL)
+                if tool is _MISSING_TOOL_SENTINEL:
+                    raise ToolRegistryError(
+                        f"Unknown tool registry entry requested: {normalized_name}"
+                    )
+                selected_tool = cast(ToolDescriptor, tool)
+                selection = ToolRegistry(
+                    (selected_tool,),
+                    schema_version=self._schema_version,
+                    toolset_version=self._toolset_version,
+                    parser=self._parser,
+                    parser_contract_version=self._parser_contract_version,
+                )
+                raw_tuple_key = names if isinstance(names, tuple) and names != requested_names else None
+                if len(self._selection_cache) >= _SELECTION_CACHE_MAX_SIZE - int(raw_tuple_key is not None):
+                    self._selection_cache.clear()
+                self._selection_cache[requested_names] = selection
+                if raw_tuple_key is not None:
+                    self._selection_cache[raw_tuple_key] = selection
+                return selection
+
         requested_names_list: list[str] = []
         seen_names: set[str] = set()
         for name in names:
@@ -285,12 +318,12 @@ class ToolRegistry:
             parser=self._parser,
             parser_contract_version=self._parser_contract_version,
         )
-        cache_raw_tuple = isinstance(names, tuple) and names != requested_names
-        if len(self._selection_cache) >= _SELECTION_CACHE_MAX_SIZE - int(cache_raw_tuple):
+        raw_tuple_key = names if isinstance(names, tuple) and names != requested_names else None
+        if len(self._selection_cache) >= _SELECTION_CACHE_MAX_SIZE - int(raw_tuple_key is not None):
             self._selection_cache.clear()
         self._selection_cache[requested_names] = selection
-        if cache_raw_tuple:
-            self._selection_cache[names] = selection
+        if raw_tuple_key is not None:
+            self._selection_cache[raw_tuple_key] = selection
         return selection
 
     def as_openai_tools(self) -> list[dict[str, Any]]:

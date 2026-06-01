@@ -319,6 +319,26 @@ def test_tool_registry_select_reuses_cached_selected_registry() -> None:
     assert selected.names() == ("visit", "image_crop")
 
 
+def test_tool_registry_select_caches_single_name_fast_path() -> None:
+    registry = ToolRegistry(built_in_tool_registry().tools)
+
+    selected = registry.select((" visit ",))
+
+    assert selected.names() == ("visit",)
+    assert registry._selection_cache[("visit",)] is selected
+    assert registry._selection_cache[(" visit ",)] is selected
+    del registry._selection_cache[(" visit ",)]
+    assert registry.select((" visit ",)) is selected
+    assert registry._selection_cache[(" visit ",)] is selected
+    assert registry.select(["visit"]) is selected
+
+
+def test_tool_registry_select_single_name_returns_self_for_single_tool_registry() -> None:
+    registry = ToolRegistry((built_in_tool_registry().tools[0],))
+
+    assert registry.select([registry.names()[0]]) is registry
+
+
 def test_tool_registry_select_tuple_cache_hit_skips_name_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
     registry = ToolRegistry(built_in_tool_registry().tools)
     selected = registry.select(("visit", "image_crop"))
