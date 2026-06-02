@@ -14,8 +14,12 @@ crashes during the run.
 
 This slice closes the remaining blocker only when a fresh release rerun on a
 current `origin/main` base proves every #1642 scenario is within the accepted
-threshold or the issue accepts the lower-memory pairwise lifecycle as equivalent
-acceptance evidence.
+threshold. The preferred lifecycle is a simultaneous run with all endpoints
+resident. When that lifecycle is invalidated by peer co-residency failures such
+as OMLX Metal memory exhaustion, the accepted fallback is an explicit
+`pairwise-sequential` lifecycle: two sibling runs, each comparing Melix with
+exactly one peer, both using the same scenario matrix, token accounting,
+measurement profile, build evidence, and threshold settings.
 
 ## Findings
 
@@ -62,8 +66,34 @@ acceptance evidence.
    repeats `3`, and explicit artifact evidence.
 5. If the simultaneous three-endpoint lifecycle is unstable because of peer
    Metal memory pressure, collect pairwise release gates with the same scenario
-   profile and record the lifecycle caveat explicitly before asking whether it
-   satisfies the issue's peer-comparison intent.
+   profile and record the lifecycle explicitly in the comparison manifest and
+   summary. Each `pairwise-sequential` run must include Melix and exactly one
+   peer endpoint, and the sibling pair is the acceptance evidence.
+6. Keep the root issue open until the issue tree is either closed or explicitly
+   superseded with equivalent acceptance criteria. A remaining same-cohort probe
+   warning must be resolved, or accepted as non-blocking with a current
+   rationale tied to the release gate evidence.
+
+## Closeout Evidence Contract
+
+The three-way comparison harness records a `comparison_lifecycle` block in
+`manifest.json`, `summary.json`, and `summary.md`.
+
+- `simultaneous` means all configured endpoints are resident during one run.
+  This is the preferred lifecycle because it directly compares the target
+  endpoint against the best peer median inside a single artifact.
+- `pairwise-sequential` means one artifact compares Melix against OMLX and a
+  sibling artifact compares Melix against SwiftLM. Each run must include exactly
+  one peer endpoint. The sibling artifacts must share the same model snapshot,
+  prompt targets, max output tokens, concurrency matrix, repeat count,
+  measurement profile, token-source setting, endpoint-order policy, Melix
+  binary hashes, and threshold ratios.
+- A `pairwise-sequential` closeout is valid only when the simultaneous lifecycle
+  is not clean evidence because peer co-residency changes the measurement
+  environment or makes a peer fail independently of Melix behavior.
+- The closeout comment must cite both sibling artifact roots, their
+  `threshold-status.json` values, memory or co-residency caveat evidence, and
+  the current `origin/main` commit used for the run.
 
 ## Success Metrics
 
@@ -73,8 +103,9 @@ acceptance evidence.
 - No scenario has Melix median decode throughput more than 25 percent below the
   best peer.
 - Artifacts include Melix binary paths, SHA-256 hashes, peer revisions, model
-  snapshot path, endpoint-order mode, measurement profile, preflight status,
-  raw observations, peer-delta rows, threshold status, and Melix metrics.
+  snapshot path, endpoint-order mode, comparison lifecycle, measurement
+  profile, preflight status, raw observations, peer-delta rows, threshold
+  status, and Melix metrics.
 
 ## Current Evidence
 
@@ -326,10 +357,12 @@ Current-base focused verification:
 - `git diff --check`: passed
 
 This is strong current-base progress evidence but not yet a complete #1642
-closeout. The default repository test gate passed on this branch, but the branch
-still needs a PR evidence body and a decision on whether pairwise peer lifecycle
-evidence satisfies the acceptance criteria when simultaneous peer co-residency
-makes OMLX unstable. The same-cohort batching probe also remains in warning
-state because the scheduler admits a cohort of 2 but the observed worker model
-eval batch size is still 1; that warning did not regress in this slice, but it
-should not be presented as resolved #1642 closure evidence.
+closeout. PR #1750 landed the release-built stack path and acceptance evidence
+hardening, and the follow-up lifecycle contract makes pairwise peer evidence an
+explicit `pairwise-sequential` artifact mode instead of an ad hoc exception.
+The next closeout evidence must rerun the sibling pairwise artifacts on current
+`origin/main` with `comparison_lifecycle.mode == "pairwise-sequential"` in each
+manifest. The same-cohort batching probe also remains in warning state because
+the scheduler admits a cohort of 2 but the observed worker model eval batch size
+is still 1; that warning must be resolved or explicitly accepted as
+non-blocking before #1642 is closed.
