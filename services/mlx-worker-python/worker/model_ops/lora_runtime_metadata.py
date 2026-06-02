@@ -412,7 +412,7 @@ def _str_value(raw_value: Any) -> str:
 def _quantized_kind_from_text(raw_value: str) -> str:
     normalized = raw_value.strip().lower()
     for kind, pattern in _QUANTIZED_KIND_PATTERNS:
-        if pattern.search(normalized):
+        if kind in normalized and pattern.search(normalized):
             return kind
     return "unknown"
 
