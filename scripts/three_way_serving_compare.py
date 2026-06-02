@@ -25,7 +25,8 @@ import omlx_melix_compare_benchmark as base
 
 ENDPOINT_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 DEFAULT_RUN_ROOT = Path(".runtime/three-way-gemma31b128k")
-REPORT_SCHEMA_VERSION = 2
+REPORT_SCHEMA_VERSION = 3
+COMPARISON_LIFECYCLES = ("simultaneous", "pairwise-sequential")
 
 
 def parse_endpoint_headers(values: Iterable[str]) -> dict[str, dict[str, str]]:
@@ -335,6 +336,39 @@ def capture_runtime_snapshots(
     return snapshots
 
 
+def comparison_lifecycle_metadata(
+    lifecycle: str,
+    *,
+    target_endpoint: str,
+    endpoints: list[base.EndpointConfig],
+    note: str,
+) -> dict[str, Any]:
+    endpoint_names = [endpoint.name for endpoint in endpoints]
+    peer_names = [name for name in endpoint_names if name != target_endpoint]
+    if lifecycle == "pairwise-sequential":
+        acceptance_basis = (
+            "Compare the target endpoint with one peer per run, then aggregate sibling "
+            "runs that share the same scenario matrix, build evidence, token accounting, "
+            "and measurement profile."
+        )
+        co_residency = "target_plus_one_peer"
+    elif lifecycle == "simultaneous":
+        acceptance_basis = "Compare the target endpoint with all peers in one co-resident run."
+        co_residency = "all_endpoints"
+    else:
+        raise ValueError(f"Unsupported comparison lifecycle: {lifecycle}")
+    return {
+        "mode": lifecycle,
+        "target_endpoint": target_endpoint,
+        "peer_endpoints": peer_names,
+        "endpoint_count": len(endpoint_names),
+        "endpoint_names": endpoint_names,
+        "co_residency": co_residency,
+        "acceptance_basis": acceptance_basis,
+        "operator_note": note,
+    }
+
+
 def endpoints_for_scenario(
     endpoints: list[base.EndpointConfig],
     scenario: base.BenchmarkScenario,
@@ -404,6 +438,12 @@ def run_comparison(args: argparse.Namespace) -> dict[str, Any]:
         operator_note=args.measurement_profile_note,
     )
     run_evidence = load_run_evidence(args.run_evidence)
+    comparison_lifecycle = comparison_lifecycle_metadata(
+        args.comparison_lifecycle,
+        target_endpoint=args.target_endpoint,
+        endpoints=endpoints,
+        note=args.comparison_lifecycle_note,
+    )
 
     if args.dry_run:
         preflight = [
@@ -528,6 +568,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, Any]:
         target_endpoint=args.target_endpoint,
         measurement_profile=measurement_profile,
         endpoint_order=args.endpoint_order,
+        comparison_lifecycle=comparison_lifecycle,
         run_evidence=run_evidence,
     )
     exported_to = None if args.no_export else export_bundle(staging_dir, args.export_dir)
@@ -536,6 +577,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, Any]:
         "staging_dir": str(staging_dir),
         "exported_to": str(exported_to) if exported_to else None,
         "endpoint_count": len(endpoints),
+        "comparison_lifecycle": comparison_lifecycle,
         "preflight": preflight,
         "scenario_count": len(scenarios),
         "warmup_count": len(warmups),
@@ -573,6 +615,7 @@ def write_artifacts(
     target_endpoint: str,
     measurement_profile: dict[str, Any],
     endpoint_order: str,
+    comparison_lifecycle: dict[str, Any],
     run_evidence: dict[str, Any] | None,
 ) -> dict[str, str]:
     staging_dir.mkdir(parents=True, exist_ok=True)
@@ -601,6 +644,7 @@ def write_artifacts(
         "dry_run": dry_run,
         "target_endpoint": target_endpoint,
         "endpoint_order": endpoint_order,
+        "comparison_lifecycle": comparison_lifecycle,
         "measurement_profile": measurement_profile,
         "endpoints": [
             {
@@ -664,6 +708,7 @@ def write_artifacts(
         "generated_at": generated_at,
         "target_endpoint": target_endpoint,
         "endpoint_order": endpoint_order,
+        "comparison_lifecycle": comparison_lifecycle,
         "measurement_profile": measurement_profile,
         "runtime_snapshots": runtime_snapshots,
         "melix_metrics_snapshot": metrics_snapshot,
@@ -699,6 +744,7 @@ def write_artifacts(
             target_endpoint=target_endpoint,
             measurement_profile=measurement_profile,
             endpoint_order=endpoint_order,
+            comparison_lifecycle=comparison_lifecycle,
             run_evidence=run_evidence,
         ),
         encoding="utf-8",
@@ -723,12 +769,17 @@ def render_markdown_summary(
     target_endpoint: str,
     measurement_profile: dict[str, Any],
     endpoint_order: str = "fixed",
+    comparison_lifecycle: dict[str, Any] | None = None,
     run_evidence: dict[str, Any] | None = None,
 ) -> str:
     lines = ["# Three-Way Gemma 4 31B 128K Serving Comparison", ""]
     lines.append(f"- Dry run: `{str(dry_run).lower()}`")
     lines.append(f"- Target endpoint: `{target_endpoint}`")
     lines.append(f"- Endpoint order: `{endpoint_order}`")
+    if comparison_lifecycle is not None:
+        lines.append(f"- Comparison lifecycle: `{comparison_lifecycle.get('mode', 'unknown')}`")
+        if comparison_lifecycle.get("operator_note"):
+            lines.append(f"- Comparison lifecycle note: {comparison_lifecycle['operator_note']}")
     lines.append(f"- Measurement profile: `{measurement_profile.get('profile', 'unknown')}`")
     if measurement_profile.get("operator_note"):
         lines.append(f"- Measurement note: {measurement_profile['operator_note']}")
@@ -1022,6 +1073,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="fixed",
         help="Use 'alternate' to rotate endpoint order by repeat and reduce time-drift bias.",
     )
+    parser.add_argument(
+        "--comparison-lifecycle",
+        choices=COMPARISON_LIFECYCLES,
+        default="simultaneous",
+        help=(
+            "Record whether endpoints are compared in one co-resident run or as "
+            "target-plus-one-peer sequential sibling runs."
+        ),
+    )
+    parser.add_argument(
+        "--comparison-lifecycle-note",
+        default="",
+        help="Optional note explaining the selected comparison lifecycle.",
+    )
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--top-p", type=float, default=1.0)
     parser.add_argument("--top-k", type=int, default=0)
@@ -1085,6 +1150,11 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("Endpoint names must be unique.")
     if args.target_endpoint not in endpoint_names:
         raise ValueError("--target-endpoint must match one endpoint name.")
+    if args.comparison_lifecycle == "pairwise-sequential":
+        if len(endpoint_names) != 2:
+            raise ValueError(
+                "--comparison-lifecycle pairwise-sequential requires exactly one peer endpoint per run"
+            )
     if args.repeats < 1:
         raise ValueError("--repeats must be at least 1")
     if args.max_tokens < 1:

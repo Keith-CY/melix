@@ -100,6 +100,50 @@ def test_three_way_endpoint_order_alternate_rotates_three_endpoints() -> None:
     ]
 
 
+def test_comparison_lifecycle_metadata_records_pairwise_acceptance_basis() -> None:
+    endpoints = [
+        three_way.base.EndpointConfig("melix", "http://127.0.0.1:12441/v1", "model", {}),
+        three_way.base.EndpointConfig("omlx", "http://127.0.0.1:18061/v1", "model", {}),
+    ]
+
+    metadata = three_way.comparison_lifecycle_metadata(
+        "pairwise-sequential",
+        target_endpoint="melix",
+        endpoints=endpoints,
+        note="avoids co-resident Metal pressure",
+    )
+
+    assert metadata == {
+        "mode": "pairwise-sequential",
+        "target_endpoint": "melix",
+        "peer_endpoints": ["omlx"],
+        "endpoint_count": 2,
+        "endpoint_names": ["melix", "omlx"],
+        "co_residency": "target_plus_one_peer",
+        "acceptance_basis": (
+            "Compare the target endpoint with one peer per run, then aggregate sibling "
+            "runs that share the same scenario matrix, build evidence, token accounting, "
+            "and measurement profile."
+        ),
+        "operator_note": "avoids co-resident Metal pressure",
+    }
+
+
+def test_comparison_lifecycle_metadata_rejects_unknown_lifecycle() -> None:
+    endpoints = [
+        three_way.base.EndpointConfig("melix", "http://127.0.0.1:12441/v1", "model", {}),
+        three_way.base.EndpointConfig("omlx", "http://127.0.0.1:18061/v1", "model", {}),
+    ]
+
+    with pytest.raises(ValueError, match="Unsupported comparison lifecycle"):
+        three_way.comparison_lifecycle_metadata(
+            "rolling",
+            target_endpoint="melix",
+            endpoints=endpoints,
+            note="",
+        )
+
+
 def test_request_optional_json_captures_success_http_error_and_url_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -458,12 +502,68 @@ def test_dry_run_writes_three_way_artifacts(tmp_path: Path) -> None:
     assert (staging_dir / "summary.md").exists()
     manifest = json.loads((staging_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["dry_run"] is True
+    assert manifest["comparison_lifecycle"]["mode"] == "simultaneous"
+    assert manifest["comparison_lifecycle"]["co_residency"] == "all_endpoints"
     assert [endpoint["name"] for endpoint in manifest["endpoints"]] == [
         "melix",
         "omlx",
         "swiftlm",
     ]
     assert manifest["scenario_count"] == 3
+
+
+def test_pairwise_sequential_dry_run_writes_lifecycle_metadata(tmp_path: Path) -> None:
+    args = three_way.build_arg_parser().parse_args(
+        [
+            "--endpoint",
+            "melix=http://127.0.0.1:12441/v1::model",
+            "--endpoint",
+            "omlx=http://127.0.0.1:18061/v1::model",
+            "--comparison-lifecycle",
+            "pairwise-sequential",
+            "--comparison-lifecycle-note",
+            "OMLX/SwiftLM/Melix co-residency can exhaust Metal memory.",
+            "--dry-run",
+            "--run-id",
+            "pairwise-dry",
+            "--staging-root",
+            str(tmp_path),
+            "--no-export",
+        ]
+    )
+    three_way.validate_args(args)
+
+    result = three_way.run_comparison(args)
+
+    staging_dir = tmp_path / "pairwise-dry"
+    manifest = json.loads((staging_dir / "manifest.json").read_text(encoding="utf-8"))
+    summary = json.loads((staging_dir / "summary.json").read_text(encoding="utf-8"))
+    markdown = (staging_dir / "summary.md").read_text(encoding="utf-8")
+
+    assert result["comparison_lifecycle"]["mode"] == "pairwise-sequential"
+    assert manifest["comparison_lifecycle"]["peer_endpoints"] == ["omlx"]
+    assert manifest["comparison_lifecycle"]["co_residency"] == "target_plus_one_peer"
+    assert summary["comparison_lifecycle"] == manifest["comparison_lifecycle"]
+    assert "- Comparison lifecycle: `pairwise-sequential`" in markdown
+    assert "OMLX/SwiftLM/Melix co-residency can exhaust Metal memory." in markdown
+
+
+def test_pairwise_sequential_requires_exactly_one_peer_endpoint() -> None:
+    args = three_way.build_arg_parser().parse_args(
+        [
+            "--endpoint",
+            "melix=http://127.0.0.1:12441/v1::model",
+            "--endpoint",
+            "omlx=http://127.0.0.1:18061/v1::model",
+            "--endpoint",
+            "swiftlm=http://127.0.0.1:18062/v1::model",
+            "--comparison-lifecycle",
+            "pairwise-sequential",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="exactly one peer endpoint"):
+        three_way.validate_args(args)
 
 
 def test_dry_run_copies_run_evidence_into_artifacts(tmp_path: Path) -> None:
