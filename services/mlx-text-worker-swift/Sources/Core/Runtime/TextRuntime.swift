@@ -372,6 +372,8 @@ struct DecodeBatchProbeSummary: Sendable {
     let decodeModelEvalSyncCallCount: Int
     let decodeModelEvalSyncFirstMicros: Int
     let decodeModelEvalSyncMaxMicros: Int
+    let decodeAsyncEvalTotalMicros: Int
+    let decodeAsyncEvalCallCount: Int
     let decodeSampleTotalMicros: Int
     let decodeSampleCallCount: Int
     let decodeTokenEvalTotalMicros: Int
@@ -391,6 +393,8 @@ struct DecodeBatchProbeSummary: Sendable {
         decodeModelEvalSyncCallCount: Int = 0,
         decodeModelEvalSyncFirstMicros: Int = 0,
         decodeModelEvalSyncMaxMicros: Int = 0,
+        decodeAsyncEvalTotalMicros: Int = 0,
+        decodeAsyncEvalCallCount: Int = 0,
         decodeSampleTotalMicros: Int,
         decodeSampleCallCount: Int,
         decodeTokenEvalTotalMicros: Int = 0,
@@ -409,6 +413,8 @@ struct DecodeBatchProbeSummary: Sendable {
         self.decodeModelEvalSyncCallCount = max(0, decodeModelEvalSyncCallCount)
         self.decodeModelEvalSyncFirstMicros = max(0, decodeModelEvalSyncFirstMicros)
         self.decodeModelEvalSyncMaxMicros = max(0, decodeModelEvalSyncMaxMicros)
+        self.decodeAsyncEvalTotalMicros = max(0, decodeAsyncEvalTotalMicros)
+        self.decodeAsyncEvalCallCount = max(0, decodeAsyncEvalCallCount)
         self.decodeSampleTotalMicros = max(0, decodeSampleTotalMicros)
         self.decodeSampleCallCount = max(0, decodeSampleCallCount)
         self.decodeTokenEvalTotalMicros = max(0, decodeTokenEvalTotalMicros)
@@ -427,6 +433,10 @@ struct DecodeBatchProbeSummary: Sendable {
 
     var decodeModelEvalSyncAverageMicros: Int {
         averageMicros(total: decodeModelEvalSyncTotalMicros, count: decodeModelEvalSyncCallCount)
+    }
+
+    var decodeAsyncEvalAverageMicros: Int {
+        averageMicros(total: decodeAsyncEvalTotalMicros, count: decodeAsyncEvalCallCount)
     }
 
     var decodeSampleAverageMicros: Int {

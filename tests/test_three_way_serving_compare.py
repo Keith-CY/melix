@@ -75,6 +75,31 @@ def test_runtime_base_url_strips_openai_v1_prefix() -> None:
     assert three_way.runtime_base_url("http://127.0.0.1:12441") == "http://127.0.0.1:12441"
 
 
+def test_three_way_endpoint_order_alternate_rotates_three_endpoints() -> None:
+    endpoints = [
+        three_way.base.EndpointConfig("melix", "http://127.0.0.1:12441/v1", "model", {}),
+        three_way.base.EndpointConfig("omlx", "http://127.0.0.1:18061/v1", "model", {}),
+        three_way.base.EndpointConfig("swiftlm", "http://127.0.0.1:18062/v1", "model", {}),
+    ]
+    scenarios = [
+        three_way.base.BenchmarkScenario("pt128-out16-c1-r0", 128, 16, 1, "cold_unique", repeat_index)
+        for repeat_index in range(3)
+    ]
+
+    assert [
+        [endpoint.name for endpoint in three_way.endpoints_for_scenario(
+            endpoints,
+            scenario,
+            endpoint_order="alternate",
+        )]
+        for scenario in scenarios
+    ] == [
+        ["melix", "omlx", "swiftlm"],
+        ["omlx", "swiftlm", "melix"],
+        ["swiftlm", "melix", "omlx"],
+    ]
+
+
 def test_request_optional_json_captures_success_http_error_and_url_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -848,6 +873,114 @@ def test_three_way_run_writes_merged_melix_metrics_snapshot(
     assert "## Request Phase Rows" in markdown
     assert "First HTTP/SSE Event ms" in markdown
     assert "`swift_text.prefill_ms` | 3706.00" in markdown
+
+
+def test_three_way_alternate_endpoint_order_rotates_repeats(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_preflight(endpoint: three_way.base.EndpointConfig, *, timeout_seconds: float) -> dict[str, object]:
+        return {
+            "endpoint": endpoint.name,
+            "base_url": endpoint.base_url,
+            "status_code": 200,
+            "ok": True,
+            "model": endpoint.model,
+            "model_listed": True,
+            "model_count": 1,
+            "models": [endpoint.model],
+            "error": None,
+        }
+
+    calls: list[tuple[str, int, str]] = []
+
+    def fake_run_group(
+        endpoint: three_way.base.EndpointConfig,
+        scenario: three_way.base.BenchmarkScenario,
+        *,
+        include_usage: bool,
+        temperature: float,
+        top_p: float,
+        top_k: int,
+        timeout_seconds: float,
+        run_key: str = "",
+    ) -> list[three_way.base.RequestObservation]:
+        calls.append((endpoint.name, scenario.repeat_index, run_key))
+        return [
+            three_way.base.RequestObservation(
+                endpoint=endpoint.name,
+                model=endpoint.model,
+                scenario_id=scenario.scenario_id,
+                group_id=f"{endpoint.name}-{scenario.scenario_id}",
+                prompt_token_target=scenario.prompt_token_target,
+                prompt_token_source="usage",
+                max_tokens=scenario.max_tokens,
+                concurrency=scenario.concurrency,
+                cache_profile=scenario.cache_profile,
+                repeat_index=scenario.repeat_index,
+                request_index=0,
+                status="ok",
+                http_status=200,
+                error="",
+                ttft_ms=100.0,
+                total_ms=200.0,
+                decode_ms=100.0,
+                completion_tokens=5.0,
+                completion_token_source="usage",
+                prompt_tokens=20.0,
+                streamed_chunks=1,
+                completion_chars=20,
+                decode_tokens_per_second=50.0,
+                group_elapsed_ms=200.0,
+                prompt_style=scenario.prompt_style,
+            )
+        ]
+
+    monkeypatch.setattr(three_way.base, "preflight_endpoint", fake_preflight)
+    monkeypatch.setattr(three_way.base, "run_group", fake_run_group)
+    args = three_way.build_arg_parser().parse_args(
+        [
+            "--endpoint",
+            "melix=http://127.0.0.1:12441/v1::model",
+            "--endpoint",
+            "omlx=http://127.0.0.1:18061/v1::model",
+            "--endpoint",
+            "swiftlm=http://127.0.0.1:18062/v1::model",
+            "--prompt-token-targets",
+            "1024",
+            "--max-tokens",
+            "16",
+            "--repeats",
+            "2",
+            "--endpoint-order",
+            "alternate",
+            "--run-id",
+            "three-way-alternate-order",
+            "--staging-root",
+            str(tmp_path),
+            "--no-export",
+        ]
+    )
+    three_way.validate_args(args)
+
+    three_way.run_comparison(args)
+
+    staging_dir = tmp_path / "three-way-alternate-order"
+    manifest = json.loads((staging_dir / "manifest.json").read_text(encoding="utf-8"))
+    summary = json.loads((staging_dir / "summary.json").read_text(encoding="utf-8"))
+    markdown = (staging_dir / "summary.md").read_text(encoding="utf-8")
+
+    assert calls == [
+        ("melix", 0, "three-way-alternate-order"),
+        ("omlx", 0, "three-way-alternate-order"),
+        ("swiftlm", 0, "three-way-alternate-order"),
+        ("omlx", 1, "three-way-alternate-order"),
+        ("swiftlm", 1, "three-way-alternate-order"),
+        ("melix", 1, "three-way-alternate-order"),
+    ]
+    assert manifest["endpoint_order"] == "alternate"
+    assert summary["endpoint_order"] == "alternate"
+    assert "- Endpoint order: `alternate`" in markdown
 
 
 def test_three_way_markdown_surfaces_melix_first_load_metrics() -> None:

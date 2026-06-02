@@ -34,16 +34,17 @@ KNOWN_SWIFT_MLX_CORE_VERSION_BY_PACKAGE_VERSION = {
     "0.31.3": "0.31.1",
 }
 DEFAULT_SOCKET_DIR = Path("/tmp")
-USAGE_TEXT = """Usage: bash scripts/dev_up.sh [--prefer-built]
+USAGE_TEXT = """Usage: bash scripts/dev_up.sh [--prefer-built] [--build-configuration debug|release]
 
 Options:
-  --prefer-built  Start Swift processes from existing built executables under .build/debug when available.
+  --prefer-built  Start Swift processes from existing built executables under .build/<configuration> when available.
                   This keeps the Python worker on uv run and fails fast if the required Swift binaries are missing."""
 
 
 @dataclass(frozen=True)
 class DevUpOptions:
     prefer_built: bool = False
+    build_configuration: str = "debug"
 
 
 @dataclass(frozen=True)
@@ -80,9 +81,19 @@ def print_usage(*, stream) -> None:
 
 def parse_args(argv: list[str]) -> DevUpOptions:
     prefer_built = False
-    for argument in argv:
+    build_configuration = "debug"
+    index = 0
+    while index < len(argv):
+        argument = argv[index]
         if argument == "--prefer-built":
             prefer_built = True
+        elif argument == "--build-configuration":
+            index += 1
+            if index >= len(argv):
+                print("--build-configuration requires a value", file=sys.stderr)
+                print_usage(stream=sys.stderr)
+                raise SystemExit(2)
+            build_configuration = argv[index]
         elif argument in {"-h", "--help"}:
             print_usage(stream=sys.stdout)
             raise SystemExit(0)
@@ -90,7 +101,12 @@ def parse_args(argv: list[str]) -> DevUpOptions:
             print(f"Unknown argument: {argument}", file=sys.stderr)
             print_usage(stream=sys.stderr)
             raise SystemExit(2)
-    return DevUpOptions(prefer_built=prefer_built)
+        index += 1
+    if build_configuration not in {"debug", "release"}:
+        print("--build-configuration must be either 'debug' or 'release'", file=sys.stderr)
+        print_usage(stream=sys.stderr)
+        raise SystemExit(2)
+    return DevUpOptions(prefer_built=prefer_built, build_configuration=build_configuration)
 
 
 def resolve_path(value: str | Path) -> Path:
@@ -134,9 +150,15 @@ def optional_python_bridge_environment(layout: RuntimeLayout) -> dict[str, str]:
     return {"MELIX_PYTHON_BRIDGE_EXECUTABLE": os.fspath(layout.python_bridge_executable)}
 
 
-def resolve_built_swift_product_binary(repo_root: Path, *, package_path: str, product_name: str) -> Path:
+def resolve_built_swift_product_binary(
+    repo_root: Path,
+    *,
+    package_path: str,
+    product_name: str,
+    build_configuration: str = "debug",
+) -> Path:
     build_root = repo_root / package_path / ".build"
-    direct_candidate = build_root / "debug" / product_name
+    direct_candidate = build_root / build_configuration / product_name
     if direct_candidate.is_file() and os.access(direct_candidate, os.X_OK):
         return direct_candidate
 
@@ -153,13 +175,15 @@ def resolve_built_swift_product_binary(repo_root: Path, *, package_path: str, pr
         child_names = []
 
     for child_name in sorted(child_names):
-        candidate = build_root / child_name / "debug" / product_name
+        candidate = build_root / child_name / build_configuration / product_name
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate
 
     raise RuntimeError(
-        f"Built Swift product is missing for '{product_name}' under {build_root}.\n"
-        f"Run `make swift-test` or `swift build --package-path {repo_root / package_path}` before using --prefer-built."
+        f"Built Swift product is missing for '{product_name}' under {build_root} "
+        f"with configuration '{build_configuration}'.\n"
+        f"Run `swift build --package-path {repo_root / package_path} -c {build_configuration}` "
+        "before using --prefer-built."
     )
 
 
@@ -169,12 +193,20 @@ def build_swift_launch_command(
     package_path: str,
     product_name: str,
     prefer_built: bool,
+    build_configuration: str = "debug",
 ) -> list[str]:
     if prefer_built:
-        return [os.fspath(resolve_built_swift_product_binary(repo_root, package_path=package_path, product_name=product_name))]
+        return [os.fspath(resolve_built_swift_product_binary(
+            repo_root,
+            package_path=package_path,
+            product_name=product_name,
+            build_configuration=build_configuration,
+        ))]
     return [
         "swift",
         "run",
+        "-c",
+        build_configuration,
         "--package-path",
         os.fspath(repo_root / package_path),
         product_name,
@@ -745,6 +777,7 @@ def start_stack(options: DevUpOptions) -> None:
         package_path="services/mlx-text-worker-swift",
         product_name="melix-text-worker-swift",
         prefer_built=options.prefer_built,
+        build_configuration=options.build_configuration,
     )
     swift_text_cwd = prepare_swift_worker_launch_cwd(layout, repo_root)
     swift_text_pid = spawn_background_process(
@@ -838,6 +871,7 @@ def start_stack(options: DevUpOptions) -> None:
         package_path="services/control-plane-swift",
         product_name="melix-control-plane",
         prefer_built=options.prefer_built,
+        build_configuration=options.build_configuration,
     )
     control_plane_pid = spawn_background_process(
         cwd=repo_root,
@@ -886,7 +920,9 @@ def start_stack(options: DevUpOptions) -> None:
     if layout.service_instance_name:
         print(f"Service instance: {layout.service_instance_name}")
     if options.prefer_built:
-        print("Swift launch mode: prefer-built")
+        print(f"Swift launch mode: prefer-built ({options.build_configuration})")
+    else:
+        print(f"Swift build configuration: {options.build_configuration}")
 
 
 def _normalize_service_instance_name(value: str) -> str:
