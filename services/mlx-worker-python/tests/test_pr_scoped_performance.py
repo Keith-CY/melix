@@ -257,6 +257,7 @@ def test_lora_aux_modules_scandir_probe_script_emits_metrics(
 ) -> None:
     monkeypatch.setenv("MELIX_LORA_AUX_MODULES_PROBE_NOISE_FILES", "5")
     monkeypatch.setenv("MELIX_LORA_AUX_MODULES_PROBE_SAMPLES", "1")
+    monkeypatch.setenv("MELIX_LORA_QUANTIZED_KIND_PROBE_ITERATIONS", "6")
     probe_script = runpy.run_path(str(REPO_ROOT / "scripts/lora_aux_modules_scandir_probe.py"))
 
     assert probe_script["main"]() == 0
@@ -265,6 +266,9 @@ def test_lora_aux_modules_scandir_probe_script_emits_metrics(
     assert metrics["elapsed_ms_mean"] >= 0.0
     assert metrics["noise_file_count"] == 5.0
     assert metrics["scandir_calls_mean"] == 1.0
+    assert metrics["quantized_kind_baseline_elapsed_ms_mean"] >= 0.0
+    assert metrics["quantized_kind_optimized_elapsed_ms_mean"] >= 0.0
+    assert metrics["quantized_kind_iteration_count"] == 6.0
 
 
 def test_trajectory_provenance_copy_elision_probe_script_emits_metrics(

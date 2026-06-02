@@ -4401,9 +4401,9 @@
       "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
       "scripts/lora_aux_modules_scandir_probe.py"
     ],
-    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_canary_aux_module_detection_uses_single_scandir services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_canary_aux_module_detection_returns_false_when_scandir_fails services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_canary_receipt_records_tokenizer_resume_and_drift_status services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_canary_receipt_detects_missing_checkpoint_resume_assets services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_lora_aux_modules_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_lora_aux_modules_scandir_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands",
-    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_canary_aux_module_detection_uses_single_scandir services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_canary_aux_module_detection_returns_false_when_scandir_fails services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_canary_receipt_records_tokenizer_resume_and_drift_status services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_canary_receipt_detects_missing_checkpoint_resume_assets services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_lora_aux_modules_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_lora_aux_modules_scandir_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/model_ops/lora_runtime_metadata.py services/mlx-worker-python/tests/test_lora_training_receipts.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/lora_aux_modules_scandir_probe.py",
-    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'SCRIPT=\"scripts/lora_aux_modules_scandir_probe.py\"; if [ -f \"$SCRIPT\" ]; then python3 \"$SCRIPT\"; else for CANDIDATE in \"../head/$SCRIPT\" \"${GITHUB_WORKSPACE:-}/head/$SCRIPT\"; do if [ -f \"$CANDIDATE\" ]; then python3 \"$CANDIDATE\"; exit $?; fi; done; echo \"missing probe script fallback for $SCRIPT\" >&2; exit 2; fi'",
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_canary_aux_module_detection_uses_single_scandir services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_canary_aux_module_detection_returns_false_when_scandir_fails services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_quantized_kind_detection_uses_precompiled_patterns services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_canary_receipt_records_tokenizer_resume_and_drift_status services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_canary_receipt_detects_missing_checkpoint_resume_assets services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_lora_aux_modules_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_lora_aux_modules_scandir_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_canary_aux_module_detection_uses_single_scandir services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_canary_aux_module_detection_returns_false_when_scandir_fails services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_quantized_kind_detection_uses_precompiled_patterns services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_canary_receipt_records_tokenizer_resume_and_drift_status services/mlx-worker-python/tests/test_lora_training_receipts.py::test_lora_canary_receipt_detects_missing_checkpoint_resume_assets services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_lora_aux_modules_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_lora_aux_modules_scandir_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/model_ops/lora_runtime_metadata.py services/mlx-worker-python/tests/test_lora_training_receipts.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/lora_aux_modules_scandir_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'SCRIPT=\"scripts/lora_aux_modules_scandir_probe.py\"; for CANDIDATE in \"${MELIX_PR_SCOPED_PERFORMANCE_HEAD_REPO:-}/$SCRIPT\" \"../head/$SCRIPT\" \"${GITHUB_WORKSPACE:-}/head/$SCRIPT\" \"$SCRIPT\"; do if [ -f \"$CANDIDATE\" ]; then MELIX_LORA_RUNTIME_METADATA_REPO_ROOT=\"$PWD\" python3 \"$CANDIDATE\"; exit $?; fi; done; echo \"missing probe script fallback for $SCRIPT\" >&2; exit 2'",
     "probe_impl": "command_json",
     "coverage_replays_tests": true,
     "metrics": [
@@ -4430,6 +4430,29 @@
         "unit": "count",
         "direction": "higher_is_better",
         "warn_pct": 0.0
+      },
+      {
+        "key": "quantized_kind_baseline_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "quantized_kind_optimized_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "quantized_kind_delta_ms",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "quantized_kind_iteration_count",
+        "unit": "count",
+        "direction": "informational"
       }
     ]
   },

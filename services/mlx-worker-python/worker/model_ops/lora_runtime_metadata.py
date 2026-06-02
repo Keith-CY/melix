@@ -35,6 +35,10 @@ _AUXILIARY_MODULE_PREFIXES = tuple(
 )
 
 _QUANTIZED_KIND_ORDER = ("4bit", "8bit", "q4", "q8", "optiq")
+_QUANTIZED_KIND_PATTERNS = tuple(
+    (kind, re.compile(rf"(?<![a-z0-9]){re.escape(kind)}(?![a-z0-9])"))
+    for kind in _QUANTIZED_KIND_ORDER
+)
 
 
 ADAPTER_RUNTIME_EXT_KEY_MAP: tuple[tuple[str, str], ...] = (
@@ -402,8 +406,8 @@ def _str_value(raw_value: Any) -> str:
 
 def _quantized_kind_from_text(raw_value: str) -> str:
     normalized = raw_value.strip().lower()
-    for kind in _QUANTIZED_KIND_ORDER:
-        if re.search(rf"(?<![a-z0-9]){re.escape(kind)}(?![a-z0-9])", normalized):
+    for kind, pattern in _QUANTIZED_KIND_PATTERNS:
+        if pattern.search(normalized):
             return kind
     return "unknown"
 
