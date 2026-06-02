@@ -554,6 +554,61 @@ def test_lora_canary_aux_module_detection_returns_false_when_scandir_fails(
     assert lora_runtime_metadata_module._aux_modules_restored(base_model_dir) is False
 
 
+def test_lora_processor_resume_mode_uses_os_path_isfile_with_precedence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    base_model_dir = tmp_path / "base-model"
+    base_model_dir.mkdir()
+    (base_model_dir / "tokenizer_config.json").write_text("{}\n", encoding="utf-8")
+    (base_model_dir / "preprocessor_config.json").write_text("{}\n", encoding="utf-8")
+    (base_model_dir / "processor_config.json").write_text("{}\n", encoding="utf-8")
+
+    def fail_path_is_file(self: Path):
+        raise AssertionError("processor resume mode should avoid Path.is_file")  # pragma: no cover
+
+    checked_paths: list[str] = []
+    original_isfile = lora_runtime_metadata_module.os.path.isfile
+
+    def counting_isfile(path: str | Path):
+        checked_paths.append(str(path))
+        return original_isfile(path)
+
+    monkeypatch.setattr(Path, "is_file", fail_path_is_file)
+    monkeypatch.setattr(lora_runtime_metadata_module.os.path, "isfile", counting_isfile)
+
+    assert lora_runtime_metadata_module._processor_resume_mode(base_model_dir) == "processor_config"
+    assert checked_paths == [str(base_model_dir / "processor_config.json")]
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    [
+        ("preprocessor_config.json", "preprocessor_config"),
+        ("tokenizer_config.json", "tokenizer_only"),
+    ],
+)
+def test_lora_processor_resume_mode_fallback_precedence(
+    tmp_path: Path,
+    filename: str,
+    expected: str,
+) -> None:
+    base_model_dir = tmp_path / "base-model"
+    base_model_dir.mkdir()
+    (base_model_dir / filename).write_text("{}\n", encoding="utf-8")
+
+    assert lora_runtime_metadata_module._processor_resume_mode(base_model_dir) == expected
+
+
+def test_lora_processor_resume_mode_returns_missing_without_resume_assets(
+    tmp_path: Path,
+) -> None:
+    base_model_dir = tmp_path / "base-model"
+    base_model_dir.mkdir()
+
+    assert lora_runtime_metadata_module._processor_resume_mode(base_model_dir) == "missing"
+
+
 def test_lora_quantized_kind_detection_uses_precompiled_patterns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
