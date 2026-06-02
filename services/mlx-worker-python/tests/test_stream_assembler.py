@@ -440,6 +440,9 @@ def test_pipe_channel_name_lowercases_only_the_channel_token() -> None:
     assert RequestStreamAssembler._pipe_channel_name(" thought metadata") == "thought"
     assert RequestStreamAssembler._pipe_channel_name("FINAL\nvisible") == "final"
     assert RequestStreamAssembler._pipe_channel_name("Analysis\tdebug") == "analysis"
+    assert RequestStreamAssembler._pipe_channel_name("analysis metadata\n") == "analysis"
+    assert RequestStreamAssembler._pipe_channel_name("final") == "final"
+    assert RequestStreamAssembler._pipe_channel_name("finale metadata") == "finale"
     assert RequestStreamAssembler._pipe_channel_name("\r\n") == ""
 
 

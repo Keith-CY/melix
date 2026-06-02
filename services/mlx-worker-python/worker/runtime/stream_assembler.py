@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 _UTF8_INCREMENTAL_DECODER = codecs.getincrementaldecoder("utf-8")
 _COMPACT_SORTED_JSON_ENCODER = json.JSONEncoder(separators=(",", ":"), sort_keys=True)
 _MISSING_TOOL_ARGUMENTS = object()
+_PIPE_CHANNEL_NAME_FAST_PATHS = ("analysis", "thought", "reasoning", "commentary", "final")
 
 
 @lru_cache(maxsize=32)
@@ -1046,6 +1047,12 @@ class RequestStreamAssembler:
 
     @staticmethod
     def _pipe_channel_name(header: str) -> str:
+        if header and "a" <= header[0] <= "z":
+            for channel_name in _PIPE_CHANNEL_NAME_FAST_PATHS:
+                if header.startswith(channel_name):
+                    channel_name_len = len(channel_name)
+                    if len(header) == channel_name_len or header[channel_name_len].isspace():
+                        return channel_name
         stripped = header.strip()
         if not stripped:
             return ""
