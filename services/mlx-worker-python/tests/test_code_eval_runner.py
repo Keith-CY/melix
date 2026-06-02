@@ -537,11 +537,16 @@ def test_read_limited_text_handles_missing_and_oversized_files(tmp_path: Path) -
     assert code_eval_runner._read_limited_text(missing_path, 8) == ""
     assert code_eval_runner._read_limited_stdio(missing_path, 8) == ("", 0)
 
+    empty_path = tmp_path / "empty.txt"
+    empty_path.write_text("", encoding="utf-8")
+    assert code_eval_runner._read_limited_stdio(empty_path, 4) == ("", 0)
+
     output_path = tmp_path / "output.txt"
     output_path.write_text("0123456789abcdef", encoding="utf-8")
 
     assert code_eval_runner._read_limited_text(output_path, 4) == "cdef"
     assert code_eval_runner._read_limited_stdio(output_path, 4) == ("cdef", 16)
+    assert code_eval_runner._read_limited_stdio(output_path, 0) == ("", 16)
 
     directory_path = tmp_path / "directory"
     directory_path.mkdir()
