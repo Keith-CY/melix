@@ -28,6 +28,19 @@ def test_gemma_e4b_profile_gate_passes_supported_profile_and_ok_threshold() -> N
     ) == []
 
 
+def test_gemma_e4b_profile_gate_preserves_input_and_returned_section_isolation() -> None:
+    evidence = default_passing_evidence()
+
+    report = evaluate_gemma_e4b_profile_gate_evidence(evidence)
+    report["selected_profile"]["requested_profile"] = "mutated"
+    report["unsupported_routes"][0]["status"] = "mutated"
+    report["benchmark"]["threshold_status"]["status"] = "mutated"
+
+    assert evidence["selected_profile"]["requested_profile"] == "balanced"
+    assert evidence["unsupported_routes"][0]["status"] == "blocked"
+    assert evidence["benchmark"]["threshold_status"]["status"] == "ok"
+
+
 def test_gemma_e4b_profile_gate_fails_when_profile_receipt_is_unverified() -> None:
     evidence = default_passing_evidence()
     evidence["selected_profile"]["profile_receipt"] = {

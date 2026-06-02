@@ -2877,6 +2877,9 @@ def test_gemma_e4b_profile_gate_probe_script_emits_metrics() -> None:
     assert metrics["capability_receipt_supported"] == 1.0
     assert metrics["unsupported_selected_route_count"] == 0.0
     assert metrics["benchmark_threshold_passed"] == 1.0
+    assert metrics["elapsed_ms_mean"] > 0.0
+    assert metrics["iteration_count"] == 2000.0
+    assert metrics["sample_count"] == 5.0
 
 
 def test_gemma_e4b_profile_gate_probe_script_main_covers_checked_in_file(
@@ -2912,6 +2915,11 @@ def test_gemma_e4b_profile_gate_probe_script_main_covers_checked_in_file(
     report = json.loads(capsys.readouterr().out)
     assert report["status"] == "failed"
     assert report["artifact_status"] == "missing"
+
+    with pytest.raises(ValueError, match="samples must be at least 1"):
+        module.collect_metrics(module.default_passing_evidence(), samples=0, iterations=1)
+    with pytest.raises(ValueError, match="iterations must be at least 1"):
+        module.collect_metrics(module.default_passing_evidence(), samples=1, iterations=0)
 
 
 def test_gemma_e4b_profile_gate_probe_rejects_non_object_input(tmp_path: Path) -> None:

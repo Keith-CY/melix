@@ -129,18 +129,17 @@ def collect_gemma_e4b_profile_gate_evidence(jobs_root: str | Path) -> dict[str, 
 
 
 def evaluate_gemma_e4b_profile_gate_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
-    normalized = copy.deepcopy(evidence)
-    metrics, failures = _evaluate_metrics_and_failures(normalized)
+    metrics, failures = _evaluate_metrics_and_failures(evidence)
     metrics["failure_count"] = float(len(failures))
     metrics["release_gate_passed"] = 1.0 if not failures else 0.0
     return {
         "schema_version": SCHEMA_VERSION,
         "status": "passed" if not failures else "failed",
-        "artifact_status": str(normalized.get("artifact_status") or "present"),
-        "model_id": str(normalized.get("model_id") or ""),
-        "selected_profile": _as_dict(normalized.get("selected_profile")),
-        "unsupported_routes": _as_list(normalized.get("unsupported_routes")),
-        "benchmark": _as_dict(normalized.get("benchmark")),
+        "artifact_status": str(evidence.get("artifact_status") or "present"),
+        "model_id": str(evidence.get("model_id") or ""),
+        "selected_profile": copy.deepcopy(_as_dict(evidence.get("selected_profile"))),
+        "unsupported_routes": copy.deepcopy(_as_list(evidence.get("unsupported_routes"))),
+        "benchmark": copy.deepcopy(_as_dict(evidence.get("benchmark"))),
         "metrics": metrics,
         "failures": failures,
     }
