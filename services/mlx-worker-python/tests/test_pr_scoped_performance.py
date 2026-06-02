@@ -218,6 +218,7 @@ def test_scope_report_selects_dataset_version_listing_probe() -> None:
 
     selected_ids = _selected_probe_ids(scope)
     assert "dataset-version-listing-scandir" in selected_ids
+    assert "dataset-quality-lengths-chain" in selected_ids
     assert "dataset-source-records-scandir" in selected_ids
 
 
@@ -354,6 +355,28 @@ def test_dataset_version_listing_probe_script_emits_metrics(
     assert metrics["elapsed_ms_p95"] >= 0.0
     assert metrics["sample_count"] == 1.0
     assert metrics["version_count"] == 5.0
+
+
+def test_dataset_quality_lengths_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_QUALITY_LENGTHS_TRAIN_ROWS", "5")
+    monkeypatch.setenv("MELIX_DATASET_QUALITY_LENGTHS_VALIDATION_ROWS", "2")
+    monkeypatch.setenv("MELIX_DATASET_QUALITY_LENGTHS_SAMPLES", "1")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/dataset_quality_lengths_probe.py"))
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["elapsed_ms_p95"] >= 0.0
+    assert metrics["sample_count"] == 1.0
+    assert metrics["train_row_count"] == 5.0
+    assert metrics["validation_row_count"] == 2.0
+    assert metrics["row_count"] == 7.0
+    assert metrics["mean_output_length"] > 0.0
+    assert metrics["p95_output_length"] > 0.0
 
 
 def test_dataset_source_records_probe_script_emits_metrics(
@@ -2877,6 +2900,9 @@ def test_gemma_e4b_profile_gate_probe_script_emits_metrics() -> None:
     assert metrics["capability_receipt_supported"] == 1.0
     assert metrics["unsupported_selected_route_count"] == 0.0
     assert metrics["benchmark_threshold_passed"] == 1.0
+    assert metrics["elapsed_ms_mean"] > 0.0
+    assert metrics["iteration_count"] == 2000.0
+    assert metrics["sample_count"] == 5.0
 
 
 def test_gemma_e4b_profile_gate_probe_script_main_covers_checked_in_file(
@@ -2912,6 +2938,11 @@ def test_gemma_e4b_profile_gate_probe_script_main_covers_checked_in_file(
     report = json.loads(capsys.readouterr().out)
     assert report["status"] == "failed"
     assert report["artifact_status"] == "missing"
+
+    with pytest.raises(ValueError, match="samples must be at least 1"):
+        module.collect_metrics(module.default_passing_evidence(), samples=0, iterations=1)
+    with pytest.raises(ValueError, match="iterations must be at least 1"):
+        module.collect_metrics(module.default_passing_evidence(), samples=1, iterations=0)
 
 
 def test_gemma_e4b_profile_gate_probe_rejects_non_object_input(tmp_path: Path) -> None:
@@ -3053,6 +3084,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "trajectory-manifest-json-load",
         "dataset-registry-preview-limit-short-circuit",
         "dataset-version-listing-scandir",
+        "dataset-quality-lengths-chain",
         "dataset-source-records-scandir",
         "maintenance-bench-report-readback",
         "maintenance-percentile-vector-reuse",

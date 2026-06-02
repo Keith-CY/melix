@@ -113,7 +113,8 @@ The persisted gate input is JSON with schema
 - `unsupported_selected_route_count` remains `0.0`.
 - `benchmark_threshold_failure_count` remains `0.0`.
 - The PR-scoped probe emits numeric gate metrics and fails on regressions in
-  gate behavior.
+  gate behavior. It also reports `elapsed_ms_mean` over repeated deterministic
+  evaluations so evaluation-copy changes have a registered timing signal.
 
 ## Verification
 
