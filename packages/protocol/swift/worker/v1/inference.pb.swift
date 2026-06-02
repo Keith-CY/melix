@@ -436,6 +436,21 @@ public nonisolated struct Melix_Worker_V1_PrefillResponse: @unchecked Sendable {
   /// Clears the value of `restorePlan`. Subsequent reads from it will return its default value.
   public mutating func clearRestorePlan() {_uniqueStorage()._restorePlan = nil}
 
+  public var recoveredPrefixTokens: UInt32 {
+    get {_storage._recoveredPrefixTokens}
+    set {_uniqueStorage()._recoveredPrefixTokens = newValue}
+  }
+
+  public var cacheHitMode: String {
+    get {_storage._cacheHitMode}
+    set {_uniqueStorage()._cacheHitMode = newValue}
+  }
+
+  public var fallbackReason: String {
+    get {_storage._fallbackReason}
+    set {_uniqueStorage()._fallbackReason = newValue}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2140,7 +2155,7 @@ nonisolated extension Melix_Worker_V1_PrefillRequest: SwiftProtobuf.Message, Swi
 
 nonisolated extension Melix_Worker_V1_PrefillResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PrefillResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}decode_handle\0\u{3}block_table_id\0\u{3}block_table\0\u{3}restored_snapshot_id\0\u{3}prompt_tokens\0\u{3}lifecycle_phase\0\u{3}admission_state\0\u{3}applied_acceleration\0\u{3}restore_plan\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ok\0\u{1}error\0\u{3}decode_handle\0\u{3}block_table_id\0\u{3}block_table\0\u{3}restored_snapshot_id\0\u{3}prompt_tokens\0\u{3}lifecycle_phase\0\u{3}admission_state\0\u{3}applied_acceleration\0\u{3}restore_plan\0\u{3}recovered_prefix_tokens\0\u{3}cache_hit_mode\0\u{3}fallback_reason\0")
 
   fileprivate class _StorageClass {
     var _ok: Bool = false
@@ -2154,6 +2169,9 @@ nonisolated extension Melix_Worker_V1_PrefillResponse: SwiftProtobuf.Message, Sw
     var _admissionState: Melix_Worker_V1_AdmissionState = .unspecified
     var _appliedAcceleration: Melix_Worker_V1_AccelerationPolicy? = nil
     var _restorePlan: Melix_Worker_V1_CacheRestorePlan? = nil
+    var _recoveredPrefixTokens: UInt32 = 0
+    var _cacheHitMode: String = String()
+    var _fallbackReason: String = String()
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -2175,6 +2193,9 @@ nonisolated extension Melix_Worker_V1_PrefillResponse: SwiftProtobuf.Message, Sw
       _admissionState = source._admissionState
       _appliedAcceleration = source._appliedAcceleration
       _restorePlan = source._restorePlan
+      _recoveredPrefixTokens = source._recoveredPrefixTokens
+      _cacheHitMode = source._cacheHitMode
+      _fallbackReason = source._fallbackReason
     }
   }
 
@@ -2204,6 +2225,9 @@ nonisolated extension Melix_Worker_V1_PrefillResponse: SwiftProtobuf.Message, Sw
         case 9: try { try decoder.decodeSingularEnumField(value: &_storage._admissionState) }()
         case 10: try { try decoder.decodeSingularMessageField(value: &_storage._appliedAcceleration) }()
         case 11: try { try decoder.decodeSingularMessageField(value: &_storage._restorePlan) }()
+        case 12: try { try decoder.decodeSingularUInt32Field(value: &_storage._recoveredPrefixTokens) }()
+        case 13: try { try decoder.decodeSingularStringField(value: &_storage._cacheHitMode) }()
+        case 14: try { try decoder.decodeSingularStringField(value: &_storage._fallbackReason) }()
         default: break
         }
       }
@@ -2249,6 +2273,15 @@ nonisolated extension Melix_Worker_V1_PrefillResponse: SwiftProtobuf.Message, Sw
       try { if let v = _storage._restorePlan {
         try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
       } }()
+      if _storage._recoveredPrefixTokens != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._recoveredPrefixTokens, fieldNumber: 12)
+      }
+      if !_storage._cacheHitMode.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._cacheHitMode, fieldNumber: 13)
+      }
+      if !_storage._fallbackReason.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._fallbackReason, fieldNumber: 14)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -2269,6 +2302,9 @@ nonisolated extension Melix_Worker_V1_PrefillResponse: SwiftProtobuf.Message, Sw
         if _storage._admissionState != rhs_storage._admissionState {return false}
         if _storage._appliedAcceleration != rhs_storage._appliedAcceleration {return false}
         if _storage._restorePlan != rhs_storage._restorePlan {return false}
+        if _storage._recoveredPrefixTokens != rhs_storage._recoveredPrefixTokens {return false}
+        if _storage._cacheHitMode != rhs_storage._cacheHitMode {return false}
+        if _storage._fallbackReason != rhs_storage._fallbackReason {return false}
         return true
       }
       if !storagesAreEqual {return false}

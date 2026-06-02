@@ -1903,6 +1903,8 @@ public nonisolated struct Melix_Worker_V1_BlockTable: Sendable {
 
   public var totalTokenCount: UInt32 = 0
 
+  public var cacheMode: Melix_Worker_V1_CacheMode = .unspecified
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -4164,7 +4166,7 @@ nonisolated extension Melix_Worker_V1_ModelLoadTrustPolicy: SwiftProtobuf.Messag
 
 nonisolated extension Melix_Worker_V1_BlockTable: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".BlockTable"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}blocks\0\u{3}cache_key\0\u{3}scope_id\0\u{1}pages\0\u{3}total_token_count\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}blocks\0\u{3}cache_key\0\u{3}scope_id\0\u{1}pages\0\u{3}total_token_count\0\u{3}cache_mode\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4177,6 +4179,7 @@ nonisolated extension Melix_Worker_V1_BlockTable: SwiftProtobuf.Message, SwiftPr
       case 3: try { try decoder.decodeSingularStringField(value: &self.scopeID) }()
       case 4: try { try decoder.decodeRepeatedMessageField(value: &self.pages) }()
       case 5: try { try decoder.decodeSingularUInt32Field(value: &self.totalTokenCount) }()
+      case 6: try { try decoder.decodeSingularEnumField(value: &self.cacheMode) }()
       default: break
       }
     }
@@ -4202,6 +4205,9 @@ nonisolated extension Melix_Worker_V1_BlockTable: SwiftProtobuf.Message, SwiftPr
     if self.totalTokenCount != 0 {
       try visitor.visitSingularUInt32Field(value: self.totalTokenCount, fieldNumber: 5)
     }
+    if self.cacheMode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.cacheMode, fieldNumber: 6)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -4211,6 +4217,7 @@ nonisolated extension Melix_Worker_V1_BlockTable: SwiftProtobuf.Message, SwiftPr
     if lhs.scopeID != rhs.scopeID {return false}
     if lhs.pages != rhs.pages {return false}
     if lhs.totalTokenCount != rhs.totalTokenCount {return false}
+    if lhs.cacheMode != rhs.cacheMode {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -1971,3 +1971,31 @@ def test_generate_forwards_acceleration_policy_to_runtimes_that_accept_it() -> N
     assert seen_policy.draft_model_id == "mlx-community/gemma-4-E2B-it-assistant-bf16"
     assert seen_policy.num_draft_tokens == 6
     assert seen_policy.allow_baseline_fallback is True
+
+
+def test_text_native_mtp_parser_metrics_surfaces_cache_reuse_fields() -> None:
+    metrics = engine_core_module._text_native_mtp_parser_metrics(
+        RuntimeTokenEvent(
+            text="done",
+            cache_hit_mode="partial",
+            recovered_prefix_tokens=64,
+            cache_fallback_reason="",
+        )
+    )
+    assert metrics["cache_hit_mode"] == "partial"
+    assert metrics["recovered_prefix_tokens"] == "64"
+    assert metrics["cache_fallback_reason"] == ""
+
+
+def test_text_native_mtp_parser_metrics_fallback_reason_surfaced() -> None:
+    metrics = engine_core_module._text_native_mtp_parser_metrics(
+        RuntimeTokenEvent(
+            text="done",
+            cache_hit_mode="none",
+            recovered_prefix_tokens=0,
+            cache_fallback_reason="active_kv_excluded",
+        )
+    )
+    assert metrics["cache_hit_mode"] == "none"
+    assert metrics["recovered_prefix_tokens"] == "0"
+    assert metrics["cache_fallback_reason"] == "active_kv_excluded"

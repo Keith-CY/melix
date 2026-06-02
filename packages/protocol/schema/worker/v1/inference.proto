@@ -79,6 +79,9 @@ message PrefillResponse {
   AdmissionState admission_state = 9;
   AccelerationPolicy applied_acceleration = 10;
   CacheRestorePlan restore_plan = 11;
+  uint32 recovered_prefix_tokens = 12;
+  string cache_hit_mode = 13;
+  string fallback_reason = 14;
 }
 
 message DecodeRequest {

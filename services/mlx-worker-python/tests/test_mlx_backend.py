@@ -2040,3 +2040,820 @@ def test_worker_model_catalog_and_runtime_expose_text_family_metadata() -> None:
     assert loaded["text_moe_enabled"] == "true"
     assert loaded["text_moe_expert_count"] == "128"
     assert loaded["text_moe_gate_dequant"] == "true"
+
+
+# ---------------------------------------------------------------------------
+# _estimate_cache_bytes
+# ---------------------------------------------------------------------------
+
+
+def test_estimate_cache_bytes_returns_zero_for_empty_and_none() -> None:
+    from worker.runtime.mlx_text_runtime import _estimate_cache_bytes
+
+    assert _estimate_cache_bytes([]) == 0
+    assert _estimate_cache_bytes(None) == 0  # type: ignore[arg-type]
+    assert _estimate_cache_bytes("not-a-list") == 0  # type: ignore[arg-type]
+
+
+def test_estimate_cache_bytes_sums_nbytes_from_layered_state() -> None:
+    from worker.runtime.mlx_text_runtime import _estimate_cache_bytes
+
+    class FakeTensor:
+        def __init__(self, n: int) -> None:
+            self.nbytes = n
+
+    class FakeLayerCache:
+        def __init__(self, tensors) -> None:
+            self.state = tensors
+
+    cache = [
+        FakeLayerCache([FakeTensor(100), FakeTensor(200)]),
+        FakeLayerCache([FakeTensor(50)]),
+    ]
+    assert _estimate_cache_bytes(cache) == 350
+
+
+def test_estimate_cache_bytes_handles_size_itemsize_fallback() -> None:
+    from worker.runtime.mlx_text_runtime import _estimate_cache_bytes
+
+    class FakeTensorNoNbytes:
+        size = 10
+        itemsize = 4
+
+    class FakeLayerCache:
+        state = [FakeTensorNoNbytes()]
+
+    assert _estimate_cache_bytes([FakeLayerCache()]) == 40
+
+
+def test_estimate_cache_bytes_handles_scalar_state_with_nbytes() -> None:
+    from worker.runtime.mlx_text_runtime import _estimate_cache_bytes
+
+    class FakeScalarState:
+        nbytes = 512
+
+    class FakeLayerCache:
+        state = FakeScalarState()
+
+    assert _estimate_cache_bytes([FakeLayerCache()]) == 512
+
+
+def _install_fake_trim(monkeypatch, *, returns):
+    """Install a fake mlx_lm.models.cache.trim_prompt_cache returning `returns`."""
+    import types as _types
+    calls = []
+
+    def fake_trim(cache, n):
+        calls.append((cache, n))
+        if isinstance(returns, Exception):
+            raise returns
+        return returns
+
+    mod = sys.modules.get("mlx_lm.models.cache") or _types.ModuleType("mlx_lm.models.cache")
+    mod.trim_prompt_cache = fake_trim  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "mlx_lm.models.cache", mod)
+    return calls
+
+
+def test_trim_restored_cache_noop_for_zero_or_negative() -> None:
+    from worker.runtime.mlx_text_runtime import _trim_restored_cache
+
+    assert _trim_restored_cache([SimpleNamespace()], 0) is True
+    assert _trim_restored_cache([SimpleNamespace()], -3) is True
+
+
+def test_trim_restored_cache_exact_trim_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    from worker.runtime.mlx_text_runtime import _trim_restored_cache
+
+    calls = _install_fake_trim(monkeypatch, returns=4)
+    cache = [SimpleNamespace(state=[])]
+    assert _trim_restored_cache(cache, 4) is True
+    assert calls == [(cache, 4)]
+
+
+def test_trim_restored_cache_partial_trim_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    from worker.runtime.mlx_text_runtime import _trim_restored_cache
+
+    # trim_prompt_cache could only trim 2 of the requested 4 (e.g. rotating cache).
+    _install_fake_trim(monkeypatch, returns=2)
+    assert _trim_restored_cache([SimpleNamespace()], 4) is False
+
+
+def test_trim_restored_cache_exception_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    from worker.runtime.mlx_text_runtime import _trim_restored_cache
+
+    _install_fake_trim(monkeypatch, returns=RuntimeError("cannot trim"))
+    assert _trim_restored_cache([SimpleNamespace()], 4) is False
+
+
+def test_estimate_cache_bytes_skips_layer_with_none_state() -> None:
+    from worker.runtime.mlx_text_runtime import _estimate_cache_bytes
+
+    class FakeLayerNoState:
+        pass
+
+    assert _estimate_cache_bytes([FakeLayerNoState()]) == 0
+
+
+def test_generate_native_mtp_invalid_block_size_falls_back_to_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Covers except (ValueError, TypeError) in block_size parsing (line ~1287)."""
+    fake_core = _install_fake_mlx_core(monkeypatch)
+    _install_fake_mlx_lm_cache(monkeypatch, fake_core)
+
+    from worker.runtime import prefix_block_store as _pbs
+    mock_store = _pbs.PrefixBlockStore()
+    monkeypatch.setattr(_pbs, "get_store", lambda *a, **kw: mock_store)
+    monkeypatch.setattr(mlx_text_runtime_module, "_get_prefix_store", lambda *a, **kw: mock_store)
+    monkeypatch.setattr(mlx_text_runtime_module, "_clone_cache_snapshot", lambda cache: None)
+    monkeypatch.setattr(mlx_text_runtime_module, "_estimate_cache_bytes", lambda cache: 0)
+
+    def fake_prefill(model, tokens, *, prefill_step_size, stream, restore_cache=None, restore_token_count=0):
+        return [SimpleNamespace(state=[])], [int(tokens[-1])], list(tokens[:-1])
+
+    monkeypatch.setattr(mlx_text_runtime_module, "_native_mtp_prefill_prompt_cache", fake_prefill)
+
+    class FakeBatchGenerator:
+        stream = None
+        def __init__(self, model, **kwargs) -> None: pass  # pragma: no cover
+        def insert(self, tokens, max_tokens, caches, all_tokens, samplers): return [77]
+        def next_generated(self):
+            return [SimpleNamespace(uid=77, token=1, finish_reason="stop",
+                speculative_acceptance_rate=None, speculative_rollback_rate=None,
+                speculative_accepted_tokens=None, speculative_rejected_tokens=None,
+                speculative_num_draft_tokens=None, speculative_draft_model_configured=None,
+                speculative_backbone_ms=None, speculative_cycle_count=None,
+                speculative_mtp_head_ms=None, speculative_sample_ms=None,
+                speculative_cache_ops_ms=None)]
+        def remove(self, uids) -> None: pass  # pragma: no cover
+
+    monkeypatch.setattr(mlx_text_runtime_module, "_load_mlx_batch_generator_class", lambda: FakeBatchGenerator)
+    monkeypatch.setattr(mlx_text_runtime_module, "maybe_apply_native_mtp_text_preload_patches",
+        lambda _path, *, metadata: {"melix.native_mtp.enabled": "true", "melix.native_mtp.compatible": "true",
+            "melix.native_mtp.weights_present": "true", "melix.native_mtp.weight_count": "1",
+            "melix.native_mtp.patch_applied": "true", "melix.native_mtp.active": "true", "melix.native_mtp.reason": ""})
+
+    class FakeTokenizer:
+        eos_token = "</s>"
+        eos_token_id = 2
+        detokenizer = SimpleNamespace(tokens=[], reset=lambda: None,
+            add_token=lambda t: None, last_segment="x", finalize=lambda: None)
+        def encode(self, prompt, add_special_tokens=True): return [1, 2, 3, 4]
+
+    def fake_load(s, **kw): return SimpleNamespace(), FakeTokenizer()
+
+    backend = mlx_text_runtime_module.AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=lambda *a, **kw: iter([]),  # pragma: no cover
+        sampler_factory=lambda **kw: "s",
+    )
+    model_spec = WorkerModelCatalog.dev_text_model(environment={"MELIX_DEV_TEXT_MODEL_PATH": "x"})
+    for k in ["melix.native_mtp.enabled", "melix.native_mtp.active",
+              "melix.native_mtp.patch_applied", "melix.native_mtp.compatible"]:
+        model_spec.ext[k] = "true"
+    loaded = backend.load_model(model_spec)
+    loaded[mlx_text_runtime_module._NATIVE_MTP_TEXT_ACTIVE_FIELD] = True
+
+    import threading
+    events = list(backend.generate_tokens(
+        loaded, "hi", common_pb2.SamplingConfig(max_output_tokens=1), threading.Event(),
+        execution_ext={"_melix.session_id": "s", "_melix.block_size": "not-an-int"},
+    ))
+    assert len(events) > 0
+
+
+# ---------------------------------------------------------------------------
+# _native_mtp_prefill_prompt_cache — restore_cache path
+# ---------------------------------------------------------------------------
+
+
+def _install_fake_mlx_lm_cache(monkeypatch: pytest.MonkeyPatch, fake_core: types.ModuleType) -> None:
+    import types as _types
+
+    mlx_lm_models_cache = _types.ModuleType("mlx_lm.models.cache")
+
+    def fake_make_prompt_cache(_model):  # pragma: no cover
+        return [SimpleNamespace(state=[])]
+
+    mlx_lm_models_cache.make_prompt_cache = fake_make_prompt_cache  # type: ignore[attr-defined]
+    mlx_lm = sys.modules.get("mlx_lm") or _types.ModuleType("mlx_lm")
+    mlx_lm_models = getattr(mlx_lm, "models", None) or _types.ModuleType("mlx_lm.models")
+    monkeypatch.setitem(sys.modules, "mlx_lm", mlx_lm)
+    monkeypatch.setitem(sys.modules, "mlx_lm.models", mlx_lm_models)
+    monkeypatch.setitem(sys.modules, "mlx_lm.models.cache", mlx_lm_models_cache)
+
+
+def test_native_mtp_prefill_prompt_cache_restore_early_return_for_single_token_suffix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_core = _install_fake_mlx_core(monkeypatch)
+    _install_fake_mlx_lm_cache(monkeypatch, fake_core)
+    from worker.runtime.mlx_text_runtime import _native_mtp_prefill_prompt_cache
+
+    restore_cache = [SimpleNamespace(state=[])]
+    model_calls: list[object] = []
+
+    def fake_model(arr, cache=None):  # pragma: no cover
+        model_calls.append(arr)
+
+    result_cache, last_token, cached_tokens = _native_mtp_prefill_prompt_cache(
+        fake_model,
+        [1, 2, 3, 4, 5],
+        prefill_step_size=4,
+        stream=None,
+        restore_cache=restore_cache,
+        restore_token_count=4,
+    )
+
+    assert result_cache is restore_cache
+    assert last_token == [5]
+    assert cached_tokens == [1, 2, 3, 4]
+    assert model_calls == []
+
+
+def test_native_mtp_prefill_prompt_cache_restore_runs_suffix_prefill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_core = _install_fake_mlx_core(monkeypatch)
+    _install_fake_mlx_lm_cache(monkeypatch, fake_core)
+
+    eval_calls: list[object] = []
+
+    class FakeArray:
+        def __init__(self, tokens: list[int]) -> None:
+            self._tokens = list(tokens)
+
+        def __getitem__(self, idx):
+            if isinstance(idx, tuple) and len(idx) == 2:
+                col_idx = idx[1]
+                if isinstance(col_idx, slice) and col_idx.start is not None:
+                    return FakeArray(self._tokens[col_idx.start:])
+            return FakeArray(self._tokens)
+
+        @property
+        def shape(self):
+            return (1, len(self._tokens))
+
+    fake_core.array = lambda data, *a, **kw: FakeArray(list(data))  # type: ignore[attr-defined]
+    fake_core.eval = lambda items: eval_calls.append(items)  # type: ignore[attr-defined]
+
+    from worker.runtime.mlx_text_runtime import _native_mtp_prefill_prompt_cache
+
+    restore_cache = [SimpleNamespace(state=[])]
+    model_calls: list[object] = []
+
+    def fake_model(arr, cache=None):
+        model_calls.append(arr)
+
+    result_cache, last_token, cached_tokens = _native_mtp_prefill_prompt_cache(
+        fake_model,
+        [1, 2, 3, 4, 5, 6, 7, 8],
+        prefill_step_size=4,
+        stream=None,
+        restore_cache=restore_cache,
+        restore_token_count=4,
+    )
+
+    assert result_cache is restore_cache
+    assert last_token == [8]
+    assert cached_tokens[:4] == [1, 2, 3, 4]
+    assert len(model_calls) > 0
+
+
+# ---------------------------------------------------------------------------
+# _generate_native_mtp_batch_tokens — LCP store integration
+# ---------------------------------------------------------------------------
+
+
+def test_generate_native_mtp_lcp_store_consulted_with_session_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Covers LCP ext-extraction and store query code paths."""
+    fake_core = _install_fake_mlx_core(monkeypatch)
+    _install_fake_mlx_lm_cache(monkeypatch, fake_core)
+
+    from worker.runtime import prefix_block_store as _pbs
+
+    mock_store = _pbs.PrefixBlockStore()
+    monkeypatch.setattr(_pbs, "get_store", lambda *a, **kw: mock_store)
+    monkeypatch.setattr(mlx_text_runtime_module, "_get_prefix_store", lambda *a, **kw: mock_store)
+    monkeypatch.setattr(mlx_text_runtime_module, "_clone_cache_snapshot", lambda cache: None)
+    monkeypatch.setattr(mlx_text_runtime_module, "_estimate_cache_bytes", lambda cache: 0)
+
+    def fake_prefill(model, tokens, *, prefill_step_size, stream, restore_cache=None, restore_token_count=0):
+        cache = restore_cache if restore_cache is not None else [SimpleNamespace(state=[])]
+        return cache, [int(tokens[-1])], list(tokens[:-1])
+
+    monkeypatch.setattr(mlx_text_runtime_module, "_native_mtp_prefill_prompt_cache", fake_prefill)
+
+    class FakeResponse:
+        uid = 77
+        token = 101
+        finish_reason = "stop"
+        speculative_acceptance_rate = None
+        speculative_rollback_rate = None
+        speculative_accepted_tokens = None
+        speculative_rejected_tokens = None
+        speculative_num_draft_tokens = None
+        speculative_draft_model_configured = None
+        speculative_backbone_ms = None
+        speculative_cycle_count = None
+        speculative_mtp_head_ms = None
+        speculative_sample_ms = None
+        speculative_cache_ops_ms = None
+
+    class FakeBatchGenerator:
+        stream = None
+
+        def __init__(self, model, **kwargs) -> None:  # pragma: no cover
+            pass
+
+        def insert(self, tokens, max_tokens, caches, all_tokens, samplers):
+            return [77]
+
+        def next_generated(self):
+            return [FakeResponse()]
+
+        def remove(self, uids) -> None:  # pragma: no cover
+            pass
+
+    monkeypatch.setattr(mlx_text_runtime_module, "_load_mlx_batch_generator_class", lambda: FakeBatchGenerator)
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "maybe_apply_native_mtp_text_preload_patches",
+        lambda _path, *, metadata: {
+            "melix.native_mtp.enabled": "true",
+            "melix.native_mtp.compatible": "true",
+            "melix.native_mtp.weights_present": "true",
+            "melix.native_mtp.weight_count": "1",
+            "melix.native_mtp.patch_applied": "true",
+            "melix.native_mtp.active": "true",
+            "melix.native_mtp.reason": "",
+        },
+    )
+
+    class FakeDetokenizer:
+        tokens: list[int] = []
+
+        def reset(self) -> None:
+            self.tokens = []
+
+        def add_token(self, token: int) -> None:
+            self.tokens.append(token)
+
+        @property
+        def last_segment(self) -> str:  # pragma: no cover
+            return "x"
+
+        def finalize(self) -> None:  # pragma: no cover
+            pass
+
+    class FakeTokenizer:
+        eos_token = "</s>"
+        eos_token_id = 2
+        detokenizer = FakeDetokenizer()
+
+        def encode(self, prompt: str, add_special_tokens: bool = True):
+            return [10, 20, 30, 40, 50, 60, 70, 80]
+
+    def fake_load(model_source: str, **kwargs):
+        return SimpleNamespace(_melix_native_mtp_active=True), FakeTokenizer()
+
+    def fake_stream_generate(*_args, **_kwargs):  # pragma: no cover
+        raise AssertionError("LCP test should not call stream_generate")
+
+    backend = mlx_text_runtime_module.AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=fake_stream_generate,
+        sampler_factory=lambda **kw: "sampler",
+    )
+    model_spec = WorkerModelCatalog.dev_text_model(
+        environment={"MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/lcp-test"}
+    )
+    model_spec.ext["melix.native_mtp.enabled"] = "true"
+    model_spec.ext["melix.native_mtp.active"] = "true"
+    model_spec.ext["melix.native_mtp.patch_applied"] = "true"
+    model_spec.ext["melix.native_mtp.compatible"] = "true"
+    loaded_model = backend.load_model(model_spec)
+    loaded_model[mlx_text_runtime_module._NATIVE_MTP_TEXT_ACTIVE_FIELD] = True
+
+    import threading
+
+    events = list(
+        backend.generate_tokens(
+            loaded_model,
+            "hello world",
+            common_pb2.SamplingConfig(max_output_tokens=2),
+            threading.Event(),
+            execution_ext={
+                "_melix.session_id": "lcp-session-99",
+                "_melix.model_id": "test-model",
+                "_melix.model_revision": "v1",
+                "_melix.block_size": "4",
+                "_melix.acceleration_mode": "",
+            },
+        )
+    )
+
+    assert len(events) > 0
+    final = events[-1]
+    assert final.cache_hit_mode == "none"
+    assert final.recovered_prefix_tokens == 0
+
+
+def test_generate_native_mtp_lcp_warm_path_uses_restored_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Covers the _use_lcp=True code path (lines ~1308-1344, 1449-1453)."""
+    fake_core = _install_fake_mlx_core(monkeypatch)
+    _install_fake_mlx_lm_cache(monkeypatch, fake_core)
+
+    from worker.runtime import prefix_block_store as _pbs
+    from worker.runtime.prefix_block_store import PrefixBlockStore
+
+    mock_store = PrefixBlockStore()
+    mock_store.put(
+        session_id="warm-session",
+        token_ids=[10, 20, 30, 40, 50, 60, 70, 80],
+        cache_snapshot={"data": "warm-cache"},
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="test-model",
+        model_revision="v1",
+        block_size=4,
+        total_bytes=512,
+    )
+
+    monkeypatch.setattr(_pbs, "get_store", lambda *a, **kw: mock_store)
+    monkeypatch.setattr(mlx_text_runtime_module, "_get_prefix_store", lambda *a, **kw: mock_store)
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "_clone_cache_snapshot",
+        lambda cache: [SimpleNamespace(state=[])] if cache is not None else None,
+    )
+    monkeypatch.setattr(mlx_text_runtime_module, "_estimate_cache_bytes", lambda cache: 0)
+
+    def fake_prefill(model, tokens, *, prefill_step_size, stream, restore_cache=None, restore_token_count=0):
+        cache = restore_cache if restore_cache is not None else [SimpleNamespace(state=[])]
+        return cache, [int(tokens[-1])], list(tokens[:-1])
+
+    monkeypatch.setattr(mlx_text_runtime_module, "_native_mtp_prefill_prompt_cache", fake_prefill)
+
+    class FakeResponse:
+        uid = 77
+        token = 101
+        finish_reason = "stop"
+        speculative_acceptance_rate = None
+        speculative_rollback_rate = None
+        speculative_accepted_tokens = None
+        speculative_rejected_tokens = None
+        speculative_num_draft_tokens = None
+        speculative_draft_model_configured = None
+        speculative_backbone_ms = None
+        speculative_cycle_count = None
+        speculative_mtp_head_ms = None
+        speculative_sample_ms = None
+        speculative_cache_ops_ms = None
+
+    class FakeBatchGenerator:
+        stream = None
+
+        def __init__(self, model, **kwargs) -> None:  # pragma: no cover
+            pass
+
+        def insert(self, tokens, max_tokens, caches, all_tokens, samplers):
+            return [77]
+
+        def next_generated(self):
+            return [FakeResponse()]
+
+        def remove(self, uids) -> None:  # pragma: no cover
+            pass
+
+    monkeypatch.setattr(mlx_text_runtime_module, "_load_mlx_batch_generator_class", lambda: FakeBatchGenerator)
+    monkeypatch.setattr(
+        mlx_text_runtime_module,
+        "maybe_apply_native_mtp_text_preload_patches",
+        lambda _path, *, metadata: {
+            "melix.native_mtp.enabled": "true",
+            "melix.native_mtp.compatible": "true",
+            "melix.native_mtp.weights_present": "true",
+            "melix.native_mtp.weight_count": "1",
+            "melix.native_mtp.patch_applied": "true",
+            "melix.native_mtp.active": "true",
+            "melix.native_mtp.reason": "",
+        },
+    )
+
+    class FakeDetokenizer:
+        tokens: list[int] = []
+
+        def reset(self) -> None:
+            self.tokens = []
+
+        def add_token(self, token: int) -> None:
+            self.tokens.append(token)
+
+        @property
+        def last_segment(self) -> str:  # pragma: no cover
+            return "x"
+
+        def finalize(self) -> None:  # pragma: no cover
+            pass
+
+    class FakeTokenizer:
+        eos_token = "</s>"
+        eos_token_id = 2
+        detokenizer = FakeDetokenizer()
+
+        def encode(self, prompt: str, add_special_tokens: bool = True):
+            return [10, 20, 30, 40, 50, 60, 70, 80]
+
+    def fake_load(model_source: str, **kwargs):
+        return SimpleNamespace(_melix_native_mtp_active=True), FakeTokenizer()
+
+    def fake_stream_generate(*_args, **_kwargs):  # pragma: no cover
+        raise AssertionError("warm path test should not call stream_generate")
+
+    backend = mlx_text_runtime_module.AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=fake_stream_generate,
+        sampler_factory=lambda **kw: "sampler",
+    )
+    model_spec = WorkerModelCatalog.dev_text_model(
+        environment={"MELIX_DEV_TEXT_MODEL_PATH": "mlx-community/lcp-warm-test"}
+    )
+    model_spec.ext["melix.native_mtp.enabled"] = "true"
+    model_spec.ext["melix.native_mtp.active"] = "true"
+    model_spec.ext["melix.native_mtp.patch_applied"] = "true"
+    model_spec.ext["melix.native_mtp.compatible"] = "true"
+    loaded_model = backend.load_model(model_spec)
+    loaded_model[mlx_text_runtime_module._NATIVE_MTP_TEXT_ACTIVE_FIELD] = True
+
+    import threading
+
+    events = list(
+        backend.generate_tokens(
+            loaded_model,
+            "hello world",
+            common_pb2.SamplingConfig(max_output_tokens=2),
+            threading.Event(),
+            execution_ext={
+                "_melix.session_id": "warm-session",
+                "_melix.model_id": "test-model",
+                "_melix.model_revision": "v1",
+                "_melix.block_size": "4",
+                "_melix.acceleration_mode": "",
+            },
+        )
+    )
+
+    assert len(events) > 0
+    final = events[-1]
+    assert final.cache_hit_mode in ("partial", "exact")
+
+
+def _build_lcp_backend(monkeypatch, *, store, clone_fn, responses, encode_tokens=None,
+                       trim_returns=None, prefill_calls=None):
+    """Build an MTP-active backend wired to a mock prefix store for LCP tests."""
+    fake_core = _install_fake_mlx_core(monkeypatch)
+    _install_fake_mlx_lm_cache(monkeypatch, fake_core)
+
+    from worker.runtime import prefix_block_store as _pbs
+
+    monkeypatch.setattr(_pbs, "get_store", lambda *a, **kw: store)
+    monkeypatch.setattr(mlx_text_runtime_module, "_get_prefix_store", lambda *a, **kw: store)
+    monkeypatch.setattr(mlx_text_runtime_module, "_clone_cache_snapshot", clone_fn)
+    monkeypatch.setattr(mlx_text_runtime_module, "_estimate_cache_bytes", lambda cache: 0)
+    if trim_returns is not None:
+        _install_fake_trim(monkeypatch, returns=trim_returns)
+
+    tokens_to_encode = encode_tokens or [10, 20, 30, 40, 50, 60, 70, 80]
+
+    def fake_prefill(model, tokens, *, prefill_step_size, stream, restore_cache=None, restore_token_count=0):
+        if prefill_calls is not None:
+            prefill_calls.append({"restore_cache": restore_cache, "restore_token_count": restore_token_count})
+        cache = restore_cache if restore_cache is not None else [SimpleNamespace(state=[])]
+        return cache, [int(tokens[-1])], list(tokens[:-1])
+
+    monkeypatch.setattr(mlx_text_runtime_module, "_native_mtp_prefill_prompt_cache", fake_prefill)
+
+    class FakeBatchGenerator:
+        stream = None
+        def __init__(self, model, **kwargs) -> None: pass  # pragma: no cover
+        def insert(self, tokens, max_tokens, caches, all_tokens, samplers): return [77]
+        def next_generated(self): return responses
+        def remove(self, uids) -> None: pass  # pragma: no cover
+
+    monkeypatch.setattr(mlx_text_runtime_module, "_load_mlx_batch_generator_class", lambda: FakeBatchGenerator)
+    monkeypatch.setattr(mlx_text_runtime_module, "maybe_apply_native_mtp_text_preload_patches",
+        lambda _path, *, metadata: {"melix.native_mtp.enabled": "true", "melix.native_mtp.compatible": "true",
+            "melix.native_mtp.weights_present": "true", "melix.native_mtp.weight_count": "1",
+            "melix.native_mtp.patch_applied": "true", "melix.native_mtp.active": "true", "melix.native_mtp.reason": ""})
+
+    class FakeDetokenizer:
+        tokens: list[int] = []
+        def reset(self) -> None: self.tokens = []
+        def add_token(self, token: int) -> None: self.tokens.append(token)
+        @property
+        def last_segment(self) -> str: return "x"
+        def finalize(self) -> None: pass
+
+    class FakeTokenizer:
+        eos_token = "</s>"
+        eos_token_id = 2
+        detokenizer = FakeDetokenizer()
+        def encode(self, prompt, add_special_tokens=True): return list(tokens_to_encode)
+
+    def fake_load(s, **kw): return SimpleNamespace(_melix_native_mtp_active=True), FakeTokenizer()
+
+    backend = mlx_text_runtime_module.AutoMLXBackend(
+        load_fn=fake_load,
+        stream_generate_fn=lambda *a, **kw: (_ for _ in ()).throw(AssertionError("no stream_generate")),  # pragma: no cover
+        sampler_factory=lambda **kw: "sampler",
+    )
+    model_spec = WorkerModelCatalog.dev_text_model(environment={"MELIX_DEV_TEXT_MODEL_PATH": "x"})
+    for k in ("melix.native_mtp.enabled", "melix.native_mtp.active",
+              "melix.native_mtp.patch_applied", "melix.native_mtp.compatible"):
+        model_spec.ext[k] = "true"
+    loaded = backend.load_model(model_spec)
+    loaded[mlx_text_runtime_module._NATIVE_MTP_TEXT_ACTIVE_FIELD] = True
+    return backend, loaded
+
+
+def _mtp_response(**overrides):
+    base = dict(uid=77, token=101, finish_reason="stop",
+        speculative_acceptance_rate=None, speculative_rollback_rate=None,
+        speculative_accepted_tokens=None, speculative_rejected_tokens=None,
+        speculative_num_draft_tokens=None, speculative_draft_model_configured=None,
+        speculative_backbone_ms=None, speculative_cycle_count=None,
+        speculative_mtp_head_ms=None, speculative_sample_ms=None, speculative_cache_ops_ms=None)
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def test_generate_native_mtp_lcp_clone_failure_releases_and_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Covers the failed-clone branch that releases the ref and falls back to cold prefill."""
+    from worker.runtime.prefix_block_store import PrefixBlockStore
+
+    store = PrefixBlockStore()
+    store.put(
+        session_id="clone-fail-session",
+        token_ids=[10, 20, 30, 40, 50, 60, 70, 80],
+        cache_snapshot=[SimpleNamespace(state=[])],
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="test-model",
+        model_revision="v1",
+        block_size=4,
+        total_bytes=512,
+    )
+
+    # Clone returns None on the warm hit (forcing the fallback+release branch),
+    # but the post-prefill store update also calls clone — return None there too.
+    clone_calls = {"n": 0}
+
+    def clone_fn(cache):
+        clone_calls["n"] += 1
+        return None
+
+    backend, loaded = _build_lcp_backend(
+        monkeypatch, store=store, clone_fn=clone_fn, responses=[_mtp_response()]
+    )
+
+    import threading
+    events = list(backend.generate_tokens(
+        loaded, "hello world", common_pb2.SamplingConfig(max_output_tokens=2), threading.Event(),
+        execution_ext={"_melix.session_id": "clone-fail-session", "_melix.model_id": "test-model",
+            "_melix.model_revision": "v1", "_melix.block_size": "4"},
+    ))
+
+    assert len(events) > 0
+    # Clone was attempted (warm hit) and failed → fell back; ref released cleanly.
+    assert clone_calls["n"] >= 1
+    # No active refs leaked.
+    entry = store.acquire("clone-fail-session")
+    assert entry is not None
+    assert entry._active_refs == 1
+    store.release(entry)
+
+
+def test_generate_native_mtp_emits_nonterminal_then_terminal_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Covers the non-terminal event branch (cache metrics omitted until finish)."""
+    from worker.runtime.prefix_block_store import PrefixBlockStore
+
+    store = PrefixBlockStore()
+    backend, loaded = _build_lcp_backend(
+        monkeypatch,
+        store=store,
+        clone_fn=lambda cache: None,
+        responses=[_mtp_response(finish_reason=None, token=55), _mtp_response(token=66)],
+    )
+
+    import threading
+    events = list(backend.generate_tokens(
+        loaded, "hello world", common_pb2.SamplingConfig(max_output_tokens=4), threading.Event(),
+        execution_ext={"_melix.session_id": "nonterminal-session", "_melix.model_id": "test-model",
+            "_melix.model_revision": "v1", "_melix.block_size": "4"},
+    ))
+
+    assert len(events) >= 2
+    # First (non-terminal) event carries no cache metrics.
+    assert events[0].cache_hit_mode is None
+    assert events[0].recovered_prefix_tokens is None
+    # Terminal event carries them.
+    assert events[-1].cache_hit_mode == "none"
+
+
+def test_generate_native_mtp_partial_hit_trims_stale_tail_before_suffix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A partial hit must trim the stored tail (stored_len - recovered) before replay."""
+    from worker.runtime.prefix_block_store import PrefixBlockStore
+
+    store = PrefixBlockStore()
+    # Stored prompt is 8 tokens; new prompt shares only the first block of 4.
+    store.put(
+        session_id="partial-session",
+        token_ids=[10, 20, 30, 40, 50, 60, 70, 80],
+        cache_snapshot=[SimpleNamespace(state=[])],
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="test-model",
+        model_revision="v1",
+        block_size=4,
+        total_bytes=512,
+    )
+
+    prefill_calls: list[dict] = []
+    backend, loaded = _build_lcp_backend(
+        monkeypatch,
+        store=store,
+        clone_fn=lambda cache: [SimpleNamespace(state=[])] if cache is not None else None,
+        responses=[_mtp_response()],
+        encode_tokens=[10, 20, 30, 40, 99, 99, 99, 99],  # shares block 1, diverges in block 2
+        trim_returns=4,  # stored_len(8) - recovered(4) = 4 trimmed successfully
+        prefill_calls=prefill_calls,
+    )
+
+    import threading
+    events = list(backend.generate_tokens(
+        loaded, "hello world", common_pb2.SamplingConfig(max_output_tokens=2), threading.Event(),
+        execution_ext={"_melix.session_id": "partial-session", "_melix.model_id": "test-model",
+            "_melix.model_revision": "v1", "_melix.block_size": "4"},
+    ))
+
+    assert len(events) > 0
+    assert events[-1].cache_hit_mode == "partial"
+    assert events[-1].recovered_prefix_tokens == 4
+    # Suffix prefill ran with the trimmed restored cache at the recovered boundary.
+    warm_calls = [c for c in prefill_calls if c["restore_cache"] is not None]
+    assert warm_calls and warm_calls[0]["restore_token_count"] == 4
+
+
+def test_generate_native_mtp_partial_hit_falls_back_when_trim_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the stale tail cannot be fully trimmed, fall back to a cold prefill (no reuse)."""
+    from worker.runtime.prefix_block_store import PrefixBlockStore
+
+    store = PrefixBlockStore()
+    store.put(
+        session_id="trim-fail-session",
+        token_ids=[10, 20, 30, 40, 50, 60, 70, 80],
+        cache_snapshot=[SimpleNamespace(state=[])],
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="test-model",
+        model_revision="v1",
+        block_size=4,
+        total_bytes=512,
+    )
+
+    prefill_calls: list[dict] = []
+    backend, loaded = _build_lcp_backend(
+        monkeypatch,
+        store=store,
+        clone_fn=lambda cache: [SimpleNamespace(state=[])] if cache is not None else None,
+        responses=[_mtp_response()],
+        encode_tokens=[10, 20, 30, 40, 99, 99, 99, 99],
+        trim_returns=2,  # only 2 of the required 4 trimmed → unsafe → fall back
+        prefill_calls=prefill_calls,
+    )
+
+    import threading
+    events = list(backend.generate_tokens(
+        loaded, "hello world", common_pb2.SamplingConfig(max_output_tokens=2), threading.Event(),
+        execution_ext={"_melix.session_id": "trim-fail-session", "_melix.model_id": "test-model",
+            "_melix.model_revision": "v1", "_melix.block_size": "4"},
+    ))
+
+    assert len(events) > 0
+    # Cold-prefill fallback: no restore_cache passed to prefill, and the entry ref
+    # was released cleanly (re-acquire sees only our own ref).
+    assert all(c["restore_cache"] is None for c in prefill_calls)
+    entry = store.acquire("trim-fail-session")
+    assert entry is not None
+    assert entry._active_refs == 1
+    store.release(entry)

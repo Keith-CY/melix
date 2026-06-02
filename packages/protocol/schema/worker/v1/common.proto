@@ -481,6 +481,7 @@ message BlockTable {
   string scope_id = 3;
   repeated PageRef pages = 4;
   uint32 total_token_count = 5;
+  CacheMode cache_mode = 6;
 }
 
 message BlockRef {

@@ -75,15 +75,21 @@ def _text_native_mtp_parser_metrics(event: RuntimeTokenEvent | None) -> dict[str
         return {}
 
     t = event.native_mtp_timings
-    if (
-        t is None
-        and event.speculative_accepted_tokens is None
-        and event.speculative_rejected_tokens is None
-        and event.speculative_target_verify_ms is None
-    ):
+    has_timing = t is not None
+    has_speculative = (
+        event.speculative_accepted_tokens is not None
+        or event.speculative_rejected_tokens is not None
+        or event.speculative_target_verify_ms is not None
+    )
+    has_cache = (
+        event.cache_hit_mode is not None
+        or event.recovered_prefix_tokens is not None
+        or event.cache_fallback_reason is not None
+    )
+    if not has_timing and not has_speculative and not has_cache:
         return {}
 
-    metric_fields = {
+    metric_fields: dict[str, object] = {
         "text_batch_generator_speculative_cycle_count_total": t.cycle_count if t else None,
         "text_batch_generator_speculative_accepted_count_total": event.speculative_accepted_tokens,
         "text_batch_generator_speculative_rejected_count_total": event.speculative_rejected_tokens,
@@ -98,6 +104,9 @@ def _text_native_mtp_parser_metrics(event: RuntimeTokenEvent | None) -> dict[str
         "text_batch_generator_batch_insert_ms": t.batch_insert_ms if t else None,
         "text_batch_generator_first_response_ms": t.first_response_ms if t else None,
         "text_batch_generator_first_visible_ms": t.first_visible_ms if t else None,
+        "cache_hit_mode": event.cache_hit_mode,
+        "recovered_prefix_tokens": event.recovered_prefix_tokens,
+        "cache_fallback_reason": event.cache_fallback_reason,
     }
     return {key: str(value) for key, value in metric_fields.items() if value is not None}
 
@@ -155,6 +164,13 @@ class EngineCore:
     def generate(self, request: inference_pb2.GenerateRequest) -> Iterator[inference_pb2.ExecuteEvent]:
         execution = request.execution
         execution_ext = execution.ext
+        _routing_ext: dict[str, str] = dict(execution_ext) if execution_ext else {}
+        _routing_ext["_melix.session_id"] = execution.id.session_id
+        _routing_ext["_melix.model_id"] = execution.scope.model_id
+        _routing_ext["_melix.model_revision"] = execution.scope.revision
+        _routing_ext["_melix.block_size"] = str(execution.cache_hints.preferred_block_size)
+        _routing_ext["_melix.acceleration_mode"] = str(execution.acceleration.mode)
+        _routing_ext["_melix.cache_mode"] = str(execution.cache_hints.cache_mode)
         sampling = request.sampling
         reasoning = execution.reasoning
         request_id = execution.id.request_id
@@ -235,7 +251,7 @@ class EngineCore:
                     prompt,
                     effective_sampling,
                     cancel_event,
-                    execution_ext=execution_ext,
+                    execution_ext=_routing_ext,
                     acceleration_policy=execution.acceleration,
                 )
             else:
@@ -244,7 +260,7 @@ class EngineCore:
                     prompt,
                     effective_sampling,
                     cancel_event,
-                    execution_ext=execution_ext,
+                    execution_ext=_routing_ext,
                 )
             for runtime_event in runtime_events:
                 if cancel_event.is_set():
