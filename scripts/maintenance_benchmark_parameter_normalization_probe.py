@@ -47,6 +47,15 @@ def _string_values(value_count: int) -> list[CountedString]:
     return [CountedString(variants[index % len(variants)]) for index in range(value_count)]
 
 
+def _native_int_values(value_count: int) -> list[int]:
+    return [(index % 97) - 12 for index in range(value_count)]
+
+
+def _native_string_values(value_count: int) -> list[str]:
+    variants = (" cold ", "", " warm", "default ", " structured ", "cold")
+    return [variants[index % len(variants)] for index in range(value_count)]
+
+
 def _run_sample(value_count: int, iterations: int) -> tuple[float, int, int, int, int, int]:
     int_conversion_calls = 0
     string_conversion_calls = 0
@@ -77,6 +86,25 @@ def _run_sample(value_count: int, iterations: int) -> tuple[float, int, int, int
     )
 
 
+def _run_native_sample(value_count: int, iterations: int) -> tuple[float, int]:
+    checksum = 0
+    started = time.perf_counter()
+    for _ in range(iterations):
+        positive_values = MaintenanceCore._positive_sorted_values(
+            _native_int_values(value_count),
+            default=(32,),
+        )
+        normalized_strings = MaintenanceCore._normalized_string_values(
+            _native_string_values(value_count),
+            default=("default",),
+        )
+        if positive_values[0] <= 0 or normalized_strings != ("cold", "default", "structured", "warm"):
+            raise SystemExit("unexpected native benchmark parameter normalization output")
+        checksum += len(positive_values) + len(normalized_strings)
+    elapsed_ms = (time.perf_counter() - started) * 1000.0
+    return elapsed_ms, checksum
+
+
 def main() -> int:
     value_count = int(os.environ.get("MELIX_MAINTENANCE_PARAMETER_PROBE_VALUE_COUNT", "3000"))
     iterations = int(os.environ.get("MELIX_MAINTENANCE_PARAMETER_PROBE_ITERATIONS", "80"))
@@ -86,7 +114,9 @@ def main() -> int:
     int_call_samples: list[float] = []
     string_call_samples: list[float] = []
     calls_per_value_samples: list[float] = []
+    native_elapsed_samples: list[float] = []
     checksum = 0
+    native_checksum = 0
 
     for _ in range(sample_count):
         tracemalloc.start()
@@ -105,6 +135,8 @@ def main() -> int:
         int_call_samples.append(float(int_calls))
         string_call_samples.append(float(string_calls))
         calls_per_value_samples.append((int_calls + string_calls) / (int_values + string_values))
+        native_elapsed_ms, native_checksum = _run_native_sample(value_count, iterations)
+        native_elapsed_samples.append(native_elapsed_ms)
 
     print(
         json.dumps(
@@ -114,6 +146,8 @@ def main() -> int:
                 "elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
                 "int_conversion_calls_mean": round(statistics.fmean(int_call_samples), 6),
                 "iteration_count": float(iterations),
+                "native_checksum": float(native_checksum),
+                "native_elapsed_ms_mean": round(statistics.fmean(native_elapsed_samples), 6),
                 "peak_bytes_mean": round(statistics.fmean(peak_samples), 6),
                 "sample_count": float(sample_count),
                 "string_conversion_calls_mean": round(statistics.fmean(string_call_samples), 6),

@@ -5859,6 +5859,8 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
     counted_ints = [CountedInt(8), CountedInt(0), CountedInt(4), CountedInt(8)]
     assert MaintenanceCore._positive_sorted_values(counted_ints, default=(32,)) == (4, 8)
     assert [value.calls for value in counted_ints] == [1, 1, 1, 1]
+    assert MaintenanceCore._positive_sorted_values([8, 0, 4, 8], default=(32,)) == (4, 8)
+    assert MaintenanceCore._positive_sorted_values([False, True, 2], default=(32,)) == (1, 2)
 
     class CountedString:
         def __init__(self, value: str) -> None:
@@ -5875,6 +5877,10 @@ def test_benchmark_helper_parsers_cover_invalid_and_boundary_inputs(
         default=("default",),
     ) == ("cold", "warm")
     assert [value.calls for value in counted_strings] == [1, 1, 1]
+    assert MaintenanceCore._normalized_string_values(
+        [" warm ", "", "cold"],
+        default=("default",),
+    ) == ("cold", "warm")
 
     MaintenanceCore._shape_benchmark_prompt.cache_clear()
     MaintenanceCore._benchmark_prompt_token_count.cache_clear()
