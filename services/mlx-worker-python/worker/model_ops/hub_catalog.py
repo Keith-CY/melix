@@ -340,11 +340,14 @@ def _is_mlx_atom(value: str) -> bool:
 
 
 def _tag_payload_contains_mlx(value: Any) -> bool:
-    if isinstance(value, str):
-        return value.lower() == "mlx"
-    if not isinstance(value, list):
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, str) and _is_mlx_atom(item):
+                return True
         return False
-    return any(item.lower() == "mlx" for item in value if isinstance(item, str))
+    if isinstance(value, str):
+        return _is_mlx_atom(value)
+    return False
 
 
 def _normalized_lowered_tags(tags: list[str], lowered_tags: set[str] | None = None) -> set[str]:
