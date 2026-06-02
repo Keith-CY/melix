@@ -2850,8 +2850,19 @@ def _coerce_string_list(value: object) -> list[str]:
 
 
 def _parse_response_json(response_text: str) -> dict[str, object]:
-    response_start = 0
     response_length = len(response_text)
+    if response_text.startswith(_JSON_FENCE_PREFIX):
+        parsed, end_index = _JSON_DECODER.raw_decode(
+            response_text,
+            _JSON_FENCE_PREFIX_LENGTH,
+        )
+        if not _has_only_optional_closing_fence(response_text, end_index, response_length):
+            raise json.JSONDecodeError("Extra data", response_text, end_index)
+        if not isinstance(parsed, dict):
+            raise ValueError("LLM response must be a JSON object")
+        return parsed
+
+    response_start = 0
     while response_start < response_length and response_text[response_start].isspace():
         response_start += 1
 
