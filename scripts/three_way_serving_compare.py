@@ -335,6 +335,18 @@ def capture_runtime_snapshots(
     return snapshots
 
 
+def endpoints_for_scenario(
+    endpoints: list[base.EndpointConfig],
+    scenario: base.BenchmarkScenario,
+    *,
+    endpoint_order: str,
+) -> list[base.EndpointConfig]:
+    if endpoint_order == "alternate" and endpoints:
+        offset = scenario.repeat_index % len(endpoints)
+        return list(endpoints[offset:]) + list(endpoints[:offset])
+    return list(endpoints)
+
+
 def prompt_token_evidence(observations: list[base.RequestObservation]) -> list[dict[str, Any]]:
     grouped: dict[tuple[str, int, int, int, str, str], list[base.RequestObservation]] = {}
     for observation in observations:
@@ -448,7 +460,11 @@ def run_comparison(args: argparse.Namespace) -> dict[str, Any]:
             )
             observations = []
             for scenario in scenarios:
-                for endpoint in endpoints:
+                for endpoint in endpoints_for_scenario(
+                    endpoints,
+                    scenario,
+                    endpoint_order=args.endpoint_order,
+                ):
                     observations.extend(
                         base.run_group(
                             endpoint,
@@ -458,6 +474,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, Any]:
                             top_p=args.top_p,
                             top_k=args.top_k,
                             timeout_seconds=args.timeout_seconds,
+                            run_key=run_id,
                         )
                     )
 
@@ -510,6 +527,7 @@ def run_comparison(args: argparse.Namespace) -> dict[str, Any]:
         dry_run=args.dry_run,
         target_endpoint=args.target_endpoint,
         measurement_profile=measurement_profile,
+        endpoint_order=args.endpoint_order,
         run_evidence=run_evidence,
     )
     exported_to = None if args.no_export else export_bundle(staging_dir, args.export_dir)
@@ -554,6 +572,7 @@ def write_artifacts(
     dry_run: bool,
     target_endpoint: str,
     measurement_profile: dict[str, Any],
+    endpoint_order: str,
     run_evidence: dict[str, Any] | None,
 ) -> dict[str, str]:
     staging_dir.mkdir(parents=True, exist_ok=True)
@@ -581,6 +600,7 @@ def write_artifacts(
         "generated_at": generated_at,
         "dry_run": dry_run,
         "target_endpoint": target_endpoint,
+        "endpoint_order": endpoint_order,
         "measurement_profile": measurement_profile,
         "endpoints": [
             {
@@ -643,6 +663,7 @@ def write_artifacts(
         "schema_version": REPORT_SCHEMA_VERSION,
         "generated_at": generated_at,
         "target_endpoint": target_endpoint,
+        "endpoint_order": endpoint_order,
         "measurement_profile": measurement_profile,
         "runtime_snapshots": runtime_snapshots,
         "melix_metrics_snapshot": metrics_snapshot,
@@ -677,6 +698,7 @@ def write_artifacts(
             dry_run=dry_run,
             target_endpoint=target_endpoint,
             measurement_profile=measurement_profile,
+            endpoint_order=endpoint_order,
             run_evidence=run_evidence,
         ),
         encoding="utf-8",
@@ -700,11 +722,13 @@ def render_markdown_summary(
     dry_run: bool,
     target_endpoint: str,
     measurement_profile: dict[str, Any],
+    endpoint_order: str = "fixed",
     run_evidence: dict[str, Any] | None = None,
 ) -> str:
     lines = ["# Three-Way Gemma 4 31B 128K Serving Comparison", ""]
     lines.append(f"- Dry run: `{str(dry_run).lower()}`")
     lines.append(f"- Target endpoint: `{target_endpoint}`")
+    lines.append(f"- Endpoint order: `{endpoint_order}`")
     lines.append(f"- Measurement profile: `{measurement_profile.get('profile', 'unknown')}`")
     if measurement_profile.get("operator_note"):
         lines.append(f"- Measurement note: {measurement_profile['operator_note']}")
@@ -992,6 +1016,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--concurrency", type=int, nargs="+", default=[1])
     parser.add_argument("--cache-profile", choices=["cold_unique", "repeated"], default="cold_unique")
     parser.add_argument("--prompt-style", choices=base.PROMPT_STYLES, default="concise")
+    parser.add_argument(
+        "--endpoint-order",
+        choices=["fixed", "alternate"],
+        default="fixed",
+        help="Use 'alternate' to rotate endpoint order by repeat and reduce time-drift bias.",
+    )
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--top-p", type=float, default=1.0)
     parser.add_argument("--top-k", type=int, default=0)

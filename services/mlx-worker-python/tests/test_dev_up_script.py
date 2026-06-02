@@ -106,6 +106,8 @@ def test_build_swift_launch_command_defaults_to_swift_run(tmp_path: Path) -> Non
     ) == [
         "swift",
         "run",
+        "-c",
+        "debug",
         "--package-path",
         f"{tmp_path}/services/mlx-text-worker-swift",
         "melix-text-worker-swift",
@@ -123,6 +125,43 @@ def test_build_swift_launch_command_prefers_built_binary_when_requested(tmp_path
         product_name="melix-text-worker-swift",
         prefer_built=True,
     ) == [str(binary_path)]
+
+
+def test_build_swift_launch_command_uses_requested_release_configuration(tmp_path: Path) -> None:
+    dev_up = load_dev_up_module()
+    binary_path = (
+        tmp_path
+        / "services/mlx-text-worker-swift/.build/arm64-apple-macosx/release/melix-text-worker-swift"
+    )
+    make_executable(binary_path)
+
+    assert dev_up.build_swift_launch_command(
+        tmp_path,
+        package_path="services/mlx-text-worker-swift",
+        product_name="melix-text-worker-swift",
+        prefer_built=True,
+        build_configuration="release",
+    ) == [str(binary_path)]
+
+
+def test_build_swift_launch_command_passes_configuration_to_swift_run(tmp_path: Path) -> None:
+    dev_up = load_dev_up_module()
+
+    assert dev_up.build_swift_launch_command(
+        tmp_path,
+        package_path="services/mlx-text-worker-swift",
+        product_name="melix-text-worker-swift",
+        prefer_built=False,
+        build_configuration="release",
+    ) == [
+        "swift",
+        "run",
+        "-c",
+        "release",
+        "--package-path",
+        f"{tmp_path}/services/mlx-text-worker-swift",
+        "melix-text-worker-swift",
+    ]
 
 
 def test_build_swift_launch_command_uses_direct_debug_binary_without_glob(
@@ -203,7 +242,8 @@ def test_build_swift_launch_command_reports_missing_built_binary(tmp_path: Path)
         raise AssertionError("Expected build_swift_launch_command to fail when built binary is missing")
 
     assert "Built Swift product is missing for 'melix-control-plane'" in message
-    assert "Run `make swift-test` or `swift build --package-path" in message
+    assert "with configuration 'debug'" in message
+    assert "Run `swift build --package-path" in message
 
 
 def test_build_python_worker_launch_command_defaults_to_uv_extra_mlx(tmp_path: Path) -> None:
@@ -262,10 +302,10 @@ def test_dev_up_shell_wrapper_delegates_help_to_python_entrypoint() -> None:
 
     assert result.returncode == 0
     assert result.stdout.splitlines() == [
-        "Usage: bash scripts/dev_up.sh [--prefer-built]",
+        "Usage: bash scripts/dev_up.sh [--prefer-built] [--build-configuration debug|release]",
         "",
         "Options:",
-        "  --prefer-built  Start Swift processes from existing built executables under .build/debug when available.",
+        "  --prefer-built  Start Swift processes from existing built executables under .build/<configuration> when available.",
         "                  This keeps the Python worker on uv run and fails fast if the required Swift binaries are missing.",
     ]
 
@@ -273,7 +313,19 @@ def test_dev_up_shell_wrapper_delegates_help_to_python_entrypoint() -> None:
 def test_parse_args_prefers_built() -> None:
     dev_up = load_dev_up_module()
 
-    assert dev_up.parse_args(["--prefer-built"]) == dev_up.DevUpOptions(prefer_built=True)
+    assert dev_up.parse_args(["--prefer-built"]) == dev_up.DevUpOptions(
+        prefer_built=True,
+        build_configuration="debug",
+    )
+
+
+def test_parse_args_accepts_release_build_configuration() -> None:
+    dev_up = load_dev_up_module()
+
+    assert dev_up.parse_args(["--prefer-built", "--build-configuration", "release"]) == dev_up.DevUpOptions(
+        prefer_built=True,
+        build_configuration="release",
+    )
 
 
 def test_parse_args_help_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
@@ -283,7 +335,7 @@ def test_parse_args_help_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
         dev_up.parse_args(["--help"])
 
     assert exc.value.code == 0
-    assert "Usage: bash scripts/dev_up.sh [--prefer-built]" in capsys.readouterr().out
+    assert "Usage: bash scripts/dev_up.sh [--prefer-built] [--build-configuration debug|release]" in capsys.readouterr().out
 
 
 def test_parse_args_rejects_unknown_argument(capsys: pytest.CaptureFixture[str]) -> None:
@@ -295,7 +347,29 @@ def test_parse_args_rejects_unknown_argument(capsys: pytest.CaptureFixture[str])
     captured = capsys.readouterr()
     assert exc.value.code == 2
     assert "Unknown argument: --nope" in captured.err
-    assert "Usage: bash scripts/dev_up.sh [--prefer-built]" in captured.err
+    assert "Usage: bash scripts/dev_up.sh [--prefer-built] [--build-configuration debug|release]" in captured.err
+
+
+def test_parse_args_rejects_missing_build_configuration(capsys: pytest.CaptureFixture[str]) -> None:
+    dev_up = load_dev_up_module()
+
+    with pytest.raises(SystemExit) as exc:
+        dev_up.parse_args(["--build-configuration"])
+
+    captured = capsys.readouterr()
+    assert exc.value.code == 2
+    assert "--build-configuration requires a value" in captured.err
+
+
+def test_parse_args_rejects_unsupported_build_configuration(capsys: pytest.CaptureFixture[str]) -> None:
+    dev_up = load_dev_up_module()
+
+    with pytest.raises(SystemExit) as exc:
+        dev_up.parse_args(["--build-configuration", "profile"])
+
+    captured = capsys.readouterr()
+    assert exc.value.code == 2
+    assert "--build-configuration must be either 'debug' or 'release'" in captured.err
 
 
 def test_compute_runtime_layout_uses_environment_overrides(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -606,6 +680,18 @@ def test_read_mlx_metal_dist_info_version_uses_scandir_without_path_glob(
             nested_monkeypatch,
             tmp_case("layout-env"),
         )
+    test_build_swift_launch_command_defaults_to_swift_run(tmp_case("swift-run-debug"))
+    test_build_swift_launch_command_prefers_built_binary_when_requested(tmp_case("swift-built-debug"))
+    test_build_swift_launch_command_uses_requested_release_configuration(tmp_case("swift-built-release"))
+    test_build_swift_launch_command_passes_configuration_to_swift_run(tmp_case("swift-run-release"))
+    test_build_swift_launch_command_reports_missing_built_binary(tmp_case("swift-built-missing"))
+    test_dev_up_shell_wrapper_delegates_help_to_python_entrypoint()
+    test_parse_args_prefers_built()
+    test_parse_args_accepts_release_build_configuration()
+    test_parse_args_help_exits_zero(capsys)
+    test_parse_args_rejects_unknown_argument(capsys)
+    test_parse_args_rejects_missing_build_configuration(capsys)
+    test_parse_args_rejects_unsupported_build_configuration(capsys)
     with pytest.MonkeyPatch.context() as nested_monkeypatch:
         test_compute_runtime_layout_uses_short_default_worker_sockets(
             nested_monkeypatch,
@@ -626,6 +712,12 @@ def test_read_mlx_metal_dist_info_version_uses_scandir_without_path_glob(
         test_start_stack_orchestrates_processes_and_emits_runtime_env(
             nested_monkeypatch,
             tmp_case("start-stack"),
+            capsys,
+        )
+    with pytest.MonkeyPatch.context() as nested_monkeypatch:
+        test_start_stack_emits_default_swift_build_configuration(
+            nested_monkeypatch,
+            tmp_case("start-stack-debug"),
             capsys,
         )
     with pytest.MonkeyPatch.context() as nested_monkeypatch:
@@ -1218,11 +1310,29 @@ def test_start_stack_orchestrates_processes_and_emits_runtime_env(
     monkeypatch.setenv("MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE", "1")
 
     monkeypatch.setattr(dev_up, "compute_runtime_layout", lambda root: layout)
-    monkeypatch.setattr(
-        dev_up,
-        "build_swift_launch_command",
-        lambda repo_root, *, package_path, product_name, prefer_built: [product_name],
-    )
+    def fake_build_swift_launch_command(
+        repo_root: Path,
+        *,
+        package_path: str,
+        product_name: str,
+        prefer_built: bool,
+        build_configuration: str = "debug",
+    ) -> list[str]:
+        calls.append(
+            (
+                "swift-launch",
+                {
+                    "build_configuration": build_configuration,
+                    "package_path": package_path,
+                    "prefer_built": prefer_built,
+                    "product_name": product_name,
+                    "repo_root": repo_root,
+                },
+            )
+        )
+        return [product_name]
+
+    monkeypatch.setattr(dev_up, "build_swift_launch_command", fake_build_swift_launch_command)
     monkeypatch.setattr(
         dev_up,
         "prepare_swift_worker_launch_cwd",
@@ -1245,7 +1355,7 @@ def test_start_stack_orchestrates_processes_and_emits_runtime_env(
     )
     monkeypatch.setattr(dev_up.time, "perf_counter_ns", lambda: 999)
 
-    dev_up.start_stack(dev_up.DevUpOptions(prefer_built=True))
+    dev_up.start_stack(dev_up.DevUpOptions(prefer_built=True, build_configuration="release"))
 
     assert (layout.runtime_dir / "swift-text-worker.pid").read_text(encoding="utf-8") == "101"
     assert (layout.runtime_dir / "swift-vision-worker.pid").read_text(encoding="utf-8") == "202"
@@ -1254,10 +1364,17 @@ def test_start_stack_orchestrates_processes_and_emits_runtime_env(
     output = capsys.readouterr().out
     assert "Melix local stack is ready." in output
     assert "Service instance: team-a" in output
-    assert "Swift launch mode: prefer-built" in output
+    assert "Swift launch mode: prefer-built (release)" in output
     assert any(kind == "spawn" for kind, _ in calls)
     assert any(kind == "wait" for kind, _ in calls)
     assert ("http", "12436") in calls
+    swift_launch_calls = [payload for kind, payload in calls if kind == "swift-launch"]
+    assert [payload["product_name"] for payload in swift_launch_calls] == [
+        "melix-text-worker-swift",
+        "melix-control-plane",
+    ]
+    assert {payload["build_configuration"] for payload in swift_launch_calls} == {"release"}
+    assert {payload["prefer_built"] for payload in swift_launch_calls} == {True}
     wait_calls = [payload for kind, payload in calls if kind == "wait"]
     assert len(wait_calls) == 3
     assert all(payload["python_executable"] == bridge_python for payload in wait_calls)
@@ -1302,6 +1419,75 @@ def test_start_stack_orchestrates_processes_and_emits_runtime_env(
     assert control_plane_spawn["env_overrides"]["MELIX_PYTHON_BRIDGE_EXECUTABLE"] == str(bridge_python)
 
 
+def test_start_stack_emits_default_swift_build_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    dev_up = load_dev_up_module()
+    layout = make_layout(dev_up, tmp_path)
+    calls: list[tuple[str, object]] = []
+    pid_values = iter([101, 202, 303, 404])
+
+    monkeypatch.setattr(dev_up, "compute_runtime_layout", lambda root: layout)
+
+    def fake_build_swift_launch_command(
+        repo_root: Path,
+        *,
+        package_path: str,
+        product_name: str,
+        prefer_built: bool,
+        build_configuration: str = "debug",
+    ) -> list[str]:
+        calls.append(
+            (
+                "swift-launch",
+                {
+                    "build_configuration": build_configuration,
+                    "prefer_built": prefer_built,
+                    "product_name": product_name,
+                    "repo_root": repo_root,
+                },
+            )
+        )
+        return [product_name]
+
+    monkeypatch.setattr(dev_up, "build_swift_launch_command", fake_build_swift_launch_command)
+    monkeypatch.setattr(
+        dev_up,
+        "prepare_swift_worker_launch_cwd",
+        lambda layout, repo_root, worker_name="swift-text-worker": layout.runtime_dir / f"{worker_name}-cwd",
+    )
+    monkeypatch.setattr(
+        dev_up,
+        "spawn_background_process",
+        lambda **kwargs: calls.append(("spawn", kwargs)) or next(pid_values),
+    )
+    monkeypatch.setattr(
+        dev_up,
+        "run_wait_for_worker_ready",
+        lambda repo_root, **kwargs: calls.append(("wait", kwargs)),
+    )
+    monkeypatch.setattr(
+        dev_up,
+        "wait_for_http_ready",
+        lambda http_port, timeout_seconds=120.0: calls.append(("http", http_port)),
+    )
+    monkeypatch.setattr(dev_up.time, "perf_counter_ns", lambda: 999)
+
+    dev_up.start_stack(dev_up.DevUpOptions())
+
+    output = capsys.readouterr().out
+    assert "Swift build configuration: debug" in output
+    swift_launch_calls = [payload for kind, payload in calls if kind == "swift-launch"]
+    assert [payload["product_name"] for payload in swift_launch_calls] == [
+        "melix-text-worker-swift",
+        "melix-control-plane",
+    ]
+    assert {payload["build_configuration"] for payload in swift_launch_calls} == {"debug"}
+    assert {payload["prefer_built"] for payload in swift_launch_calls} == {False}
+
+
 def test_start_stack_wraps_http_timeout_with_log_paths(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1317,7 +1503,7 @@ def test_start_stack_wraps_http_timeout_with_log_paths(
     monkeypatch.setattr(
         dev_up,
         "build_swift_launch_command",
-        lambda repo_root, *, package_path, product_name, prefer_built: [product_name],
+        lambda repo_root, *, package_path, product_name, prefer_built, build_configuration="debug": [product_name],
     )
     monkeypatch.setattr(dev_up, "spawn_background_process", lambda **kwargs: 1)
     monkeypatch.setattr(dev_up, "run_wait_for_worker_ready", lambda repo_root, **kwargs: None)
@@ -1365,7 +1551,7 @@ def test_start_stack_control_plane_gateway_config_store_overrides_parent_environ
     monkeypatch.setattr(
         dev_up,
         "build_swift_launch_command",
-        lambda repo_root, *, package_path, product_name, prefer_built: [product_name],
+        lambda repo_root, *, package_path, product_name, prefer_built, build_configuration="debug": [product_name],
     )
     monkeypatch.setattr(dev_up.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(dev_up, "run_wait_for_worker_ready", lambda repo_root, **kwargs: None)
