@@ -621,6 +621,30 @@ def test_lora_quantized_kind_detection_uses_precompiled_patterns(
     assert lora_runtime_metadata_module._quantized_kind_from_text("not-a-q4suffix") == "unknown"
 
 
+def test_lora_quantized_kind_detection_skips_regex_without_substring(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    search_calls = 0
+
+    class CountingPattern:
+        def search(self, _value: str) -> None:
+            nonlocal search_calls
+            search_calls += 1
+            return None
+
+    monkeypatch.setattr(
+        lora_runtime_metadata_module,
+        "_QUANTIZED_KIND_PATTERNS",
+        tuple((kind, CountingPattern()) for kind in ("4bit", "8bit", "q4", "q8", "optiq")),
+    )
+
+    assert lora_runtime_metadata_module._quantized_kind_from_text("plain fused adapter") == "unknown"
+    assert search_calls == 0
+
+    assert lora_runtime_metadata_module._quantized_kind_from_text("not-a-q4suffix") == "unknown"
+    assert search_calls == 1
+
+
 def test_lora_canary_receipt_detects_missing_checkpoint_resume_assets(
     tmp_path: Path,
 ) -> None:
