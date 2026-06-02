@@ -199,7 +199,7 @@ def test_report_evidence_gate_run_kind_non_string_values_still_match_by_string()
 
 
 def test_report_evidence_gate_metric_prefix_tuple_rules_reuse_normalized_tuple() -> None:
-    report_evidence_gate_module._string_tuple_from_tuple.cache_clear()
+    report_evidence_gate_module._string_prefix_tuple_from_tuple.cache_clear()
     rule = {"metric_prefixes": ("adapter.", "runtime.")}
 
     assert report_evidence_gate_module._rule_matches_report(
@@ -217,9 +217,26 @@ def test_report_evidence_gate_metric_prefix_tuple_rules_reuse_normalized_tuple()
         probe_phases=set(),
     )
 
-    cache_info = report_evidence_gate_module._string_tuple_from_tuple.cache_info()
+    cache_info = report_evidence_gate_module._string_prefix_tuple_from_tuple.cache_info()
     assert cache_info.hits >= 1
     assert cache_info.misses == 1
+
+
+def test_report_evidence_gate_metric_prefix_fast_reject_preserves_empty_prefix() -> None:
+    assert report_evidence_gate_module._rule_matches_report(
+        rule={"metric_prefixes": ("", "runtime.")},
+        runs=[],
+        targets=[],
+        metrics=[{"metric": "anything.decode_ms"}],
+        probe_phases=set(),
+    )
+    assert not report_evidence_gate_module._rule_matches_report(
+        rule={"metric_prefixes": ("adapter.", "runtime.")},
+        runs=[],
+        targets=[],
+        metrics=[{"metric": "other.decode_ms"}, {"metric": 42}],
+        probe_phases=set(),
+    )
 
 
 def test_report_evidence_gate_metric_prefix_list_rules_reflect_mutation() -> None:
