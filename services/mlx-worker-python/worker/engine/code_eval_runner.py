@@ -556,12 +556,12 @@ def _read_limited_stdio(path: Path, byte_limit: int) -> tuple[str, int]:
 
     try:
         size = os.fstat(fd).st_size
-        read_limit = max(int(byte_limit), 0)
+        read_limit = byte_limit if byte_limit > 0 else 0
+        read_size = read_limit if size > read_limit else size
+        if read_size == 0:
+            return "", size
         if size > read_limit:
             os.lseek(fd, -read_limit, os.SEEK_END)
-            read_size = read_limit
-        else:
-            read_size = size
         return os.read(fd, read_size).decode("utf-8", errors="replace").strip(), size
     except OSError:
         return "", 0
