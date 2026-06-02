@@ -267,7 +267,7 @@ def _evaluate_metrics_and_failures(evidence: dict[str, Any]) -> tuple[dict[str, 
         if route_selected:
             unsupported_selected_route_count += 1.0
             failures.append(f"gemma_e4b_profile.unsupported_routes.{route_name} was selected")
-        if route_status in _REFUSED_ROUTE_STATUSES:
+        elif route_status in _REFUSED_ROUTE_STATUSES:
             unsupported_route_refusal_count += 1.0
             if not route_reason:
                 unsupported_route_missing_reason_count += 1.0

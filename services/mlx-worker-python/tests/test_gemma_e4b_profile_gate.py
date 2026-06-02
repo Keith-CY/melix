@@ -65,6 +65,10 @@ def test_gemma_e4b_profile_gate_fails_when_unsupported_route_is_selected() -> No
     assert report["status"] == "failed"
     assert report["metrics"]["unsupported_selected_route_count"] == 1.0
     assert "gemma_e4b_profile.unsupported_routes.speculative_decode was selected" in report["failures"]
+    assert (
+        "gemma_e4b_profile.unsupported_routes.speculative_decode status is selected"
+        not in report["failures"]
+    )
 
 
 def test_gemma_e4b_profile_gate_fails_when_refusal_reason_is_missing() -> None:
