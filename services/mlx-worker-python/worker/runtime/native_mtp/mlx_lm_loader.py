@@ -58,8 +58,9 @@ def extra_mtp_safetensor_files(model_path: Path) -> list[Path]:
     path_join = os.path.join
     path_exists = os.path.exists
     path_basename = os.path.basename
+    mtp_key_prefixes = _MTP_WEIGHT_KEY_PREFIXES
     for key, file_name in weight_map.items():
-        if not _is_mtp_weight_key(key):
+        if not key.startswith(mtp_key_prefixes):
             continue
         file_name_text = str(file_name)
         if file_name_text in seen:

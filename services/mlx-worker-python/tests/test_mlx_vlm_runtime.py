@@ -1612,9 +1612,13 @@ def test_native_mtp_extra_safetensor_files_filters_names_before_path_join(
         exists_names.append(Path(path).name)
         return original_exists(path)
 
+    def fail_helper_call(key: object) -> bool:  # pragma: no cover - regression guard
+        raise AssertionError("extra_mtp_safetensor_files() should use direct JSON key prefix checks")
+
     monkeypatch.setattr(Path, "__truediv__", tracked_path_join)
     monkeypatch.setattr(native_mtp_loader_module.os.path, "basename", tracked_basename)
     monkeypatch.setattr(native_mtp_loader_module.os.path, "exists", tracked_exists)
+    monkeypatch.setattr(native_mtp_loader_module, "_is_mtp_weight_key", fail_helper_call)
 
     assert extra_mtp_safetensor_files(model_dir) == [sidecar_path]
     assert joined_path_names == ["model.safetensors.index.json"]
