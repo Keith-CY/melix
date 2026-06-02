@@ -3002,7 +3002,7 @@ class MaintenanceCore:
     def _positive_sorted_values(values, *, default: tuple[int, ...]) -> tuple[int, ...]:
         normalized_values: set[int] = set()
         for value in values:
-            parsed = int(value)
+            parsed = value if type(value) is int else int(value)
             if parsed > 0:
                 normalized_values.add(parsed)
         return tuple(sorted(normalized_values)) or default
@@ -3011,7 +3011,8 @@ class MaintenanceCore:
     def _normalized_string_values(values, *, default: tuple[str, ...]) -> tuple[str, ...]:
         normalized_values: set[str] = set()
         for value in values:
-            normalized = str(value).strip()
+            raw_value = value if type(value) is str else str(value)
+            normalized = raw_value.strip()
             if normalized:
                 normalized_values.add(normalized)
         return tuple(sorted(normalized_values)) or default
