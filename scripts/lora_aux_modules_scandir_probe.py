@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import statistics
 import sys
 import tempfile
@@ -10,11 +11,14 @@ import time
 import tracemalloc
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(os.environ.get("MELIX_LORA_RUNTIME_METADATA_REPO_ROOT") or Path(__file__).resolve().parents[1])
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 
 from worker.model_ops import lora_runtime_metadata as metadata_module  # noqa: E402
+
+
+_QUANTIZED_KIND_ORDER = ("4bit", "8bit", "q4", "q8", "optiq")
 
 
 def _int_env(name: str, default: int) -> int:
@@ -75,10 +79,61 @@ def _measure(*, noise_count: int, sample_count: int) -> dict[str, float]:
     }
 
 
+def _baseline_quantized_kind_from_text(raw_value: str) -> str:
+    normalized = raw_value.strip().lower()
+    for kind in _QUANTIZED_KIND_ORDER:
+        if re.search(rf"(?<![a-z0-9]){re.escape(kind)}(?![a-z0-9])", normalized):
+            return kind
+    return "unknown"
+
+
+def _measure_quantized_kind(*, iteration_count: int, sample_count: int) -> dict[str, float]:
+    payload = [
+        "profile=mlx-community-q4",
+        "source model 4bit adapter",
+        "profile: optiq calibrated",
+        "plain fused adapter",
+        "8bit base checkpoint",
+        "not-a-q4suffix",
+    ] * max(1, iteration_count // 6)
+    expected = [_baseline_quantized_kind_from_text(value) for value in payload]
+    optimized_elapsed_ms: list[float] = []
+    baseline_elapsed_ms: list[float] = []
+
+    for _ in range(sample_count):
+        started = time.perf_counter()
+        optimized = [metadata_module._quantized_kind_from_text(value) for value in payload]
+        optimized_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
+
+        started = time.perf_counter()
+        baseline = [_baseline_quantized_kind_from_text(value) for value in payload]
+        baseline_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
+
+        if optimized != expected or baseline != expected:
+            raise RuntimeError("quantized kind parser output changed")
+
+    optimized_mean = statistics.fmean(optimized_elapsed_ms)
+    baseline_mean = statistics.fmean(baseline_elapsed_ms)
+    return {
+        "quantized_kind_baseline_elapsed_ms_mean": baseline_mean,
+        "quantized_kind_optimized_elapsed_ms_mean": optimized_mean,
+        "quantized_kind_delta_ms": optimized_mean - baseline_mean,
+        "quantized_kind_iteration_count": float(len(payload)),
+    }
+
+
 def main() -> int:
     noise_count = _int_env("MELIX_LORA_AUX_MODULES_PROBE_NOISE_FILES", 4000)
     sample_count = _int_env("MELIX_LORA_AUX_MODULES_PROBE_SAMPLES", 7)
-    print(json.dumps(_measure(noise_count=noise_count, sample_count=sample_count), sort_keys=True))
+    quantized_iteration_count = _int_env("MELIX_LORA_QUANTIZED_KIND_PROBE_ITERATIONS", 12000)
+    metrics = _measure(noise_count=noise_count, sample_count=sample_count)
+    metrics.update(
+        _measure_quantized_kind(
+            iteration_count=quantized_iteration_count,
+            sample_count=sample_count,
+        )
+    )
+    print(json.dumps(metrics, sort_keys=True))
     return 0
 
 
