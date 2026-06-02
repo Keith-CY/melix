@@ -218,6 +218,7 @@ def test_scope_report_selects_dataset_version_listing_probe() -> None:
 
     selected_ids = _selected_probe_ids(scope)
     assert "dataset-version-listing-scandir" in selected_ids
+    assert "dataset-quality-lengths-chain" in selected_ids
     assert "dataset-source-records-scandir" in selected_ids
 
 
@@ -354,6 +355,28 @@ def test_dataset_version_listing_probe_script_emits_metrics(
     assert metrics["elapsed_ms_p95"] >= 0.0
     assert metrics["sample_count"] == 1.0
     assert metrics["version_count"] == 5.0
+
+
+def test_dataset_quality_lengths_probe_script_emits_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("MELIX_DATASET_QUALITY_LENGTHS_TRAIN_ROWS", "5")
+    monkeypatch.setenv("MELIX_DATASET_QUALITY_LENGTHS_VALIDATION_ROWS", "2")
+    monkeypatch.setenv("MELIX_DATASET_QUALITY_LENGTHS_SAMPLES", "1")
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/dataset_quality_lengths_probe.py"))
+
+    assert probe_script["main"]() == 0
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["elapsed_ms_p95"] >= 0.0
+    assert metrics["sample_count"] == 1.0
+    assert metrics["train_row_count"] == 5.0
+    assert metrics["validation_row_count"] == 2.0
+    assert metrics["row_count"] == 7.0
+    assert metrics["mean_output_length"] > 0.0
+    assert metrics["p95_output_length"] > 0.0
 
 
 def test_dataset_source_records_probe_script_emits_metrics(
@@ -3053,6 +3076,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "trajectory-manifest-json-load",
         "dataset-registry-preview-limit-short-circuit",
         "dataset-version-listing-scandir",
+        "dataset-quality-lengths-chain",
         "dataset-source-records-scandir",
         "maintenance-bench-report-readback",
         "maintenance-percentile-vector-reuse",

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import csv
 from datetime import datetime, timezone
 import hashlib
+from itertools import chain
 import json
 import os
 import re
@@ -960,7 +961,7 @@ def _quality_summary(
     total_count = success_count + failed_count
     success_rate = success_count / total_count if total_count else 0.0
     score = round(success_rate, 6)
-    lengths = [_sample_output_length(row) for row in [*train_rows, *validation_rows]]
+    lengths = [_sample_output_length(row) for row in chain(train_rows, validation_rows)]
     quality_controls = ingest_receipt.get("quality_control_summary", {})
     source_record_count = float(quality_controls.get("source_record_count", 0) or 0)
     exact_dedup_count = float(quality_controls.get("exact_dedup_count", 0) or 0)
