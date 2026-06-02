@@ -26,6 +26,8 @@ from worker.productization.release_gates import (
     evaluate_release_gate,
     load_release_gate_policy,
 )
+from worker.productization.gemma_e4b_profile_gate import default_passing_evidence
+from worker.productization.gemma_e4b_profile_gate import evaluate_gemma_e4b_profile_gate_evidence
 from worker.productization.quantization_gates import (
     collect_quantization_benchmark_evidence,
     evaluate_quantization_gate,
@@ -248,6 +250,19 @@ def _passing_observability_evidence() -> dict[str, object]:
             "debug_queue_retained_event_count": 8.0,
         },
     }
+
+
+def _passing_gemma_e4b_profile_gate_evidence() -> dict[str, object]:
+    return evaluate_gemma_e4b_profile_gate_evidence(default_passing_evidence())
+
+
+def _write_persisted_gemma_e4b_profile_gate_evidence(jobs_root: Path) -> None:
+    gate_root = jobs_root / "gemma_e4b_profile_gate"
+    gate_root.mkdir(parents=True, exist_ok=True)
+    (gate_root / "evidence.json").write_text(
+        json.dumps(default_passing_evidence(), indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _write_persisted_real_workload_evidence(jobs_root: Path) -> None:
@@ -475,6 +490,7 @@ def test_build_release_gate_report_records_packaged_launch_passed_state(
     repo_root.mkdir()
     _write_persisted_real_workload_evidence(tmp_path / "jobs")
     _write_persisted_evaluation_compare_evidence(tmp_path / "jobs")
+    _write_persisted_gemma_e4b_profile_gate_evidence(tmp_path / "jobs")
     monkeypatch.setattr(
         release_gates_module,
         "collect_cache_recovery_benchmark_evidence",
@@ -785,6 +801,20 @@ def test_collect_real_workload_evidence_reports_qwen_gemma_and_kimi_families(
     assert evidence["families"]["kimi"]["metrics"]["sample_count"] >= 16.0
 
 
+def test_collect_gemma_e4b_profile_gate_evidence_reports_selected_profile(
+    tmp_path: Path,
+) -> None:
+    _write_persisted_gemma_e4b_profile_gate_evidence(tmp_path / "jobs")
+
+    evidence = release_gates_module.collect_gemma_e4b_profile_gate_evidence(tmp_path / "jobs")
+
+    assert evidence["status"] == "passed"
+    assert evidence["selected_profile"]["effective_profile"] == "balanced"
+    assert evidence["metrics"]["release_gate_passed"] == 1.0
+    assert evidence["metrics"]["unsupported_selected_route_count"] == 0.0
+    assert evidence["metrics"]["benchmark_threshold_passed"] == 1.0
+
+
 def test_collect_real_workload_evidence_handles_policy_fallback_and_unknown_families(
     tmp_path: Path,
 ) -> None:
@@ -854,6 +884,123 @@ def test_evaluate_real_workload_evidence_reports_missing_family_metrics_and_summ
     )
     assert "real_workload.summary.pass_count must be numeric" in malformed_summary
     assert any("did not match computed" in failure for failure in malformed_summary)
+
+
+def test_gemma_e4b_profile_gate_fails_closed_for_missing_or_regressed_evidence() -> None:
+    policy = load_release_gate_policy()
+    base_report = {
+        "install": {
+            "generated_asset_count": 5,
+            "bootstrap_command_count": 3,
+            "checks": {
+                "manifest_exists": True,
+                "environment_script_exists": True,
+                "all_plists_exist": True,
+            },
+        },
+        "benchmarks": {
+            "report_exists": True,
+            "metrics": {
+                "bench.smoke.ttft_ms": 10.0,
+                "bench.smoke.tokens_per_second": 50.0,
+                "bench.latency.p95_ms": 20.0,
+            },
+        },
+        "training": {
+            "training_duration_ms": 100.0,
+            "adapter_publish_ms": 10.0,
+        },
+        "recovery": {
+            "restart_recovery_ms": 420.0,
+            "restart_recovery_success_rate": 100.0,
+        },
+        "runtime_core": {
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
+        "audio": {
+            "checks": {
+                "slim_requires_runtime_pack_download": True,
+                "full_runtime_pack_preinstalled": True,
+                "slim_runtime_pack_metadata_exists": True,
+                "full_runtime_pack_metadata_exists": True,
+                "slim_managed_model_metadata_exists": True,
+                "full_managed_model_metadata_exists": True,
+            },
+            "metrics": {
+                "slim.audio_runtime_pack_install_ms": 1.0,
+                "slim.audio_model_download_ms": 1.0,
+                "slim.audio_first_use_blocked_runtime_pack_count": 1.0,
+                "slim.audio_first_use_blocked_model_count": 1.0,
+                "slim.audio_runtime_pack_recovery_success_rate": 100.0,
+                "full.audio_runtime_pack_install_ms": 0.0,
+                "full.audio_model_download_ms": 1.0,
+                "full.audio_first_use_blocked_runtime_pack_count": 0.0,
+                "full.audio_first_use_blocked_model_count": 1.0,
+                "full.audio_runtime_pack_recovery_success_rate": 100.0,
+            },
+        },
+        "quantization": {
+            "summary": {"profile_count": 7.0, "smoke_pass_rate": 100.0},
+            "profiles": {
+                profile_id: {
+                    "job_ms": 1.0,
+                    "artifact_bytes": 670,
+                    "manifest_bytes": 1747,
+                    "calibration_sample_count": 16 if profile_id == "q8" else 32,
+                    "smoke_test_passed": True,
+                }
+                for profile_id in ("q2", "q3", "q4", "q5", "q6", "q7", "q8")
+            },
+        },
+        "evaluation": {
+            "metrics": {"eval.mmlu.typed_score_mean": 1.0},
+        },
+        "evaluation_compare": _passing_evaluation_compare_evidence(),
+        "real_workload": _passing_real_workload_evidence(),
+        "m9": _passing_m9_evidence(),
+        "observability": _passing_observability_evidence(),
+        "lora_path": _passing_lora_path_evidence(),
+    }
+
+    missing_failures = evaluate_release_gate(base_report, policy)
+    assert "gemma_e4b_profile evidence is missing" in missing_failures
+
+    regressed_evidence = default_passing_evidence()
+    regressed_evidence["selected_profile"]["profile_receipt"] = {
+        "profile_admission_status": "refused",
+        "verification_status": "failed",
+        "proof_matrix_id": "gemma-e4b-profile-baseline-20260602",
+    }
+    regressed_evidence["unsupported_routes"][0] = {
+        "route": "speculative_decode",
+        "selected": True,
+        "status": "selected",
+    }
+    regressed_evidence["benchmark"]["threshold_status"] = {
+        "status": "threshold_failed",
+        "row_count": 1,
+        "failure_count": 1,
+    }
+    regressed_report = dict(base_report)
+    regressed_report["gemma_e4b_profile"] = evaluate_gemma_e4b_profile_gate_evidence(
+        regressed_evidence
+    )
+
+    regressed_failures = evaluate_release_gate(regressed_report, policy)
+
+    assert (
+        "gemma_e4b_profile.selected_profile.profile_receipt.profile_admission_status is refused"
+        in regressed_failures
+    )
+    assert "gemma_e4b_profile.unsupported_routes.speculative_decode was selected" in regressed_failures
+    assert "gemma_e4b_profile.benchmark.threshold_status.status is threshold_failed" in regressed_failures
+    assert (
+        "gemma_e4b_profile.release_gate_passed=0.00 fell below minimum 1.00"
+        in regressed_failures
+    )
 
 
 def test_collect_m9_collectors_delegate_to_expected_smoke_commands(
@@ -1281,6 +1428,7 @@ def test_build_release_gate_report_includes_m9_summary_when_collectors_pass(
     repo_root.mkdir()
     _write_persisted_real_workload_evidence(tmp_path / "jobs")
     _write_persisted_evaluation_compare_evidence(tmp_path / "jobs")
+    _write_persisted_gemma_e4b_profile_gate_evidence(tmp_path / "jobs")
     monkeypatch.setattr(
         release_gates_module,
         "collect_cache_recovery_benchmark_evidence",
@@ -1490,6 +1638,7 @@ def test_build_release_gate_report_passes_with_supplied_recovery_evidence(
     repo_root.mkdir()
     _write_persisted_real_workload_evidence(tmp_path / "jobs")
     _write_persisted_evaluation_compare_evidence(tmp_path / "jobs")
+    _write_persisted_gemma_e4b_profile_gate_evidence(tmp_path / "jobs")
     monkeypatch.setattr(
         release_gates_module,
         "collect_cache_recovery_benchmark_evidence",
@@ -1645,6 +1794,11 @@ def test_build_release_gate_report_uses_temp_jobs_root_and_reports_type_errors(
         release_gates_module,
         "collect_real_workload_evidence",
         lambda jobs_root, policy=None: _passing_real_workload_evidence(),
+    )
+    monkeypatch.setattr(
+        release_gates_module,
+        "collect_gemma_e4b_profile_gate_evidence",
+        lambda jobs_root: _passing_gemma_e4b_profile_gate_evidence(),
     )
     monkeypatch.setattr(
         release_gates_module,
@@ -1833,6 +1987,14 @@ def test_default_policy_includes_audio_section() -> None:
     assert DEFAULT_RELEASE_GATE_POLICY["audio"]["full.audio_runtime_pack_install_ms"]["max"] == 0.0
 
 
+def test_default_policy_includes_gemma_e4b_profile_gate() -> None:
+    assert "gemma_e4b_profile" in DEFAULT_RELEASE_GATE_POLICY
+    gate_policy = DEFAULT_RELEASE_GATE_POLICY["gemma_e4b_profile"]["metrics"]
+    assert gate_policy["release_gate_passed"]["min"] == 1.0
+    assert gate_policy["unsupported_selected_route_count"]["max"] == 0.0
+    assert gate_policy["benchmark_threshold_failure_count"]["max"] == 0.0
+
+
 def test_default_policy_includes_evaluation_section() -> None:
     assert "evaluation" in DEFAULT_RELEASE_GATE_POLICY
     assert "eval.mmlu.typed_score_mean" in DEFAULT_RELEASE_GATE_POLICY["evaluation"]
@@ -1857,6 +2019,8 @@ def test_checked_in_release_gate_policy_includes_evaluation_thresholds() -> None
     assert "evaluation_compare" in policy
     assert policy["evaluation_compare"]["mmlu"]["bootstrap_iterations"] == 400
     assert policy["evaluation_compare"]["mmlu"]["required_verdict_mode"] == "exact"
+    assert "gemma_e4b_profile" in policy
+    assert policy["gemma_e4b_profile"]["metrics"]["release_gate_passed"]["min"] == 1.0
     assert "m9" in policy
     assert policy["m9"]["agent_export"]["integration.export_generation_ms"]["min"] == 0.0
     assert policy["m9"]["shared_access"]["gateway.auth_validation_failures"]["min"] == 1.0

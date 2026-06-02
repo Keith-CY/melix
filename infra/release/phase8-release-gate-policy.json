@@ -301,6 +301,46 @@
       }
     }
   },
+  "gemma_e4b_profile": {
+    "metrics": {
+      "acceleration_mode_resolved": {
+        "min": 1.0
+      },
+      "batch_size_evidence_present": {
+        "min": 1.0
+      },
+      "benchmark_threshold_failure_count": {
+        "max": 0.0
+      },
+      "benchmark_threshold_passed": {
+        "min": 1.0
+      },
+      "capability_receipt_supported": {
+        "min": 1.0
+      },
+      "comparison_validity_passed": {
+        "min": 1.0
+      },
+      "failure_count": {
+        "max": 0.0
+      },
+      "profile_proof_satisfied": {
+        "min": 1.0
+      },
+      "release_gate_passed": {
+        "min": 1.0
+      },
+      "selected_profile_receipt_passed": {
+        "min": 1.0
+      },
+      "unsupported_route_missing_reason_count": {
+        "max": 0.0
+      },
+      "unsupported_selected_route_count": {
+        "max": 0.0
+      }
+    }
+  },
   "m9": {
     "agent_export": {
       "integration.export_generation_ms": {
