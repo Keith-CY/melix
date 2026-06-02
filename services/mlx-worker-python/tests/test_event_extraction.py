@@ -235,11 +235,17 @@ def test_local_event_extraction_parse_errors_keep_raw_response_for_diagnostics(t
     assert failure["raw_response_path"] == trace["raw_response_path"]
 
 
-def test_semantic_judge_prompt_v4_documents_event_field_and_group_boundaries() -> None:
-    assert event_extraction_module.SEMANTIC_JUDGE_PROMPT_VERSION == "semantic-judge.v4"
+def test_semantic_judge_prompt_v6_documents_event_field_and_group_boundaries() -> None:
+    assert event_extraction_module.SEMANTIC_JUDGE_PROMPT_VERSION == "semantic-judge.v6"
     prompt = event_extraction_module.SEMANTIC_JUDGE_SYSTEM_PROMPT
     assert "kind=event" in prompt
     assert "kind=field" in prompt
+    assert "wrong_actor_same_event" in prompt
+    assert "optional_non_target" in prompt
+    assert "gold_issue" in prompt
+    assert "field scoring, not by rejecting the event pair" in prompt
+    assert "unconfirmed, cancelled, denied" in prompt
+    assert "split/merge" in prompt
     assert "gold_values" in prompt
     assert "pred_values" in prompt
     assert "出来转转" in prompt
@@ -705,24 +711,262 @@ def test_evaluate_event_extraction_semantic_judge_matches_event_and_values(tmp_p
     row_audit = [json.loads(line) for line in row_audit_path.read_text(encoding="utf-8").splitlines()]
     judge_audit = [json.loads(line) for line in judge_audit_path.read_text(encoding="utf-8").splitlines()]
     assert summary["status"] == "completed"
-    assert summary["scoring_mode"] == "event_extraction_semantic_weighted_f1"
-    assert summary["overall_weighted_f1"] == 1.0
+    assert summary["scoring_mode"] == "event_extraction_semantic_confidence_adjusted_weighted_f1.v2"
+    assert summary["supersedes_scoring_mode"] == "event_extraction_semantic_weighted_f1"
+    assert summary["overall_weighted_f1"] == 0.944133
+    assert summary["quality_semantic_event_precision"] == 0.944133
+    assert summary["quality_semantic_event_recall"] == 0.944133
+    assert summary["soft_semantic_event_f0_5"] == 0.944133
+    assert summary["coverage_semantic_event_f0_5"] == 1.0
     assert summary["field_metrics"]["time"]["tp"] == 1
     assert summary["field_metrics"]["action"]["tp"] == 1
     assert summary["semantic_judge"]["judge_remote_server_id"] == "judge-server"
     assert summary["semantic_judge"]["judge_model_id"] == "judge-model"
-    assert summary["semantic_judge"]["judge_prompt_version"] == "semantic-judge.v4"
+    assert summary["semantic_judge"]["judge_prompt_version"] == "semantic-judge.v6"
     assert summary["semantic_judge"]["judge_prompt_hash"].startswith("sha256:")
     assert summary["semantic_judge"]["calls"] == 3
+    assert summary["semantic_judge"]["reason_distribution"] == {
+        "event": {"same_event": 1},
+        "field": {"same_value": 2},
+    }
+    assert summary["semantic_judge"]["review_candidates"]["count"] == 0
     assert details[0]["match_status"] == "matched"
+    assert details[0]["event_match_confidence"] == 0.97
+    assert details[0]["event_match_confidence_tier"] == "high"
+    assert details[0]["legacy_weighted_f1"] == 0.973333
+    assert details[0]["confidence_adjusted_weighted_f1"] == 0.944133
+    assert details[0]["active_fields"] == ["actor", "time", "action"]
+    assert details[0]["inactive_fields"] == ["location"]
     assert details[0]["fields"]["time"]["tp"] == 1
     assert details[0]["fields"]["action"]["tp"] == 1
+    assert details[0]["fields"]["time"]["semantic_matches"][0]["semantic_match_confidence"] == 0.96
     assert row_audit[0]["matched_pairs"] == [
-        {"gold_event_index": 0, "pred_event_index": 0, "alignment_score": 0.97}
+        {
+            "gold_event_index": 0,
+            "pred_event_index": 0,
+            "alignment_score": 0.538889,
+            "event_match_confidence": 0.97,
+            "event_match_confidence_tier": "high",
+        }
     ]
     assert [row["kind"] for row in judge_audit] == ["event", "field", "field"]
+    assert judge_audit[0]["decision_category"] == "same_event"
+    assert judge_audit[0]["requires_review"] is False
     assert all("api_key" not in json.dumps(row) for row in judge_audit)
     assert len(judge.requests) == 3
+
+
+def test_evaluate_event_extraction_semantic_reports_soft_event_metrics(tmp_path: Path) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    summary_path = tmp_path / "event_eval_semantic_summary.json"
+    details_path = tmp_path / "event_eval_semantic_details.jsonl"
+    row_audit_path = tmp_path / "event_eval_semantic_row_audit.jsonl"
+    judge_audit_path = tmp_path / "event_eval_judge_audit.jsonl"
+    _write_jsonl(
+        gold,
+        [
+            {
+                "dialogue_id": "dlg-soft-metrics",
+                "dialogue": ["speaker_1: 周六见面，周日开会"],
+                "events": [
+                    {
+                        "actor": ["speaker_1", "speaker_2"],
+                        "time": ["周六"],
+                        "location": None,
+                        "action": ["见面"],
+                        "digest": "",
+                    },
+                    {
+                        "actor": ["speaker_1"],
+                        "time": ["周日"],
+                        "location": None,
+                        "action": ["开会"],
+                        "digest": "",
+                    },
+                ],
+            }
+        ],
+    )
+    _write_jsonl(
+        pred,
+        [
+            {
+                "dialogue_id": "dlg-soft-metrics",
+                "dialogue": ["speaker_1: 周六见面，周日开会"],
+                "events": [
+                    {
+                        "actor": ["speaker_1", "speaker_2"],
+                        "time": ["周六"],
+                        "location": None,
+                        "action": ["见面"],
+                        "digest": "",
+                    },
+                ],
+            }
+        ],
+    )
+
+    class FakeJudge:
+        def judge_semantic_equivalence(self, request: dict[str, object]) -> dict[str, object]:
+            if request["kind"] == "event" and request["pred_event_index"] == 0:
+                return {
+                    "equivalent": True,
+                    "confidence": 1.0,
+                    "reason_code": "same_event",
+                    "short_reason": "same event",
+                }
+            return {
+                "equivalent": False,
+                "confidence": 0.0,
+                "reason_code": "different_event",
+                "short_reason": "different event",
+            }
+
+    summary = event_extraction_module.evaluate_event_extraction_semantic(
+        gold_jsonl=gold,
+        pred_jsonl=pred,
+        summary_output=summary_path,
+        details_output=details_path,
+        row_audit_output=row_audit_path,
+        judge_audit_output=judge_audit_path,
+        judge=FakeJudge(),
+        judge_remote_server_id="judge-server",
+        judge_model_id="judge-model",
+    )
+
+    assert summary["overall_weighted_f1"] == 0.5
+    assert summary["strict_event_row_average_f1"] == 0.5
+    assert (
+        summary["strict_event_row_average_formula"]
+        == "sum(matched_event_weighted_f1) / (matched_events + unmatched_gold + unmatched_pred)"
+    )
+    assert summary["soft_semantic_event_precision"] == 1.0
+    assert summary["soft_semantic_event_recall"] == 0.5
+    assert summary["soft_semantic_event_f1"] == 0.666667
+    assert summary["quality_semantic_event_precision"] == 1.0
+    assert summary["quality_semantic_event_recall"] == 0.5
+    assert summary["coverage_semantic_event_f0_5"] == 0.833333
+    assert summary["soft_semantic_event_f0_5"] == 0.833333
+    assert summary["quality_priority_beta"] == 0.5
+    assert summary["matched_event_quality"] == 1.0
+    assert summary["summary"]["soft_semantic_event_f0_5"] == 0.833333
+    assert summary["summary"]["coverage_semantic_event_f0_5"] == 0.833333
+    assert json.loads(summary_path.read_text(encoding="utf-8")) == summary
+
+
+def test_evaluate_event_extraction_semantic_keeps_low_confidence_same_event_matched(tmp_path: Path) -> None:
+    gold = tmp_path / "gold.jsonl"
+    pred = tmp_path / "pred.jsonl"
+    summary_path = tmp_path / "event_eval_semantic_summary.json"
+    details_path = tmp_path / "event_eval_semantic_details.jsonl"
+    row_audit_path = tmp_path / "event_eval_semantic_row_audit.jsonl"
+    judge_audit_path = tmp_path / "event_eval_judge_audit.jsonl"
+    _write_jsonl(
+        gold,
+        [
+            {
+                "dialogue_id": "dlg-low-confidence",
+                "dialogue": ["speaker_1: 阿菜周六来", "speaker_2: 他周六到"],
+                "events": [
+                    {
+                        "actor": ["阿菜"],
+                        "time": ["周六"],
+                        "location": None,
+                        "action": ["来"],
+                        "digest": "",
+                    }
+                ],
+            }
+        ],
+    )
+    _write_jsonl(
+        pred,
+        [
+            {
+                "dialogue_id": "dlg-low-confidence",
+                "dialogue": ["speaker_1: 阿菜周六来", "speaker_2: 他周六到"],
+                "events": [
+                    {
+                        "actor": ["speaker_1"],
+                        "time": ["周六"],
+                        "location": None,
+                        "action": ["到达"],
+                        "digest": "",
+                    }
+                ],
+            }
+        ],
+    )
+
+    class LowConfidenceJudge:
+        def judge_semantic_equivalence(self, request: dict[str, object]) -> dict[str, object]:
+            if request["kind"] == "event":
+                return {
+                    "equivalent": True,
+                    "confidence": 0.35,
+                    "reason_code": "wrong_actor_same_event",
+                    "short_reason": "Same arrival event but actor evidence is wrong.",
+                }
+            if request["field_name"] == "actor":
+                return {
+                    "equivalent": False,
+                    "confidence": 0.95,
+                    "reason_code": "different_value",
+                    "short_reason": "Predicted speaker is not the third-party actor.",
+                }
+            if request["field_name"] == "action":
+                return {
+                    "equivalent": True,
+                    "confidence": 0.8,
+                    "reason_code": "same_value",
+                    "short_reason": "Arrive and come refer to the same action here.",
+                }
+            return {
+                "equivalent": True,
+                "confidence": 1.0,
+                "reason_code": "same_value",
+                "short_reason": "Same value.",
+            }
+
+    summary = event_extraction_module.evaluate_event_extraction_semantic(
+        gold_jsonl=gold,
+        pred_jsonl=pred,
+        summary_output=summary_path,
+        details_output=details_path,
+        row_audit_output=row_audit_path,
+        judge_audit_output=judge_audit_path,
+        judge=LowConfidenceJudge(),
+        judge_remote_server_id="judge-server",
+        judge_model_id="judge-model",
+    )
+
+    detail = json.loads(details_path.read_text(encoding="utf-8").splitlines()[0])
+    row_audit = json.loads(row_audit_path.read_text(encoding="utf-8").splitlines()[0])
+    judge_audit = [json.loads(line) for line in judge_audit_path.read_text(encoding="utf-8").splitlines()]
+    assert summary["summary"]["events_matched"] == 1
+    assert summary["summary"]["events_unmatched_gold"] == 0
+    assert summary["summary"]["events_unmatched_pred"] == 0
+    assert summary["soft_semantic_event_f0_5"] == 0.206111
+    assert summary["coverage_semantic_event_f0_5"] == 1.0
+    assert summary["semantic_judge"]["reason_distribution"] == {
+        "event": {"wrong_actor_same_event": 1},
+        "field": {"different_value": 1, "same_value": 1},
+    }
+    assert summary["semantic_judge"]["review_candidates"]["count"] == 1
+    assert summary["semantic_judge"]["review_candidates"]["reason_distribution"] == {"wrong_actor_same_event": 1}
+    assert detail["match_status"] == "matched"
+    assert detail["event_match_confidence"] == 0.35
+    assert detail["event_match_confidence_tier"] == "low"
+    assert detail["fields"]["actor"]["f1"] == 0.0
+    assert detail["fields"]["action"]["semantic_matches"][0]["semantic_match_confidence"] == 0.8
+    assert detail["legacy_weighted_f1"] == 0.588889
+    assert detail["weighted_f1"] == 0.206111
+    assert row_audit["matched_pairs"][0]["alignment_score"] < 0.5
+    assert row_audit["matched_pairs"][0]["event_match_confidence"] == 0.35
+    assert row_audit["matched_pairs"][0]["event_match_confidence_tier"] == "low"
+    assert judge_audit[0]["decision_category"] == "wrong_actor_same_event"
+    assert judge_audit[0]["requires_review"] is True
 
 
 def test_semantic_field_values_reuses_cached_group_actor_aliases(
@@ -876,7 +1120,9 @@ def test_evaluate_event_extraction_semantic_expands_group_actor_aliases(tmp_path
     )
 
     detail = json.loads(details_path.read_text(encoding="utf-8").splitlines()[0])
-    assert summary["overall_weighted_f1"] == 1.0
+    assert summary["overall_weighted_f1"] == 0.96
+    assert detail["event_match_confidence"] == 0.96
+    assert detail["legacy_weighted_f1"] == 1.0
     assert summary["field_metrics"]["actor"]["tp"] == 2
     assert detail["fields"]["actor"]["gold"] == ["speaker_1", "speaker_2"]
     assert detail["fields"]["actor"]["pred"] == ["speaker_1", "speaker_2"]
@@ -985,9 +1231,12 @@ def test_evaluate_event_extraction_semantic_actor_relation_aliases_and_slot_guar
     assert summary["field_metrics"]["actor"]["tp"] == 1
     assert summary["field_metrics"]["actor"]["fp"] == 1
     assert summary["field_metrics"]["actor"]["fn"] == 1
-    assert details[0]["fields"]["actor"]["semantic_matches"] == [
-        {"gold_value": "speaker_1的朋友阿菜", "pred_value": "阿菜", "score": 0.94}
-    ]
+    assert details[0]["fields"]["actor"]["semantic_matches"][0] == {
+        "gold_value": "speaker_1的朋友阿菜",
+        "pred_value": "阿菜",
+        "score": 0.94,
+        "semantic_match_confidence": 0.94,
+    }
     assert details[1]["fields"]["actor"]["semantic_matches"] == []
 
 
@@ -1314,7 +1563,7 @@ def test_evaluate_event_extraction_semantic_matches_bidirectional_action_split_m
     assert summary["field_metrics"]["action"]["fn"] == 0
     for detail in details:
         action = detail["fields"]["action"]
-        assert action["f1"] == 1.0
+        assert action["f1"] == 0.96
         assert action["semantic_matches"][0]["gold_values"] in (["吃饭", "见面"], ["吃饭见面"])
         assert action["semantic_matches"][0]["pred_values"] in (["吃饭", "见面"], ["吃饭见面"])
         assert action["semantic_matches"][0]["score"] == 0.96
@@ -1411,7 +1660,12 @@ def test_evaluate_event_extraction_semantic_matches_specific_check_action(tmp_pa
     detail = json.loads(details_path.read_text(encoding="utf-8").splitlines()[0])
     assert summary["field_metrics"]["action"]["tp"] == 1
     assert detail["fields"]["action"]["semantic_matches"] == [
-        {"gold_value": "做唐筛", "pred_value": "做检查", "score": 0.92}
+        {
+            "gold_value": "做唐筛",
+            "pred_value": "做检查",
+            "score": 0.92,
+            "semantic_match_confidence": 0.92,
+        }
     ]
 
 
@@ -1505,13 +1759,23 @@ def test_evaluate_event_extraction_semantic_matches_v4_action_and_time_examples(
     assert summary["field_metrics"]["time"]["tp"] == 1
     assert summary["field_metrics"]["action"]["tp"] == 1
     assert detail["fields"]["time"]["semantic_matches"] == [
-        {"gold_value": "今天直到夕阳西下", "pred_value": "今天", "score": 0.91}
+        {
+            "gold_value": "今天直到夕阳西下",
+            "pred_value": "今天",
+            "score": 0.91,
+            "semantic_match_confidence": 0.91,
+        }
     ]
     assert detail["fields"]["action"]["tp"] == 1
     assert detail["fields"]["action"]["fp"] == 0
     assert detail["fields"]["action"]["fn"] == 0
     assert detail["fields"]["action"]["semantic_matches"] == [
-        {"gold_values": ["见面聊天"], "pred_values": ["见面", "聊聊"], "score": 0.94}
+        {
+            "gold_values": ["见面聊天"],
+            "pred_values": ["见面", "聊聊"],
+            "score": 0.94,
+            "semantic_match_confidence": 0.94,
+        }
     ]
 
 
@@ -1583,14 +1847,13 @@ def test_evaluate_event_extraction_semantic_flags_low_quality_event_alignment(tm
     assert detail["fields"]["time"]["tp"] == 1
     assert detail["weighted_f1"] < event_extraction_module.SEMANTIC_LOW_QUALITY_ALIGNMENT_WEIGHTED_F1_THRESHOLD
     assert row_audit["low_quality_alignment"] is True
-    assert row_audit["low_quality_alignment_pairs"] == [
-        {
-            "gold_event_index": 0,
-            "pred_event_index": 0,
-            "weighted_f1": detail["weighted_f1"],
-            "alignment_score": 0.93,
-        }
-    ]
+    assert row_audit["low_quality_alignment_pairs"][0]["gold_event_index"] == 0
+    assert row_audit["low_quality_alignment_pairs"][0]["pred_event_index"] == 0
+    assert row_audit["low_quality_alignment_pairs"][0]["weighted_f1"] == detail["weighted_f1"]
+    assert row_audit["low_quality_alignment_pairs"][0]["legacy_weighted_f1"] == detail["legacy_weighted_f1"]
+    assert row_audit["low_quality_alignment_pairs"][0]["event_match_confidence"] == 0.93
+    assert row_audit["low_quality_alignment_pairs"][0]["event_match_confidence_tier"] == "high"
+    assert row_audit["low_quality_alignment_pairs"][0]["alignment_score"] == 0.644603
 
 
 def test_evaluate_event_extraction_semantic_does_not_merge_same_place_different_actors(tmp_path: Path) -> None:
@@ -2472,15 +2735,18 @@ def test_evaluation_core_writes_semantic_judge_artifacts_without_persisting_judg
         for metric in run.result.metrics
         if metric.name == "eval.event_extraction.semantic_overall_weighted_f1"
     )
-    assert semantic_metric.value == 1.0
+    assert semantic_metric.value == 0.9024
     assert captured["judge_target"].api_key == "sk-judge-secret"
 
     semantic_summary_path = output_dir / "reports" / "evaluated-model" / "event_eval_semantic_summary.json"
     semantic_summary = json.loads(semantic_summary_path.read_text(encoding="utf-8"))
     assert semantic_summary["status"] == "completed"
-    assert semantic_summary["overall_weighted_f1"] == 1.0
+    assert semantic_summary["scoring_mode"] == "event_extraction_semantic_confidence_adjusted_weighted_f1.v2"
+    assert semantic_summary["supersedes_scoring_mode"] == "event_extraction_semantic_weighted_f1"
+    assert semantic_summary["overall_weighted_f1"] == 0.9024
     assert semantic_summary["semantic_judge"]["judge_remote_server_id"] == "judge-server"
     assert semantic_summary["semantic_judge"]["judge_model_id"] == "judge-model"
+    assert semantic_summary["semantic_judge"]["judge_prompt_version"] == "semantic-judge.v6"
     assert "sk-judge-secret" not in json.dumps(semantic_summary, ensure_ascii=False)
     assert "https://judge.example/v1" not in json.dumps(semantic_summary, ensure_ascii=False)
 

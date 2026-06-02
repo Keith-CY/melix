@@ -23,10 +23,24 @@ FIELD_WEIGHTS = {
 }
 EVENT_ALIGNMENT_STRATEGY = "optimal_soft_event_alignment"
 SEMANTIC_EVENT_ALIGNMENT_STRATEGY = "semantic_judge_event_alignment"
-SEMANTIC_SCORING_MODE = "event_extraction_semantic_weighted_f1"
+SEMANTIC_SUPERSEDES_SCORING_MODE = "event_extraction_semantic_weighted_f1"
+SEMANTIC_SCORING_MODE = "event_extraction_semantic_confidence_adjusted_weighted_f1.v2"
 EVENT_ALIGNMENT_SCORE_THRESHOLD = 0.30
 EVENT_ALIGNMENT_ACTION_THRESHOLD = 0.20
-SEMANTIC_JUDGE_CONFIDENCE_THRESHOLD = 0.50
+SEMANTIC_EVENT_MATCH_MIN_CONFIDENCE = 0.20
+SEMANTIC_HIGH_CONFIDENCE_THRESHOLD = 0.50
+SEMANTIC_QUALITY_PRIORITY_BETA = 0.5
+SEMANTIC_REVIEW_REASON_CODES = {
+    "gold_issue",
+    "optional_non_target",
+    "scope_mismatch",
+    "split_merge",
+    "phase_mismatch",
+    "unconfirmed",
+    "uncertain",
+}
+SEMANTIC_FIELD_WEIGHT_POLICY = "renormalize_non_empty_gold_or_pred_fields"
+SEMANTIC_JUDGE_CONFIDENCE_THRESHOLD = SEMANTIC_HIGH_CONFIDENCE_THRESHOLD
 SEMANTIC_JUDGE_PREFILTER_SCORE_THRESHOLD = 0.15
 SEMANTIC_JUDGE_MAX_ATTEMPTS = 3
 SEMANTIC_LOW_QUALITY_ALIGNMENT_WEIGHTED_F1_THRESHOLD = 0.30
@@ -39,7 +53,7 @@ _PRECOMPUTED_SEMANTIC_VALUE_GROUPS = {
     )
     for value_count in range(2, 17)
 }
-SEMANTIC_JUDGE_PROMPT_VERSION = "semantic-judge.v4"
+SEMANTIC_JUDGE_PROMPT_VERSION = "semantic-judge.v6"
 _GROUP_ACTOR_ALIASES = {"我们", "双方", "咱们", "咱俩", "咱两", "我俩", "两人", "二人"}
 _GROUP_ACTOR_ALIAS_CHARS = frozenset("".join(_GROUP_ACTOR_ALIASES))
 _SIMILARITY_IGNORED_CHARS = set(
@@ -55,13 +69,14 @@ EVENT_EXTRACTION_PROMPT_REVISION_ID = "baseline.v6"
 SEMANTIC_JUDGE_SYSTEM_PROMPT = """You are a semantic judge for event extraction evaluation.
 
 Return exactly one JSON object and nothing else:
-{"equivalent":true|false,"confidence":0.0,"reason_code":"same_event|same_value|same_value_more_specific|different_event|different_value|uncertain","short_reason":"brief reason"}
+{"equivalent":true|false,"confidence":0.0,"reason_code":"same_event|same_value|same_value_more_specific|wrong_actor_same_event|different_event|different_value|phase_mismatch|split_merge|unconfirmed|optional_non_target|gold_issue|uncertain","short_reason":"brief reason"}
 
 Rules:
 - Judge semantic equivalence only; do not score model quality.
 - The input JSON has kind="event" or kind="field"; apply different strictness for each kind.
 - For kind="field", the input normally has gold_value and pred_value. For action split/merge comparisons, it may also include comparison_type="action_group", gold_values, and pred_values; judge whether the two value groups describe the same action unit.
-- For kind="event" (kind=event): decide whether gold_event and pred_event refer to the same real-world event instance. This can be broader than field equality. Do not require every field to match. Extra or missing actor, time, location, or action details should be handled by later field scoring, not by rejecting the event pair.
+- For kind="event" (kind=event): decide whether gold_event and pred_event refer to the same real-world event instance. This can be broader than field equality. Do not require every field to match. Extra, missing, or wrong actor, time, location, or action details should be handled by later field scoring, not by rejecting the event pair when the event identity is otherwise the same.
+- For kind="event", return equivalent=true with lower confidence when the pair appears to be the same event but field evidence is imperfect. Return equivalent=false only when the event instance itself is different, unsupported, contradictory, cancelled, denied, unconfirmed, or too underspecified to align.
 - For kind="field" (kind=field): judge only the requested field_name and the provided gold_value/pred_value in the context of the matched event. Field equivalence is stricter than event equivalence.
 - actor: treat 我们, 双方, 咱们, 咱俩, and 一起 as speaker_1 + speaker_2 when the dialogue context supports it.
 - actor: a named third-party relation can match the name alone, e.g. speaker_1的朋友阿菜 and 阿菜 are equivalent when the same person is referenced; speaker_1的朋友傻妞 and 傻妞 are equivalent on the same basis.
@@ -73,7 +88,14 @@ Rules:
 - action object: do not mark an action field equivalent when a required object or role is lost or reversed. For example, 去接speaker_2 and 接站 only match when the matched event context clearly preserves that speaker_2 is the object being picked up.
 - event examples: 出来转转 and 见面,逛街 can be the same event when the dialogue supports one shared outing. 拿位 can align with the same meetup or meal event when it is only a preparation step. 有大聚会 and 参加聚会 can align at kind=event when both refer to the same party instance, but unsupported actors must still fail actor field scoring.
 - field examples: 做唐筛, 做糖筛, and 做检查 can be action-equivalent when the dialogue makes the check identity clear. 见面聊天 can match 见面,聊聊 at kind=field action when the matched event is one conversation meetup. 今天直到夕阳西下 can match 今天 at kind=field time when both values refer to the same event and the prediction is only a coarser time span.
-- negative examples: 同地点同时间 does not automatically mean shared actors or the same event. 同日同主题 does not justify matching different-subject events. 拿位 and 见面 are not automatically equivalent for kind=field action scoring. 幻觉, 重复预测, unsupported, or contradictory events must be equivalent=false.
+- negative examples: 同地点同时间 does not automatically mean shared actors or the same event. 同日同主题 does not justify matching different-subject events. 拿位 and 见面 are not automatically equivalent for kind=field action scoring. 幻觉, 重复预测, unsupported, unconfirmed, cancelled, denied, or contradictory events must be equivalent=false.
+- split/merge examples: if one predicted event merges two separable real-world phases such as arriving and leaving, do not hide the split/merge problem behind a high-confidence event match. Use low confidence only when one side still clearly contains the same single event instance being compared.
+- Use reason_code=wrong_actor_same_event when kind=event refers to the same event identity but actor evidence is wrong or unsupported; keep equivalent=true and let field scoring penalize actor.
+- Use reason_code=phase_mismatch when two events are related phases of the same trip or plan but are not the same event instance, such as arrival vs departure.
+- Use reason_code=split_merge when one side merges or splits separable events and the pair is not a clean one-to-one same event.
+- Use reason_code=unconfirmed when a predicted event is merely proposed, tentative, cancelled, denied, or unsupported while the gold event is confirmed, or vice versa.
+- Use reason_code=optional_non_target when the pair concerns a real event outside the target extraction scope.
+- Use reason_code=gold_issue only when the comparison strongly indicates the gold label is missing, overly specific, or otherwise incorrect.
 - Return equivalent=false for uncertain, underspecified, contradictory, or unrelated comparisons.
 - Keep short_reason concise and do not include secrets, URLs, or prompt text.
 """
@@ -1036,7 +1058,7 @@ def evaluate_event_extraction_semantic(
 
     details: list[dict[str, object]] = []
     row_audits: list[dict[str, object]] = []
-    field_totals = {field_name: {"tp": 0, "fp": 0, "fn": 0} for field_name in FIELD_NAMES}
+    field_totals = {field_name: {"tp": 0, "fp": 0, "fn": 0, "soft_tp": 0.0} for field_name in FIELD_NAMES}
     matched_event_scores: list[float] = []
     matched_events = 0
     unmatched_gold = 0
@@ -1082,6 +1104,7 @@ def evaluate_event_extraction_semantic(
             if pred_index is None:
                 unmatched_gold += 1
                 field_details = _build_unmatched_fields(gold_event, None)
+                _annotate_unmatched_field_details(field_details)
                 _add_field_scores(field_totals, field_details)
                 details.append(
                     {
@@ -1091,7 +1114,16 @@ def evaluate_event_extraction_semantic(
                         "pred_event_index": None,
                         "match_status": "unmatched_gold",
                         "weighted_f1": 0.0,
+                        "legacy_weighted_f1": 0.0,
+                        "confidence_adjusted_weighted_f1": 0.0,
                         "active_weight": 0.0,
+                        "active_fields": _active_field_names(field_details),
+                        "inactive_fields": _inactive_field_names(field_details),
+                        "field_weight_sum": _round_metric(_active_field_weight_sum(field_details)),
+                        "field_weight_policy": SEMANTIC_FIELD_WEIGHT_POLICY,
+                        "event_match_confidence": 0.0,
+                        "event_match_confidence_tier": "none",
+                        "scoring_mode": SEMANTIC_SCORING_MODE,
                         "alignment_score": 0.0,
                         "semantic_alignment_score": 0.0,
                         "alignment_fields": {},
@@ -1105,9 +1137,13 @@ def evaluate_event_extraction_semantic(
             matched_events += 1
             semantic_alignment_score = float(pair_decision.get("alignment_score", 0.0) or 0.0)
             alignment_scores.append(semantic_alignment_score)
+            event_match_confidence = _round_metric(float(pair_decision.get("confidence", semantic_alignment_score) or 0.0))
+            event_match_confidence_tier = _semantic_confidence_tier(event_match_confidence)
             field_details: dict[str, dict[str, object]] = {}
             weighted_score_total = 0.0
             active_weight = 0.0
+            active_fields: list[str] = []
+            inactive_fields: list[str] = []
             for field_name in FIELD_NAMES:
                 field_score = _semantic_score_field(
                     dialogue_id=dialogue_id,
@@ -1119,14 +1155,26 @@ def evaluate_event_extraction_semantic(
                     pred_event=pred_event,
                     judge_runtime=judge_runtime,
                 )
+                field_score["active"] = bool(field_score["gold"] or field_score["pred"])
+                field_score["weight"] = FIELD_WEIGHTS[field_name] if field_score["active"] else 0.0
+                field_score["inactive_reason"] = "" if field_score["active"] else "empty_gold_and_pred"
                 field_details[field_name] = field_score
-                if field_score["gold"] or field_score["pred"]:
+                if field_score["active"]:
                     weight = FIELD_WEIGHTS[field_name]
+                    active_fields.append(field_name)
                     active_weight += weight
                     weighted_score_total += weight * float(field_score["f1"])
+                else:
+                    inactive_fields.append(field_name)
             _add_field_scores(field_totals, field_details)
 
-            weighted_f1 = _round_metric(weighted_score_total / active_weight) if active_weight else 0.0
+            legacy_weighted_f1 = _round_metric(weighted_score_total / active_weight) if active_weight else 0.0
+            for field_name in FIELD_NAMES:
+                field_score = field_details[field_name]
+                normalized_weight = _safe_divide(float(field_score["weight"]), active_weight)
+                field_score["weight"] = _round_metric(normalized_weight) if field_score["active"] else 0.0
+                field_score["score_contribution"] = _round_metric(normalized_weight * float(field_score["f1"]))
+            weighted_f1 = _round_metric(event_match_confidence * legacy_weighted_f1)
             matched_event_scores.append(weighted_f1)
             if weighted_f1 < SEMANTIC_LOW_QUALITY_ALIGNMENT_WEIGHTED_F1_THRESHOLD:
                 row_audit["low_quality_alignment"] = True
@@ -1137,6 +1185,9 @@ def evaluate_event_extraction_semantic(
                             "gold_event_index": gold_index,
                             "pred_event_index": pred_index,
                             "weighted_f1": weighted_f1,
+                            "legacy_weighted_f1": legacy_weighted_f1,
+                            "event_match_confidence": event_match_confidence,
+                            "event_match_confidence_tier": event_match_confidence_tier,
                             "alignment_score": _round_metric(semantic_alignment_score),
                         }
                     )
@@ -1148,7 +1199,16 @@ def evaluate_event_extraction_semantic(
                     "pred_event_index": pred_index,
                     "match_status": "matched",
                     "weighted_f1": weighted_f1,
+                    "legacy_weighted_f1": legacy_weighted_f1,
+                    "confidence_adjusted_weighted_f1": weighted_f1,
                     "active_weight": _round_metric(active_weight),
+                    "active_fields": active_fields,
+                    "inactive_fields": inactive_fields,
+                    "field_weight_sum": _round_metric(active_weight),
+                    "field_weight_policy": SEMANTIC_FIELD_WEIGHT_POLICY,
+                    "event_match_confidence": event_match_confidence,
+                    "event_match_confidence_tier": event_match_confidence_tier,
+                    "scoring_mode": SEMANTIC_SCORING_MODE,
                     "alignment_score": _round_metric(semantic_alignment_score),
                     "semantic_alignment_score": _round_metric(semantic_alignment_score),
                     "alignment_fields": pair_decision.get("alignment_fields", {}),
@@ -1161,6 +1221,7 @@ def evaluate_event_extraction_semantic(
                 continue
             unmatched_pred += 1
             field_details = _build_unmatched_fields(None, pred_event)
+            _annotate_unmatched_field_details(field_details)
             _add_field_scores(field_totals, field_details)
             details.append(
                 {
@@ -1170,7 +1231,16 @@ def evaluate_event_extraction_semantic(
                     "pred_event_index": pred_index,
                     "match_status": "unmatched_pred",
                     "weighted_f1": 0.0,
+                    "legacy_weighted_f1": 0.0,
+                    "confidence_adjusted_weighted_f1": 0.0,
                     "active_weight": 0.0,
+                    "active_fields": _active_field_names(field_details),
+                    "inactive_fields": _inactive_field_names(field_details),
+                    "field_weight_sum": _round_metric(_active_field_weight_sum(field_details)),
+                    "field_weight_policy": SEMANTIC_FIELD_WEIGHT_POLICY,
+                    "event_match_confidence": 0.0,
+                    "event_match_confidence_tier": "none",
+                    "scoring_mode": SEMANTIC_SCORING_MODE,
                     "alignment_score": 0.0,
                     "semantic_alignment_score": 0.0,
                     "alignment_fields": {},
@@ -1191,9 +1261,13 @@ def evaluate_event_extraction_semantic(
     status = "completed" if judge_runtime.failures == 0 else "partial"
     summary["status"] = status
     summary["scoring_mode"] = SEMANTIC_SCORING_MODE
+    summary["supersedes_scoring_mode"] = SEMANTIC_SUPERSEDES_SCORING_MODE
     summary["base_scoring_mode"] = "event_extraction_weighted_f1"
     summary["alignment_strategy"] = SEMANTIC_EVENT_ALIGNMENT_STRATEGY
     summary["event_alignment"]["alignment_strategy"] = SEMANTIC_EVENT_ALIGNMENT_STRATEGY
+    summary["event_alignment"]["event_match_min_confidence"] = SEMANTIC_EVENT_MATCH_MIN_CONFIDENCE
+    summary["event_alignment"]["high_confidence_threshold"] = SEMANTIC_HIGH_CONFIDENCE_THRESHOLD
+    summary["event_alignment"]["field_weight_policy"] = SEMANTIC_FIELD_WEIGHT_POLICY
     summary["semantic_judge"] = {
         "judge_remote_server_id": judge_runtime.judge_remote_server_id,
         "judge_model_id": judge_runtime.judge_model_id,
@@ -1203,6 +1277,12 @@ def evaluate_event_extraction_semantic(
         "cache_hits": judge_runtime.cache_hits,
         "failures": judge_runtime.failures,
     }
+    summary["semantic_judge"]["reason_distribution"] = _semantic_judge_reason_distribution(
+        judge_runtime.audit_rows
+    )
+    summary["semantic_judge"]["review_candidates"] = _semantic_judge_review_summary(
+        judge_runtime.audit_rows
+    )
 
     _write_json(summary_output, summary)
     _write_jsonl(details_output, details)
@@ -1332,14 +1412,22 @@ def _semantic_align_dialogue_events(
                     )
                 )
                 source = "judge"
-            score = _semantic_decision_score(decision)
-            is_accepted = score >= SEMANTIC_JUDGE_CONFIDENCE_THRESHOLD
+            event_confidence = _semantic_decision_score(decision)
+            score = _round_metric(event_confidence * local_score)
+            is_accepted = (
+                bool(decision.get("equivalent", False))
+                and event_confidence >= SEMANTIC_EVENT_MATCH_MIN_CONFIDENCE
+            )
             score_row.append(score)
             accepted_row.append(is_accepted)
             candidate = {
                 "gold_event_index": gold_index,
                 "pred_event_index": pred_index,
                 "alignment_score": _round_metric(score),
+                "semantic_event_match_score": _round_metric(score),
+                "event_match_confidence": _round_metric(event_confidence),
+                "confidence": _round_metric(event_confidence),
+                "confidence_tier": _semantic_confidence_tier(event_confidence),
                 "accepted": is_accepted,
                 "source": source,
                 "reason_code": decision.get("reason_code", ""),
@@ -1350,7 +1438,7 @@ def _semantic_align_dialogue_events(
                 {
                     **candidate,
                     "alignment_fields": local_alignment.get("fields", {}),
-                    "confidence": _round_metric(float(decision.get("confidence", 0.0) or 0.0)),
+                    "confidence": _round_metric(event_confidence),
                     "equivalent": bool(decision.get("equivalent", False)),
                     "short_reason": str(decision.get("short_reason") or ""),
                 }
@@ -1415,28 +1503,32 @@ def _semantic_score_field(
                 judge_runtime=judge_runtime,
             )
             score_row.append(score)
-            accepted_row.append(score >= SEMANTIC_JUDGE_CONFIDENCE_THRESHOLD)
+            accepted_row.append(score > 0.0)
         scores.append(score_row)
         accepted.append(accepted_row)
 
     matches = _maximum_weight_event_matching(scores, accepted)
-    tp = len(matches)
-    fp = len(pred_values) - tp
-    fn = len(gold_values) - tp
+    matched_gold = len(matches)
+    matched_pred = len(matches)
+    soft_tp = sum(score for _gold_index, _pred_index, score in matches)
+    fp = len(pred_values) - matched_pred
+    fn = len(gold_values) - matched_gold
     return {
         "gold": gold_values,
         "pred": pred_values,
-        "tp": tp,
+        "tp": matched_gold,
         "fp": fp,
         "fn": fn,
-        "precision": _round_metric(_safe_divide(tp, tp + fp)),
-        "recall": _round_metric(_safe_divide(tp, tp + fn)),
-        "f1": _round_metric(_safe_divide(2 * tp, 2 * tp + fp + fn)),
+        "soft_tp": _round_metric(soft_tp),
+        "precision": _round_metric(_safe_divide(soft_tp, matched_pred + fp)),
+        "recall": _round_metric(_safe_divide(soft_tp, matched_gold + fn)),
+        "f1": _round_metric(_safe_divide(2 * soft_tp, matched_gold + matched_pred + fp + fn)),
         "semantic_matches": [
             {
                 "gold_value": gold_values[gold_index],
                 "pred_value": pred_values[pred_index],
                 "score": _round_metric(score),
+                "semantic_match_confidence": _round_metric(score),
             }
             for gold_index, pred_index, score in matches
         ],
@@ -1471,7 +1563,7 @@ def _semantic_score_action_field(
                 pred_value=pred_value,
                 judge_runtime=judge_runtime,
             )
-            if score >= SEMANTIC_JUDGE_CONFIDENCE_THRESHOLD:
+            if score > 0.0:
                 candidates.append(
                     {
                         "gold_indices": (gold_index,),
@@ -1495,7 +1587,7 @@ def _semantic_score_action_field(
                 pred_values=pred_group,
                 judge_runtime=judge_runtime,
             )
-            if score >= SEMANTIC_JUDGE_CONFIDENCE_THRESHOLD:
+            if score > 0.0:
                 candidates.append(
                     {
                         "gold_indices": (gold_index,),
@@ -1519,7 +1611,7 @@ def _semantic_score_action_field(
                 pred_values=[pred_value],
                 judge_runtime=judge_runtime,
             )
-            if score >= SEMANTIC_JUDGE_CONFIDENCE_THRESHOLD:
+            if score > 0.0:
                 candidates.append(
                     {
                         "gold_indices": gold_indices,
@@ -1547,6 +1639,7 @@ def _semantic_score_action_field(
         if isinstance(match.get("pred_indices"), tuple)
     }
     tp = len(matches)
+    soft_tp = sum(float(match.get("score", 0.0) or 0.0) for match in matches)
     fp = len(pred_values) - len(consumed_pred)
     fn = len(gold_values) - len(consumed_gold)
     return {
@@ -1555,9 +1648,10 @@ def _semantic_score_action_field(
         "tp": tp,
         "fp": fp,
         "fn": fn,
-        "precision": _round_metric(_safe_divide(tp, tp + fp)),
-        "recall": _round_metric(_safe_divide(tp, tp + fn)),
-        "f1": _round_metric(_safe_divide(2 * tp, 2 * tp + fp + fn)),
+        "soft_tp": _round_metric(soft_tp),
+        "precision": _round_metric(_safe_divide(soft_tp, tp + fp)),
+        "recall": _round_metric(_safe_divide(soft_tp, tp + fn)),
+        "f1": _round_metric(_safe_divide(2 * soft_tp, 2 * tp + fp + fn)),
         "semantic_matches": [
             _semantic_action_match_payload(match, gold_values=gold_values, pred_values=pred_values)
             for match in matches
@@ -1727,12 +1821,24 @@ def _semantic_action_match_payload(
             "gold_value": gold_values[gold_indices[0]],
             "pred_value": pred_values[pred_indices[0]],
             "score": score,
+            "semantic_match_confidence": score,
         }
     return {
         "gold_values": [gold_values[index] for index in gold_indices],
         "pred_values": [pred_values[index] for index in pred_indices],
         "score": score,
+        "semantic_match_confidence": score,
     }
+
+
+def _semantic_confidence_tier(confidence: float) -> str:
+    if confidence >= SEMANTIC_HIGH_CONFIDENCE_THRESHOLD:
+        return "high"
+    if confidence >= SEMANTIC_EVENT_MATCH_MIN_CONFIDENCE:
+        return "low"
+    if confidence > 0.0:
+        return "below_minimum"
+    return "none"
 
 
 def _semantic_field_values(field_name: str, event: dict[str, object]) -> list[str]:
@@ -1975,6 +2081,8 @@ def _semantic_judge_cache_key(request: dict[str, object]) -> str:
         for key, value in request.items()
         if key not in {"dialogue_id", "dialogue_excerpt", "gold_event_index", "pred_event_index"}
     }
+    payload["judge_prompt_version"] = SEMANTIC_JUDGE_PROMPT_VERSION
+    payload["judge_prompt_hash"] = SEMANTIC_JUDGE_PROMPT_HASH
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return f"sha256:{sha256(encoded).hexdigest()}"
 
@@ -2001,9 +2109,17 @@ def _semantic_judge_audit_row(
     error_code: str | None,
     failure_reason: str | None,
 ) -> dict[str, object]:
+    reason_code = str(decision.get("reason_code") or "")
+    kind = str(request.get("kind") or "")
+    requires_review = _semantic_judge_requires_review(
+        kind=kind,
+        reason_code=reason_code,
+        status=status,
+        failure_reason=failure_reason,
+    )
     return {
         "dialogue_id": request.get("dialogue_id", ""),
-        "kind": request.get("kind", ""),
+        "kind": kind,
         "judge_prompt_version": SEMANTIC_JUDGE_PROMPT_VERSION,
         "judge_prompt_hash": SEMANTIC_JUDGE_PROMPT_HASH,
         "field_name": request.get("field_name"),
@@ -2016,13 +2132,96 @@ def _semantic_judge_audit_row(
         "pred_values": request.get("pred_values"),
         "equivalent": bool(decision.get("equivalent", False)),
         "confidence": _round_metric(float(decision.get("confidence", 0.0) or 0.0)),
-        "reason_code": str(decision.get("reason_code") or ""),
+        "reason_code": reason_code,
+        "decision_category": _semantic_judge_decision_category(
+            kind=kind,
+            equivalent=bool(decision.get("equivalent", False)),
+            reason_code=reason_code,
+        ),
+        "requires_review": requires_review,
         "short_reason": str(decision.get("short_reason") or ""),
         "source": source,
         "status": status,
         "cache_key": cache_key,
         "error_code": error_code,
         "failure_reason": failure_reason,
+    }
+
+
+def _semantic_judge_decision_category(
+    *, kind: str, equivalent: bool, reason_code: str
+) -> str:
+    if reason_code == "gold_issue":
+        return "gold_issue"
+    if reason_code == "optional_non_target":
+        return "optional_non_target"
+    if reason_code == "unconfirmed":
+        return "unconfirmed"
+    if reason_code == "phase_mismatch":
+        return "phase_mismatch"
+    if reason_code == "split_merge":
+        return "split_merge"
+    if reason_code == "wrong_actor_same_event":
+        return "wrong_actor_same_event"
+    if kind == "event" and equivalent:
+        return "same_event"
+    if kind == "event":
+        return "different_event"
+    if equivalent:
+        return "same_value"
+    return "different_value"
+
+
+def _semantic_judge_requires_review(
+    *, kind: str, reason_code: str, status: str, failure_reason: str | None
+) -> bool:
+    if status != "ok" or failure_reason:
+        return True
+    if reason_code in SEMANTIC_REVIEW_REASON_CODES:
+        return True
+    return kind == "event" and reason_code == "wrong_actor_same_event"
+
+
+def _semantic_judge_reason_distribution(
+    audit_rows: Sequence[dict[str, object]]
+) -> dict[str, dict[str, int]]:
+    distribution: dict[str, dict[str, int]] = {}
+    for row in audit_rows:
+        kind = str(row.get("kind") or "unknown")
+        reason_code = str(row.get("reason_code") or "unknown")
+        kind_counts = distribution.setdefault(kind, {})
+        kind_counts[reason_code] = kind_counts.get(reason_code, 0) + 1
+    return {kind: dict(sorted(counts.items())) for kind, counts in sorted(distribution.items())}
+
+
+def _semantic_judge_review_summary(
+    audit_rows: Sequence[dict[str, object]]
+) -> dict[str, object]:
+    reason_counts: dict[str, int] = {}
+    examples: list[dict[str, object]] = []
+    for row in audit_rows:
+        if not row.get("requires_review"):
+            continue
+        reason_code = str(row.get("reason_code") or "unknown")
+        reason_counts[reason_code] = reason_counts.get(reason_code, 0) + 1
+        if len(examples) < 20:
+            examples.append(
+                {
+                    "dialogue_id": row.get("dialogue_id"),
+                    "kind": row.get("kind"),
+                    "field_name": row.get("field_name"),
+                    "gold_event_index": row.get("gold_event_index"),
+                    "pred_event_index": row.get("pred_event_index"),
+                    "reason_code": reason_code,
+                    "decision_category": row.get("decision_category"),
+                    "confidence": row.get("confidence"),
+                    "short_reason": row.get("short_reason"),
+                }
+            )
+    return {
+        "count": sum(reason_counts.values()),
+        "reason_distribution": dict(sorted(reason_counts.items())),
+        "examples": examples,
     }
 
 
@@ -2345,6 +2544,11 @@ def _build_semantic_row_alignment_audit(
     matches = alignment["matches"] if isinstance(alignment.get("matches"), list) else []
     matched_gold = {gold_index for gold_index, _pred_index, _score in matches}
     matched_pred = {pred_index for _gold_index, pred_index, _score in matches}
+    pair_decisions = {
+        (int(pair.get("gold_event_index", -1)), int(pair.get("pred_event_index", -1))): pair
+        for pair in alignment.get("pair_decisions", [])
+        if isinstance(pair, dict)
+    }
     return {
         "dialogue_id": dialogue_id,
         "alignment_strategy": SEMANTIC_EVENT_ALIGNMENT_STRATEGY,
@@ -2355,6 +2559,20 @@ def _build_semantic_row_alignment_audit(
                 "gold_event_index": gold_index,
                 "pred_event_index": pred_index,
                 "alignment_score": _round_metric(score),
+                "event_match_confidence": _round_metric(
+                    float(
+                        (
+                            pair_decisions.get((gold_index, pred_index), {}).get(
+                                "event_match_confidence"
+                            )
+                            or pair_decisions.get((gold_index, pred_index), {}).get("confidence")
+                            or 0.0
+                        )
+                    )
+                ),
+                "event_match_confidence_tier": pair_decisions.get(
+                    (gold_index, pred_index), {}
+                ).get("confidence_tier", "none"),
             }
             for gold_index, pred_index, score in matches
         ],
@@ -2373,7 +2591,7 @@ def _build_semantic_row_alignment_audit(
 
 def _build_summary(
     *,
-    field_totals: dict[str, dict[str, int]],
+    field_totals: dict[str, dict[str, float]],
     matched_event_scores: Sequence[float],
     events_evaluated: int,
     matched_events: int,
@@ -2384,28 +2602,75 @@ def _build_summary(
     field_metrics: dict[str, dict[str, object]] = {}
     hallucination_rates: dict[str, float] = {}
     missing_rates: dict[str, float] = {}
+    matched_event_score_sum = sum(matched_event_scores)
+    strict_event_row_average_f1 = _safe_divide(matched_event_score_sum, events_evaluated)
+    soft_semantic_event_precision = _safe_divide(
+        matched_event_score_sum,
+        matched_event_score_sum + unmatched_pred,
+    )
+    soft_semantic_event_recall = _safe_divide(
+        matched_event_score_sum,
+        matched_event_score_sum + unmatched_gold,
+    )
+    soft_semantic_event_f1 = _safe_divide(
+        2 * soft_semantic_event_precision * soft_semantic_event_recall,
+        soft_semantic_event_precision + soft_semantic_event_recall,
+    )
+    coverage_semantic_event_f0_5 = _fbeta(
+        precision=soft_semantic_event_precision,
+        recall=soft_semantic_event_recall,
+        beta=SEMANTIC_QUALITY_PRIORITY_BETA,
+    )
+    quality_semantic_event_precision = _safe_divide(
+        matched_event_score_sum,
+        matched_events + unmatched_pred,
+    )
+    quality_semantic_event_recall = _safe_divide(
+        matched_event_score_sum,
+        matched_events + unmatched_gold,
+    )
+    soft_semantic_event_f0_5 = _fbeta(
+        precision=quality_semantic_event_precision,
+        recall=quality_semantic_event_recall,
+        beta=SEMANTIC_QUALITY_PRIORITY_BETA,
+    )
 
     for field_name in FIELD_NAMES:
         totals = field_totals[field_name]
         tp = totals["tp"]
         fp = totals["fp"]
         fn = totals["fn"]
-        field_metrics[field_name] = {
+        soft_tp = float(totals.get("soft_tp", tp) or 0.0)
+        field_metric = {
             "weight": FIELD_WEIGHTS[field_name],
-            "precision": _round_metric(_safe_divide(tp, tp + fp)),
-            "recall": _round_metric(_safe_divide(tp, tp + fn)),
-            "f1": _round_metric(_safe_divide(2 * tp, 2 * tp + fp + fn)),
+            "precision": _round_metric(_safe_divide(soft_tp, tp + fp)),
+            "recall": _round_metric(_safe_divide(soft_tp, tp + fn)),
+            "f1": _round_metric(_safe_divide(2 * soft_tp, 2 * tp + fp + fn)),
             "tp": tp,
             "fp": fp,
             "fn": fn,
         }
+        if "soft_tp" in totals:
+            field_metric["soft_tp"] = _round_metric(soft_tp)
+        field_metrics[field_name] = field_metric
         hallucination_rates[field_name] = _round_metric(_safe_divide(fp, tp + fp))
         missing_rates[field_name] = _round_metric(_safe_divide(fn, tp + fn))
 
     event_summary = {
-        "overall_weighted_f1": _round_metric(
-            _safe_divide(sum(matched_event_scores), events_evaluated)
+        "overall_weighted_f1": _round_metric(strict_event_row_average_f1),
+        "strict_event_row_average_f1": _round_metric(strict_event_row_average_f1),
+        "strict_event_row_average_formula": (
+            "sum(matched_event_weighted_f1) / (matched_events + unmatched_gold + unmatched_pred)"
         ),
+        "soft_semantic_event_precision": _round_metric(soft_semantic_event_precision),
+        "soft_semantic_event_recall": _round_metric(soft_semantic_event_recall),
+        "soft_semantic_event_f1": _round_metric(soft_semantic_event_f1),
+        "quality_semantic_event_precision": _round_metric(quality_semantic_event_precision),
+        "quality_semantic_event_recall": _round_metric(quality_semantic_event_recall),
+        "soft_semantic_event_f0_5": _round_metric(soft_semantic_event_f0_5),
+        "coverage_semantic_event_f0_5": _round_metric(coverage_semantic_event_f0_5),
+        "quality_priority_beta": SEMANTIC_QUALITY_PRIORITY_BETA,
+        "matched_event_quality": _round_metric(_safe_divide(matched_event_score_sum, matched_events)),
         "events_evaluated": events_evaluated,
         "events_matched": matched_events,
         "events_unmatched_gold": unmatched_gold,
@@ -2490,8 +2755,38 @@ def _build_unmatched_fields(
     }
 
 
+def _annotate_unmatched_field_details(field_details: dict[str, dict[str, object]]) -> None:
+    active_weight = _active_field_weight_sum(field_details)
+    for field_name in FIELD_NAMES:
+        field_score = field_details[field_name]
+        is_active = bool(field_score["gold"] or field_score["pred"])
+        base_weight = FIELD_WEIGHTS[field_name] if is_active else 0.0
+        normalized_weight = _safe_divide(base_weight, active_weight)
+        field_score["active"] = is_active
+        field_score["weight"] = _round_metric(normalized_weight) if is_active else 0.0
+        field_score["score_contribution"] = 0.0
+        field_score["inactive_reason"] = "" if is_active else "empty_gold_and_pred"
+
+
+def _active_field_names(field_details: dict[str, dict[str, object]]) -> list[str]:
+    return [field_name for field_name in FIELD_NAMES if bool(field_details[field_name].get("active", False))]
+
+
+def _inactive_field_names(field_details: dict[str, dict[str, object]]) -> list[str]:
+    return [field_name for field_name in FIELD_NAMES if not bool(field_details[field_name].get("active", False))]
+
+
+def _active_field_weight_sum(field_details: dict[str, dict[str, object]]) -> float:
+    weight_sum = 0.0
+    for field_name in FIELD_NAMES:
+        field_score = field_details[field_name]
+        if field_score.get("active", bool(field_score["gold"] or field_score["pred"])):
+            weight_sum += FIELD_WEIGHTS[field_name]
+    return weight_sum
+
+
 def _add_field_scores(
-    field_totals: dict[str, dict[str, int]],
+    field_totals: dict[str, dict[str, float]],
     field_details: dict[str, dict[str, object]],
 ) -> None:
     for field_name in FIELD_NAMES:
@@ -2499,6 +2794,8 @@ def _add_field_scores(
         field_totals[field_name]["tp"] += int(field_score["tp"])
         field_totals[field_name]["fp"] += int(field_score["fp"])
         field_totals[field_name]["fn"] += int(field_score["fn"])
+        if "soft_tp" in field_totals[field_name]:
+            field_totals[field_name]["soft_tp"] += float(field_score.get("soft_tp", field_score["tp"]) or 0.0)
 
 
 def _normalize_dialogue_lines(value: object) -> list[str]:
@@ -2916,6 +3213,16 @@ def _safe_divide(numerator: float, denominator: float) -> float:
     if denominator == 0:
         return 0.0
     return numerator / denominator
+
+
+def _fbeta(*, precision: float, recall: float, beta: float) -> float:
+    if precision == 0 and recall == 0:
+        return 0.0
+    beta_squared = beta * beta
+    denominator = (beta_squared * precision) + recall
+    if denominator == 0:
+        return 0.0
+    return (1 + beta_squared) * precision * recall / denominator
 
 
 def _round_metric(value: float) -> float:
