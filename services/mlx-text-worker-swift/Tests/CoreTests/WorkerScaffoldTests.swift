@@ -1317,6 +1317,60 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertNotNil(summary.tokensPerSecond)
     }
 
+    func testAutoSwiftMLXBackendDecodeRecordsOptInBaselineDecodeProbe() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let counter = CountingLanguageModelCallCounter()
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 2
+
+        var acceleration = Melix_Worker_V1_AccelerationPolicy()
+        acceleration.mode = .baseline
+
+        setenv("MELIX_SWIFT_BASELINE_DECODE_PROBE", "1", 1)
+        defer { unsetenv("MELIX_SWIFT_BASELINE_DECODE_PROBE") }
+
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(
+                    storage: makeCountingPreparedLogitsModelContainer(counter: counter)
+                )
+                let prefill = try await backend.prefill(
+                    model: model,
+                    messages: [makeSystemMessage("system"), makeUserMessage("bridge baseline decode probe")],
+                    prefillStepSize: 32,
+                    resumeHint: "live-baseline-decode-probe",
+                    acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                    shouldAbort: { false }
+                )
+                let stream = try await backend.decodeEvents(
+                    model: model,
+                    context: prefill.context,
+                    sampling: sampling,
+                    maxOutputTokens: 2,
+                    decodeStepSize: 1,
+                    prefillToken: "",
+                    acceleration: acceleration,
+                    shouldAbort: { false }
+                )
+                return try await collectTextGenerationEvents(from: stream)
+            }
+        }
+
+        let summary = try XCTUnwrap(renderedSummary(from: events))
+        XCTAssertEqual(summary.completionTokens, 2)
+        XCTAssertNil(summary.activeKVProbe)
+        let baselineProbe = try XCTUnwrap(summary.decodeBatchProbe)
+        XCTAssertEqual(baselineProbe.decodeModelCallCount, 1)
+        XCTAssertEqual(counter.stepCallCount, 1)
+        XCTAssertEqual(baselineProbe.decodeSampleCallCount, 2)
+        XCTAssertEqual(baselineProbe.decodeAsyncEvalCallCount, 2)
+        XCTAssertEqual(baselineProbe.decodeTokenEvalCallCount, 2)
+        XCTAssertEqual(baselineProbe.decodeTokenIDCallCount, 2)
+        XCTAssertEqual(baselineProbe.decodeDetokenizeCallCount, 2)
+    }
+
     func testAutoSwiftMLXBackendBatchesLiveHomogeneousDecodeRequests() async throws {
         let backend = AutoSwiftMLXBackend()
         let promptTokens = [1, 2, 3, 4, 5]
@@ -1470,7 +1524,73 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(Set(recorder.cacheIdentifiers).count, 1)
 
         let batchProbe = try XCTUnwrap(summaries[0]?.decodeBatchProbe)
+        XCTAssertEqual(batchProbe.decodeModelCallCount, 2)
         XCTAssertEqual(batchProbe.decodeTokenEvalCallCount, 4)
+        XCTAssertEqual(batchProbe.decodeTokenIDCallCount, 6)
+    }
+
+    func testAutoSwiftMLXBackendKeepsLongPromptBatchDecodeOnSynchronousTokenPath() async throws {
+        let backend = AutoSwiftMLXBackend()
+        let recorder = BatchCacheIdentityRecorder()
+        var sampling = Melix_Worker_V1_SamplingConfig()
+        sampling.temperature = 0
+        sampling.topP = 1
+        sampling.maxOutputTokens = 3
+
+        let longPromptTokens = MLXArray(Array(repeating: 2, count: 300), [1, 300])
+        let events = try await withTemporaryDefaultMetallib {
+            try await Device.withDefaultDevice(.cpu) {
+                let model = LoadedTextModel(
+                    storage: makeBatchCacheIdentityModelContainer(recorder: recorder)
+                )
+                let context1 = makePreparedDecodeContext(
+                    prepared: .tokens(LMInput.Text(tokens: longPromptTokens)),
+                    cache: makeSimpleKVCache(sequenceLength: 300)
+                )
+                let context2 = makePreparedDecodeContext(
+                    prepared: .tokens(LMInput.Text(tokens: longPromptTokens)),
+                    cache: makeSimpleKVCache(sequenceLength: 300)
+                )
+                let stream = try await backend.decodeBatchEvents(
+                    requests: [
+                        TextRuntimeDecodeRequest(
+                            model: model,
+                            draftModel: nil,
+                            context: context1,
+                            sampling: sampling,
+                            maxOutputTokens: 3,
+                            decodeStepSize: 1,
+                            prefillToken: "",
+                            acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                            shouldAbort: { false }
+                        ),
+                        TextRuntimeDecodeRequest(
+                            model: model,
+                            draftModel: nil,
+                            context: context2,
+                            sampling: sampling,
+                            maxOutputTokens: 3,
+                            decodeStepSize: 1,
+                            prefillToken: "",
+                            acceleration: Melix_Worker_V1_AccelerationPolicy(),
+                            shouldAbort: { false }
+                        ),
+                    ]
+                )
+                return try await collectTextBatchGenerationEvents(from: stream)
+            }
+        }
+
+        let summaries = renderedBatchRequestSummaries(from: events)
+        XCTAssertEqual(summaries[0]?.completionTokens, 3)
+        XCTAssertEqual(summaries[1]?.completionTokens, 3)
+        XCTAssertEqual(summaries[0]?.decodeBatchSize, 2)
+        XCTAssertEqual(recorder.batchSizes, [2, 2, 2])
+        XCTAssertEqual(recorder.sequenceLengths, [1, 1, 1])
+
+        let batchProbe = try XCTUnwrap(summaries[0]?.decodeBatchProbe)
+        XCTAssertEqual(batchProbe.decodeModelCallCount, 2)
+        XCTAssertEqual(batchProbe.decodeTokenEvalCallCount, 6)
         XCTAssertEqual(batchProbe.decodeTokenIDCallCount, 6)
     }
 

@@ -32,6 +32,8 @@ struct PreparedPrefillContext: @unchecked Sendable {
 }
 
 #if canImport(MLXLMCommon)
+private let shortPromptBatchDecodeLookaheadMaxPromptTokens = 256
+
 struct PreparedDecodeState: @unchecked Sendable {
     let input: LMInput
     let prepared: PrepareResult
@@ -39,6 +41,10 @@ struct PreparedDecodeState: @unchecked Sendable {
     let promptPrefillTime: TimeInterval
     let prefillQuantizeMicros: Int
     let activeKVQuantizationRatio: Int
+}
+
+private func supportsArgMaxTokenIDFastPath(_ parameters: GenerateParameters) -> Bool {
+    parameters.temperature == 0 && parameters.repetitionPenalty == nil
 }
 #endif
 
@@ -768,6 +774,7 @@ private struct BatchDecodeRequestState: @unchecked Sendable {
     var detokenizer: NaiveStreamingDetokenizer
     var pendingToken: MLXArray?
     var pendingTokenID: Int?
+    var pendingBatchedTokenRow: MLXArray?
     var generatedTokenCount: Int
     var isFinished: Bool
 }
@@ -780,7 +787,7 @@ private struct SwiftMLXBatchDecodeInput: @unchecked Sendable {
     let acceleration: Melix_Worker_V1_AccelerationPolicy
 
     var supportsBatchedArgMaxTokenIDs: Bool {
-        parameters.temperature == 0 && parameters.repetitionPenalty == nil
+        supportsArgMaxTokenIDFastPath(parameters)
     }
 }
 
@@ -1377,6 +1384,7 @@ private func makePreparedBatchDecodeEvents(
                     detokenizer: NaiveStreamingDetokenizer(tokenizer: context.tokenizer),
                     pendingToken: nil,
                     pendingTokenID: nil,
+                    pendingBatchedTokenRow: nil,
                     generatedTokenCount: 0,
                     isFinished: false
                 )
@@ -1399,6 +1407,8 @@ private func makePreparedBatchDecodeEvents(
             var decodeTokenEvalCallCount = 0
             var decodeTokenIDTotalMicros = 0
             var decodeTokenIDCallCount = 0
+            var decodeAsyncEvalTotalMicros = 0
+            var decodeAsyncEvalCallCount = 0
             var decodeDetokenizeTotalMicros = 0
             var decodeDetokenizeCallCount = 0
             var decodeStreamYieldTotalMicros = 0
@@ -1408,6 +1418,7 @@ private func makePreparedBatchDecodeEvents(
             let startedAt = Date.timeIntervalSinceReferenceDate
             var decodeLoopIterations = 0
             var maxModelEvalBatchSize = max(1, batchCacheState.sourceRequestIndices.count)
+            let supportsBatchDecodeLookahead = shouldUseBatchDecodeLookahead(for: batchInput.states)
 
             for index in states.indices {
                 guard batchInput.parameters.maxTokens.map({ $0 > 0 }) ?? true,
@@ -1424,13 +1435,121 @@ private func makePreparedBatchDecodeEvents(
                 )
                 decodeSampleCallCount += 1
                 decodeSampleTotalMicros += elapsedMicros(since: sampleStartedAt)
-                asyncEval(token)
+                recordDecodeAsyncEval(
+                    token,
+                    shouldRecord: true,
+                    totalMicros: &decodeAsyncEvalTotalMicros,
+                    callCount: &decodeAsyncEvalCallCount
+                )
                 states[index].pendingToken = token
+            }
+
+            @discardableResult
+            func consumeBatchDecodeLookaheadStep() -> Bool {
+                guard let batchCache = batchCacheState.cache,
+                      supportsBatchDecodeLookahead,
+                      let lookaheadInput = makeBatchDecodeLookaheadInput(
+                        sourceRequestIndices: batchCacheState.sourceRequestIndices,
+                        states: states,
+                        supportsBatchedArgMaxTokenIDs: batchInput.supportsBatchedArgMaxTokenIDs
+                      )
+                else {
+                    return false
+                }
+
+                let activeIndices = batchCacheState.sourceRequestIndices
+                let shouldAdvanceModel = batchInput.parameters.maxTokens.map { maxTokens in
+                    activeIndices.contains { states[$0].generatedTokenCount + 1 < maxTokens }
+                } ?? true
+
+                decodeLoopIterations += 1
+                maxModelEvalBatchSize = max(maxModelEvalBatchSize, activeIndices.count)
+
+                if shouldAdvanceModel {
+                    let modelStartedAt = Date.timeIntervalSinceReferenceDate
+                    let logits = context.model(lookaheadInput, cache: batchCache)
+                    decodeModelCallCount += 1
+                    decodeModelTotalMicros += elapsedMicros(since: modelStartedAt)
+                    recordBatchModelEvalSyncProbe(
+                        logits,
+                        shouldForce: shouldForceBatchModelEvalProbe,
+                        totalMicros: &decodeModelEvalSyncTotalMicros,
+                        callCount: &decodeModelEvalSyncCallCount,
+                        firstMicros: &decodeModelEvalSyncFirstMicros,
+                        maxMicros: &decodeModelEvalSyncMaxMicros
+                    )
+
+                    updatePendingTokensFromBatchLogits(
+                        logits,
+                        activeIndices: activeIndices,
+                        states: &states,
+                        supportsBatchedArgMaxTokenIDs: batchInput.supportsBatchedArgMaxTokenIDs,
+                        decodeSampleTotalMicros: &decodeSampleTotalMicros,
+                        decodeSampleCallCount: &decodeSampleCallCount,
+                        decodeTokenEvalTotalMicros: &decodeTokenEvalTotalMicros,
+                        decodeTokenEvalCallCount: &decodeTokenEvalCallCount,
+                        decodeTokenIDTotalMicros: &decodeTokenIDTotalMicros,
+                        decodeTokenIDCallCount: &decodeTokenIDCallCount,
+                        decodeAsyncEvalTotalMicros: &decodeAsyncEvalTotalMicros,
+                        decodeAsyncEvalCallCount: &decodeAsyncEvalCallCount
+                    )
+                }
+
+                let tokenEvalStartedAt = Date.timeIntervalSinceReferenceDate
+                let emittedTokenIDs = lookaheadInput.reshaped([activeIndices.count])
+                    .asArray(UInt32.self)
+                    .map(Int.init)
+                let tokenEvalMicros = elapsedMicros(since: tokenEvalStartedAt)
+                decodeTokenEvalCallCount += 1
+                decodeTokenEvalTotalMicros += tokenEvalMicros
+                decodeTokenIDCallCount += emittedTokenIDs.count
+                decodeTokenIDTotalMicros += tokenEvalMicros
+
+                for (batchIndex, requestIndex) in activeIndices.enumerated() {
+                    let tokenID = emittedTokenIDs[batchIndex]
+                    if tokenID == context.tokenizer.unknownTokenId
+                        || tokenID == context.tokenizer.eosTokenId
+                        || additionalEOSTokenIds.contains(tokenID)
+                    {
+                        states[requestIndex].isFinished = true
+                        clearPendingBatchDecodeToken(&states[requestIndex])
+                        continue
+                    }
+
+                    states[requestIndex].generatedTokenCount += 1
+                    let detokenizeStartedAt = Date.timeIntervalSinceReferenceDate
+                    states[requestIndex].detokenizer.append(token: tokenID)
+                    let chunk = states[requestIndex].detokenizer.next()
+                    decodeDetokenizeCallCount += 1
+                    decodeDetokenizeTotalMicros += elapsedMicros(since: detokenizeStartedAt)
+                    if let chunk, !chunk.isEmpty {
+                        let yieldStartedAt = Date.timeIntervalSinceReferenceDate
+                        continuation.yield(.token(requestIndex: requestIndex, text: chunk))
+                        decodeStreamYieldCallCount += 1
+                        decodeStreamYieldTotalMicros += elapsedMicros(since: yieldStartedAt)
+                    }
+
+                    if batchInput.parameters.maxTokens.map({ states[requestIndex].generatedTokenCount >= $0 }) ?? false {
+                        states[requestIndex].isFinished = true
+                        clearPendingBatchDecodeToken(&states[requestIndex])
+                        continue
+                    }
+
+                    if !shouldAdvanceModel {
+                        clearPendingBatchDecodeToken(&states[requestIndex])
+                    }
+                }
+
+                return true
             }
 
             while states.contains(where: { !$0.isFinished && $0.pendingToken != nil }) {
                 if Task.isCancelled {
                     break
+                }
+
+                if consumeBatchDecodeLookaheadStep() {
+                    continue
                 }
 
                 var activeIndices: [Int] = []
@@ -1446,6 +1565,7 @@ private func makePreparedBatchDecodeEvents(
                         states[index].isFinished = true
                         states[index].pendingToken = nil
                         states[index].pendingTokenID = nil
+                        states[index].pendingBatchedTokenRow = nil
                         continue
                     }
 
@@ -1468,6 +1588,8 @@ private func makePreparedBatchDecodeEvents(
                     {
                         states[index].isFinished = true
                         states[index].pendingToken = nil
+                        states[index].pendingTokenID = nil
+                        states[index].pendingBatchedTokenRow = nil
                         continue
                     }
 
@@ -1487,6 +1609,8 @@ private func makePreparedBatchDecodeEvents(
                     if batchInput.parameters.maxTokens.map({ states[index].generatedTokenCount >= $0 }) ?? false {
                         states[index].isFinished = true
                         states[index].pendingToken = nil
+                        states[index].pendingTokenID = nil
+                        states[index].pendingBatchedTokenRow = nil
                         continue
                     }
 
@@ -1502,25 +1626,24 @@ private func makePreparedBatchDecodeEvents(
                 if activeIndices == batchCacheState.sourceRequestIndices,
                    let batchCache = batchCacheState.cache {
                     maxModelEvalBatchSize = max(maxModelEvalBatchSize, activeIndices.count)
-                    let nextInput = MLXArray(activeTokenIDs, [activeTokenIDs.count, 1])
+                    let nextInput = makeBatchDecodeNextInput(
+                        activeIndices: activeIndices,
+                        activeTokenIDs: activeTokenIDs,
+                        states: states,
+                        supportsBatchedArgMaxTokenIDs: batchInput.supportsBatchedArgMaxTokenIDs
+                    )
                     let modelStartedAt = Date.timeIntervalSinceReferenceDate
                     let logits = context.model(nextInput, cache: batchCache)
                     decodeModelCallCount += 1
                     decodeModelTotalMicros += elapsedMicros(since: modelStartedAt)
-                    if shouldForceBatchModelEvalProbe {
-                        let modelEvalStartedAt = Date.timeIntervalSinceReferenceDate
-                        eval(logits)
-                        decodeModelEvalSyncCallCount += 1
-                        let modelEvalSyncMicros = elapsedMicros(since: modelEvalStartedAt)
-                        if decodeModelEvalSyncCallCount == 1 {
-                            decodeModelEvalSyncFirstMicros = modelEvalSyncMicros
-                        }
-                        decodeModelEvalSyncTotalMicros += modelEvalSyncMicros
-                        decodeModelEvalSyncMaxMicros = max(
-                            decodeModelEvalSyncMaxMicros,
-                            modelEvalSyncMicros
-                        )
-                    }
+                    recordBatchModelEvalSyncProbe(
+                        logits,
+                        shouldForce: shouldForceBatchModelEvalProbe,
+                        totalMicros: &decodeModelEvalSyncTotalMicros,
+                        callCount: &decodeModelEvalSyncCallCount,
+                        firstMicros: &decodeModelEvalSyncFirstMicros,
+                        maxMicros: &decodeModelEvalSyncMaxMicros
+                    )
 
                     updatePendingTokensFromBatchLogits(
                         logits,
@@ -1532,7 +1655,9 @@ private func makePreparedBatchDecodeEvents(
                         decodeTokenEvalTotalMicros: &decodeTokenEvalTotalMicros,
                         decodeTokenEvalCallCount: &decodeTokenEvalCallCount,
                         decodeTokenIDTotalMicros: &decodeTokenIDTotalMicros,
-                        decodeTokenIDCallCount: &decodeTokenIDCallCount
+                        decodeTokenIDCallCount: &decodeTokenIDCallCount,
+                        decodeAsyncEvalTotalMicros: &decodeAsyncEvalTotalMicros,
+                        decodeAsyncEvalCallCount: &decodeAsyncEvalCallCount
                     )
                 } else {
                     materializeBatchCacheState(&batchCacheState, into: &requestCaches)
@@ -1543,25 +1668,24 @@ private func makePreparedBatchDecodeEvents(
                             sourceRequestIndices: activeIndices
                         )
                         maxModelEvalBatchSize = max(maxModelEvalBatchSize, activeIndices.count)
-                        let nextInput = MLXArray(activeTokenIDs, [activeTokenIDs.count, 1])
+                        let nextInput = makeBatchDecodeNextInput(
+                            activeIndices: activeIndices,
+                            activeTokenIDs: activeTokenIDs,
+                            states: states,
+                            supportsBatchedArgMaxTokenIDs: batchInput.supportsBatchedArgMaxTokenIDs
+                        )
                         let modelStartedAt = Date.timeIntervalSinceReferenceDate
                         let logits = context.model(nextInput, cache: rebuiltCache)
                         decodeModelCallCount += 1
                         decodeModelTotalMicros += elapsedMicros(since: modelStartedAt)
-                        if shouldForceBatchModelEvalProbe {
-                            let modelEvalStartedAt = Date.timeIntervalSinceReferenceDate
-                            eval(logits)
-                            decodeModelEvalSyncCallCount += 1
-                            let modelEvalSyncMicros = elapsedMicros(since: modelEvalStartedAt)
-                            if decodeModelEvalSyncCallCount == 1 {
-                                decodeModelEvalSyncFirstMicros = modelEvalSyncMicros
-                            }
-                            decodeModelEvalSyncTotalMicros += modelEvalSyncMicros
-                            decodeModelEvalSyncMaxMicros = max(
-                                decodeModelEvalSyncMaxMicros,
-                                modelEvalSyncMicros
-                            )
-                        }
+                        recordBatchModelEvalSyncProbe(
+                            logits,
+                            shouldForce: shouldForceBatchModelEvalProbe,
+                            totalMicros: &decodeModelEvalSyncTotalMicros,
+                            callCount: &decodeModelEvalSyncCallCount,
+                            firstMicros: &decodeModelEvalSyncFirstMicros,
+                            maxMicros: &decodeModelEvalSyncMaxMicros
+                        )
 
                         updatePendingTokensFromBatchLogits(
                             logits,
@@ -1573,7 +1697,9 @@ private func makePreparedBatchDecodeEvents(
                             decodeTokenEvalTotalMicros: &decodeTokenEvalTotalMicros,
                             decodeTokenEvalCallCount: &decodeTokenEvalCallCount,
                             decodeTokenIDTotalMicros: &decodeTokenIDTotalMicros,
-                            decodeTokenIDCallCount: &decodeTokenIDCallCount
+                            decodeTokenIDCallCount: &decodeTokenIDCallCount,
+                            decodeAsyncEvalTotalMicros: &decodeAsyncEvalTotalMicros,
+                            decodeAsyncEvalCallCount: &decodeAsyncEvalCallCount
                         )
                     } else {
                         for (tokenIndex, requestIndex) in activeIndices.enumerated() {
@@ -1595,9 +1721,15 @@ private func makePreparedBatchDecodeEvents(
                             )
                             decodeSampleCallCount += 1
                             decodeSampleTotalMicros += elapsedMicros(since: sampleStartedAt)
-                            asyncEval(token)
+                            recordDecodeAsyncEval(
+                                token,
+                                shouldRecord: true,
+                                totalMicros: &decodeAsyncEvalTotalMicros,
+                                callCount: &decodeAsyncEvalCallCount
+                            )
                             states[requestIndex].pendingToken = token
                             states[requestIndex].pendingTokenID = nil
+                            states[requestIndex].pendingBatchedTokenRow = nil
                         }
                     }
                 }
@@ -1616,6 +1748,8 @@ private func makePreparedBatchDecodeEvents(
                 decodeModelEvalSyncCallCount: decodeModelEvalSyncCallCount,
                 decodeModelEvalSyncFirstMicros: decodeModelEvalSyncFirstMicros,
                 decodeModelEvalSyncMaxMicros: decodeModelEvalSyncMaxMicros,
+                decodeAsyncEvalTotalMicros: decodeAsyncEvalTotalMicros,
+                decodeAsyncEvalCallCount: decodeAsyncEvalCallCount,
                 decodeSampleTotalMicros: decodeSampleTotalMicros,
                 decodeSampleCallCount: decodeSampleCallCount,
                 decodeTokenEvalTotalMicros: decodeTokenEvalTotalMicros,
@@ -1667,6 +1801,50 @@ private func makePreparedBatchDecodeEvents(
     return stream
 }
 
+private func clearPendingBatchDecodeToken(_ state: inout BatchDecodeRequestState) {
+    state.pendingToken = nil
+    state.pendingTokenID = nil
+    state.pendingBatchedTokenRow = nil
+}
+
+private func recordBatchModelEvalSyncProbe(
+    _ logits: MLXArray,
+    shouldForce: Bool,
+    totalMicros: inout Int,
+    callCount: inout Int,
+    firstMicros: inout Int,
+    maxMicros: inout Int
+) {
+    guard shouldForce else {
+        return
+    }
+
+    let modelEvalStartedAt = Date.timeIntervalSinceReferenceDate
+    eval(logits)
+    callCount += 1
+    let modelEvalSyncMicros = elapsedMicros(since: modelEvalStartedAt)
+    if callCount == 1 {
+        firstMicros = modelEvalSyncMicros
+    }
+    totalMicros += modelEvalSyncMicros
+    maxMicros = max(maxMicros, modelEvalSyncMicros)
+}
+
+private func recordDecodeAsyncEval(
+    _ array: MLXArray,
+    shouldRecord: Bool,
+    totalMicros: inout Int,
+    callCount: inout Int
+) {
+    let startedAt = shouldRecord ? Date.timeIntervalSinceReferenceDate : 0
+    asyncEval(array)
+    guard shouldRecord else {
+        return
+    }
+    callCount += 1
+    totalMicros += elapsedMicros(since: startedAt)
+}
+
 private func updatePendingTokensFromBatchLogits(
     _ logits: MLXArray,
     activeIndices: [Int],
@@ -1677,7 +1855,9 @@ private func updatePendingTokensFromBatchLogits(
     decodeTokenEvalTotalMicros: inout Int,
     decodeTokenEvalCallCount: inout Int,
     decodeTokenIDTotalMicros: inout Int,
-    decodeTokenIDCallCount: inout Int
+    decodeTokenIDCallCount: inout Int,
+    decodeAsyncEvalTotalMicros: inout Int,
+    decodeAsyncEvalCallCount: inout Int
 ) {
     guard supportsBatchedArgMaxTokenIDs,
           activeIndices.allSatisfy({ states[$0].processor == nil })
@@ -1694,9 +1874,15 @@ private func updatePendingTokensFromBatchLogits(
             )
             decodeSampleCallCount += 1
             decodeSampleTotalMicros += elapsedMicros(since: sampleStartedAt)
-            asyncEval(token)
+            recordDecodeAsyncEval(
+                token,
+                shouldRecord: true,
+                totalMicros: &decodeAsyncEvalTotalMicros,
+                callCount: &decodeAsyncEvalCallCount
+            )
             states[requestIndex].pendingToken = token
             states[requestIndex].pendingTokenID = nil
+            states[requestIndex].pendingBatchedTokenRow = nil
         }
         return
     }
@@ -1705,21 +1891,65 @@ private func updatePendingTokensFromBatchLogits(
     let tokenIDs = batchedArgMaxTokenIDs(from: logits)
     decodeSampleCallCount += activeIndices.count
     decodeSampleTotalMicros += elapsedMicros(since: sampleStartedAt)
-    let tokenEvalStartedAt = Date.timeIntervalSinceReferenceDate
-    let ids = tokenIDs.asArray(UInt32.self)
-    decodeTokenEvalCallCount += 1
-    decodeTokenEvalTotalMicros += elapsedMicros(since: tokenEvalStartedAt)
+    recordDecodeAsyncEval(
+        tokenIDs,
+        shouldRecord: true,
+        totalMicros: &decodeAsyncEvalTotalMicros,
+        callCount: &decodeAsyncEvalCallCount
+    )
 
     for (batchIndex, requestIndex) in activeIndices.enumerated() {
-        let tokenIDStartedAt = Date.timeIntervalSinceReferenceDate
-        let tokenID = Int(ids[batchIndex])
-        decodeTokenIDCallCount += 1
-        decodeTokenIDTotalMicros += elapsedMicros(since: tokenIDStartedAt)
         states[requestIndex].output = LMOutput(
             logits: logits[batchIndex ..< (batchIndex + 1), 0..., 0...]
         )
-        states[requestIndex].pendingToken = MLXArray([tokenID])
-        states[requestIndex].pendingTokenID = tokenID
+        states[requestIndex].pendingToken = tokenIDs[batchIndex ..< (batchIndex + 1)]
+        states[requestIndex].pendingTokenID = nil
+        states[requestIndex].pendingBatchedTokenRow = tokenIDs[batchIndex ..< (batchIndex + 1)]
+    }
+}
+
+private func makeBatchDecodeNextInput(
+    activeIndices: [Int],
+    activeTokenIDs: [Int],
+    states: [BatchDecodeRequestState],
+    supportsBatchedArgMaxTokenIDs: Bool
+) -> MLXArray {
+    guard supportsBatchedArgMaxTokenIDs,
+          activeIndices.allSatisfy({ states[$0].processor == nil }),
+          activeIndices.allSatisfy({ states[$0].pendingBatchedTokenRow != nil })
+    else {
+        return MLXArray(activeTokenIDs, [activeTokenIDs.count, 1])
+    }
+    let rows = activeIndices.compactMap { states[$0].pendingBatchedTokenRow }
+    return stacked(rows, axis: 0)
+}
+
+private func makeBatchDecodeLookaheadInput(
+    sourceRequestIndices: [Int],
+    states: [BatchDecodeRequestState],
+    supportsBatchedArgMaxTokenIDs: Bool
+) -> MLXArray? {
+    guard supportsBatchedArgMaxTokenIDs,
+          !sourceRequestIndices.isEmpty,
+          sourceRequestIndices.allSatisfy({
+              !states[$0].isFinished
+                  && states[$0].processor == nil
+                  && !states[$0].request.shouldAbort()
+                  && states[$0].pendingBatchedTokenRow != nil
+          })
+    else {
+        return nil
+    }
+    let rows = sourceRequestIndices.compactMap { states[$0].pendingBatchedTokenRow }
+    return stacked(rows, axis: 0)
+}
+
+private func shouldUseBatchDecodeLookahead(for states: [PreparedDecodeState]) -> Bool {
+    guard states.count > 1 else {
+        return false
+    }
+    return states.allSatisfy { state in
+        state.input.text.tokens.size <= shortPromptBatchDecodeLookaheadMaxPromptTokens
     }
 }
 
@@ -2703,6 +2933,8 @@ private func makePreparedDecodeEvents(
             var decodeSampleCallCount = 0
             var decodeTokenIDTotalMicros = 0
             var decodeTokenIDCallCount = 0
+            var decodeAsyncEvalTotalMicros = 0
+            var decodeAsyncEvalCallCount = 0
             var decodeDetokenizeTotalMicros = 0
             var decodeDetokenizeCallCount = 0
             var decodeStreamYieldTotalMicros = 0
@@ -2713,6 +2945,9 @@ private func makePreparedDecodeEvents(
             var prefillQuantizeMicros = decodeState.prefillQuantizeMicros
             let shouldRecordActiveKVDecodeProbe =
                 normalizedAccelerationPolicy(acceleration).mode == .activeKvQuantized
+            let shouldRecordBaselineDecodeProbe =
+                ProcessInfo.processInfo.environment["MELIX_SWIFT_BASELINE_DECODE_PROBE"] == "1"
+            let shouldRecordDecodeProbe = shouldRecordActiveKVDecodeProbe || shouldRecordBaselineDecodeProbe
 
             let additionalEOSTokenIds = Set(
                 context.configuration.extraEOSTokens.compactMap {
@@ -2746,24 +2981,84 @@ private func makePreparedDecodeEvents(
             let shouldForceModelEvalProbe =
                 ProcessInfo.processInfo.environment["MELIX_SWIFT_ACTIVE_KV_FORCE_MODEL_EVAL_PROBE"] == "1"
                 && normalizedAccelerationPolicy(acceleration).mode == .activeKvQuantized
+            let supportsArgMaxTokenIDFastPath = supportsArgMaxTokenIDFastPath(parameters)
             let startedAt = Date.timeIntervalSinceReferenceDate
 
-            var pendingToken: MLXArray?
-            if parameters.maxTokens.map({ $0 > 0 }) ?? true {
-                let sampleStartedAt = shouldRecordActiveKVDecodeProbe
+            func sampleDecodeToken(from logits: MLXArray) -> (token: MLXArray, tokenIDRow: MLXArray?) {
+                let sampleStartedAt = shouldRecordDecodeProbe
                     ? Date.timeIntervalSinceReferenceDate
                     : 0
-                let token = sampleNextToken(
-                    logits: output.logits,
-                    processor: &processor,
-                    sampler: sampler
-                )
-                if shouldRecordActiveKVDecodeProbe {
+                let token: MLXArray
+                let tokenIDRow: MLXArray?
+                if supportsArgMaxTokenIDFastPath, processor == nil {
+                    token = batchedArgMaxTokenIDs(from: logits)
+                    tokenIDRow = token
+                } else {
+                    token = sampleNextToken(
+                        logits: logits,
+                        processor: &processor,
+                        sampler: sampler
+                    )
+                    tokenIDRow = nil
+                }
+                if shouldRecordDecodeProbe {
                     decodeSampleCallCount += 1
                     decodeSampleTotalMicros += elapsedMicros(since: sampleStartedAt)
                 }
-                asyncEval(token)
-                pendingToken = token
+                return (token: token, tokenIDRow: tokenIDRow)
+            }
+
+            func makeNextDecodeOutput(from token: MLXArray, state: LMOutput.State?) -> LMOutput {
+                let nextInput = LMInput.Text(tokens: token)
+                if shouldEvaluateTurboQuantFusedAttentionCandidate && !didDispatchTurboQuantFusedAttention {
+                    turboQuantCandidateEligibilityCheckCount += 1
+                    let candidateStartedAt = shouldRecordDecodeProbe
+                        ? Date.timeIntervalSinceReferenceDate
+                        : 0
+                    didDispatchTurboQuantFusedAttention = dispatchTurboQuantFusedAttentionCandidateIfNeeded(
+                        cache: cache,
+                        acceleration: acceleration,
+                        candidateProbeEnabled: turboQuantCandidateProbeEnabled
+                    )
+                    if shouldRecordDecodeProbe {
+                        turboQuantCandidateCallCount += 1
+                        turboQuantCandidateTotalMicros += elapsedMicros(since: candidateStartedAt)
+                    }
+                }
+                let modelStartedAt = shouldRecordDecodeProbe
+                    ? Date.timeIntervalSinceReferenceDate
+                    : 0
+                let nextOutput = context.model(
+                    nextInput[text: .newAxis],
+                    cache: cache.isEmpty ? nil : cache,
+                    state: state
+                )
+                if shouldRecordDecodeProbe {
+                    decodeModelCallCount += 1
+                    decodeModelTotalMicros += elapsedMicros(since: modelStartedAt)
+                }
+                if let modelEvalSyncMicros = activeKVModelEvalSyncMicrosIfNeeded(
+                    enabled: shouldForceModelEvalProbe,
+                    logits: nextOutput.logits
+                ) {
+                    decodeModelEvalSyncCallCount += 1
+                    decodeModelEvalSyncTotalMicros += modelEvalSyncMicros
+                }
+                return nextOutput
+            }
+
+            var pendingToken: MLXArray?
+            var pendingTokenIDRow: MLXArray?
+            if parameters.maxTokens.map({ $0 > 0 }) ?? true {
+                let sampledToken = sampleDecodeToken(from: output.logits)
+                recordDecodeAsyncEval(
+                    sampledToken.token,
+                    shouldRecord: shouldRecordDecodeProbe,
+                    totalMicros: &decodeAsyncEvalTotalMicros,
+                    callCount: &decodeAsyncEvalCallCount
+                )
+                pendingToken = sampledToken.token
+                pendingTokenIDRow = sampledToken.tokenIDRow
             }
 
             while let token = pendingToken,
@@ -2773,14 +3068,34 @@ private func makePreparedDecodeEvents(
                     break
                 }
 
-                let tokenEvalStartedAt = shouldRecordActiveKVDecodeProbe
+                let canAdvanceModel = parameters.maxTokens.map { generatedTokenCount + 1 < $0 } ?? true
+                let shouldAdvanceModelBeforeTokenID =
+                    canAdvanceModel && supportsArgMaxTokenIDFastPath && processor == nil && pendingTokenIDRow != nil
+                var advancedOutput: LMOutput?
+                var nextToken: MLXArray?
+                var nextTokenIDRow: MLXArray?
+                if shouldAdvanceModelBeforeTokenID, let tokenIDRow = pendingTokenIDRow {
+                    let nextOutput = makeNextDecodeOutput(from: tokenIDRow, state: output.state)
+                    let sampledNextToken = sampleDecodeToken(from: nextOutput.logits)
+                    recordDecodeAsyncEval(
+                        sampledNextToken.token,
+                        shouldRecord: shouldRecordDecodeProbe,
+                        totalMicros: &decodeAsyncEvalTotalMicros,
+                        callCount: &decodeAsyncEvalCallCount
+                    )
+                    advancedOutput = nextOutput
+                    nextToken = sampledNextToken.token
+                    nextTokenIDRow = sampledNextToken.tokenIDRow
+                }
+
+                let tokenEvalStartedAt = shouldRecordDecodeProbe
                     ? Date.timeIntervalSinceReferenceDate
                     : 0
-                let tokenIDStartedAt = shouldRecordActiveKVDecodeProbe
+                let tokenIDStartedAt = shouldRecordDecodeProbe
                     ? Date.timeIntervalSinceReferenceDate
                     : 0
                 let tokenID = token.item(Int.self)
-                if shouldRecordActiveKVDecodeProbe {
+                if shouldRecordDecodeProbe {
                     decodeTokenIDCallCount += 1
                     decodeTokenIDTotalMicros += elapsedMicros(since: tokenIDStartedAt)
                     decodeTokenEvalCallCount += 1
@@ -2795,75 +3110,37 @@ private func makePreparedDecodeEvents(
                 }
 
                 generatedTokenCount += 1
-                var nextToken: MLXArray?
-                if parameters.maxTokens.map({ generatedTokenCount < $0 }) ?? true {
-                    let nextInput = LMInput.Text(tokens: token)
-                    if shouldEvaluateTurboQuantFusedAttentionCandidate && !didDispatchTurboQuantFusedAttention {
-                        turboQuantCandidateEligibilityCheckCount += 1
-                        let candidateStartedAt = shouldRecordActiveKVDecodeProbe
-                            ? Date.timeIntervalSinceReferenceDate
-                            : 0
-                        didDispatchTurboQuantFusedAttention = dispatchTurboQuantFusedAttentionCandidateIfNeeded(
-                            cache: cache,
-                            acceleration: acceleration,
-                            candidateProbeEnabled: turboQuantCandidateProbeEnabled
-                        )
-                        if shouldRecordActiveKVDecodeProbe {
-                            turboQuantCandidateCallCount += 1
-                            turboQuantCandidateTotalMicros += elapsedMicros(since: candidateStartedAt)
-                        }
-                    }
-                    let modelStartedAt = shouldRecordActiveKVDecodeProbe
-                        ? Date.timeIntervalSinceReferenceDate
-                        : 0
-                    let nextOutput = context.model(
-                        nextInput[text: .newAxis],
-                        cache: cache.isEmpty ? nil : cache,
-                        state: output.state
+                if let advancedOutput {
+                    output = advancedOutput
+                } else if canAdvanceModel {
+                    let nextOutput = makeNextDecodeOutput(from: pendingTokenIDRow ?? token, state: output.state)
+                    let sampledNextToken = sampleDecodeToken(from: nextOutput.logits)
+                    recordDecodeAsyncEval(
+                        sampledNextToken.token,
+                        shouldRecord: shouldRecordDecodeProbe,
+                        totalMicros: &decodeAsyncEvalTotalMicros,
+                        callCount: &decodeAsyncEvalCallCount
                     )
-                    if shouldRecordActiveKVDecodeProbe {
-                        decodeModelCallCount += 1
-                        decodeModelTotalMicros += elapsedMicros(since: modelStartedAt)
-                    }
-                    if let modelEvalSyncMicros = activeKVModelEvalSyncMicrosIfNeeded(
-                        enabled: shouldForceModelEvalProbe,
-                        logits: nextOutput.logits
-                    ) {
-                        decodeModelEvalSyncCallCount += 1
-                        decodeModelEvalSyncTotalMicros += modelEvalSyncMicros
-                    }
                     output = nextOutput
-                    let sampleStartedAt = shouldRecordActiveKVDecodeProbe
-                        ? Date.timeIntervalSinceReferenceDate
-                        : 0
-                    let sampledNextToken = sampleNextToken(
-                        logits: output.logits,
-                        processor: &processor,
-                        sampler: sampler
-                    )
-                    if shouldRecordActiveKVDecodeProbe {
-                        decodeSampleCallCount += 1
-                        decodeSampleTotalMicros += elapsedMicros(since: sampleStartedAt)
-                    }
-                    asyncEval(sampledNextToken)
-                    nextToken = sampledNextToken
+                    nextToken = sampledNextToken.token
+                    nextTokenIDRow = sampledNextToken.tokenIDRow
                 }
 
-                let detokenizeStartedAt = shouldRecordActiveKVDecodeProbe
+                let detokenizeStartedAt = shouldRecordDecodeProbe
                     ? Date.timeIntervalSinceReferenceDate
                     : 0
                 detokenizer.append(token: tokenID)
                 let chunk = detokenizer.next()
-                if shouldRecordActiveKVDecodeProbe {
+                if shouldRecordDecodeProbe {
                     decodeDetokenizeCallCount += 1
                     decodeDetokenizeTotalMicros += elapsedMicros(since: detokenizeStartedAt)
                 }
                 if let chunk {
-                    let yieldStartedAt = shouldRecordActiveKVDecodeProbe
+                    let yieldStartedAt = shouldRecordDecodeProbe
                         ? Date.timeIntervalSinceReferenceDate
                         : 0
                     continuation.yield(.chunk(chunk))
-                    if shouldRecordActiveKVDecodeProbe {
+                    if shouldRecordDecodeProbe {
                         decodeStreamYieldCallCount += 1
                         decodeStreamYieldTotalMicros += elapsedMicros(since: yieldStartedAt)
                     }
@@ -2871,6 +3148,7 @@ private func makePreparedDecodeEvents(
 
                 if let nextToken {
                     pendingToken = nextToken
+                    pendingTokenIDRow = nextTokenIDRow
                 } else {
                     break
                 }
@@ -2912,12 +3190,36 @@ private func makePreparedDecodeEvents(
                 turboQuantFusedAttentionDispatched: didDispatchTurboQuantFusedAttention,
                 turboQuantCandidateEligibilityCheckCount: turboQuantCandidateEligibilityCheckCount
             )
+            let baselineDecodeProbe = shouldRecordBaselineDecodeProbe
+                ? DecodeBatchProbeSummary(
+                    decodeLoopTotalMicros: decodeLoopTotalMicros,
+                    decodeModelTotalMicros: decodeModelTotalMicros,
+                    decodeModelCallCount: decodeModelCallCount,
+                    decodeModelEvalSyncTotalMicros: decodeModelEvalSyncTotalMicros,
+                    decodeModelEvalSyncCallCount: decodeModelEvalSyncCallCount,
+                    decodeModelEvalSyncFirstMicros: 0,
+                    decodeModelEvalSyncMaxMicros: 0,
+                    decodeAsyncEvalTotalMicros: decodeAsyncEvalTotalMicros,
+                    decodeAsyncEvalCallCount: decodeAsyncEvalCallCount,
+                    decodeSampleTotalMicros: decodeSampleTotalMicros,
+                    decodeSampleCallCount: decodeSampleCallCount,
+                    decodeTokenEvalTotalMicros: decodeTokenEvalTotalMicros,
+                    decodeTokenEvalCallCount: decodeTokenEvalCallCount,
+                    decodeTokenIDTotalMicros: decodeTokenIDTotalMicros,
+                    decodeTokenIDCallCount: decodeTokenIDCallCount,
+                    decodeDetokenizeTotalMicros: decodeDetokenizeTotalMicros,
+                    decodeDetokenizeCallCount: decodeDetokenizeCallCount,
+                    decodeStreamYieldTotalMicros: decodeStreamYieldTotalMicros,
+                    decodeStreamYieldCallCount: decodeStreamYieldCallCount
+                )
+                : nil
             continuation.yield(.summary(
                 TextGenerationSummary(
                     promptTokens: decodeState.input.text.tokens.size,
                     completionTokens: generatedTokenCount,
                     tokensPerSecond: Double(generatedTokenCount) / elapsed,
-                    activeKVProbe: activeKVProbe
+                    activeKVProbe: activeKVProbe,
+                    decodeBatchProbe: baselineDecodeProbe
                 )
             ))
             continuation.finish()

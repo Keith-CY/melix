@@ -717,6 +717,18 @@ struct TextDecodeEngine: Sendable {
             "swift_text.decode_batch_model_eval_sync_max_us",
             value: probe.decodeModelEvalSyncMaxMicros
         )
+        metrics.set(
+            "swift_text.decode_batch_async_eval_total_us",
+            value: probe.decodeAsyncEvalTotalMicros
+        )
+        metrics.set(
+            "swift_text.decode_batch_async_eval_call_count",
+            value: probe.decodeAsyncEvalCallCount
+        )
+        metrics.set(
+            "swift_text.decode_batch_async_eval_avg_us",
+            value: probe.decodeAsyncEvalAverageMicros
+        )
         metrics.set("swift_text.decode_batch_sample_total_us", value: probe.decodeSampleTotalMicros)
         metrics.set("swift_text.decode_batch_sample_call_count", value: probe.decodeSampleCallCount)
         metrics.set("swift_text.decode_batch_sample_avg_us", value: probe.decodeSampleAverageMicros)
