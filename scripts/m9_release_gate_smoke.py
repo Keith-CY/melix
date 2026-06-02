@@ -11,6 +11,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "services" / "mlx-worker-python"))
 
+from worker.productization.gemma_e4b_profile_gate import (
+    default_passing_evidence as default_passing_gemma_e4b_profile_evidence,
+    evaluate_gemma_e4b_profile_gate_evidence,
+)
 from worker.productization.release_gates import (
     evaluate_m9_release_evidence,
     evaluate_release_gate,
@@ -148,6 +152,7 @@ def _build_fixture_report(
         },
         "evaluation_compare": _build_passing_evaluation_compare_report(),
         "real_workload": _build_passing_real_workload_report(),
+        "gemma_e4b_profile": _build_passing_gemma_e4b_profile_report(),
         "m9": m9,
         "observability": _build_passing_observability_report(),
         "lora_path": _build_passing_lora_path_report(),
@@ -155,6 +160,12 @@ def _build_fixture_report(
     if fixture_mode == "passing" and m9_failures:
         raise RuntimeError(f"Passing M9 fixture unexpectedly failed: {m9_failures}")
     return report
+
+
+def _build_passing_gemma_e4b_profile_report() -> dict[str, object]:
+    return evaluate_gemma_e4b_profile_gate_evidence(
+        default_passing_gemma_e4b_profile_evidence()
+    )
 
 
 def _build_passing_m9_report() -> dict[str, object]:

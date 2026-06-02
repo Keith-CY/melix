@@ -32,6 +32,11 @@ from worker.productization.benchmark_schemas import (
     build_serving_benchmark_results,
 )
 from worker.productization.benchmark_suites import BenchmarkSuiteCatalog
+from worker.productization.gemma_e4b_profile_gate import (
+    DEFAULT_GEMMA_E4B_PROFILE_GATE_POLICY,
+    collect_gemma_e4b_profile_gate_evidence,
+    evaluate_gemma_e4b_profile_gate,
+)
 from worker.productization.quantization_gates import (
     DEFAULT_QUANTIZATION_GATE_POLICY,
     collect_quantization_benchmark_evidence,
@@ -215,6 +220,7 @@ DEFAULT_RELEASE_GATE_POLICY: dict[str, Any] = {
         }
     },
     "real_workload": copy.deepcopy(DEFAULT_REAL_WORKLOAD_GATE_POLICY),
+    "gemma_e4b_profile": copy.deepcopy(DEFAULT_GEMMA_E4B_PROFILE_GATE_POLICY),
     "m9": copy.deepcopy(DEFAULT_M9_RELEASE_GATE_POLICY),
     "observability": {
         "probe_policy.noop_overhead_threshold_passed": {"min": 1.0},
@@ -1055,6 +1061,7 @@ def build_release_gate_report(
             jobs_root,
             policy=active_policy.get("real_workload", {}),
         ),
+        "gemma_e4b_profile": collect_gemma_e4b_profile_gate_evidence(jobs_root),
         "m9": collect_m9_evidence(repo_root, policy=active_policy.get("m9", {})),
         "observability": collect_observability_evidence(),
         "lora_path": collect_lora_path_evidence(jobs_root),
@@ -1162,6 +1169,17 @@ def evaluate_release_gate(report: dict[str, Any], policy: dict[str, Any]) -> lis
             evaluate_real_workload_evidence(
                 real_workload,
                 policy.get("real_workload", {}),
+            )
+        )
+
+    gemma_e4b_profile = report.get("gemma_e4b_profile")
+    if not isinstance(gemma_e4b_profile, dict):
+        failures.append("gemma_e4b_profile evidence is missing")
+    else:
+        failures.extend(
+            evaluate_gemma_e4b_profile_gate(
+                gemma_e4b_profile,
+                policy.get("gemma_e4b_profile", {}),
             )
         )
 
