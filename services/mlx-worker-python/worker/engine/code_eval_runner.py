@@ -69,12 +69,26 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
 def _code_block_content_start(text: str, start: int) -> int:
     if text.startswith(_PYTHON_CODE_BLOCK_TAG, start):
         start += _PYTHON_CODE_BLOCK_TAG_LENGTH
-    elif text[start:start + _PYTHON_CODE_BLOCK_TAG_LENGTH].lower() == _PYTHON_CODE_BLOCK_TAG:
+    elif _starts_with_python_tag_ignore_case(text, start):
         start += _PYTHON_CODE_BLOCK_TAG_LENGTH
     text_length = len(text)
     while start < text_length and text[start].isspace():
         start += 1
     return start
+
+
+def _starts_with_python_tag_ignore_case(text: str, start: int) -> bool:
+    end = start + _PYTHON_CODE_BLOCK_TAG_LENGTH
+    if end > len(text):
+        return False
+    return (
+        text[start] in "pP"
+        and text[start + 1] in "yY"
+        and text[start + 2] in "tT"
+        and text[start + 3] in "hH"
+        and text[start + 4] in "oO"
+        and text[start + 5] in "nN"
+    )
 
 
 def is_code_execution_policy_supported(code_exec_policy: str) -> bool:
