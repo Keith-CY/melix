@@ -554,6 +554,18 @@ def test_lora_canary_aux_module_detection_returns_false_when_scandir_fails(
     assert lora_runtime_metadata_module._aux_modules_restored(base_model_dir) is False
 
 
+def test_lora_quantized_kind_detection_uses_precompiled_patterns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_re_search(*_args: object, **_kwargs: object):
+        raise AssertionError("quantized kind detection should reuse compiled patterns")  # pragma: no cover
+
+    monkeypatch.setattr(lora_runtime_metadata_module.re, "search", fail_re_search)
+
+    assert lora_runtime_metadata_module._quantized_kind_from_text("mlx q4 adapter") == "q4"
+    assert lora_runtime_metadata_module._quantized_kind_from_text("not-a-q4suffix") == "unknown"
+
+
 def test_lora_canary_receipt_detects_missing_checkpoint_resume_assets(
     tmp_path: Path,
 ) -> None:
