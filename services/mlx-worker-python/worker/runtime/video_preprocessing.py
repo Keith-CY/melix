@@ -162,7 +162,11 @@ def _parse_video_reference(reference: str) -> ParsedVideoReference:
 
 
 def _path_name_and_suffix(path: str) -> tuple[str, str]:
-    path_name = path.rstrip("/").rsplit("/", 1)[-1]
+    end_index = len(path)
+    while end_index > 0 and path[end_index - 1] == "/":
+        end_index -= 1
+    slash_index = path.rfind("/", 0, end_index)
+    path_name = path[slash_index + 1 : end_index]
     dot_index = path_name.rfind(".")
     path_suffix = path_name[dot_index + 1 :].lower() if 0 < dot_index < len(path_name) - 1 else ""
     return path_name, path_suffix
