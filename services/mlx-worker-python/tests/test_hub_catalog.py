@@ -176,6 +176,31 @@ def test_payload_mlx_tag_match_stays_exact_and_case_insensitive() -> None:
     assert _payload_is_mlx_compatible({"tags": ["ammlx"], "cardData": {}}) is False
 
 
+def test_repo_id_mlx_substring_match_preserves_ascii_case_insensitivity() -> None:
+    for repo_id in (
+        "owner/model-mlx",
+        "owner/model-MLX",
+        "owner/model-Mlx",
+        "owner/model-MlX",
+        "owner/model-mLX",
+        "owner/model-mLx",
+        "owner/model-mlX",
+        "owner/model-MLx",
+    ):
+        assert _payload_is_mlx_compatible({"id": repo_id, "tags": [], "cardData": {}}) is True
+        assert _is_mlx_compatible(
+            repo_id=repo_id,
+            tags=[],
+            library_name="transformers",
+            card_data={},
+        ) is True
+    assert _payload_is_mlx_compatible({"id": "owner/model", "tags": [], "cardData": {}}) is False
+    assert _payload_is_mlx_compatible({"id": "owner/model", "tags": [], "cardData": None}) is False
+    assert _payload_is_mlx_compatible(
+        {"id": "owner/model", "tags": [], "cardData": {"library_name": "MLX"}}
+    ) is True
+
+
 def test_direct_size_hint_rejects_extra_tokens_without_full_split() -> None:
     assert _direct_size_hint_from_text("12 GB extra") == 0
     assert _direct_size_hint_from_text("12 GB") == 12 * 1024 * 1024 * 1024
