@@ -1,0 +1,17 @@
+{
+  "schema_version": "melix.swift_vision_frozen_python_baseline.v1",
+  "status": "placeholder",
+  "python_worker_git_sha": "",
+  "model_id": "unsloth/gemma-4-E4B-it-MLX-8bit",
+  "model_artifact_hash": "",
+  "fixture_manifest_hash": "",
+  "judge_prompt_hash": "",
+  "judge_model_id": "",
+  "scores": {
+    "gemma4_vlm.native_video": {
+      "image": 0.0
+    }
+  },
+  "per_sample_scores": [],
+  "timing": {}
+}

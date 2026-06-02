@@ -1,0 +1,167 @@
+{
+  "schema_version": "melix.swift_vision_real_model_acceptance_manifest.v1",
+  "fixture_suite_id": "swift-vision-real-model.dev.v1",
+  "scope": "Swift Vision Worker real-model acceptance for Gemma 4, Qwen 3.5, and Qwen 3.6",
+  "scoring_policy": {
+    "absolute_floor": 0.7,
+    "allowed_delta": 0.05,
+    "critical_sentinel_score": 1.0
+  },
+  "model_family_targets": [
+    {
+      "family_id": "gemma4_vlm.native_video",
+      "accepted_model_ids": [
+        "unsloth/gemma-4-E4B-it-MLX-8bit",
+        "unsloth/gemma-4-31b-it-MLX-8bit"
+      ],
+      "accepted_model_types": [
+        "gemma4"
+      ],
+      "model_weights_path": "../../../../../.runtime/models/gemma4-vlm-native-video",
+      "required_modalities": [
+        "image",
+        "video"
+      ],
+      "required_runtime_features": [
+        "swift_vision_worker",
+        "native_video_execution",
+        "judge_backed_semantic"
+      ],
+      "required_route": {
+        "task": "generate_multimodal",
+        "worker_family": "vision",
+        "supports_native_video": true,
+        "residency_policy": "allow_multi_residency"
+      },
+      "modality_suites": {
+        "image": {
+          "supported": true,
+          "minimum_acceptance_cases": 1,
+          "scoring_mode": "judge_backed_semantic",
+          "judge_required": true,
+          "python_baseline_path": "baselines/gemma4-image.json"
+        },
+        "video": {
+          "supported": true,
+          "minimum_acceptance_cases": 1,
+          "scoring_mode": "judge_backed_semantic",
+          "judge_required": true,
+          "requires_native_video_receipt": true,
+          "python_baseline_path": "baselines/gemma4-video.json"
+        }
+      }
+    },
+    {
+      "family_id": "qwen35_vlm.native_video",
+      "accepted_model_ids": [
+        "mlx-community/Qwen3.5-VL-8B-Instruct-4bit",
+        "mlx-community/Qwen3.5-VL-30B-A3B-Instruct-4bit"
+      ],
+      "accepted_model_types": [
+        "qwen3_5_vl",
+        "qwen3_5"
+      ],
+      "model_weights_path": "../../../../../.runtime/models/qwen35-vlm-native-video",
+      "required_modalities": [
+        "image",
+        "video"
+      ],
+      "required_runtime_features": [
+        "swift_vision_worker",
+        "native_video_execution",
+        "native_mtp",
+        "judge_backed_semantic"
+      ],
+      "required_route": {
+        "task": "generate_multimodal",
+        "worker_family": "vision",
+        "supports_native_video": true,
+        "residency_policy": "allow_multi_residency"
+      },
+      "modality_suites": {
+        "image": {
+          "supported": true,
+          "minimum_acceptance_cases": 1,
+          "scoring_mode": "judge_backed_semantic",
+          "judge_required": true,
+          "python_baseline_path": "baselines/qwen35-image.json"
+        },
+        "video": {
+          "supported": true,
+          "minimum_acceptance_cases": 1,
+          "scoring_mode": "judge_backed_semantic",
+          "judge_required": true,
+          "requires_native_video_receipt": true,
+          "python_baseline_path": "baselines/qwen35-video.json"
+        }
+      }
+    },
+    {
+      "family_id": "qwen36_vlm.native_video",
+      "accepted_model_ids": [
+        "mlx-community/Qwen3.6-VL-8B-Instruct-4bit",
+        "mlx-community/Qwen3.6-VL-30B-A3B-Instruct-4bit"
+      ],
+      "accepted_model_types": [
+        "qwen3_5",
+        "qwen3_6_vl"
+      ],
+      "model_weights_path": "../../../../../.runtime/models/qwen36-vlm-native-video",
+      "required_modalities": [
+        "image",
+        "video"
+      ],
+      "required_runtime_features": [
+        "swift_vision_worker",
+        "native_video_execution",
+        "native_mtp",
+        "judge_backed_semantic"
+      ],
+      "required_route": {
+        "task": "generate_multimodal",
+        "worker_family": "vision",
+        "supports_native_video": true,
+        "residency_policy": "allow_multi_residency"
+      },
+      "modality_suites": {
+        "image": {
+          "supported": true,
+          "minimum_acceptance_cases": 1,
+          "scoring_mode": "judge_backed_semantic",
+          "judge_required": true,
+          "python_baseline_path": "baselines/qwen36-image.json"
+        },
+        "video": {
+          "supported": true,
+          "minimum_acceptance_cases": 1,
+          "scoring_mode": "judge_backed_semantic",
+          "judge_required": true,
+          "requires_native_video_receipt": true,
+          "python_baseline_path": "baselines/qwen36-video.json"
+        }
+      }
+    }
+  ],
+  "media_artifacts": [
+    {
+      "media_id": "single-black-pixel",
+      "path": "../../evaluation/mmlu.vision.dev.v1/sample.ppm",
+      "sha256": "sha256:c940efc28573af63c6ebbfeb23e69ded35c645b0dca6c4553d62aa1977912614",
+      "mime_type": "image/x-portable-pixmap"
+    },
+    {
+      "media_id": "query-card",
+      "path": "../../evaluation/agentic-visual-retrieval-qa.dev.v1/media/query-card.ppm",
+      "sha256": "sha256:db5c51233f8c916d0d27f3c4f8c2b7f87a54a2cbb6dff5d0639663630761ae1d",
+      "mime_type": "image/x-portable-pixmap"
+    },
+    {
+      "media_id": "native-video-placeholder",
+      "path": "media/native-video-placeholder.mp4",
+      "sha256": "",
+      "mime_type": "video/mp4",
+      "duration": 0,
+      "frame_count": 0
+    }
+  ]
+}
