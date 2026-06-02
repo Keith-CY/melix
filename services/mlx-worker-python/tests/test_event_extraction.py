@@ -2038,7 +2038,7 @@ def test_event_alignment_uses_global_optimum_not_greedy() -> None:
     assert matches == [(0, 1, 0.80), (1, 0, 0.80)]
 
 
-def test_event_alignment_precomputes_only_accepted_sparse_edges() -> None:
+def test_event_alignment_precomputes_only_accepted_sparse_edges(monkeypatch) -> None:
     scores = [
         [0.91, 0.0, 0.0, 0.77],
         [0.0, 0.82, 0.0, 0.0],
@@ -2049,16 +2049,35 @@ def test_event_alignment_precomputes_only_accepted_sparse_edges() -> None:
         [False, True, False, False],
         [True, False, True, False],
     ]
+    round_calls: list[float] = []
+    original_round_metric = event_extraction_module._round_metric
+
+    def counted_round_metric(value: float) -> float:
+        round_calls.append(value)
+        return original_round_metric(value)
+
+    monkeypatch.setattr(event_extraction_module, "_round_metric", counted_round_metric)
 
     edges = event_extraction_module._accepted_event_matching_edges(scores, accepted)
+    precomputed_round_calls = len(round_calls)
     matches = event_extraction_module._maximum_weight_event_matching(scores, accepted)
 
+    assert precomputed_round_calls == 0
     assert edges == (
         ((0, 0.91), (3, 0.77)),
         ((1, 0.82),),
         ((0, 0.80), (2, 0.79)),
     )
     assert matches == [(0, 0, 0.91), (1, 1, 0.82), (2, 2, 0.79)]
+
+
+def test_event_alignment_tie_breaks_on_rounded_match_tuples() -> None:
+    matches = event_extraction_module._maximum_weight_event_matching(
+        [[0.5, 0.5]],
+        [[True, True]],
+    )
+
+    assert matches == [(0, 0, 0.5)]
 
 
 def test_event_alignment_reuses_normalized_action_values(monkeypatch) -> None:
