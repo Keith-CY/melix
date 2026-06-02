@@ -33,6 +33,11 @@ _AUXILIARY_MODULE_PATTERNS = (
 _AUXILIARY_MODULE_PREFIXES = tuple(
     pattern.removesuffix("*.py") for pattern in _AUXILIARY_MODULE_PATTERNS
 )
+_PROCESSOR_RESUME_FILENAMES = (
+    ("processor_config.json", "processor_config"),
+    ("preprocessor_config.json", "preprocessor_config"),
+    ("tokenizer_config.json", "tokenizer_only"),
+)
 
 _QUANTIZED_KIND_ORDER = ("4bit", "8bit", "q4", "q8", "optiq")
 _QUANTIZED_KIND_PATTERNS = tuple(
@@ -321,12 +326,12 @@ def _saved_tokenizer_config(
 
 
 def _processor_resume_mode(base_model_dir: Path) -> str:
-    if (base_model_dir / "processor_config.json").is_file():
-        return "processor_config"
-    if (base_model_dir / "preprocessor_config.json").is_file():
-        return "preprocessor_config"
-    if (base_model_dir / "tokenizer_config.json").is_file():
-        return "tokenizer_only"
+    base_model_path = os.fspath(base_model_dir)
+    join = os.path.join
+    isfile = os.path.isfile
+    for filename, resume_mode in _PROCESSOR_RESUME_FILENAMES:
+        if isfile(join(base_model_path, filename)):
+            return resume_mode
     return "missing"
 
 
