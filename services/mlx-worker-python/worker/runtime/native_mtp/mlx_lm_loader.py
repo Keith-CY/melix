@@ -23,7 +23,7 @@ def _load_json_payload(path: Path) -> dict[str, Any]:
 
 def _is_mtp_weight_key(key: Any) -> bool:
     if isinstance(key, str):
-        return key.startswith("language_model.mtp.") or key.startswith("mtp.")
+        return key.startswith(_MTP_WEIGHT_KEY_PREFIXES)
     return str(key).startswith(_MTP_WEIGHT_KEY_PREFIXES)
 
 
