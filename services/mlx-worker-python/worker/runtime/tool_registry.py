@@ -286,28 +286,28 @@ class ToolRegistry:
                 return selection
 
         requested_names_list: list[str] = []
+        selected: list[ToolDescriptor] = []
+        missing_names: list[str] = []
         seen_names: set[str] = set()
+        tool_by_name = self._tool_by_name
+        missing_tool_sentinel = _MISSING_TOOL_SENTINEL
         for name in names:
             normalized_name = name.strip()
             if not normalized_name or normalized_name in seen_names:
                 continue
             seen_names.add(normalized_name)
             requested_names_list.append(normalized_name)
+            tool = tool_by_name.get(normalized_name, missing_tool_sentinel)
+            if tool is missing_tool_sentinel:
+                missing_names.append(normalized_name)
+            else:
+                selected.append(cast(ToolDescriptor, tool))
         requested_names = tuple(requested_names_list)
         if requested_names == self._tool_names:
             return self
         cached_selection = self._selection_cache.get(requested_names)
         if cached_selection is not None:
             return cached_selection
-        tool_by_name = self._tool_by_name
-        selected: list[ToolDescriptor] = []
-        missing_names: list[str] = []
-        for name in requested_names:
-            tool = tool_by_name.get(name, _MISSING_TOOL_SENTINEL)
-            if tool is _MISSING_TOOL_SENTINEL:
-                missing_names.append(name)
-            else:
-                selected.append(tool)
         if missing_names:
             joined = ", ".join(missing_names)
             raise ToolRegistryError(f"Unknown tool registry entry requested: {joined}")
