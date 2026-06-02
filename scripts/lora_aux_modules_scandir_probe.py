@@ -79,6 +79,66 @@ def _measure(*, noise_count: int, sample_count: int) -> dict[str, float]:
     }
 
 
+def _baseline_processor_resume_mode(base_model_dir: Path) -> str:
+    if (base_model_dir / "processor_config.json").is_file():
+        return "processor_config"
+    if (base_model_dir / "preprocessor_config.json").is_file():
+        return "preprocessor_config"
+    if (base_model_dir / "tokenizer_config.json").is_file():
+        return "tokenizer_only"
+    return "missing"
+
+
+def _measure_processor_resume_mode(*, noise_count: int, sample_count: int) -> dict[str, float]:
+    optimized_elapsed_ms: list[float] = []
+    baseline_elapsed_ms: list[float] = []
+    isfile_calls: list[float] = []
+
+    with tempfile.TemporaryDirectory(prefix="melix-lora-processor-probe-") as temp_dir:
+        base_model_dir = Path(temp_dir) / "base-model"
+        _seed_base_model(base_model_dir, noise_count=noise_count, aux_index=noise_count)
+        (base_model_dir / "tokenizer_config.json").write_text("{}\n", encoding="utf-8")
+        (base_model_dir / "preprocessor_config.json").write_text("{}\n", encoding="utf-8")
+        expected = _baseline_processor_resume_mode(base_model_dir)
+        if expected != "preprocessor_config":
+            raise RuntimeError("unexpected processor resume baseline")  # pragma: no cover
+
+        original_isfile = metadata_module.os.path.isfile
+        for _ in range(sample_count):
+            call_count = 0
+
+            def counting_isfile(path: str | Path):
+                nonlocal call_count
+                call_count += 1
+                return original_isfile(path)
+
+            metadata_module.os.path.isfile = counting_isfile
+            started = time.perf_counter()
+            try:
+                optimized = metadata_module._processor_resume_mode(base_model_dir)
+            finally:
+                optimized_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
+                metadata_module.os.path.isfile = original_isfile
+            if optimized != expected:
+                raise RuntimeError("processor resume mode changed")  # pragma: no cover
+            isfile_calls.append(float(call_count))
+
+            started = time.perf_counter()
+            baseline = _baseline_processor_resume_mode(base_model_dir)
+            baseline_elapsed_ms.append((time.perf_counter() - started) * 1000.0)
+            if baseline != expected:
+                raise RuntimeError("processor resume baseline changed")  # pragma: no cover
+
+    optimized_mean = statistics.fmean(optimized_elapsed_ms)
+    baseline_mean = statistics.fmean(baseline_elapsed_ms)
+    return {
+        "processor_resume_baseline_elapsed_ms_mean": baseline_mean,
+        "processor_resume_optimized_elapsed_ms_mean": optimized_mean,
+        "processor_resume_delta_ms": optimized_mean - baseline_mean,
+        "processor_resume_isfile_calls_mean": statistics.fmean(isfile_calls),
+    }
+
+
 def _baseline_quantized_kind_from_text(raw_value: str) -> str:
     normalized = raw_value.strip().lower()
     for kind in _QUANTIZED_KIND_ORDER:
@@ -127,6 +187,7 @@ def main() -> int:
     sample_count = _int_env("MELIX_LORA_AUX_MODULES_PROBE_SAMPLES", 7)
     quantized_iteration_count = _int_env("MELIX_LORA_QUANTIZED_KIND_PROBE_ITERATIONS", 12000)
     metrics = _measure(noise_count=noise_count, sample_count=sample_count)
+    metrics.update(_measure_processor_resume_mode(noise_count=noise_count, sample_count=sample_count))
     metrics.update(
         _measure_quantized_kind(
             iteration_count=quantized_iteration_count,

@@ -267,9 +267,27 @@ def test_lora_aux_modules_scandir_probe_script_emits_metrics(
     assert metrics["elapsed_ms_mean"] >= 0.0
     assert metrics["noise_file_count"] == 5.0
     assert metrics["scandir_calls_mean"] == 1.0
+    assert metrics["processor_resume_baseline_elapsed_ms_mean"] >= 0.0
+    assert metrics["processor_resume_optimized_elapsed_ms_mean"] >= 0.0
+    assert metrics["processor_resume_isfile_calls_mean"] == 2.0
     assert metrics["quantized_kind_baseline_elapsed_ms_mean"] >= 0.0
     assert metrics["quantized_kind_optimized_elapsed_ms_mean"] >= 0.0
     assert metrics["quantized_kind_iteration_count"] == 6.0
+
+
+def test_lora_processor_resume_probe_baseline_modes(tmp_path: Path) -> None:
+    probe_script = runpy.run_path(str(REPO_ROOT / "scripts/lora_aux_modules_scandir_probe.py"))
+    baseline_processor_resume_mode = probe_script["_baseline_processor_resume_mode"]
+    base_model_dir = tmp_path / "base-model"
+    base_model_dir.mkdir()
+
+    assert baseline_processor_resume_mode(base_model_dir) == "missing"
+    (base_model_dir / "tokenizer_config.json").write_text("{}\n", encoding="utf-8")
+    assert baseline_processor_resume_mode(base_model_dir) == "tokenizer_only"
+    (base_model_dir / "preprocessor_config.json").write_text("{}\n", encoding="utf-8")
+    assert baseline_processor_resume_mode(base_model_dir) == "preprocessor_config"
+    (base_model_dir / "processor_config.json").write_text("{}\n", encoding="utf-8")
+    assert baseline_processor_resume_mode(base_model_dir) == "processor_config"
 
 
 def test_trajectory_provenance_copy_elision_probe_script_emits_metrics(
