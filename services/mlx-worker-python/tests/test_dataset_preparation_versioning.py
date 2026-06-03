@@ -10,6 +10,7 @@ from worker.productization.dataset_preparation import (
     DatasetIngestRequest,
     DatasetRetryFailedRequest,
     DatasetVersionRequest,
+    _sample_output_length_stats,
     _sample_output_lengths,
     list_dataset_versions,
     prepare_dataset_ingest,
@@ -123,6 +124,8 @@ def test_dataset_quality_output_lengths_preserve_completion_and_message_semantic
     ]
 
     assert _sample_output_lengths(train_rows, validation_rows) == [3, 5, 10, 0]
+    assert _sample_output_length_stats(train_rows, validation_rows) == (4, 18, 10)
+    assert _sample_output_length_stats([], []) == (0, 0, 0)
 
 
 def test_dataset_version_rejects_blocked_workspace_preflight_receipt_before_reading_segments(
