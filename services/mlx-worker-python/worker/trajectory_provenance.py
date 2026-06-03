@@ -8,6 +8,7 @@ from typing import Any
 
 _JSON_LOADS = json.loads
 _PATH_READ_BYTES = Path.read_bytes
+_STR = str
 
 
 TRAJECTORY_PROVENANCE_FIELDS = (
@@ -108,30 +109,31 @@ def _trajectory_provenance_from_snapshot_manifest(
     copy_nested: bool,
 ) -> dict[str, Any]:
     manifest_get = manifest.get
+    to_str = _STR
     if (
-        str(manifest_get("format", "")).strip() != "agentic_tool_trace"
-        and not str(manifest_get("trajectory_trace_digest", "")).strip()
+        to_str(manifest_get("format", "")).strip() != "agentic_tool_trace"
+        and not to_str(manifest_get("trajectory_trace_digest", "")).strip()
     ):
         return {}
 
     provenance: dict[str, Any] = {}
-    dataset_id = str(
+    dataset_id = to_str(
         manifest_get("source_dataset_id") or manifest_get("dataset_id") or ""
     ).strip()
     if dataset_id:
         provenance["trajectory_dataset_id"] = dataset_id
-    dataset_version = str(manifest_get("version") or "").strip()
+    dataset_version = to_str(manifest_get("version") or "").strip()
     if dataset_version:
         provenance["trajectory_dataset_version"] = dataset_version
-    schema_version = str(
+    schema_version = to_str(
         manifest_get("trajectory_schema_version") or "melix.agentic_tool_trace.v1"
     ).strip()
     if schema_version:
         provenance["trajectory_schema_version"] = schema_version
-    split = str(manifest_get("trajectory_split") or "train").strip()
+    split = to_str(manifest_get("trajectory_split") or "train").strip()
     if split:
         provenance["trajectory_split"] = split
-    trace_digest = str(manifest_get("trajectory_trace_digest") or "").strip()
+    trace_digest = to_str(manifest_get("trajectory_trace_digest") or "").strip()
     if trace_digest:
         provenance["trajectory_trace_digest"] = trace_digest
     if snapshot_manifest_path is not None:
