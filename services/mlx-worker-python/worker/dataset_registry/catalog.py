@@ -963,7 +963,8 @@ def _first_split_alias_delimiter(candidate: str) -> int:
 
 def _path_matches_split(relative_path: Path, split: str) -> bool:
     normalized_split, split_dash_prefix, split_underscore_prefix = _split_match_tokens(split)
-    if _path_part_matches_split(
+    part_matches_split = _path_part_matches_split
+    if part_matches_split(
         relative_path.name,
         normalized_split,
         split_dash_prefix,
@@ -972,7 +973,7 @@ def _path_matches_split(relative_path: Path, split: str) -> bool:
         return True
     parts = relative_path.parts
     for part in parts[:-1]:
-        if _path_part_matches_split(
+        if part_matches_split(
             part,
             normalized_split,
             split_dash_prefix,
