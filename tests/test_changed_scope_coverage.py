@@ -373,6 +373,7 @@ def test_line_ranges_may_overlap_rejects_disjoint_changed_bounds() -> None:
     assert changed_scope_coverage._line_ranges_may_overlap({1, 4}, [2], [3]) is True
     assert changed_scope_coverage._line_ranges_may_overlap({5}, [], [4, 6]) is True
     assert changed_scope_coverage._line_ranges_may_overlap({5}, [9, 1], []) is True
+    assert changed_scope_coverage._line_ranges_may_overlap({5}, [], [9, 1]) is True
 
 
 def test_measurable_changed_lines_skips_source_read_when_no_changed_lines(monkeypatch, tmp_path: Path) -> None:
