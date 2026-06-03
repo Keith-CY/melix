@@ -175,3 +175,69 @@ _Avoid_: External URL input, floating media reference
 **Model Family Acceptance Target**:
 A real-model acceptance target defined at the model-family level and satisfied by one or more concrete model artifacts. It records both the family identity and the concrete model evidence so similarly configured families are not accidentally treated as interchangeable.
 _Avoid_: Single model ID gate, display-name matching
+
+## Desktop Operator UI Language
+
+**Server Profile**:
+A durable local or remote runtime configuration shown in the desktop Servers domain. It records endpoint or launch policy, auth policy, routing constraints, lifecycle state, and capability receipts. A server profile is the operator-facing runtime target for Chat, API, Jobs, and Command Center actions.
+_Avoid_: Hidden provider, implicit default server, model asset
+
+**Model Asset**:
+A downloaded, imported, or remote-referenced model artifact managed by the Models domain. It can be validated, quantized, used to create a server, or associated with adapters, but it is not itself a running endpoint.
+_Avoid_: Server profile, active runtime, running model
+
+**Adapter Asset**:
+A fine-tuned artifact, such as a LoRA adapter, that can be attached to a compatible model asset or server after validation. It is usually produced by a Workflow and surfaced through Models and Jobs lineage.
+_Avoid_: Model asset, server profile, training job
+
+**Job**:
+A durable operation record for downloads, training, evaluation, benchmark, image generation or editing, batch runs, capability refreshes, and debug-bundle exports. Jobs have source domains, execution state, evidence, and produced artifacts.
+_Avoid_: Workflow template, transient task, notification
+
+**Artifact**:
+A durable output or referenced input produced, imported, consumed, or linked by a job or operation. Artifacts belong to owner domains, such as Models, Diagnostics, Image, or Workflows, and are exposed through Jobs lineage.
+_Avoid_: Job, receipt, temporary output
+
+**Capability Receipt**:
+A receipt that records runtime capability probes, unsupported routes, probe timing, and routing eligibility for a server profile. Capability receipts are owned by Servers and are also evidence in Diagnostics.
+_Avoid_: Server health badge, model compatibility guess
+
+**Diagnostic Report Artifact**:
+A benchmark, matrix, evaluation, log bundle, or debug-bundle artifact that records evidence and provenance. It can have a review state separate from its health state.
+_Avoid_: Runtime health, job state, raw log
+
+**API Token**:
+An inbound credential for clients calling Melix. It belongs to API / Inbound Auth and is separate from outbound Remote Provider Credentials used by Melix when calling remote providers.
+_Avoid_: Remote provider credential, Hugging Face token
+
+**Selection**:
+The UI focus on a concrete object such as a server profile, job, model asset, receipt, evaluation report, or artifact. Selection updates the Inspector with object-specific details without necessarily navigating away from the current page.
+_Avoid_: Page route, primary action, hover state
+
+**Health Status**:
+A finite health state attached to an object that describes whether it is usable, degraded, blocked, expired, unsupported, offline, or failed. Canonical UI health states are ready, valid, degraded, offline, blocked, expired, unsupported, and failed.
+_Avoid_: Execution state, review state, arbitrary badge text, color-only status
+
+**Execution Status**:
+A finite lifecycle state for durable operations and validations. Canonical UI execution states are draft, queued, running, validating, completed, recoverable, and failed. Execution status is separate from object health even when both are displayed for the same object.
+_Avoid_: Health status, review state, progress text
+
+**Review State**:
+The human or operator review workflow state for an evidence artifact, especially diagnostic and evaluation reports. Examples include pending review, reviewed, and rejected. Review state can coexist with a valid object status and should not be treated as health degradation by itself.
+_Avoid_: Runtime health, execution status, job state, capability state
+
+**Inspector**:
+The right-side desktop surface that shows page-level summary when no object is selected and selected-object context, health, metrics, actions, and evidence when selection exists.
+_Avoid_: Details page, activity feed, generic sidebar
+
+**Command Center**:
+The operator cockpit for deciding what needs attention now in the Melix runtime. It summarizes current next action, runtime health, active blockers, active jobs, and recovery items, then links to owning domains for deeper evidence or repair.
+_Avoid_: Diagnostics page, activity feed, home page
+
+**Diagnostics**:
+The operator domain for proving and debugging what happened in Melix. Diagnostics owns benchmark results, benchmark matrices, evaluation results, logs, evidence trails, and debug bundles rather than immediate next-action prioritization.
+_Avoid_: Command Center, recovery queue, generic logs
+
+**Desktop Product Promise**:
+The desktop shell should make the local-first AI runtime feel immediately controllable without hiding runtime state behind generic chat or tools labels. Operators should always know which runtime is active, what state it is in, and where to inspect evidence when something fails.
+_Avoid_: Generic chat app, hidden provider, tool drawer
