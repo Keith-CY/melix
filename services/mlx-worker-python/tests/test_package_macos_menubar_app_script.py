@@ -36,6 +36,16 @@ def find_workflow_step(workflow: str, name: str) -> str:
     return match.group(0)
 
 
+def find_workflow_job(workflow: str, job_name: str) -> str:
+    match = re.search(
+        rf"^  {re.escape(job_name)}:[ \t]*\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:[ \t]*$|\Z)",
+        workflow,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    assert match is not None, f"Workflow job not found: {job_name}"
+    return match.group(0)
+
+
 def find_run_workflow_step(workflow: str, name: str, command: str) -> re.Match[str]:
     match = re.search(
         rf"^[ \t]*-[ \t]+name:[ \t]+{re.escape(name)}[ \t]*\n"
@@ -348,6 +358,27 @@ jobs:
     assert "next-step" not in step
 
 
+def test_find_workflow_job_stops_before_any_next_job() -> None:
+    workflow = """
+jobs:
+  detect-main-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide
+        run: echo decide
+  unrelated-job:
+    runs-on: ubuntu-latest
+  package-app:
+    runs-on: macos-26
+"""
+
+    job = find_workflow_job(workflow, "detect-main-update")
+
+    assert "run: echo decide" in job
+    assert "unrelated-job:" not in job
+    assert "package-app:" not in job
+
+
 def test_package_workflow_manual_dispatch_defaults_to_main_checkout() -> None:
     workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
 
@@ -420,7 +451,7 @@ def test_package_workflow_detects_scheduled_main_updates_before_packaging() -> N
 
     assert re.search(r"^[ \t]+detect-main-update:[ \t]*$", workflow, flags=re.MULTILINE)
     assert "should_package: ${{ steps.detect-main-update.outputs.should_package }}" in workflow
-    preflight_job = workflow.split("detect-main-update:", maxsplit=1)[1].split("\n  package-app:", maxsplit=1)[0]
+    preflight_job = find_workflow_job(workflow, "detect-main-update")
     assert "if: github.event_name == 'schedule'" in preflight_job
     assert "actions/checkout@v6" in preflight_job
     assert "ref: main" in preflight_job
@@ -435,7 +466,7 @@ def test_package_workflow_detects_scheduled_main_updates_before_packaging() -> N
 def test_package_workflow_successfully_skips_scheduled_run_without_main_changes() -> None:
     workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
 
-    preflight_job = workflow.split("detect-main-update:", maxsplit=1)[1].split("\n  package-app:", maxsplit=1)[0]
+    preflight_job = find_workflow_job(workflow, "detect-main-update")
     assert "No package needed" in preflight_job
     assert "Current main SHA:" in preflight_job
     assert "Last successful scheduled app package SHA:" in preflight_job
@@ -456,7 +487,7 @@ def test_package_workflow_gates_package_job_only_for_scheduled_skip_and_pr_label
         workflow,
         flags=re.MULTILINE,
     )
-    package_app_job = workflow.split("package-app:", maxsplit=1)[1].split("\n  attach-release-artifact:", maxsplit=1)[0]
+    package_app_job = find_workflow_job(workflow, "package-app")
     assert "github.event_name != 'schedule' || needs.detect-main-update.outputs.should_package == 'true'" in package_app_job
     assert "github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'package-app')" in package_app_job
     assert "startsWith(github.ref, 'refs/tags/v')" in workflow
