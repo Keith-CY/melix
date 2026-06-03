@@ -204,6 +204,9 @@ def test_repo_id_mlx_substring_match_preserves_ascii_case_insensitivity() -> Non
 def test_direct_size_hint_rejects_extra_tokens_without_full_split() -> None:
     assert _direct_size_hint_from_text("12 GB extra") == 0
     assert _direct_size_hint_from_text("12 GB") == 12 * 1024 * 1024 * 1024
+    assert _direct_size_hint_from_text("12 gb") == 12 * 1024 * 1024 * 1024
+    assert _direct_size_hint_from_text("9 mb") == 9 * 1024 * 1024
+    assert _direct_size_hint_from_text("512 kb") == 512 * 1024
 
 
 def test_direct_card_size_hint_preserves_case_insensitive_label_prefix() -> None:

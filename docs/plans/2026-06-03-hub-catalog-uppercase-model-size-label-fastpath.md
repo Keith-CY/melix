@@ -18,6 +18,12 @@ The affected path is covered by `hub-catalog-size-hint-regex-precompile` in `inf
 
 Add a narrow exact-prefix branch for uppercase `MODEL SIZE:` and `MODEL SIZE|` direct card-size labels before falling back to the generic case-insensitive character-by-character label scanner. This keeps existing accepted label formats intact while avoiding the generic scanner for the synthetic and common uppercase direct-label form.
 
+Follow-up within the same registered probe path: add exact lowercase unit suffix
+branches in `_direct_size_hint_from_text(...)` for integer `kb`/`mb`/`gb` direct
+card-size values. This preserves the decimal/fallback parser for fractional and
+unusual values while avoiding `split(...)`, `lower()`, and `float(...)` on common
+lowercase integer unit labels such as `MODEL SIZE:7 kb`.
+
 ## Verification Plan
 
 - Run the registered focused test command for the Hub catalog probe.
