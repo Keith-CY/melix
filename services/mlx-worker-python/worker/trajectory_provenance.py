@@ -140,7 +140,7 @@ def _trajectory_provenance_from_snapshot_manifest(
         provenance["trajectory_snapshot_manifest_path"] = str(snapshot_manifest_path)
     for source_field, output_field in _TRAJECTORY_MANIFEST_OPTIONAL_FIELD_MAP:
         value = manifest_get(source_field)
-        if value in ("", None):
+        if value is None or value == "":
             continue
         provenance[output_field] = value
     if copy_nested:
