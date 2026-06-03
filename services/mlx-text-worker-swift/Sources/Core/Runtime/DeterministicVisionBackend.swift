@@ -394,7 +394,7 @@ private struct DeterministicVisionVideo: Sendable {
             resolvedURL = URL(fileURLWithPath: trimmed)
             defaultFilename = resolvedURL.lastPathComponent
         }
-        let bytes = (try? Data(contentsOf: resolvedURL)) ?? Data()
+        let bytes = (try? Data(contentsOf: resolvedURL, options: .mappedIfSafe)) ?? Data()
         try self.init(
             bytes: bytes,
             reference: trimmed,

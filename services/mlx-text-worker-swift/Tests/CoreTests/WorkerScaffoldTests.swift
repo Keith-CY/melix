@@ -1537,9 +1537,9 @@ final class WorkerScaffoldTests: XCTestCase {
         sampling.topP = 1
         sampling.maxOutputTokens = 3
 
-        let longPromptTokens = MLXArray(Array(repeating: 2, count: 300), [1, 300])
         let events = try await withTemporaryDefaultMetallib {
             try await Device.withDefaultDevice(.cpu) {
+                let longPromptTokens = MLXArray(Array(repeating: 2, count: 300), [1, 300])
                 let model = LoadedTextModel(
                     storage: makeBatchCacheIdentityModelContainer(recorder: recorder)
                 )
@@ -2881,6 +2881,28 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(payload["request_id"] as? String, "req-vision-payload-receipt")
         XCTAssertEqual(payload["worker_family"] as? String, "vision")
         XCTAssertEqual(mediaParts.map { $0["kind"] as? String }, ["image", "video"])
+    }
+
+    func testJSONLReceiptWriterPreservesFirstWritesFromIndependentWriters() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-vision-payload-receipt-concurrent-\(UUID().uuidString)", isDirectory: true)
+        let receiptPath = directory.appendingPathComponent("vision-payload.jsonl").path
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let count = 48
+        let writers = (0..<count).map { _ in JSONLReceiptWriter(path: receiptPath) }
+        for index in 0..<count {
+            writers[index].append(Data(#"{"request_id":"req-\#(index)"}"#.utf8))
+        }
+
+        let maybePayloads = await waitForJSONLLines(atPath: receiptPath, expectedCount: count)
+        let payloads = try XCTUnwrap(maybePayloads)
+        XCTAssertEqual(
+            Set(payloads.compactMap { $0["request_id"] as? String }),
+            Set((0..<count).map { "req-\($0)" })
+        )
     }
 
     func testRuntimeRegistryTracksBusyStateAndGenerateEventsForLoadedModel() async throws {
@@ -11450,6 +11472,41 @@ private func waitForFileContents(
         try? await Task.sleep(nanoseconds: 10_000_000)
     }
     return try? String(contentsOfFile: path, encoding: .utf8)
+}
+
+@available(macOS 15.0, *)
+private func waitForJSONLLines(
+    atPath path: String,
+    expectedCount: Int,
+    attempts: Int = 100
+) async -> [[String: Any]]? {
+    for _ in 0..<attempts {
+        if let contents = try? String(contentsOfFile: path, encoding: .utf8) {
+            let lines = contents.split(separator: "\n")
+            if lines.count == expectedCount,
+               let payloads = parseJSONLLines(lines),
+               payloads.count == expectedCount {
+                return payloads
+            }
+        }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else {
+        return nil
+    }
+    return parseJSONLLines(contents.split(separator: "\n"))
+}
+
+@available(macOS 15.0, *)
+private func parseJSONLLines(_ lines: [Substring]) -> [[String: Any]]? {
+    var payloads: [[String: Any]] = []
+    for line in lines {
+        guard let payload = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else {
+            return nil
+        }
+        payloads.append(payload)
+    }
+    return payloads
 }
 
 @available(macOS 15.0, *)
