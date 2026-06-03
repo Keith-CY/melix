@@ -12,6 +12,7 @@ from worker.productization import (
 )
 from worker.productization import swift_vision_real_model_acceptance as acceptance_module
 from worker.productization.swift_vision_real_model_acceptance import (
+    SWIFT_VISION_DETERMINISTIC_TEMPERATURE,
     SWIFT_VISION_REAL_MODEL_ACCEPTANCE_MANIFEST_SCHEMA_VERSION,
     _assistant_content,
     _bounded_float,
@@ -82,11 +83,12 @@ class ExactVisionClient:
 
 
 def test_missing_prerequisites_write_blocked_acceptance_artifacts(tmp_path: Path) -> None:
+    missing_model_path = tmp_path / "missing_gemma4"
     manifest_path = _write_manifest(
         tmp_path,
         baseline_path="baselines/gemma4-image.json",
         media_path="media/missing.ppm",
-        model_path="/missing/gemma4",
+        model_path=str(missing_model_path),
         judge_required=True,
     )
     samples_path = _write_samples(tmp_path)
@@ -126,7 +128,7 @@ def test_missing_prerequisites_write_blocked_acceptance_artifacts(tmp_path: Path
         "frozen_python_baseline",
         "swift_vision_endpoint",
     }
-    assert blocked["expected_paths_or_ids"]["model_weights"] == "/missing/gemma4"
+    assert blocked["expected_paths_or_ids"]["model_weights"] == str(missing_model_path)
     assert blocked["detected_paths_or_ids"]["model_weights"] == ""
     assert "Provide local model weights" in blocked["remediation_hint"]
 
@@ -141,6 +143,17 @@ def test_swift_vision_real_model_acceptance_exports_public_productization_entryp
     assert AcceptanceRunConfig.__name__ == "AcceptanceRunConfig"
     assert OpenAICompatibleVisionClient.__name__ == "OpenAICompatibleVisionClient"
     assert callable(run_swift_vision_real_model_acceptance)
+    config = AcceptanceRunConfig(
+        manifest_path=Path("manifest.json"),
+        samples_path=Path("samples.jsonl"),
+        output_dir=Path("run"),
+        repo_root=Path("."),
+        swift_vision_base_url="http://127.0.0.1:12436/v1",
+        swift_vision_api_key="swift-secret",
+        judge_api_key="judge-secret",
+    )
+    assert "swift-secret" not in repr(config)
+    assert "judge-secret" not in repr(config)
 
 
 def test_judge_backed_semantic_acceptance_persists_prompt_audit_summary_and_cache(
@@ -228,6 +241,69 @@ def test_judge_backed_semantic_acceptance_persists_prompt_audit_summary_and_cach
     assert sample_scores[0]["route_receipt"]["worker_family"] == "vision"
 
 
+def test_empty_media_path_or_checksum_blocks_fixture_media(tmp_path: Path) -> None:
+    model_dir = tmp_path / "models" / "gemma4"
+    model_dir.mkdir(parents=True)
+    media_dir = tmp_path / "media"
+    media_dir.mkdir()
+    (media_dir / "card.ppm").write_bytes(b"P6\n1 1\n255\n\x00\x00\x00")
+    baseline_dir = tmp_path / "baselines"
+    baseline_dir.mkdir()
+    (baseline_dir / "gemma4-image.json").write_text(
+        json.dumps(
+            {
+                "status": "frozen",
+                "python_worker_git_sha": "py-sha",
+                "scores": {"gemma4_vlm.native_video": {"image": 0.91}},
+            }
+        )
+    )
+    samples_path = _write_samples(tmp_path)
+
+    empty_path_manifest = _write_manifest(
+        tmp_path / "empty-path",
+        baseline_path="../baselines/gemma4-image.json",
+        media_path="",
+        model_path=str(model_dir),
+        judge_required=False,
+    )
+    empty_path_result = run_swift_vision_real_model_acceptance(
+        AcceptanceRunConfig(
+            manifest_path=empty_path_manifest,
+            samples_path=samples_path,
+            output_dir=tmp_path / "run-empty-path",
+            repo_root=tmp_path,
+            swift_vision_base_url="http://127.0.0.1:12436/v1",
+            repo_git_sha="abc123",
+        )
+    )
+    assert empty_path_result.status == "blocked"
+    empty_path_blocked = json.loads(empty_path_result.blocked_artifact_paths[0].read_text())
+    assert empty_path_blocked["missing_prerequisites"] == ["fixture_media"]
+
+    empty_sha_manifest = _write_manifest(
+        tmp_path / "empty-sha",
+        baseline_path="../baselines/gemma4-image.json",
+        media_path="../media/card.ppm",
+        media_sha256="",
+        model_path=str(model_dir),
+        judge_required=False,
+    )
+    empty_sha_result = run_swift_vision_real_model_acceptance(
+        AcceptanceRunConfig(
+            manifest_path=empty_sha_manifest,
+            samples_path=samples_path,
+            output_dir=tmp_path / "run-empty-sha",
+            repo_root=tmp_path,
+            swift_vision_base_url="http://127.0.0.1:12436/v1",
+            repo_git_sha="abc123",
+        )
+    )
+    assert empty_sha_result.status == "blocked"
+    empty_sha_blocked = json.loads(empty_sha_result.blocked_artifact_paths[0].read_text())
+    assert empty_sha_blocked["missing_prerequisites"] == ["fixture_media"]
+
+
 def test_openai_compatible_vision_client_builds_multimodal_request_and_parses_response() -> None:
     captured: dict[str, object] = {}
 
@@ -251,6 +327,7 @@ def test_openai_compatible_vision_client_builds_multimodal_request_and_parses_re
         base_url="http://127.0.0.1:12436/v1/",
         api_key="local-key",
         timeout_seconds=9.0,
+        temperature=0.2,
         transport=transport,
     )
     response = client.generate(
@@ -280,6 +357,7 @@ def test_openai_compatible_vision_client_builds_multimodal_request_and_parses_re
     assert captured["headers"]["Authorization"] == "Bearer local-key"
     body = captured["body"]
     assert body["model"] == "melix-dev-vlm"
+    assert body["temperature"] == 0.2
     content = body["messages"][0]["content"]
     assert content[0] == {"type": "text", "text": "Describe the media."}
     assert content[1]["type"] == "input_image"
@@ -290,6 +368,13 @@ def test_openai_compatible_vision_client_builds_multimodal_request_and_parses_re
     assert response["status"] == "ok"
     assert response["model_answer"] == "A black pixel."
     assert response["usage"] == {"prompt_tokens": 7, "completion_tokens": 4}
+
+    default_client = OpenAICompatibleVisionClient(
+        base_url="http://127.0.0.1:12436/v1",
+        transport=transport,
+    )
+    default_client.generate({"model_id": "melix-dev-vlm", "prompt": "Describe the media."})
+    assert captured["body"]["temperature"] == SWIFT_VISION_DETERMINISTIC_TEMPERATURE
 
 
 def test_exact_match_acceptance_can_fail_critical_sentinel_and_records_failed_summary(
@@ -580,8 +665,10 @@ def test_validation_and_helper_fallbacks(tmp_path: Path) -> None:
     assert _bounded_float(2.5) == 1.0
     assert _mean([]) == 0.0
     assert _resolve_manifest_path(tmp_path, "") == ""
-    assert _resolve_manifest_path(tmp_path, "/abs/model") == "/abs/model"
+    absolute_path = str(tmp_path.resolve())
+    assert _resolve_manifest_path(tmp_path, absolute_path) == absolute_path
     assert _frozen_baseline_ready(tmp_path / "missing.json") is False
+    assert _frozen_baseline_ready(tmp_path) is False
     bad_baseline = tmp_path / "bad-baseline.json"
     bad_baseline.write_text("[]")
     assert _frozen_baseline_ready(bad_baseline) is False
@@ -594,6 +681,7 @@ def _write_manifest(
     media_path: str,
     model_path: str,
     judge_required: bool,
+    media_sha256: str = "sha256:test",
     scoring_mode: str = "judge_backed_semantic",
     unsupported_suite: bool = False,
 ) -> Path:
@@ -630,11 +718,12 @@ def _write_manifest(
             {
                 "media_id": "query-card",
                 "path": media_path,
-                "sha256": "sha256:test",
+                "sha256": media_sha256,
                 "mime_type": "image/x-portable-pixmap",
             }
         ],
     }
+    root.mkdir(parents=True, exist_ok=True)
     path = root / "manifest.json"
     path.write_text(json.dumps(manifest))
     return path

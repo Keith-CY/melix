@@ -4,7 +4,7 @@ import argparse
 import json
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable
@@ -42,6 +42,8 @@ short_reason. Do not use hidden context or external knowledge.
 SWIFT_VISION_JUDGE_PROMPT_HASH = (
     f"sha256:{sha256(SWIFT_VISION_JUDGE_SYSTEM_PROMPT.encode('utf-8')).hexdigest()}"
 )
+SWIFT_VISION_DETERMINISTIC_TEMPERATURE = 0.0
+SWIFT_VISION_STRICT_JUDGE_FAILURE_POLICY = True
 
 
 VisionTransport = Callable[[str, bytes, dict[str, str], float], dict[str, object]]
@@ -54,12 +56,12 @@ class AcceptanceRunConfig:
     output_dir: Path
     repo_root: Path
     swift_vision_base_url: str
-    swift_vision_api_key: str = ""
+    swift_vision_api_key: str = field(default="", repr=False)
     judge_remote_server_id: str = ""
     judge_model_id: str = ""
     judge_provider_kind: str = "openai-compatible"
     judge_base_url: str = ""
-    judge_api_key: str = ""
+    judge_api_key: str = field(default="", repr=False)
     judge_timeout_seconds: float = 60.0
     judge_rate_limit_per_minute: int = 0
     timeout_seconds: float = 120.0
@@ -83,11 +85,13 @@ class OpenAICompatibleVisionClient:
         base_url: str,
         api_key: str = "",
         timeout_seconds: float = 120.0,
+        temperature: float = SWIFT_VISION_DETERMINISTIC_TEMPERATURE,
         transport: VisionTransport | None = None,
     ) -> None:
         self._base_url = base_url.strip().rstrip("/")
         self._api_key = api_key
         self._timeout_seconds = timeout_seconds
+        self._temperature = temperature
         self._transport = transport or _default_transport
 
     def generate(self, request: dict[str, object]) -> dict[str, object]:
@@ -96,7 +100,7 @@ class OpenAICompatibleVisionClient:
         body = {
             "model": _required_text(request, "model_id"),
             "stream": False,
-            "temperature": 0,
+            "temperature": self._temperature,
             "messages": [
                 {
                     "role": "user",
@@ -339,11 +343,15 @@ def run_swift_vision_real_model_acceptance(
             )
             absolute_floor = _policy_float(manifest, "absolute_floor", default=0.70)
             allowed_delta = _policy_float(manifest, "allowed_delta", default=0.05)
+            judge_failure_free = (
+                not SWIFT_VISION_STRICT_JUDGE_FAILURE_POLICY
+                or (judge_runtime.failures if judge_runtime else 0) == 0
+            )
             passed = (
                 swift_score >= absolute_floor
                 and swift_score >= baseline_score - allowed_delta
                 and critical_failures == 0
-                and (judge_runtime.failures if judge_runtime else 0) == 0
+                and judge_failure_free
             )
             _record_target_result(
                 target_results,
@@ -487,6 +495,12 @@ def _default_transport(
 
 
 def _openai_content_parts(request: dict[str, object]) -> list[dict[str, object]]:
+    """Build multimodal content with manifest media paths passed through verbatim.
+
+    The Swift Vision endpoint accepts local paths in the OpenAI-compatible `url`
+    field. Callers targeting stricter URL validators must provide `file://` URIs
+    in the manifest.
+    """
     content: list[dict[str, object]] = []
     prompt = _required_text(request, "prompt")
     if prompt:
@@ -660,8 +674,8 @@ def _missing_prerequisites(
         not config.judge_remote_server_id.strip() or not config.judge_model_id.strip()
     ):
         missing.append("judge_target")
-    baseline = str(suite.get("python_baseline_path") or "").strip()
-    if not baseline or not _frozen_baseline_ready(config.manifest_path.parent / baseline):
+    baseline = _manifest_relative_path(config.manifest_path.parent, suite.get("python_baseline_path"))
+    if not baseline or not _frozen_baseline_ready(Path(baseline)):
         missing.append("frozen_python_baseline")
     sample_media_ids = {
         media_id.strip()
@@ -675,8 +689,9 @@ def _missing_prerequisites(
         if media is None:
             media_missing = True
             continue
-        path = str(media.get("path") or "")
-        if not Path(path).expanduser().exists():
+        path = str(media.get("path") or "").strip()
+        checksum = str(media.get("sha256") or "").strip()
+        if not path or not Path(path).expanduser().exists() or not checksum:
             media_missing = True
     if media_missing:
         missing.append("fixture_media")
@@ -698,6 +713,8 @@ def _write_blocked_artifact(
     manifest_hash: str,
 ) -> Path:
     path = output_dir / "blocked" / f"{family_id}__{modality_suite}.json"
+    baseline = str(suite.get("python_baseline_path") or "").strip()
+    resolved_baseline = _manifest_relative_path(config.manifest_path.parent, baseline)
     expected = {
         "model_weights": _resolve_manifest_path(
             config.manifest_path.parent,
@@ -705,7 +722,7 @@ def _write_blocked_artifact(
         ),
         "judge_target": _judge_target_id(config),
         "fixture_media": "media_artifacts referenced by samples.jsonl",
-        "frozen_python_baseline": str(suite.get("python_baseline_path") or ""),
+        "frozen_python_baseline": baseline,
         "swift_vision_endpoint": config.swift_vision_base_url,
     }
     detected = {
@@ -717,9 +734,7 @@ def _write_blocked_artifact(
         ),
         "judge_target": _judge_target_id(config) if "judge_target" not in missing else "",
         "fixture_media": "present" if "fixture_media" not in missing else "",
-        "frozen_python_baseline": _detected_path(
-            str(config.manifest_path.parent / str(suite.get("python_baseline_path") or ""))
-        ),
+        "frozen_python_baseline": _detected_path(resolved_baseline),
         "swift_vision_endpoint": config.swift_vision_base_url if config.swift_vision_base_url.strip() else "",
     }
     payload = {
@@ -832,7 +847,7 @@ def _baseline_score(path: Path, *, family_id: str, suite_id: str) -> float:
 
 
 def _frozen_baseline_ready(path: Path) -> bool:
-    if not path.exists():
+    if not path.is_file():
         return False
     try:
         payload = _read_json(path)
@@ -978,6 +993,13 @@ def _policy_float(manifest: dict[str, object], key: str, *, default: float) -> f
 def _required_text(payload: dict[str, object], key: str) -> str:
     value = payload.get(key)
     return str(value or "").strip()
+
+
+def _manifest_relative_path(base_dir: Path, raw_path: object) -> str:
+    path = str(raw_path or "").strip()
+    if not path:
+        return ""
+    return _resolve_manifest_path(base_dir, path)
 
 
 def _mean(values: list[float]) -> float:

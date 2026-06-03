@@ -899,6 +899,8 @@ media artifact entry must record:
 External URLs may be used only while creating a fixture. Once a fixture is
 accepted, the media must be vendored or bundled and referenced through the
 immutable artifact entry.
+An empty media path, missing media file, or empty `sha256` is a missing fixture
+media prerequisite and must produce a blocked acceptance artifact.
 
 Native video acceptance must emit a `video_preprocess_receipt` for each video
 request. The receipt must include:
