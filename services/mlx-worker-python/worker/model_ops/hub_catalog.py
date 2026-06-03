@@ -683,6 +683,8 @@ def _direct_card_size_hint_from_text(text: str) -> int:
 def _strip_model_size_label(text: str) -> str:
     if text.startswith("Model size: "):
         return text[12:]
+    if text.startswith("MODEL SIZE:") or text.startswith("MODEL SIZE|"):
+        return text[11:]
     if not _starts_with_model_size_label(text):
         return ""
     cursor = 10
