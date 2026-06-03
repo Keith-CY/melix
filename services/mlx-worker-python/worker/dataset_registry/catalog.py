@@ -488,7 +488,7 @@ def _first_supported_dataset_file(directory: Path) -> Path | None:
 
 def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Path, bool, bool] | None:
     best_name = ""
-    best_path: Path | None = None
+    best_path_raw = ""
     best_is_dir = False
     best_is_file = False
     try:
@@ -507,14 +507,14 @@ def _next_supported_scan_entry(directory: Path, *, after: str) -> tuple[str, Pat
                 if is_file and name in _README_NAMES:
                     continue
                 best_name = name
-                best_path = Path(entry.path)
+                best_path_raw = entry.path
                 best_is_dir = is_dir
                 best_is_file = is_file
     except OSError:
         return None
-    if best_path is None:
+    if not best_path_raw:
         return None
-    return best_name, best_path, best_is_dir, best_is_file
+    return best_name, Path(best_path_raw), best_is_dir, best_is_file
 
 
 def _selected_dataset_files(snapshot_path: Path, *, split: str) -> tuple[Path, ...]:
