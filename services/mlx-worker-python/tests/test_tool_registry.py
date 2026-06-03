@@ -507,6 +507,32 @@ def test_built_in_tool_config_partial_selection_reuses_serialized_selection_cach
     assert built_in_tool_config(["image_crop", "local_compute"]).tools[0].name == "image_crop"
 
 
+def test_built_in_tool_config_caches_raw_normalized_selection_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw_selection = (" image_crop ",)
+    expected_config = built_in_tool_config(raw_selection)
+
+    selection_templates = tool_registry_module._BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES
+
+    assert selection_templates[raw_selection] == expected_config
+    assert selection_templates[("image_crop",)] == expected_config
+
+    def fail_select(self: ToolRegistry, names: list[str] | tuple[str, ...]) -> ToolRegistry:
+        raise AssertionError(  # pragma: no cover
+            "cached raw built_in_tool_config() selection should skip registry selection"
+        )
+
+    monkeypatch.setattr(ToolRegistry, "select", fail_select)
+
+    config = built_in_tool_config(raw_selection)
+
+    assert config == expected_config
+    assert config is not expected_config
+    config.tools[0].name = "mutated"
+    assert built_in_tool_config(raw_selection).tools[0].name == "image_crop"
+
+
 def test_tool_registry_worker_tool_config_reuses_cached_serialized_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

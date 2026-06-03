@@ -33,6 +33,7 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     full_list_self_samples: list[float] = []
     full_config_template_elapsed_samples: list[float] = []
     full_config_template_samples: list[float] = []
+    raw_single_config_elapsed_samples: list[float] = []
     missing_selection_elapsed_samples: list[float] = []
     missing_selection_error_samples: list[float] = []
     checksum = 0
@@ -63,6 +64,14 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         )
         full_config_template_samples.append(float(full_config_template_count))
 
+        raw_single_config_started = time.perf_counter()
+        for _index in range(full_config_iterations):
+            config = built_in_tool_config((" image_crop ",))
+            checksum += len(config.tools)
+        raw_single_config_elapsed_samples.append(
+            (time.perf_counter() - raw_single_config_started) * 1000.0
+        )
+
         missing_selection_started = time.perf_counter()
         missing_selection_count = 0
         for index in range(full_config_iterations):
@@ -84,6 +93,9 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
             full_config_template_elapsed_samples
         ),
         "full_config_template_hits_mean": statistics.fmean(full_config_template_samples),
+        "raw_single_config_elapsed_ms_mean": statistics.fmean(
+            raw_single_config_elapsed_samples
+        ),
         "missing_selection_elapsed_ms_mean": statistics.fmean(
             missing_selection_elapsed_samples
         ),
