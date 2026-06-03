@@ -899,6 +899,8 @@ media artifact entry must record:
 External URLs may be used only while creating a fixture. Once a fixture is
 accepted, the media must be vendored or bundled and referenced through the
 immutable artifact entry.
+An empty media path, missing media file, or empty `sha256` is a missing fixture
+media prerequisite and must produce a blocked acceptance artifact.
 
 Native video acceptance must emit a `video_preprocess_receipt` for each video
 request. The receipt must include:
@@ -1380,6 +1382,35 @@ video evidence for the Vision Worker. It includes:
 - family and modality-suite score aggregation.
 
 Slice 2 is required before claiming Vision Worker migration readiness.
+
+Slice 2.1 starts the real-model acceptance gate as an executable fixture runner
+and artifact contract before the full native video runtime evidence is complete.
+The runner lives in
+`worker.productization.swift_vision_real_model_acceptance` and is exposed by
+`scripts/swift_vision_real_model_acceptance.py`. It reads
+`services/mlx-worker-python/fixtures/vision-acceptance/swift-vision-real-model.dev.v1/manifest.json`
+and `samples.jsonl`, drives a configured OpenAI-compatible Swift Vision endpoint,
+and writes:
+
+- `summary.json` with per-family and per-modality-suite status, scores,
+  baseline comparisons, and judge counters;
+- `blocked/*.json` blocked acceptance artifacts when model weights, judge
+  target, fixture media, frozen Python baseline, or Swift Vision endpoint
+  prerequisites are missing;
+- `scores/sample-scores.jsonl` with per-sample route, runtime, and scoring
+  evidence;
+- `judge/prompt-snapshots.jsonl` and `judge/audit.jsonl` for judge-backed
+  semantic acceptance, including cache-hit audit rows.
+
+Slice 2.1 is not allowed to report missing local prerequisites as pass, skip, or
+xfail. Missing prerequisites produce blocked acceptance artifacts with
+`status = blocked` and the fields listed below. The checked-in seed fixture
+declares Gemma 4, Qwen 3.5, and Qwen 3.6 native-video targets, but placeholder
+baselines and missing local model paths are not migration-pass evidence.
+
+Slice 2.1 deliberately does not satisfy the native video execution gate by
+itself. Native video receipt enforcement, real video media, and the temporal
+sentinel pass requirement remain in the next Slice 2 sub-cut.
 
 Slice 2 prerequisites are hard gates. Missing model weights, judge targets,
 fixture media artifacts, or frozen Python baselines must produce a blocked

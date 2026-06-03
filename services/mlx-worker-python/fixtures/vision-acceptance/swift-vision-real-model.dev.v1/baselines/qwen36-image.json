@@ -1,0 +1,17 @@
+{
+  "schema_version": "melix.swift_vision_frozen_python_baseline.v1",
+  "status": "placeholder",
+  "python_worker_git_sha": "",
+  "model_id": "mlx-community/Qwen3.6-VL-8B-Instruct-4bit",
+  "model_artifact_hash": "",
+  "fixture_manifest_hash": "",
+  "judge_prompt_hash": "",
+  "judge_model_id": "",
+  "scores": {
+    "qwen36_vlm.native_video": {
+      "image": 0.0
+    }
+  },
+  "per_sample_scores": [],
+  "timing": {}
+}
