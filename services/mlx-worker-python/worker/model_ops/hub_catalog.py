@@ -652,11 +652,23 @@ def _direct_size_hint_from_text(text: str) -> int:
         value_text = text[:-3]
         if value_text.isdecimal():
             return int(value_text) * _SIZE_HINT_MB
+    if text.endswith(" mb"):
+        value_text = text[:-3]
+        if value_text.isdecimal():
+            return int(value_text) * _SIZE_HINT_MB
     if text.endswith(" GB"):
         value_text = text[:-3]
         if value_text.isdecimal():
             return int(value_text) * _SIZE_HINT_GB
+    if text.endswith(" gb"):
+        value_text = text[:-3]
+        if value_text.isdecimal():
+            return int(value_text) * _SIZE_HINT_GB
     if text.endswith(" KB"):
+        value_text = text[:-3]
+        if value_text.isdecimal():
+            return int(value_text) * _SIZE_HINT_KB
+    if text.endswith(" kb"):
         value_text = text[:-3]
         if value_text.isdecimal():
             return int(value_text) * _SIZE_HINT_KB
