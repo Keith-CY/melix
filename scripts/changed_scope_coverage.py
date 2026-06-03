@@ -131,6 +131,24 @@ def _filter_coverage_paths(paths: list[str], allowlist: frozenset[str] | None) -
     return [path for path in paths if path in allowlist]
 
 
+def _line_ranges_may_overlap(changed: set[int], *measured_line_groups: list[int]) -> bool:
+    if not changed:
+        return False
+    min_changed = min(changed)
+    max_changed = max(changed)
+    for line_group in measured_line_groups:
+        if not line_group:
+            continue
+        first_line = line_group[0]
+        last_line = line_group[-1]
+        if first_line > last_line:
+            first_line = min(line_group)
+            last_line = max(line_group)
+        if first_line <= max_changed and last_line >= min_changed:
+            return True
+    return False
+
+
 def _measurable_changed_lines(
     repo_root: Path,
     coverage_payload: dict[str, object],
@@ -143,6 +161,8 @@ def _measurable_changed_lines(
     entry = coverage_payload["files"][rel_path]
     executed_lines = entry["executed_lines"]
     missing_lines = entry["missing_lines"]
+    if not _line_ranges_may_overlap(changed, executed_lines, missing_lines):
+        return [], [], []
     if len(executed_lines) == 1 and len(missing_lines) == 1:
         executed_line = executed_lines[0]
         missing_line = missing_lines[0]
