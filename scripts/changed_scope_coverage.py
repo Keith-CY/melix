@@ -131,19 +131,29 @@ def _filter_coverage_paths(paths: list[str], allowlist: frozenset[str] | None) -
     return [path for path in paths if path in allowlist]
 
 
-def _line_ranges_may_overlap(changed: set[int], *measured_line_groups: list[int]) -> bool:
+def _line_ranges_may_overlap(
+    changed: set[int],
+    executed_lines: list[int],
+    missing_lines: list[int],
+) -> bool:
     if not changed:
         return False
     min_changed = min(changed)
     max_changed = max(changed)
-    for line_group in measured_line_groups:
-        if not line_group:
-            continue
-        first_line = line_group[0]
-        last_line = line_group[-1]
+    if executed_lines:
+        first_line = executed_lines[0]
+        last_line = executed_lines[-1]
         if first_line > last_line:
-            first_line = min(line_group)
-            last_line = max(line_group)
+            first_line = min(executed_lines)
+            last_line = max(executed_lines)
+        if first_line <= max_changed and last_line >= min_changed:
+            return True
+    if missing_lines:
+        first_line = missing_lines[0]
+        last_line = missing_lines[-1]
+        if first_line > last_line:
+            first_line = min(missing_lines)
+            last_line = max(missing_lines)
         if first_line <= max_changed and last_line >= min_changed:
             return True
     return False
