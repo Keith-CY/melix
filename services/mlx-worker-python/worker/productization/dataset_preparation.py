@@ -4,7 +4,6 @@ from dataclasses import dataclass
 import csv
 from datetime import datetime, timezone
 import hashlib
-from itertools import chain
 import json
 import os
 import re
@@ -961,7 +960,7 @@ def _quality_summary(
     total_count = success_count + failed_count
     success_rate = success_count / total_count if total_count else 0.0
     score = round(success_rate, 6)
-    lengths = [_sample_output_length(row) for row in chain(train_rows, validation_rows)]
+    lengths = _sample_output_lengths(train_rows, validation_rows)
     quality_controls = ingest_receipt.get("quality_control_summary", {})
     source_record_count = float(quality_controls.get("source_record_count", 0) or 0)
     exact_dedup_count = float(quality_controls.get("exact_dedup_count", 0) or 0)
@@ -1004,13 +1003,27 @@ def _quality_grade(score: float) -> str:
     return "F"
 
 
-def _sample_output_length(row: dict[str, Any]) -> int:
-    if "completion" in row:
-        return len(str(row["completion"]))
-    messages = row.get("messages", [])
-    if isinstance(messages, list):
-        return sum(len(str(item.get("content", ""))) for item in messages if isinstance(item, dict))
-    return 0
+def _sample_output_lengths(
+    train_rows: list[dict[str, Any]],
+    validation_rows: list[dict[str, Any]],
+) -> list[int]:
+    lengths: list[int] = []
+    append = lengths.append
+    for rows in (train_rows, validation_rows):
+        for row in rows:
+            if "completion" in row:
+                append(len(str(row["completion"])))
+                continue
+            messages = row.get("messages", [])
+            if not isinstance(messages, list):
+                append(0)
+                continue
+            total = 0
+            for item in messages:
+                if isinstance(item, dict):
+                    total += len(str(item.get("content", "")))
+            append(total)
+    return lengths
 
 
 def _p95(values: list[int]) -> int:

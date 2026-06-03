@@ -10,6 +10,7 @@ from worker.productization.dataset_preparation import (
     DatasetIngestRequest,
     DatasetRetryFailedRequest,
     DatasetVersionRequest,
+    _sample_output_lengths,
     list_dataset_versions,
     prepare_dataset_ingest,
     prepare_dataset_version,
@@ -109,6 +110,19 @@ def test_dataset_version_writes_schema_backed_package_and_quality_summary(
     assert quality["pii_mask_count"] == 1
     assert quality["dedup_ratio"] == 0
     assert quality["metrics"]["quality_scoring_latency_ms"] >= 0
+
+
+def test_dataset_quality_output_lengths_preserve_completion_and_message_semantics() -> None:
+    train_rows = [
+        {"completion": "abc"},
+        {"completion": 12345},
+    ]
+    validation_rows = [
+        {"messages": [{"content": "hello"}, {"content": "world"}, {"role": "tool"}]},
+        {"messages": "not-a-list"},
+    ]
+
+    assert _sample_output_lengths(train_rows, validation_rows) == [3, 5, 10, 0]
 
 
 def test_dataset_version_rejects_blocked_workspace_preflight_receipt_before_reading_segments(

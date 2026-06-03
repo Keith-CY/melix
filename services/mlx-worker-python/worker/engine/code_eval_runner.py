@@ -302,12 +302,14 @@ def _count_nonblank_test_lines(test_code: str) -> int:
         return sum(1 for line in test_code.splitlines() if line.strip())
     count = 0
     line_has_content = False
+    splitline_boundaries = _PYTHON_SPLITLINE_BOUNDARIES
     for character in test_code:
-        if character in _PYTHON_SPLITLINE_BOUNDARIES:
+        if character in splitline_boundaries:
             line_has_content = False
-        elif not line_has_content and not character.isspace():
-            count += 1
-            line_has_content = True
+        elif not line_has_content:
+            if not character.isspace():
+                count += 1
+                line_has_content = True
     return count
 
 

@@ -46,7 +46,11 @@ text worker with a metallib matching the pinned Swift MLX runtime:
 
 `scripts/dev_up.py` auto-discovers a matching `mlx_metal` `mlx.metallib` from
 the configured repo uv cache, nearby local environments, or the user's global uv
-cache. It rejects incompatible auto-discovered candidates before startup. Use
+cache. During discovery it scans candidate `*.dist-info` directories with a
+direct `mlx_metal-... .dist-info` prefix/suffix parse instead of a regex fallback,
+so large Python environments avoid extra per-entry regex work while preserving
+the directory-name fallback when `METADATA` lacks a `Version:` header. It rejects
+incompatible auto-discovered candidates before startup. Use
 `MELIX_SWIFT_MLX_METALLIB_PATH` only when the matching metallib lives outside
 those caches.
 

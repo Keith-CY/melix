@@ -301,11 +301,20 @@ def _rule_matches_report(
                 return True
     metric_prefixes = rule.get("metric_prefixes", ())
     if metric_prefixes:
-        metric_prefix_tuple = _string_tuple(metric_prefixes)
+        (
+            metric_prefix_tuple,
+            metric_prefix_initials,
+            metric_prefix_matches_empty,
+        ) = _string_prefix_tuple(metric_prefixes)
         metric_key = "metric"
         to_string = str
         for metric in metrics:
-            if to_string(metric.get(metric_key, "")).startswith(metric_prefix_tuple):
+            metric_value = to_string(metric.get(metric_key, ""))
+            if metric_prefix_matches_empty or (
+                metric_value
+                and metric_value[0] in metric_prefix_initials
+                and metric_value.startswith(metric_prefix_tuple)
+            ):
                 return True
     target_fields = rule.get("target_fields", ())
     if target_fields:
@@ -336,6 +345,14 @@ def _string_tuple_from_tuple(values: tuple[object, ...]) -> tuple[str, ...]:
     return tuple(str(item) for item in values)
 
 
+@lru_cache(maxsize=128)
+def _string_prefix_tuple_from_tuple(
+    values: tuple[object, ...],
+) -> tuple[tuple[str, ...], frozenset[str], bool]:
+    prefixes = tuple(str(item) for item in values)
+    return prefixes, frozenset(prefix[0] for prefix in prefixes if prefix), "" in prefixes
+
+
 def _string_frozenset(values: object) -> frozenset[str]:
     if isinstance(values, tuple):
         return _string_frozenset_from_tuple(values)
@@ -346,6 +363,15 @@ def _string_tuple(values: object) -> tuple[str, ...]:
     if isinstance(values, tuple):
         return _string_tuple_from_tuple(values)
     return tuple(str(item) for item in values)  # type: ignore[union-attr]
+
+
+def _string_prefix_tuple(
+    values: object,
+) -> tuple[tuple[str, ...], frozenset[str], bool]:
+    if isinstance(values, tuple):
+        return _string_prefix_tuple_from_tuple(values)
+    prefixes = tuple(str(item) for item in values)  # type: ignore[union-attr]
+    return prefixes, frozenset(prefix[0] for prefix in prefixes if prefix), "" in prefixes
 
 
 def _telemetry_failures(report: dict[str, object]) -> list[str]:

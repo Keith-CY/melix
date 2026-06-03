@@ -400,14 +400,18 @@ def _base_models(value: Any) -> list[str]:
 
 
 def _payload_is_mlx_compatible(payload: dict[str, Any]) -> bool:
-    card_data = payload.get("cardData") if isinstance(payload.get("cardData"), dict) else {}
-    library_name = _string(payload.get("library_name") or card_data.get("library_name"))
+    library_name = _string(payload.get("library_name"))
     if library_name and _is_mlx_atom(library_name):
         return True
     if _tag_payload_contains_mlx(payload.get("tags")):
         return True
     repo_id = _string(payload.get("id") or payload.get("modelId"))
     if "mlx" in repo_id.lower():
+        return True
+    card_data = payload.get("cardData")
+    if not isinstance(card_data, dict):
+        return False
+    if not library_name and _is_mlx_atom(_string(card_data.get("library_name"))):
         return True
     card_tags = card_data.get("tags")
     if not card_tags:

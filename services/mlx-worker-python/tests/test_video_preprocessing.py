@@ -273,6 +273,8 @@ def test_parse_video_reference_caches_repeated_uri_metadata() -> None:
     [
         ("https://example.com/media/archive.demo.MP4", "archive.demo.MP4", "mp4"),
         ("https://example.com/media/demo.mov/", "demo.mov", "mov"),
+        ("https://example.com/media/demo.mov///", "demo.mov", "mov"),
+        ("/", "", ""),
         ("/tmp/.mp4", ".mp4", ""),
         ("relative/video.", "video.", ""),
     ],

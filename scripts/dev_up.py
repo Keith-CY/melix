@@ -512,16 +512,16 @@ def read_mlx_metal_dist_info_version(metallib_path: Path) -> str | None:
                         return version
 
                     if fallback_version is None:
-                        match = re.fullmatch(r"mlx_metal-(?P<version>.+)\.dist-info", entry.name)
-                        if match:
-                            fallback_version = match.group("version")
+                        fallback_candidate = entry.name[len("mlx_metal-") : -len(".dist-info")]
+                        if fallback_candidate:
+                            fallback_version = fallback_candidate
         except OSError:
             continue
 
         if fallback_version is not None:
             return fallback_version
-
     return None
+
 
 
 def iter_mlx_metallib_candidates(root: Path):
