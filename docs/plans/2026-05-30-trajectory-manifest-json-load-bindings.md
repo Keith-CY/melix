@@ -15,8 +15,9 @@ registry entry includes focused `test_command`, `coverage_command`, and
 `load_trajectory_provenance_from_snapshot_manifest()` already reads manifest
 JSON as bytes to avoid text decoding overhead. This slice keeps that behavior,
 binds the hot `json.loads` and `Path.read_bytes` call targets at module import,
-and skips rebuilding `Path` objects when callers already pass a `Path`. Repeated
-manifest provenance loads avoid per-call attribute lookup and an unnecessary
+uses local bindings for the per-call read/parse/extract sequence, and skips
+rebuilding `Path` objects when callers already pass a `Path`. Repeated manifest
+provenance loads avoid per-call global attribute lookup and an unnecessary
 constructor on the registered probe path.
 
 The change does not alter accepted manifest shapes, provenance field names,

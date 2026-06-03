@@ -149,12 +149,15 @@ def _trajectory_provenance_from_snapshot_manifest(
 def load_trajectory_provenance_from_snapshot_manifest(
     manifest_path: Path | str,
 ) -> dict[str, Any]:
+    read_bytes = _PATH_READ_BYTES
+    loads = _JSON_LOADS
+    extract_provenance = _trajectory_provenance_from_snapshot_manifest
     if not isinstance(manifest_path, Path):
         manifest_path = Path(manifest_path)
-    payload = _JSON_LOADS(_PATH_READ_BYTES(manifest_path))
+    payload = loads(read_bytes(manifest_path))
     if not isinstance(payload, dict):
         return {}
-    return _trajectory_provenance_from_snapshot_manifest(
+    return extract_provenance(
         payload,
         snapshot_manifest_path=manifest_path,
         copy_nested=False,
