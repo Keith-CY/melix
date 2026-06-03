@@ -117,14 +117,17 @@ def test_dataset_quality_output_lengths_preserve_completion_and_message_semantic
     train_rows = [
         {"completion": "abc"},
         {"completion": 12345},
+        {"messages": [{"content": "hi"}, {"content": "there"}, {"role": "tool"}]},
+        {"messages": "not-a-list"},
     ]
     validation_rows = [
+        {"completion": "done"},
         {"messages": [{"content": "hello"}, {"content": "world"}, {"role": "tool"}]},
         {"messages": "not-a-list"},
     ]
 
-    assert _sample_output_lengths(train_rows, validation_rows) == [3, 5, 10, 0]
-    assert _sample_output_length_stats(train_rows, validation_rows) == (4, 18, 10)
+    assert _sample_output_lengths(train_rows, validation_rows) == [3, 5, 7, 0, 4, 10, 0]
+    assert _sample_output_length_stats(train_rows, validation_rows) == (7, 29, 10)
     assert _sample_output_length_stats([], []) == (0, 0, 0)
 
 
