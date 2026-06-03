@@ -30,3 +30,13 @@ review follow-up. Local Linux base-vs-head probe evidence showed the streaming
 counter kept `nonblank_line_count_mean=48000` while reducing `peak_bytes_mean`
 from `2117.0` to `112.0` bytes; `elapsed_ms_mean` increased from `45.36` to
 `77.21` ms and remains informational for this allocation-focused slice.
+
+## 2026-06-03 ASCII Fast Path Follow-up
+
+This follow-up keeps the same registered probe and narrows the implementation to
+the large-payload `_count_nonblank_test_lines` fallback. Common executable-code
+evaluation test payloads are ASCII, so the counter now detects ASCII payloads and
+uses ASCII-only splitline and whitespace membership checks. Non-ASCII payloads
+continue through the existing Unicode splitline-compatible path, preserving the
+documented LF, CR/CRLF, VT, FF, file/group/record separator, NEL, LS, and PS
+semantics.

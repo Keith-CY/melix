@@ -19,6 +19,8 @@ _JSON_DECODE_ERROR = json.JSONDecodeError
 _PYTHON_CODE_BLOCK_TAG = "python"
 _PYTHON_CODE_BLOCK_TAG_LENGTH = len(_PYTHON_CODE_BLOCK_TAG)
 _PYTHON_SPLITLINE_BOUNDARIES = "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
+_ASCII_SPLITLINE_BOUNDARIES = "\n\r\v\f\x1c\x1d\x1e"
+_ASCII_NON_LINE_WHITESPACE = " \t\x1f"
 _COUNT_TESTS_SPLITLINES_MAX_CHARS = 500_000
 
 
@@ -302,6 +304,16 @@ def _count_nonblank_test_lines(test_code: str) -> int:
         return sum(1 for line in test_code.splitlines() if line.strip())
     count = 0
     line_has_content = False
+    if test_code.isascii():
+        splitline_boundaries = _ASCII_SPLITLINE_BOUNDARIES
+        non_line_whitespace = _ASCII_NON_LINE_WHITESPACE
+        for character in test_code:
+            if character in splitline_boundaries:
+                line_has_content = False
+            elif not line_has_content and character not in non_line_whitespace:
+                count += 1
+                line_has_content = True
+        return count
     splitline_boundaries = _PYTHON_SPLITLINE_BOUNDARIES
     for character in test_code:
         if character in splitline_boundaries:
