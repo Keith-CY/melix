@@ -8,6 +8,8 @@ on:
         required: true
         default: "main"
         type: string
+  schedule:
+    - cron: "0 0 * * *"
   pull_request:
     types:
       - opened
@@ -44,12 +46,104 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: package-self-contained-app-${{ github.ref }}
+  group: package-self-contained-app-${{ github.event_name == 'schedule' && 'schedule-' || '' }}${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  detect-main-update:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    outputs:
+      should_package: ${{ steps.detect-main-update.outputs.should_package }}
+
+    steps:
+      - name: Checkout scheduled main source
+        uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - name: Detect scheduled main update
+        id: detect-main-update
+        uses: actions/github-script@v9
+        env:
+          CURRENT_SHA: ${{ github.sha }}
+        with:
+          script: |
+            const fs = require('fs');
+            const currentSha = process.env.CURRENT_SHA || context.sha;
+            const { owner, repo } = context.repo;
+            const workflow_id = 'package-self-contained-app.yml';
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              owner,
+              repo,
+              workflow_id,
+              branch: 'main',
+              event: 'schedule',
+              status: 'success',
+              per_page: 30,
+            });
+
+            let matchedRun = null;
+            let matchedArtifact = null;
+            for (const run of runs) {
+              if (run.id === context.runId) {
+                continue;
+              }
+              const artifactResponse = await github.rest.actions.listWorkflowRunArtifacts({
+                owner,
+                repo,
+                run_id: run.id,
+                per_page: 100,
+              });
+              const artifact = artifactResponse.data.artifacts.find((entry) => (
+                entry.name.startsWith('Melix-main-') && !entry.expired
+              ));
+              if (artifact) {
+                matchedRun = run;
+                matchedArtifact = artifact;
+                break;
+              }
+            }
+
+            const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+            if (matchedRun && matchedRun.head_sha === currentSha) {
+              core.setOutput('should_package', 'false');
+              const body = [
+                '## No package needed',
+                '',
+                `- Current main SHA: ${currentSha}`,
+                `- Last successful scheduled app package SHA: ${matchedRun.head_sha}`,
+                `- Last app artifact: ${matchedArtifact.name}`,
+                `- Last package workflow run: ${matchedRun.html_url}`,
+                '',
+              ].join('\n');
+              if (summaryPath) {
+                fs.appendFileSync(summaryPath, body, 'utf8');
+              }
+              return;
+            }
+
+            core.setOutput('should_package', 'true');
+            const body = [
+              '## Package scheduled Melix.app',
+              '',
+              `- Current main SHA: ${currentSha}`,
+              `- Last successful scheduled app package SHA: ${matchedRun ? matchedRun.head_sha : 'none'}`,
+              matchedArtifact ? `- Last app artifact: ${matchedArtifact.name}` : '- Last app artifact: none',
+              '- Decision: package current main because it has not been covered by a successful scheduled app artifact.',
+              '',
+            ].join('\n');
+            if (summaryPath) {
+              fs.appendFileSync(summaryPath, body, 'utf8');
+            }
+
   package-app:
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'package-app')
+    needs:
+      - detect-main-update
+    if: |
+      always() &&
+      (github.event_name != 'schedule' || needs.detect-main-update.outputs.should_package == 'true') &&
+      (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'package-app'))
     runs-on: macos-15
     outputs:
       artifact_name: ${{ steps.compute-build-metadata.outputs.artifact_name }}
@@ -61,8 +155,14 @@ jobs:
         with:
           ref: ${{ inputs.source_ref }}
 
+      - name: Checkout scheduled main source
+        if: github.event_name == 'schedule'
+        uses: actions/checkout@v6
+        with:
+          ref: main
+
       - name: Checkout event source
-        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name != 'workflow_dispatch' && github.event_name != 'schedule'
         uses: actions/checkout@v6
 
       - uses: actions/setup-python@v6
@@ -179,6 +279,7 @@ jobs:
           name: ${{ steps.compute-build-metadata.outputs.artifact_name }}
           path: ${{ runner.temp }}/${{ steps.compute-build-metadata.outputs.artifact_name }}.zip
           if-no-files-found: error
+          retention-days: 14
 
       - name: Publish app artifact download summary
         if: github.event_name != 'pull_request' && success()

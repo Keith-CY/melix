@@ -92,6 +92,18 @@ needs a fresh downloadable `Melix.app` archive from the repository `main` branch
 The manual archive uses the same self-contained app-bundle packaging path as push and tag runs.
 GitHub authentication may be required to download workflow artifacts.
 
+## Daily App Archive From `main`
+
+The same `package-self-contained-app` workflow also runs every day at 00:00 UTC on the repository
+`main` branch. Before building, the workflow compares the current `main` commit with the last
+successful scheduled app artifact. If that prior artifact already covers the current commit, the run
+finishes successfully without packaging and records the skipped decision in the workflow summary.
+
+When `main` has changed since the last successful scheduled app artifact, the workflow packages the
+self-contained `Melix.app` archive and uploads it as a workflow artifact. These scheduled artifacts
+are retained for 14 days. Release assets attached to version tags use the GitHub Release path and are
+not governed by the scheduled artifact retention period.
+
 ## Deterministic Validation
 
 Run the repository-owned smoke command to verify the shared packaging target matrix across all
