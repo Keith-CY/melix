@@ -650,6 +650,25 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["scheduler.route_selection_receipt_emitted", default: 0] == 1)
     }
 
+    @Test("JSONL receipt writer preserves first writes from independent writers")
+    func jsonlReceiptWriterPreservesFirstWritesFromIndependentWriters() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-route-receipt-concurrent-\(UUID().uuidString)", isDirectory: true)
+        let receiptPath = directory.appendingPathComponent("route-selection.jsonl").path
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let count = 48
+        let writers = (0..<count).map { _ in JSONLReceiptWriter(path: receiptPath) }
+        for index in 0..<count {
+            writers[index].append(Data(#"{"request_id":"req-\#(index)"}"#.utf8))
+        }
+
+        let payloads = try #require(await waitForJSONLLines(atPath: receiptPath, expectedCount: count))
+        #expect(Set(payloads.compactMap { $0["request_id"] as? String }) == Set((0..<count).map { "req-\($0)" }))
+    }
+
     @Test("python text compatibility sessions use generate instead of phase-aware prefill")
     func pythonTextCompatibilitySessionsUseGenerateInsteadOfPhaseAwarePrefill() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -4349,6 +4368,40 @@ private func waitForFileContents(
         try? await Task.sleep(nanoseconds: 10_000_000)
     }
     return try? String(contentsOfFile: path, encoding: .utf8)
+}
+
+private func waitForJSONLLines(
+    atPath path: String,
+    expectedCount: Int,
+    attempts: Int = 100
+) async -> [[String: Any]]? {
+    let effectiveAttempts = attempts * waitAttemptsMultiplier
+    for _ in 0..<effectiveAttempts {
+        if let contents = try? String(contentsOfFile: path, encoding: .utf8) {
+            let lines = contents.split(separator: "\n")
+            if lines.count == expectedCount,
+               let payloads = parseJSONLLines(lines),
+               payloads.count == expectedCount {
+                return payloads
+            }
+        }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else {
+        return nil
+    }
+    return parseJSONLLines(contents.split(separator: "\n"))
+}
+
+private func parseJSONLLines(_ lines: [Substring]) -> [[String: Any]]? {
+    var payloads: [[String: Any]] = []
+    for line in lines {
+        guard let payload = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else {
+            return nil
+        }
+        payloads.append(payload)
+    }
+    return payloads
 }
 
 private actor BlockingWorkerClient: WorkerRoutingClient {
