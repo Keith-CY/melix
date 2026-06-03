@@ -1434,8 +1434,9 @@ private func validateRequestRoutes(
     if workerFamily == .vision {
         guard matchingRoutes.contains(where: { route in
             route.task == .generateMultimodal
-                && route.supportedModalities.contains(.image)
+                && route.supportedModalities.contains(where: { $0 == .image || $0 == .video })
                 && route.requiresAnyModality.contains(where: { $0 == .image || $0 == .video })
+                && (!route.requiresAnyModality.contains(.video) || route.supportsNativeVideo)
         }) else {
             throw WorkerRuntimeRegistryError.requestRouteUnsupported(
                 modelID: spec.modelID,

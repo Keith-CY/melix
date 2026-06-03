@@ -2794,6 +2794,95 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(response.error.details["reason"], "worker_family_mismatch")
     }
 
+    func testRuntimeRegistryVisionWorkerAcceptsVideoOnlyNativeRoute() async throws {
+        let registry = WorkerRuntimeRegistry(
+            configuration: WorkerConfiguration(workerID: "vision-video-test", workerFamily: .vision),
+            runtime: TextRuntime(backend: FakeRuntimeBackend())
+        )
+
+        var model = Melix_Worker_V1_ModelSpec()
+        model.modelID = "video-only-dev"
+        model.modelPath = "video-only-dev"
+        var route = Melix_Worker_V1_RequestRouteDeclaration()
+        route.task = .generateMultimodal
+        route.supportedModalities = [.video]
+        route.requiresAnyModality = [.video]
+        route.workerFamily = .vision
+        route.modelFamilyTarget = "video-only.test"
+        route.supportsNativeVideo = true
+        model.requestRoutes = [route]
+
+        let loaded = try await registry.loadModel(model)
+
+        XCTAssertEqual(loaded.spec.modelID, "video-only-dev")
+        XCTAssertEqual(loaded.spec.requestRoutes.first?.requiresAnyModality, [.video])
+    }
+
+    func testVisionPayloadReceiptIsWrittenAsynchronously() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-vision-payload-receipt-\(UUID().uuidString)", isDirectory: true)
+        let receiptPath = directory.appendingPathComponent("vision-payload.jsonl").path
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let services = makeServices(
+            environment: [
+                "MELIX_SWIFT_WORKER_FAMILY": "vision",
+                "MELIX_SWIFT_VISION_PAYLOAD_RECEIPT_PATH": receiptPath,
+            ],
+            backend: FakeRuntimeBackend(generatedChunks: ["vision"])
+        )
+        var loadRequest = Melix_Worker_V1_LoadModelRequest()
+        loadRequest.model.modelID = "melix-dev-vlm"
+        let loadResponse = try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.runtime.loadModel(
+                request: loadRequest,
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_RuntimeService.Method.LoadModel.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+        XCTAssertTrue(loadResponse.ok, loadResponse.error.message)
+
+        var request = Melix_Worker_V1_GenerateRequest()
+        request.execution.id.requestID = "req-vision-payload-receipt"
+        request.execution.modelHandle = loadResponse.modelHandle
+        request.messages = [
+            makeVisionMessage(
+                prompt: "receipt",
+                imageBytes: Data("image".utf8),
+                videoBytes: Data("video".utf8),
+                videoFilename: "clip.mp4"
+            )
+        ]
+        let writer = RecordingRPCWriter<Melix_Worker_V1_ExecuteEvent>()
+        try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.inference.generate(
+                request: request,
+                response: RPCWriter(wrapping: writer),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_InferenceService.Method.Generate.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
+        let maybeContents = await waitForFileContents(atPath: receiptPath)
+        let contents = try XCTUnwrap(maybeContents)
+        let firstLine = try XCTUnwrap(contents.split(separator: "\n").first)
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(firstLine.utf8)) as? [String: Any])
+        let mediaParts = try XCTUnwrap(payload["media_parts"] as? [[String: Any]])
+
+        XCTAssertEqual(payload["request_id"] as? String, "req-vision-payload-receipt")
+        XCTAssertEqual(payload["worker_family"] as? String, "vision")
+        XCTAssertEqual(mediaParts.map { $0["kind"] as? String }, ["image", "video"])
+    }
+
     func testRuntimeRegistryTracksBusyStateAndGenerateEventsForLoadedModel() async throws {
         let registry = WorkerRuntimeRegistry(
             configuration: WorkerConfiguration(),
@@ -11006,6 +11095,50 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(stats.lastVideoWindowMs, 2_000)
     }
 
+    func testDeterministicVisionBackendNormalizesLocalVideoURI() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-vision-video-uri-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let videoURL = directory.appendingPathComponent("local-clip.mp4")
+        try Data("swift video uri".utf8).write(to: videoURL)
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let backend = DeterministicVisionBackend(tokenDelayNanos: 0)
+        let loaded = try await backend.loadModel(spec: WorkerModelCatalog.devVisionModel())
+
+        let events = try await collectTextGenerationEvents(
+            from: try await backend.generateEvents(
+                model: loaded,
+                messages: [
+                    makeVisionMessage(
+                        prompt: "Summarize the local clip.",
+                        videoURI: videoURL.path,
+                        videoFilename: "",
+                        frameBudget: 6,
+                        startMs: 250,
+                        endMs: 1_250
+                    )
+                ],
+                sampling: Melix_Worker_V1_SamplingConfig(),
+                shouldAbort: { false }
+            )
+        )
+
+        XCTAssertEqual(
+            renderedTokenChunks(from: events).joined(),
+            """
+            Video content: local-clip.mp4
+            Frame policy: uniform_sample 6 frame(s) from 250ms to 1250ms
+            Prompt: Summarize the local clip.
+            """
+        )
+        let maybeStats = await backend.runtimeStatsOverlay()
+        let stats = try XCTUnwrap(maybeStats)
+        XCTAssertEqual(stats.lastVideoEffectiveFrameCount, 6)
+        XCTAssertEqual(stats.lastVideoWindowMs, 1_000)
+    }
+
     func testDeterministicVisionBackendAppliesOCRStopSequences() async throws {
         let backend = DeterministicVisionBackend(tokenDelayNanos: 0)
         let loaded = try await backend.loadModel(spec: WorkerModelCatalog.devOCRModel())
@@ -11302,6 +11435,21 @@ private func makeServices(
         abortRegistry: abortRegistry,
         metrics: metrics
     )
+}
+
+@available(macOS 15.0, *)
+private func waitForFileContents(
+    atPath path: String,
+    attempts: Int = 100
+) async -> String? {
+    for _ in 0..<attempts {
+        if let contents = try? String(contentsOfFile: path, encoding: .utf8),
+           !contents.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return contents
+        }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    return try? String(contentsOfFile: path, encoding: .utf8)
 }
 
 @available(macOS 15.0, *)
@@ -11755,6 +11903,7 @@ private func makeVisionMessage(
     imageBytes: Data? = nil,
     imageFilename: String = "image.png",
     videoBytes: Data? = nil,
+    videoURI: String? = nil,
     videoFilename: String = "video.mp4",
     frameBudget: UInt32 = 0,
     startMs: UInt32 = 0,
@@ -11793,6 +11942,20 @@ private func makeVisionMessage(
         videoPart.media.startMs = startMs
         videoPart.media.endMs = endMs
         videoPart.media.byteLength = UInt64(videoBytes.count)
+        parts.append(videoPart)
+    }
+
+    if let videoURI {
+        var videoPart = Melix_Worker_V1_MessagePart()
+        videoPart.videoUri = videoURI
+        videoPart.media.mediaType = .video
+        videoPart.media.sourceKind = .mediaSourceUri
+        videoPart.media.mimeType = "video/mp4"
+        videoPart.media.format = "mp4"
+        videoPart.media.filename = videoFilename
+        videoPart.media.frameBudget = frameBudget
+        videoPart.media.startMs = startMs
+        videoPart.media.endMs = endMs
         parts.append(videoPart)
     }
 

@@ -633,7 +633,7 @@ struct RequestCoordinatorTests {
         #expect(try await coordinator.cancel(requestID: "req-route-receipt"))
         _ = await consumer.result
 
-        let contents = try String(contentsOfFile: receiptPath, encoding: .utf8)
+        let contents = try #require(await waitForFileContents(atPath: receiptPath))
         let firstLine = try #require(contents.split(separator: "\n").first)
         let payload = try #require(
             JSONSerialization.jsonObject(with: Data(firstLine.utf8)) as? [String: Any]
@@ -4335,6 +4335,20 @@ struct RequestCoordinatorTests {
         _ = await consumer.result
     }
 
+}
+
+private func waitForFileContents(
+    atPath path: String,
+    attempts: Int = 100
+) async -> String? {
+    for _ in 0..<attempts {
+        if let contents = try? String(contentsOfFile: path, encoding: .utf8),
+           !contents.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return contents
+        }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    return try? String(contentsOfFile: path, encoding: .utf8)
 }
 
 private actor BlockingWorkerClient: WorkerRoutingClient {

@@ -259,6 +259,7 @@ final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceP
     private let generationEngine: TextGenerationEngine
     private let prefillEngine: TextPrefillEngine
     private let decodeEngine: TextDecodeEngine
+    private let visionPayloadReceiptWriter: JSONLReceiptWriter?
 
     init(
         configuration: WorkerConfiguration,
@@ -270,6 +271,11 @@ final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceP
         self.registry = registry
         self.abortRegistry = abortRegistry
         self.metrics = metrics
+        let trimmedReceiptPath = configuration.visionPayloadReceiptPath?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.visionPayloadReceiptWriter = trimmedReceiptPath.isEmpty
+            ? nil
+            : JSONLReceiptWriter(path: trimmedReceiptPath)
         self.generationEngine = TextGenerationEngine(registry: registry, abortRegistry: abortRegistry, metrics: metrics)
         self.prefillEngine = TextPrefillEngine(registry: registry, abortRegistry: abortRegistry, metrics: metrics)
         self.decodeEngine = TextDecodeEngine(
@@ -290,7 +296,7 @@ final class InferenceRPCService: Melix_Worker_V1_InferenceService.SimpleServiceP
         context: GRPCCore.ServerContext
     ) async throws {
         if configuration.workerFamily == .vision {
-            appendVisionPayloadReceipt(for: request)
+            enqueueVisionPayloadReceipt(for: request)
         }
         try await generationEngine.runGenerate(request: request, response: response)
     }
@@ -795,8 +801,8 @@ private func workerFamilyName(_ workerFamily: Melix_Worker_V1_WorkerFamily) -> S
 }
 
 private extension InferenceRPCService {
-    func appendVisionPayloadReceipt(for request: Melix_Worker_V1_GenerateRequest) {
-        guard let path = configuration.visionPayloadReceiptPath else {
+    func enqueueVisionPayloadReceipt(for request: Melix_Worker_V1_GenerateRequest) {
+        guard let visionPayloadReceiptWriter else {
             return
         }
         let mediaParts = request.messages.enumerated().flatMap { messageIndex, message in
@@ -825,25 +831,7 @@ private extension InferenceRPCService {
               let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else {
             return
         }
-        let url = URL(fileURLWithPath: path)
-        try? FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        if !FileManager.default.fileExists(atPath: path) {
-            FileManager.default.createFile(atPath: path, contents: nil)
-        }
-        guard let handle = try? FileHandle(forWritingTo: url) else {
-            return
-        }
-        defer { try? handle.close() }
-        do {
-            try handle.seekToEnd()
-            try handle.write(contentsOf: data)
-            try handle.write(contentsOf: Data("\n".utf8))
-        } catch {
-            return
-        }
+        visionPayloadReceiptWriter.append(data)
     }
 
     private func visionMediaPartSummary(

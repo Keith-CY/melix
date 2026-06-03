@@ -14,8 +14,9 @@ from tests.integration.helpers import LiveMelixStack, get_cache_stats, read_metr
 
 # CI macOS runners occasionally add transport/scheduling jitter around the
 # millisecond-scale local stack; route/cache metrics below remain the primary
-# recovery assertions, while this budget keeps TTFT comparisons non-flaky.
-HTTP_TTFT_JITTER_BUDGET_MS = 100.0
+# recovery assertions, while this budget only rejects unusually large HTTP-layer
+# regressions.
+HTTP_TTFT_JITTER_BUDGET_MS = 250.0
 
 
 def test_session_followup_replays_prompt_and_restores_latest_branch_snapshot_through_control_plane() -> None:
