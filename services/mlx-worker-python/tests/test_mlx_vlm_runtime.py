@@ -1582,6 +1582,7 @@ def test_native_mtp_extra_safetensor_files_filters_names_before_path_join(
             "language_model.mtp.layers.2.duplicate_weight": "notes.txt",
             "language_model.mtp.layers.3.weight": "mtp-00001.safetensors",
             "language_model.mtp.layers.4.weight": "mtp-missing.safetensors",
+            "language_model.mtp.layers.5.weight": "nested/mtp-00002.safetensors",
             "language_model.layers.0.weight": "ignored-mtp.safetensors",
         }
     }
@@ -1591,11 +1592,14 @@ def test_native_mtp_extra_safetensor_files_filters_names_before_path_join(
     )
     sidecar_path = model_dir / "mtp-00001.safetensors"
     sidecar_path.write_bytes(b"mtp")
+    nested_sidecar_path = model_dir / "nested" / "mtp-00002.safetensors"
+    nested_sidecar_path.parent.mkdir()
+    nested_sidecar_path.write_bytes(b"nested-mtp")
 
     original_join = Path.__truediv__
     joined_path_names: list[str] = []
     original_basename = native_mtp_loader_module.os.path.basename
-    basename_names: list[str] = []
+    basename_candidate_names: list[str] = []
     original_exists = native_mtp_loader_module.os.path.exists
     exists_names: list[str] = []
 
@@ -1604,8 +1608,8 @@ def test_native_mtp_extra_safetensor_files_filters_names_before_path_join(
         return original_join(self, key)
 
     def tracked_basename(path: str) -> str:
-        if "/" not in path:
-            basename_names.append(path)
+        if path in index_payload["weight_map"].values():
+            basename_candidate_names.append(path)
         return original_basename(path)
 
     def tracked_exists(path: str) -> bool:
@@ -1616,14 +1620,14 @@ def test_native_mtp_extra_safetensor_files_filters_names_before_path_join(
     monkeypatch.setattr(native_mtp_loader_module.os.path, "basename", tracked_basename)
     monkeypatch.setattr(native_mtp_loader_module.os.path, "exists", tracked_exists)
 
-    assert extra_mtp_safetensor_files(model_dir) == [sidecar_path]
+    assert extra_mtp_safetensor_files(model_dir) == [sidecar_path, nested_sidecar_path]
     assert joined_path_names == ["model.safetensors.index.json"]
-    assert exists_names == ["mtp-00001.safetensors", "mtp-missing.safetensors"]
-    assert basename_names == [
-        "model-00001-of-00002.safetensors",
+    assert exists_names == [
         "mtp-00001.safetensors",
         "mtp-missing.safetensors",
+        "mtp-00002.safetensors",
     ]
+    assert basename_candidate_names == []
 
 
 def test_native_mtp_patched_loader_uses_scandir_model_weight_listing(
