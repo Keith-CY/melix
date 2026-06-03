@@ -22,6 +22,7 @@ _PYTHON_SPLITLINE_BOUNDARIES = "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
 _ASCII_SPLITLINE_BOUNDARIES = "\n\r\v\f\x1c\x1d\x1e"
 _ASCII_NON_LINE_WHITESPACE = " \t\x1f"
 _COUNT_TESTS_SPLITLINES_MAX_CHARS = 500_000
+_ORD_ZERO = ord("0")
 
 
 @dataclass(frozen=True, slots=True)
@@ -565,7 +566,7 @@ def _extract_json_int_field_value_and_end(
     value = 0
     digit_count = 0
     while cursor < payload_length:
-        digit = payload_bytes[cursor] - ord("0")
+        digit = payload_bytes[cursor] - _ORD_ZERO
         if digit < 0 or digit > 9:
             break
         value = (value * 10) + digit
