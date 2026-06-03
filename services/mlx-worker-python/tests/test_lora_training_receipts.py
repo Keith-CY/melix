@@ -618,6 +618,7 @@ def test_lora_quantized_kind_detection_uses_precompiled_patterns(
     monkeypatch.setattr(lora_runtime_metadata_module.re, "search", fail_re_search)
 
     assert lora_runtime_metadata_module._quantized_kind_from_text("mlx q4 adapter") == "q4"
+    assert lora_runtime_metadata_module._quantized_kind_from_text(" \tq8\n") == "q8"
     assert lora_runtime_metadata_module._quantized_kind_from_text("not-a-q4suffix") == "unknown"
 
 
