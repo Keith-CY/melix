@@ -960,7 +960,10 @@ def _quality_summary(
     total_count = success_count + failed_count
     success_rate = success_count / total_count if total_count else 0.0
     score = round(success_rate, 6)
-    lengths = _sample_output_lengths(train_rows, validation_rows)
+    output_length_count, output_length_total, p95_output_length = _sample_output_length_stats(
+        train_rows,
+        validation_rows,
+    )
     quality_controls = ingest_receipt.get("quality_control_summary", {})
     source_record_count = float(quality_controls.get("source_record_count", 0) or 0)
     exact_dedup_count = float(quality_controls.get("exact_dedup_count", 0) or 0)
@@ -978,8 +981,8 @@ def _quality_summary(
         "validation_count": len(validation_rows),
         "pii_mask_count": int(quality_controls.get("pii_mask_count", 0) or 0),
         "dedup_ratio": (exact_dedup_count + fuzzy_dedup_count) / source_record_count if source_record_count else 0,
-        "mean_output_length": sum(lengths) / len(lengths) if lengths else 0,
-        "p95_output_length": _p95(lengths),
+        "mean_output_length": output_length_total / output_length_count if output_length_count else 0,
+        "p95_output_length": p95_output_length,
         "policy_id": "melix.dataset_quality.local.v1",
         "review_notes": [],
         "blocking_reasons": blocking_reasons,
@@ -1008,11 +1011,36 @@ def _sample_output_lengths(
     validation_rows: list[dict[str, Any]],
 ) -> list[int]:
     lengths: list[int] = []
+    _append_sample_output_lengths(lengths, train_rows, validation_rows)
+    return lengths
+
+
+def _sample_output_length_stats(
+    train_rows: list[dict[str, Any]],
+    validation_rows: list[dict[str, Any]],
+) -> tuple[int, int, int]:
+    lengths: list[int] = []
+    _append_sample_output_lengths(lengths, train_rows, validation_rows)
+    length_count = len(lengths)
+    if not length_count:
+        return 0, 0, 0
+    output_length_total = sum(lengths)
+    lengths.sort()
+    index = min(length_count - 1, int(round((length_count - 1) * 0.95)))
+    return length_count, output_length_total, lengths[index]
+
+
+def _append_sample_output_lengths(
+    lengths: list[int],
+    train_rows: list[dict[str, Any]],
+    validation_rows: list[dict[str, Any]],
+) -> None:
     append = lengths.append
+    str_ = str
     for rows in (train_rows, validation_rows):
         for row in rows:
             if "completion" in row:
-                append(len(str(row["completion"])))
+                append(len(str_(row["completion"])))
                 continue
             messages = row.get("messages", [])
             if not isinstance(messages, list):
@@ -1021,9 +1049,8 @@ def _sample_output_lengths(
             total = 0
             for item in messages:
                 if isinstance(item, dict):
-                    total += len(str(item.get("content", "")))
+                    total += len(str_(item.get("content", "")))
             append(total)
-    return lengths
 
 
 def _p95(values: list[int]) -> int:
