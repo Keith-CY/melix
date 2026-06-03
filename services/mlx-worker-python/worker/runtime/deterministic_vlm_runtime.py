@@ -366,10 +366,15 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
             execution_ext=execution_ext,
         )
         enforce_attention_prefill_policy(attention_policy)
+        prompt_tokens = (
+            attention_policy.prompt_tokens
+            if attention_policy is not None
+            else self.prompt_token_count(prepared_request, loaded_model=loaded_model)
+        )
         self._ensure_fast_path_probe(
             loaded_model,
             prepared_request,
-            seq_len=attention_policy.prompt_tokens if attention_policy is not None else None,
+            seq_len=prompt_tokens,
             attention_policy=attention_policy,
         )
         response = self._response_text(prepared_request)
@@ -389,6 +394,7 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
                     prepared_request=prepared_request,
                     cache_identity=cache_identity,
                     scope_id=scope_id,
+                    token_length=prompt_tokens,
                     execution_ext=execution_ext,
                 )
             )
@@ -424,7 +430,7 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
                     return
             yield RuntimeTokenEvent(
                 text=response,
-                prompt_tokens=self.prompt_token_count(prepared_request, loaded_model=loaded_model),
+                prompt_tokens=prompt_tokens,
                 completion_tokens=self._completion_token_count(response),
                 finish_reason="stop",
             )
@@ -449,7 +455,7 @@ class DeterministicVLMRuntime(DeterministicProbeMixin[VisionProbeSnapshot]):
                     return
             yield RuntimeTokenEvent(
                 text=response,
-                prompt_tokens=self.prompt_token_count(prepared_request, loaded_model=loaded_model),
+                prompt_tokens=prompt_tokens,
                 completion_tokens=self._completion_token_count(response),
                 finish_reason="stop",
             )

@@ -26,7 +26,7 @@ class SplitTrackingText(str):
         return super().split(*args, **kwargs)
 
 
-def _prepared_request() -> PreparedVisionRequest:
+def _prepared_request(index: int = 0) -> PreparedVisionRequest:
     return PreparedVisionRequest(
         prompt_text="Describe the synthetic image.",
         images=[],
@@ -35,8 +35,8 @@ def _prepared_request() -> PreparedVisionRequest:
         preprocess_latency_ms=0.0,
         preprocess_input_bytes=0,
         preprocess_peak_memory_bytes=0,
-        prompt_hash_hex="p" * 64,
-        multimodal_hash_hex="m" * 64,
+        prompt_hash_hex=f"{index:064x}"[-64:],
+        multimodal_hash_hex=f"{index + 1:064x}"[-64:],
     )
 
 
@@ -45,14 +45,15 @@ def _response_payload(word_count: int) -> str:
     return ("alpha beta\tgamma\n" * max(1, word_count // 3)).strip()
 
 
-def _run_once(*, iterations: int, word_count: int) -> tuple[float, int, float, int, int]:
-    request = _prepared_request()
+def _run_once(*, iterations: int, word_count: int) -> tuple[float, int, float, int, int, int]:
     payload = _response_payload(word_count)
     expected_completion_tokens = len(payload.split())
     runtime = DeterministicVLMRuntime()
     original_response_text = DeterministicVLMRuntime._response_text
     original_token_count = deterministic_vlm_runtime_module._whitespace_token_count
+    original_prompt_token_count = runtime.prompt_token_count
     token_count_calls = 0
+    prompt_token_count_calls = 0
 
     def counting_token_count(text: str) -> int:
         nonlocal token_count_calls
@@ -60,14 +61,21 @@ def _run_once(*, iterations: int, word_count: int) -> tuple[float, int, float, i
         original_token_count.cache_clear()
         return original_token_count(text)
 
+    def counting_prompt_token_count(*args: object, **kwargs: object) -> int:
+        nonlocal prompt_token_count_calls
+        prompt_token_count_calls += 1
+        return original_prompt_token_count(*args, **kwargs)
+
     try:
         DeterministicVLMRuntime._response_text = staticmethod(lambda prepared_request: SplitTrackingText(payload))  # type: ignore[method-assign]
         deterministic_vlm_runtime_module._whitespace_token_count = counting_token_count
+        runtime.prompt_token_count = counting_prompt_token_count  # type: ignore[method-assign]
         SplitTrackingText.split_calls = 0
         tracemalloc.start()
         start = time.perf_counter()
         completion_total = 0
-        for _ in range(iterations):
+        for index in range(iterations):
+            request = _prepared_request(index)
             events = list(runtime.generate_tokens({}, request, sampling=None, cancel_event=Event()))
             completion_total += sum(event.completion_tokens for event in events if event.text)
         elapsed_ms = (time.perf_counter() - start) * 1000.0
@@ -76,10 +84,18 @@ def _run_once(*, iterations: int, word_count: int) -> tuple[float, int, float, i
     finally:
         DeterministicVLMRuntime._response_text = staticmethod(original_response_text)  # type: ignore[method-assign]
         deterministic_vlm_runtime_module._whitespace_token_count = original_token_count
+        runtime.prompt_token_count = original_prompt_token_count  # type: ignore[method-assign]
     expected_total = expected_completion_tokens * iterations
     if completion_total != expected_total:
         raise SystemExit(f"unexpected completion token total: {completion_total} != {expected_total}")
-    return elapsed_ms, SplitTrackingText.split_calls, float(peak_bytes), expected_completion_tokens, token_count_calls
+    return (
+        elapsed_ms,
+        SplitTrackingText.split_calls,
+        float(peak_bytes),
+        expected_completion_tokens,
+        token_count_calls,
+        prompt_token_count_calls,
+    )
 
 
 def main() -> int:
@@ -91,8 +107,16 @@ def main() -> int:
     peaks: list[float] = []
     token_counts: list[int] = []
     token_count_calls: list[int] = []
+    prompt_token_count_calls: list[int] = []
     for _ in range(samples):
-        elapsed_ms, split_call_count, peak_bytes, token_count, token_count_call_count = _run_once(
+        (
+            elapsed_ms,
+            split_call_count,
+            peak_bytes,
+            token_count,
+            token_count_call_count,
+            prompt_token_count_call_count,
+        ) = _run_once(
             iterations=iterations,
             word_count=word_count,
         )
@@ -101,6 +125,7 @@ def main() -> int:
         peaks.append(peak_bytes)
         token_counts.append(token_count)
         token_count_calls.append(token_count_call_count)
+        prompt_token_count_calls.append(prompt_token_count_call_count)
     print(
         json.dumps(
             {
@@ -109,6 +134,7 @@ def main() -> int:
                 "peak_bytes_mean": statistics.fmean(peaks),
                 "completion_tokens": token_counts[-1],
                 "token_count_calls_mean": statistics.fmean(token_count_calls),
+                "prompt_token_count_calls_mean": statistics.fmean(prompt_token_count_calls),
                 "iterations": iterations,
                 "samples": samples,
             },

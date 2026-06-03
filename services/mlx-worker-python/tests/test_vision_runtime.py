@@ -420,6 +420,49 @@ def test_vlm_completion_token_count_scans_without_split_list(monkeypatch: pytest
     assert SplitTrackingText.split_calls == 0
 
 
+def test_vlm_generate_reuses_prompt_token_count_for_probe_and_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = PreparedVisionRequest(
+        prompt_text="Describe the image.",
+        images=[],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=0,
+        preprocess_peak_memory_bytes=0,
+        prompt_hash_hex="p" * 64,
+        multimodal_hash_hex="m" * 64,
+    )
+    runtime = DeterministicVLMRuntime()
+    original_prompt_token_count = runtime.prompt_token_count
+    call_count = 0
+
+    def counted_prompt_token_count(prepared_request, loaded_model=None, family_config=None):
+        nonlocal call_count
+        call_count += 1
+        return original_prompt_token_count(
+            prepared_request,
+            loaded_model=loaded_model,
+            family_config=family_config,
+        )
+
+    monkeypatch.setattr(runtime, "prompt_token_count", counted_prompt_token_count)
+
+    token_events = list(
+        runtime.generate_tokens(
+            {},
+            request,
+            sampling=None,
+            cancel_event=Event(),
+        )
+    )
+    token_event = next(event for event in token_events if isinstance(event, RuntimeTokenEvent))
+
+    assert token_event.prompt_tokens == 3
+    assert call_count == 1
+
+
 def test_vlm_completion_token_count_reuses_last_response_scan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
