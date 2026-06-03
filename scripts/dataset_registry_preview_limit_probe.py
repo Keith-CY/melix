@@ -24,22 +24,29 @@ def _int_env(name: str, default: int) -> int:
     return int(raw_value)
 
 
-def _build_snapshot(root: Path, *, row_count: int) -> Path:
-    snapshot_dir = root / "snapshot" / "data"
-    snapshot_dir.mkdir(parents=True)
+def _build_snapshot(root: Path, *, row_count: int, sidecar_count: int) -> Path:
+    snapshot_root = root / "snapshot"
+    snapshot_root.mkdir(parents=True)
+    for index in range(sidecar_count, 0, -1):
+        (snapshot_root / f"sidecar-{index:05d}.txt").write_text("ignored\n", encoding="utf-8")
+    snapshot_dir = snapshot_root / "data"
+    snapshot_dir.mkdir()
     rows = [{"prompt": f"prompt-{index}", "answer": f"answer-{index}"} for index in range(row_count)]
     (snapshot_dir / "train.json").write_text(json.dumps({"rows": rows}), encoding="utf-8")
-    (root / "snapshot" / "README.md").write_text("# Synthetic dataset\n", encoding="utf-8")
-    return root / "snapshot"
+    (snapshot_root / "README.md").write_text("# Synthetic dataset\n", encoding="utf-8")
+    return snapshot_root
 
 
 def main() -> int:
     row_count = _int_env("MELIX_DATASET_PREVIEW_PROBE_FILES", 50_000)
+    sidecar_count = _int_env("MELIX_DATASET_PREVIEW_PROBE_SIDECARS", 1_000)
     sample_count = _int_env("MELIX_DATASET_PREVIEW_PROBE_SAMPLES", 7)
     elapsed_samples: list[float] = []
     peak_samples: list[float] = []
     with tempfile.TemporaryDirectory(prefix="melix-dataset-preview-probe-") as temp_dir:
-        snapshot_dir = _build_snapshot(Path(temp_dir), row_count=row_count)
+        snapshot_dir = _build_snapshot(
+            Path(temp_dir), row_count=row_count, sidecar_count=sidecar_count
+        )
         expected = [{"prompt": "prompt-0", "answer": "answer-0"}]
         zero_limit_elapsed_samples: list[float] = []
         zero_limit_peak_samples: list[float] = []
@@ -74,6 +81,7 @@ def main() -> int:
                 "zero_limit_elapsed_ms_mean": round(statistics.fmean(zero_limit_elapsed_samples), 6),
                 "zero_limit_peak_bytes_mean": round(statistics.fmean(zero_limit_peak_samples), 3),
                 "file_count": float(row_count),
+                "sidecar_count": float(sidecar_count),
                 "rows_returned": 1.0,
                 "zero_limit_rows_returned": 0.0,
                 "sample_count": float(sample_count),

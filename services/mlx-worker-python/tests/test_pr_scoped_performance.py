@@ -2868,6 +2868,7 @@ def test_dataset_registry_preview_limit_probe_script_emits_metrics(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("MELIX_DATASET_PREVIEW_PROBE_FILES", "4")
+    monkeypatch.setenv("MELIX_DATASET_PREVIEW_PROBE_SIDECARS", "3")
     monkeypatch.setenv("MELIX_DATASET_PREVIEW_PROBE_SAMPLES", "1")
 
     with pytest.raises(SystemExit) as exc_info:
@@ -2876,6 +2877,7 @@ def test_dataset_registry_preview_limit_probe_script_emits_metrics(
     assert exc_info.value.code == 0
     metrics = json.loads(capsys.readouterr().out)
     assert metrics["file_count"] == 4.0
+    assert metrics["sidecar_count"] == 3.0
     assert metrics["rows_returned"] == 1.0
     assert metrics["zero_limit_rows_returned"] == 0.0
     assert metrics["elapsed_ms_mean"] >= 0

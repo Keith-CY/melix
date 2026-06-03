@@ -5,7 +5,7 @@ import sys
 import types
 from dataclasses import FrozenInstanceError
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 import pytest
 
@@ -342,6 +342,35 @@ def test_dataset_catalog_first_preview_scan_skips_readme_without_rescan(tmp_path
     assert first_entry is not None
     assert first_entry[1] == data_dir
     assert catalog._first_supported_dataset_file(snapshot_dir) == train_path
+
+
+def test_dataset_catalog_first_preview_scan_defers_path_construction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    snapshot_dir.mkdir()
+    for index in range(25, 0, -1):
+        (snapshot_dir / f"sidecar-{index:02d}.txt").write_text("ignored\n", encoding="utf-8")
+    winner = snapshot_dir / "data.json"
+    winner.write_text('{"rows":[{"prompt":"first"}]}', encoding="utf-8")
+
+    real_path = catalog.Path
+    constructor_calls = 0
+
+    def counting_path(*args: Any, **kwargs: Any) -> Path:
+        nonlocal constructor_calls
+        constructor_calls += 1
+        return real_path(*args, **kwargs)
+
+    monkeypatch.setattr(catalog, "Path", counting_path)
+
+    first_entry = catalog._next_supported_scan_entry(snapshot_dir, after="")
+
+    assert first_entry is not None
+    assert first_entry[0] == "data.json"
+    assert first_entry[1] == winner
+    assert constructor_calls == 1
 
 
 def test_dataset_catalog_json_row_reader_limit_uses_incremental_decode(
