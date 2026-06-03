@@ -21,7 +21,12 @@ Metrics:
 - `split_calls_mean` (`lower_is_better`, target `0`) verifies the split-list path is removed.
 - `elapsed_ms_mean` (`lower_is_better`) tracks the repeated counting workload.
 - `peak_bytes_mean` (`lower_is_better`) tracks transient allocation pressure.
+- `prompt_token_count_calls_mean` (`lower_is_better`, target `1` per generation) verifies that direct deterministic VLM generation reuses the prompt-token count for the fast-path probe, cache entry, and emitted token event instead of recounting the same prepared prompt.
 - `completion_tokens` is informational parity evidence.
+
+## 2026-06-03 Prompt Token Reuse Slice
+
+The same registered probe covers a follow-up direct-generation optimization: after resolving the attention policy, `generate_tokens()` now computes the prompt-token count once, passes that count to the fast-path probe, stores it in newly created cache entries, and emits it in the runtime token event. This preserves deterministic token accounting while removing duplicate prompt-token scans on cache-miss generation paths. The probe uses distinct synthetic request hashes per iteration so the measured workload exercises repeated cache-entry creation rather than same-request cache hits.
 
 ## Verification Plan
 
