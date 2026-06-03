@@ -58,6 +58,7 @@ These are the authoritative interface and architecture definitions. Do not move 
 | [Architecture Spec](architecture-spec.md) | System-wide architecture, component responsibilities, and runtime layout |
 | [Control Plane Protocol](control-plane-protocol.md) | The typed protocol between the control plane and worker surfaces |
 | [Worker RPC Schema](worker-rpc-schema.md) | RPC message shapes and worker communication contracts |
+| [Window UI Product Spec](window-ui-product-spec.md) | Desktop operator window IA, object model, status model, routes, Inspector, security boundaries, and first-run UX |
 | [Workspace Manifest Contract](workspace-manifest-contract.md) | Project workspace identity, artifact roots, artifact types, provenance references, redaction policy, and validation summary |
 | [Benchmark & Evaluation Contract](benchmark-evaluation-contract.md) | Benchmark and evaluation data formats, output contracts, and artifact shapes |
 | [Agentic Trajectory Dataset Contract](agentic-trajectory-dataset-contract.md) | Shared trajectory package, validation, and provenance contract for LoRA, RL, benchmark, and evaluation alignment work |
