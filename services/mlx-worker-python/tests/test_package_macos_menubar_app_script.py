@@ -12,6 +12,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MODULE_PATH = REPO_ROOT / "scripts" / "package_macos_menubar_app.py"
 PACKAGE_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "package-self-contained-app.yml"
+PACKAGING_RUNBOOK_PATH = REPO_ROOT / "docs" / "runbooks" / "platform-packaging-targets.md"
 
 
 def find_named_workflow_step(workflow: str, name: str) -> re.Match[str]:
@@ -32,6 +33,16 @@ def find_workflow_step(workflow: str, name: str) -> str:
         flags=re.MULTILINE | re.DOTALL,
     )
     assert match is not None, f"Workflow step not found: {name}"
+    return match.group(0)
+
+
+def find_workflow_job(workflow: str, job_name: str) -> str:
+    match = re.search(
+        rf"^  {re.escape(job_name)}:[ \t]*\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:[ \t]*$|\Z)",
+        workflow,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    assert match is not None, f"Workflow job not found: {job_name}"
     return match.group(0)
 
 
@@ -347,6 +358,27 @@ jobs:
     assert "next-step" not in step
 
 
+def test_find_workflow_job_stops_before_any_next_job() -> None:
+    workflow = """
+jobs:
+  detect-main-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide
+        run: echo decide
+  unrelated-job:
+    runs-on: ubuntu-latest
+  package-app:
+    runs-on: macos-26
+"""
+
+    job = find_workflow_job(workflow, "detect-main-update")
+
+    assert "run: echo decide" in job
+    assert "unrelated-job:" not in job
+    assert "package-app:" not in job
+
+
 def test_package_workflow_manual_dispatch_defaults_to_main_checkout() -> None:
     workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
 
@@ -401,6 +433,80 @@ def test_package_workflow_publishes_download_summary_for_uploaded_app_artifact()
     assert "Download:" in summary_step
     assert "Workflow run:" in summary_step
     assert "artifacts/${artifact.id}" in summary_step
+
+
+def test_package_workflow_runs_daily_at_midnight_utc() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert re.search(r"^[ \t]*schedule:[ \t]*$", workflow, flags=re.MULTILINE)
+    assert re.search(
+        r"^[ \t]*-[ \t]+cron:[ \t]+\"0 0 \* \* \*\"[ \t]*$",
+        workflow,
+        flags=re.MULTILINE,
+    )
+
+
+def test_package_workflow_detects_scheduled_main_updates_before_packaging() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert re.search(r"^[ \t]+detect-main-update:[ \t]*$", workflow, flags=re.MULTILINE)
+    assert "should_package: ${{ steps.detect-main-update.outputs.should_package }}" in workflow
+    preflight_job = find_workflow_job(workflow, "detect-main-update")
+    assert "if: github.event_name == 'schedule'" in preflight_job
+    assert "actions/checkout@v6" in preflight_job
+    assert "ref: main" in preflight_job
+    assert "github.rest.actions.listWorkflowRuns" in preflight_job
+    assert "event: 'schedule'" in preflight_job
+    assert "status: 'success'" in preflight_job
+    assert "github.rest.actions.listWorkflowRunArtifacts" in preflight_job
+    assert ".name.startsWith('Melix-main-')" in preflight_job
+    assert "matchedRun.head_sha === currentSha" in preflight_job
+
+
+def test_package_workflow_successfully_skips_scheduled_run_without_main_changes() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    preflight_job = find_workflow_job(workflow, "detect-main-update")
+    assert "No package needed" in preflight_job
+    assert "Current main SHA:" in preflight_job
+    assert "Last successful scheduled app package SHA:" in preflight_job
+    assert "core.setOutput('should_package', 'false')" in preflight_job
+
+
+def test_package_workflow_isolates_scheduled_concurrency_from_push_runs() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert "package-self-contained-app-${{ github.event_name == 'schedule' && 'schedule-' || '' }}${{ github.ref }}" in workflow
+
+
+def test_package_workflow_gates_package_job_only_for_scheduled_skip_and_pr_label() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert re.search(
+        r"^[ \t]+package-app:[ \t]*\n[ \t]+needs:[ \t]*\n[ \t]+-[ \t]+detect-main-update",
+        workflow,
+        flags=re.MULTILINE,
+    )
+    package_app_job = find_workflow_job(workflow, "package-app")
+    assert "github.event_name != 'schedule' || needs.detect-main-update.outputs.should_package == 'true'" in package_app_job
+    assert "github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'package-app')" in package_app_job
+    assert "startsWith(github.ref, 'refs/tags/v')" in workflow
+
+
+def test_package_workflow_sets_nightly_artifact_retention() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    upload_step = find_workflow_step(workflow, "Upload app artifact")
+    assert "retention-days: 14" in upload_step
+
+
+def test_packaging_runbook_documents_daily_main_app_archive() -> None:
+    runbook = PACKAGING_RUNBOOK_PATH.read_text(encoding="utf-8")
+
+    assert "Daily App Archive From `main`" in runbook
+    assert "00:00 UTC" in runbook
+    assert "last successful scheduled app artifact" in runbook
+    assert "14 days" in runbook
 
 
 def test_main_resolves_default_build_outputs_and_prints_app_path(
