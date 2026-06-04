@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import time
 import runpy
 import sys
@@ -1960,6 +1961,72 @@ def test_changed_paths_force_all_wildcards_handles_empty_matchers(monkeypatch: p
     monkeypatch.setattr(pr_scoped_performance_module, "_force_all_wildcard_matchers", lambda: ())
 
     assert pr_scoped_performance_module._changed_paths_match_force_all_wildcards({"README.md"}) is False
+
+
+def test_changed_paths_force_all_wildcards_short_circuits_on_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    match_calls: list[str] = []
+
+    monkeypatch.setattr(
+        pr_scoped_performance_module,
+        "_force_all_wildcard_matchers",
+        lambda: (("scripts/", re.compile(r"scripts/pr_scoped_performance_.*\.py")),),
+    )
+
+    def tracked_match(path: str, matchers: tuple[tuple[str, re.Pattern[str]], ...]) -> bool:
+        match_calls.append(path)
+        return path.startswith("scripts/pr_scoped_performance_")
+
+    monkeypatch.setattr(pr_scoped_performance_module, "_matches_any_compiled_glob", tracked_match)
+
+    assert (
+        pr_scoped_performance_module._changed_paths_match_force_all_wildcards(
+            ["scripts/pr_scoped_performance_report.py", "docs/late.md"]  # type: ignore[arg-type]
+        )
+        is True
+    )
+    assert match_calls == ["scripts/pr_scoped_performance_report.py"]
+
+
+def test_matches_any_glob_uses_explicit_short_circuit(monkeypatch: pytest.MonkeyPatch) -> None:
+    glob_calls: list[str] = []
+
+    def tracked_match(path: str, glob: str) -> bool:
+        glob_calls.append(glob)
+        return glob == "services/*.py"
+
+    monkeypatch.setattr(pr_scoped_performance_module, "_glob_matches_path", tracked_match)
+
+    assert _matches_any_glob(
+        "services/mlx-worker-python/worker/productization/pr_scoped_performance.py",
+        ("services/*.py", "docs/*.md"),
+    ) is True
+    assert glob_calls == ["services/*.py"]
+
+
+def test_coverage_paths_for_probe_uses_explicit_glob_matcher(monkeypatch: pytest.MonkeyPatch) -> None:
+    glob_calls: list[str] = []
+    probe = ProbeDefinition(
+        probe_id="alpha",
+        name="Alpha",
+        runner="ubuntu-latest",
+        watch_globs=("services/*.py", "docs/*.md"),
+        test_command="true",
+        coverage_command="true",
+        probe_impl="benchmark_evaluation_report",
+        probe_command="",
+        metrics=(MetricDefinition(key="elapsed_ms_mean", unit="ms", direction="lower_is_better"),),
+    )
+
+    def tracked_match(path: str, globs: tuple[str, ...]) -> bool:
+        glob_calls.extend(globs)
+        return path.startswith("services/")
+
+    monkeypatch.setattr(pr_scoped_performance_module, "_matches_any_glob", tracked_match)
+
+    assert coverage_paths_for_probe(probe=probe, changed_files=["services/a.py"]) == ("services/a.py",)
+    assert glob_calls == ["services/*.py", "docs/*.md"]
 
 
 def test_scope_report_empty_direct_paths_skips_probe_matching(monkeypatch: pytest.MonkeyPatch) -> None:
