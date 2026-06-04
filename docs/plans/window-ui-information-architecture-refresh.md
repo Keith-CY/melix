@@ -84,6 +84,14 @@ rewrite.
      from metadata.
    - Add route state for selected objects.
 
+   Status: initial implementation slice landed. The desktop shell now exposes
+   the accepted 10 top-level domains, treats Jobs as a first-class navigation
+   surface, defines typed route metadata for the accepted domain/page map, and
+   normalizes canonical selected-object route values plus legacy `eval` and
+   `token` aliases. Legacy persisted `Tools / Jobs` session state migrates to
+   the top-level Jobs surface. Follow-up slices still need to make every header,
+   secondary tab, and Inspector panel consume this metadata directly.
+
 2. Inspector Contract
    - Implement page-level and selected-object Inspector modes.
    - Preserve Context, Health, Metrics, Actions, Evidence order.

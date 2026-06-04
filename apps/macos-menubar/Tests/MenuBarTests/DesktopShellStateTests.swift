@@ -5,6 +5,132 @@ import Testing
 
 @Suite("Desktop Shell State", .serialized)
 struct DesktopShellStateTests {
+    @Test("desktop route metadata encodes accepted product IA")
+    func desktopRouteMetadataEncodesAcceptedProductIA() throws {
+        #expect(DesktopSurface.visibleNavigationCases == [
+            .chat,
+            .commandCenter,
+            .server,
+            .models,
+            .workflows,
+            .jobs,
+            .diagnostics,
+            .api,
+            .image,
+            .settings,
+        ])
+        #expect(DesktopSurface.visibleNavigationCases.map(\.rawValue) == [
+            "Chat",
+            "Command Center",
+            "Servers",
+            "Models",
+            "Workflows",
+            "Jobs",
+            "Diagnostics",
+            "API",
+            "Image",
+            "Settings",
+        ])
+
+        let metadata = DesktopRouteMetadata.acceptedWindowIA
+        #expect(metadata.domains.map(\.domain.routeDomainID) == [
+            "chat",
+            "command",
+            "servers",
+            "models",
+            "workflows",
+            "jobs",
+            "diagnostics",
+            "api",
+            "image",
+            "settings",
+        ])
+
+        let chat = try #require(metadata.page(domain: .chat, pageID: "session"))
+        #expect(chat.label == "Session")
+        #expect(chat.title == "Chat")
+        #expect(chat.crumb == "Chat")
+        #expect(chat.routePath == "/chat/session")
+        #expect(chat.inspectorModule == .chatRuntime)
+
+        let command = try #require(metadata.page(domain: .commandCenter, pageID: "overview"))
+        #expect(command.primaryAction?.title == "Review Eval Drift")
+        #expect(command.primaryAction?.target == .page(domain: .diagnostics, pageID: "evaluation"))
+        #expect(command.secondaryActions.map(\.title) == ["Jobs"])
+        #expect(command.secondaryActions.first?.target == .page(domain: .jobs, pageID: "queue"))
+
+        let localServer = try #require(metadata.page(domain: .server, pageID: "create-local"))
+        #expect(localServer.title == "Create Local Server")
+        #expect(localServer.primaryAction?.title == "Create And Start")
+        #expect(localServer.inspectorModule == .serverProfile)
+
+        let remoteServer = try #require(metadata.page(domain: .server, pageID: "add-remote"))
+        #expect(remoteServer.title == "Add Remote Server")
+        #expect(remoteServer.primaryAction?.title == "Save Remote Server")
+        #expect(remoteServer.inspectorModule == .capabilityReceipt)
+
+        let jobsQueue = try #require(metadata.page(domain: .jobs, pageID: "queue"))
+        #expect(jobsQueue.title == "Queue")
+        #expect(jobsQueue.inspectorModule == .jobLineage)
+
+        let inboundAuth = try #require(metadata.page(domain: .api, pageID: "inbound-auth"))
+        #expect(inboundAuth.title == "Inbound Auth")
+        #expect(inboundAuth.inspectorModule == .apiInboundAuth)
+    }
+
+    @Test("selected object routes normalize aliases and encode canonical values")
+    func selectedObjectRoutesNormalizeAliasesAndEncodeCanonicalValues() throws {
+        let server = try #require(DesktopSelectedObjectRoute(rawValue: "server:remote-lab"))
+        #expect(server.kind == .server)
+        #expect(server.objectID == "remote-lab")
+        #expect(server.rawValue == "server:remote-lab")
+        #expect(server.defaultRoute == .page(domain: .server, pageID: "overview"))
+
+        let artifact = try #require(DesktopSelectedObjectRoute(rawValue: "artifact:report/benchmark-matrix-042.json"))
+        #expect(artifact.kind == .artifact)
+        #expect(artifact.objectID == "report/benchmark-matrix-042.json")
+        #expect(artifact.rawValue == "artifact:report/benchmark-matrix-042.json")
+        #expect(artifact.defaultRoute == .page(domain: .jobs, pageID: "history"))
+
+        let evalAlias = try #require(DesktopSelectedObjectRoute(rawValue: "eval:support-dialogue-v23"))
+        #expect(evalAlias.kind == .diagnosticReport)
+        #expect(evalAlias.rawValue == "diagnostic-report:support-dialogue-v23")
+        #expect(evalAlias.defaultRoute == .page(domain: .diagnostics, pageID: "evaluation"))
+
+        let tokenAlias = try #require(DesktopSelectedObjectRoute(rawValue: "token:lan-shared-client"))
+        #expect(tokenAlias.kind == .apiToken)
+        #expect(tokenAlias.rawValue == "api-token:lan-shared-client")
+        #expect(tokenAlias.defaultRoute == .page(domain: .api, pageID: "inbound-auth"))
+
+        #expect(DesktopSelectedObjectRoute(rawValue: "workflow:template-1") == nil)
+        #expect(DesktopSelectedObjectRoute(rawValue: "job:") == nil)
+        #expect(DesktopSelectedObjectRoute(rawValue: "missing-delimiter") == nil)
+    }
+
+    @Test("legacy tools jobs session restores to top-level jobs")
+    func legacyToolsJobsSessionRestoresToTopLevelJobs() throws {
+        let legacyJSON = Data(
+            #"""
+            {
+              "schema_version": 5,
+              "selected_surface": "tools",
+              "selected_tool_section": "jobs",
+              "selected_server_session_id": "",
+              "server_sessions": []
+            }
+            """#.utf8
+        )
+        let legacyState = try JSONDecoder().decode(OperatorSessionState.self, from: legacyJSON)
+        #expect(legacyState.selectedSurface == .jobs)
+        #expect(legacyState.selectedToolSection == .jobs)
+        #expect(legacyState.selectedRuntimeJobID.isEmpty)
+
+        let encoded = try JSONEncoder().encode(legacyState)
+        let payload = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        #expect(payload["selected_surface"] as? String == "jobs")
+        #expect(payload["selected_tool_section"] as? String == "jobs")
+    }
+
     @Test("pane visibility defaults keep sidebars visible and chat inspector open")
     func paneVisibilityDefaultsKeepSidebarsVisibleAndChatInspectorOpen() throws {
         for surface in DesktopSurface.allCases {

@@ -786,6 +786,8 @@ struct RuntimeSyntheticDatasetStateTests {
     func syntheticDatasetNavigationHasIconCategoryAndSessionPersistenceMapping() throws {
         #expect(DesktopToolSection.syntheticDatasets.symbolName == "sparkles.rectangle.stack")
         #expect(DesktopToolCategory.workflows.sections.contains(.syntheticDatasets))
+        #expect(DesktopToolCategory.workflows.sections.contains(.jobs) == false)
+        #expect(DesktopToolCategory.jobs.sections == [.jobs])
 
         let state = OperatorSessionState(
             selectedSurface: .tools,

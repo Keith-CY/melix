@@ -285,14 +285,16 @@ struct DesktopShellTabStripView: View {
             return "4"
         case .workflows:
             return "5"
-        case .diagnostics:
+        case .jobs:
             return "6"
-        case .image:
+        case .diagnostics:
             return "7"
         case .api:
             return "8"
-        case .settings:
+        case .image:
             return "9"
+        case .settings:
+            return "0"
         case .tools:
             return "0"
         }

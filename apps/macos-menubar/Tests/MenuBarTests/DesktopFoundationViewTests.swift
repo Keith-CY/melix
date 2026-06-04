@@ -348,7 +348,8 @@ struct DesktopFoundationViewTests {
     @MainActor
     func toolsCategoriesMapSectionsIntoStagedWorkflowGroups() {
         #expect(DesktopToolCategory.models.sections == [.modelsLibrary, .downloads])
-        #expect(DesktopToolCategory.workflows.sections == [.training, .workflowRecipes, .syntheticDatasets, .batchRuns, .jobs])
+        #expect(DesktopToolCategory.workflows.sections == [.training, .workflowRecipes, .syntheticDatasets, .batchRuns])
+        #expect(DesktopToolCategory.jobs.sections == [.jobs])
         #expect(DesktopToolCategory.diagnostics.sections == [.diagnostics, .logs])
         #expect(DesktopToolCategory.system.sections == [.settings])
     }
@@ -376,7 +377,7 @@ struct DesktopFoundationViewTests {
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
 
-        for surface in [DesktopSurface.server, .image, .tools, .api] {
+        for surface in [DesktopSurface.server, .jobs, .image, .tools, .api] {
             viewModel.selectSurface(surface)
             let hosted = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
             let renderedTexts = renderedTextValues(in: hosted)
@@ -2603,6 +2604,9 @@ struct DesktopFoundationViewTests {
         for section in DesktopSurfaceDomain.workflows.sections {
             #expect(section.breadcrumbTitle == "Workflows / \(section.domainTitle)")
         }
+        for section in DesktopSurfaceDomain.jobs.sections {
+            #expect(section.breadcrumbTitle == "Jobs / \(section.domainTitle)")
+        }
     }
 
     @Test("jobs tool section renders navigation list selection and empty state")
@@ -2614,7 +2618,7 @@ struct DesktopFoundationViewTests {
         let emptyView = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
         let emptyTexts = renderedTextValues(in: emptyView)
 
-        #expect(viewModel.selectedSurface == .workflows)
+        #expect(viewModel.selectedSurface == .jobs)
         #expect(viewModel.selectedToolSection == .jobs)
         #expect(DesktopJobsToolSectionView.emptyStateTitle == "No Jobs Yet")
         #expect(emptyTexts.contains(DesktopJobsToolSectionView.emptyStateTitle))
