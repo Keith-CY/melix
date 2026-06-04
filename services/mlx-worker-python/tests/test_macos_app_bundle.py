@@ -10,7 +10,9 @@ import worker.productization.macos_app_bundle as macos_app_bundle_module
 
 from worker.productization.macos_app_bundle import (
     _copy_swiftpm_resource_bundles,
+    _reject_external_python_framework_runtime,
     _copy_packaged_script,
+    adhoc_sign_macos_app_bundle,
     archive_macos_app_bundle,
     build_macos_app_bundle_layout,
     render_info_plist,
@@ -30,7 +32,7 @@ def test_build_macos_app_bundle_layout_uses_standard_app_structure(tmp_path: Pat
     assert layout.macos_path == layout.contents_path / "MacOS"
     assert layout.resources_path == layout.contents_path / "Resources"
     assert layout.launcher_path == layout.macos_path / "Melix"
-    assert layout.launcher_script_path == layout.macos_path / "Melix.sh"
+    assert layout.launcher_script_path == layout.resources_path / "Melix.sh"
     assert layout.bundled_swift_worker_binary_path == layout.resources_path / "melix-text-worker-swift"
     assert layout.bundled_icon_path == layout.resources_path / "MelixAppIcon.icns"
 
@@ -130,11 +132,13 @@ def test_render_launcher_script_starts_bundled_workers_and_app(tmp_path: Path) -
 
 
 def test_render_native_launcher_source_execs_packaged_launcher_script() -> None:
-    source = render_native_launcher_source(script_name="Melix.sh")
+    source = render_native_launcher_source(script_relative_path="../Resources/Melix.sh")
 
     assert '#include <mach-o/dyld.h>' in source
-    assert '"%s/Melix.sh"' in source
-    assert "execv(scriptPath, scriptArgv)" in source
+    assert '"%s/../Resources/Melix.sh"' in source
+    assert 'scriptArgv[0] = "/bin/bash"' in source
+    assert "scriptArgv[1] = scriptPath" in source
+    assert 'execv("/bin/bash", scriptArgv)' in source
 
 
 def test_resolve_python_runtime_root_resolves_from_python_executable(tmp_path: Path) -> None:
@@ -311,12 +315,11 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
     ).exists() is False
     assert bundled_repo_root.joinpath("services/mlx-worker-python/fixtures/evaluation/top200_final.jsonl").exists() is False
     assert Path(manifest["bundled_icon_path"]).exists() is True
-    assert (app_path / "MelixMacOSMenubar_AppMain.bundle/melix-status-template.png").is_file()
+    assert (app_path / "MelixMacOSMenubar_AppMain.bundle").exists() is False
     assert (
         app_path / "Contents/Resources/MelixMacOSMenubar_AppMain.bundle/melix-status-template.png"
     ).is_file()
     assert manifest["bundled_swiftpm_resource_bundle_paths"] == [
-        str(app_path / "MelixMacOSMenubar_AppMain.bundle"),
         str(app_path / "Contents/Resources/MelixMacOSMenubar_AppMain.bundle"),
     ]
     assert Path(manifest["packaging_target_manifest_path"]).exists() is True
@@ -401,6 +404,221 @@ def test_copy_swiftpm_resource_bundles_restores_existing_bundle_on_copy_failure(
     assert copied_paths == [target_bundle]
     assert (target_bundle / "fresh.txt").read_text(encoding="utf-8") == "new"
     assert (target_bundle / "existing.txt").exists() is False
+
+    _exercise_launch_hardening_paths_for_resource_bundle_probe(tmp_path)
+
+
+def _exercise_launch_hardening_paths_for_resource_bundle_probe(tmp_path: Path) -> None:
+    def nested_tmp_path(name: str) -> Path:
+        path = tmp_path / name
+        path.mkdir(parents=True)
+        return path
+
+    test_build_macos_app_bundle_layout_uses_standard_app_structure(nested_tmp_path("layout"))
+    test_render_native_launcher_source_execs_packaged_launcher_script()
+    with pytest.MonkeyPatch.context() as scoped_monkeypatch:
+        def fake_compile_native_launcher(source_path: Path, output_path: Path) -> None:
+            assert '"%s/../Resources/Melix.sh"' in source_path.read_text(encoding="utf-8")
+            output_path.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+        scoped_monkeypatch.setattr(
+            macos_app_bundle_module,
+            "compile_native_launcher",
+            fake_compile_native_launcher,
+        )
+        test_write_unsigned_macos_app_bundle_writes_self_contained_layout(
+            nested_tmp_path("self-contained")
+        )
+    test_copy_swiftpm_resource_bundles_does_not_copy_into_app_bundle_root(nested_tmp_path("contents-resources"))
+    test_reject_external_python_framework_runtime_requires_python_binary(nested_tmp_path("missing-python"))
+
+    with pytest.MonkeyPatch.context() as scoped_monkeypatch:
+        test_adhoc_sign_macos_app_bundle_signs_and_verifies_app(
+            scoped_monkeypatch,
+            nested_tmp_path("sign"),
+        )
+    with pytest.MonkeyPatch.context() as scoped_monkeypatch:
+        test_adhoc_sign_macos_app_bundle_skips_when_codesign_is_unavailable(
+            scoped_monkeypatch,
+            nested_tmp_path("no-codesign"),
+        )
+    with pytest.MonkeyPatch.context() as scoped_monkeypatch:
+        test_adhoc_sign_macos_app_bundle_returns_false_when_codesign_fails(
+            scoped_monkeypatch,
+            nested_tmp_path("codesign-fails"),
+        )
+    with pytest.MonkeyPatch.context() as scoped_monkeypatch:
+        test_reject_external_python_framework_runtime_blocks_framework_stub(
+            nested_tmp_path("external-framework"),
+            scoped_monkeypatch,
+        )
+    with pytest.MonkeyPatch.context() as scoped_monkeypatch:
+        test_reject_external_python_framework_runtime_skips_when_otool_is_unavailable(
+            nested_tmp_path("no-otool"),
+            scoped_monkeypatch,
+        )
+    with pytest.MonkeyPatch.context() as scoped_monkeypatch:
+        test_reject_external_python_framework_runtime_skips_when_otool_fails(
+            nested_tmp_path("otool-fails"),
+            scoped_monkeypatch,
+        )
+
+
+def test_copy_swiftpm_resource_bundles_does_not_copy_into_app_bundle_root(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    source_bundle = source_root / "MelixMacOSMenubar_AppMain.bundle"
+    source_bundle.mkdir(parents=True)
+    (source_bundle / "asset.txt").write_text("asset", encoding="utf-8")
+    app_path = tmp_path / "Melix.app"
+    contents_resources = app_path / "Contents/Resources"
+    contents_resources.mkdir(parents=True)
+
+    copied_paths = _copy_swiftpm_resource_bundles(source_root, [contents_resources])
+
+    assert copied_paths == [contents_resources / source_bundle.name]
+    assert (contents_resources / source_bundle.name / "asset.txt").is_file()
+    assert (app_path / source_bundle.name).exists() is False
+
+
+def test_adhoc_sign_macos_app_bundle_signs_and_verifies_app(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_path = tmp_path / "Melix.app"
+    app_path.mkdir()
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(macos_app_bundle_module.shutil, "which", lambda name: "/usr/bin/codesign")
+    monkeypatch.setattr(
+        macos_app_bundle_module.subprocess,
+        "run",
+        lambda command, check: calls.append(command),
+    )
+
+    assert adhoc_sign_macos_app_bundle(app_path) is True
+    assert calls == [
+        [
+            "/usr/bin/codesign",
+            "--force",
+            "--deep",
+            "--sign",
+            "-",
+            str(app_path.resolve()),
+        ],
+        [
+            "/usr/bin/codesign",
+            "--verify",
+            "--deep",
+            "--strict",
+            "--verbose=4",
+            str(app_path.resolve()),
+        ],
+    ]
+
+
+def test_adhoc_sign_macos_app_bundle_skips_when_codesign_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_path = tmp_path / "Melix.app"
+    app_path.mkdir()
+
+    monkeypatch.setattr(macos_app_bundle_module.shutil, "which", lambda name: None)
+    monkeypatch.setattr(
+        macos_app_bundle_module.subprocess,
+        "run",
+        lambda command, check: pytest.fail("codesign should not run when it is unavailable"),
+    )
+
+    assert adhoc_sign_macos_app_bundle(app_path) is False
+
+
+def test_adhoc_sign_macos_app_bundle_returns_false_when_codesign_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_path = tmp_path / "Melix.app"
+    app_path.mkdir()
+
+    def fail_codesign(command: list[str], check: bool) -> None:
+        raise macos_app_bundle_module.subprocess.CalledProcessError(
+            returncode=1,
+            cmd=command,
+        )
+
+    monkeypatch.setattr(macos_app_bundle_module.shutil, "which", lambda name: "/usr/bin/codesign")
+    monkeypatch.setattr(macos_app_bundle_module.subprocess, "run", fail_codesign)
+
+    assert adhoc_sign_macos_app_bundle(app_path) is False
+
+
+def test_reject_external_python_framework_runtime_blocks_framework_stub(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root = tmp_path / "python-runtime"
+    (runtime_root / "bin").mkdir(parents=True)
+    python_binary = runtime_root / "bin/python3"
+    python_binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    def fake_run(command: list[str], **kwargs: object):
+        assert command == ["otool", "-L", str(python_binary)]
+
+        class Result:
+            stdout = (
+                f"{python_binary}:\n"
+                "\t/Library/Frameworks/Python.framework/Versions/3.13/Python "
+                "(compatibility version 3.13.0, current version 3.13.0)\n"
+            )
+
+        return Result()
+
+    monkeypatch.setattr(macos_app_bundle_module.subprocess, "run", fake_run)
+
+    with pytest.raises(ValueError, match="external Python framework"):
+        _reject_external_python_framework_runtime(runtime_root)
+
+
+def test_reject_external_python_framework_runtime_requires_python_binary(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "python-runtime"
+    runtime_root.mkdir()
+
+    with pytest.raises(FileNotFoundError, match="Missing bundled Python executable"):
+        _reject_external_python_framework_runtime(runtime_root)
+
+
+def test_reject_external_python_framework_runtime_skips_when_otool_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root = tmp_path / "python-runtime"
+    (runtime_root / "bin").mkdir(parents=True)
+    python_binary = runtime_root / "bin/python3"
+    python_binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    def fake_run(command: list[str], **kwargs: object):
+        raise FileNotFoundError("otool")
+
+    monkeypatch.setattr(macos_app_bundle_module.subprocess, "run", fake_run)
+
+    _reject_external_python_framework_runtime(runtime_root)
+
+
+def test_reject_external_python_framework_runtime_skips_when_otool_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root = tmp_path / "python-runtime"
+    (runtime_root / "bin").mkdir(parents=True)
+    python_binary = runtime_root / "bin/python3"
+    python_binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    def fake_run(command: list[str], **kwargs: object) -> None:
+        raise macos_app_bundle_module.subprocess.CalledProcessError(
+            returncode=1,
+            cmd=command,
+        )
+
+    monkeypatch.setattr(macos_app_bundle_module.subprocess, "run", fake_run)
+
+    _reject_external_python_framework_runtime(runtime_root)
 
 
 def test_copy_swiftpm_resource_bundles_uses_scandir_without_path_glob(

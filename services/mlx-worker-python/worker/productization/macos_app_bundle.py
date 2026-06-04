@@ -61,7 +61,7 @@ def build_macos_app_bundle_layout(output_path: str | Path, app_name: str = "Meli
         resources_path=resources_path,
         plist_path=contents_path / "Info.plist",
         launcher_path=macos_path / app_name,
-        launcher_script_path=macos_path / f"{app_name}.sh",
+        launcher_script_path=resources_path / f"{app_name}.sh",
         bundled_app_binary_path=resources_path / "melix-menubar",
         bundled_cli_binary_path=resources_path / "melix",
         bundled_swift_worker_binary_path=resources_path / "melix-text-worker-swift",
@@ -79,6 +79,28 @@ def build_macos_app_bundle_layout(output_path: str | Path, app_name: str = "Meli
 def resolve_python_runtime_root(python_executable: str | Path) -> Path:
     executable = Path(python_executable).expanduser().resolve()
     return executable.parent.parent
+
+
+def _reject_external_python_framework_runtime(python_runtime: str | Path) -> None:
+    runtime_root = Path(python_runtime).expanduser().resolve()
+    python_executable = runtime_root / "bin/python3"
+    if not python_executable.is_file():
+        raise FileNotFoundError(f"Missing bundled Python executable: {python_executable}")
+    try:
+        result = subprocess.run(
+            ["otool", "-L", os.fspath(python_executable)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return
+    external_framework_prefix = "/Library/Frameworks/Python.framework/"
+    if external_framework_prefix in result.stdout:
+        raise ValueError(
+            "Bundled Python runtime links to an external Python framework. "
+            f"Use a relocatable Python runtime instead: {python_executable}"
+        )
 
 
 def resolve_site_packages_root(repo_root: str | Path) -> Path:
@@ -223,7 +245,7 @@ def render_launcher_script(
     )
 
 
-def render_native_launcher_source(*, script_name: str) -> str:
+def render_native_launcher_source(*, script_relative_path: str) -> str:
     return "\n".join(
         [
             "#include <limits.h>",
@@ -248,25 +270,26 @@ def render_native_launcher_source(*, script_name: str) -> str:
             "    *lastSlash = '\\0';",
             "    char scriptPath[PATH_MAX];",
             (
-                f'    int written = snprintf(scriptPath, sizeof(scriptPath), "%s/{script_name}", '
+                f'    int written = snprintf(scriptPath, sizeof(scriptPath), "%s/{script_relative_path}", '
                 "executablePath);"
             ),
             "    if (written < 0 || written >= (int)sizeof(scriptPath)) {",
             '        fputs("Melix launcher script path is too long.\\n", stderr);',
             "        return 127;",
             "    }",
-            "    char **scriptArgv = calloc((size_t)argc + 1, sizeof(char *));",
+            "    char **scriptArgv = calloc((size_t)argc + 2, sizeof(char *));",
             "    if (scriptArgv == NULL) {",
             '        fputs("Unable to allocate Melix launcher argv.\\n", stderr);',
             "        return 127;",
             "    }",
-            "    scriptArgv[0] = scriptPath;",
+            '    scriptArgv[0] = "/bin/bash";',
+            "    scriptArgv[1] = scriptPath;",
             "    for (int index = 1; index < argc; index += 1) {",
-            "        scriptArgv[index] = argv[index];",
+            "        scriptArgv[index + 1] = argv[index];",
             "    }",
-            "    scriptArgv[argc] = NULL;",
-            "    execv(scriptPath, scriptArgv);",
-            '    perror("execv Melix launcher script");',
+            "    scriptArgv[argc + 1] = NULL;",
+            '    execv("/bin/bash", scriptArgv);',
+            '    perror("execv /bin/bash Melix launcher script");',
             "    return 127;",
             "}",
             "",
@@ -346,6 +369,7 @@ def write_unsigned_macos_app_bundle(
         raise FileNotFoundError(f"Missing Python site-packages: {python_site_packages}")
     if not resolved_icon_source_path.is_file():
         raise FileNotFoundError(f"Missing macOS app icon: {resolved_icon_source_path}")
+    _reject_external_python_framework_runtime(python_runtime)
 
     layout = build_macos_app_bundle_layout(output_path, app_name=app_name)
     target_metadata = build_packaging_target_metadata(
@@ -382,7 +406,7 @@ def write_unsigned_macos_app_bundle(
     started_at = time.perf_counter()
     bundled_resource_bundle_paths = _copy_swiftpm_resource_bundles(
         executable.parent,
-        [layout.app_path, layout.resources_path],
+        [layout.resources_path],
     )
     timings["copy_swiftpm_resource_bundles_seconds"] = elapsed_seconds(started_at)
 
@@ -440,7 +464,9 @@ def write_unsigned_macos_app_bundle(
     started_at = time.perf_counter()
     native_launcher_source_path = layout.macos_path / f"{app_name}Launcher.c"
     native_launcher_source_path.write_text(
-        render_native_launcher_source(script_name=layout.launcher_script_path.name),
+        render_native_launcher_source(
+            script_relative_path=f"../Resources/{layout.launcher_script_path.name}"
+        ),
         encoding="utf-8",
     )
     try:
@@ -453,7 +479,6 @@ def write_unsigned_macos_app_bundle(
     os.chmod(layout.embedded_env_script_path, 0o755)
     for path in (
         layout.launcher_path,
-        layout.launcher_script_path,
         layout.bundled_app_binary_path,
         layout.bundled_cli_binary_path,
         layout.bundled_swift_worker_binary_path,
@@ -535,6 +560,40 @@ def _copy_swiftpm_resource_bundles(source_root: Path, target_roots: list[Path]) 
                 shutil.rmtree(backup)
             copied_paths.append(target)
     return copied_paths
+
+
+def adhoc_sign_macos_app_bundle(app_path: str | Path) -> bool:
+    app = Path(app_path).expanduser().resolve()
+    codesign = shutil.which("codesign")
+    if codesign is None:
+        return False
+
+    try:
+        subprocess.run(
+            [
+                codesign,
+                "--force",
+                "--deep",
+                "--sign",
+                "-",
+                os.fspath(app),
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                codesign,
+                "--verify",
+                "--deep",
+                "--strict",
+                "--verbose=4",
+                os.fspath(app),
+            ],
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        return False
+    return True
 
 
 def archive_macos_app_bundle(app_path: str | Path, archive_path: str | Path) -> Path:

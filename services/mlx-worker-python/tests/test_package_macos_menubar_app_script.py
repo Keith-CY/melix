@@ -283,11 +283,31 @@ def test_package_workflow_uses_runtime_only_python_environment_for_bundle() -> N
     assert "--extra mlx" in sync_args
     assert "--no-dev" in sync_args
     assert "--frozen" in sync_args
-    assert re.search(r'PACKAGE_PYTHON="\$GITHUB_WORKSPACE/\.venv-package/bin/python"', workflow)
+    assert re.search(r'PACKAGE_VENV_PYTHON="\$GITHUB_WORKSPACE/\.venv-package/bin/python"', workflow)
+    assert 'PYTHON_RUNTIME_ROOT="$("$PACKAGE_PYTHON" -c' in workflow
     assert "--python-runtime-root" in workflow
     assert "$PYTHON_RUNTIME_ROOT" in workflow
     assert "--python-site-packages-path" in workflow
     assert "$PYTHON_SITE_PACKAGES" in workflow
+
+
+def test_package_workflow_uses_uv_managed_python_for_packaged_runtime() -> None:
+    workflow = PACKAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    runtime_step = find_workflow_step(workflow, "Prepare packaging Python runtime")
+    assert 'uv python install --install-dir "$RUNNER_TEMP/package-python" 3.12' in runtime_step
+    assert "UV_MANAGED_PYTHON=1" in runtime_step
+    assert 'find "$RUNNER_TEMP/package-python" -path "*/bin/python3"' in runtime_step
+    assert "PACKAGE_PYTHON=%s" in runtime_step
+    assert "GITHUB_ENV" in runtime_step
+    assert 'UV_PYTHON="$PACKAGE_PYTHON"' in runtime_step
+
+    package_step = find_workflow_step(workflow, "Package self-contained Melix.app")
+    assert ": \"${PACKAGE_PYTHON:?PACKAGE_PYTHON must be exported by Prepare packaging Python runtime}\"" in package_step
+    assert "uv python find" not in runtime_step
+    assert "uv python find" not in package_step
+    assert 'PYTHON_RUNTIME_ROOT="$("$PACKAGE_PYTHON" -c' in package_step
+    assert "sys.base_prefix" in package_step
 
 
 def test_package_workflow_builds_required_swift_products_before_packaging_app() -> None:
@@ -580,6 +600,7 @@ def test_main_records_archive_timing_in_json_manifest(
     )
     monkeypatch.setattr(module, "resolve_python_runtime_root", lambda executable: tmp_path / "python-runtime")
     monkeypatch.setattr(module, "resolve_site_packages_root", lambda repo_root: tmp_path / "site-packages")
+    call_order: list[str] = []
 
     def fake_write_unsigned_macos_app_bundle(**kwargs):
         return {
@@ -590,12 +611,19 @@ def test_main_records_archive_timing_in_json_manifest(
             },
         }
 
+    def fake_adhoc_sign_macos_app_bundle(app_path):
+        call_order.append("sign")
+        seen["signed_app_path"] = app_path
+        return True
+
     def fake_archive_macos_app_bundle(app_path, requested_archive_path):
+        call_order.append("archive")
         seen["app_path"] = app_path
         seen["archive_path"] = requested_archive_path
         return Path(requested_archive_path)
 
     monkeypatch.setattr(module, "write_unsigned_macos_app_bundle", fake_write_unsigned_macos_app_bundle)
+    monkeypatch.setattr(module, "adhoc_sign_macos_app_bundle", fake_adhoc_sign_macos_app_bundle)
     monkeypatch.setattr(module, "archive_macos_app_bundle", fake_archive_macos_app_bundle)
     monkeypatch.setattr(
         module.sys,
@@ -616,8 +644,13 @@ def test_main_records_archive_timing_in_json_manifest(
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["archive_path"] == str(archive_path)
+    assert payload["adhoc_signed"] is True
+    assert seen["signed_app_path"] == str(tmp_path / "Melix.app")
     assert seen["archive_path"] == str(archive_path)
+    assert call_order == ["sign", "archive"]
     assert payload["timings"]["write_total_seconds"] == 0.25
+    assert isinstance(payload["timings"]["adhoc_sign_seconds"], float)
+    assert payload["timings"]["adhoc_sign_seconds"] >= 0.0
     assert isinstance(payload["timings"]["archive_seconds"], float)
     assert payload["timings"]["archive_seconds"] >= 0.0
     assert payload["timings"]["total_seconds"] >= payload["timings"]["write_total_seconds"]
@@ -644,6 +677,7 @@ def test_main_requires_write_timing_when_archive_is_requested(
         "write_unsigned_macos_app_bundle",
         lambda **kwargs: {"app_path": str(tmp_path / "Melix.app"), "timings": {}},
     )
+    monkeypatch.setattr(module, "adhoc_sign_macos_app_bundle", lambda app_path: True)
     monkeypatch.setattr(module, "archive_macos_app_bundle", lambda app_path, requested_archive_path: archive_path)
     monkeypatch.setattr(
         module.sys,

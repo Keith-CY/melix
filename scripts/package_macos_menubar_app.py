@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "services/mlx-worker-python"))
 
 from worker.productization.macos_app_bundle import (
+    adhoc_sign_macos_app_bundle,
     archive_macos_app_bundle,
     elapsed_seconds,
     resolve_python_runtime_root,
@@ -166,16 +167,21 @@ def main() -> int:
     )
     if args.archive_path:
         started_at = time.perf_counter()
+        manifest["adhoc_signed"] = adhoc_sign_macos_app_bundle(manifest["app_path"])
+        timings = _manifest_timings(manifest)
+        timings["adhoc_sign_seconds"] = elapsed_seconds(started_at)
+        started_at = time.perf_counter()
         manifest["archive_path"] = str(
             archive_macos_app_bundle(manifest["app_path"], args.archive_path)
         )
-        timings = _manifest_timings(manifest)
         timings["archive_seconds"] = elapsed_seconds(started_at)
         write_seconds = timings.get("write_total_seconds")
         if write_seconds is None:
             raise KeyError("write_total_seconds missing from bundle manifest timings")
         timings["total_seconds"] = round(
-            float(write_seconds) + timings["archive_seconds"],
+            float(write_seconds)
+            + timings["adhoc_sign_seconds"]
+            + timings["archive_seconds"],
             6,
         )
     else:
