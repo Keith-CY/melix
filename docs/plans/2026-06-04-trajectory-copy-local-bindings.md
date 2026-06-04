@@ -13,8 +13,15 @@ covers the affected path with focused `test_command`, `coverage_command`, and
 
 Keep trajectory provenance normalization semantics unchanged while reducing
 container-dispatch overhead in `normalize_trajectory_provenance(...)`. The common
-built-in `dict` and `list` values now use direct `type(...) is ...` checks before
-falling back to the existing subclass-safe `isinstance(...)` path.
+built-in `dict` and `list` values already use direct `type(...) is ...` checks
+before falling back to the existing subclass-safe `isinstance(...)` path.
+
+This follow-up micro-slice keeps the same registered probe and narrows the next
+hot path inside `_copy_trajectory_provenance_value(...)`: keep the existing exact
+`type(...) is ...` dispatch order, but use a precomputed frozenset for exact JSON
+scalar type membership before falling back to subclass-safe `isinstance(...)` and
+`copy.deepcopy(...)` handling. This targets the leaf-heavy recursive copy path
+without changing container isolation semantics.
 
 ## Verification
 

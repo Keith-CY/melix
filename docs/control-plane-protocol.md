@@ -719,6 +719,14 @@ must return a typed `invalid_generation_bounds` response before worker
 generation starts. Stop strings are normalized into the worker sampling contract
 for both streaming and buffered responses.
 
+Prompt-budget admission uses the selected catalog model context window after
+registry discovery has applied model-artifact context evidence such as
+`config.json` `max_position_embeddings` or nested text config equivalents.
+The gateway may reject clearly over-budget prompts before worker generation
+using its local prompt-token estimate, but that estimate is a pre-worker guard
+and must be reported with source metadata when it drives a typed
+`prompt_budget_exceeded` response.
+
 The translated worker request records a request-local generation receipt under
 `execution.ext` with the `melix.generation.` prefix on these field names:
 `max_tokens_requested`, `max_tokens_effective`,

@@ -79,6 +79,7 @@ class _PlainLocalModelScan:
     model_dir: Path
     has_model_weight_files: bool
     has_generation_config: bool
+    has_tokenizer_config: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,6 +191,65 @@ def _load_model_config_payload(
 ) -> dict[str, object]:
     config_path = model_dir / "config.json"
     return _load_json_dict_file(config_path, json_cache=json_cache)
+
+
+_CONTEXT_WINDOW_KEYS = (
+    "max_position_embeddings",
+    "max_seq_len",
+    "max_seq_length",
+    "seq_length",
+    "n_positions",
+)
+_TEXT_CONTEXT_CONFIG_KEYS = ("text_config", "language_config", "llm_config")
+_TOKENIZER_MAX_LENGTH_SENTINEL = 10**18
+
+
+def _config_context_window(config_payload: Mapping[str, object] | None) -> tuple[int, str]:
+    if not isinstance(config_payload, Mapping):
+        return 0, ""
+
+    for key in _CONTEXT_WINDOW_KEYS:
+        value = _positive_int_value(config_payload.get(key))
+        if value > 0:
+            return value, f"config.{key}"
+
+    for config_key in _TEXT_CONTEXT_CONFIG_KEYS:
+        nested = config_payload.get(config_key)
+        if not isinstance(nested, Mapping):
+            continue
+        for key in _CONTEXT_WINDOW_KEYS:
+            value = _positive_int_value(nested.get(key))
+            if value > 0:
+                return value, f"config.{config_key}.{key}"
+
+    return 0, ""
+
+
+def _tokenizer_context_window(
+    model_dir: Path,
+    *,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+) -> tuple[int, str]:
+    tokenizer_payload = _load_json_dict_file(model_dir / "tokenizer_config.json", json_cache=json_cache)
+    value = _positive_int_value(tokenizer_payload.get("model_max_length"))
+    if 0 < value < _TOKENIZER_MAX_LENGTH_SENTINEL:
+        return value, "tokenizer_config.model_max_length"
+    return 0, ""
+
+
+def _model_context_window(
+    model_dir: Path,
+    config_payload: Mapping[str, object] | None,
+    *,
+    json_cache: dict[Path, tuple[int, int, dict[str, object]]] | None = None,
+    has_tokenizer_config: bool | None = None,
+) -> tuple[int, str]:
+    config_value, config_source = _config_context_window(config_payload)
+    if config_value > 0:
+        return config_value, config_source
+    if has_tokenizer_config is False:
+        return 0, ""
+    return _tokenizer_context_window(model_dir, json_cache=json_cache)
 
 
 def _load_tensor_index_payload(
@@ -2011,6 +2071,7 @@ class WorkerModelCatalog:
                 metadata={},
                 config_payload=config_payload,
                 has_generation_config=plain_local_model.has_generation_config,
+                has_tokenizer_config=plain_local_model.has_tokenizer_config,
             )
             self._apply_root_metadata(
                 model,
@@ -2097,6 +2158,7 @@ class WorkerModelCatalog:
                     has_manifest = False
                     has_config = False
                     has_generation_config = False
+                    has_tokenizer_config = False
                     has_model_weight_files = False
                     for entry in entries:
                         entry_name = entry.name
@@ -2109,6 +2171,9 @@ class WorkerModelCatalog:
                                 continue
                             if entry_name == "generation_config.json" and entry.is_file():
                                 has_generation_config = True
+                                continue
+                            if entry_name == "tokenizer_config.json" and entry.is_file():
+                                has_tokenizer_config = True
                                 continue
                             if entry_name == "model.safetensors.index.json" and entry.is_file():
                                 has_model_weight_files = True
@@ -2136,6 +2201,7 @@ class WorkerModelCatalog:
                         model_dir=current,
                         has_model_weight_files=has_model_weight_files,
                         has_generation_config=has_generation_config,
+                        has_tokenizer_config=has_tokenizer_config,
                     )
                 )
                 continue
@@ -2177,6 +2243,7 @@ class WorkerModelCatalog:
         metadata: dict[str, str],
         config_payload: Mapping[str, object] | None = None,
         has_generation_config: bool | None = None,
+        has_tokenizer_config: bool | None = None,
     ) -> common_pb2.ModelSpec:
         json_cache = getattr(self, "_json_file_cache", None)
         if json_cache is None:
@@ -2190,6 +2257,16 @@ class WorkerModelCatalog:
         }
         if config_payload is None:
             config_payload = _load_model_config_payload(model_dir, json_cache=json_cache)
+        max_context, max_context_source = _model_context_window(
+            model_dir,
+            config_payload,
+            json_cache=json_cache,
+            has_tokenizer_config=has_tokenizer_config,
+        )
+        if max_context <= 0:
+            max_context = 8192
+            max_context_source = "default.8192"
+        ext["melix.context_window.source"] = max_context_source
         ext.update(dflash_draft_metadata(config_payload))
         model_kind = "vlm" if _is_gemma4_vlm_config(config_payload) else "text"
         if model_kind == "text":
@@ -2235,7 +2312,7 @@ class WorkerModelCatalog:
             quant_profile_id="",
             parser_mode="text",
             reasoning_mode="off",
-            max_context=8192,
+            max_context=max_context,
             ext=ext,
         )
 

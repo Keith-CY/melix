@@ -2745,10 +2745,183 @@ struct OpenAIHandlerTests {
         )
 
         let loadRequest = try #require(await harness.textClient.lastLoadModelRequest)
+        let companion = try #require(await harness.catalog.model(id: "melix-dev-vlm#text"))
 
         #expect(response.statusCode == 200)
         #expect(loadRequest.model.modelID == "melix-dev-vlm#text")
         #expect(loadRequest.model.maxContext == 262_144)
+        #expect(companion.maxContext == 262_144)
+        #expect(companion.settings.ext["melix.context_window.source"] == "config.text_config.max_position_embeddings")
+    }
+
+    @Test("POST /v1/chat/completions lets 128k text companions reach worker admission")
+    func postChatCompletionsLets128KTextCompanionsReachWorkerAdmission() async throws {
+        let modelDirectory = try makeModelConfigDirectory(
+            config: """
+            {
+              "model_type": "gemma4",
+              "text_config": {
+                "model_type": "gemma4_text",
+                "max_position_embeddings": 131072
+              }
+            }
+            """
+        )
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: "req-http-gemma4-vlm-text-companion-128k",
+            textEvents: [
+                makeCompletedEvent(
+                    requestID: "req-http-gemma4-vlm-text-companion-128k",
+                    seq: 1,
+                    finishReason: "stop",
+                    assistantText: "ok"
+                ),
+            ],
+            textLoadModelHandle: "melix-dev-vlm#text::swift",
+            configureModel: { model in
+                model.maxContext = 8_192
+                model.settings.ext["melix.vlm.execution_mode"] = "multimodal"
+                model.settings.ext["melix.vlm.text_only_batch_generator"] = "true"
+                model.settings.ext.removeValue(forKey: "melix.vlm.text_companion.enabled")
+                model.settings.ext["melix.model_path"] = modelDirectory.path
+                model.settings.ext["melix.model_revision"] = "dev"
+                model.settings.ext["melix.tokenizer_hash"] = "tok-dev"
+            }
+        )
+        let densePrompt = String(repeating: "a", count: 524_288)
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": false,
+              "max_tokens": 512,
+              "messages": [
+                { "role": "user", "content": "\(densePrompt)" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: body
+            )
+        )
+
+        #expect(response.statusCode == 200)
+        let companion = try #require(await harness.catalog.model(id: "melix-dev-vlm#text"))
+        #expect(companion.maxContext == 131_072)
+        #expect(companion.settings.ext["melix.context_window.source"] == "config.text_config.max_position_embeddings")
+        #expect(await harness.textClient.lastGenerateRequest != nil)
+        #expect(await harness.vlmClient.lastGenerateRequest == nil)
+    }
+
+    @Test("POST /v1/chat/completions caches Gemma4 text companion context inference by model path")
+    func postChatCompletionsCachesGemma4TextCompanionContextInferenceByModelPath() async throws {
+        let modelDirectory = try makeModelConfigDirectory(
+            config: """
+            {
+              "model_type": "gemma4",
+              "text_config": {
+                "model_type": "gemma4_text",
+                "max_position_embeddings": 131072
+              }
+            }
+            """
+        )
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: "req-http-gemma4-vlm-text-companion-context-cache",
+            textEvents: [
+                makeCompletedEvent(
+                    requestID: "req-http-gemma4-vlm-text-companion-context-cache",
+                    seq: 1,
+                    finishReason: "stop",
+                    assistantText: "ok"
+                ),
+            ],
+            textLoadModelHandle: "melix-dev-vlm#text::swift",
+            configureModel: { model in
+                model.maxContext = 8_192
+                model.settings.ext["melix.vlm.execution_mode"] = "multimodal"
+                model.settings.ext["melix.vlm.text_only_batch_generator"] = "true"
+                model.settings.ext.removeValue(forKey: "melix.vlm.text_companion.enabled")
+                model.settings.ext["melix.model_path"] = modelDirectory.path
+                model.settings.ext["melix.model_revision"] = "dev"
+                model.settings.ext["melix.tokenizer_hash"] = "tok-dev"
+            }
+        )
+        let firstBody = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": false,
+              "messages": [
+                { "role": "user", "content": "Reply briefly." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+        let firstResponse = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: firstBody
+            )
+        )
+        _ = try await collectBody(firstResponse.body)
+        let firstCompanion = try #require(await harness.catalog.model(id: "melix-dev-vlm#text"))
+
+        #expect(firstResponse.statusCode == 200)
+        #expect(firstCompanion.maxContext == 131_072)
+
+        try """
+        {
+          "model_type": "gemma4",
+          "text_config": {
+            "model_type": "gemma4_text",
+            "max_position_embeddings": 8192
+          }
+        }
+        """.write(
+            to: modelDirectory.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        var secondModel = try #require(await harness.catalog.model(id: "melix-dev-vlm"))
+        secondModel.modelID = "melix-dev-vlm-alt"
+        secondModel.settings.alias = "Melix Vision Alt"
+        secondModel.maxContext = 8_192
+        await harness.catalog.registerModel(secondModel, reason: "test_model_registered")
+
+        let secondBody = try #require(
+            """
+            {
+              "model": "melix-dev-vlm-alt",
+              "stream": false,
+              "messages": [
+                { "role": "user", "content": "Reply briefly." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+        let secondResponse = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: secondBody
+            )
+        )
+        _ = try await collectBody(secondResponse.body)
+        let secondCompanion = try #require(await harness.catalog.model(id: "melix-dev-vlm-alt#text"))
+
+        #expect(secondResponse.statusCode == 200)
+        #expect(secondCompanion.maxContext == 131_072)
+        #expect(secondCompanion.settings.ext["melix.context_window.source"] == "config.text_config.max_position_embeddings")
     }
 
     @Test("POST /v1/chat/completions keeps Gemma4 VLM media requests on the Swift vision route")
@@ -11278,6 +11451,50 @@ struct OpenAIHandlerTests {
         #expect(response.statusCode == 200)
         #expect(message["content"] as? String == "ok")
         #expect(await workerClient.lastGenerateRequest != nil)
+    }
+
+    @Test("long context admission still rejects prompts beyond estimate slack")
+    func longContextAdmissionStillRejectsPromptsBeyondEstimateSlack() async throws {
+        let workerClient = ScriptedWorkerClient(events: [])
+        var model = warmModel()
+        model.maxContext = 131_072
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [model]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+                abortRegistry: AbortRegistry()
+            ),
+            translator: ChatRequestTranslator(requestIDGenerator: { "req-long-context-over-budget" })
+        )
+        let densePrompt = String(repeating: "a", count: 540_000)
+        let body = try #require(
+            """
+            {
+              "model": "melix-dev-text",
+              "stream": false,
+              "max_tokens": 512,
+              "messages": [
+                { "role": "user", "content": "\(densePrompt)" }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(method: .post, path: "/v1/chat/completions", headers: [:], body: body)
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+        let metadata = try #require(error["prompt_token_metadata"] as? [String: Any])
+
+        #expect(response.statusCode == 400)
+        #expect(error["code"] as? String == "prompt_budget_exceeded")
+        #expect(metadata["context_window_tokens"] as? Int == 131_072)
+        #expect(metadata["max_prompt_tokens_effective"] as? Int == 130_560)
+        #expect(metadata["prompt_tokens_estimate_source"] as? String == "control_plane_heuristic_utf8_whitespace")
+        #expect(metadata["prompt_tokens_estimate_slack"] as? Int == 2_048)
+        #expect(metadata["prompt_tokens_reject_threshold"] as? Int == 132_608)
+        #expect(await workerClient.lastGenerateRequest == nil)
     }
 
     @Test("chat requests return 409 when the model is not ready")

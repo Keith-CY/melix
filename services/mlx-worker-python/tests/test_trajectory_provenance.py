@@ -373,7 +373,21 @@ def test_copy_trajectory_provenance_value_falls_back_for_custom_mutables() -> No
         def __init__(self, value: int) -> None:
             self.value = value
 
-    original = {"items": [CustomMutable(1)], "tuple": (CustomMutable(2),)}
+    class DictSubclass(dict):
+        pass
+
+    class ListSubclass(list):
+        pass
+
+    class TupleSubclass(tuple):
+        pass
+
+    original = {
+        "items": ListSubclass([CustomMutable(1)]),
+        "tuple": TupleSubclass((CustomMutable(2),)),
+        "plain_tuple": (CustomMutable(4),),
+        "mapping": DictSubclass({"nested": CustomMutable(3)}),
+    }
 
     copied = _copy_trajectory_provenance_value(original)
 
@@ -384,6 +398,12 @@ def test_copy_trajectory_provenance_value_falls_back_for_custom_mutables() -> No
     assert copied["tuple"] is not original["tuple"]
     assert copied["tuple"][0] is not original["tuple"][0]
     assert copied["tuple"][0].value == 2
+    assert copied["plain_tuple"] is not original["plain_tuple"]
+    assert copied["plain_tuple"][0] is not original["plain_tuple"][0]
+    assert copied["plain_tuple"][0].value == 4
+    assert copied["mapping"] is not original["mapping"]
+    assert copied["mapping"]["nested"] is not original["mapping"]["nested"]
+    assert copied["mapping"]["nested"].value == 3
 
 
 def test_train_lora_records_agentic_trajectory_provenance_in_adapter_manifest(
