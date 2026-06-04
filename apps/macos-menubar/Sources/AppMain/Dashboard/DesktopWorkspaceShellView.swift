@@ -57,6 +57,14 @@ struct DesktopWorkspaceShellView: View {
                         showsSidebar: paneVisibilityBinding(.sidebar, for: .workflows),
                         showsInspector: paneVisibilityBinding(.inspector, for: .workflows)
                     )
+                case .jobs:
+                    DesktopDomainWorkspaceView(
+                        domain: .jobs,
+                        viewModel: viewModel,
+                        foundation: foundation,
+                        showsSidebar: paneVisibilityBinding(.sidebar, for: .jobs),
+                        showsInspector: paneVisibilityBinding(.inspector, for: .jobs)
+                    )
                 case .diagnostics:
                     DesktopDomainWorkspaceView(
                         domain: .diagnostics,
@@ -2121,6 +2129,22 @@ extension DesktopInspectorContractView where ExtraContent == EmptyView {
     }
 }
 
+enum DesktopInspectorEvidenceBuilder {
+    static func jobsEvidence(
+        artifactRoot: String?,
+        detailLogPath: String?,
+        logSnapshotPath: String?,
+        artifactPaths: [String]
+    ) -> [String] {
+        let basePaths = [
+            artifactRoot,
+            detailLogPath,
+            logSnapshotPath,
+        ]
+        return (basePaths + artifactPaths.map(Optional.some)).compactMap { $0 }.filter { $0.isEmpty == false }
+    }
+}
+
 private struct DesktopDomainWorkspaceView: View {
     let domain: DesktopSurfaceDomain
     let viewModel: RuntimeViewModel
@@ -2217,7 +2241,9 @@ private struct DesktopDomainWorkspaceView: View {
         case .models:
             return "Manage local model assets, downloads, compatibility, quantization, and adapters."
         case .workflows:
-            return "Run training, recipes, synthetic data generation, batch jobs, and job review."
+            return "Run training, recipes, synthetic dataset generation, and batch operations."
+        case .jobs:
+            return "Review durable operation state, queue progress, history, and artifact lineage across domains."
         case .diagnostics:
             return "Audit benchmark, matrix, evaluation, and log evidence for runtime behavior."
         case .settings:
@@ -2231,6 +2257,8 @@ private struct DesktopDomainWorkspaceView: View {
             return viewModel.primaryModel?.stateText ?? "No primary model"
         case .workflows:
             return viewModel.lastModelOperation?.stage ?? "No active workflow"
+        case .jobs:
+            return viewModel.runtimeJobsEmptyStateTitle
         case .diagnostics:
             return viewModel.diagnosticsRunMonitor?.statusText ?? "Ready for diagnostics"
         case .settings:
@@ -2244,6 +2272,8 @@ private struct DesktopDomainWorkspaceView: View {
             return viewModel.primaryModel?.memoryText ?? "Model metrics unavailable"
         case .workflows:
             return viewModel.lastModelOperation?.operation ?? "No operation recorded"
+        case .jobs:
+            return "\(viewModel.runtimeJobs.count) jobs tracked"
         case .diagnostics:
             return viewModel.diagnosticsRunMonitor?.primaryMetricText ?? "No recent diagnostic metric"
         case .settings:
@@ -2265,7 +2295,16 @@ private struct DesktopDomainWorkspaceView: View {
         case .workflows:
             return [
                 DesktopInspectorActionRow(title: "Open Jobs", systemImage: "list.bullet.rectangle.portrait") {
-                    viewModel.selectToolSection(.jobs)
+                    viewModel.selectSurface(.jobs)
+                },
+                DesktopInspectorActionRow(title: "Open Diagnostics", systemImage: "stethoscope") {
+                    viewModel.selectToolSection(.diagnostics)
+                },
+            ]
+        case .jobs:
+            return [
+                DesktopInspectorActionRow(title: "Refresh Jobs", systemImage: "arrow.clockwise") {
+                    Task { await viewModel.refreshRuntimeJobs() }
                 },
                 DesktopInspectorActionRow(title: "Open Diagnostics", systemImage: "stethoscope") {
                     viewModel.selectToolSection(.diagnostics)
@@ -2295,6 +2334,13 @@ private struct DesktopDomainWorkspaceView: View {
             return [viewModel.lastModelOperation?.outputPath, viewModel.primaryModel?.modelID].compactMap { $0 }.filter { $0.isEmpty == false }
         case .workflows:
             return [viewModel.lastModelOperation?.outputPath, viewModel.selectedRuntimeJob?.artifactRoot].compactMap { $0 }.filter { $0.isEmpty == false }
+        case .jobs:
+            return DesktopInspectorEvidenceBuilder.jobsEvidence(
+                artifactRoot: viewModel.selectedRuntimeJob?.artifactRoot,
+                detailLogPath: viewModel.selectedRuntimeJobDetail?.logs.path,
+                logSnapshotPath: viewModel.selectedRuntimeJobLogSnapshot?.logPath,
+                artifactPaths: viewModel.selectedRuntimeJobArtifactSnapshot?.artifacts.compactMap { $0.path } ?? []
+            )
         case .diagnostics:
             return [viewModel.diagnosticsRunMonitor?.artifactText, viewModel.diagnosticsRunMonitor?.detailText].compactMap { $0 }.filter { $0.isEmpty == false }
         case .settings:

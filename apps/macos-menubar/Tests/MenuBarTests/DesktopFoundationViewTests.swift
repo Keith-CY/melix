@@ -348,7 +348,8 @@ struct DesktopFoundationViewTests {
     @MainActor
     func toolsCategoriesMapSectionsIntoStagedWorkflowGroups() {
         #expect(DesktopToolCategory.models.sections == [.modelsLibrary, .downloads])
-        #expect(DesktopToolCategory.workflows.sections == [.training, .workflowRecipes, .syntheticDatasets, .batchRuns, .jobs])
+        #expect(DesktopToolCategory.workflows.sections == [.training, .workflowRecipes, .syntheticDatasets, .batchRuns])
+        #expect(DesktopToolCategory.jobs.sections == [.jobs])
         #expect(DesktopToolCategory.diagnostics.sections == [.diagnostics, .logs])
         #expect(DesktopToolCategory.system.sections == [.settings])
     }
@@ -376,7 +377,7 @@ struct DesktopFoundationViewTests {
         let viewModel = RuntimeViewModel(client: client)
         await viewModel.start()
 
-        for surface in [DesktopSurface.server, .image, .tools, .api] {
+        for surface in [DesktopSurface.server, .jobs, .image, .tools, .api] {
             viewModel.selectSurface(surface)
             let hosted = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
             let renderedTexts = renderedTextValues(in: hosted)
@@ -2603,6 +2604,9 @@ struct DesktopFoundationViewTests {
         for section in DesktopSurfaceDomain.workflows.sections {
             #expect(section.breadcrumbTitle == "Workflows / \(section.domainTitle)")
         }
+        for section in DesktopSurfaceDomain.jobs.sections {
+            #expect(section.breadcrumbTitle == "Jobs / \(section.domainTitle)")
+        }
     }
 
     @Test("jobs tool section renders navigation list selection and empty state")
@@ -2614,7 +2618,7 @@ struct DesktopFoundationViewTests {
         let emptyView = hostView(DesktopJobsToolSectionView(viewModel: viewModel))
         let emptyTexts = renderedTextValues(in: emptyView)
 
-        #expect(viewModel.selectedSurface == .workflows)
+        #expect(viewModel.selectedSurface == .jobs)
         #expect(viewModel.selectedToolSection == .jobs)
         #expect(DesktopJobsToolSectionView.emptyStateTitle == "No Jobs Yet")
         #expect(emptyTexts.contains(DesktopJobsToolSectionView.emptyStateTitle))
@@ -2656,6 +2660,31 @@ struct DesktopFoundationViewTests {
 
         let shellView = hostView(DesktopWorkspaceShellView(viewModel: viewModel))
         #expect(shellView.subviews.isEmpty == false)
+    }
+
+    @Test("jobs inspector evidence maps every fetched artifact path")
+    @MainActor
+    func jobsInspectorEvidenceMapsEveryFetchedArtifactPath() {
+        let evidence = DesktopInspectorEvidenceBuilder.jobsEvidence(
+            artifactRoot: "/tmp/melix/jobs/eval-1808",
+            detailLogPath: "/tmp/melix/jobs/eval-1808/detail.log",
+            logSnapshotPath: "/tmp/melix/jobs/eval-1808/live.log",
+            artifactPaths: [
+                "/tmp/melix/jobs/eval-1808/manifest.json",
+                "/tmp/melix/jobs/eval-1808/metrics.json",
+                "",
+                "/tmp/melix/jobs/eval-1808/report.md",
+            ]
+        )
+
+        #expect(evidence == [
+            "/tmp/melix/jobs/eval-1808",
+            "/tmp/melix/jobs/eval-1808/detail.log",
+            "/tmp/melix/jobs/eval-1808/live.log",
+            "/tmp/melix/jobs/eval-1808/manifest.json",
+            "/tmp/melix/jobs/eval-1808/metrics.json",
+            "/tmp/melix/jobs/eval-1808/report.md",
+        ])
     }
 
     @Test("batch runs tool section renders model config inputs and validation messages")
