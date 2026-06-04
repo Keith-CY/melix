@@ -441,27 +441,41 @@ def _prune_python_runtime_baggage(python_runtime: Path) -> dict[str, int]:
     return result
 
 
-def _is_python_runtime_executable(path: Path) -> bool:
-    if path.parent.name != "bin":
-        return False
-    if path.name in _PYTHON_RUNTIME_EXECUTABLE_NAMES:
-        return True
-    return path.name.startswith("python3.")
-
-
 def _iter_python_native_binary_candidates(
     python_runtime_path: Path,
     site_packages_path: Path,
 ) -> list[Path]:
-    candidates: list[Path] = []
-    for path in python_runtime_path.rglob("*"):
-        if path.is_symlink() or not path.is_file():
-            continue
-        if path.suffix in _PYTHON_NATIVE_BINARY_SUFFIXES or _is_python_runtime_executable(path):
-            candidates.append(path)
-    for path in site_packages_path.rglob("*"):
-        if not path.is_symlink() and path.is_file() and path.suffix in _PYTHON_NATIVE_BINARY_SUFFIXES:
-            candidates.append(path)
+    def collect(root_path: Path, *, include_runtime_executables: bool) -> list[Path]:
+        selected: list[Path] = []
+        stack = [root_path]
+        while stack:
+            current = stack.pop()
+            try:
+                with os.scandir(current) as iterator:
+                    entries = sorted(iterator, key=lambda entry: entry.name)
+            except OSError:
+                continue
+            for entry in reversed(entries):
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append(Path(entry.path))
+                        continue
+                    if entry.is_symlink() or not entry.is_file(follow_symlinks=False):
+                        continue
+                except OSError:
+                    continue
+                suffix = os.path.splitext(entry.name)[1]
+                if suffix in _PYTHON_NATIVE_BINARY_SUFFIXES:
+                    selected.append(Path(entry.path))
+                    continue
+                if not include_runtime_executables or os.path.basename(os.path.dirname(entry.path)) != "bin":
+                    continue
+                if entry.name in _PYTHON_RUNTIME_EXECUTABLE_NAMES or entry.name.startswith("python3."):
+                    selected.append(Path(entry.path))
+        return selected
+
+    candidates = collect(python_runtime_path, include_runtime_executables=True)
+    candidates.extend(collect(site_packages_path, include_runtime_executables=False))
     return candidates
 
 
