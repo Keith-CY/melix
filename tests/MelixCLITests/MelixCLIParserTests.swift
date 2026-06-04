@@ -609,6 +609,34 @@ struct MelixCLIParserTests {
         #expect(options.suites == ["event_extraction"])
     }
 
+    @Test("parses topic membership eval run without generic field mapping")
+    func parsesTopicMembershipEvalRunWithoutGenericFieldMapping() throws {
+        let command = try MelixCLIParser.parse([
+            "eval", "run",
+            "--model-id", "melix-dev-text",
+            "--source-jsonl", "/tmp/topic-membership.jsonl",
+            "--scoring-mode", "topic_membership_strict_micro_f1",
+            "--eval-prompt-file", "/tmp/topic-prompt.md",
+            "--sample-size", "413",
+            "--json",
+        ])
+
+        guard case .evalRun(let options) = command else {
+            Issue.record("Expected eval run command")
+            return
+        }
+
+        #expect(options.modelID == "melix-dev-text")
+        #expect(options.suites == ["topic_membership"])
+        #expect(options.source == .localJSONL(path: "/tmp/topic-membership.jsonl"))
+        #expect(options.fieldMapping.inputTextPath == "")
+        #expect(options.fieldMapping.targetPath == "")
+        #expect(options.profile.scoringMode == "topic_membership_strict_micro_f1")
+        #expect(options.evalPromptFile == "/tmp/topic-prompt.md")
+        #expect(options.sampleSize == 413)
+        #expect(options.json)
+    }
+
     @Test("remote server parser supports provider presets and rejects base URL overrides")
     func remoteServerParserSupportsProviderPresetsAndRejectsBaseURLOverrides() throws {
         let gemini = try MelixCLIParser.parse([
@@ -4153,6 +4181,39 @@ struct MelixCLIParserTests {
         #expect(options.profile.scoringMode == "normalized_exact_match")
         #expect(options.profile.threshold == 0.8)
         #expect(options.profile.ignoredPaths == ["metadata.trace_id"])
+        #expect(options.json)
+    }
+
+    @Test("parses topic membership eval compare with prompt and semantic judge")
+    func parsesTopicMembershipEvalCompareWithPromptAndSemanticJudge() throws {
+        let command = try MelixCLIParser.parse([
+            "eval",
+            "compare",
+            "--model-id", "melix-dev-text",
+            "--target-adapter", "/tmp/topic.adapter.json",
+            "--source-jsonl", "/tmp/topic-membership.jsonl",
+            "--scoring-mode", "topic_membership_semantic_micro_f1",
+            "--eval-prompt-file", "/tmp/topic-prompt.md",
+            "--semantic-judge-remote-server-id", "judge",
+            "--semantic-judge-model", "judge-model",
+            "--json",
+        ])
+
+        guard case .evalCompare(let options) = command else {
+            Issue.record("Expected evalCompare command")
+            return
+        }
+
+        #expect(options.modelID == "melix-dev-text")
+        #expect(options.targetAdapterManifestPaths == ["/tmp/topic.adapter.json"])
+        #expect(options.suites == ["topic_membership"])
+        #expect(options.source == .localJSONL(path: "/tmp/topic-membership.jsonl"))
+        #expect(options.fieldMapping.inputTextPath == "")
+        #expect(options.fieldMapping.targetPath == "")
+        #expect(options.profile.scoringMode == "topic_membership_semantic_micro_f1")
+        #expect(options.evalPromptFile == "/tmp/topic-prompt.md")
+        #expect(options.semanticJudgeRemoteServerID == "judge")
+        #expect(options.semanticJudgeModelID == "judge-model")
         #expect(options.json)
     }
 
