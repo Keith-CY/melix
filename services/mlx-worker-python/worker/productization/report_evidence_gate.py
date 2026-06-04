@@ -252,7 +252,11 @@ def _release_matrix_rows(
         for role in roles:
             if role not in matrix_roles:
                 continue
-            evidence_by_role.setdefault(role, set()).update(evidence_ids)
+            role_evidence_ids = evidence_by_role.get(role)
+            if role_evidence_ids is None:
+                evidence_by_role[role] = set(evidence_ids)
+            else:
+                role_evidence_ids.update(evidence_ids)
 
     rows: list[dict[str, object]] = []
     for role, rule in matrix.items():
