@@ -214,9 +214,23 @@ jobs:
 
       - name: Prepare packaging Python runtime
         run: |
+          bash scripts/ci_progress.sh "Package app managed Python install" \
+            env UV_CACHE_DIR="$GITHUB_WORKSPACE/.uv-cache" \
+            uv python install --install-dir "$RUNNER_TEMP/package-python" 3.12
+          PACKAGE_PYTHON="$(
+            find "$RUNNER_TEMP/package-python" -path "*/bin/python3" -print | sort | head -n 1
+          )"
+          if [ -z "$PACKAGE_PYTHON" ] || [ ! -x "$PACKAGE_PYTHON" ]; then
+            printf 'fatal: uv-managed package Python not found under %s\n' "$RUNNER_TEMP/package-python" >&2
+            find "$RUNNER_TEMP/package-python" -maxdepth 4 -print >&2
+            exit 1
+          fi
+          printf 'PACKAGE_PYTHON=%s\n' "$PACKAGE_PYTHON" >> "$GITHUB_ENV"
           bash scripts/ci_progress.sh "Package app Python runtime sync" \
             env UV_PROJECT_ENVIRONMENT="$GITHUB_WORKSPACE/.venv-package" \
             UV_CACHE_DIR="$GITHUB_WORKSPACE/.uv-cache" \
+            UV_MANAGED_PYTHON=1 \
+            UV_PYTHON="$PACKAGE_PYTHON" \
             uv sync --project services/mlx-worker-python --extra mlx --no-dev --frozen
 
       - name: Compute build metadata
@@ -258,12 +272,13 @@ jobs:
       - name: Package self-contained Melix.app
         id: package-app
         run: |
-          PACKAGE_PYTHON="$GITHUB_WORKSPACE/.venv-package/bin/python"
-          PYTHON_RUNTIME_ROOT="$(dirname "$(dirname "$(realpath "$PACKAGE_PYTHON")")")"
-          PYTHON_SITE_PACKAGES="$("$PACKAGE_PYTHON" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+          : "${PACKAGE_PYTHON:?PACKAGE_PYTHON must be exported by Prepare packaging Python runtime}"
+          PACKAGE_VENV_PYTHON="$GITHUB_WORKSPACE/.venv-package/bin/python"
+          PYTHON_RUNTIME_ROOT="$("$PACKAGE_PYTHON" -c 'import sys; print(sys.base_prefix)')"
+          PYTHON_SITE_PACKAGES="$("$PACKAGE_VENV_PYTHON" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
           bash scripts/ci_progress.sh "Package app bundle assembly" \
             env PYTHONPATH="$GITHUB_WORKSPACE:$GITHUB_WORKSPACE/services/mlx-worker-python" \
-            "$PACKAGE_PYTHON" scripts/package_macos_menubar_app.py \
+            "$PACKAGE_VENV_PYTHON" scripts/package_macos_menubar_app.py \
             --repo-root "$GITHUB_WORKSPACE" \
             --output-path "$RUNNER_TEMP/Melix.app" \
             --archive-path "$RUNNER_TEMP/${{ steps.compute-build-metadata.outputs.artifact_name }}.zip" \
