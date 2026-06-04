@@ -14,6 +14,7 @@ from worker.productization.macos_app_bundle import (
     _reject_external_python_framework_runtime,
     _copy_packaged_script,
     _is_macho_file,
+    _iter_nested_macho_signing_targets,
     _iter_python_native_binary_candidates,
     _path_size_bytes,
     _prune_python_package_baggage,
@@ -919,6 +920,41 @@ def test_macho_detection_handles_non_files_and_read_errors(
 
     monkeypatch.setattr(Path, "open", fail_open)
     assert _is_macho_file(native) is False
+
+
+def test_iter_nested_macho_signing_targets_uses_os_walk_without_path_rglob(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_path = tmp_path / "Melix.app"
+    macos_dir = app_path / "Contents/MacOS"
+    resources_dir = app_path / "Contents/Resources"
+    nested_dir = resources_dir / "Nested.bundle/Contents/MacOS"
+    macos_dir.mkdir(parents=True)
+    nested_dir.mkdir(parents=True)
+
+    launcher = macos_dir / "Melix"
+    launcher.write_bytes(b"\xfe\xed\xfa\xcflauncher")
+    helper = nested_dir / "Helper"
+    helper.write_bytes(b"\xcf\xfa\xed\xfehelper")
+    plain = resources_dir / "plain.txt"
+    plain.write_text("not native\n", encoding="utf-8")
+
+    external_dir = tmp_path / "external"
+    external_dir.mkdir()
+    (external_dir / "ExternalHelper").write_bytes(b"\xfe\xed\xfa\xcfexternal")
+    linked_dir = resources_dir / "Linked.bundle"
+    linked_dir.symlink_to(external_dir, target_is_directory=True)
+
+    def fail_rglob(self: Path, pattern: str):  # pragma: no cover - regression guard
+        raise AssertionError("_iter_nested_macho_signing_targets() should not allocate Path.rglob() trees")
+
+    monkeypatch.setattr(Path, "rglob", fail_rglob)
+
+    assert _iter_nested_macho_signing_targets(app_path) == [
+        launcher,
+        helper,
+    ]
 
 
 def test_copy_swiftpm_resource_bundles_restores_existing_bundle_on_copy_failure(

@@ -539,9 +539,12 @@ def _is_macho_file(path: Path) -> bool:
 
 def _iter_nested_macho_signing_targets(app_path: Path) -> list[Path]:
     targets: list[Path] = []
-    for path in app_path.rglob("*"):
-        if _is_macho_file(path):
-            targets.append(path)
+    for root, _dirnames, filenames in os.walk(app_path, followlinks=False):
+        root_path = Path(root)
+        for filename in filenames:
+            path = root_path / filename
+            if _is_macho_file(path):
+                targets.append(path)
     targets.sort(key=lambda candidate: candidate.as_posix())
     return targets
 
