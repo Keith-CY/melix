@@ -367,6 +367,23 @@ def test_card_data_tag_mlx_check_avoids_string_list_materialization(monkeypatch:
     ) is False
 
 
+def test_tag_payload_mlx_list_detection_uses_single_iteration_pass() -> None:
+    class CountingTagList(list):
+        contains_calls = 0
+
+        def __contains__(self, value: object) -> bool:  # pragma: no cover
+            self.contains_calls += 1
+            return super().__contains__(value)
+
+    matching_tags = CountingTagList(["Text-Generation", "MLX", object()])
+    non_matching_tags = CountingTagList(["Text-Generation", object()])
+
+    assert hub_catalog_module._tag_payload_contains_mlx(matching_tags) is True
+    assert hub_catalog_module._tag_payload_contains_mlx(non_matching_tags) is False
+    assert matching_tags.contains_calls == 0
+    assert non_matching_tags.contains_calls == 0
+
+
 def test_get_model_card_raises_invalid_argument_for_blank_repo_id() -> None:
     catalog = HubCatalog()
 
