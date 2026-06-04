@@ -5470,6 +5470,9 @@ def test_package_macos_resolve_probe_script_emits_metrics(capsys: pytest.Capture
     assert metrics["sample_count"] == 9.0
     assert metrics["triple_count"] == 1500.0
     assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["cli_elapsed_ms_mean"] >= 0.0
+    assert metrics["tail_debug_elapsed_ms_mean"] >= 0.0
+    assert metrics["cli_tail_debug_elapsed_ms_mean"] >= 0.0
 
 
 def test_melix_metrics_snapshot_discovery_probe_script_emits_metrics(
@@ -5492,6 +5495,10 @@ def test_package_macos_resolve_probe_rejects_unexpected_resolution(monkeypatch: 
         @staticmethod
         def resolve_built_binary(repo_root: Path) -> Path:
             return repo_root / "apps/macos-menubar/.build/arch-0001/debug/melix-menubar"
+
+        @staticmethod
+        def resolve_built_cli_binary(repo_root: Path) -> Path:
+            return repo_root / ".build/arch-0001/debug/melix"
 
     monkeypatch.setitem(
         probe_script["main"].__globals__,

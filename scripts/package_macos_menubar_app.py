@@ -36,6 +36,7 @@ def _resolve_built_product(build_root: Path, product_name: str) -> Path | None:
 
     direct_debug_candidate = os.path.join(build_root_path, _DEBUG_BUILD_CONFIGURATION, product_name)
     lex_first_triple_name: str | None = None
+    triple_names: list[str] = []
     try:
         with os.scandir(build_root) as entries:
             for entry in entries:
@@ -44,6 +45,7 @@ def _resolve_built_product(build_root: Path, product_name: str) -> Path | None:
                         continue
                 except OSError:
                     continue
+                triple_names.append(entry.name)
                 if lex_first_triple_name is None or entry.name < lex_first_triple_name:
                     lex_first_triple_name = entry.name
     except OSError:
@@ -72,20 +74,7 @@ def _resolve_built_product(build_root: Path, product_name: str) -> Path | None:
     if os.path.isfile(lex_first_debug_candidate):
         return Path(lex_first_debug_candidate)
 
-    try:
-        with os.scandir(build_root) as entries:
-            remaining_triple_names: list[str] = []
-            for entry in entries:
-                if entry.name == lex_first_triple_name:
-                    continue
-                try:
-                    if not entry.is_dir(follow_symlinks=False):
-                        continue
-                except OSError:
-                    continue
-                remaining_triple_names.append(entry.name)
-    except OSError:
-        return None
+    remaining_triple_names = [name for name in triple_names if name != lex_first_triple_name]
     remaining_triple_names.sort()
     for triple_name in remaining_triple_names:
         candidate = os.path.join(build_root_path, triple_name, _RELEASE_BUILD_CONFIGURATION, product_name)

@@ -278,6 +278,34 @@ def test_resolve_built_product_uses_debug_fallbacks_after_release_candidates(
     assert module._resolve_built_product(remaining_root, "melix") == later_debug
 
 
+def test_resolve_built_product_reuses_initial_scan_for_remaining_debug_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    build_root = tmp_path / ".build"
+    first_triple = build_root / "arm64-apple-macosx"
+    later_debug = build_root / "x86_64-apple-macosx/debug/melix"
+    first_triple.mkdir(parents=True)
+    later_debug.parent.mkdir(parents=True)
+    later_debug.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    original_scandir = module.os.scandir
+    scandir_calls = 0
+
+    def counting_scandir(path: Path):
+        nonlocal scandir_calls
+        scandir_calls += 1
+        if scandir_calls > 1:
+            raise AssertionError("remaining fallback candidates should reuse the initial os.scandir() results")  # pragma: no cover
+        return original_scandir(path)
+
+    monkeypatch.setattr(module.os, "scandir", counting_scandir)
+
+    assert module._resolve_built_product(build_root, "melix") == later_debug
+    assert scandir_calls == 1
+
+
 def test_resolve_built_product_uses_remaining_release_before_remaining_debug(
     tmp_path: Path,
 ) -> None:
