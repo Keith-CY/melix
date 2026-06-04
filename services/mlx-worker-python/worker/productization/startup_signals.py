@@ -139,9 +139,9 @@ def compare_versions(left: str, right: str) -> int:
         return 0
     left_length = len(left)
     right_length = len(right)
-    if left_length == right_length + 1 and left and left[0] == "v" and left.startswith(right, 1):
+    if left_length == right_length + 1 and left[0] == "v" and left.startswith(right, 1):
         return 0
-    if right_length == left_length + 1 and right and right[0] == "v" and right.startswith(left, 1):
+    if right_length == left_length + 1 and right[0] == "v" and right.startswith(left, 1):
         return 0
     left_cleaned = left.strip()
     right_cleaned = right.strip()
