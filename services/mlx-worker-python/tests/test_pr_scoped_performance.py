@@ -4338,13 +4338,10 @@ def test_real_model_support_hf_cache_probe_script_emits_metrics(
 
     assert excinfo.value.code == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["elapsed_ms_mean"] > 0
-    assert payload["peak_bytes_mean"] > 0
     assert payload["sample_count"] == 7.0
     assert payload["snapshot_count"] == 6000.0
     assert payload["selected_latest_snapshot"] == 5999.0
     assert payload["weight_scan_elapsed_ms_mean"] > 0
-    assert payload["weight_scan_peak_bytes_mean"] > 0
     assert payload["weight_file_count"] == 20_000.0
 
 

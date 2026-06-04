@@ -19,7 +19,9 @@ PHASE2_DRAFT_MODEL_PATH_ENV = "MELIX_PHASE2_DRAFT_MODEL_PATH"
 _MANAGED_MODEL_ROOT_ENV = "MELIX_MANAGED_MODEL_ROOT"
 _LOGGER = logging.getLogger(__name__)
 _REAL_MODEL_WEIGHT_SUFFIXES = (".safetensors", ".gguf", ".bin", ".pt", ".pth", ".mlx")
+_REAL_MODEL_COMMON_WEIGHT_FILENAMES = ("model.safetensors", "pytorch_model.bin")
 _REAL_MODEL_WEIGHT_FILENAMES = {
+    *_REAL_MODEL_COMMON_WEIGHT_FILENAMES,
     "model.safetensors.index.json",
     "pytorch_model.bin.index.json",
 }
@@ -328,6 +330,10 @@ def _is_deterministic_development_model(model_id: str) -> bool:
 def _has_recognized_model_weight_files(path: Path) -> bool:
     if not path.is_dir():
         return False
+    path_string = os.fspath(path)
+    for filename in _REAL_MODEL_COMMON_WEIGHT_FILENAMES:
+        if os.path.isfile(os.path.join(path_string, filename)):
+            return True
     with os.scandir(path) as entries:
         for entry in entries:
             try:
