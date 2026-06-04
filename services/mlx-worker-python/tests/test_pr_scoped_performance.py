@@ -3330,6 +3330,8 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
         "model_listing_old_mean_ms",
         "model_listing_old_peak_bytes_mean",
         "key_old_mean_ms",
+        "key_delta_ms",
+        "key_speedup",
     ):
         assert native_mtp_metrics[metric_key]["direction"] == "informational"
         assert "warn_pct" not in native_mtp_metrics[metric_key]
@@ -3337,8 +3339,6 @@ def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -
     assert native_mtp_metrics["model_listing_delta_ms"]["direction"] == "lower_is_better"
     assert native_mtp_metrics["model_listing_speedup"]["direction"] == "higher_is_better"
     assert native_mtp_metrics["key_new_mean_ms"]["direction"] == "lower_is_better"
-    assert native_mtp_metrics["key_delta_ms"]["direction"] == "lower_is_better"
-    assert native_mtp_metrics["key_speedup"]["direction"] == "higher_is_better"
 
     changed_scope_metrics = {
         metric["key"]: metric
