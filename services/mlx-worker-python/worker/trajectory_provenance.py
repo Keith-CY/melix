@@ -30,6 +30,7 @@ TRAJECTORY_PROVENANCE_FIELDS = (
 TRAJECTORY_PROVENANCE_CSV_FIELDS = TRAJECTORY_PROVENANCE_FIELDS
 
 _JSON_IMMUTABLE_TYPES = (str, int, float, bool, type(None))
+_JSON_IMMUTABLE_TYPE_SET = frozenset(_JSON_IMMUTABLE_TYPES)
 _TRAJECTORY_MANIFEST_OPTIONAL_FIELD_MAP = (
     ("trajectory_toolset_version", "trajectory_toolset_version"),
     ("trajectory_registry_schema_version", "trajectory_registry_schema_version"),
@@ -49,7 +50,7 @@ def _copy_trajectory_provenance_value(value: Any) -> Any:
         return [_copy_trajectory_provenance_value(item) for item in value]
     if value_type is tuple:
         return tuple(_copy_trajectory_provenance_value(item) for item in value)
-    if value_type in _JSON_IMMUTABLE_TYPES:
+    if value_type in _JSON_IMMUTABLE_TYPE_SET:
         return value
     if isinstance(value, dict):
         return {key: _copy_trajectory_provenance_value(item) for key, item in value.items()}
