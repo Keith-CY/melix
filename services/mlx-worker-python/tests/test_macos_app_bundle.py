@@ -416,7 +416,19 @@ def _exercise_launch_hardening_paths_for_resource_bundle_probe(tmp_path: Path) -
 
     test_build_macos_app_bundle_layout_uses_standard_app_structure(nested_tmp_path("layout"))
     test_render_native_launcher_source_execs_packaged_launcher_script()
-    test_write_unsigned_macos_app_bundle_writes_self_contained_layout(nested_tmp_path("self-contained"))
+    with pytest.MonkeyPatch.context() as scoped_monkeypatch:
+        def fake_compile_native_launcher(source_path: Path, output_path: Path) -> None:
+            assert '"%s/../Resources/Melix.sh"' in source_path.read_text(encoding="utf-8")
+            output_path.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+        scoped_monkeypatch.setattr(
+            macos_app_bundle_module,
+            "compile_native_launcher",
+            fake_compile_native_launcher,
+        )
+        test_write_unsigned_macos_app_bundle_writes_self_contained_layout(
+            nested_tmp_path("self-contained")
+        )
     test_copy_swiftpm_resource_bundles_does_not_copy_into_app_bundle_root(nested_tmp_path("contents-resources"))
     test_reject_external_python_framework_runtime_requires_python_binary(nested_tmp_path("missing-python"))
 
