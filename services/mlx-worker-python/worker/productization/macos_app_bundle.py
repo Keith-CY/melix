@@ -93,7 +93,7 @@ def _reject_external_python_framework_runtime(python_runtime: str | Path) -> Non
             capture_output=True,
             text=True,
         )
-    except FileNotFoundError:
+    except (FileNotFoundError, subprocess.CalledProcessError):
         return
     external_framework_prefix = "/Library/Frameworks/Python.framework/"
     if external_framework_prefix in result.stdout:
@@ -568,28 +568,31 @@ def adhoc_sign_macos_app_bundle(app_path: str | Path) -> bool:
     if codesign is None:
         return False
 
-    subprocess.run(
-        [
-            codesign,
-            "--force",
-            "--deep",
-            "--sign",
-            "-",
-            os.fspath(app),
-        ],
-        check=True,
-    )
-    subprocess.run(
-        [
-            codesign,
-            "--verify",
-            "--deep",
-            "--strict",
-            "--verbose=4",
-            os.fspath(app),
-        ],
-        check=True,
-    )
+    try:
+        subprocess.run(
+            [
+                codesign,
+                "--force",
+                "--deep",
+                "--sign",
+                "-",
+                os.fspath(app),
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                codesign,
+                "--verify",
+                "--deep",
+                "--strict",
+                "--verbose=4",
+                os.fspath(app),
+            ],
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        return False
     return True
 
 

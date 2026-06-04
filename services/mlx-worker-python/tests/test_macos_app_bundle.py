@@ -443,6 +443,11 @@ def _exercise_launch_hardening_paths_for_resource_bundle_probe(tmp_path: Path) -
             nested_tmp_path("no-codesign"),
         )
     with pytest.MonkeyPatch.context() as scoped_monkeypatch:
+        test_adhoc_sign_macos_app_bundle_returns_false_when_codesign_fails(
+            scoped_monkeypatch,
+            nested_tmp_path("codesign-fails"),
+        )
+    with pytest.MonkeyPatch.context() as scoped_monkeypatch:
         test_reject_external_python_framework_runtime_blocks_framework_stub(
             nested_tmp_path("external-framework"),
             scoped_monkeypatch,
@@ -450,6 +455,11 @@ def _exercise_launch_hardening_paths_for_resource_bundle_probe(tmp_path: Path) -
     with pytest.MonkeyPatch.context() as scoped_monkeypatch:
         test_reject_external_python_framework_runtime_skips_when_otool_is_unavailable(
             nested_tmp_path("no-otool"),
+            scoped_monkeypatch,
+        )
+    with pytest.MonkeyPatch.context() as scoped_monkeypatch:
+        test_reject_external_python_framework_runtime_skips_when_otool_fails(
+            nested_tmp_path("otool-fails"),
             scoped_monkeypatch,
         )
 
@@ -523,6 +533,25 @@ def test_adhoc_sign_macos_app_bundle_skips_when_codesign_is_unavailable(
     assert adhoc_sign_macos_app_bundle(app_path) is False
 
 
+def test_adhoc_sign_macos_app_bundle_returns_false_when_codesign_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_path = tmp_path / "Melix.app"
+    app_path.mkdir()
+
+    def fail_codesign(command: list[str], check: bool) -> None:
+        raise macos_app_bundle_module.subprocess.CalledProcessError(
+            returncode=1,
+            cmd=command,
+        )
+
+    monkeypatch.setattr(macos_app_bundle_module.shutil, "which", lambda name: "/usr/bin/codesign")
+    monkeypatch.setattr(macos_app_bundle_module.subprocess, "run", fail_codesign)
+
+    assert adhoc_sign_macos_app_bundle(app_path) is False
+
+
 def test_reject_external_python_framework_runtime_blocks_framework_stub(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -567,6 +596,25 @@ def test_reject_external_python_framework_runtime_skips_when_otool_is_unavailabl
 
     def fake_run(command: list[str], **kwargs: object):
         raise FileNotFoundError("otool")
+
+    monkeypatch.setattr(macos_app_bundle_module.subprocess, "run", fake_run)
+
+    _reject_external_python_framework_runtime(runtime_root)
+
+
+def test_reject_external_python_framework_runtime_skips_when_otool_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root = tmp_path / "python-runtime"
+    (runtime_root / "bin").mkdir(parents=True)
+    python_binary = runtime_root / "bin/python3"
+    python_binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    def fake_run(command: list[str], **kwargs: object) -> None:
+        raise macos_app_bundle_module.subprocess.CalledProcessError(
+            returncode=1,
+            cmd=command,
+        )
 
     monkeypatch.setattr(macos_app_bundle_module.subprocess, "run", fake_run)
 
