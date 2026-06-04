@@ -348,9 +348,12 @@ def _path_size_bytes(path: Path) -> int:
         root_path = Path(root)
         for dirname in list(dirnames):
             directory = root_path / dirname
-            if directory.is_symlink():
-                total += directory.lstat().st_size
-                dirnames.remove(dirname)
+            try:
+                if directory.is_symlink():
+                    total += directory.lstat().st_size
+                    dirnames.remove(dirname)
+            except OSError:
+                continue
         for filename in filenames:
             file_path = root_path / filename
             try:
@@ -371,11 +374,16 @@ def _prune_python_package_baggage(site_packages: Path) -> dict[str, int]:
             if dirname not in _PRUNABLE_PYTHON_PACKAGE_DIR_NAMES:
                 continue
             target = root_path / dirname
-            result["bytes_saved"] += _path_size_bytes(target)
-            if target.is_symlink():
-                target.unlink()
-            else:
-                shutil.rmtree(target)
+            try:
+                bytes_saved = _path_size_bytes(target)
+                if target.is_symlink():
+                    target.unlink()
+                else:
+                    shutil.rmtree(target)
+            except OSError:
+                dirnames.remove(dirname)
+                continue
+            result["bytes_saved"] += bytes_saved
             result["directories_pruned"] += 1
             dirnames.remove(dirname)
     return result
@@ -390,12 +398,17 @@ def _prune_python_runtime_baggage(python_runtime: Path) -> dict[str, int]:
 
     include_path = python_runtime / "include"
     if include_path.exists() or include_path.is_symlink():
-        result["bytes_saved"] += _path_size_bytes(include_path)
-        if include_path.is_symlink():
-            include_path.unlink()
+        try:
+            bytes_saved = _path_size_bytes(include_path)
+            if include_path.is_symlink():
+                include_path.unlink()
+            else:
+                shutil.rmtree(include_path)
+        except OSError:
+            pass
         else:
-            shutil.rmtree(include_path)
-        result["directories_pruned"] += 1
+            result["bytes_saved"] += bytes_saved
+            result["directories_pruned"] += 1
 
     for root, dirnames, filenames in os.walk(python_runtime, followlinks=False):
         root_path = Path(root)
@@ -403,11 +416,16 @@ def _prune_python_runtime_baggage(python_runtime: Path) -> dict[str, int]:
             if dirname not in _PRUNABLE_PYTHON_RUNTIME_DIR_NAMES:
                 continue
             target = root_path / dirname
-            result["bytes_saved"] += _path_size_bytes(target)
-            if target.is_symlink():
-                target.unlink()
-            else:
-                shutil.rmtree(target)
+            try:
+                bytes_saved = _path_size_bytes(target)
+                if target.is_symlink():
+                    target.unlink()
+                else:
+                    shutil.rmtree(target)
+            except OSError:
+                dirnames.remove(dirname)
+                continue
+            result["bytes_saved"] += bytes_saved
             result["directories_pruned"] += 1
             dirnames.remove(dirname)
         for filename in filenames:

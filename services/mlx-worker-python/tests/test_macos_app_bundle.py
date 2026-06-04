@@ -195,7 +195,10 @@ def test_resolve_site_packages_root_skips_non_site_package_entries(tmp_path: Pat
         raise AssertionError("expected resolve_site_packages_root() to fail without site-packages")
 
 
-def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: Path) -> None:
+def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     repo_root = tmp_path / "repo"
     (repo_root / "services/mlx-worker-python/worker").mkdir(parents=True)
     top20_fixture_root = (
@@ -291,6 +294,18 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
     python_site_packages = tmp_path / "python-site-packages"
     python_site_packages.mkdir()
     (python_site_packages / "grpc.py").write_text("", encoding="utf-8")
+    launcher_compile_calls: list[tuple[Path, Path]] = []
+
+    def fake_compile_native_launcher(source_path: Path, output_path: Path) -> None:
+        launcher_compile_calls.append((source_path, output_path))
+        assert '"%s/../Resources/Melix.sh"' in source_path.read_text(encoding="utf-8")
+        output_path.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        macos_app_bundle_module,
+        "compile_native_launcher",
+        fake_compile_native_launcher,
+    )
 
     manifest = write_unsigned_macos_app_bundle(
         repo_root=repo_root,
@@ -333,6 +348,9 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
     ]
     assert Path(manifest["packaging_target_manifest_path"]).exists() is True
     assert Path(manifest["launcher_path"]).is_file() is True
+    assert launcher_compile_calls == [
+        (app_path / "Contents/MacOS/MelixLauncher.c", app_path / "Contents/MacOS/Melix"),
+    ]
     launcher = Path(manifest["launcher_script_path"]).read_text(encoding="utf-8")
     assert "worker.bootstrap" in launcher
     assert 'export MELIX_CLI="$RESOURCES_DIR/melix"' in launcher
@@ -644,6 +662,82 @@ def test_path_size_bytes_tolerates_metadata_errors(
     assert _path_size_bytes(directory) == retained.lstat().st_size
 
 
+def test_path_size_bytes_tolerates_directory_symlink_metadata_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory = tmp_path / "tree"
+    directory.mkdir()
+    retained = directory / "retained.txt"
+    retained.write_text("kept\n", encoding="utf-8")
+    symlink_target = tmp_path / "linked-target"
+    symlink_target.mkdir()
+    broken_link = directory / "linked"
+    broken_link.symlink_to(symlink_target, target_is_directory=True)
+    original_lstat = Path.lstat
+
+    def fail_lstat(self: Path):
+        if self == broken_link:
+            raise OSError("synthetic directory symlink metadata failure")
+        return original_lstat(self)
+
+    monkeypatch.setattr(Path, "lstat", fail_lstat)
+
+    assert _path_size_bytes(directory) == retained.lstat().st_size
+
+
+def test_prune_python_package_baggage_tolerates_directory_delete_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    site_packages = tmp_path / "site-packages"
+    test_dir = site_packages / "nativepkg/tests"
+    test_dir.mkdir(parents=True)
+    (test_dir / "fixture.txt").write_text("fixture\n", encoding="utf-8")
+    original_rmtree = macos_app_bundle_module.shutil.rmtree
+
+    def fail_rmtree(path: Path) -> None:
+        if path == test_dir:
+            raise OSError("synthetic package prune failure")
+        original_rmtree(path)
+
+    monkeypatch.setattr(macos_app_bundle_module.shutil, "rmtree", fail_rmtree)
+
+    result = _prune_python_package_baggage(site_packages)
+
+    assert result["directories_pruned"] == 0
+    assert result["bytes_saved"] == 0
+    assert test_dir.is_dir()
+
+
+def test_prune_python_runtime_baggage_tolerates_directory_delete_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = tmp_path / "python-runtime"
+    include = runtime / "include"
+    ensurepip = runtime / "lib/python3.12/ensurepip"
+    include.mkdir(parents=True)
+    ensurepip.mkdir(parents=True)
+    (include / "Python.h").write_text("header\n", encoding="utf-8")
+    (ensurepip / "__init__.py").write_text("ensurepip\n", encoding="utf-8")
+    original_rmtree = macos_app_bundle_module.shutil.rmtree
+
+    def fail_rmtree(path: Path) -> None:
+        if path in {include, ensurepip}:
+            raise OSError("synthetic runtime prune failure")
+        original_rmtree(path)
+
+    monkeypatch.setattr(macos_app_bundle_module.shutil, "rmtree", fail_rmtree)
+
+    result = _prune_python_runtime_baggage(runtime)
+
+    assert result["directories_pruned"] == 0
+    assert result["bytes_saved"] == 0
+    assert include.is_dir()
+    assert ensurepip.is_dir()
+
+
 def test_prune_python_runtime_baggage_tolerates_file_delete_errors(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -818,17 +912,9 @@ def _exercise_launch_hardening_paths_for_resource_bundle_probe(tmp_path: Path) -
     test_build_macos_app_bundle_layout_uses_standard_app_structure(nested_tmp_path("layout"))
     test_render_native_launcher_source_execs_packaged_launcher_script()
     with pytest.MonkeyPatch.context() as scoped_monkeypatch:
-        def fake_compile_native_launcher(source_path: Path, output_path: Path) -> None:
-            assert '"%s/../Resources/Melix.sh"' in source_path.read_text(encoding="utf-8")
-            output_path.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
-
-        scoped_monkeypatch.setattr(
-            macos_app_bundle_module,
-            "compile_native_launcher",
-            fake_compile_native_launcher,
-        )
         test_write_unsigned_macos_app_bundle_writes_self_contained_layout(
-            nested_tmp_path("self-contained")
+            nested_tmp_path("self-contained"),
+            scoped_monkeypatch,
         )
     test_copy_swiftpm_resource_bundles_does_not_copy_into_app_bundle_root(nested_tmp_path("contents-resources"))
     test_reject_external_python_framework_runtime_requires_python_binary(nested_tmp_path("missing-python"))
@@ -1109,16 +1195,38 @@ def test_write_unsigned_macos_app_bundle_requires_an_icon_file(tmp_path: Path) -
         raise AssertionError("expected write_unsigned_macos_app_bundle() to require an icon file")
 
 
-def test_archive_macos_app_bundle_creates_zip(tmp_path: Path) -> None:
+def test_archive_macos_app_bundle_creates_zip(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     app_path = tmp_path / "Melix.app"
     (app_path / "Contents/MacOS").mkdir(parents=True)
     (app_path / "Contents/MacOS/Melix").write_text("echo\n", encoding="utf-8")
     archive_path = tmp_path / "Melix.zip"
+    run_calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(command: list[str], check: bool, **kwargs: object) -> None:
+        run_calls.append((command, {"check": check, **kwargs}))
+        assert command[0] == "/usr/bin/ditto"
+        Path(command[-1]).write_bytes(b"zip")
+
+    monkeypatch.setattr(macos_app_bundle_module.subprocess, "run", fake_run)
 
     result = archive_macos_app_bundle(app_path, archive_path)
 
     assert result == archive_path
     assert archive_path.exists() is True
+    assert run_calls[0][0] == [
+        "/usr/bin/ditto",
+        "-c",
+        "-k",
+        "--norsrc",
+        "--keepParent",
+        str(app_path.resolve()),
+        str(archive_path.resolve()),
+    ]
+    assert run_calls[0][1]["check"] is True
+    assert run_calls[0][1]["env"]["COPYFILE_DISABLE"] == "1"  # type: ignore[index]
 
 
 def test_packaged_script_copy_rejects_ci_only_probe_scripts(tmp_path: Path) -> None:
