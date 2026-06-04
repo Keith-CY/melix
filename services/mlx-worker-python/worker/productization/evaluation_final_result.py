@@ -480,6 +480,8 @@ def _matches_json_schema_pattern(pattern_properties: Any, key: str) -> bool:
 
 
 def _json_typed_score(*, expected: Any, actual: Any, ignored_paths: Collection[str], path: str = "") -> float:
+    if expected == actual:
+        return 1.0
     if isinstance(expected, dict):
         total = 0.0
         count = 0

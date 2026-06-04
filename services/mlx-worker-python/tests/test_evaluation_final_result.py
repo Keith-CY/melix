@@ -355,6 +355,21 @@ def test_score_final_result_reuses_cached_schema_free_json_scores() -> None:
     evaluation_final_result_module._ignored_paths_for_profile.cache_clear()
 
 
+def test_json_typed_score_short_circuits_equal_subtrees(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_joined_path(prefix: str, key: str) -> str:  # pragma: no cover
+        raise AssertionError("equal JSON subtrees should skip recursive path walking")
+
+    monkeypatch.setattr(evaluation_final_result_module, "_joined_path", fail_joined_path)
+
+    score = evaluation_final_result_module._json_typed_score(
+        expected={"answer": "A", "metadata": {"source": "fixture"}},
+        actual={"answer": "A", "metadata": {"source": "fixture"}},
+        ignored_paths=frozenset(),
+    )
+
+    assert score == 1.0
+
+
 def test_score_final_result_rejects_invalid_json_shape_before_scoring() -> None:
     score = score_final_result(
         extracted_result=json.dumps([{"label": "A"}]),
