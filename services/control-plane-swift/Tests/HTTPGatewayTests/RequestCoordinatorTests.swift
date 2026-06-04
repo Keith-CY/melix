@@ -2531,6 +2531,68 @@ struct RequestCoordinatorTests {
         #expect(metrics.values["scheduler.cache_pressure"] == 0.25)
     }
 
+    @Test("long text prefills widen the worker prefill step without changing scheduler progress chunks")
+    func longTextPrefillsWidenWorkerPrefillStepWithoutChangingSchedulerProgressChunks() async throws {
+        let workerClient = PhaseAwareWorkerClient()
+        let metricsStore = MetricsStore()
+        let schedulerReadModel = SchedulerReadModel(metricsStore: metricsStore)
+        let coordinator = RequestCoordinator(
+            workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+            abortRegistry: AbortRegistry(),
+            schedulerReadModel: schedulerReadModel,
+            metricsStore: metricsStore
+        )
+
+        let longPrompt = (1...32_768).map { "token\($0)" }.joined(separator: " ")
+        let execution = try await coordinator.startChatCompletion(
+            makeTranslatedChatRequest(
+                requestID: "req-long-text-prefill-window",
+                messages: [makeWorkerTextMessage(longPrompt)]
+            )
+        )
+        let consumer = Task {
+            do {
+                for try await _ in execution.stream {}
+            } catch {
+            }
+        }
+        defer { consumer.cancel() }
+
+        let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+        #expect(prefillRequest.prefillStepSize == 1_024)
+
+        _ = try #require(await waitForDecodeRequest(workerClient: workerClient))
+        let prefillProgress = try #require(await waitForProgress(
+            schedulerReadModel: schedulerReadModel,
+            requestID: "req-long-text-prefill-window",
+            phase: .requestPrefilling,
+            lane: "text.prefill.background",
+            attempts: 50,
+            matching: { $0.prefillProcessedTokens == 32_768 }
+        ))
+        await workerClient.emitDecodeStarted(
+            requestID: "req-long-text-prefill-window",
+            decodeHandle: "decode-req-long-text-prefill-window"
+        )
+        await workerClient.emitToken(requestID: "req-long-text-prefill-window", text: "chunked")
+        await workerClient.finishDecode(requestID: "req-long-text-prefill-window")
+
+        let metrics = await metricsStore.snapshot()
+        #expect(prefillProgress.prefillProgressPct == 100)
+        #expect(metrics.values["scheduler.prefill_chunk_target_tokens"] == 16)
+        #expect(metrics.values["scheduler.prefill_chunk_count"] == 2_048)
+        #expect(metrics.values["scheduler.prefill_last_chunk_tokens"] == 32_768)
+    }
+
+    @Test("long text worker prefill step threshold is inclusive at 32768 estimated tokens")
+    func longTextWorkerPrefillStepThresholdIsInclusiveAt32768EstimatedTokens() async throws {
+        let belowThresholdStep = try await workerPrefillStepSizeForTextTokenCount(32_767)
+        let atThresholdStep = try await workerPrefillStepSizeForTextTokenCount(32_768)
+
+        #expect(belowThresholdStep == 512)
+        #expect(atThresholdStep == 1_024)
+    }
+
     @Test("phase-aware text requests join the active continuous batch cohort")
     func phaseAwareTextRequestsJoinTheActiveContinuousBatchCohort() async throws {
         let workerClient = PhaseAwareWorkerClient()
@@ -5413,6 +5475,36 @@ private func makeWorkerTextMessage(_ text: String) -> Melix_Worker_V1_ChatMessag
     part.text = text
     message.parts = [part]
     return message
+}
+
+private func workerPrefillStepSizeForTextTokenCount(
+    _ tokenCount: Int
+) async throws -> UInt32 {
+    let workerClient = PhaseAwareWorkerClient()
+    let metricsStore = MetricsStore()
+    let coordinator = RequestCoordinator(
+        workerRegistry: WorkerRegistry(defaultTextClient: workerClient),
+        abortRegistry: AbortRegistry(),
+        schedulerReadModel: SchedulerReadModel(metricsStore: metricsStore),
+        metricsStore: metricsStore
+    )
+    let prompt = (1...tokenCount).map { "token\($0)" }.joined(separator: " ")
+    let execution = try await coordinator.startChatCompletion(
+        makeTranslatedChatRequest(
+            requestID: "req-prefill-step-\(tokenCount)",
+            messages: [makeWorkerTextMessage(prompt)]
+        )
+    )
+    let consumer = Task {
+        do {
+            for try await _ in execution.stream {}
+        } catch {
+        }
+    }
+    defer { consumer.cancel() }
+
+    let prefillRequest = try #require(await waitForPrefillRequest(workerClient: workerClient))
+    return prefillRequest.prefillStepSize
 }
 
 private func makeWorkerVisionMessage(
