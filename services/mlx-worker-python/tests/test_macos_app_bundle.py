@@ -551,6 +551,8 @@ def test_bundle_slimming_helpers_cover_runtime_edge_cases(
     site_so.write_text("native-debug-symbols\n", encoding="utf-8")
     skipped_runtime_file = runtime / "README.txt"
     skipped_runtime_file.write_text("not native\n", encoding="utf-8")
+    skipped_runtime_executable = runtime_lib / "python3.12"
+    skipped_runtime_executable.write_text("not in bin\n", encoding="utf-8")
 
     include_target = tmp_path / "include-target"
     include_target.mkdir()
@@ -599,6 +601,17 @@ def test_bundle_slimming_helpers_cover_runtime_edge_cases(
     assert runtime_so in candidates
     assert site_so in candidates
     assert skipped_runtime_file not in candidates
+    assert skipped_runtime_executable not in candidates
+
+    def fail_rglob(self: Path, pattern: str):  # pragma: no cover - regression guard
+        raise AssertionError("_iter_python_native_binary_candidates() should not allocate Path.rglob() trees")
+
+    monkeypatch.setattr(Path, "rglob", fail_rglob)
+    assert set(_iter_python_native_binary_candidates(runtime, site_packages)) == {
+        python_versioned,
+        runtime_so,
+        site_so,
+    }
 
     monkeypatch.setattr(macos_app_bundle_module.shutil, "which", lambda name: "/usr/bin/strip")
 
@@ -628,6 +641,49 @@ def test_bundle_slimming_helpers_cover_runtime_edge_cases(
     unavailable_result = _strip_packaged_binaries([python_versioned])
     assert unavailable_result["strip_available"] is False
     assert unavailable_result["attempted"] == 0
+
+
+def test_iter_python_native_binary_candidates_tolerates_scandir_metadata_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = tmp_path / "python-runtime"
+    site_packages = tmp_path / "site-packages"
+    runtime.mkdir()
+    site_packages.mkdir()
+
+    class BrokenEntry:
+        name = "broken.so"
+        path = str(runtime / "broken.so")
+
+        def is_dir(self, *, follow_symlinks: bool) -> bool:
+            assert follow_symlinks is False
+            raise OSError("synthetic dir metadata failure")
+
+        def is_symlink(self) -> bool:  # pragma: no cover - guarded by is_dir failure
+            raise AssertionError("is_symlink should not run after is_dir failure")
+
+        def is_file(self, *, follow_symlinks: bool) -> bool:  # pragma: no cover
+            raise AssertionError("is_file should not run after is_dir failure")
+
+    class FakeScandir:
+        def __init__(self, entries: list[object]) -> None:
+            self._entries = entries
+
+        def __enter__(self) -> list[object]:
+            return self._entries
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    def fake_scandir(path: Path):
+        if path == runtime:
+            return FakeScandir([BrokenEntry()])
+        raise OSError("synthetic scandir failure")
+
+    monkeypatch.setattr(macos_app_bundle_module.os, "scandir", fake_scandir)
+
+    assert _iter_python_native_binary_candidates(runtime, site_packages) == []
 
 
 def test_path_size_bytes_tolerates_metadata_errors(
