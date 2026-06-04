@@ -2193,8 +2193,8 @@
       "services/mlx-worker-python/tests/test_package_macos_menubar_app_script.py",
       "services/mlx-worker-python/tests/test_pr_scoped_performance.py"
     ],
-    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_package_macos_menubar_app_script.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_package_macos_resolve_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_package_macos_resolve_probe_script_emits_metrics",
-    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_package_macos_menubar_app_script.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_package_macos_resolve_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_package_macos_resolve_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json scripts/package_macos_menubar_app.py scripts/package_macos_resolve_probe.py services/mlx-worker-python/tests/test_package_macos_menubar_app_script.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_package_macos_menubar_app_script.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_package_macos_resolve_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_package_macos_resolve_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_package_macos_resolve_probe_rejects_unexpected_resolution",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_package_macos_menubar_app_script.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_package_macos_resolve_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_package_macos_resolve_probe_script_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_package_macos_resolve_probe_rejects_unexpected_resolution && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json scripts/package_macos_menubar_app.py scripts/package_macos_resolve_probe.py services/mlx-worker-python/tests/test_package_macos_menubar_app_script.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
     "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 scripts/package_macos_resolve_probe.py",
     "probe_impl": "command_json",
     "coverage_replays_tests": true,
@@ -2219,6 +2219,30 @@
       },
       {
         "key": "cli_elapsed_ms_min",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "tail_debug_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "tail_debug_elapsed_ms_min",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "cli_tail_debug_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "cli_tail_debug_elapsed_ms_min",
         "unit": "ms",
         "direction": "lower_is_better",
         "warn_pct": 5.0
