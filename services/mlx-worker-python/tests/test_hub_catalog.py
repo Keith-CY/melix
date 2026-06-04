@@ -1278,6 +1278,35 @@ def test_summary_record_reuses_lowered_tags_for_local_fit(monkeypatch: pytest.Mo
     assert calls == 1
 
 
+def test_summary_record_reads_card_data_once() -> None:
+    class CountingPayload(dict[str, object]):
+        card_data_gets = 0
+
+        def get(self, key: str, default: object = None) -> object:
+            if key == "cardData":
+                self.card_data_gets += 1
+            return super().get(key, default)
+
+    payload = CountingPayload(
+        {
+            "id": "mlx-community/card-data-once",
+            "author": "mlx-community",
+            "pipeline_tag": "text-generation",
+            "tags": ["MLX", "4bit"],
+            "library_name": "mlx",
+            "siblings": [{"rfilename": "model.safetensors", "size": 1024}],
+            "safetensors": {"total": 1_000_000},
+            "cardData": {"model_name": "Card Data Once"},
+        }
+    )
+
+    catalog = HubCatalog(local_memory_gb=64.0)
+    record = catalog._summary_record(payload)
+
+    assert record.summary == "Card Data Once"
+    assert payload.card_data_gets == 1
+
+
 def test_get_model_card_includes_local_fit_evidence_from_readme_size_hint() -> None:
     payload = [
         {
