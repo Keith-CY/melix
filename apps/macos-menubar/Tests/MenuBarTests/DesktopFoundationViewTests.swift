@@ -2662,6 +2662,31 @@ struct DesktopFoundationViewTests {
         #expect(shellView.subviews.isEmpty == false)
     }
 
+    @Test("jobs inspector evidence maps every fetched artifact path")
+    @MainActor
+    func jobsInspectorEvidenceMapsEveryFetchedArtifactPath() {
+        let evidence = DesktopInspectorEvidenceBuilder.jobsEvidence(
+            artifactRoot: "/tmp/melix/jobs/eval-1808",
+            detailLogPath: "/tmp/melix/jobs/eval-1808/detail.log",
+            logSnapshotPath: "/tmp/melix/jobs/eval-1808/live.log",
+            artifactPaths: [
+                "/tmp/melix/jobs/eval-1808/manifest.json",
+                "/tmp/melix/jobs/eval-1808/metrics.json",
+                "",
+                "/tmp/melix/jobs/eval-1808/report.md",
+            ]
+        )
+
+        #expect(evidence == [
+            "/tmp/melix/jobs/eval-1808",
+            "/tmp/melix/jobs/eval-1808/detail.log",
+            "/tmp/melix/jobs/eval-1808/live.log",
+            "/tmp/melix/jobs/eval-1808/manifest.json",
+            "/tmp/melix/jobs/eval-1808/metrics.json",
+            "/tmp/melix/jobs/eval-1808/report.md",
+        ])
+    }
+
     @Test("batch runs tool section renders model config inputs and validation messages")
     @MainActor
     func batchRunsToolSectionRendersModelConfigInputsAndValidationMessages() throws {

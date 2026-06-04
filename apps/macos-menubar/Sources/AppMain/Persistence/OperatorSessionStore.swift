@@ -125,13 +125,14 @@ public struct OperatorSessionStore: OperatorSessionStoring {
 
 private extension OperatorSessionState {
     init(sharedState: MelixOperatorSessionState) {
+        let selectedToolSection = DesktopToolSection(operatorSessionID: sharedState.selectedToolSectionID)
         self.init(
             schemaVersion: sharedState.schemaVersion,
             selectedSurface: DesktopSurface(
                 operatorSessionID: sharedState.selectedSurfaceID,
-                selectedToolSection: DesktopToolSection(operatorSessionID: sharedState.selectedToolSectionID)
+                selectedToolSection: selectedToolSection
             ),
-            selectedToolSection: DesktopToolSection(operatorSessionID: sharedState.selectedToolSectionID),
+            selectedToolSection: selectedToolSection,
             selectedServerSessionID: sharedState.selectedServerSessionID,
             selectedRuntimeJobID: sharedState.selectedRuntimeJobID,
             serverSessions: sharedState.serverSessions.map(DesktopServerSessionState.init(sharedState:)),

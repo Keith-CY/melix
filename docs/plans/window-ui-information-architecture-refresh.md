@@ -97,6 +97,10 @@ rewrite.
    - Preserve Context, Health, Metrics, Actions, Evidence order.
    - Add visible detail action when a selected object has a detail route.
 
+   Status: review follow-up for the route metadata shell slice now maps Jobs
+   domain Inspector evidence from the selected job root, logs, and every fetched
+   artifact path so artifact lineage is not truncated to the first artifact.
+
 3. Chat Runtime Contract
    - Keep Chat default.
    - Block send without explicit server binding.

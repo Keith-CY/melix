@@ -2129,6 +2129,22 @@ extension DesktopInspectorContractView where ExtraContent == EmptyView {
     }
 }
 
+enum DesktopInspectorEvidenceBuilder {
+    static func jobsEvidence(
+        artifactRoot: String?,
+        detailLogPath: String?,
+        logSnapshotPath: String?,
+        artifactPaths: [String]
+    ) -> [String] {
+        let basePaths = [
+            artifactRoot,
+            detailLogPath,
+            logSnapshotPath,
+        ]
+        return (basePaths + artifactPaths.map(Optional.some)).compactMap { $0 }.filter { $0.isEmpty == false }
+    }
+}
+
 private struct DesktopDomainWorkspaceView: View {
     let domain: DesktopSurfaceDomain
     let viewModel: RuntimeViewModel
@@ -2319,12 +2335,12 @@ private struct DesktopDomainWorkspaceView: View {
         case .workflows:
             return [viewModel.lastModelOperation?.outputPath, viewModel.selectedRuntimeJob?.artifactRoot].compactMap { $0 }.filter { $0.isEmpty == false }
         case .jobs:
-            return [
-                viewModel.selectedRuntimeJob?.artifactRoot,
-                viewModel.selectedRuntimeJobDetail?.logs.path,
-                viewModel.selectedRuntimeJobLogSnapshot?.logPath,
-                viewModel.selectedRuntimeJobArtifactSnapshot?.artifacts.first?.path,
-            ].compactMap { $0 }.filter { $0.isEmpty == false }
+            return DesktopInspectorEvidenceBuilder.jobsEvidence(
+                artifactRoot: viewModel.selectedRuntimeJob?.artifactRoot,
+                detailLogPath: viewModel.selectedRuntimeJobDetail?.logs.path,
+                logSnapshotPath: viewModel.selectedRuntimeJobLogSnapshot?.logPath,
+                artifactPaths: viewModel.selectedRuntimeJobArtifactSnapshot?.artifacts.compactMap { $0.path } ?? []
+            )
         case .diagnostics:
             return [viewModel.diagnosticsRunMonitor?.artifactText, viewModel.diagnosticsRunMonitor?.detailText].compactMap { $0 }.filter { $0.isEmpty == false }
         case .settings:
