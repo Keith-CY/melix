@@ -315,24 +315,27 @@ def _score_json_result(
     target: str,
     profile: EvaluationProfileDefinition,
 ) -> ScoringOutcome:
+    output_schema = profile.output_schema or {}
+    if not output_schema:
+        try:
+            return _cached_schema_free_json_scoring_outcome(
+                target=target,
+                extracted_result=extracted_result,
+                ignored_paths=profile.ignored_paths,
+            )
+        except json.JSONDecodeError:
+            _loads_json_payload(target)
+            return ScoringOutcome(typed_score=0.0, validation_status="parse_failed", failure_reason="invalid_json")
+
     parsed_target = _loads_json_payload(target)
     try:
         parsed_result = _loads_json_payload(extracted_result)
     except json.JSONDecodeError:
         return ScoringOutcome(typed_score=0.0, validation_status="parse_failed", failure_reason="invalid_json")
 
-    output_schema = profile.output_schema or {}
     validation_error = _validate_json_schema(output_schema, parsed_result)
     if validation_error:
         return ScoringOutcome(typed_score=0.0, validation_status="schema_failed", failure_reason=validation_error)
-
-    if not output_schema:
-        score = _cached_json_typed_score(
-            target=target,
-            extracted_result=extracted_result,
-            ignored_paths=profile.ignored_paths,
-        )
-        return ScoringOutcome(typed_score=round(score, 4), validation_status="validated")
 
     score = _json_typed_score(
         expected=parsed_target,
@@ -353,12 +356,18 @@ def _ignored_paths_for_profile(profile_ignored_paths: tuple[str, ...]) -> frozen
 
 
 @lru_cache(maxsize=128)
-def _cached_json_typed_score(*, target: str, extracted_result: str, ignored_paths: tuple[str, ...]) -> float:
-    return _json_typed_score(
+def _cached_schema_free_json_scoring_outcome(
+    *,
+    target: str,
+    extracted_result: str,
+    ignored_paths: tuple[str, ...],
+) -> ScoringOutcome:
+    score = _json_typed_score(
         expected=_loads_json_payload(target),
         actual=_loads_json_payload(extracted_result),
         ignored_paths=_ignored_paths_for_profile(ignored_paths),
     )
+    return ScoringOutcome(typed_score=round(score, 4), validation_status="validated")
 
 
 def _score_text_result(

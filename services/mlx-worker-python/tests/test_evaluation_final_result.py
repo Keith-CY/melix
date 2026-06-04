@@ -317,8 +317,8 @@ def test_score_final_result_reuses_cached_parsed_json_payloads(monkeypatch: pyte
     evaluation_final_result_module._loads_json_payload.cache_clear()
 
 
-def test_score_final_result_reuses_cached_schema_free_json_scores() -> None:
-    evaluation_final_result_module._cached_json_typed_score.cache_clear()
+def test_score_final_result_reuses_cached_schema_free_json_outcomes() -> None:
+    evaluation_final_result_module._cached_schema_free_json_scoring_outcome.cache_clear()
     evaluation_final_result_module._ignored_paths_for_profile.cache_clear()
     target = json.dumps(
         {
@@ -350,9 +350,32 @@ def test_score_final_result_reuses_cached_schema_free_json_scores() -> None:
         typed_score=1.0,
         validation_status="validated",
     )
-    assert evaluation_final_result_module._cached_json_typed_score.cache_info().hits >= 1
-    evaluation_final_result_module._cached_json_typed_score.cache_clear()
+    assert first is second
+    assert evaluation_final_result_module._cached_schema_free_json_scoring_outcome.cache_info().hits >= 1
+    evaluation_final_result_module._cached_schema_free_json_scoring_outcome.cache_clear()
     evaluation_final_result_module._ignored_paths_for_profile.cache_clear()
+
+
+def test_score_final_result_preserves_schema_free_invalid_extracted_json_status() -> None:
+    evaluation_final_result_module._cached_schema_free_json_scoring_outcome.cache_clear()
+    score = score_final_result(
+        extracted_result="{invalid-json",
+        target=json.dumps({"answer": "A"}),
+        profile=EvaluationProfileDefinition(
+            profile_type="final_result",
+            result_kind="json",
+            extraction_mode="strict_full_response",
+            scoring_mode="json_field_match",
+            threshold=1.0,
+        ),
+    )
+
+    assert score == evaluation_final_result_module.ScoringOutcome(
+        typed_score=0.0,
+        validation_status="parse_failed",
+        failure_reason="invalid_json",
+    )
+    evaluation_final_result_module._cached_schema_free_json_scoring_outcome.cache_clear()
 
 
 def test_score_final_result_rejects_invalid_json_shape_before_scoring() -> None:
