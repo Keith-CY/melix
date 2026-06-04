@@ -4806,7 +4806,7 @@ struct MelixCLIRunnerTests {
         #expect(request.parameters["semantic_judge_rate_limit_per_minute"] == "12")
         #expect(request.parameters["remote_provider_extra_body_json"] == "{\"max_tokens\":1024,\"chat_template_kwargs\":{\"enable_thinking\":false}}")
 
-        await #expect(throws: MelixCLIError.runtime("Semantic judge scoring is only supported for event_extraction_weighted_f1.")) {
+        await #expect(throws: MelixCLIError.runtime("Semantic judge scoring is only supported for event_extraction_weighted_f1 or topic_membership_semantic_micro_f1.")) {
             try await runner.run(
                 MelixCLICommand.evalRun(
                     EvalRunOptions(
@@ -4816,6 +4816,109 @@ struct MelixCLIRunnerTests {
                         source: .localJSONL(path: "/tmp/eval.jsonl"),
                         fieldMapping: .init(inputTextPath: "prompt", targetPath: "answer"),
                         profile: .init(scoringMode: "multiple_choice_accuracy"),
+                        semanticJudgeRemoteServerID: "judge",
+                        semanticJudgeModelID: "judge-model",
+                        json: true
+                    )
+                )
+            )
+        }
+    }
+
+    @Test("eval run forwards topic membership semantic judge parameters")
+    func evalRunForwardsTopicMembershipSemanticJudgeParameters() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-topic-semantic-judge-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let client = StubControlPlaneXPCClient()
+        await client.setEvaluationResults([
+            makeEvaluationRunResult(
+                jobID: "eval-topic-semantic-judge",
+                suiteID: "topic_membership",
+                datasetID: "topic-membership",
+                metricName: "eval.topic_membership.semantic_membership_f1",
+                metricValue: 0.5
+            ),
+        ])
+        let runner = MelixCLIRunner(
+            client: client,
+            environment: ["MELIX_HOME": temporaryRoot.path]
+        )
+
+        _ = try await runner.run(
+            .remoteServerAdd(
+                .init(
+                    remoteServerID: "evaluated",
+                    title: "Evaluated",
+                    providerPreset: .custom,
+                    providerKind: "openai-compatible",
+                    baseURL: "https://evaluated.example/v1",
+                    defaultModelID: "evaluated-default",
+                    apiKey: "sk-evaluated",
+                    timeoutSeconds: 30,
+                    rateLimitPerMinute: 0
+                )
+            )
+        )
+        _ = try await runner.run(
+            .remoteServerAdd(
+                .init(
+                    remoteServerID: "judge",
+                    title: "Judge",
+                    providerPreset: .custom,
+                    providerKind: "openai-compatible",
+                    baseURL: "https://judge.example/v1",
+                    defaultModelID: "judge-default",
+                    apiKey: "sk-judge",
+                    timeoutSeconds: 41,
+                    rateLimitPerMinute: 12
+                )
+            )
+        )
+
+        _ = try await runner.run(
+            MelixCLICommand.evalRun(
+                EvalRunOptions(
+                    remoteServerID: "evaluated",
+                    remoteModelID: "evaluated-model",
+                    suites: ["topic_membership"],
+                    sampleSize: 413,
+                    source: .localJSONL(path: "/tmp/topic-membership.jsonl"),
+                    profile: .init(scoringMode: "topic_membership_semantic_micro_f1"),
+                    evalPrompt: "Return topic membership JSON.",
+                    semanticJudgeRemoteServerID: "judge",
+                    semanticJudgeModelID: "judge-model",
+                    json: true
+                )
+            )
+        )
+
+        let request = try #require((await client.evaluationRequests).first)
+        #expect(request.suiteID == "topic_membership")
+        #expect(request.source == .localJSONL(path: "/tmp/topic-membership.jsonl"))
+        #expect(request.fieldMapping.inputTextPath == "")
+        #expect(request.fieldMapping.targetPath == "")
+        #expect(request.profile.scoringMode == "topic_membership_semantic_micro_f1")
+        #expect(request.parameters["eval_prompt_system_prompt"] == "Return topic membership JSON.")
+        #expect(request.parameters["semantic_judge_remote_server_id"] == "judge")
+        #expect(request.parameters["semantic_judge_provider_kind"] == "openai-compatible")
+        #expect(request.parameters["semantic_judge_base_url"] == "https://judge.example/v1")
+        #expect(request.parameters["semantic_judge_api_key"] == "sk-judge")
+        #expect(request.parameters["semantic_judge_model_id"] == "judge-model")
+        #expect(request.parameters["semantic_judge_timeout_seconds"] == "41")
+        #expect(request.parameters["semantic_judge_rate_limit_per_minute"] == "12")
+
+        await #expect(throws: MelixCLIError.runtime("Semantic judge scoring is only supported for event_extraction_weighted_f1 or topic_membership_semantic_micro_f1.")) {
+            try await runner.run(
+                MelixCLICommand.evalRun(
+                    EvalRunOptions(
+                        remoteServerID: "evaluated",
+                        remoteModelID: "evaluated-model",
+                        suites: ["topic_membership"],
+                        source: .localJSONL(path: "/tmp/topic-membership.jsonl"),
+                        profile: .init(scoringMode: "topic_membership_strict_micro_f1"),
+                        evalPrompt: "Return topic membership JSON.",
                         semanticJudgeRemoteServerID: "judge",
                         semanticJudgeModelID: "judge-model",
                         json: true

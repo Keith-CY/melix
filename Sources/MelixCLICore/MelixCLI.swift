@@ -1158,6 +1158,12 @@ public struct EvalCompareOptions: Equatable, Sendable {
     public let fieldMapping: ControlPlaneEvaluationRequest.FieldMapping
     public let profile: ControlPlaneEvaluationRequest.Profile
     public let parameters: [String: String]
+    public let evalPromptID: String
+    public let evalPromptRevisionID: String
+    public let evalPrompt: String
+    public let evalPromptFile: String
+    public let semanticJudgeRemoteServerID: String
+    public let semanticJudgeModelID: String
     public let json: Bool
     public let liveProgress: Bool
 
@@ -1173,6 +1179,12 @@ public struct EvalCompareOptions: Equatable, Sendable {
         fieldMapping: ControlPlaneEvaluationRequest.FieldMapping = .init(),
         profile: ControlPlaneEvaluationRequest.Profile = .init(),
         parameters: [String: String] = [:],
+        evalPromptID: String = "",
+        evalPromptRevisionID: String = "",
+        evalPrompt: String = "",
+        evalPromptFile: String = "",
+        semanticJudgeRemoteServerID: String = "",
+        semanticJudgeModelID: String = "",
         json: Bool = false,
         liveProgress: Bool = true
     ) {
@@ -1187,6 +1199,12 @@ public struct EvalCompareOptions: Equatable, Sendable {
         self.fieldMapping = fieldMapping
         self.profile = profile
         self.parameters = parameters
+        self.evalPromptID = evalPromptID
+        self.evalPromptRevisionID = evalPromptRevisionID
+        self.evalPrompt = evalPrompt
+        self.evalPromptFile = evalPromptFile
+        self.semanticJudgeRemoteServerID = semanticJudgeRemoteServerID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.semanticJudgeModelID = semanticJudgeModelID.trimmingCharacters(in: .whitespacesAndNewlines)
         self.json = json
         self.liveProgress = liveProgress
     }
@@ -2605,7 +2623,7 @@ public enum MelixCLIParser {
       melix eval prompt update --prompt-id ID --system-prompt-file PATH [--json]
       melix eval prompt freeze --prompt-id ID [--revision-id REV] [--json]
       melix eval prompt archive --prompt-id ID [--json]
-      melix eval compare (--model-id MODEL_ID | --repo-id HF_REPO) (--target-model-id MODEL_ID | --target-adapter ADAPTER_MANIFEST_PATH)... [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO | --dataset-ref HF_DATASET[@REV]] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--schema PATH | --output-schema-json JSON] [--hints PATH] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--no-live] [--json]
+      melix eval compare (--model-id MODEL_ID | --repo-id HF_REPO) (--target-model-id MODEL_ID | --target-adapter ADAPTER_MANIFEST_PATH)... [--suite SUITE ...] [--dataset-id DATASET_ID] [--dataset-root PATH] [--source-csv PATH | --source-jsonl PATH | --hf-dataset-path REPO | --dataset-ref HF_DATASET[@REV]] [--hf-dataset-name NAME] [--hf-dataset-revision REV] [--hf-dataset-split SPLIT] [--field-system-path PATH] [--field-input-text-path PATH] [--field-target-path PATH] [--field-sample-id-path PATH] [--profile-type TYPE] [--result-kind KIND] [--extraction-mode MODE] [--scoring-mode MODE] [--threshold N] [--schema PATH | --output-schema-json JSON] [--hints PATH] [--eval-prompt TEXT | --eval-prompt-file PATH | --eval-prompt-id ID [--eval-prompt-revision REV]] [--semantic-judge-remote-server-id ID [--semantic-judge-model MODEL]] [--ignored-path PATH ...] [--sample-size N] [--batch-factor N] [--seed N] [--few-shot N] [--code-exec-policy MODE] [--no-live] [--json]
       melix eval compare export-summary-csv --job-id JOB_ID --output PATH [--json]
       melix eval compare export-samples-csv --job-id JOB_ID --output PATH [--json]
       melix eval compare export-samples-jsonl --job-id JOB_ID --output PATH [--json]
@@ -4851,9 +4869,10 @@ public enum MelixCLIParser {
             }
             let sampleSize = UInt32(values.single["--sample-size"] ?? "") ?? 0
             let scoringMode = sourceConfiguration.profile.scoringMode
-            let suites = (values.multi["--suite"] ?? []).isEmpty && scoringMode == "event_extraction_weighted_f1"
-                ? ["event_extraction"]
-                : (values.multi["--suite"] ?? [])
+            let suites = defaultedEvaluationSuites(
+                explicitSuites: values.multi["--suite"] ?? [],
+                scoringMode: scoringMode
+            )
             try validateEvalPromptOptions(values)
             return .evalRun(
                 EvalRunOptions(
@@ -5029,6 +5048,27 @@ public enum MelixCLIParser {
         return zip(remoteServerIDs, remoteModelIDs).map {
             EvalRemoteTargetOptions(remoteServerID: $0.0, remoteModelID: $0.1)
         }
+    }
+
+    private static func defaultedEvaluationSuites(
+        explicitSuites: [String],
+        scoringMode: String
+    ) -> [String] {
+        guard explicitSuites.isEmpty else {
+            return explicitSuites
+        }
+        if scoringMode == EvaluationPromptStore.eventExtractionScoringMode {
+            return [EvaluationPromptStore.eventExtractionTaskKind]
+        }
+        if EvaluationPromptStore.topicMembershipScoringModes.contains(scoringMode) {
+            return [EvaluationPromptStore.topicMembershipTaskKind]
+        }
+        return []
+    }
+
+    private static func isDedicatedEvaluationScoringMode(_ scoringMode: String) -> Bool {
+        scoringMode == EvaluationPromptStore.eventExtractionScoringMode
+            || EvaluationPromptStore.topicMembershipScoringModes.contains(scoringMode)
     }
 
     private static func parseEvalPrompt(_ arguments: [String]) throws -> MelixCLICommand {
@@ -5228,19 +5268,40 @@ public enum MelixCLIParser {
             values,
             command: "melix eval compare"
         )
+        let scoringMode = sourceConfiguration.profile.scoringMode
+        let suites = defaultedEvaluationSuites(
+            explicitSuites: values.multi["--suite"] ?? [],
+            scoringMode: scoringMode
+        )
+        let semanticJudgeRemoteServerID = values.single["--semantic-judge-remote-server-id"] ?? ""
+        let semanticJudgeModelID = values.single["--semantic-judge-model"] ?? ""
+        if semanticJudgeRemoteServerID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           semanticJudgeModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        {
+            throw MelixCLIError.missingRequired(
+                "--semantic-judge-remote-server-id is required when using --semantic-judge-model for melix eval compare."
+            )
+        }
+        try validateEvalPromptOptions(values)
         return .evalCompare(
             EvalCompareOptions(
                 modelID: modelID,
                 hfRepoID: hfRepoID,
                 targetModelIDs: targetModelIDs,
                 targetAdapterManifestPaths: targetAdapterManifestPaths,
-                suites: values.multi["--suite"] ?? [],
+                suites: suites,
                 datasetID: values.single["--dataset-id"] ?? "",
                 sampleSize: UInt32(values.single["--sample-size"] ?? "") ?? 0,
                 source: sourceConfiguration.source,
                 fieldMapping: sourceConfiguration.fieldMapping,
                 profile: sourceConfiguration.profile,
                 parameters: try parseEvalParameters(values),
+                evalPromptID: values.single["--eval-prompt-id"] ?? "",
+                evalPromptRevisionID: values.single["--eval-prompt-revision"] ?? "",
+                evalPrompt: values.single["--eval-prompt"] ?? "",
+                evalPromptFile: values.single["--eval-prompt-file"] ?? "",
+                semanticJudgeRemoteServerID: semanticJudgeRemoteServerID,
+                semanticJudgeModelID: semanticJudgeModelID,
                 json: values.flags.contains("--json"),
                 liveProgress: values.flags.contains("--no-live") == false
             )
@@ -5411,7 +5472,7 @@ public enum MelixCLIParser {
             if values.single["--dataset-root"]?.isEmpty == false {
                 throw MelixCLIError.usage("--dataset-root is only supported for builtin evaluation datasets.")
             }
-            if profile.scoringMode == "event_extraction_weighted_f1" {
+            if isDedicatedEvaluationScoringMode(profile.scoringMode) {
                 return (source, fieldMapping, profile)
             }
             guard fieldMapping.inputTextPath.isEmpty == false else {
@@ -5662,7 +5723,7 @@ public enum MelixCLIParser {
             if values.single["--dataset-root"]?.isEmpty == false || values.single["--eval-dataset-root"]?.isEmpty == false {
                 throw MelixCLIError.usage("--dataset-root is only supported for builtin evaluation datasets.")
             }
-            if profile.scoringMode == "event_extraction_weighted_f1" {
+            if isDedicatedEvaluationScoringMode(profile.scoringMode) {
                 return (source, fieldMapping, profile)
             }
             guard fieldMapping.inputTextPath.isEmpty == false else {
@@ -6995,6 +7056,12 @@ public actor MelixCLIRunner {
                 fieldMapping: options.fieldMapping,
                 profile: options.profile,
                 parameters: parameters,
+                evalPromptID: options.evalPromptID,
+                evalPromptRevisionID: options.evalPromptRevisionID,
+                evalPrompt: options.evalPrompt,
+                evalPromptFile: options.evalPromptFile,
+                semanticJudgeRemoteServerID: options.semanticJudgeRemoteServerID,
+                semanticJudgeModelID: options.semanticJudgeModelID,
                 json: options.json,
                 liveProgress: options.liveProgress
             )
@@ -8952,6 +9019,12 @@ public actor MelixCLIRunner {
         appendOption("--scoring-mode", value: options.parameters["scoring_mode"], into: &arguments)
         appendOption("--code-exec-policy", value: options.parameters["code_exec_policy"], into: &arguments)
         appendOption("--hints", value: options.parameters["hints_path"], into: &arguments)
+        appendOption("--eval-prompt-id", value: options.evalPromptID, into: &arguments)
+        appendOption("--eval-prompt-revision", value: options.evalPromptRevisionID, into: &arguments)
+        appendOption("--eval-prompt", value: options.evalPrompt, into: &arguments)
+        appendOption("--eval-prompt-file", value: options.evalPromptFile, into: &arguments)
+        appendOption("--semantic-judge-remote-server-id", value: options.semanticJudgeRemoteServerID, into: &arguments)
+        appendOption("--semantic-judge-model", value: options.semanticJudgeModelID, into: &arguments)
         arguments.append("--json")
         return arguments
     }
@@ -11462,14 +11535,15 @@ public actor MelixCLIRunner {
                 try adHocEvaluationPromptParameters(systemPrompt: adHocPrompt, suiteID: suiteID, options: options)
             ) { _, new in new }
         }
+        let effectiveScoringMode = options.parameters["scoring_mode"]?.isEmpty == false
+            ? options.parameters["scoring_mode"] ?? ""
+            : options.profile.scoringMode
         let usesEventPrompt = suiteID == "event_extraction"
-            || options.profile.scoringMode == EvaluationPromptStore.eventExtractionScoringMode
-            || options.parameters["scoring_mode"] == EvaluationPromptStore.eventExtractionScoringMode
+            || effectiveScoringMode == EvaluationPromptStore.eventExtractionScoringMode
             || options.evalPromptID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         if usesEventPrompt && adHocPrompt.isEmpty {
             guard suiteID == "event_extraction"
-                || options.profile.scoringMode == EvaluationPromptStore.eventExtractionScoringMode
-                || options.parameters["scoring_mode"] == EvaluationPromptStore.eventExtractionScoringMode
+                || effectiveScoringMode == EvaluationPromptStore.eventExtractionScoringMode
             else {
                 throw MelixCLIError.runtime("Evaluation prompts are only supported for event_extraction_weighted_f1.")
             }
@@ -11482,10 +11556,10 @@ public actor MelixCLIRunner {
         }
         if options.semanticJudgeRemoteServerID.isEmpty == false {
             guard suiteID == "event_extraction"
-                || options.profile.scoringMode == EvaluationPromptStore.eventExtractionScoringMode
-                || options.parameters["scoring_mode"] == EvaluationPromptStore.eventExtractionScoringMode
+                || effectiveScoringMode == EvaluationPromptStore.eventExtractionScoringMode
+                || effectiveScoringMode == EvaluationPromptStore.topicMembershipSemanticScoringMode
             else {
-                throw MelixCLIError.runtime("Semantic judge scoring is only supported for event_extraction_weighted_f1.")
+                throw MelixCLIError.runtime("Semantic judge scoring is only supported for event_extraction_weighted_f1 or topic_membership_semantic_micro_f1.")
             }
             parameters.merge(
                 try semanticJudgeParameters(
