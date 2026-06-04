@@ -25,29 +25,44 @@ def main() -> int:
     triple_count = 1500
     sample_count = 9
     elapsed_samples: list[float] = []
+    cli_elapsed_samples: list[float] = []
     with tempfile.TemporaryDirectory(prefix="melix-pr-perf-package-resolve-") as temp_dir:
         synthetic_repo = Path(temp_dir) / "repo"
-        build_root = synthetic_repo / "apps/macos-menubar/.build"
-        expected = build_root / "arch-0000" / "release" / "melix-menubar"
-        for index in range(triple_count):
-            product_dir = build_root / f"arch-{index:04d}" / "release"
-            product_dir.mkdir(parents=True, exist_ok=True)
-            product_name = "melix-menubar" if index == 0 else "other-product"
-            (product_dir / product_name).write_text("x", encoding="utf-8")
+        menubar_build_root = synthetic_repo / "apps/macos-menubar/.build"
+        cli_build_root = synthetic_repo / ".build"
+        expected = menubar_build_root / "arch-1499" / "debug" / "melix-menubar"
+        expected_cli = cli_build_root / "arch-1499" / "debug" / "melix"
+        for build_root, product_name in (
+            (menubar_build_root, "melix-menubar"),
+            (cli_build_root, "melix"),
+        ):
+            for index in range(triple_count):
+                product_dir = build_root / f"arch-{index:04d}" / "debug"
+                product_dir.mkdir(parents=True, exist_ok=True)
+                name = product_name if index == triple_count - 1 else "other-product"
+                (product_dir / name).write_text("x", encoding="utf-8")
 
         resolved = expected
+        resolved_cli = expected_cli
         for _ in range(sample_count):
             started = time.perf_counter()
             resolved = module.resolve_built_binary(synthetic_repo)
             elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+            started = time.perf_counter()
+            resolved_cli = module.resolve_built_cli_binary(synthetic_repo)
+            cli_elapsed_samples.append((time.perf_counter() - started) * 1000.0)
 
     if resolved != expected:
         raise AssertionError(f"expected {expected}, got {resolved}")
+    if resolved_cli != expected_cli:
+        raise AssertionError(f"expected {expected_cli}, got {resolved_cli}")  # pragma: no cover
     print(
         json.dumps(
             {
                 "elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
                 "elapsed_ms_min": round(min(elapsed_samples), 6),
+                "cli_elapsed_ms_mean": round(statistics.fmean(cli_elapsed_samples), 6),
+                "cli_elapsed_ms_min": round(min(cli_elapsed_samples), 6),
                 "sample_count": float(sample_count),
                 "triple_count": float(triple_count),
             },

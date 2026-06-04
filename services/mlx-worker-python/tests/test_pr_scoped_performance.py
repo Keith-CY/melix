@@ -5470,6 +5470,7 @@ def test_package_macos_resolve_probe_script_emits_metrics(capsys: pytest.Capture
     assert metrics["sample_count"] == 9.0
     assert metrics["triple_count"] == 1500.0
     assert metrics["elapsed_ms_mean"] >= 0.0
+    assert metrics["cli_elapsed_ms_mean"] >= 0.0
 
 
 def test_melix_metrics_snapshot_discovery_probe_script_emits_metrics(
