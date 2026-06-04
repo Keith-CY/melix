@@ -192,13 +192,16 @@ class HubCatalog:
             raise HubCatalogError("hub_payload_invalid", f"Hub payload could not be decoded: {exc}") from exc
 
     def _summary_record(self, payload: dict[str, Any]) -> HubModelSummaryRecord:
-        card_data = payload.get("cardData") if isinstance(payload.get("cardData"), dict) else {}
-        repo_id = _string(payload.get("id") or payload.get("modelId"))
-        tags = _string_list(payload.get("tags"))
+        payload_get = payload.get
+        raw_card_data = payload_get("cardData")
+        card_data = raw_card_data if isinstance(raw_card_data, dict) else {}
+        card_get = card_data.get
+        repo_id = _string(payload_get("id") or payload_get("modelId"))
+        tags = _string_list(payload_get("tags"))
         lowered_tags = _lowered_tag_set(tags)
-        library_name = _string(payload.get("library_name") or card_data.get("library_name"))
-        pipeline_tag = _string(payload.get("pipeline_tag") or card_data.get("pipeline_tag"))
-        sibling_files = _sibling_files(payload.get("siblings"))
+        library_name = _string(payload_get("library_name") or card_get("library_name"))
+        pipeline_tag = _string(payload_get("pipeline_tag") or card_get("pipeline_tag"))
+        sibling_files = _sibling_files(payload_get("siblings"))
         mlx_compatible = _is_mlx_compatible(
             repo_id=repo_id,
             tags=tags,
@@ -214,20 +217,21 @@ class HubCatalog:
             lowered_tags=lowered_tags,
             mlx_compatible=mlx_compatible,
             local_memory_gb=self._local_memory_gb,
+            card_data=card_data,
         )
         return HubModelSummaryRecord(
             repo_id=repo_id,
             author=_author(payload, repo_id),
             model_name=_model_name(repo_id),
-            summary=_string(card_data.get("model_name") or payload.get("description")),
+            summary=_string(card_get("model_name") or payload_get("description")),
             pipeline_tag=pipeline_tag,
             tags=tags,
-            downloads=_int(payload.get("downloads")),
-            likes=_int(payload.get("likes")),
+            downloads=_int(payload_get("downloads")),
+            likes=_int(payload_get("likes")),
             mlx_compatible=mlx_compatible,
             library_name=library_name,
             sibling_files=sibling_files,
-            last_modified=_string(payload.get("lastModified")),
+            last_modified=_string(payload_get("lastModified")),
             local_fit_status=local_fit["status"],
             local_fit_reasons=local_fit["reasons"],
             estimated_artifact_bytes=local_fit["estimated_artifact_bytes"],
@@ -240,7 +244,8 @@ class HubCatalog:
 
     def _card_record(self, payload: dict[str, Any]) -> HubModelCardRecord:
         summary = self._summary_record(payload)
-        card_data = payload.get("cardData") if isinstance(payload.get("cardData"), dict) else {}
+        raw_card_data = payload.get("cardData")
+        card_data = raw_card_data if isinstance(raw_card_data, dict) else {}
         return HubModelCardRecord(
             repo_id=summary.repo_id,
             author=summary.author,
@@ -452,9 +457,10 @@ def _local_fit_evidence(
     mlx_compatible: bool,
     local_memory_gb: float,
     lowered_tags: set[str] | None = None,
+    card_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     lowered_tags = _normalized_lowered_tags(tags, lowered_tags)
-    artifact_bytes = _estimated_artifact_bytes(payload)
+    artifact_bytes = _estimated_artifact_bytes(payload, card_data=card_data)
     parameter_count = _parameter_count(payload.get("safetensors"))
     quantization_summary = _quantization_summary(tags, lowered_tags=lowered_tags)
     estimated_resident_bytes = _estimated_resident_bytes(
@@ -563,7 +569,9 @@ def _local_fit_evidence(
     }
 
 
-def _estimated_artifact_bytes(payload: dict[str, Any]) -> int:
+def _estimated_artifact_bytes(
+    payload: dict[str, Any], *, card_data: dict[str, Any] | None = None
+) -> int:
     for key in ("usedStorage", "used_storage", "storage", "size"):
         value = _int(payload.get(key))
         if value > 0:
@@ -573,7 +581,7 @@ def _estimated_artifact_bytes(payload: dict[str, Any]) -> int:
     if sibling_bytes > 0:
         return sibling_bytes
 
-    hint_bytes = _size_hint_bytes(payload)
+    hint_bytes = _size_hint_bytes(payload, card_data=card_data)
     return hint_bytes
 
 
@@ -601,9 +609,10 @@ def _is_weight_or_config_file(filename: str) -> bool:
     return lowered.endswith(_LOWERCASE_WEIGHT_OR_CONFIG_SUFFIXES)
 
 
-def _size_hint_bytes(payload: dict[str, Any]) -> int:
-    raw_card_data = payload.get("cardData")
-    card_data = raw_card_data if isinstance(raw_card_data, dict) else {}
+def _size_hint_bytes(payload: dict[str, Any], *, card_data: dict[str, Any] | None = None) -> int:
+    if card_data is None:
+        raw_card_data = payload.get("cardData")
+        card_data = raw_card_data if isinstance(raw_card_data, dict) else {}
     direct_card_text = _string(card_data.get("model_size"))
     if direct_card_text:
         direct_card_hint = _direct_card_size_hint_from_text(direct_card_text)
