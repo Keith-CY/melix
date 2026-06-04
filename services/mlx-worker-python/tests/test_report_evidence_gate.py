@@ -467,9 +467,54 @@ def test_report_evidence_gate_passes_complete_release_matrix(tmp_path: Path) -> 
         "adapter_check": True,
         "runtime_check": True,
     }
+    release_matrix = gate["release_matrix"]
+    assert isinstance(release_matrix, list)
+    serving_row = next(row for row in release_matrix if row["role"] == "serving_benchmark")
+    assert serving_row["evidence_ids"] == ["serving-base", "serving-head"]
     markdown = render_pr_evidence_markdown(gate)
     assert "Report JSON" in markdown
     assert "serving-head" in markdown
+
+
+def test_report_evidence_gate_release_matrix_dedupes_evidence_ids(tmp_path: Path) -> None:
+    serving_report = _write_report(tmp_path, "serving", run_kind="serving_benchmark")
+
+    gate = build_report_evidence_gate(
+        [serving_report, serving_report],
+        matrix={"serving": {"run_kinds": ("serving_benchmark",)}},
+    )
+
+    assert gate["release_matrix"] == [
+        {
+            "role": "serving",
+            "required": True,
+            "present": True,
+            "evidence_ids": ["serving-base", "serving-head"],
+            "description": "",
+        }
+    ]
+
+
+def test_report_evidence_gate_release_matrix_ignores_invalid_cached_roles() -> None:
+    rows = report_evidence_gate_module._release_matrix_rows(
+        [
+            {"release_matrix_roles": "serving", "source_evidence_ids": ["bad-type"]},
+            {"release_matrix_roles": ["serving"], "source_evidence_ids": "bad-type"},
+            {"release_matrix_roles": ["serving"], "source_evidence_ids": []},
+            {"release_matrix_roles": ["serving", "unknown"], "source_evidence_ids": ["ok"]},
+        ],
+        {"serving": {"description": "serving evidence"}},
+    )
+
+    assert rows == [
+        {
+            "role": "serving",
+            "required": True,
+            "present": True,
+            "evidence_ids": ["ok"],
+            "description": "serving evidence",
+        }
+    ]
 
 
 def test_report_evidence_gate_reports_blocking_metrics_and_probe_phase(tmp_path: Path) -> None:

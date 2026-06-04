@@ -239,19 +239,30 @@ def _release_matrix_rows(
     reports: list[dict[str, object]],
     matrix: dict[str, dict[str, object]],
 ) -> list[dict[str, object]]:
+    evidence_by_role: dict[str, set[str]] = {}
+    matrix_roles = set(matrix)
+    for report in reports:
+        roles = report.get("release_matrix_roles")
+        source_evidence_ids = report.get("source_evidence_ids", [])
+        if not isinstance(roles, list) or not isinstance(source_evidence_ids, list):
+            continue
+        evidence_ids = tuple(str(item) for item in source_evidence_ids)
+        if not evidence_ids:
+            continue
+        for role in roles:
+            if role not in matrix_roles:
+                continue
+            evidence_by_role.setdefault(role, set()).update(evidence_ids)
+
     rows: list[dict[str, object]] = []
     for role, rule in matrix.items():
-        evidence_ids: list[str] = []
-        for report in reports:
-            roles = report.get("release_matrix_roles")
-            if isinstance(roles, list) and role in roles:
-                evidence_ids.extend(str(item) for item in report.get("source_evidence_ids", []))
+        evidence_ids = evidence_by_role.get(role, set())
         rows.append(
             {
                 "role": role,
                 "required": bool(rule.get("required", True)),
                 "present": bool(evidence_ids),
-                "evidence_ids": sorted(set(evidence_ids)),
+                "evidence_ids": sorted(evidence_ids),
                 "description": str(rule.get("description", "")),
             }
         )
