@@ -201,13 +201,13 @@ jobs:
         run: bash scripts/ci_progress.sh "Package app bootstrap" make bootstrap
 
       - name: Build CLI executable
-        run: bash scripts/ci_progress.sh "Package app CLI build" swift build --product melix --disable-automatic-resolution
+        run: bash scripts/ci_progress.sh "Package app CLI build" swift build -c release --product melix --disable-automatic-resolution
 
       - name: Build Swift text worker
-        run: bash scripts/ci_progress.sh "Package app Swift text worker build" swift build --package-path services/mlx-text-worker-swift --disable-automatic-resolution
+        run: bash scripts/ci_progress.sh "Package app Swift text worker build" swift build -c release --package-path services/mlx-text-worker-swift --disable-automatic-resolution
 
       - name: Build menu bar app executable
-        run: bash scripts/ci_progress.sh "Package app menubar build" swift build --package-path apps/macos-menubar --disable-automatic-resolution
+        run: bash scripts/ci_progress.sh "Package app menubar build" swift build -c release --package-path apps/macos-menubar --disable-automatic-resolution
 
       - name: Packaging smoke checks
         run: bash scripts/ci_progress.sh "Package app smoke checks" make package-smoke

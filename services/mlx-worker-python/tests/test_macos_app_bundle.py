@@ -12,6 +12,12 @@ from worker.productization.macos_app_bundle import (
     _copy_swiftpm_resource_bundles,
     _reject_external_python_framework_runtime,
     _copy_packaged_script,
+    _is_macho_file,
+    _iter_python_native_binary_candidates,
+    _path_size_bytes,
+    _prune_python_package_baggage,
+    _prune_python_runtime_baggage,
+    _strip_packaged_binaries,
     adhoc_sign_macos_app_bundle,
     archive_macos_app_bundle,
     build_macos_app_bundle_layout,
@@ -100,6 +106,7 @@ def test_render_portable_environment_script_uses_home_relative_paths() -> None:
     assert 'export MELIX_HTTP_PORT="${MELIX_HTTP_PORT:-12436}"' in script
     assert 'export MELIX_BACKEND_MODE="auto"' in script
     assert 'export MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE="swift"' in script
+    assert 'export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-$MELIX_RUNTIME_DIR/python-bytecode-cache}"' in script
 
 
 def test_render_launcher_script_starts_bundled_workers_and_app(tmp_path: Path) -> None:
@@ -124,6 +131,7 @@ def test_render_launcher_script_starts_bundled_workers_and_app(tmp_path: Path) -
     assert '--backend-mode "$MELIX_BACKEND_MODE"' in script
     assert "export MELIX_SWIFT_WORKER_PID" in script
     assert "export MELIX_PYTHON_WORKER_PID" in script
+    assert '"$MELIX_RUNTIME_DIR/python-bytecode-cache"' in script
     assert '"$MELIX_MODEL_OPS_JOBS_ROOT"' in script
     assert '"$MELIX_EVALUATION_JOBS_ROOT"' in script
     assert '"$RESOURCES_DIR/python-runtime/bin/python3" "$RESOURCES_DIR/repo/scripts/wait_for_worker_ready.py"' in script
@@ -330,6 +338,7 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
     assert "melix-text-worker-swift" in launcher
     assert 'export MELIX_MENU_BAR_STARTUP_SURFACE="console"' in launcher
     assert 'export MELIX_MENU_BAR_PRESENTATION_MODE="dock-and-tray"' in launcher
+    assert '"$MELIX_RUNTIME_DIR/python-bytecode-cache"' in launcher
     assert "export MELIX_SWIFT_WORKER_PID" in launcher
     assert "export MELIX_PYTHON_WORKER_PID" in launcher
     assert 'exec "$RESOURCES_DIR/melix-menubar" "$@"' in launcher
@@ -368,6 +377,265 @@ def test_write_unsigned_macos_app_bundle_writes_self_contained_layout(tmp_path: 
     ):
         assert isinstance(timings[key], float)
         assert timings[key] >= 0.0
+
+
+def test_write_unsigned_macos_app_bundle_slims_copied_runtime_assets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = tmp_path / "repo"
+    (repo_root / "services/mlx-worker-python/worker").mkdir(parents=True)
+    (repo_root / "packages/protocol/python").mkdir(parents=True)
+    (repo_root / "scripts").mkdir(parents=True)
+    (repo_root / "services/mlx-worker-python/worker/bootstrap.py").write_text("print('bootstrap')\n", encoding="utf-8")
+    (repo_root / "services/mlx-worker-python/worker/control_plane_bridge.py").write_text("print('bridge')\n", encoding="utf-8")
+    (repo_root / "services/mlx-worker-python/pyproject.toml").write_text("[project]\nname='fixture'\nversion='0.1.0'\n", encoding="utf-8")
+    (repo_root / "packages/protocol/python/__init__.py").write_text("", encoding="utf-8")
+    (repo_root / "scripts/wait_for_worker_ready.py").write_text("print('wait')\n", encoding="utf-8")
+
+    menubar = tmp_path / "melix-menubar"
+    cli = tmp_path / "melix"
+    swift_worker = tmp_path / "melix-text-worker-swift"
+    for executable in (menubar, cli, swift_worker):
+        executable.write_text("#!/usr/bin/env bash\necho debug-symbols\n", encoding="utf-8")
+        executable.chmod(0o755)
+
+    python_runtime = tmp_path / "python-runtime"
+    (python_runtime / "bin").mkdir(parents=True)
+    python_executable = python_runtime / "bin/python3"
+    python_executable.write_text("#!/usr/bin/env bash\necho python-debug-symbols\n", encoding="utf-8")
+    python_executable.chmod(0o755)
+    runtime_dylib = python_runtime / "lib/libpython3.12.dylib"
+    runtime_dylib.parent.mkdir(parents=True)
+    runtime_dylib.write_text("native-debug-symbols\n", encoding="utf-8")
+    runtime_include = python_runtime / "include/python3.12"
+    runtime_include.mkdir(parents=True)
+    (runtime_include / "Python.h").write_text("not needed by packaged runtime\n", encoding="utf-8")
+    runtime_static_archive = python_runtime / "lib/libpython3.12.a"
+    runtime_static_archive.write_text("not needed by packaged runtime\n", encoding="utf-8")
+    runtime_ensurepip = python_runtime / "lib/python3.12/ensurepip/_bundled"
+    runtime_ensurepip.mkdir(parents=True)
+    (runtime_ensurepip / "pip-25.0.1-py3-none-any.whl").write_text(
+        "not needed by packaged runtime\n",
+        encoding="utf-8",
+    )
+    runtime_pycache = python_runtime / "lib/python3.12/json/__pycache__"
+    runtime_pycache.mkdir(parents=True)
+    (runtime_pycache / "decoder.cpython-312.pyc").write_bytes(b"not needed by packaged runtime\n")
+
+    python_site_packages = tmp_path / "python-site-packages"
+    native_package = python_site_packages / "nativepkg"
+    native_package.mkdir(parents=True)
+    native_extension = native_package / "module.cpython-312-darwin.so"
+    native_extension.write_text("native-debug-symbols\n", encoding="utf-8")
+    native_extension.chmod(0o755)
+    external_native_extension = tmp_path / "external-module.cpython-312-darwin.so"
+    external_native_extension.write_text("external-native-debug-symbols\n", encoding="utf-8")
+    (native_package / "linked-module.cpython-312-darwin.so").symlink_to(external_native_extension)
+    for pruned_dir in ("tests", "test", "testing", "docs", "doc", "__pycache__"):
+        path = native_package / pruned_dir
+        path.mkdir()
+        (path / "fixture.txt").write_text("not needed at runtime\n", encoding="utf-8")
+    retained_source = native_package / "runtime.py"
+    retained_source.write_text("VALUE = 'kept'\n", encoding="utf-8")
+
+    icon_file = tmp_path / "MelixAppIcon.icns"
+    icon_file.write_bytes(b"icns")
+    strip_calls: list[str] = []
+
+    def fake_which(name: str) -> str | None:
+        if name == "strip":
+            return "/usr/bin/strip"
+        if name == "xcrun":
+            return "/usr/bin/xcrun"
+        return None
+
+    def fake_run(command: list[str], check: bool, **kwargs: object):
+        if command[0] == "otool":
+            return type("Completed", (), {"stdout": ""})()
+        if command[0] == "/usr/bin/strip":
+            target = Path(command[-1])
+            strip_calls.append(target.name)
+            target.write_text(target.read_text(encoding="utf-8").replace("debug-symbols", "stripped"), encoding="utf-8")
+            return None
+        raise AssertionError(f"unexpected subprocess command: {command}")
+
+    monkeypatch.setattr(macos_app_bundle_module.shutil, "which", fake_which)
+    monkeypatch.setattr(macos_app_bundle_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        macos_app_bundle_module,
+        "compile_native_launcher",
+        lambda source_path, output_path: output_path.write_text("#!/usr/bin/env bash\n", encoding="utf-8"),
+    )
+
+    manifest = write_unsigned_macos_app_bundle(
+        repo_root=repo_root,
+        executable_path=menubar,
+        cli_executable_path=cli,
+        swift_text_worker_executable_path=swift_worker,
+        python_runtime_root=python_runtime,
+        python_site_packages_path=python_site_packages,
+        output_path=tmp_path / "Melix.app",
+        icon_source_path=icon_file,
+    )
+
+    resources = Path(manifest["resources_path"])
+    bundled_runtime = resources / "python-runtime"
+    bundled_package = resources / "python-site-packages/nativepkg"
+    assert (bundled_runtime / "include").exists() is False
+    assert (bundled_runtime / "lib/libpython3.12.a").exists() is False
+    assert (bundled_runtime / "lib/python3.12/ensurepip").exists() is False
+    assert (bundled_runtime / "lib/python3.12/json/__pycache__").exists() is False
+    assert (bundled_package / "runtime.py").is_file()
+    for pruned_dir in ("tests", "test", "testing", "docs", "doc", "__pycache__"):
+        assert (bundled_package / pruned_dir).exists() is False
+    assert "melix-menubar" in strip_calls
+    assert "melix" in strip_calls
+    assert "melix-text-worker-swift" in strip_calls
+    assert "python3" in strip_calls
+    assert "libpython3.12.dylib" in strip_calls
+    assert "module.cpython-312-darwin.so" in strip_calls
+    assert "linked-module.cpython-312-darwin.so" not in strip_calls
+    assert external_native_extension.read_text(encoding="utf-8") == "external-native-debug-symbols\n"
+    assert (native_package / "tests").is_dir()
+    slimming = manifest["slimming"]
+    assert slimming["swift_binaries_stripped"] == 3
+    assert slimming["python_native_binaries_stripped"] == 3
+    assert slimming["python_package_directories_pruned"] == 6
+    assert slimming["python_runtime_baggage_bytes_saved"] > 0
+    assert slimming["bytes_saved"] > 0
+    timings = manifest["timings"]
+    assert isinstance(timings["strip_swift_binaries_seconds"], float)
+    assert isinstance(timings["strip_python_native_binaries_seconds"], float)
+    assert isinstance(timings["prune_python_package_baggage_seconds"], float)
+    assert isinstance(timings["prune_python_runtime_baggage_seconds"], float)
+
+
+def test_bundle_slimming_helpers_cover_runtime_edge_cases(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = tmp_path / "python-runtime"
+    site_packages = tmp_path / "site-packages"
+    runtime_bin = runtime / "bin"
+    runtime_lib = runtime / "lib/python3.12"
+    site_package = site_packages / "nativepkg"
+    runtime_bin.mkdir(parents=True)
+    runtime_lib.mkdir(parents=True)
+    site_package.mkdir(parents=True)
+
+    python_versioned = runtime_bin / "python3.12"
+    python_versioned.write_text("python-debug-symbols\n", encoding="utf-8")
+    runtime_so = runtime_lib / "_socket.cpython-312-darwin.so"
+    runtime_so.write_text("native-debug-symbols\n", encoding="utf-8")
+    site_so = site_package / "module.cpython-312-darwin.so"
+    site_so.write_text("native-debug-symbols\n", encoding="utf-8")
+    skipped_runtime_file = runtime / "README.txt"
+    skipped_runtime_file.write_text("not native\n", encoding="utf-8")
+
+    include_target = tmp_path / "include-target"
+    include_target.mkdir()
+    include_link = runtime / "include"
+    include_link.symlink_to(include_target, target_is_directory=True)
+    ensurepip_link_target = tmp_path / "ensurepip-target"
+    ensurepip_link_target.mkdir()
+    ensurepip_link = runtime_lib / "ensurepip"
+    ensurepip_link.symlink_to(ensurepip_link_target, target_is_directory=True)
+    pycache = runtime_lib / "__pycache__"
+    pycache.mkdir()
+    (pycache / "module.pyc").write_bytes(b"cache")
+    archive = runtime / "libpython3.12.a"
+    archive.write_text("archive\n", encoding="utf-8")
+    retained_py = runtime_lib / "runtime.py"
+    retained_py.write_text("VALUE = 1\n", encoding="utf-8")
+
+    package_doc_link_target = tmp_path / "doc-target"
+    package_doc_link_target.mkdir()
+    package_doc_link = site_package / "docs"
+    package_doc_link.symlink_to(package_doc_link_target, target_is_directory=True)
+
+    assert _path_size_bytes(site_package) > 0
+    assert _path_size_bytes(tmp_path / "missing") == 0
+
+    package_prune = _prune_python_package_baggage(site_packages)
+    assert package_prune["directories_pruned"] == 1
+    assert package_prune["bytes_saved"] > 0
+    assert package_doc_link.exists() is False
+    assert package_doc_link_target.is_dir()
+
+    runtime_prune = _prune_python_runtime_baggage(runtime)
+    assert runtime_prune["directories_pruned"] == 3
+    assert runtime_prune["files_pruned"] == 1
+    assert runtime_prune["bytes_saved"] > 0
+    assert include_link.exists() is False
+    assert include_target.is_dir()
+    assert ensurepip_link.exists() is False
+    assert ensurepip_link_target.is_dir()
+    assert pycache.exists() is False
+    assert archive.exists() is False
+    assert retained_py.is_file()
+
+    candidates = _iter_python_native_binary_candidates(runtime, site_packages)
+    assert python_versioned in candidates
+    assert runtime_so in candidates
+    assert site_so in candidates
+    assert skipped_runtime_file not in candidates
+
+    monkeypatch.setattr(macos_app_bundle_module.shutil, "which", lambda name: "/usr/bin/strip")
+
+    def fake_strip(command: list[str], check: bool, **kwargs: object) -> None:
+        target = Path(command[-1])
+        if target == site_so:
+            raise macos_app_bundle_module.subprocess.CalledProcessError(returncode=1, cmd=command)
+        target.write_text(target.read_text(encoding="utf-8").replace("debug-symbols", "stripped"), encoding="utf-8")
+
+    monkeypatch.setattr(macos_app_bundle_module.subprocess, "run", fake_strip)
+
+    strip_result = _strip_packaged_binaries(
+        [
+            python_versioned,
+            python_versioned,
+            runtime_so,
+            site_so,
+            runtime / "missing.so",
+        ]
+    )
+    assert strip_result["attempted"] == 3
+    assert strip_result["stripped"] == 2
+    assert strip_result["failed"] == 1
+    assert strip_result["bytes_saved"] > 0
+
+    monkeypatch.setattr(macos_app_bundle_module.shutil, "which", lambda name: None)
+    unavailable_result = _strip_packaged_binaries([python_versioned])
+    assert unavailable_result["strip_available"] is False
+    assert unavailable_result["attempted"] == 0
+
+
+def test_macho_detection_handles_non_files_and_read_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    native = tmp_path / "native.dylib"
+    native.write_bytes(b"\xfe\xed\xfa\xcfpayload")
+    plain = tmp_path / "plain.so"
+    plain.write_text("plain text\n", encoding="utf-8")
+    linked = tmp_path / "linked.so"
+    linked.symlink_to(native)
+
+    assert _is_macho_file(native) is True
+    assert _is_macho_file(plain) is False
+    assert _is_macho_file(linked) is False
+    assert _is_macho_file(tmp_path / "missing.so") is False
+
+    original_open = Path.open
+
+    def fail_open(self: Path, *args: object, **kwargs: object):
+        if self == native:
+            raise OSError("synthetic read failure")
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", fail_open)
+    assert _is_macho_file(native) is False
 
 
 def test_copy_swiftpm_resource_bundles_restores_existing_bundle_on_copy_failure(
@@ -485,7 +753,13 @@ def test_adhoc_sign_macos_app_bundle_signs_and_verifies_app(
     tmp_path: Path,
 ) -> None:
     app_path = tmp_path / "Melix.app"
-    app_path.mkdir()
+    native_extension = app_path / "Contents/Resources/python-site-packages/cv2/cv2.abi3.so"
+    nested_dylib = app_path / "Contents/Resources/python-site-packages/cv2/.dylibs/libavcodec.61.dylib"
+    non_native_data = app_path / "Contents/Resources/python-site-packages/cv2/data.so"
+    for native_path in (native_extension, nested_dylib):
+        native_path.parent.mkdir(parents=True, exist_ok=True)
+        native_path.write_bytes(b"\xcf\xfa\xed\xfe" + b"mach-o")
+    non_native_data.write_text("not a mach-o binary\n", encoding="utf-8")
     calls: list[list[str]] = []
 
     monkeypatch.setattr(macos_app_bundle_module.shutil, "which", lambda name: "/usr/bin/codesign")
@@ -496,7 +770,13 @@ def test_adhoc_sign_macos_app_bundle_signs_and_verifies_app(
     )
 
     assert adhoc_sign_macos_app_bundle(app_path) is True
-    assert calls == [
+    signed_nested_targets = {Path(command[-1]) for command in calls[:-2]}
+    assert signed_nested_targets == {
+        native_extension.resolve(),
+        nested_dylib.resolve(),
+    }
+    assert non_native_data.resolve() not in signed_nested_targets
+    assert calls[-2:] == [
         [
             "/usr/bin/codesign",
             "--force",

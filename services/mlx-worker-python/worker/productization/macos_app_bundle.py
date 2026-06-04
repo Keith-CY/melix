@@ -24,6 +24,23 @@ _BUNDLED_BENCHMARK_FIXTURE_IDS = (
     "agentic-search.dev.v1",
     "agentic-visit.dev.v1",
 )
+_PRUNABLE_PYTHON_PACKAGE_DIR_NAMES = frozenset(
+    ("__pycache__", "doc", "docs", "test", "testing", "tests")
+)
+_PRUNABLE_PYTHON_RUNTIME_DIR_NAMES = frozenset(("__pycache__", "ensurepip"))
+_PRUNABLE_PYTHON_RUNTIME_FILE_SUFFIXES = frozenset((".a", ".pyc"))
+_PYTHON_NATIVE_BINARY_SUFFIXES = (".dylib", ".so")
+_PYTHON_RUNTIME_EXECUTABLE_NAMES = frozenset(("python", "python3"))
+_MACHO_MAGIC_VALUES = frozenset(
+    (
+        b"\xfe\xed\xfa\xce",
+        b"\xce\xfa\xed\xfe",
+        b"\xfe\xed\xfa\xcf",
+        b"\xcf\xfa\xed\xfe",
+        b"\xca\xfe\xba\xbe",
+        b"\xbe\xba\xfe\xca",
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -183,6 +200,7 @@ def render_portable_environment_script(
             'export MELIX_BACKEND_MODE="auto"',
             'export MELIX_SWIFT_TEXT_WORKER_BACKEND_MODE="swift"',
             'export MELIX_LOGS_DIR="${MELIX_LOGS_DIR:-$MELIX_HOME/logs}"',
+            'export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-$MELIX_RUNTIME_DIR/python-bytecode-cache}"',
             "",
         ]
     )
@@ -211,7 +229,7 @@ def render_launcher_script(
             f'export MELIX_REPO_ROOT="$RESOURCES_DIR/{repo_root.as_posix()}"',
             'source "$RESOURCES_DIR/melix-product-env.sh"',
             f'export MELIX_CLI="$RESOURCES_DIR/{bundled_cli_binary_name}"',
-            'mkdir -p "$MELIX_HOME/config" "$MELIX_HOME/state" "$MELIX_HOME/secrets" "$MELIX_HOME/install" "$MELIX_RUNTIME_DIR" "$MELIX_LOGS_DIR" "$MELIX_RUNTIME_DIR/swift-text-worker-cache" "$MELIX_MANAGED_MODEL_ROOT" "$MELIX_AUDIO_RUNTIME_PACK_ROOT" "$MELIX_MODEL_OPS_JOBS_ROOT" "$MELIX_EVALUATION_JOBS_ROOT"',
+            'mkdir -p "$MELIX_HOME/config" "$MELIX_HOME/state" "$MELIX_HOME/secrets" "$MELIX_HOME/install" "$MELIX_RUNTIME_DIR" "$MELIX_LOGS_DIR" "$MELIX_RUNTIME_DIR/swift-text-worker-cache" "$MELIX_RUNTIME_DIR/python-bytecode-cache" "$MELIX_MANAGED_MODEL_ROOT" "$MELIX_AUDIO_RUNTIME_PACK_ROOT" "$MELIX_MODEL_OPS_JOBS_ROOT" "$MELIX_EVALUATION_JOBS_ROOT"',
             'RUN_TOKEN="${MELIX_RUN_TOKEN:-$$}"',
             'export MELIX_WORKER_SOCKET_PATH="$MELIX_RUNTIME_DIR/python-worker-${RUN_TOKEN}.sock"',
             'export MELIX_SWIFT_TEXT_WORKER_SOCKET_PATH="$MELIX_RUNTIME_DIR/swift-text-worker-${RUN_TOKEN}.sock"',
@@ -318,6 +336,184 @@ def elapsed_seconds(started_at: float) -> float:
     return round(time.perf_counter() - started_at, 6)
 
 
+def _path_size_bytes(path: Path) -> int:
+    try:
+        if path.is_symlink() or path.is_file():
+            return path.lstat().st_size
+    except OSError:
+        return 0
+
+    total = 0
+    for root, dirnames, filenames in os.walk(path, followlinks=False):
+        root_path = Path(root)
+        for dirname in list(dirnames):
+            directory = root_path / dirname
+            if directory.is_symlink():
+                total += directory.lstat().st_size
+                dirnames.remove(dirname)
+        for filename in filenames:
+            file_path = root_path / filename
+            try:
+                total += file_path.lstat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def _prune_python_package_baggage(site_packages: Path) -> dict[str, int]:
+    result = {
+        "directories_pruned": 0,
+        "bytes_saved": 0,
+    }
+    for root, dirnames, _filenames in os.walk(site_packages, followlinks=False):
+        root_path = Path(root)
+        for dirname in list(dirnames):
+            if dirname not in _PRUNABLE_PYTHON_PACKAGE_DIR_NAMES:
+                continue
+            target = root_path / dirname
+            result["bytes_saved"] += _path_size_bytes(target)
+            if target.is_symlink():
+                target.unlink()
+            else:
+                shutil.rmtree(target)
+            result["directories_pruned"] += 1
+            dirnames.remove(dirname)
+    return result
+
+
+def _prune_python_runtime_baggage(python_runtime: Path) -> dict[str, int]:
+    result = {
+        "directories_pruned": 0,
+        "files_pruned": 0,
+        "bytes_saved": 0,
+    }
+
+    include_path = python_runtime / "include"
+    if include_path.exists() or include_path.is_symlink():
+        result["bytes_saved"] += _path_size_bytes(include_path)
+        if include_path.is_symlink():
+            include_path.unlink()
+        else:
+            shutil.rmtree(include_path)
+        result["directories_pruned"] += 1
+
+    for root, dirnames, filenames in os.walk(python_runtime, followlinks=False):
+        root_path = Path(root)
+        for dirname in list(dirnames):
+            if dirname not in _PRUNABLE_PYTHON_RUNTIME_DIR_NAMES:
+                continue
+            target = root_path / dirname
+            result["bytes_saved"] += _path_size_bytes(target)
+            if target.is_symlink():
+                target.unlink()
+            else:
+                shutil.rmtree(target)
+            result["directories_pruned"] += 1
+            dirnames.remove(dirname)
+        for filename in filenames:
+            target = root_path / filename
+            if target.suffix not in _PRUNABLE_PYTHON_RUNTIME_FILE_SUFFIXES:
+                continue
+            try:
+                result["bytes_saved"] += target.lstat().st_size
+                target.unlink()
+            except OSError:
+                continue
+            result["files_pruned"] += 1
+    return result
+
+
+def _is_python_runtime_executable(path: Path) -> bool:
+    if path.parent.name != "bin":
+        return False
+    if path.name in _PYTHON_RUNTIME_EXECUTABLE_NAMES:
+        return True
+    return path.name.startswith("python3.")
+
+
+def _iter_python_native_binary_candidates(
+    python_runtime_path: Path,
+    site_packages_path: Path,
+) -> list[Path]:
+    candidates: list[Path] = []
+    for path in python_runtime_path.rglob("*"):
+        if path.is_symlink() or not path.is_file():
+            continue
+        if path.suffix in _PYTHON_NATIVE_BINARY_SUFFIXES or _is_python_runtime_executable(path):
+            candidates.append(path)
+    for path in site_packages_path.rglob("*"):
+        if not path.is_symlink() and path.is_file() and path.suffix in _PYTHON_NATIVE_BINARY_SUFFIXES:
+            candidates.append(path)
+    return candidates
+
+
+def _strip_packaged_binaries(paths: list[Path]) -> dict[str, int | bool]:
+    strip = shutil.which("strip")
+    result: dict[str, int | bool] = {
+        "strip_available": strip is not None,
+        "attempted": 0,
+        "stripped": 0,
+        "failed": 0,
+        "bytes_saved": 0,
+    }
+    if strip is None:
+        return result
+
+    seen_targets: set[Path] = set()
+    for path in paths:
+        try:
+            if path.is_symlink() or not path.is_file():
+                continue
+            target_key = path.resolve(strict=True)
+        except OSError:
+            continue
+        if target_key in seen_targets:
+            continue
+        seen_targets.add(target_key)
+
+        try:
+            before_size = path.stat().st_size
+        except OSError:
+            continue
+        result["attempted"] = int(result["attempted"]) + 1
+        try:
+            subprocess.run(
+                [strip, "-x", os.fspath(path)],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            result["failed"] = int(result["failed"]) + 1
+            continue
+        result["stripped"] = int(result["stripped"]) + 1
+        try:
+            after_size = path.stat().st_size
+        except OSError:
+            after_size = before_size
+        result["bytes_saved"] = int(result["bytes_saved"]) + max(0, before_size - after_size)
+    return result
+
+
+def _is_macho_file(path: Path) -> bool:
+    try:
+        if path.is_symlink() or not path.is_file():
+            return False
+        with path.open("rb") as handle:
+            return handle.read(4) in _MACHO_MAGIC_VALUES
+    except OSError:
+        return False
+
+
+def _iter_nested_macho_signing_targets(app_path: Path) -> list[Path]:
+    targets: list[Path] = []
+    for path in app_path.rglob("*"):
+        if _is_macho_file(path):
+            targets.append(path)
+    targets.sort(key=lambda candidate: candidate.as_posix())
+    return targets
+
+
 def write_unsigned_macos_app_bundle(
     *,
     repo_root: str | Path,
@@ -402,6 +598,52 @@ def write_unsigned_macos_app_bundle(
     started_at = time.perf_counter()
     shutil.copytree(python_site_packages, layout.bundled_site_packages_path, dirs_exist_ok=True, symlinks=True)
     timings["copy_python_site_packages_seconds"] = elapsed_seconds(started_at)
+
+    started_at = time.perf_counter()
+    swift_strip_result = _strip_packaged_binaries(
+        [
+            layout.bundled_app_binary_path,
+            layout.bundled_cli_binary_path,
+            layout.bundled_swift_worker_binary_path,
+        ]
+    )
+    timings["strip_swift_binaries_seconds"] = elapsed_seconds(started_at)
+    started_at = time.perf_counter()
+    python_prune_result = _prune_python_package_baggage(layout.bundled_site_packages_path)
+    timings["prune_python_package_baggage_seconds"] = elapsed_seconds(started_at)
+    started_at = time.perf_counter()
+    python_runtime_prune_result = _prune_python_runtime_baggage(layout.bundled_python_runtime_path)
+    timings["prune_python_runtime_baggage_seconds"] = elapsed_seconds(started_at)
+    started_at = time.perf_counter()
+    python_strip_result = _strip_packaged_binaries(
+        _iter_python_native_binary_candidates(
+            layout.bundled_python_runtime_path,
+            layout.bundled_site_packages_path,
+        )
+    )
+    timings["strip_python_native_binaries_seconds"] = elapsed_seconds(started_at)
+    slimming = {
+        "strip_available": bool(
+            swift_strip_result["strip_available"] and python_strip_result["strip_available"]
+        ),
+        "swift_binaries_stripped": int(swift_strip_result["stripped"]),
+        "swift_strip_failures": int(swift_strip_result["failed"]),
+        "swift_strip_bytes_saved": int(swift_strip_result["bytes_saved"]),
+        "python_native_binaries_stripped": int(python_strip_result["stripped"]),
+        "python_native_strip_failures": int(python_strip_result["failed"]),
+        "python_native_strip_bytes_saved": int(python_strip_result["bytes_saved"]),
+        "python_package_directories_pruned": int(python_prune_result["directories_pruned"]),
+        "python_package_baggage_bytes_saved": int(python_prune_result["bytes_saved"]),
+        "python_runtime_directories_pruned": int(python_runtime_prune_result["directories_pruned"]),
+        "python_runtime_files_pruned": int(python_runtime_prune_result["files_pruned"]),
+        "python_runtime_baggage_bytes_saved": int(python_runtime_prune_result["bytes_saved"]),
+        "bytes_saved": (
+            int(swift_strip_result["bytes_saved"])
+            + int(python_strip_result["bytes_saved"])
+            + int(python_prune_result["bytes_saved"])
+            + int(python_runtime_prune_result["bytes_saved"])
+        ),
+    }
 
     started_at = time.perf_counter()
     bundled_resource_bundle_paths = _copy_swiftpm_resource_bundles(
@@ -517,6 +759,7 @@ def write_unsigned_macos_app_bundle(
         "http_port": http_port,
         "health_probe_url": str(target_metadata["health_probe_url"]),
         "service_base_url": str(target_metadata["service_base_url"]),
+        "slimming": slimming,
         "timings": timings,
     }
 
@@ -569,6 +812,17 @@ def adhoc_sign_macos_app_bundle(app_path: str | Path) -> bool:
         return False
 
     try:
+        for nested_target in _iter_nested_macho_signing_targets(app):
+            subprocess.run(
+                [
+                    codesign,
+                    "--force",
+                    "--sign",
+                    "-",
+                    os.fspath(nested_target),
+                ],
+                check=True,
+            )
         subprocess.run(
             [
                 codesign,

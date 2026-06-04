@@ -127,21 +127,26 @@ def test_main_forwards_packaging_target_and_update_channel(
     assert payload["packaging_target_id"] == "macos_app_bundle_preview"
 
 
-def test_resolve_built_products_use_direct_debug_candidate_before_glob(
+def test_resolve_built_products_use_direct_release_candidate_before_debug(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     module = load_package_macos_app_module()
     repo_root = tmp_path / "repo"
-    menubar_binary = repo_root / "apps/macos-menubar/.build/debug/melix-menubar"
-    cli_binary = repo_root / ".build/debug/melix"
-    swift_worker_binary = repo_root / "services/mlx-text-worker-swift/.build/debug/melix-text-worker-swift"
-    for binary in (menubar_binary, cli_binary, swift_worker_binary):
+    menubar_binary = repo_root / "apps/macos-menubar/.build/release/melix-menubar"
+    cli_binary = repo_root / ".build/release/melix"
+    swift_worker_binary = repo_root / "services/mlx-text-worker-swift/.build/release/melix-text-worker-swift"
+    debug_binaries = (
+        repo_root / "apps/macos-menubar/.build/debug/melix-menubar",
+        repo_root / ".build/debug/melix",
+        repo_root / "services/mlx-text-worker-swift/.build/debug/melix-text-worker-swift",
+    )
+    for binary in (menubar_binary, cli_binary, swift_worker_binary, *debug_binaries):
         binary.parent.mkdir(parents=True, exist_ok=True)
         binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
 
     def fail_glob(self: Path, pattern: str):
-        raise AssertionError("direct debug candidate should avoid scanning build triples")
+        raise AssertionError("direct release candidate should avoid scanning build triples")
 
     monkeypatch.setattr(Path, "glob", fail_glob)
 
@@ -150,15 +155,16 @@ def test_resolve_built_products_use_direct_debug_candidate_before_glob(
     assert module.resolve_built_swift_text_worker_binary(repo_root) == swift_worker_binary
 
 
-def test_resolve_built_product_falls_back_to_sorted_triple_debug_candidates(
+def test_resolve_built_product_falls_back_to_sorted_triple_release_candidates(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     module = load_package_macos_app_module()
     build_root = tmp_path / ".build"
-    expected = build_root / "arm64-apple-macosx/debug/melix-menubar"
-    later = build_root / "x86_64-apple-macosx/debug/melix-menubar"
-    for binary in (later, expected):
+    expected = build_root / "arm64-apple-macosx/release/melix-menubar"
+    later = build_root / "x86_64-apple-macosx/release/melix-menubar"
+    debug = build_root / "arm64-apple-macosx/debug/melix-menubar"
+    for binary in (later, expected, debug):
         binary.parent.mkdir(parents=True, exist_ok=True)
         binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
 
@@ -175,14 +181,14 @@ def test_resolve_built_product_falls_back_to_sorted_triple_debug_candidates(
     assert module._resolve_built_product(tmp_path / "missing-build-root", "melix-menubar") is None
 
 
-def test_resolve_built_product_returns_lex_first_triple_without_sorting(
+def test_resolve_built_product_returns_lex_first_release_triple_without_sorting(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     module = load_package_macos_app_module()
     build_root = tmp_path / ".build"
-    expected = build_root / "arm64-apple-macosx/debug/melix-menubar"
-    later = build_root / "x86_64-apple-macosx/debug/melix-menubar"
+    expected = build_root / "arm64-apple-macosx/release/melix-menubar"
+    later = build_root / "x86_64-apple-macosx/release/melix-menubar"
     for binary in (later, expected):
         binary.parent.mkdir(parents=True, exist_ok=True)
         binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
@@ -205,7 +211,7 @@ def test_resolve_built_product_skips_non_dirs_and_entry_errors(
 ) -> None:
     module = load_package_macos_app_module()
     build_root = tmp_path / ".build"
-    expected = build_root / "arm64-apple-macosx/debug/melix-menubar"
+    expected = build_root / "arm64-apple-macosx/release/melix-menubar"
     expected.parent.mkdir(parents=True, exist_ok=True)
     expected.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
 
@@ -246,14 +252,121 @@ def test_resolve_built_product_returns_none_without_triple_directories(tmp_path:
     assert module._resolve_built_product(build_root, "melix-menubar") is None
 
 
+def test_resolve_built_product_uses_debug_fallbacks_after_release_candidates(
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+
+    direct_root = tmp_path / "direct/.build"
+    direct_debug = direct_root / "debug/melix"
+    direct_debug.parent.mkdir(parents=True)
+    direct_debug.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    assert module._resolve_built_product(direct_root, "melix") == direct_debug
+
+    lex_root = tmp_path / "lex/.build"
+    lex_debug = lex_root / "arm64-apple-macosx/debug/melix"
+    lex_debug.parent.mkdir(parents=True)
+    lex_debug.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    assert module._resolve_built_product(lex_root, "melix") == lex_debug
+
+    remaining_root = tmp_path / "remaining/.build"
+    first_triple = remaining_root / "arm64-apple-macosx"
+    later_debug = remaining_root / "x86_64-apple-macosx/debug/melix"
+    first_triple.mkdir(parents=True)
+    later_debug.parent.mkdir(parents=True)
+    later_debug.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    assert module._resolve_built_product(remaining_root, "melix") == later_debug
+
+
+def test_resolve_built_product_uses_remaining_release_before_remaining_debug(
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    build_root = tmp_path / ".build"
+    first_triple = build_root / "arch-0000"
+    later_release = build_root / "arch-0001/release/melix"
+    later_debug = build_root / "arch-0001/debug/melix"
+    first_triple.mkdir(parents=True)
+    for binary in (later_release, later_debug):
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    assert module._resolve_built_product(build_root, "melix") == later_release
+
+
+def test_resolve_built_product_uses_lex_debug_before_scanning_remaining_release_triples(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    build_root = tmp_path / ".build"
+    expected = build_root / "arch-0000/debug/melix"
+    expected.parent.mkdir(parents=True)
+    expected.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    for index in range(1, 10):
+        (build_root / f"arch-{index:04d}" / "debug").mkdir(parents=True)
+
+    original_is_file = module.os.path.isfile
+
+    def guarded_is_file(path: object) -> bool:
+        path_value = module.os.fspath(path)
+        if "/release/" in path_value and "/arch-0001/" in path_value:
+            raise AssertionError("lex-first debug fallback should avoid remaining release probes")  # pragma: no cover
+        return original_is_file(path)
+
+    monkeypatch.setattr(module.os.path, "isfile", guarded_is_file)
+
+    assert module._resolve_built_product(build_root, "melix") == expected
+
+
+def test_resolve_built_product_uses_lex_debug_without_missing_release_file_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    build_root = tmp_path / ".build"
+    expected = build_root / "arch-0000/debug/melix"
+    expected.parent.mkdir(parents=True)
+    expected.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    original_is_file = module.os.path.isfile
+
+    def guarded_is_file(path: object) -> bool:
+        if module.os.fspath(path) == module.os.fspath(build_root / "arch-0000/release/melix"):  # pragma: no cover
+            raise AssertionError("debug-only lex-first triple should not probe missing release file")
+        return original_is_file(path)
+
+    monkeypatch.setattr(module.os.path, "isfile", guarded_is_file)
+
+    assert module._resolve_built_product(build_root, "melix") == expected
+
+
+def test_resolve_built_product_returns_debug_candidate_when_scandir_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = load_package_macos_app_module()
+    build_root = tmp_path / ".build"
+    debug_binary = build_root / "debug/melix"
+    debug_binary.parent.mkdir(parents=True)
+    debug_binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    def fail_scandir(path: Path):
+        raise OSError("synthetic scandir failure")
+
+    monkeypatch.setattr(module.os, "scandir", fail_scandir)
+
+    assert module._resolve_built_product(build_root, "melix") == debug_binary
+
+
 def test_resolve_built_cli_binary_falls_back_with_scandir_without_path_glob(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     module = load_package_macos_app_module()
     repo_root = tmp_path / "repo"
-    expected = repo_root / ".build/arm64-apple-macosx/debug/melix"
-    later = repo_root / ".build/x86_64-apple-macosx/debug/melix"
+    expected = repo_root / ".build/arm64-apple-macosx/release/melix"
+    later = repo_root / ".build/x86_64-apple-macosx/release/melix"
     for binary in (later, expected):
         binary.parent.mkdir(parents=True, exist_ok=True)
         binary.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
@@ -317,17 +430,17 @@ def test_package_workflow_builds_required_swift_products_before_packaging_app() 
         find_run_workflow_step(
             workflow,
             "Build CLI executable",
-            "swift build --product melix --disable-automatic-resolution",
+            "swift build -c release --product melix --disable-automatic-resolution",
         ),
         find_run_workflow_step(
             workflow,
             "Build Swift text worker",
-            "swift build --package-path services/mlx-text-worker-swift --disable-automatic-resolution",
+            "swift build -c release --package-path services/mlx-text-worker-swift --disable-automatic-resolution",
         ),
         find_run_workflow_step(
             workflow,
             "Build menu bar app executable",
-            "swift build --package-path apps/macos-menubar --disable-automatic-resolution",
+            "swift build -c release --package-path apps/macos-menubar --disable-automatic-resolution",
         ),
     ]
     package_step = find_named_workflow_step(workflow, "Package self-contained Melix.app")
@@ -536,10 +649,10 @@ def test_main_resolves_default_build_outputs_and_prints_app_path(
 ) -> None:
     module = load_package_macos_app_module()
     repo_root = tmp_path / "repo"
-    menubar_binary = repo_root / "apps/macos-menubar/.build/debug/melix-menubar"
-    cli_binary = repo_root / ".build/debug/melix"
+    menubar_binary = repo_root / "apps/macos-menubar/.build/release/melix-menubar"
+    cli_binary = repo_root / ".build/release/melix"
     swift_worker_binary = (
-        repo_root / "services/mlx-text-worker-swift/.build/arm64-apple-macosx/debug/melix-text-worker-swift"
+        repo_root / "services/mlx-text-worker-swift/.build/arm64-apple-macosx/release/melix-text-worker-swift"
     )
     python_executable = repo_root / ".venv/bin/python"
     site_packages = repo_root / ".venv/lib/python3.13/site-packages"
