@@ -321,6 +321,8 @@ private enum CacheRouteClass: String, Sendable {
 
 private let boundarySafePrefillChunkTargetTokens: UInt32 = 16
 private let textWorkerPrefillWindowTargetTokens: UInt32 = 512
+private let longTextWorkerPrefillWindowPromptThresholdTokens: UInt32 = 32_768
+private let longTextWorkerPrefillWindowTargetTokens: UInt32 = 1_024
 private let workerDispatchReadinessCacheTTLSeconds: TimeInterval = 5
 private let defaultActiveKVQuantProfile = "turboquant-q4"
 private let activeKVQuantProfiles: Set<String> = [
@@ -3096,7 +3098,14 @@ private func resolvedWorkerPrefillStepSize(
     if messagesContainVisionInput(messages) {
         return resolvedPrefillProgressChunkTarget(for: messages)
     }
-    return estimatedPromptTokens(for: messages) > 0 ? textWorkerPrefillWindowTargetTokens : 0
+    let estimatedPromptTokens = estimatedPromptTokens(for: messages)
+    guard estimatedPromptTokens > 0 else {
+        return 0
+    }
+    if estimatedPromptTokens >= longTextWorkerPrefillWindowPromptThresholdTokens {
+        return longTextWorkerPrefillWindowTargetTokens
+    }
+    return textWorkerPrefillWindowTargetTokens
 }
 
 private func requestRouteRequest(
