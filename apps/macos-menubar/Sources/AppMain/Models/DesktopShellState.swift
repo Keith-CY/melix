@@ -6,9 +6,10 @@ public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendabl
     case chat = "Chat"
     case commandCenter = "Command Center"
     case image = "Image"
-    case server = "Server"
+    case server = "Servers"
     case models = "Models"
     case workflows = "Workflows"
+    case jobs = "Jobs"
     case diagnostics = "Diagnostics"
     case tools = "Tools"
     case api = "API"
@@ -32,6 +33,8 @@ public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendabl
             return "square.stack.3d.up"
         case .workflows:
             return "point.3.connected.trianglepath.dotted"
+        case .jobs:
+            return "list.bullet.rectangle.portrait"
         case .diagnostics:
             return "stethoscope"
         case .tools:
@@ -44,7 +47,34 @@ public enum DesktopSurface: String, CaseIterable, Identifiable, Codable, Sendabl
     }
 
     public static var visibleNavigationCases: [DesktopSurface] {
-        [.chat, .commandCenter, .server, .models, .workflows, .diagnostics, .image, .api, .settings]
+        [.chat, .commandCenter, .server, .models, .workflows, .jobs, .diagnostics, .api, .image, .settings]
+    }
+
+    public var routeDomainID: String {
+        switch self {
+        case .chat:
+            return "chat"
+        case .commandCenter:
+            return "command"
+        case .server:
+            return "servers"
+        case .models:
+            return "models"
+        case .workflows:
+            return "workflows"
+        case .jobs:
+            return "jobs"
+        case .diagnostics:
+            return "diagnostics"
+        case .api:
+            return "api"
+        case .image:
+            return "image"
+        case .settings:
+            return "settings"
+        case .tools:
+            return "tools"
+        }
     }
 }
 
@@ -93,6 +123,7 @@ public enum DesktopToolSection: String, CaseIterable, Identifiable, Codable, Sen
 public enum DesktopToolCategory: String, CaseIterable, Identifiable, Codable, Sendable {
     case models = "Models"
     case workflows = "Workflows"
+    case jobs = "Jobs"
     case diagnostics = "Diagnostics"
     case system = "System"
 
@@ -103,7 +134,9 @@ public enum DesktopToolCategory: String, CaseIterable, Identifiable, Codable, Se
         case .models:
             return [.modelsLibrary, .downloads]
         case .workflows:
-            return [.training, .workflowRecipes, .syntheticDatasets, .batchRuns, .jobs]
+            return [.training, .workflowRecipes, .syntheticDatasets, .batchRuns]
+        case .jobs:
+            return [.jobs]
         case .diagnostics:
             return [.diagnostics, .logs]
         case .system:
@@ -115,6 +148,7 @@ public enum DesktopToolCategory: String, CaseIterable, Identifiable, Codable, Se
 public enum DesktopSurfaceDomain: String, CaseIterable, Identifiable, Sendable {
     case models = "Models"
     case workflows = "Workflows"
+    case jobs = "Jobs"
     case diagnostics = "Diagnostics"
     case settings = "Settings"
 
@@ -126,6 +160,8 @@ public enum DesktopSurfaceDomain: String, CaseIterable, Identifiable, Sendable {
             return .models
         case .workflows:
             return .workflows
+        case .jobs:
+            return .jobs
         case .diagnostics:
             return .diagnostics
         case .settings:
@@ -138,7 +174,9 @@ public enum DesktopSurfaceDomain: String, CaseIterable, Identifiable, Sendable {
         case .models:
             return [.modelsLibrary, .downloads]
         case .workflows:
-            return [.training, .workflowRecipes, .syntheticDatasets, .batchRuns, .jobs]
+            return [.training, .workflowRecipes, .syntheticDatasets, .batchRuns]
+        case .jobs:
+            return [.jobs]
         case .diagnostics:
             return [.diagnostics, .logs]
         case .settings:
@@ -152,8 +190,10 @@ extension DesktopToolSection {
         switch self {
         case .modelsLibrary, .downloads:
             return .models
-        case .training, .workflowRecipes, .syntheticDatasets, .batchRuns, .jobs:
+        case .training, .workflowRecipes, .syntheticDatasets, .batchRuns:
             return .workflows
+        case .jobs:
+            return .jobs
         case .diagnostics, .logs:
             return .diagnostics
         case .settings:
@@ -166,7 +206,7 @@ extension DesktopToolSection {
         case .modelsLibrary:
             return "Library"
         case .syntheticDatasets:
-            return "Synthetic Datasets"
+            return "Dataset Generation"
         default:
             return rawValue
         }
@@ -184,6 +224,8 @@ extension DesktopSurface {
             return .models
         case .workflows:
             return .workflows
+        case .jobs:
+            return .jobs
         case .diagnostics:
             return .diagnostics
         case .settings:
@@ -309,6 +351,550 @@ public struct DesktopRuntimeEndpointState: Equatable, Sendable {
     )
 }
 
+public enum DesktopInspectorModule: String, CaseIterable, Identifiable, Codable, Sendable {
+    case chatRuntime
+    case commandCenter
+    case serverProfile
+    case capabilityReceipt
+    case modelAsset
+    case workflowTemplate
+    case jobLineage
+    case diagnosticsEvidence
+    case apiInboundAuth
+    case apiConsole
+    case imageArtifact
+    case runtimeStorage
+
+    public var id: String { rawValue }
+}
+
+public enum DesktopRouteActionTarget: Equatable, Codable, Sendable {
+    case page(domain: DesktopSurface, pageID: String)
+}
+
+public struct DesktopRouteActionMetadata: Equatable, Codable, Sendable {
+    public let title: String
+    public let target: DesktopRouteActionTarget
+
+    public init(title: String, target: DesktopRouteActionTarget) {
+        self.title = title
+        self.target = target
+    }
+}
+
+public struct DesktopRoutePageMetadata: Identifiable, Equatable, Codable, Sendable {
+    public let id: String
+    public let label: String
+    public let title: String
+    public let subtitle: String
+    public let primaryAction: DesktopRouteActionMetadata?
+    public let secondaryActions: [DesktopRouteActionMetadata]
+    public let inspectorModule: DesktopInspectorModule
+    public let routeDomainID: String
+
+    public var crumb: String { domainLabel }
+    public var routePath: String { "/\(routeDomainID)/\(id)" }
+
+    public let domainLabel: String
+
+    public init(
+        id: String,
+        label: String,
+        title: String,
+        subtitle: String,
+        inspectorModule: DesktopInspectorModule,
+        routeDomainID: String,
+        domainLabel: String,
+        primaryAction: DesktopRouteActionMetadata? = nil,
+        secondaryActions: [DesktopRouteActionMetadata] = []
+    ) {
+        self.id = id
+        self.label = label
+        self.title = title
+        self.subtitle = subtitle
+        self.primaryAction = primaryAction
+        self.secondaryActions = secondaryActions
+        self.inspectorModule = inspectorModule
+        self.routeDomainID = routeDomainID
+        self.domainLabel = domainLabel
+    }
+}
+
+public struct DesktopRouteDomainMetadata: Identifiable, Equatable, Codable, Sendable {
+    public let domain: DesktopSurface
+    public let pages: [DesktopRoutePageMetadata]
+
+    public var id: String { domain.routeDomainID }
+
+    public init(domain: DesktopSurface, pages: [DesktopRoutePageMetadata]) {
+        self.domain = domain
+        self.pages = pages
+    }
+}
+
+public struct DesktopRouteMetadata: Equatable, Codable, Sendable {
+    public let domains: [DesktopRouteDomainMetadata]
+
+    public init(domains: [DesktopRouteDomainMetadata]) {
+        self.domains = domains
+    }
+
+    public func page(domain: DesktopSurface, pageID: String) -> DesktopRoutePageMetadata? {
+        domains.first { $0.domain == domain }?.pages.first { $0.id == pageID }
+    }
+
+    public static let acceptedWindowIA = DesktopRouteMetadata(domains: [
+        .init(
+            domain: .chat,
+            pages: [
+                .page(
+                    domain: .chat,
+                    id: "session",
+                    label: "Session",
+                    title: "Chat",
+                    subtitle: "Chat sessions must bind to an explicit local or remote server before sending.",
+                    inspectorModule: .chatRuntime
+                ),
+                .page(
+                    domain: .chat,
+                    id: "inspector-collapsed",
+                    label: "Inspector Collapsed",
+                    title: "Chat",
+                    subtitle: "Chat remains usable when the runtime Inspector is collapsed.",
+                    inspectorModule: .chatRuntime
+                ),
+            ]
+        ),
+        .init(
+            domain: .commandCenter,
+            pages: [
+                .page(
+                    domain: .commandCenter,
+                    id: "overview",
+                    label: "Overview",
+                    title: "Command Center",
+                    subtitle: "Shows what needs attention now without replacing Diagnostics evidence.",
+                    inspectorModule: .commandCenter,
+                    primaryAction: .init(
+                        title: "Review Eval Drift",
+                        target: .page(domain: .diagnostics, pageID: "evaluation")
+                    ),
+                    secondaryActions: [
+                        .init(title: "Jobs", target: .page(domain: .jobs, pageID: "queue")),
+                    ]
+                ),
+                .page(
+                    domain: .commandCenter,
+                    id: "menu-bar",
+                    label: "Menu Bar Command Center",
+                    title: "Menu Bar Command Center",
+                    subtitle: "Compact command center state for menu bar operator access.",
+                    inspectorModule: .commandCenter
+                ),
+            ]
+        ),
+        .init(
+            domain: .server,
+            pages: [
+                .page(
+                    domain: .server,
+                    id: "overview",
+                    label: "Overview",
+                    title: "Servers",
+                    subtitle: "Manage local and remote server profiles, health, credentials, and capability receipts.",
+                    inspectorModule: .serverProfile,
+                    primaryAction: .init(title: "Create Local Server", target: .page(domain: .server, pageID: "create-local")),
+                    secondaryActions: [
+                        .init(title: "Add Remote Server", target: .page(domain: .server, pageID: "add-remote")),
+                    ]
+                ),
+                .page(
+                    domain: .server,
+                    id: "local",
+                    label: "Local Servers",
+                    title: "Local Servers",
+                    subtitle: "Start, stop, and inspect local runtime profiles.",
+                    inspectorModule: .serverProfile,
+                    primaryAction: .init(title: "Create Local Server", target: .page(domain: .server, pageID: "create-local"))
+                ),
+                .page(
+                    domain: .server,
+                    id: "remote",
+                    label: "Remote Servers",
+                    title: "Remote Servers",
+                    subtitle: "Manage outbound provider targets and credential boundaries.",
+                    inspectorModule: .serverProfile,
+                    primaryAction: .init(title: "Add Remote Server", target: .page(domain: .server, pageID: "add-remote"))
+                ),
+                .page(
+                    domain: .server,
+                    id: "create-local",
+                    label: "Create Local Server",
+                    title: "Create Local Server",
+                    subtitle: "Basic setup first, advanced runtime fields collapsed for first-run creation.",
+                    inspectorModule: .serverProfile,
+                    primaryAction: .init(title: "Create And Start", target: .page(domain: .server, pageID: "local"))
+                ),
+                .page(
+                    domain: .server,
+                    id: "add-remote",
+                    label: "Add Remote Server",
+                    title: "Add Remote Server",
+                    subtitle: "Endpoint, authentication, capability test, and review for outbound provider setup.",
+                    inspectorModule: .capabilityReceipt,
+                    primaryAction: .init(title: "Save Remote Server", target: .page(domain: .server, pageID: "remote"))
+                ),
+                .page(
+                    domain: .server,
+                    id: "receipts",
+                    label: "Capability Receipts",
+                    title: "Capability Receipts",
+                    subtitle: "Evidence for runtime capabilities, unsupported routes, and probe freshness.",
+                    inspectorModule: .capabilityReceipt
+                ),
+            ]
+        ),
+        .init(
+            domain: .models,
+            pages: [
+                .page(
+                    domain: .models,
+                    id: "library",
+                    label: "Library",
+                    title: "Models",
+                    subtitle: "Manage model and adapter assets without treating them as running endpoints.",
+                    inspectorModule: .modelAsset,
+                    primaryAction: .init(title: "Validate", target: .page(domain: .models, pageID: "library"))
+                ),
+                .page(
+                    domain: .models,
+                    id: "downloads-imports",
+                    label: "Downloads & Imports",
+                    title: "Downloads & Imports",
+                    subtitle: "Download, import, validate, and convert model assets.",
+                    inspectorModule: .modelAsset,
+                    primaryAction: .init(title: "Start Download", target: .page(domain: .models, pageID: "downloads-imports"))
+                ),
+            ]
+        ),
+        .init(
+            domain: .workflows,
+            pages: [
+                .page(
+                    domain: .workflows,
+                    id: "training",
+                    label: "Training",
+                    title: "Training",
+                    subtitle: "Configure repeatable training workflows that produce adapter assets and jobs.",
+                    inspectorModule: .workflowTemplate,
+                    primaryAction: .init(title: "Train LoRA", target: .page(domain: .jobs, pageID: "queue"))
+                ),
+                .page(
+                    domain: .workflows,
+                    id: "recipes",
+                    label: "Workflow Recipes",
+                    title: "Workflow Recipes",
+                    subtitle: "Apply reusable operation templates that create workflow drafts or jobs.",
+                    inspectorModule: .workflowTemplate
+                ),
+                .page(
+                    domain: .workflows,
+                    id: "dataset-generation",
+                    label: "Dataset Generation",
+                    title: "Dataset Generation",
+                    subtitle: "Generate durable datasets through repeatable workflow templates.",
+                    inspectorModule: .workflowTemplate,
+                    primaryAction: .init(title: "Create Dataset", target: .page(domain: .jobs, pageID: "queue"))
+                ),
+                .page(
+                    domain: .workflows,
+                    id: "batch-runs",
+                    label: "Batch Runs",
+                    title: "Batch Runs",
+                    subtitle: "Run batch operations that produce durable job outputs.",
+                    inspectorModule: .workflowTemplate,
+                    primaryAction: .init(title: "Start Batch", target: .page(domain: .jobs, pageID: "queue"))
+                ),
+            ]
+        ),
+        .init(
+            domain: .jobs,
+            pages: [
+                .page(
+                    domain: .jobs,
+                    id: "overview",
+                    label: "Overview",
+                    title: "Jobs",
+                    subtitle: "Durable operation state across models, workflows, diagnostics, image, servers, and API.",
+                    inspectorModule: .jobLineage,
+                    primaryAction: .init(title: "Refresh Jobs", target: .page(domain: .jobs, pageID: "overview"))
+                ),
+                .page(
+                    domain: .jobs,
+                    id: "queue",
+                    label: "Queue",
+                    title: "Queue",
+                    subtitle: "Queued and running work with blockers, recovery paths, and evidence links.",
+                    inspectorModule: .jobLineage,
+                    primaryAction: .init(title: "Refresh Jobs", target: .page(domain: .jobs, pageID: "queue"))
+                ),
+                .page(
+                    domain: .jobs,
+                    id: "history",
+                    label: "History",
+                    title: "History",
+                    subtitle: "Completed jobs and artifact lineage across owner domains.",
+                    inspectorModule: .jobLineage
+                ),
+            ]
+        ),
+        .init(
+            domain: .diagnostics,
+            pages: [
+                .page(
+                    domain: .diagnostics,
+                    id: "overview",
+                    label: "Overview",
+                    title: "Diagnostics",
+                    subtitle: "Canonical evidence and debugging workspace for runtime behavior.",
+                    inspectorModule: .diagnosticsEvidence
+                ),
+                .page(
+                    domain: .diagnostics,
+                    id: "benchmark",
+                    label: "Benchmark",
+                    title: "Benchmark",
+                    subtitle: "Measure latency, throughput, memory, and runtime path evidence.",
+                    inspectorModule: .diagnosticsEvidence,
+                    primaryAction: .init(title: "Run Benchmark", target: .page(domain: .jobs, pageID: "queue"))
+                ),
+                .page(
+                    domain: .diagnostics,
+                    id: "matrix",
+                    label: "Matrix",
+                    title: "Matrix",
+                    subtitle: "Compare runtime and model behavior across benchmark axes.",
+                    inspectorModule: .diagnosticsEvidence,
+                    primaryAction: .init(title: "Run Matrix", target: .page(domain: .jobs, pageID: "queue"))
+                ),
+                .page(
+                    domain: .diagnostics,
+                    id: "evaluation",
+                    label: "Evaluation",
+                    title: "Evaluation",
+                    subtitle: "Review eval evidence, semantic metrics, and human review state.",
+                    inspectorModule: .diagnosticsEvidence,
+                    primaryAction: .init(title: "Review Eval Drift", target: .page(domain: .diagnostics, pageID: "evaluation"))
+                ),
+                .page(
+                    domain: .diagnostics,
+                    id: "logs",
+                    label: "Logs",
+                    title: "Logs",
+                    subtitle: "Inspect logs and debug bundles as evidence artifacts.",
+                    inspectorModule: .diagnosticsEvidence
+                ),
+            ]
+        ),
+        .init(
+            domain: .api,
+            pages: [
+                .page(
+                    domain: .api,
+                    id: "overview",
+                    label: "Overview",
+                    title: "API",
+                    subtitle: "Developer integration overview for Melix endpoints and inbound access.",
+                    inspectorModule: .apiConsole
+                ),
+                .page(
+                    domain: .api,
+                    id: "inbound-auth",
+                    label: "Inbound Auth",
+                    title: "Inbound Auth",
+                    subtitle: "Configure credentials for clients calling Melix; remote provider credentials live under Servers.",
+                    inspectorModule: .apiInboundAuth
+                ),
+                .page(
+                    domain: .api,
+                    id: "playground",
+                    label: "Playground",
+                    title: "Playground",
+                    subtitle: "Request, response, headers, auth, latency, and receipt console.",
+                    inspectorModule: .apiConsole,
+                    primaryAction: .init(title: "Send Request", target: .page(domain: .api, pageID: "playground"))
+                ),
+                .page(
+                    domain: .api,
+                    id: "endpoints",
+                    label: "Endpoints",
+                    title: "Endpoints",
+                    subtitle: "Supported routes, compatibility, and endpoint receipts.",
+                    inspectorModule: .apiConsole
+                ),
+            ]
+        ),
+        .init(
+            domain: .image,
+            pages: [
+                .page(
+                    domain: .image,
+                    id: "generate",
+                    label: "Generate",
+                    title: "Image",
+                    subtitle: "Generate image artifacts with runtime and lineage visibility.",
+                    inspectorModule: .imageArtifact,
+                    primaryAction: .init(title: "Generate Image", target: .page(domain: .jobs, pageID: "queue"))
+                ),
+                .page(
+                    domain: .image,
+                    id: "edit",
+                    label: "Edit",
+                    title: "Edit",
+                    subtitle: "Edit image artifacts with source, mask, revision, and lineage context.",
+                    inspectorModule: .imageArtifact,
+                    primaryAction: .init(title: "Apply Edit", target: .page(domain: .jobs, pageID: "queue"))
+                ),
+            ]
+        ),
+        .init(
+            domain: .settings,
+            pages: [
+                .page(
+                    domain: .settings,
+                    id: "runtime-storage",
+                    label: "Runtime & Storage",
+                    title: "Runtime & Storage",
+                    subtitle: "Configure runtime discovery, model roots, storage, and operator preferences.",
+                    inspectorModule: .runtimeStorage
+                ),
+                .page(
+                    domain: .settings,
+                    id: "reserved-ia",
+                    label: "Reserved IA",
+                    title: "Reserved IA",
+                    subtitle: "Reserved settings areas for security, retention, developer mode, logs, updates, and shortcuts.",
+                    inspectorModule: .runtimeStorage
+                ),
+            ]
+        ),
+    ])
+}
+
+private extension DesktopRoutePageMetadata {
+    static func page(
+        domain: DesktopSurface,
+        id: String,
+        label: String,
+        title: String,
+        subtitle: String,
+        inspectorModule: DesktopInspectorModule,
+        primaryAction: DesktopRouteActionMetadata? = nil,
+        secondaryActions: [DesktopRouteActionMetadata] = []
+    ) -> DesktopRoutePageMetadata {
+        DesktopRoutePageMetadata(
+            id: id,
+            label: label,
+            title: title,
+            subtitle: subtitle,
+            inspectorModule: inspectorModule,
+            routeDomainID: domain.routeDomainID,
+            domainLabel: domain.rawValue,
+            primaryAction: primaryAction,
+            secondaryActions: secondaryActions
+        )
+    }
+}
+
+public enum DesktopSelectedObjectKind: String, CaseIterable, Identifiable, Codable, Sendable {
+    case server
+    case model
+    case adapter
+    case job
+    case artifact
+    case receipt
+    case diagnosticReport = "diagnostic-report"
+    case apiToken = "api-token"
+
+    public var id: String { rawValue }
+
+    public init?(routePrefix: String) {
+        switch routePrefix.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "server":
+            self = .server
+        case "model":
+            self = .model
+        case "adapter":
+            self = .adapter
+        case "job":
+            self = .job
+        case "artifact":
+            self = .artifact
+        case "receipt":
+            self = .receipt
+        case "diagnostic-report", "eval":
+            self = .diagnosticReport
+        case "api-token", "token":
+            self = .apiToken
+        default:
+            return nil
+        }
+    }
+
+    public var defaultRoute: DesktopRouteActionTarget {
+        switch self {
+        case .server:
+            return .page(domain: .server, pageID: "overview")
+        case .model, .adapter:
+            return .page(domain: .models, pageID: "library")
+        case .job:
+            return .page(domain: .jobs, pageID: "queue")
+        case .artifact:
+            return .page(domain: .jobs, pageID: "history")
+        case .receipt:
+            return .page(domain: .server, pageID: "receipts")
+        case .diagnosticReport:
+            return .page(domain: .diagnostics, pageID: "evaluation")
+        case .apiToken:
+            return .page(domain: .api, pageID: "inbound-auth")
+        }
+    }
+}
+
+public struct DesktopSelectedObjectRoute: RawRepresentable, Equatable, Codable, Sendable {
+    public let kind: DesktopSelectedObjectKind
+    public let objectID: String
+
+    public var rawValue: String {
+        "\(kind.rawValue):\(objectID)"
+    }
+
+    public var defaultRoute: DesktopRouteActionTarget {
+        kind.defaultRoute
+    }
+
+    public init(kind: DesktopSelectedObjectKind, objectID: String) {
+        self.kind = kind
+        self.objectID = objectID
+    }
+
+    public init?(rawValue: String) {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let delimiterIndex = trimmed.firstIndex(of: ":") else {
+            return nil
+        }
+        let prefix = String(trimmed[..<delimiterIndex])
+        let objectID = String(trimmed[trimmed.index(after: delimiterIndex)...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard objectID.isEmpty == false,
+              let kind = DesktopSelectedObjectKind(routePrefix: prefix)
+        else {
+            return nil
+        }
+        self.init(kind: kind, objectID: objectID)
+    }
+}
+
 extension DesktopSurface {
     init(paneVisibilityID rawValue: String) {
         switch Self.normalizedPaneVisibilityID(rawValue) {
@@ -316,12 +902,14 @@ extension DesktopSurface {
             self = .commandCenter
         case "image":
             self = .image
-        case "server":
+        case "server", "servers":
             self = .server
         case "models":
             self = .models
         case "workflows":
             self = .workflows
+        case "jobs":
+            self = .jobs
         case "diagnostics":
             self = .diagnostics
         case "tools":
@@ -349,6 +937,8 @@ extension DesktopSurface {
             return "models"
         case .workflows:
             return "workflows"
+        case .jobs:
+            return "jobs"
         case .diagnostics:
             return "diagnostics"
         case .tools:

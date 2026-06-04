@@ -180,7 +180,7 @@ struct OperatorSessionPersistenceSmokeTests {
         encoder.outputFormatting = [.sortedKeys]
         let state = OperatorSessionState(
             schemaVersion: 1,
-            selectedSurface: .tools,
+            selectedSurface: .jobs,
             selectedToolSection: .jobs,
             selectedServerSessionID: "",
             selectedRuntimeJobID: "job-codable-selection",
@@ -190,6 +190,7 @@ struct OperatorSessionPersistenceSmokeTests {
 
         var decodedState = try JSONDecoder().decode(OperatorSessionState.self, from: encoder.encode(state))
         #expect(decodedState.schemaVersion == 6)
+        #expect(decodedState.selectedSurface == .jobs)
         #expect(decodedState.selectedToolSection == .jobs)
         #expect(decodedState.selectedRuntimeJobID == "job-codable-selection")
         #expect(decodedState.paneVisibility.count == DesktopPaneVisibilityState.defaultStates.count)
@@ -212,6 +213,8 @@ struct OperatorSessionPersistenceSmokeTests {
         )
         let legacyState = try JSONDecoder().decode(OperatorSessionState.self, from: legacyJSON)
         #expect(legacyState.schemaVersion == 6)
+        #expect(legacyState.selectedSurface == .jobs)
+        #expect(legacyState.selectedToolSection == .jobs)
         #expect(legacyState.selectedRuntimeJobID.isEmpty)
     }
 

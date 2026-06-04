@@ -54,10 +54,11 @@ public struct OperatorSessionState: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let selectedSurfaceID = try container.decodeIfPresent(String.self, forKey: .selectedSurface) ?? "chat"
         let selectedToolSectionID = try container.decodeIfPresent(String.self, forKey: .selectedToolSection) ?? "modelsLibrary"
+        let selectedToolSection = DesktopToolSection(operatorSessionID: selectedToolSectionID)
         self.init(
             schemaVersion: try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 4,
-            selectedSurface: DesktopSurface(operatorSessionID: selectedSurfaceID),
-            selectedToolSection: DesktopToolSection(operatorSessionID: selectedToolSectionID),
+            selectedSurface: DesktopSurface(operatorSessionID: selectedSurfaceID, selectedToolSection: selectedToolSection),
+            selectedToolSection: selectedToolSection,
             selectedServerSessionID: try container.decodeIfPresent(String.self, forKey: .selectedServerSessionID) ?? "",
             selectedRuntimeJobID: try container.decodeIfPresent(String.self, forKey: .selectedRuntimeJobID) ?? "",
             serverSessions: try container.decodeIfPresent([DesktopServerSessionState].self, forKey: .serverSessions) ?? [],
@@ -124,10 +125,14 @@ public struct OperatorSessionStore: OperatorSessionStoring {
 
 private extension OperatorSessionState {
     init(sharedState: MelixOperatorSessionState) {
+        let selectedToolSection = DesktopToolSection(operatorSessionID: sharedState.selectedToolSectionID)
         self.init(
             schemaVersion: sharedState.schemaVersion,
-            selectedSurface: DesktopSurface(operatorSessionID: sharedState.selectedSurfaceID),
-            selectedToolSection: DesktopToolSection(operatorSessionID: sharedState.selectedToolSectionID),
+            selectedSurface: DesktopSurface(
+                operatorSessionID: sharedState.selectedSurfaceID,
+                selectedToolSection: selectedToolSection
+            ),
+            selectedToolSection: selectedToolSection,
             selectedServerSessionID: sharedState.selectedServerSessionID,
             selectedRuntimeJobID: sharedState.selectedRuntimeJobID,
             serverSessions: sharedState.serverSessions.map(DesktopServerSessionState.init(sharedState:)),
@@ -354,22 +359,24 @@ private extension DesktopServerSessionLifecycle {
 }
 
 private extension DesktopSurface {
-    init(operatorSessionID rawValue: String) {
+    init(operatorSessionID rawValue: String, selectedToolSection: DesktopToolSection = .modelsLibrary) {
         switch Self.normalizedOperatorSessionID(rawValue) {
         case "commandcenter":
             self = .commandCenter
         case "image":
             self = .image
-        case "server":
+        case "server", "servers":
             self = .server
         case "models":
             self = .models
         case "workflows":
             self = .workflows
+        case "jobs":
+            self = .jobs
         case "diagnostics":
             self = .diagnostics
         case "tools":
-            self = .tools
+            self = selectedToolSection.domain.surface
         case "api":
             self = .api
         case "settings":
@@ -393,6 +400,8 @@ private extension DesktopSurface {
             return "models"
         case .workflows:
             return "workflows"
+        case .jobs:
+            return "jobs"
         case .diagnostics:
             return "diagnostics"
         case .tools:

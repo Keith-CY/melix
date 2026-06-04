@@ -340,7 +340,7 @@ struct RuntimeJobsStateTests {
         #expect(viewModel.selectedRuntimeJob == nil)
 
         viewModel.selectToolSection(.jobs)
-        #expect(viewModel.selectedSurface == .workflows)
+        #expect(viewModel.selectedSurface == .jobs)
         #expect(viewModel.selectedToolSection == .jobs)
     }
 
@@ -1012,6 +1012,7 @@ struct RuntimeJobsStateTests {
             JSONSerialization.jsonObject(with: Data(contentsOf: melixHome.operatorSessionFileURL)) as? [String: Any]
         )
         #expect(persistedPayload["selected_tool_section"] as? String == "jobs")
+        #expect(persistedPayload["selected_surface"] as? String == "jobs")
         #expect(persistedPayload["selected_runtime_job_id"] as? String == "eval-cli-2")
 
         let restored = RuntimeViewModel(
@@ -1021,6 +1022,7 @@ struct RuntimeJobsStateTests {
         await restored.start()
 
         #expect(restored.selectedToolSection == .jobs)
+        #expect(restored.selectedSurface == .jobs)
         #expect(restored.selectedRuntimeJobID == "eval-cli-2")
         restored.applyRuntimeJobs(jobs)
         #expect(restored.selectedRuntimeJob?.id == "eval-cli-2")
