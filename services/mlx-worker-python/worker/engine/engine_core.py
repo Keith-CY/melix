@@ -168,7 +168,10 @@ class EngineCore:
         _routing_ext["_melix.session_id"] = execution.id.session_id
         _routing_ext["_melix.model_id"] = execution.scope.model_id
         _routing_ext["_melix.model_revision"] = execution.scope.revision
-        _routing_ext["_melix.block_size"] = str(execution.cache_hints.preferred_block_size)
+        # Only forward a block size when the client set one; an unset proto field
+        # is 0, which the runtime must treat as "use the default", not block_size=1.
+        if execution.cache_hints.preferred_block_size > 0:
+            _routing_ext["_melix.block_size"] = str(execution.cache_hints.preferred_block_size)
         _routing_ext["_melix.acceleration_mode"] = str(execution.acceleration.mode)
         _routing_ext["_melix.cache_mode"] = str(execution.cache_hints.cache_mode)
         sampling = request.sampling

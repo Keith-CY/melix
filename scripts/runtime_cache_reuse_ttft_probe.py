@@ -16,6 +16,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import math
 import os
 import statistics
 import sys
@@ -126,22 +127,25 @@ def main() -> None:
             else:
                 warm_samples.append(ttft)
 
+    def _p95(samples: list[float]) -> float | None:
+        # Nearest-rank p95 with a zero-based index: ceil(0.95 * N) - 1, clamped.
+        # The previous int(N * 0.95) collapsed to the last element (the max) for
+        # small N (e.g. N=20 -> index 19), making the metric meaningless.
+        if len(samples) < 4:
+            return None
+        ordered = sorted(samples)
+        rank = math.ceil(0.95 * len(ordered)) - 1
+        rank = min(max(rank, 0), len(ordered) - 1)
+        return round(ordered[rank], 3)
+
     result: dict[str, object] = {
         "probe": "runtime_cache_reuse_ttft",
         "cold_samples": cold_samples,
         "warm_samples": warm_samples,
         "cold_p50_ms": round(statistics.median(cold_samples), 3) if cold_samples else None,
-        "cold_p95_ms": (
-            round(sorted(cold_samples)[int(len(cold_samples) * 0.95)], 3)
-            if len(cold_samples) >= 4
-            else None
-        ),
+        "cold_p95_ms": _p95(cold_samples),
         "warm_p50_ms": round(statistics.median(warm_samples), 3) if warm_samples else None,
-        "warm_p95_ms": (
-            round(sorted(warm_samples)[int(len(warm_samples) * 0.95)], 3)
-            if len(warm_samples) >= 4
-            else None
-        ),
+        "warm_p95_ms": _p95(warm_samples),
         "sample_count": len(cold_samples),
     }
 
@@ -151,14 +155,27 @@ def main() -> None:
         if cold_p50 > 0:
             result["p50_improvement_pct"] = round((cold_p50 - warm_p50) / cold_p50 * 100, 1)
 
+    cold_p95 = result["cold_p95_ms"]
+    warm_p95 = result["warm_p95_ms"]
+    if cold_p95 is not None and warm_p95 is not None and float(cold_p95) > 0:
+        result["p95_improvement_pct"] = round(
+            (float(cold_p95) - float(warm_p95)) / float(cold_p95) * 100, 1
+        )
+
     print(json.dumps(result, sort_keys=True))
 
     target_p50_improvement = 25.0
     target_p95_improvement = 20.0
-    improvement = result.get("p50_improvement_pct")
-    if improvement is not None and float(improvement) < target_p50_improvement:
+    p50_improvement = result.get("p50_improvement_pct")
+    if p50_improvement is not None and float(p50_improvement) < target_p50_improvement:
         print(
-            f"WARNING: p50 improvement {improvement}% below target {target_p50_improvement}%",
+            f"WARNING: p50 improvement {p50_improvement}% below target {target_p50_improvement}%",
+            file=sys.stderr,
+        )
+    p95_improvement = result.get("p95_improvement_pct")
+    if p95_improvement is not None and float(p95_improvement) < target_p95_improvement:
+        print(
+            f"WARNING: p95 improvement {p95_improvement}% below target {target_p95_improvement}%",
             file=sys.stderr,
         )
 

@@ -210,6 +210,19 @@ def test_find_lcp_no_match_when_store_empty() -> None:
     assert result.entry is None
 
 
+def test_find_lcp_shorter_prompt_fully_covered_is_exact() -> None:
+    # New prompt is a full block-aligned prefix of a longer stored prompt: every
+    # token of the request is cached, so the hit is "exact" with an empty suffix.
+    store = PrefixBlockStore()
+    _put(store, "s1", [1, 2, 3, 4, 5, 6, 7, 8])
+    result = store.find_lcp([1, 2, 3, 4], "m1", "r1", 4)
+    assert result.mode == "exact"
+    assert result.recovered_prefix_tokens == 4
+    assert result.suffix_token_ids == []
+    assert result.entry is not None
+    store.release(result.entry)
+
+
 def test_find_lcp_partial_match() -> None:
     store = PrefixBlockStore()
     # stored: 8 tokens (2 blocks of 4)

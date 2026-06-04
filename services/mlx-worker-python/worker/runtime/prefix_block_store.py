@@ -137,7 +137,6 @@ class PrefixBlockStore:
         model_revision: str,
         block_size: int,
         acceleration_mode: str = "",
-        cache_mode_hint: str = "",
         force_fallback: bool = False,
     ) -> LCPResult:
         """Find the longest common block-aligned prefix among stored sessions.
@@ -215,7 +214,11 @@ class PrefixBlockStore:
                 )
             live.acquire()
 
-        is_exact = best_len >= len(token_ids) and best_len >= len(best_entry.token_ids)
+        # "exact" means every token of THIS request is already cached (empty
+        # suffix to replay). A shorter request that is a full prefix of a longer
+        # stored prompt still counts as exact for the request — the stale stored
+        # tail is trimmed by the caller before reuse.
+        is_exact = best_len >= len(token_ids)
         mode = "exact" if is_exact else "partial"
         suffix = list(token_ids[best_len:])
 

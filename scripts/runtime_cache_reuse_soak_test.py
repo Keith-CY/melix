@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 """10,000-request soak test for prefix cache refcount safety.
 
-Sends alternating normal and force-fallback requests and asserts zero leaked
-cache references. Uses the `_test.force_cache_fallback` debug flag to inject
-forced fallbacks deterministically.
-
-Run without hardware (unit mode) to verify the block store contract.
-Run with hardware (integration mode) to verify the full runtime contract.
+Drives the PrefixBlockStore directly (no hardware) through alternating normal
+and forced-fallback cycles and asserts zero leaked cache references. The forced
+fallback exercises the same release/cleanup path the runtime's
+`_test.force_cache_fallback` debug hook triggers in production-shaped flows.
 
 Usage:
-    python scripts/runtime_cache_reuse_soak_test.py           # unit mode
-    MELIX_SOAK_INTEGRATION=1 ... python ...                    # integration mode
+    python scripts/runtime_cache_reuse_soak_test.py
 """
 
 from __future__ import annotations

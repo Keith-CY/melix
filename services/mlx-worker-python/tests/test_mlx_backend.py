@@ -2216,9 +2216,16 @@ def test_generate_native_mtp_invalid_block_size_falls_back_to_default(
     loaded[mlx_text_runtime_module._NATIVE_MTP_TEXT_ACTIVE_FIELD] = True
 
     import threading
+    # Non-integer value hits the except branch.
     events = list(backend.generate_tokens(
         loaded, "hi", common_pb2.SamplingConfig(max_output_tokens=1), threading.Event(),
         execution_ext={"_melix.session_id": "s", "_melix.block_size": "not-an-int"},
+    ))
+    assert len(events) > 0
+    # Negative value parses as an int but trips the < 1 guard → default.
+    events = list(backend.generate_tokens(
+        loaded, "hi", common_pb2.SamplingConfig(max_output_tokens=1), threading.Event(),
+        execution_ext={"_melix.session_id": "s2", "_melix.block_size": "-5"},
     ))
     assert len(events) > 0
 
@@ -2857,3 +2864,90 @@ def test_generate_native_mtp_partial_hit_falls_back_when_trim_incomplete(
     assert entry is not None
     assert entry._active_refs == 1
     store.release(entry)
+
+
+def test_generate_native_mtp_unset_block_size_defaults_not_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unset/"0" block size must default to 64, not degenerate to 1-token blocks."""
+    from worker.runtime.prefix_block_store import PrefixBlockStore
+
+    store = PrefixBlockStore()
+    captured: dict[str, int] = {}
+    orig_find = store.find_lcp
+
+    def spy_find(token_ids, model_id, model_revision, block_size, **kw):
+        captured["block_size"] = block_size
+        return orig_find(token_ids, model_id, model_revision, block_size, **kw)
+
+    store.find_lcp = spy_find  # type: ignore[method-assign]
+
+    backend, loaded = _build_lcp_backend(
+        monkeypatch, store=store, clone_fn=lambda cache: None, responses=[_mtp_response()]
+    )
+
+    import threading
+    list(backend.generate_tokens(
+        loaded, "hello world", common_pb2.SamplingConfig(max_output_tokens=2), threading.Event(),
+        # Mirrors engine_core for an unset preferred_block_size: "0".
+        execution_ext={"_melix.session_id": "bs0", "_melix.model_id": "test-model",
+            "_melix.model_revision": "v1", "_melix.block_size": "0"},
+    ))
+
+    assert captured.get("block_size") == 64
+
+
+def test_generate_native_mtp_test_fallback_hook_ignored_without_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The _test.force_cache_fallback request field is inert unless the env gate is set."""
+    monkeypatch.delenv("MELIX_ENABLE_TEST_CACHE_HOOKS", raising=False)
+    from worker.runtime.prefix_block_store import PrefixBlockStore
+
+    store = PrefixBlockStore()
+    store.put(
+        session_id="hook-session",
+        token_ids=[10, 20, 30, 40, 50, 60, 70, 80],
+        cache_snapshot=[SimpleNamespace(state=[])],
+        cache_mode="CACHE_MODE_TIERED",
+        model_id="test-model",
+        model_revision="v1",
+        block_size=4,
+        total_bytes=512,
+    )
+    backend, loaded = _build_lcp_backend(
+        monkeypatch,
+        store=store,
+        clone_fn=lambda cache: [SimpleNamespace(state=[])] if cache is not None else None,
+        responses=[_mtp_response()],
+    )
+
+    import threading
+    events = list(backend.generate_tokens(
+        loaded, "hello world", common_pb2.SamplingConfig(max_output_tokens=2), threading.Event(),
+        execution_ext={"_melix.session_id": "hook-session", "_melix.model_id": "test-model",
+            "_melix.model_revision": "v1", "_melix.block_size": "4",
+            "_test.force_cache_fallback": "true"},
+    ))
+    # Without the env gate the hook is ignored, so the exact match is still reused.
+    assert events[-1].cache_hit_mode == "exact"
+
+
+def test_generate_native_mtp_no_session_reports_no_session_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no session id the cache is bypassed and the reason is observable."""
+    from worker.runtime.prefix_block_store import PrefixBlockStore
+
+    store = PrefixBlockStore()
+    backend, loaded = _build_lcp_backend(
+        monkeypatch, store=store, clone_fn=lambda cache: None, responses=[_mtp_response()]
+    )
+
+    import threading
+    events = list(backend.generate_tokens(
+        loaded, "hello world", common_pb2.SamplingConfig(max_output_tokens=2), threading.Event(),
+        execution_ext={"_melix.model_id": "test-model", "_melix.model_revision": "v1"},
+    ))
+    assert events[-1].cache_hit_mode == "none"
+    assert events[-1].cache_fallback_reason == "no_session_id"

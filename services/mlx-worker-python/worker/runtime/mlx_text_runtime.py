@@ -1308,10 +1308,19 @@ class AutoMLXBackend:
         _session_id = str(_ext.get("_melix.session_id", "") or "")
         _model_id = str(_ext.get("_melix.model_id", "") or "")
         _model_revision = str(_ext.get("_melix.model_revision", "") or "")
-        try:
-            _block_size = max(1, int(_ext.get("_melix.block_size", "64") or "64"))
-        except (ValueError, TypeError):
-            _block_size = 64
+        _DEFAULT_BLOCK_SIZE = 64
+        # An unset proto field arrives as "0"; treat "0"/"" as "use the default"
+        # rather than letting max(1, int("0")) collapse to a degenerate 1-token block.
+        _raw_block_size = str(_ext.get("_melix.block_size", "") or "").strip()
+        if _raw_block_size in ("", "0"):
+            _block_size = _DEFAULT_BLOCK_SIZE
+        else:
+            try:
+                _block_size = int(_raw_block_size)
+            except (ValueError, TypeError):
+                _block_size = _DEFAULT_BLOCK_SIZE
+            if _block_size < 1:
+                _block_size = _DEFAULT_BLOCK_SIZE
         _acceleration_mode = str(_ext.get("_melix.acceleration_mode", "") or "")
         # Cache mode flows from the request; unspecified ("", "0") stores as a
         # standard tiered cache. A rotating value is preserved so find_lcp's
@@ -1319,7 +1328,12 @@ class AutoMLXBackend:
         _cache_mode = str(_ext.get("_melix.cache_mode", "") or "")
         if not _cache_mode or _cache_mode in ("0", "CACHE_MODE_UNSPECIFIED"):
             _cache_mode = "CACHE_MODE_TIERED"
-        _force_fallback = _ext.get("_test.force_cache_fallback", "").lower() in ("1", "true", "yes")
+        # Debug-only fallback hook: never honored from a live request unless the
+        # operator has explicitly enabled test cache hooks for the process.
+        _force_fallback = (
+            _truthy_string(os.environ.get("MELIX_ENABLE_TEST_CACHE_HOOKS"))
+            and _ext.get("_test.force_cache_fallback", "").lower() in ("1", "true", "yes")
+        )
         _prefix_store = _get_prefix_store()
 
         _lcp: _LCPResult | None = None
@@ -1469,7 +1483,7 @@ class AutoMLXBackend:
                     if finish_reason is not None:
                         _cache_hit_mode = _lcp.mode if _lcp is not None else "none"
                         _recovered_prefix_tokens = _lcp.recovered_prefix_tokens if _lcp is not None else 0
-                        _cache_fallback_reason = _lcp.fallback_reason if _lcp is not None else ""
+                        _cache_fallback_reason = _lcp.fallback_reason if _lcp is not None else "no_session_id"
                     else:
                         _cache_hit_mode = None
                         _recovered_prefix_tokens = None

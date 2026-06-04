@@ -1903,6 +1903,10 @@ public nonisolated struct Melix_Worker_V1_BlockTable: Sendable {
 
   public var totalTokenCount: UInt32 = 0
 
+  /// Cache tier/mode of the materialized blocks. The MTP text path tracks the
+  /// request cache mode worker-locally (PrefixBlockStore); this field reserves
+  /// the contract for the control-plane block-table serialization side, which
+  /// is wired with the text Prefill RPC (issue #40 follow-ups).
   public var cacheMode: Melix_Worker_V1_CacheMode = .unspecified
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()

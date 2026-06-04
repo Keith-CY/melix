@@ -436,6 +436,11 @@ public nonisolated struct Melix_Worker_V1_PrefillResponse: @unchecked Sendable {
   /// Clears the value of `restorePlan`. Subsequent reads from it will return its default value.
   public mutating func clearRestorePlan() {_uniqueStorage()._restorePlan = nil}
 
+  /// Prefix-cache reuse observability. On the MTP text path these are emitted on
+  /// the streaming terminal event (worker/v1 ExecuteEvent parser metrics:
+  /// cache_hit_mode / recovered_prefix_tokens / cache_fallback_reason). They are
+  /// reserved here on the unary PrefillResponse for the text Prefill RPC, which
+  /// is VLM-only today; see issue #40 follow-ups.
   public var recoveredPrefixTokens: UInt32 {
     get {_storage._recoveredPrefixTokens}
     set {_uniqueStorage()._recoveredPrefixTokens = newValue}
