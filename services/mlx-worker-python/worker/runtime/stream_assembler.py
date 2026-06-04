@@ -1086,10 +1086,11 @@ class RequestStreamAssembler:
         return []
 
     def _hidden_pipe_channel_deltas(self, hidden: str, visible: str = "") -> list[AssemblyDelta]:
-        if not hidden.strip():
+        hidden_has_content = bool(hidden.strip())
+        if not hidden_has_content:
             self._metrics["empty_thinking_sentinel_count"] += 1
         deltas: list[AssemblyDelta] = []
-        if hidden.strip():
+        if hidden_has_content:
             if self._reasoning_enabled:
                 self._reasoning_parts.append(hidden)
                 deltas.append(AssemblyDelta(reasoning_text=hidden, raw_text=hidden))
