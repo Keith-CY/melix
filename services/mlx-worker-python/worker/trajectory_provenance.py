@@ -31,17 +31,6 @@ TRAJECTORY_PROVENANCE_CSV_FIELDS = TRAJECTORY_PROVENANCE_FIELDS
 
 _JSON_IMMUTABLE_TYPES = (str, int, float, bool, type(None))
 _JSON_IMMUTABLE_TYPE_SET = frozenset(_JSON_IMMUTABLE_TYPES)
-_TRAJECTORY_MANIFEST_OPTIONAL_FIELD_MAP = (
-    ("trajectory_toolset_version", "trajectory_toolset_version"),
-    ("trajectory_registry_schema_version", "trajectory_registry_schema_version"),
-    ("trajectory_reward_policy_id", "trajectory_reward_policy_id"),
-    ("trajectory_leakage_policy_id", "trajectory_leakage_policy_id"),
-    ("source_package_path", "trajectory_package_path"),
-    ("trajectory_quality_metrics", "trajectory_quality_metrics"),
-    ("agentic_sft_token_metrics", "agentic_sft_token_metrics"),
-)
-
-
 def _copy_trajectory_provenance_value(value: Any) -> Any:
     value_type = type(value)
     if value_type is dict:
@@ -142,11 +131,30 @@ def _trajectory_provenance_from_snapshot_manifest(
         provenance["trajectory_trace_digest"] = trace_digest
     if snapshot_manifest_path is not None:
         provenance["trajectory_snapshot_manifest_path"] = str(snapshot_manifest_path)
-    for source_field, output_field in _TRAJECTORY_MANIFEST_OPTIONAL_FIELD_MAP:
-        value = manifest_get(source_field)
-        if value is None or value == "":
-            continue
-        provenance[output_field] = value
+    trajectory_toolset_version = manifest_get("trajectory_toolset_version")
+    if trajectory_toolset_version is not None and trajectory_toolset_version != "":
+        provenance["trajectory_toolset_version"] = trajectory_toolset_version
+    trajectory_registry_schema_version = manifest_get("trajectory_registry_schema_version")
+    if (
+        trajectory_registry_schema_version is not None
+        and trajectory_registry_schema_version != ""
+    ):
+        provenance["trajectory_registry_schema_version"] = trajectory_registry_schema_version
+    trajectory_reward_policy_id = manifest_get("trajectory_reward_policy_id")
+    if trajectory_reward_policy_id is not None and trajectory_reward_policy_id != "":
+        provenance["trajectory_reward_policy_id"] = trajectory_reward_policy_id
+    trajectory_leakage_policy_id = manifest_get("trajectory_leakage_policy_id")
+    if trajectory_leakage_policy_id is not None and trajectory_leakage_policy_id != "":
+        provenance["trajectory_leakage_policy_id"] = trajectory_leakage_policy_id
+    source_package_path = manifest_get("source_package_path")
+    if source_package_path is not None and source_package_path != "":
+        provenance["trajectory_package_path"] = source_package_path
+    trajectory_quality_metrics = manifest_get("trajectory_quality_metrics")
+    if trajectory_quality_metrics is not None and trajectory_quality_metrics != "":
+        provenance["trajectory_quality_metrics"] = trajectory_quality_metrics
+    agentic_sft_token_metrics = manifest_get("agentic_sft_token_metrics")
+    if agentic_sft_token_metrics is not None and agentic_sft_token_metrics != "":
+        provenance["agentic_sft_token_metrics"] = agentic_sft_token_metrics
     if copy_nested:
         return normalize_trajectory_provenance(provenance)
     return provenance
