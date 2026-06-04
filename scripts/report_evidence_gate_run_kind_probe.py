@@ -12,7 +12,7 @@ REPO_ROOT = Path(os.environ.get("MELIX_REPORT_EVIDENCE_GATE_REPO_ROOT", Path(__f
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 
-from worker.productization.report_evidence_gate import _rule_matches_report  # noqa: E402
+from worker.productization.report_evidence_gate import _release_matrix_rows, _rule_matches_report  # noqa: E402
 
 
 def _measure_run_kind(iterations: int, sample_count: int) -> tuple[dict[str, float], float]:
@@ -118,10 +118,51 @@ def _measure_target_fields(iterations: int, sample_count: int) -> tuple[dict[str
     )
 
 
+def _measure_release_matrix_rows(iterations: int, sample_count: int) -> tuple[dict[str, float], float]:
+    matrix = {
+        f"role_{index}": {"run_kinds": (f"kind_{index}",), "description": "probe role"}
+        for index in range(32)
+    }
+    reports = [
+        {
+            "release_matrix_roles": [f"role_{index % 32}"],
+            "source_evidence_ids": [f"evidence_{index % 48}", f"evidence_{(index + 7) % 48}"],
+        }
+        for index in range(96)
+    ]
+    elapsed_samples: list[float] = []
+    emitted_rows = 0
+
+    for _ in range(sample_count):
+        started = time.perf_counter()
+        for _index in range(iterations):
+            rows = _release_matrix_rows(reports, matrix)
+            if len(rows) != len(matrix):
+                raise RuntimeError("expected one release-matrix row per role")
+            emitted_rows += len(rows)
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+
+    elapsed_mean = statistics.fmean(elapsed_samples)
+    return (
+        {
+            "release_matrix_elapsed_ms_mean": elapsed_mean,
+            "release_matrix_role_count": float(len(matrix)),
+            "release_matrix_report_count": float(len(reports)),
+            "release_matrix_emitted_rows": float(emitted_rows),
+        },
+        elapsed_mean,
+    )
+
+
 def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     run_kind_metrics, run_kind_elapsed = _measure_run_kind(iterations, sample_count)
     metric_prefix_metrics, metric_prefix_elapsed = _measure_metric_prefix(iterations, sample_count)
     target_field_metrics, target_field_elapsed = _measure_target_fields(iterations, sample_count)
+    release_matrix_iterations = max(1, iterations // 100)
+    release_matrix_metrics, release_matrix_elapsed = _measure_release_matrix_rows(
+        release_matrix_iterations,
+        sample_count,
+    )
     return {
         "elapsed_ms_mean": run_kind_elapsed + metric_prefix_elapsed + target_field_elapsed,
         "iterations": float(iterations),
@@ -129,6 +170,7 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         **run_kind_metrics,
         **metric_prefix_metrics,
         **target_field_metrics,
+        **release_matrix_metrics,
     }
 
 
