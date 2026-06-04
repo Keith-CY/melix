@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import plistlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -609,6 +610,138 @@ def test_bundle_slimming_helpers_cover_runtime_edge_cases(
     unavailable_result = _strip_packaged_binaries([python_versioned])
     assert unavailable_result["strip_available"] is False
     assert unavailable_result["attempted"] == 0
+
+
+def test_path_size_bytes_tolerates_metadata_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    broken = tmp_path / "broken"
+    broken.write_text("unreadable metadata\n", encoding="utf-8")
+    directory = tmp_path / "tree"
+    directory.mkdir()
+    retained = directory / "retained.txt"
+    retained.write_text("kept\n", encoding="utf-8")
+    skipped = directory / "skipped.txt"
+    skipped.write_text("skipped\n", encoding="utf-8")
+    original_is_symlink = Path.is_symlink
+    original_lstat = Path.lstat
+
+    def fail_is_symlink(self: Path) -> bool:
+        if self == broken:
+            raise OSError("synthetic symlink metadata failure")
+        return original_is_symlink(self)
+
+    def fail_lstat(self: Path):
+        if self == skipped:
+            raise OSError("synthetic file metadata failure")
+        return original_lstat(self)
+
+    monkeypatch.setattr(Path, "is_symlink", fail_is_symlink)
+    monkeypatch.setattr(Path, "lstat", fail_lstat)
+
+    assert _path_size_bytes(broken) == 0
+    assert _path_size_bytes(directory) == retained.lstat().st_size
+
+
+def test_prune_python_runtime_baggage_tolerates_file_delete_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = tmp_path / "python-runtime"
+    runtime.mkdir()
+    archive = runtime / "libpython3.12.a"
+    archive.write_text("archive\n", encoding="utf-8")
+    original_unlink = Path.unlink
+
+    def fail_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if self == archive:
+            raise OSError("synthetic delete failure")
+        original_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_unlink)
+
+    result = _prune_python_runtime_baggage(runtime)
+
+    assert result["files_pruned"] == 0
+    assert result["bytes_saved"] >= archive.stat().st_size
+    assert archive.is_file()
+
+
+def test_strip_packaged_binaries_tolerates_resolve_and_stat_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ResolveFailurePath:
+        def is_symlink(self) -> bool:
+            return False
+
+        def is_file(self) -> bool:
+            return True
+
+        def resolve(self, strict: bool) -> Path:
+            assert strict is True
+            raise OSError("synthetic resolve failure")
+
+    class StatBeforeFailurePath:
+        def is_symlink(self) -> bool:
+            return False
+
+        def is_file(self) -> bool:
+            return True
+
+        def resolve(self, strict: bool) -> object:
+            assert strict is True
+            return self
+
+        def stat(self) -> object:
+            raise OSError("synthetic stat failure")
+
+    class StatAfterFailurePath:
+        def __init__(self) -> None:
+            self.stat_calls = 0
+
+        def __fspath__(self) -> str:
+            return "/tmp/melix-stat-after-native.dylib"
+
+        def is_symlink(self) -> bool:
+            return False
+
+        def is_file(self) -> bool:
+            return True
+
+        def resolve(self, strict: bool) -> object:
+            assert strict is True
+            return self
+
+        def stat(self) -> object:
+            self.stat_calls += 1
+            if self.stat_calls == 1:
+                return SimpleNamespace(st_size=128)
+            raise OSError("synthetic stat-after-strip failure")
+
+    monkeypatch.setattr(macos_app_bundle_module.shutil, "which", lambda name: "/usr/bin/strip")
+
+    stripped_commands: list[list[str]] = []
+
+    def fake_strip(command: list[str], check: bool, **kwargs: object) -> None:
+        assert check is True
+        stripped_commands.append(command)
+
+    monkeypatch.setattr(macos_app_bundle_module.subprocess, "run", fake_strip)
+
+    result = _strip_packaged_binaries(
+        [
+            ResolveFailurePath(),  # type: ignore[list-item]
+            StatBeforeFailurePath(),  # type: ignore[list-item]
+            StatAfterFailurePath(),  # type: ignore[list-item]
+        ]
+    )
+
+    assert result["attempted"] == 1
+    assert result["stripped"] == 1
+    assert result["failed"] == 0
+    assert result["bytes_saved"] == 0
+    assert stripped_commands == [["/usr/bin/strip", "-x", "/tmp/melix-stat-after-native.dylib"]]
 
 
 def test_macho_detection_handles_non_files_and_read_errors(
