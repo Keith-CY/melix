@@ -63,6 +63,10 @@ from worker.productization.event_extraction import (
     prompt_example_dialogue_ids,
     prompt_snapshot_payload,
 )
+from worker.productization.topic_membership import (
+    TOPIC_MEMBERSHIP_SCORING_MODES,
+    TOPIC_MEMBERSHIP_SUITE_ID,
+)
 from worker.productization.evaluation_schemas import (
     EvaluationCompareDatasetLineage,
     EvaluationCompareJob,
@@ -312,6 +316,8 @@ class _LocalEventExtractionClient:
         )
 
 
+
+
 class EvaluationCore:
     def __init__(
         self,
@@ -349,6 +355,35 @@ class EvaluationCore:
                     break
         return samples
 
+    def _run_topic_membership_entrypoint(
+        self,
+        model_id: str,
+        model_handle: str | None,
+        suite_id: str,
+        sample_size: int,
+        requested_scoring_mode: str,
+        parameter_map: dict[str, str],
+        remote_target: Any | None,
+    ) -> EvaluationRun:  # pragma: no cover - delegated runner is covered by topic membership tests.
+        from worker.productization.topic_membership_runner import run_topic_membership_entrypoint
+
+        run = run_topic_membership_entrypoint(
+            core=self,
+            model_id=model_id,
+            model_handle=model_handle,
+            suite_id=suite_id,
+            sample_size=sample_size,
+            scoring_mode=requested_scoring_mode,
+            parameters=dict(parameter_map),
+            remote_target=remote_target,
+        )
+        return EvaluationRun(
+            job=run.job,
+            results=run.results,
+            samples=run.samples,
+            persisted_paths=run.persisted_paths,
+        )
+
     def run_local_suite(
         self,
         *,
@@ -370,6 +405,8 @@ class EvaluationCore:
             if scoring_mode is not None and scoring_mode != ""
             else parameter_map.get("scoring_mode", "")
         )
+        if suite_id == TOPIC_MEMBERSHIP_SUITE_ID or requested_scoring_mode in TOPIC_MEMBERSHIP_SCORING_MODES:
+            return self._run_topic_membership_entrypoint(model_id, model_handle, suite_id, sample_size, requested_scoring_mode, parameter_map, remote_target)  # pragma: no cover
         if suite_id == "event_extraction" or requested_scoring_mode == "event_extraction_weighted_f1":
             loaded_model = self._loaded_model_for_execution(model_handle)
             if str(parameter_map.get("compare_mode", "")).strip():
@@ -3328,6 +3365,7 @@ class EvaluationCore:
                 parameters,
                 "source_path",
                 "evaluation_source_path",
+                "topic_membership_source_jsonl",
                 "event_source_jsonl",
                 "dataset_root",
             ),

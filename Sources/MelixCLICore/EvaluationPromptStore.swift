@@ -179,6 +179,13 @@ public struct EvaluationPromptSnapshot: Codable, Equatable, Sendable {
 public struct EvaluationPromptStore: Sendable {
     public static let eventExtractionTaskKind = "event_extraction"
     public static let eventExtractionScoringMode = "event_extraction_weighted_f1"
+    public static let topicMembershipTaskKind = "topic_membership"
+    public static let topicMembershipStrictScoringMode = "topic_membership_strict_micro_f1"
+    public static let topicMembershipSemanticScoringMode = "topic_membership_semantic_micro_f1"
+    public static let topicMembershipScoringModes: Set<String> = [
+        topicMembershipStrictScoringMode,
+        topicMembershipSemanticScoringMode,
+    ]
     public static let builtInBaselinePromptID = "builtin.event-extraction.baseline"
     public static let builtInLegacyBaselineRevisionID = "baseline.v1"
     public static let builtInStage1BaselineRevisionID = "baseline.v2"

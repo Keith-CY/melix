@@ -368,7 +368,17 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
             if request.source_repo:
                 parameters.setdefault("source_repo", request.source_repo)
             scoring_mode = request.scoring_mode or request.profile.scoring_mode
-            if scoring_mode == "event_extraction_weighted_f1":
+            if scoring_mode in {"topic_membership_strict_micro_f1", "topic_membership_semantic_micro_f1"} or request.suite_id == "topic_membership":
+                source_kind = request.source.WhichOneof("kind")
+                if source_kind != "local_jsonl":
+                    raise ValueError("topic_membership scoring requires --source-jsonl.")
+                source_path = request.source.local_jsonl.path
+                parameters.setdefault("topic_membership_source_jsonl", source_path)
+                parameters.setdefault("evaluation_source_kind", "jsonl")
+                parameters.setdefault("evaluation_source_locator", source_path)
+                parameters.setdefault("dataset_id", request.dataset_id or "topic-membership")
+                dataset_root = self._evaluation_materialization_root()
+            elif scoring_mode == "event_extraction_weighted_f1":
                 source_kind = request.source.WhichOneof("kind")
                 if source_kind == "local_jsonl":
                     source_path = request.source.local_jsonl.path
