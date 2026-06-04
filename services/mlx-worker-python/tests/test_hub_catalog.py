@@ -1093,6 +1093,16 @@ def test_search_models_counts_fp32_parameters_as_four_bytes_for_local_fit() -> N
     assert model.estimated_resident_bytes > int(64 * 1024 * 1024 * 1024 * 0.60)
 
 
+def test_tag_payload_contains_exact_mlx_without_atom_helper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    atom_helper = Mock(side_effect=AssertionError("exact MLX list membership should short-circuit"))
+    monkeypatch.setattr(hub_catalog_module, "_is_mlx_atom", atom_helper)
+
+    assert hub_catalog_module._tag_payload_contains_mlx(["Text-Generation", "MLX", object()]) is True
+    atom_helper.assert_not_called()
+
+
 def test_tag_lowering_fallbacks_preserve_direct_helper_compatibility() -> None:
     assert _is_mlx_compatible(
         repo_id="plain/model",
