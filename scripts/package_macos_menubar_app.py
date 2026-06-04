@@ -24,14 +24,20 @@ from worker.productization.macos_app_bundle import (
 )
 
 
-def _resolve_built_product(build_root: Path, product_name: str) -> Path | None:
-    direct_candidate = build_root / "debug" / product_name
-    if direct_candidate.is_file():
-        return direct_candidate
+_RELEASE_BUILD_CONFIGURATION = "release"
+_DEBUG_BUILD_CONFIGURATION = "debug"
 
+
+def _resolve_built_product(build_root: Path, product_name: str) -> Path | None:
+    build_root_path = os.fspath(build_root)
+    direct_release_candidate = os.path.join(build_root_path, _RELEASE_BUILD_CONFIGURATION, product_name)
+    if os.path.isfile(direct_release_candidate):
+        return Path(direct_release_candidate)
+
+    direct_debug_candidate = os.path.join(build_root_path, _DEBUG_BUILD_CONFIGURATION, product_name)
+    lex_first_triple_name: str | None = None
     try:
         with os.scandir(build_root) as entries:
-            lex_first_triple_name: str | None = None
             for entry in entries:
                 try:
                     if not entry.is_dir(follow_symlinks=False):
@@ -41,18 +47,34 @@ def _resolve_built_product(build_root: Path, product_name: str) -> Path | None:
                 if lex_first_triple_name is None or entry.name < lex_first_triple_name:
                     lex_first_triple_name = entry.name
     except OSError:
+        if os.path.isfile(direct_debug_candidate):
+            return Path(direct_debug_candidate)
         return None
 
     if lex_first_triple_name is None:
         return None
 
-    lex_first_candidate = build_root / lex_first_triple_name / "debug" / product_name
-    if lex_first_candidate.is_file():
-        return lex_first_candidate
+    lex_first_triple_path = os.path.join(build_root_path, lex_first_triple_name)
+    lex_first_release_dir = os.path.join(lex_first_triple_path, _RELEASE_BUILD_CONFIGURATION)
+    if os.path.isdir(lex_first_release_dir):
+        lex_first_release_candidate = os.path.join(lex_first_release_dir, product_name)
+        if os.path.isfile(lex_first_release_candidate):
+            return Path(lex_first_release_candidate)
+
+    if os.path.isfile(direct_debug_candidate):
+        return Path(direct_debug_candidate)
+
+    lex_first_debug_candidate = os.path.join(
+        lex_first_triple_path,
+        _DEBUG_BUILD_CONFIGURATION,
+        product_name,
+    )
+    if os.path.isfile(lex_first_debug_candidate):
+        return Path(lex_first_debug_candidate)
 
     try:
         with os.scandir(build_root) as entries:
-            triple_names: list[str] = []
+            remaining_triple_names: list[str] = []
             for entry in entries:
                 if entry.name == lex_first_triple_name:
                     continue
@@ -61,15 +83,19 @@ def _resolve_built_product(build_root: Path, product_name: str) -> Path | None:
                         continue
                 except OSError:
                     continue
-                triple_names.append(entry.name)
-            triple_names.sort()
+                remaining_triple_names.append(entry.name)
     except OSError:
         return None
+    remaining_triple_names.sort()
+    for triple_name in remaining_triple_names:
+        candidate = os.path.join(build_root_path, triple_name, _RELEASE_BUILD_CONFIGURATION, product_name)
+        if os.path.isfile(candidate):
+            return Path(candidate)
 
-    for triple_name in triple_names:
-        candidate = build_root / triple_name / "debug" / product_name
-        if candidate.is_file():
-            return candidate
+    for triple_name in remaining_triple_names:
+        candidate = os.path.join(build_root_path, triple_name, _DEBUG_BUILD_CONFIGURATION, product_name)
+        if os.path.isfile(candidate):
+            return Path(candidate)
     return None
 
 
@@ -81,7 +107,7 @@ def resolve_built_binary(repo_root: Path) -> Path:
     if candidate is not None:
         return candidate
     raise FileNotFoundError(
-        "Unable to find built `melix-menubar`. Run `swift test --package-path apps/macos-menubar` first."
+        "Unable to find built `melix-menubar`. Run `swift build -c release --package-path apps/macos-menubar` first."
     )
 
 
@@ -89,7 +115,7 @@ def resolve_built_cli_binary(repo_root: Path) -> Path:
     candidate = _resolve_built_product(repo_root / ".build", "melix")
     if candidate is not None:
         return candidate
-    raise FileNotFoundError("Unable to find built `melix`. Run `swift build --product melix` first.")
+    raise FileNotFoundError("Unable to find built `melix`. Run `swift build -c release --product melix` first.")
 
 
 def resolve_built_swift_text_worker_binary(repo_root: Path) -> Path:
@@ -100,7 +126,7 @@ def resolve_built_swift_text_worker_binary(repo_root: Path) -> Path:
     if candidate is not None:
         return candidate
     raise FileNotFoundError(
-        "Unable to find built `melix-text-worker-swift`. Run `swift test --package-path services/mlx-text-worker-swift` first."
+        "Unable to find built `melix-text-worker-swift`. Run `swift build -c release --package-path services/mlx-text-worker-swift` first."
     )
 
 

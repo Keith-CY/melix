@@ -28,9 +28,9 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="melix-pr-perf-package-resolve-") as temp_dir:
         synthetic_repo = Path(temp_dir) / "repo"
         build_root = synthetic_repo / "apps/macos-menubar/.build"
-        expected = build_root / "arch-0000" / "debug" / "melix-menubar"
+        expected = build_root / "arch-0000" / "release" / "melix-menubar"
         for index in range(triple_count):
-            product_dir = build_root / f"arch-{index:04d}" / "debug"
+            product_dir = build_root / f"arch-{index:04d}" / "release"
             product_dir.mkdir(parents=True, exist_ok=True)
             product_name = "melix-menubar" if index == 0 else "other-product"
             (product_dir / product_name).write_text("x", encoding="utf-8")
