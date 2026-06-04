@@ -22,6 +22,17 @@ duplicate-MTP-entry workload and gates `extra_new_mean_ms`, `extra_delta_ms`,
 The JSON read `delta_ms` and `speedup` ratios are reported as informational
 control metrics because they are derived from an unchanged helper and have shown
 CI jitter even when absolute `new_mean_ms` remains inside threshold.
+The key-predicate `key_delta_ms` and `key_speedup` ratios are likewise recorded
+as informational controls for sidecar-loop slices; `key_new_mean_ms` remains the
+direct gate for any future slice that changes `_is_mtp_weight_key()` itself.
+
+## Follow-up slice: local helper binding
+
+The 2026-06-04 follow-up keeps the same registered probe and narrows the change
+to the `extra_mtp_safetensor_files()` sidecar loop. It binds the MTP key
+predicate, string conversion, and final `Path` constructor once outside the
+weight-map loop while preserving raw file-name dedupe semantics for duplicate,
+missing, model-shard, and non-safetensor candidates.
 
 ## Verification plan
 
