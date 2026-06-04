@@ -72,7 +72,10 @@ def normalize_trajectory_provenance(
         value = provenance.get(field)
         if value in ("", None):
             continue
-        if isinstance(value, (dict, list)):
+        value_type = type(value)
+        if value_type is dict or value_type is list:
+            normalized[field] = _copy_trajectory_provenance_value(value)
+        elif isinstance(value, (dict, list)):
             normalized[field] = _copy_trajectory_provenance_value(value)
         else:
             normalized[field] = value
