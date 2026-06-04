@@ -1030,8 +1030,11 @@ def test_registry_root_tree_records_plain_local_weight_presence_during_single_sc
 
     assert manifest_paths == ()
     assert hf_cache_repo_dirs == ()
-    assert [(scan.model_dir, scan.has_model_weight_files, scan.has_generation_config) for scan in plain_scans] == [
-        (config_dir.resolve(), True, False)
+    assert [
+        (scan.model_dir, scan.has_model_weight_files, scan.has_generation_config, scan.has_tokenizer_config)
+        for scan in plain_scans
+    ] == [
+        (config_dir.resolve(), True, False, False)
     ]
     assert not hasattr(plain_scans[0], "__dict__")
 
@@ -1222,6 +1225,70 @@ def test_raw_model_spec_loads_config_payload_when_not_supplied(
     assert model.ext["melix.model_path"] == str(model_dir.resolve())
     assert config_load_count == 1
 
+    nested_model_dir = tmp_path / "nested-context-model"
+    _write_model_config(
+        nested_model_dir,
+        {
+            "model_type": "gemma4",
+            "text_config": {
+                "model_type": "gemma4_text",
+                "max_position_embeddings": 131_072,
+            },
+        },
+    )
+    _write_weights(nested_model_dir)
+    nested_model = catalog._raw_model_spec(
+        model_id="nested-context-model",
+        model_dir=nested_model_dir.resolve(),
+        revision="local",
+        source_kind="local_mlx_directory",
+        metadata={},
+    )
+
+    assert nested_model.max_context == 131_072
+    assert nested_model.ext["melix.context_window.source"] == "config.text_config.max_position_embeddings"
+
+    top_level_model_dir = tmp_path / "top-level-context-model"
+    _write_model_config(
+        top_level_model_dir,
+        {
+            "model_type": "qwen3",
+            "max_position_embeddings": 262_144,
+        },
+    )
+    (top_level_model_dir / "tokenizer_config.json").write_text(
+        json.dumps({"model_max_length": 1000000000000000019884624838656}) + "\n",
+        encoding="utf-8",
+    )
+    _write_weights(top_level_model_dir)
+    top_level_model = catalog._raw_model_spec(
+        model_id="top-level-context-model",
+        model_dir=top_level_model_dir.resolve(),
+        revision="local",
+        source_kind="local_mlx_directory",
+        metadata={},
+    )
+
+    assert top_level_model.max_context == 262_144
+    assert top_level_model.ext["melix.context_window.source"] == "config.max_position_embeddings"
+
+    tokenizer_model_dir = tmp_path / "tokenizer-context-model"
+    _write_model_config(tokenizer_model_dir, {"model_type": "custom"})
+    (tokenizer_model_dir / "tokenizer_config.json").write_text(
+        json.dumps({"model_max_length": 65_536}) + "\n",
+        encoding="utf-8",
+    )
+    _write_weights(tokenizer_model_dir)
+    tokenizer_model = catalog._raw_model_spec(
+        model_id="tokenizer-context-model",
+        model_dir=tokenizer_model_dir.resolve(),
+        revision="local",
+        source_kind="local_mlx_directory",
+        metadata={},
+    )
+
+    assert tokenizer_model.max_context == 65_536
+    assert tokenizer_model.ext["melix.context_window.source"] == "tokenizer_config.model_max_length"
 
 
 def test_registry_snapshot_does_not_stat_plain_local_manifest_after_tree_scan(
@@ -1269,6 +1336,7 @@ def test_registry_snapshot_does_not_stat_missing_plain_local_generation_config_a
     root = tmp_path / "root"
     model_dir = root / "plain-model"
     generation_probe = (model_dir / "generation_config.json").resolve()
+    tokenizer_probe = (model_dir / "tokenizer_config.json").resolve()
     _write_model_config(
         model_dir,
         {
@@ -1281,11 +1349,14 @@ def test_registry_snapshot_does_not_stat_missing_plain_local_generation_config_a
 
     original_stat = Path.stat
     generation_probe_calls = 0
+    tokenizer_probe_calls = 0
 
     def tracking_stat(self: Path, *args: object, **kwargs: object) -> os.stat_result:
-        nonlocal generation_probe_calls
+        nonlocal generation_probe_calls, tokenizer_probe_calls
         if os.fspath(self) == os.fspath(generation_probe):
             generation_probe_calls += 1
+        if os.fspath(self) == os.fspath(tokenizer_probe):
+            tokenizer_probe_calls += 1
         return original_stat(self, *args, **kwargs)
 
     try:
@@ -1293,7 +1364,13 @@ def test_registry_snapshot_does_not_stat_missing_plain_local_generation_config_a
     except FileNotFoundError:
         pass
     assert generation_probe_calls == 1
+    try:
+        tracking_stat(tokenizer_probe)
+    except FileNotFoundError:
+        pass
+    assert tokenizer_probe_calls == 1
     generation_probe_calls = 0
+    tokenizer_probe_calls = 0
     monkeypatch.setattr(Path, "stat", tracking_stat)
 
     catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": str(root), "HOME": str(tmp_path / "home")})
@@ -1301,6 +1378,7 @@ def test_registry_snapshot_does_not_stat_missing_plain_local_generation_config_a
 
     assert [model.model_id for model in snapshot.models] == ["plain-model"]
     assert generation_probe_calls == 0
+    assert tokenizer_probe_calls == 0
 
 
 

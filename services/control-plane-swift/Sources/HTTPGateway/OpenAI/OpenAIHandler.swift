@@ -2766,6 +2766,11 @@ public struct OpenAIHandler: Sendable {
         companion.capabilityClass = .modelCapabilityText
         companion.routeClass = .workerRouteSwiftText
         companion.features = source.features.contains("chat") ? source.features : source.features + ["chat"]
+        if let inferredContext = inferredTextMaxContext(fromModelPath: source.settings.ext["melix.model_path"]) {
+            let inferredMaxContext = inferredContext.tokens
+            companion.maxContext = max(companion.maxContext, inferredMaxContext)
+            companion.settings.ext["melix.context_window.source"] = inferredContext.source
+        }
         companion.supportedModalities = ["text"]
         companion.supportedTasks = ["generate"]
         companion.settings.alias = source.settings.alias.isEmpty
@@ -3039,13 +3044,18 @@ public struct OpenAIHandler: Sendable {
             ? contextWindowTokens - outputCapTokens
             : 0
         let promptTokensEstimated = estimatedPromptTokens(for: normalized.messages)
-        guard promptTokensEstimated > maxPromptTokens else {
+        let estimateSlackTokens = promptBudgetEstimateSlackTokens(contextWindowTokens: contextWindowTokens)
+        let rejectThreshold = addingClamped(maxPromptTokens, estimateSlackTokens)
+        guard promptTokensEstimated > rejectThreshold else {
             return nil
         }
         let metadata: [String: Any] = [
             "max_prompt_tokens_requested": Int(maxPromptTokens),
             "max_prompt_tokens_effective": Int(maxPromptTokens),
             "prompt_tokens_estimated": Int(promptTokensEstimated),
+            "prompt_tokens_estimate_source": "control_plane_heuristic_utf8_whitespace",
+            "prompt_tokens_estimate_slack": Int(estimateSlackTokens),
+            "prompt_tokens_reject_threshold": Int(rejectThreshold),
             "context_window_tokens": Int(contextWindowTokens),
             "output_cap_tokens": Int(outputCapTokens),
             "admission_phase": "prompt_budget",
@@ -3084,6 +3094,67 @@ public struct OpenAIHandler: Sendable {
             ?? gatewayServingDefaults?.maxTokens
             ?? GatewayServingDefaultsStore.defaultMaxTokens
         return fallbackOutputCapTokens >= contextWindowTokens ? 0 : fallbackOutputCapTokens
+    }
+
+    private func promptBudgetEstimateSlackTokens(contextWindowTokens: UInt32) -> UInt32 {
+        guard contextWindowTokens >= 32_768 else {
+            return 0
+        }
+        return max(1_024, contextWindowTokens / 64)
+    }
+
+    private func addingClamped(_ lhs: UInt32, _ rhs: UInt32) -> UInt32 {
+        let (value, overflow) = lhs.addingReportingOverflow(rhs)
+        return overflow ? UInt32.max : value
+    }
+
+    private func inferredTextMaxContext(fromModelPath modelPath: String?) -> (tokens: UInt32, source: String)? {
+        let trimmedPath = modelPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard trimmedPath.isEmpty == false else {
+            return nil
+        }
+        let configURL = URL(fileURLWithPath: trimmedPath, isDirectory: true)
+            .appendingPathComponent("config.json")
+        guard let data = try? Data(contentsOf: configURL),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        let contextKeys = ["max_position_embeddings", "max_seq_len", "max_seq_length", "seq_length", "n_positions"]
+        for key in contextKeys {
+            if let value = uint32ConfigValue(root[key]) {
+                return (value, "config.\(key)")
+            }
+        }
+        for nestedKey in ["text_config", "language_config", "llm_config"] {
+            for key in contextKeys {
+                if let value = nestedUInt32ConfigValue(root[nestedKey], key: key) {
+                    return (value, "config.\(nestedKey).\(key)")
+                }
+            }
+        }
+        return nil
+    }
+
+    private func nestedUInt32ConfigValue(_ value: Any?, key: String) -> UInt32? {
+        guard let object = value as? [String: Any] else {
+            return nil
+        }
+        return uint32ConfigValue(object[key])
+    }
+
+    private func uint32ConfigValue(_ value: Any?) -> UInt32? {
+        switch value {
+        case let number as NSNumber:
+            let intValue = number.uint64Value
+            guard intValue > 0, intValue <= UInt64(UInt32.max) else {
+                return nil
+            }
+            return UInt32(intValue)
+        case let string as String:
+            return UInt32(string.trimmingCharacters(in: .whitespacesAndNewlines))
+        default:
+            return nil
+        }
     }
 
     private func estimatedPromptTokens(
