@@ -58,25 +58,31 @@ def extra_mtp_safetensor_files(model_path: Path) -> list[Path]:
     path_join = os.path.join
     path_exists = os.path.exists
     path_sep = os.sep
+    is_mtp_weight_key = _is_mtp_weight_key
+    to_text = str
+    to_path = Path
     for key, file_name in weight_map.items():
-        if not _is_mtp_weight_key(key):
+        if not is_mtp_weight_key(key):
             continue
-        file_name_text = str(file_name)
+        file_name_text = to_text(file_name)
         if file_name_text in seen:
             continue
-        seen_add(file_name_text)
         if not file_name_text.endswith(".safetensors"):
+            seen_add(file_name_text)
             continue
         file_basename = file_name_text
         if path_sep in file_name_text:
             file_basename = file_name_text.rsplit(path_sep, 1)[-1]
         if file_basename.startswith("model"):
+            seen_add(file_name_text)
             continue
         path_text = path_join(model_path_text, file_name_text)
         if not path_exists(path_text):
             logger.warning("MTP shard listed in index is missing: %s", path_text)
+            seen_add(file_name_text)
             continue
-        append_extra_file(Path(path_text))
+        seen_add(file_name_text)
+        append_extra_file(to_path(path_text))
     return extra_files
 
 
