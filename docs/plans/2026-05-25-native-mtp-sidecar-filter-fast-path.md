@@ -19,6 +19,17 @@ This slice extends that probe and its focused test command to include sidecar sh
 3. Extend `scripts/native_mtp_loader_safetensor_scandir_probe.py` to compare baseline sidecar listing against the optimized helper and emit sidecar-specific timing/peak-memory metrics.
 4. Run the registered focused test command, changed-scope coverage command, and registered probe locally on Linux before PR creation. CI remains the final registered PR-scoped performance gate.
 
+## 2026-06-03 basename-elision follow-up
+
+The follow-up slice keeps the same registered `native-mtp-loader-safetensor-scandir`
+probe and narrows the implementation to one extra allocation cut inside
+`extra_mtp_safetensor_files()`: sidecar candidate filtering now derives the final
+path component with a direct string `rsplit(os.sep, 1)` fast path instead of
+calling `os.path.basename()` for every unique MTP shard candidate. This preserves
+the existing `os.path.join()` behavior for relative and absolute index entries
+while avoiding one helper call per candidate before the filesystem existence
+check.
+
 ## Validation commands
 
 ```bash
