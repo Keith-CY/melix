@@ -481,6 +481,11 @@ message BlockTable {
   string scope_id = 3;
   repeated PageRef pages = 4;
   uint32 total_token_count = 5;
+  // Cache tier/mode of the materialized blocks. The MTP text path tracks the
+  // request cache mode worker-locally (PrefixBlockStore); this field reserves
+  // the contract for the control-plane block-table serialization side, which
+  // is wired with the text Prefill RPC (issue #40 follow-ups).
+  CacheMode cache_mode = 6;
 }
 
 message BlockRef {

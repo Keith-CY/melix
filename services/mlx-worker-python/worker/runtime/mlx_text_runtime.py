@@ -14,6 +14,11 @@ import time
 from typing import Any
 
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
+from worker.runtime.prefix_block_store import (
+    LCPResult as _LCPResult,
+    clone_cache_snapshot as _clone_cache_snapshot,
+    get_store as _get_prefix_store,
+)
 from worker.runtime.runtime_utils import (
     callable_accepts_kwarg as _callable_accepts_kwarg,
     estimate_model_weight_resident_bytes as _estimate_model_weight_resident_bytes,
@@ -72,6 +77,9 @@ class RuntimeTokenEvent:
     dflash_block_size: int | None = None
     dflash_rollback_count: int | None = None
     dflash_target_hidden_layers: int | None = None
+    cache_hit_mode: str | None = None
+    recovered_prefix_tokens: int | None = None
+    cache_fallback_reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -389,12 +397,51 @@ def _native_mtp_prefill_prompt_cache(
     *,
     prefill_step_size: int,
     stream: Any,
+    restore_cache: Any = None,
+    restore_token_count: int = 0,
 ) -> tuple[list[Any], list[int], list[int]]:
     try:
         import mlx.core as mx
         from mlx_lm.models.cache import make_prompt_cache
     except ModuleNotFoundError as exc:  # pragma: no cover - guarded by native MTP availability.
         raise RuntimeUnavailableError("mlx-lm prompt cache support is not installed") from exc
+
+    if restore_cache is not None:
+        prompt_cache = restore_cache
+        suffix_tokens = list(prompt_tokens[restore_token_count:])
+        if len(suffix_tokens) <= 1:
+            last_token = suffix_tokens if suffix_tokens else [int(prompt_tokens[-1])]
+            return prompt_cache, last_token, list(prompt_tokens[:restore_token_count])
+        prefill_tokens = suffix_tokens[:-1]
+        last_token = [int(suffix_tokens[-1])]
+        step_size = max(1, int(prefill_step_size or 1))
+
+        def run_suffix_prefill() -> None:
+            input_arr = mx.array(prefill_tokens)[None]
+            while input_arr.shape[1] > 0:
+                n_to_process = min(step_size, input_arr.shape[1])
+                model(input_arr[:, :n_to_process], cache=prompt_cache)
+                # Eval via .state (older) or .keys/.values (newer KVCache)
+                eval_targets = []
+                for c in prompt_cache:
+                    s = getattr(c, "state", None)
+                    if s is not None:
+                        eval_targets.append(s)
+                    else:  # pragma: no cover - newer KVCache interface
+                        for attr in ("keys", "values"):
+                            v = getattr(c, attr, None)
+                            if v is not None:
+                                eval_targets.append(v)
+                if eval_targets:
+                    mx.eval(eval_targets)
+                input_arr = input_arr[:, n_to_process:]
+
+        if stream is None:
+            run_suffix_prefill()
+        else:  # pragma: no cover - mirrors the non-restore stream path
+            with mx.stream(stream):
+                run_suffix_prefill()
+        return prompt_cache, last_token, list(prompt_tokens[:restore_token_count]) + prefill_tokens
 
     prompt_cache = make_prompt_cache(model)
     if len(prompt_tokens) <= 1:
@@ -420,6 +467,64 @@ def _native_mtp_prefill_prompt_cache(
             run_prefill()
 
     return prompt_cache, last_token, prefill_tokens
+
+
+def _trim_restored_cache(prompt_cache: Any, trim_tokens: int) -> bool:
+    """Trim `trim_tokens` from the end of a restored prompt cache.
+
+    A restored snapshot holds KV state for the full stored prompt. On a partial
+    LCP hit only `recovered_prefix_tokens` of that state is valid, so the stale
+    tail must be trimmed before the new suffix is replayed. Returns True only
+    when exactly `trim_tokens` were trimmed across the cache; any shortfall
+    (e.g. a rotating cache that cannot trim that far) returns False so the caller
+    can fall back to a cold prefill rather than reuse misaligned state.
+    """
+    if trim_tokens <= 0:
+        return True
+    try:
+        from mlx_lm.models.cache import trim_prompt_cache
+    except (ModuleNotFoundError, ImportError):  # pragma: no cover - guarded by mlx-lm availability
+        return False
+    try:
+        trimmed = trim_prompt_cache(prompt_cache, trim_tokens)
+    except Exception:
+        return False
+    try:
+        return int(trimmed) == trim_tokens
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        return False
+
+
+def _estimate_cache_bytes(prompt_cache: Any) -> int:
+    if not isinstance(prompt_cache, list):
+        return 0
+    total = 0
+    for layer_cache in prompt_cache:
+        # Support both .state (older mlx-lm) and .keys/.values (newer KVCache)
+        tensors: list[Any] = []
+        state = getattr(layer_cache, "state", None)
+        if state is not None:
+            if isinstance(state, list | tuple):
+                tensors.extend(state)
+            else:
+                tensors.append(state)
+        else:  # pragma: no cover - newer KVCache interface
+            keys = getattr(layer_cache, "keys", None)
+            values = getattr(layer_cache, "values", None)
+            if keys is not None:
+                tensors.append(keys)
+            if values is not None:
+                tensors.append(values)
+        for tensor in tensors:
+            nbytes = getattr(tensor, "nbytes", None)
+            if nbytes is None:
+                size = getattr(tensor, "size", None)
+                itemsize = getattr(tensor, "itemsize", None)
+                if size is not None and itemsize is not None:
+                    nbytes = int(size) * int(itemsize)
+            if nbytes is not None:
+                total += int(nbytes)
+    return total
 
 
 def _tokenizer_eos_stop_tokens(tokenizer: Any) -> list[list[int]] | None:
@@ -1076,6 +1181,7 @@ class AutoMLXBackend:
                 sampler=sampler,
                 max_tokens=max_tokens,
                 cancel_event=cancel_event,
+                execution_ext=execution_ext,
             )
             return
 
@@ -1158,6 +1264,7 @@ class AutoMLXBackend:
         sampler,
         max_tokens: int,
         cancel_event,
+        execution_ext: dict[str, str] | None = None,
     ) -> Iterable[RuntimeTokenEvent]:
         try:
             import mlx.core as mx
@@ -1197,14 +1304,53 @@ class AutoMLXBackend:
         if callable(reset):
             reset()
 
-        batch_generator = self._native_mtp_batch_generator(
-            loaded_model,
-            sampler=sampler,
-            max_tokens=max_tokens,
-            stop_tokens=_tokenizer_eos_stop_tokens(tokenizer),
-            prefill_step_size=_native_mtp_text_prefill_step_size(),
+        _ext = execution_ext or {}
+        _session_id = str(_ext.get("_melix.session_id", "") or "")
+        _model_id = str(_ext.get("_melix.model_id", "") or "")
+        _model_revision = str(_ext.get("_melix.model_revision", "") or "")
+        _DEFAULT_BLOCK_SIZE = 64
+        # An unset proto field arrives as "0"; treat "0"/"" as "use the default"
+        # rather than letting max(1, int("0")) collapse to a degenerate 1-token block.
+        _raw_block_size = str(_ext.get("_melix.block_size", "") or "").strip()
+        if _raw_block_size in ("", "0"):
+            _block_size = _DEFAULT_BLOCK_SIZE
+        else:
+            try:
+                _block_size = int(_raw_block_size)
+            except (ValueError, TypeError):
+                _block_size = _DEFAULT_BLOCK_SIZE
+            if _block_size < 1:
+                _block_size = _DEFAULT_BLOCK_SIZE
+        _acceleration_mode = str(_ext.get("_melix.acceleration_mode", "") or "")
+        # Cache mode flows from the request; unspecified ("", "0") stores as a
+        # standard tiered cache. A rotating value is preserved so find_lcp's
+        # rotating-exclusion gate can reject the stored entry on the next turn.
+        _cache_mode = str(_ext.get("_melix.cache_mode", "") or "")
+        if not _cache_mode or _cache_mode in ("0", "CACHE_MODE_UNSPECIFIED"):
+            _cache_mode = "CACHE_MODE_TIERED"
+        # Debug-only fallback hook: never honored from a live request unless the
+        # operator has explicitly enabled test cache hooks for the process.
+        _force_fallback = (
+            _truthy_string(os.environ.get("MELIX_ENABLE_TEST_CACHE_HOOKS"))
+            and _ext.get("_test.force_cache_fallback", "").lower() in ("1", "true", "yes")
         )
-        prepare_ms = (time.perf_counter() - prepare_started_at) * 1000.0
+        _prefix_store = _get_prefix_store()
+
+        _lcp: _LCPResult | None = None
+        if _session_id:
+            _lcp = _prefix_store.find_lcp(
+                prompt_tokens,
+                _model_id,
+                _model_revision,
+                _block_size,
+                acceleration_mode=_acceleration_mode,
+                force_fallback=_force_fallback,
+            )
+
+        # find_lcp may have acquired an active ref on the matched entry; track it
+        # before any code that can raise so the finally block always releases it.
+        _lcp_entry_to_release = _lcp.entry if _lcp is not None else None
+        batch_generator: Any = None
         uid: int | None = None
         generation_started_at = time.perf_counter()
         first_response_ms: float | None = None
@@ -1212,15 +1358,87 @@ class AutoMLXBackend:
         prompt_tps: float | None = None
         cumulative_raw_text = ""
         try:
+            batch_generator = self._native_mtp_batch_generator(
+                loaded_model,
+                sampler=sampler,
+                max_tokens=max_tokens,
+                stop_tokens=_tokenizer_eos_stop_tokens(tokenizer),
+                prefill_step_size=_native_mtp_text_prefill_step_size(),
+            )
+            prepare_ms = (time.perf_counter() - prepare_started_at) * 1000.0
             insert_started_at = time.perf_counter()
             prefill_started_at = time.perf_counter()
-            prompt_cache, last_token, cached_tokens = _native_mtp_prefill_prompt_cache(
-                loaded_model["model"],
-                prompt_tokens,
-                prefill_step_size=_native_mtp_text_prefill_step_size(),
-                stream=getattr(batch_generator, "stream", None),
+
+            _use_lcp = (
+                _lcp is not None
+                and _lcp.mode != "none"
+                and _lcp.entry is not None
+                and _lcp.entry.cache_snapshot is not None
             )
+            _restored = None
+            if _use_lcp:
+                assert _lcp is not None and _lcp.entry is not None
+                _restored = _clone_cache_snapshot(_lcp.entry.cache_snapshot)
+                # The snapshot holds KV state for the full stored prompt; on a
+                # partial hit, trim the tail beyond the validated common prefix
+                # so the suffix replays onto correctly aligned state.
+                _trim_tokens = len(_lcp.entry.token_ids) - _lcp.recovered_prefix_tokens
+                _trim_ok = True
+                if _restored is not None and _trim_tokens > 0:
+                    _trim_ok = _trim_restored_cache(_restored, _trim_tokens)
+                if _restored is None or not _trim_ok:
+                    _use_lcp = False
+                    _restored = None
+                    # Clear the tracker before releasing so the finally block can
+                    # never double-release even if release() raises here.
+                    _entry = _lcp_entry_to_release
+                    _lcp_entry_to_release = None
+                    if _entry is not None:
+                        _prefix_store.release(_entry)
+
+            if _use_lcp:
+                assert _lcp is not None and _lcp.entry is not None
+                suffix_tokens = _lcp.suffix_token_ids
+                if suffix_tokens:
+                    prompt_cache, last_token, cached_tokens = _native_mtp_prefill_prompt_cache(
+                        loaded_model["model"],
+                        list(prompt_tokens),
+                        prefill_step_size=_native_mtp_text_prefill_step_size(),
+                        stream=getattr(batch_generator, "stream", None),
+                        restore_cache=_restored,
+                        restore_token_count=_lcp.recovered_prefix_tokens,
+                    )
+                else:
+                    prompt_cache = _restored
+                    last_token = [int(prompt_tokens[-1])] if prompt_tokens else []
+                    cached_tokens = list(prompt_tokens[:-1]) if len(prompt_tokens) > 1 else []
+            else:
+                prompt_cache, last_token, cached_tokens = _native_mtp_prefill_prompt_cache(
+                    loaded_model["model"],
+                    prompt_tokens,
+                    prefill_step_size=_native_mtp_text_prefill_step_size(),
+                    stream=getattr(batch_generator, "stream", None),
+                )
+
             prefill_ms = (time.perf_counter() - prefill_started_at) * 1000.0
+
+            if _session_id:
+                # Always update store with the full prompt_tokens so multi-turn
+                # conversations accumulate context even after an LCP warm hit.
+                _snapshot = _clone_cache_snapshot(prompt_cache)
+                if _snapshot is not None:
+                    _prefix_store.put(
+                        session_id=_session_id,
+                        token_ids=list(prompt_tokens),
+                        cache_snapshot=_snapshot,
+                        cache_mode=_cache_mode,
+                        model_id=_model_id,
+                        model_revision=_model_revision,
+                        block_size=_block_size,
+                        total_bytes=_estimate_cache_bytes(prompt_cache),
+                        acceleration_mode=_acceleration_mode,
+                    )
+
             batch_insert_started_at = time.perf_counter()
             inserted = batch_generator.insert(
                 [last_token],
@@ -1261,6 +1479,15 @@ class AutoMLXBackend:
                     if prompt_tps is None and token_count > 0:
                         prompt_tps = None
                     peak_memory = _mlx_peak_memory_gb(mx) if finish_reason is not None else None
+                    # Cache-reuse metrics only travel on the terminal event.
+                    if finish_reason is not None:
+                        _cache_hit_mode = _lcp.mode if _lcp is not None else "none"
+                        _recovered_prefix_tokens = _lcp.recovered_prefix_tokens if _lcp is not None else 0
+                        _cache_fallback_reason = _lcp.fallback_reason if _lcp is not None else "no_session_id"
+                    else:
+                        _cache_hit_mode = None
+                        _recovered_prefix_tokens = None
+                        _cache_fallback_reason = None
                     yield RuntimeTokenEvent(
                         text=text,
                         raw_text=cumulative_raw_text,
@@ -1299,17 +1526,27 @@ class AutoMLXBackend:
                         )
                         if finish_reason is not None
                         else None,
+                        cache_hit_mode=_cache_hit_mode,
+                        recovered_prefix_tokens=_recovered_prefix_tokens,
+                        cache_fallback_reason=_cache_fallback_reason,
                     )
                     if finish_reason is not None:
                         return
         finally:
-            if uid is not None:
+            if uid is not None and batch_generator is not None:
                 remove = getattr(batch_generator, "remove", None)
                 if callable(remove):
                     try:
                         remove([uid])
                     except Exception:
                         pass
+            if _lcp_entry_to_release is not None:
+                try:
+                    _prefix_store.release(_lcp_entry_to_release)
+                except Exception:
+                    pass
+                _lcp_entry_to_release = None
+            _prefix_store.flush_deferred_clear()
 
     def _native_mtp_batch_generator(
         self,

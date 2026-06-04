@@ -79,6 +79,14 @@ message PrefillResponse {
   AdmissionState admission_state = 9;
   AccelerationPolicy applied_acceleration = 10;
   CacheRestorePlan restore_plan = 11;
+  // Prefix-cache reuse observability. On the MTP text path these are emitted on
+  // the streaming terminal event (worker/v1 ExecuteEvent parser metrics:
+  // cache_hit_mode / recovered_prefix_tokens / cache_fallback_reason). They are
+  // reserved here on the unary PrefillResponse for the text Prefill RPC, which
+  // is VLM-only today; see issue #40 follow-ups.
+  uint32 recovered_prefix_tokens = 12;
+  string cache_hit_mode = 13;
+  string fallback_reason = 14;
 }
 
 message DecodeRequest {

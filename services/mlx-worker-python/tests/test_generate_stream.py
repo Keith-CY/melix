@@ -1971,3 +1971,84 @@ def test_generate_forwards_acceleration_policy_to_runtimes_that_accept_it() -> N
     assert seen_policy.draft_model_id == "mlx-community/gemma-4-E2B-it-assistant-bf16"
     assert seen_policy.num_draft_tokens == 6
     assert seen_policy.allow_baseline_fallback is True
+
+
+def test_text_native_mtp_parser_metrics_surfaces_cache_reuse_fields() -> None:
+    metrics = engine_core_module._text_native_mtp_parser_metrics(
+        RuntimeTokenEvent(
+            text="done",
+            cache_hit_mode="partial",
+            recovered_prefix_tokens=64,
+            cache_fallback_reason="",
+        )
+    )
+    assert metrics["cache_hit_mode"] == "partial"
+    assert metrics["recovered_prefix_tokens"] == "64"
+    assert metrics["cache_fallback_reason"] == ""
+
+
+def test_text_native_mtp_parser_metrics_fallback_reason_surfaced() -> None:
+    metrics = engine_core_module._text_native_mtp_parser_metrics(
+        RuntimeTokenEvent(
+            text="done",
+            cache_hit_mode="none",
+            recovered_prefix_tokens=0,
+            cache_fallback_reason="active_kv_excluded",
+        )
+    )
+    assert metrics["cache_hit_mode"] == "none"
+    assert metrics["recovered_prefix_tokens"] == "0"
+    assert metrics["cache_fallback_reason"] == "active_kv_excluded"
+
+
+def test_generate_forwards_positive_block_size_to_runtime() -> None:
+    """A client-set preferred_block_size must reach the runtime via _melix.block_size."""
+    runtime = UsageCountingRuntime(prompt_tokens=0)
+    captured: dict[str, str] = {}
+    original = runtime.generate_tokens
+
+    def capturing(loaded_model, prompt, sampling, cancel_event, execution_ext=None):
+        captured.update(dict(execution_ext or {}))
+        return original(loaded_model, prompt, sampling, cancel_event, execution_ext=execution_ext)
+
+    runtime.generate_tokens = capturing  # type: ignore[method-assign]
+    inference_service, model_handle = build_usage_counting_services(runtime)
+
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-blocksize"),
+            model_handle=model_handle,
+            cache_hints=common_pb2.CacheHints(preferred_block_size=32),
+        ),
+        messages=[common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="hi")])],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=2),
+        stream=True,
+    )
+    list(inference_service.Generate(request, context=None))
+    assert captured.get("_melix.block_size") == "32"
+
+
+def test_generate_omits_block_size_when_unset() -> None:
+    """An unset preferred_block_size (0) must not be forwarded as "0"."""
+    runtime = UsageCountingRuntime(prompt_tokens=0)
+    captured: dict[str, str] = {}
+    original = runtime.generate_tokens
+
+    def capturing(loaded_model, prompt, sampling, cancel_event, execution_ext=None):
+        captured.update(dict(execution_ext or {}))
+        return original(loaded_model, prompt, sampling, cancel_event, execution_ext=execution_ext)
+
+    runtime.generate_tokens = capturing  # type: ignore[method-assign]
+    inference_service, model_handle = build_usage_counting_services(runtime)
+
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-noblocksize"),
+            model_handle=model_handle,
+        ),
+        messages=[common_pb2.ChatMessage(role="user", parts=[common_pb2.MessagePart(text="hi")])],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=2),
+        stream=True,
+    )
+    list(inference_service.Generate(request, context=None))
+    assert "_melix.block_size" not in captured
