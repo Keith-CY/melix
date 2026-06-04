@@ -108,13 +108,10 @@ def _measure() -> dict[str, float]:
         )
 
     return {
-        "elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
-        "peak_bytes_mean": round(statistics.fmean(peak_samples), 1),
         "sample_count": float(SAMPLE_COUNT),
         "snapshot_count": float(SNAPSHOT_COUNT),
         "selected_latest_snapshot": float(SNAPSHOT_COUNT - 1),
         "weight_scan_elapsed_ms_mean": weight_elapsed_ms,
-        "weight_scan_peak_bytes_mean": weight_peak_bytes,
         "weight_file_count": float(WEIGHT_FILE_COUNT),
     }
 

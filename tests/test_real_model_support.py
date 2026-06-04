@@ -345,6 +345,30 @@ def test_runtime_model_preflight_marks_real_local_weights(tmp_path: Path) -> Non
     assert preflight.to_dict()["local_model_path"] == str(model_dir.resolve())
 
 
+def test_runtime_model_preflight_short_circuits_common_exact_weight_file(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    model_dir = tmp_path / "qwen-real-small"
+    model_dir.mkdir()
+    (model_dir / "model.safetensors").write_text("weights\n", encoding="utf-8")
+
+    def fail_scandir(*args, **kwargs):  # pragma: no cover - regression sentinel
+        raise AssertionError("exact model.safetensors should be recognized before scanning")
+
+    monkeypatch.setattr(real_model_support_module.os, "scandir", fail_scandir)
+
+    preflight = build_runtime_model_preflight(
+        model_id=REAL_SMALL_TEXT_MODEL_ID,
+        live=False,
+        local_model_path=str(model_dir),
+        source_resolution_mode="explicit_local_path",
+    )
+
+    assert preflight.runtime_model_class == "real_local_model"
+    assert preflight.real_local_model is True
+
+
 def test_runtime_model_preflight_marks_deterministic_development_models() -> None:
     preflight = build_runtime_model_preflight(
         model_id="melix-dev-text",
