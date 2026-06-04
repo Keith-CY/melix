@@ -2613,7 +2613,7 @@ def coverage_paths_for_probe(
             if direct_probe_ids and probe.probe_id in direct_probe_ids:
                 coverage_paths.append(path)
             continue
-        if any(_glob_matches_path(path, glob) for glob in probe.watch_globs):
+        if _matches_any_glob(path, probe.watch_globs):
             coverage_paths.append(path)
     return tuple(coverage_paths)
 
@@ -2692,11 +2692,19 @@ def _changed_paths_match_force_all_wildcards(changed_paths: set[str]) -> bool:
     matchers = _force_all_wildcard_matchers()
     if not matchers:
         return False
-    return any(_matches_any_compiled_glob(path, matchers) for path in changed_paths)
+    matches_any_compiled_glob = _matches_any_compiled_glob
+    for path in changed_paths:
+        if matches_any_compiled_glob(path, matchers):
+            return True
+    return False
 
 
 def _matches_any_glob(path: str, globs: tuple[str, ...]) -> bool:
-    return any(_glob_matches_path(path, glob) for glob in globs)
+    glob_matches_path = _glob_matches_path
+    for glob in globs:
+        if glob_matches_path(path, glob):
+            return True
+    return False
 
 
 def _matches_any_compiled_glob(path: str, matchers: tuple[tuple[str, re.Pattern[str]], ...]) -> bool:
