@@ -495,6 +495,26 @@ def test_report_evidence_gate_release_matrix_dedupes_evidence_ids(tmp_path: Path
     ]
 
 
+def test_report_evidence_gate_release_matrix_single_role_keeps_stringified_evidence() -> None:
+    rows = report_evidence_gate_module._release_matrix_rows(
+        [
+            {"release_matrix_roles": ["serving"], "source_evidence_ids": ["base", 7]},
+            {"release_matrix_roles": ["unknown"], "source_evidence_ids": ["ignored"]},
+        ],
+        {"serving": {"description": "serving evidence"}},
+    )
+
+    assert rows == [
+        {
+            "role": "serving",
+            "required": True,
+            "present": True,
+            "evidence_ids": ["7", "base"],
+            "description": "serving evidence",
+        }
+    ]
+
+
 def test_report_evidence_gate_release_matrix_ignores_invalid_cached_roles() -> None:
     rows = report_evidence_gate_module._release_matrix_rows(
         [

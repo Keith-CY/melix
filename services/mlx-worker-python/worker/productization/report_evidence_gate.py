@@ -244,11 +244,20 @@ def _release_matrix_rows(
     for report in reports:
         roles = report.get("release_matrix_roles")
         source_evidence_ids = report.get("source_evidence_ids", [])
-        if not isinstance(roles, list) or not isinstance(source_evidence_ids, list):
+        if (
+            not isinstance(roles, list)
+            or not isinstance(source_evidence_ids, list)
+            or not source_evidence_ids
+        ):
+            continue
+        if len(roles) == 1:
+            role = roles[0]
+            if role in matrix_roles:
+                evidence_ids_for_role = evidence_by_role.setdefault(role, set())
+                for evidence_id in source_evidence_ids:
+                    evidence_ids_for_role.add(str(evidence_id))
             continue
         evidence_ids = tuple(str(item) for item in source_evidence_ids)
-        if not evidence_ids:
-            continue
         for role in roles:
             if role not in matrix_roles:
                 continue
