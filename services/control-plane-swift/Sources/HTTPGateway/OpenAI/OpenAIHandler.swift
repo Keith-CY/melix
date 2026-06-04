@@ -1,4 +1,5 @@
 import Foundation
+import Dispatch
 import MelixControlPlaneProtocol
 import MelixWorkerProtocol
 import OSLog
@@ -19,6 +20,51 @@ public struct RichOutputSanitizationResult: Equatable, Sendable {
         self.didSanitize = didSanitize
         self.blockedHTMLFragmentCount = blockedHTMLFragmentCount
         self.unsafeURIRejectionCount = unsafeURIRejectionCount
+    }
+}
+
+private struct TextContextWindowInference: Sendable {
+    let tokens: UInt32
+    let source: String
+}
+
+private actor TextContextWindowInferenceCache {
+    private enum Entry {
+        case loading(Task<TextContextWindowInference?, Never>)
+        case loaded(TextContextWindowInference?)
+    }
+
+    private let queue = DispatchQueue(
+        label: "dev.melix.openai.text-context-window-inference",
+        qos: .utility
+    )
+    private var entries: [String: Entry] = [:]
+
+    func value(
+        for modelPath: String,
+        load: @escaping @Sendable () -> TextContextWindowInference?
+    ) async -> TextContextWindowInference? {
+        if let entry = entries[modelPath] {
+            switch entry {
+            case .loading(let task):
+                return await task.value
+            case .loaded(let value):
+                return value
+            }
+        }
+
+        let queue = queue
+        let task = Task(priority: .utility) {
+            await withCheckedContinuation { continuation in
+                queue.async {
+                    continuation.resume(returning: load())
+                }
+            }
+        }
+        entries[modelPath] = .loading(task)
+        let value = await task.value
+        entries[modelPath] = .loaded(value)
+        return value
     }
 }
 
@@ -543,6 +589,7 @@ public struct OpenAIHandler: Sendable {
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
     private let idleSweepScheduler: ModelIdleSweepScheduler
+    private let textContextWindowInferenceCache: TextContextWindowInferenceCache
 
     public init(
         modelCatalog: ModelCatalog,
@@ -604,6 +651,7 @@ public struct OpenAIHandler: Sendable {
             minimumIntervalSeconds: Self.modelIdleSweepDebounceSeconds,
             now: now
         )
+        self.textContextWindowInferenceCache = TextContextWindowInferenceCache()
     }
 
     private static func transientGatewayConfigStore(environment: [String: String]) -> GatewayConfigStore {
@@ -2605,8 +2653,9 @@ public struct OpenAIHandler: Sendable {
 
         let companionID = textCompanionModelID(for: servedModelID)
         if await modelCatalog.model(id: companionID) == nil {
+            let companionModel = await makeTextCompanionModel(from: model, companionID: companionID)
             await modelCatalog.registerModel(
-                makeTextCompanionModel(from: model, companionID: companionID),
+                companionModel,
                 reason: "text_companion_registered"
             )
         }
@@ -2755,7 +2804,7 @@ public struct OpenAIHandler: Sendable {
     private func makeTextCompanionModel(
         from source: Melix_Controlplane_V1_ModelSummary,
         companionID: String
-    ) -> Melix_Controlplane_V1_ModelSummary {
+    ) async -> Melix_Controlplane_V1_ModelSummary {
         var companion = source
         companion.modelID = companionID
         companion.kind = "text"
@@ -2766,7 +2815,7 @@ public struct OpenAIHandler: Sendable {
         companion.capabilityClass = .modelCapabilityText
         companion.routeClass = .workerRouteSwiftText
         companion.features = source.features.contains("chat") ? source.features : source.features + ["chat"]
-        if let inferredContext = inferredTextMaxContext(fromModelPath: source.settings.ext["melix.model_path"]) {
+        if let inferredContext = await inferredTextMaxContext(fromModelPath: source.settings.ext["melix.model_path"]) {
             let inferredMaxContext = inferredContext.tokens
             companion.maxContext = max(companion.maxContext, inferredMaxContext)
             companion.settings.ext["melix.context_window.source"] = inferredContext.source
@@ -3108,12 +3157,18 @@ public struct OpenAIHandler: Sendable {
         return overflow ? UInt32.max : value
     }
 
-    private func inferredTextMaxContext(fromModelPath modelPath: String?) -> (tokens: UInt32, source: String)? {
+    private func inferredTextMaxContext(fromModelPath modelPath: String?) async -> TextContextWindowInference? {
         let trimmedPath = modelPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard trimmedPath.isEmpty == false else {
             return nil
         }
-        let configURL = URL(fileURLWithPath: trimmedPath, isDirectory: true)
+        return await textContextWindowInferenceCache.value(for: trimmedPath) {
+            Self.loadInferredTextMaxContext(fromModelPath: trimmedPath)
+        }
+    }
+
+    private static func loadInferredTextMaxContext(fromModelPath modelPath: String) -> TextContextWindowInference? {
+        let configURL = URL(fileURLWithPath: modelPath, isDirectory: true)
             .appendingPathComponent("config.json")
         guard let data = try? Data(contentsOf: configURL),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -3121,28 +3176,28 @@ public struct OpenAIHandler: Sendable {
         }
         let contextKeys = ["max_position_embeddings", "max_seq_len", "max_seq_length", "seq_length", "n_positions"]
         for key in contextKeys {
-            if let value = uint32ConfigValue(root[key]) {
-                return (value, "config.\(key)")
+            if let value = Self.uint32ConfigValue(root[key]) {
+                return TextContextWindowInference(tokens: value, source: "config.\(key)")
             }
         }
         for nestedKey in ["text_config", "language_config", "llm_config"] {
             for key in contextKeys {
-                if let value = nestedUInt32ConfigValue(root[nestedKey], key: key) {
-                    return (value, "config.\(nestedKey).\(key)")
+                if let value = Self.nestedUInt32ConfigValue(root[nestedKey], key: key) {
+                    return TextContextWindowInference(tokens: value, source: "config.\(nestedKey).\(key)")
                 }
             }
         }
         return nil
     }
 
-    private func nestedUInt32ConfigValue(_ value: Any?, key: String) -> UInt32? {
+    private static func nestedUInt32ConfigValue(_ value: Any?, key: String) -> UInt32? {
         guard let object = value as? [String: Any] else {
             return nil
         }
-        return uint32ConfigValue(object[key])
+        return Self.uint32ConfigValue(object[key])
     }
 
-    private func uint32ConfigValue(_ value: Any?) -> UInt32? {
+    private static func uint32ConfigValue(_ value: Any?) -> UInt32? {
         switch value {
         case let number as NSNumber:
             let intValue = number.uint64Value

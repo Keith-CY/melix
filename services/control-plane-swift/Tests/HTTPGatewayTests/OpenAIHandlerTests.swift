@@ -2819,6 +2819,111 @@ struct OpenAIHandlerTests {
         #expect(await harness.vlmClient.lastGenerateRequest == nil)
     }
 
+    @Test("POST /v1/chat/completions caches Gemma4 text companion context inference by model path")
+    func postChatCompletionsCachesGemma4TextCompanionContextInferenceByModelPath() async throws {
+        let modelDirectory = try makeModelConfigDirectory(
+            config: """
+            {
+              "model_type": "gemma4",
+              "text_config": {
+                "model_type": "gemma4_text",
+                "max_position_embeddings": 131072
+              }
+            }
+            """
+        )
+        let harness = makeGemma4VLMOpenAIHandler(
+            requestID: "req-http-gemma4-vlm-text-companion-context-cache",
+            textEvents: [
+                makeCompletedEvent(
+                    requestID: "req-http-gemma4-vlm-text-companion-context-cache",
+                    seq: 1,
+                    finishReason: "stop",
+                    assistantText: "ok"
+                ),
+            ],
+            textLoadModelHandle: "melix-dev-vlm#text::swift",
+            configureModel: { model in
+                model.maxContext = 8_192
+                model.settings.ext["melix.vlm.execution_mode"] = "multimodal"
+                model.settings.ext["melix.vlm.text_only_batch_generator"] = "true"
+                model.settings.ext.removeValue(forKey: "melix.vlm.text_companion.enabled")
+                model.settings.ext["melix.model_path"] = modelDirectory.path
+                model.settings.ext["melix.model_revision"] = "dev"
+                model.settings.ext["melix.tokenizer_hash"] = "tok-dev"
+            }
+        )
+        let firstBody = try #require(
+            """
+            {
+              "model": "melix-dev-vlm",
+              "stream": false,
+              "messages": [
+                { "role": "user", "content": "Reply briefly." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+        let firstResponse = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: firstBody
+            )
+        )
+        _ = try await collectBody(firstResponse.body)
+        let firstCompanion = try #require(await harness.catalog.model(id: "melix-dev-vlm#text"))
+
+        #expect(firstResponse.statusCode == 200)
+        #expect(firstCompanion.maxContext == 131_072)
+
+        try """
+        {
+          "model_type": "gemma4",
+          "text_config": {
+            "model_type": "gemma4_text",
+            "max_position_embeddings": 8192
+          }
+        }
+        """.write(
+            to: modelDirectory.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        var secondModel = try #require(await harness.catalog.model(id: "melix-dev-vlm"))
+        secondModel.modelID = "melix-dev-vlm-alt"
+        secondModel.settings.alias = "Melix Vision Alt"
+        secondModel.maxContext = 8_192
+        await harness.catalog.registerModel(secondModel, reason: "test_model_registered")
+
+        let secondBody = try #require(
+            """
+            {
+              "model": "melix-dev-vlm-alt",
+              "stream": false,
+              "messages": [
+                { "role": "user", "content": "Reply briefly." }
+              ]
+            }
+            """.data(using: .utf8)
+        )
+        let secondResponse = try await harness.handler.handle(
+            HTTPRequest(
+                method: .post,
+                path: "/v1/chat/completions",
+                headers: ["content-type": "application/json"],
+                body: secondBody
+            )
+        )
+        _ = try await collectBody(secondResponse.body)
+        let secondCompanion = try #require(await harness.catalog.model(id: "melix-dev-vlm-alt#text"))
+
+        #expect(secondResponse.statusCode == 200)
+        #expect(secondCompanion.maxContext == 131_072)
+        #expect(secondCompanion.settings.ext["melix.context_window.source"] == "config.text_config.max_position_embeddings")
+    }
+
     @Test("POST /v1/chat/completions keeps Gemma4 VLM media requests on the Swift vision route")
     func postChatCompletionsKeepsGemma4VLMMediaRequestsOnSwiftVisionRoute() async throws {
         let harness = makeGemma4VLMOpenAIHandler(
