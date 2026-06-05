@@ -207,8 +207,11 @@ def test_direct_size_hint_rejects_extra_tokens_without_full_split() -> None:
     assert _direct_size_hint_from_text("12 gb") == 12 * 1024 * 1024 * 1024
     assert _direct_size_hint_from_text("12\tGB") == 12 * 1024 * 1024 * 1024
     assert _direct_size_hint_from_text("12 GB\n") == 12 * 1024 * 1024 * 1024
+    assert _direct_size_hint_from_text("1.5 GB") == int(1.5 * 1024 * 1024 * 1024)
     assert _direct_size_hint_from_text("9 mb") == 9 * 1024 * 1024
     assert _direct_size_hint_from_text("512 kb") == 512 * 1024
+    assert _direct_size_hint_from_text("12 Mb") == 12 * 1024 * 1024
+    assert _direct_size_hint_from_text("12 XB") == 0
 
 
 def test_direct_card_size_hint_preserves_case_insensitive_label_prefix() -> None:

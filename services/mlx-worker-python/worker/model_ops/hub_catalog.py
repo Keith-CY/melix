@@ -660,23 +660,25 @@ def _size_hint_bytes(payload: dict[str, Any], *, card_data: dict[str, Any] | Non
 
 def _direct_size_hint_from_text(text: str) -> int:
     if len(text) >= 4 and text[-3].isspace():
-        value_text = text[:-3]
-        unit_text = text[-2:]
-        if unit_text == "MB" or unit_text == "mb":
-            multiplier = _SIZE_HINT_MB
-        elif unit_text == "GB" or unit_text == "gb":
-            multiplier = _SIZE_HINT_GB
-        elif unit_text == "KB" or unit_text == "kb":
-            multiplier = _SIZE_HINT_KB
-        else:
-            multiplier = 0
-        if multiplier:
-            if value_text.isdecimal():
-                return int(value_text) * multiplier
-            try:
-                return int(float(value_text) * multiplier)
-            except ValueError:
-                return 0
+        unit_suffix = ord(text[-1])
+        if unit_suffix == 66 or unit_suffix == 98:  # B or b
+            unit_initial = ord(text[-2])
+            if unit_initial == 77 or unit_initial == 109:  # M or m
+                multiplier = _SIZE_HINT_MB
+            elif unit_initial == 71 or unit_initial == 103:  # G or g
+                multiplier = _SIZE_HINT_GB
+            elif unit_initial == 75 or unit_initial == 107:  # K or k
+                multiplier = _SIZE_HINT_KB
+            else:
+                multiplier = 0
+            if multiplier:
+                value_text = text[:-3]
+                if value_text.isdecimal():
+                    return int(value_text) * multiplier
+                try:
+                    return int(float(value_text) * multiplier)
+                except ValueError:
+                    return 0
 
     parts = text.split(maxsplit=2)
     if len(parts) != 2:
