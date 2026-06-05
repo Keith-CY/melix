@@ -483,19 +483,20 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
     def ExportResultsStream(self, request, context):
         try:
             bundle_path = self._write_export_results_bundle(request)
-            total_bytes = bundle_path.stat().st_size
             chunk_size = _EXPORT_RESULTS_STREAM_CHUNK_BYTES
-            yield maintenance_pb2.ExportResultsEvent(
-                started=maintenance_pb2.ExportResultsStarted(
-                    export_path=str(bundle_path),
-                    total_bytes=total_bytes,
-                    chunk_size=chunk_size,
-                )
-            )
 
             checksum = hashlib.sha256()
             chunk_count = 0
             with bundle_path.open("rb") as bundle_file:
+                total_bytes = os.fstat(bundle_file.fileno()).st_size
+                yield maintenance_pb2.ExportResultsEvent(
+                    started=maintenance_pb2.ExportResultsStarted(
+                        export_path=str(bundle_path),
+                        total_bytes=total_bytes,
+                        chunk_size=chunk_size,
+                    )
+                )
+
                 while True:
                     data = bundle_file.read(chunk_size)
                     if not data:

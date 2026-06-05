@@ -134,9 +134,7 @@ def test_export_results_stream_keeps_active_reader_stable_during_concurrent_expo
         context=None,
     )
     first_started = next(first_stream)
-    first_chunk = next(first_stream)
     assert first_started.HasField("started")
-    assert first_chunk.HasField("chunk")
 
     second_events = list(
         service.ExportResultsStream(
@@ -145,10 +143,7 @@ def test_export_results_stream_keeps_active_reader_stable_during_concurrent_expo
         )
     )
 
-    first_chunks = [bytes(first_chunk.chunk.data)]
-    first_chunks.extend(
-        bytes(event.chunk.data) for event in first_stream if event.HasField("chunk")
-    )
+    first_chunks = [bytes(event.chunk.data) for event in first_stream if event.HasField("chunk")]
     assert b"".join(first_chunks) == first_payload
 
     second_chunks = [bytes(event.chunk.data) for event in second_events if event.HasField("chunk")]
