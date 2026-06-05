@@ -6,6 +6,7 @@ import math
 import struct
 import unicodedata
 
+_SHA256 = hashlib.sha256
 _UNPACK_DIGEST_UINT32 = struct.Struct("<8I").unpack
 _DIGEST_UINT32_SCALE = 2.0 / 0xFFFFFFFF
 
@@ -47,7 +48,7 @@ class DeterministicEmbeddingBackend:
     def _project_digest(self, seed_text: str, dimensions: int) -> list[float]:
         base_values = [
             raw * _DIGEST_UINT32_SCALE - 1.0
-            for raw in _UNPACK_DIGEST_UINT32(hashlib.sha256(seed_text.encode("utf-8")).digest())
+            for raw in _UNPACK_DIGEST_UINT32(_SHA256(seed_text.encode("utf-8")).digest())
         ]
         full_repeats, remainder = divmod(dimensions, 8)
         squared_sum = sum(value * value for value in base_values) * full_repeats
