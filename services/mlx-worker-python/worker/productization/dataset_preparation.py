@@ -565,30 +565,30 @@ def _iter_source_file_paths(input_path: Path) -> list[Path]:
 
 def _source_kind(path: Path) -> str | None:
     name = path.name
-    if name.endswith(".txt"):
+    if name[-4:] == ".txt":
         if len(name) >= 8 and name[-8] == "." and name[-7:-4].lower() == "pdf":
             return "pdf"
         if len(name) >= 9 and name[-9] == "." and name[-8:-4].lower() == "docx":
             return "docx"
         return "text"
-    if name.endswith(".text"):
+    if name[-5:] == ".text":
         return "text"
 
     dot_index = name.rfind(".")
     if dot_index < 0:
         return None
 
-    lower_name = name.lower()
-    if lower_name.endswith(".txt"):
-        if len(lower_name) >= 8 and lower_name[-8] == "." and lower_name[-7:-4] == "pdf":
+    dotted_suffix = name[dot_index:].lower()
+    if dotted_suffix == ".txt":
+        lower_stem = name[:dot_index].lower()
+        if lower_stem.endswith(".pdf"):
             return "pdf"
-        if len(lower_name) >= 9 and lower_name[-9] == "." and lower_name[-8:-4] == "docx":
+        if lower_stem.endswith(".docx"):
             return "docx"
         return "text"
-    if lower_name.endswith(".text"):
+    if dotted_suffix == ".text":
         return "text"
 
-    dotted_suffix = lower_name[dot_index:]
     if dotted_suffix in _TEXT_SOURCE_SUFFIXES:
         return "markdown"
     if dotted_suffix in _CODE_SOURCE_SUFFIXES:
