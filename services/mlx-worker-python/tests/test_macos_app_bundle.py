@@ -922,7 +922,7 @@ def test_macho_detection_handles_non_files_and_read_errors(
     assert _is_macho_file(native) is False
 
 
-def test_iter_nested_macho_signing_targets_uses_os_walk_without_path_rglob(
+def test_iter_nested_macho_signing_targets_uses_scandir_without_os_walk_or_path_rglob(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -949,12 +949,64 @@ def test_iter_nested_macho_signing_targets_uses_os_walk_without_path_rglob(
     def fail_rglob(self: Path, pattern: str):  # pragma: no cover - regression guard
         raise AssertionError("_iter_nested_macho_signing_targets() should not allocate Path.rglob() trees")
 
+    def fail_os_walk(*args: object, **kwargs: object):  # pragma: no cover - regression guard
+        raise AssertionError("_iter_nested_macho_signing_targets() should use os.scandir() directly")
+
     monkeypatch.setattr(Path, "rglob", fail_rglob)
+    monkeypatch.setattr(macos_app_bundle_module.os, "walk", fail_os_walk)
 
     assert _iter_nested_macho_signing_targets(app_path) == [
         launcher,
         helper,
     ]
+
+
+def test_iter_nested_macho_signing_targets_tolerates_scandir_and_entry_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app_path = tmp_path / "Melix.app"
+    app_path.mkdir()
+
+    class BrokenEntry:
+        name = "broken"
+        path = str(app_path / "broken")
+
+        def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+            raise OSError("metadata disappeared")
+
+    class MissingDirectoryEntry:
+        name = "missing-dir"
+        path = str(app_path / "missing-dir")
+
+        def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+            return True
+
+    class FakeScandir:
+        def __init__(self, entries: list[object]) -> None:
+            self._entries = entries
+
+        def __enter__(self) -> "FakeScandir":
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        def __iter__(self):
+            return iter(self._entries)
+
+    calls = 0
+
+    def fake_scandir(path: Path) -> FakeScandir:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return FakeScandir([MissingDirectoryEntry(), BrokenEntry()])
+        raise OSError(f"cannot scan {path}")
+
+    monkeypatch.setattr(macos_app_bundle_module.os, "scandir", fake_scandir)
+
+    assert _iter_nested_macho_signing_targets(app_path) == []
 
 
 def test_copy_swiftpm_resource_bundles_restores_existing_bundle_on_copy_failure(
