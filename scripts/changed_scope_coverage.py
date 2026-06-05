@@ -171,8 +171,6 @@ def _measurable_changed_lines(
     entry = coverage_payload["files"][rel_path]
     executed_lines = entry["executed_lines"]
     missing_lines = entry["missing_lines"]
-    if not _line_ranges_may_overlap(changed, executed_lines, missing_lines):
-        return [], [], []
     if len(executed_lines) == 1 and len(missing_lines) == 1:
         executed_line = executed_lines[0]
         missing_line = missing_lines[0]
@@ -186,6 +184,8 @@ def _measurable_changed_lines(
         executed_lookup = (executed_line,)
         missing_lookup = (missing_line,)
     else:
+        if not _line_ranges_may_overlap(changed, executed_lines, missing_lines):
+            return [], [], []
         executed = set(executed_lines)
         missing = set(missing_lines)
         measured_changed = [
