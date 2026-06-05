@@ -1050,8 +1050,11 @@ def _append_sample_output_lengths(
             continue
         total = 0
         for item in messages:
-            if isinstance(item, dict):
-                total += len(str_(item.get("content", "")))
+            try:
+                content = item.get("content", "")
+            except AttributeError:
+                continue
+            total += len(str_(content))
         append(total)
     for row in validation_rows:
         if "completion" in row:
@@ -1063,8 +1066,11 @@ def _append_sample_output_lengths(
             continue
         total = 0
         for item in messages:
-            if isinstance(item, dict):
-                total += len(str_(item.get("content", "")))
+            try:
+                content = item.get("content", "")
+            except AttributeError:
+                continue
+            total += len(str_(content))
         append(total)
 
 

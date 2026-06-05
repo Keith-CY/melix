@@ -117,12 +117,12 @@ def test_dataset_quality_output_lengths_preserve_completion_and_message_semantic
     train_rows = [
         {"completion": "abc"},
         {"completion": 12345},
-        {"messages": [{"content": "hi"}, {"content": "there"}, {"role": "tool"}]},
+        {"messages": [{"content": "hi"}, {"content": "there"}, {"role": "tool"}, "skip-me"]},
         {"messages": "not-a-list"},
     ]
     validation_rows = [
         {"completion": "done"},
-        {"messages": [{"content": "hello"}, {"content": "world"}, {"role": "tool"}]},
+        {"messages": [{"content": "hello"}, {"content": "world"}, {"role": "tool"}, "skip-too"]},
         {"messages": "not-a-list"},
     ]
 
