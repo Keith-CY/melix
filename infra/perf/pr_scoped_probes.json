@@ -2792,7 +2792,7 @@
     ],
     "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q tests/test_changed_scope_coverage.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_changed_scope_coverage_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_changed_scope_coverage_parser_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs",
     "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q tests/test_changed_scope_coverage.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_changed_scope_coverage_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_changed_scope_coverage_parser_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 scripts/changed_scope_coverage.py --coverage-json coverage.json scripts/changed_scope_coverage.py scripts/changed_scope_coverage_measured_probe.py tests/test_changed_scope_coverage.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
-    "probe_command": "python3 -c 'import importlib.util,json,pathlib,statistics,tempfile,time\nrepo=pathlib.Path.cwd()\nspec=importlib.util.spec_from_file_location(\"target\", repo/\"scripts\"/\"changed_scope_coverage.py\")\nmodule=importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\npath_count=300; measured_lines_per_path=500; sample_count=7\nelapsed=[]\nwith tempfile.TemporaryDirectory(prefix=\"melix-changed-scope-measured-probe-\") as tmp:\n    root=pathlib.Path(tmp)\n    rel_paths=[f\"pkg/module_{index}.py\" for index in range(path_count)]\n    for rel_path in rel_paths:\n        source_path=root/rel_path; source_path.parent.mkdir(parents=True, exist_ok=True); source_path.write_text(\"covered = 1\\nmissed = 2\\n\", encoding=\"utf-8\")\n    coverage_payload={\"files\": {rel_path: {\"executed_lines\": list(range(1, measured_lines_per_path+1, 2)), \"missing_lines\": list(range(2, measured_lines_per_path+1, 2))} for rel_path in rel_paths}}\n    changed_lines={measured_lines_per_path+1, measured_lines_per_path+2}\n    for _ in range(sample_count):\n        start=time.perf_counter()\n        for rel_path in rel_paths:\n            measurable, covered, missed = module._measurable_changed_lines(root, coverage_payload, rel_path, changed_lines)\n            if measurable or covered or missed: raise RuntimeError(\"empty changed sets must not produce measurable lines\")\n        elapsed.append((time.perf_counter()-start)*1000.0)\nprint(json.dumps({\"elapsed_ms_mean\": statistics.fmean(elapsed), \"source_read_calls_mean\": 0.0, \"path_count\": float(path_count), \"measured_lines_per_path\": float(measured_lines_per_path), \"sample_count\": float(sample_count)}, sort_keys=True))'",
+    "probe_command": "python3 scripts/changed_scope_coverage_measured_probe.py",
     "probe_impl": "command_json",
     "coverage_replays_tests": true,
     "metrics": [
@@ -2811,6 +2811,18 @@
       },
       {
         "key": "measured_lines_per_path",
+        "unit": "count",
+        "direction": "informational"
+      },
+      {
+        "key": "allowlist_parse_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0,
+        "warn_abs": 0.05
+      },
+      {
+        "key": "allowlist_parse_count",
         "unit": "count",
         "direction": "informational"
       }
