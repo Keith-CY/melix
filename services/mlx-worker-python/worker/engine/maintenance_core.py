@@ -203,9 +203,9 @@ class BenchmarkLoadedModelResolution:
 
 def _split_capability_values(raw_value: str) -> list[str]:
     return [
-        part.strip()
+        stripped
         for part in raw_value.split(",")
-        if part.strip()
+        if (stripped := part.strip())
     ]
 
 
