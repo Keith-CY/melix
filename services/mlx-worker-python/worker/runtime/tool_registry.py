@@ -393,28 +393,29 @@ def built_in_tool_registry() -> ToolRegistry:
 
 
 def built_in_tool_config(names: list[str] | tuple[str, ...] | None = None) -> common_pb2.ToolConfig:
-    if names is None:
-        return _copy_tool_config(_BUILTIN_TOOL_CONFIG_TEMPLATE)
+    copy_tool_config = _copy_tool_config
+    if names is None or names == BUILTIN_AGENTIC_TOOL_NAMES:
+        return copy_tool_config(_BUILTIN_TOOL_CONFIG_TEMPLATE)
     if isinstance(names, tuple):
         cached_config = _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES.get(names)
         if cached_config is not None:
-            return _copy_tool_config(cached_config)
+            return copy_tool_config(cached_config)
         requested_names = names
     else:
         if names == _BUILTIN_TOOL_CONFIG_NAMES_LIST:
-            return _copy_tool_config(_BUILTIN_TOOL_CONFIG_TEMPLATE)
+            return copy_tool_config(_BUILTIN_TOOL_CONFIG_TEMPLATE)
         requested_names = tuple(names)
     raw_requested_names = requested_names
     cached_config = _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES.get(requested_names)
     if cached_config is not None:
-        return _copy_tool_config(cached_config)
+        return copy_tool_config(cached_config)
     registry = _BUILTIN_TOOL_CONFIG_REGISTRY.select(requested_names)
     config = registry.as_worker_tool_config()
     normalized_names = registry.names()
     _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES[normalized_names] = config
     if raw_requested_names != normalized_names:
         _BUILTIN_TOOL_CONFIG_SELECTION_TEMPLATES[raw_requested_names] = config
-    return _copy_tool_config(config)
+    return copy_tool_config(config)
 
 
 def _arg(
