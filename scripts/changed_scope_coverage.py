@@ -120,6 +120,8 @@ def _coverage_path_allowlist(env: Mapping[str, str]) -> frozenset[str] | None:
         payload = json.loads(raw_value)
     except json.JSONDecodeError as exc:
         raise SystemExit(f"invalid MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON: {exc}") from exc
+    if isinstance(payload, str):
+        return frozenset([payload] if payload else [])
     if not isinstance(payload, list):
         raise SystemExit("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON must be a JSON list")
     return frozenset(str(path) for path in payload if str(path))

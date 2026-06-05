@@ -203,6 +203,12 @@ def test_coverage_path_allowlist_rejects_non_list_payload() -> None:
         )
 
 
+def test_coverage_path_allowlist_accepts_single_string_payload() -> None:
+    assert changed_scope_coverage._coverage_path_allowlist(
+        {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": '"direct.py"'}
+    ) == {"direct.py"}
+
+
 def test_parse_changed_lines_ignores_no_newline_marker_and_keeps_line_numbers() -> None:
     diff_text = "\n".join(
         [
@@ -499,7 +505,44 @@ def test_changed_scope_coverage_measured_probe_emits_large_measured_metrics() ->
     assert metrics["measured_lines_per_path"] == 10.0
     assert metrics["sample_count"] == 2.0
     assert metrics["elapsed_ms_mean"] > 0
+    assert metrics["allowlist_parse_elapsed_ms_mean"] > 0
+    assert metrics["allowlist_parse_count"] == 10000.0
     assert metrics["source_read_calls_mean"] == 0.0
+
+
+def test_changed_scope_coverage_measured_probe_rejects_unexpected_allowlist_parse(
+    monkeypatch, tmp_path: Path
+) -> None:
+    class WrongAllowlistCoverageModule:
+        Path = Path
+
+        @staticmethod
+        def _measurable_changed_lines(
+            repo_root: Path,
+            coverage_payload: dict[str, object],
+            rel_path: str,
+            changed: set[int],
+        ) -> tuple[list[int], list[int], list[int]]:
+            return [], [], []
+
+        @staticmethod
+        def _coverage_path_allowlist(env: dict[str, str]) -> frozenset[str]:
+            return frozenset({"pkg/other.py"})
+
+    monkeypatch.setattr(
+        changed_scope_coverage_measured_probe,
+        "_load_changed_scope_coverage",
+        lambda repo_root: WrongAllowlistCoverageModule,
+    )
+
+    with pytest.raises(RuntimeError, match="single-string allowlist parse"):
+        changed_scope_coverage_measured_probe.run_probe(
+            tmp_path,
+            path_count=1,
+            measured_lines_per_path=2,
+            allowlist_parse_count=1,
+            samples=1,
+        )
 
 
 def test_changed_scope_coverage_probe_counts_unexpected_source_reads(monkeypatch, tmp_path: Path) -> None:

@@ -24,11 +24,14 @@ def run_probe(
     *,
     path_count: int = 300,
     measured_lines_per_path: int = 500,
+    allowlist_parse_count: int = 10000,
     samples: int = 7,
 ) -> dict[str, float]:
     module = _load_changed_scope_coverage(repo_root)
     elapsed_samples: list[float] = []
+    allowlist_elapsed_samples: list[float] = []
     read_samples: list[float] = []
+    allowlist_value = json.dumps("pkg/module_0.py")
 
     with tempfile.TemporaryDirectory(prefix="melix-changed-scope-measured-probe-") as tmp:
         root = Path(tmp)
@@ -72,11 +75,22 @@ def run_probe(
                         raise RuntimeError("empty changed sets must not produce measurable lines")
                 elapsed_samples.append((time.perf_counter() - start) * 1000.0)
                 read_samples.append(float(read_calls))
+
+                start = time.perf_counter()
+                for _ in range(allowlist_parse_count):
+                    allowlist = module._coverage_path_allowlist(
+                        {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": allowlist_value}
+                    )
+                    if allowlist != frozenset({"pkg/module_0.py"}):
+                        raise RuntimeError("single-string allowlist parse returned unexpected paths")
+                allowlist_elapsed_samples.append((time.perf_counter() - start) * 1000.0)
         finally:
             module.Path.read_text = original_read_text
 
     return {
         "elapsed_ms_mean": statistics.fmean(elapsed_samples),
+        "allowlist_parse_elapsed_ms_mean": statistics.fmean(allowlist_elapsed_samples),
+        "allowlist_parse_count": float(allowlist_parse_count),
         "source_read_calls_mean": statistics.fmean(read_samples),
         "path_count": float(path_count),
         "measured_lines_per_path": float(measured_lines_per_path),
