@@ -566,10 +566,6 @@ def _iter_source_file_paths(input_path: Path) -> list[Path]:
 def _source_kind(path: Path) -> str | None:
     name = path.name
     if name.endswith(".txt"):
-        if name.endswith(".pdf.txt"):
-            return "pdf"
-        if name.endswith(".docx.txt"):
-            return "docx"
         if len(name) >= 8 and name[-8] == "." and name[-7:-4].lower() == "pdf":
             return "pdf"
         if len(name) >= 9 and name[-9] == "." and name[-8:-4].lower() == "docx":
@@ -584,9 +580,9 @@ def _source_kind(path: Path) -> str | None:
 
     lower_name = name.lower()
     if lower_name.endswith(".txt"):
-        if lower_name.endswith(".pdf.txt"):
+        if len(lower_name) >= 8 and lower_name[-8] == "." and lower_name[-7:-4] == "pdf":
             return "pdf"
-        if lower_name.endswith(".docx.txt"):
+        if len(lower_name) >= 9 and lower_name[-9] == "." and lower_name[-8:-4] == "docx":
             return "docx"
         return "text"
     if lower_name.endswith(".text"):
