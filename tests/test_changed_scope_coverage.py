@@ -407,6 +407,36 @@ def test_measurable_changed_lines_skips_source_read_when_no_changed_lines(monkey
     assert read_calls == []
 
 
+def test_measurable_changed_lines_checks_singletons_before_range_overlap(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    coverage_payload = {
+        "files": {
+            "foo.py": {
+                "executed_lines": [1],
+                "missing_lines": [2],
+            }
+        }
+    }
+
+    def fail_range_overlap(*args: object, **kwargs: object) -> bool:  # pragma: no cover
+        raise AssertionError("single-line coverage entries should use direct membership checks")
+
+    monkeypatch.setattr(changed_scope_coverage, "_line_ranges_may_overlap", fail_range_overlap)
+
+    measurable, covered, missed = changed_scope_coverage._measurable_changed_lines(
+        tmp_path,
+        coverage_payload,
+        "foo.py",
+        {3, 4},
+    )
+
+    assert measurable == []
+    assert covered == []
+    assert missed == []
+
+
 def test_measurable_changed_lines_skips_empty_measured_lines(monkeypatch, tmp_path: Path) -> None:
     coverage_payload = {"files": {"foo.py": {"executed_lines": [], "missing_lines": []}}}
 
