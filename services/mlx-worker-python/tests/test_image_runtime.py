@@ -247,6 +247,46 @@ def test_image_generation_and_edit_bind_model_id_once_per_loop(tmp_path: Path) -
     assert CountingLoadedModel.get_calls == 1
 
 
+def test_image_edit_binds_strength_once_per_loop(tmp_path: Path) -> None:
+    class CountingStrength:
+        float_calls = 0
+
+        def __bool__(self) -> bool:
+            return True
+
+        def __float__(self) -> float:
+            type(self).float_calls += 1
+            return 0.65
+
+    class EditRequest:
+        prompt = "add stars"
+        image = b"SOURCE_IMAGE"
+        image_uri = ""
+        mask = b"MASK_IMAGE"
+        mask_uri = ""
+        size = "128x128"
+        response_format = "png"
+        n = 5
+        strength = CountingStrength()
+        source_artifact_id = ""
+        prompt_delta = ""
+        edit_mode = inference_pb2.IMAGE_EDIT_MODE_EDIT
+        ext: dict[str, str] = {}
+
+    runtime = DeterministicImageGenerationRuntime()
+    edited = runtime.edit_image(
+        {"model_id": "melix-dev-image"},
+        EditRequest(),
+        job_id="image-edit-strength-once",
+        images_root=tmp_path,
+        cancel_event=Event(),
+    )
+
+    assert len(edited.images) == 5
+    assert CountingStrength.float_calls == 1
+    assert all(b"STRENGTH=0.65" in payload for payload in edited.images)
+
+
 def test_image_artifact_metadata_reuses_supplied_payload_byte_length(tmp_path: Path) -> None:
     class CountingBytes(bytes):
         len_calls = 0
