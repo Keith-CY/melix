@@ -164,16 +164,27 @@ class EngineCore:
     def generate(self, request: inference_pb2.GenerateRequest) -> Iterator[inference_pb2.ExecuteEvent]:
         execution = request.execution
         execution_ext = execution.ext
-        _routing_ext: dict[str, str] = dict(execution_ext) if execution_ext else {}
-        _routing_ext["_melix.session_id"] = execution.id.session_id
-        _routing_ext["_melix.model_id"] = execution.scope.model_id
-        _routing_ext["_melix.model_revision"] = execution.scope.revision
+        acceleration_mode = str(execution.acceleration.mode)
+        cache_mode = str(execution.cache_hints.cache_mode)
+        if execution_ext:
+            _routing_ext: dict[str, str] = dict(execution_ext)
+            _routing_ext["_melix.session_id"] = execution.id.session_id
+            _routing_ext["_melix.model_id"] = execution.scope.model_id
+            _routing_ext["_melix.model_revision"] = execution.scope.revision
+            _routing_ext["_melix.acceleration_mode"] = acceleration_mode
+            _routing_ext["_melix.cache_mode"] = cache_mode
+        else:
+            _routing_ext = {
+                "_melix.session_id": execution.id.session_id,
+                "_melix.model_id": execution.scope.model_id,
+                "_melix.model_revision": execution.scope.revision,
+                "_melix.acceleration_mode": acceleration_mode,
+                "_melix.cache_mode": cache_mode,
+            }
         # Only forward a block size when the client set one; an unset proto field
         # is 0, which the runtime must treat as "use the default", not block_size=1.
         if execution.cache_hints.preferred_block_size > 0:
             _routing_ext["_melix.block_size"] = str(execution.cache_hints.preferred_block_size)
-        _routing_ext["_melix.acceleration_mode"] = str(execution.acceleration.mode)
-        _routing_ext["_melix.cache_mode"] = str(execution.cache_hints.cache_mode)
         sampling = request.sampling
         reasoning = execution.reasoning
         request_id = execution.id.request_id

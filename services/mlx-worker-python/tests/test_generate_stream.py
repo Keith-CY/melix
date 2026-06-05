@@ -383,6 +383,7 @@ class UsageCountingRuntime:
     def __init__(self, *, prompt_tokens: int = 0) -> None:
         self.prompt_tokens = prompt_tokens
         self.prompt_token_count_calls = 0
+        self.execution_exts: list[dict[str, str]] = []
 
     def load_model(self, model_spec):
         return {"model_id": model_spec.model_id}
@@ -408,7 +409,7 @@ class UsageCountingRuntime:
         _ = prompt
         _ = sampling
         _ = cancel_event
-        _ = execution_ext
+        self.execution_exts.append(dict(execution_ext or {}))
         yield RuntimeTokenEvent(
             text="counted",
             prompt_tokens=self.prompt_tokens,
@@ -601,6 +602,57 @@ def test_generate_reuses_stop_contract_for_empty_execution_ext(monkeypatch) -> N
         assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["counted"]
 
     assert resolve_calls == 1
+
+
+def test_generate_builds_routing_ext_for_empty_execution_ext_without_mutating_request() -> None:
+    runtime = UsageCountingRuntime(prompt_tokens=0)
+    inference_service, model_handle = build_usage_counting_services(runtime)
+    request = generate_usage_request(model_handle, return_usage=False)
+    request.execution.id.session_id = "session-routing-empty"
+    request.execution.scope.model_id = "model-routing-empty"
+    request.execution.scope.revision = "revision-routing-empty"
+
+    events = list(inference_service.Generate(request, context=None))
+
+    assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["counted"]
+    assert dict(request.execution.ext) == {}
+    assert runtime.execution_exts == [
+        {
+            "_melix.session_id": "session-routing-empty",
+            "_melix.model_id": "model-routing-empty",
+            "_melix.model_revision": "revision-routing-empty",
+            "_melix.acceleration_mode": "0",
+            "_melix.cache_mode": "0",
+        }
+    ]
+
+
+def test_generate_routing_ext_preserves_client_ext_and_positive_block_size() -> None:
+    runtime = UsageCountingRuntime(prompt_tokens=0)
+    inference_service, model_handle = build_usage_counting_services(runtime)
+    request = generate_usage_request(model_handle, return_usage=False)
+    request.execution.id.request_id = "req-routing-custom-ext"
+    request.execution.id.session_id = "session-routing-custom"
+    request.execution.scope.model_id = "model-routing-custom"
+    request.execution.scope.revision = "revision-routing-custom"
+    request.execution.ext["client-key"] = "client-value"
+    request.execution.cache_hints.preferred_block_size = 16
+
+    events = list(inference_service.Generate(request, context=None))
+
+    assert [event.token_delta.text for event in events if event.HasField("token_delta")] == ["counted"]
+    assert dict(request.execution.ext) == {"client-key": "client-value"}
+    assert runtime.execution_exts == [
+        {
+            "client-key": "client-value",
+            "_melix.session_id": "session-routing-custom",
+            "_melix.model_id": "model-routing-custom",
+            "_melix.model_revision": "revision-routing-custom",
+            "_melix.acceleration_mode": "0",
+            "_melix.cache_mode": "0",
+            "_melix.block_size": "16",
+        }
+    ]
 
 
 def test_sampling_with_resolved_stop_reuses_sampling_when_stop_sequences_match() -> None:
