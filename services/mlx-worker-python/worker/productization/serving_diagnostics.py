@@ -491,6 +491,8 @@ def _safe_artifact_id(value: str) -> str:
 
 
 def _stable_json_object(payload: Mapping[str, object]) -> dict[str, object]:
+    if not payload:
+        return {}
     return {
         str(key): _stable_json_value(value)
         for key, value in sorted(payload.items(), key=lambda item: str(item[0]))
