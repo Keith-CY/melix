@@ -1529,9 +1529,13 @@ def test_native_mtp_weight_key_detection_preserves_string_and_custom_keys() -> N
         def __str__(self) -> str:
             return "mtp.custom.weight"
 
+    class CustomString(str):
+        pass
+
     assert _is_mtp_weight_key("language_model.mtp.layers.0.weight") is True
     assert _is_mtp_weight_key("mtp.layers.0.weight") is True
     assert _is_mtp_weight_key("language_model.layers.0.weight") is False
+    assert _is_mtp_weight_key(CustomString("mtp.layers.1.weight")) is True
     assert _is_mtp_weight_key(CustomKey()) is True
 
 
