@@ -33,14 +33,14 @@ _JSON_IMMUTABLE_TYPES = (str, int, float, bool, type(None))
 _JSON_IMMUTABLE_TYPE_SET = frozenset(_JSON_IMMUTABLE_TYPES)
 def _copy_trajectory_provenance_value(value: Any) -> Any:
     value_type = type(value)
+    if value_type in _JSON_IMMUTABLE_TYPE_SET:
+        return value
     if value_type is dict:
         return {key: _copy_trajectory_provenance_value(item) for key, item in value.items()}
     if value_type is list:
         return [_copy_trajectory_provenance_value(item) for item in value]
     if value_type is tuple:
         return tuple(_copy_trajectory_provenance_value(item) for item in value)
-    if value_type in _JSON_IMMUTABLE_TYPE_SET:
-        return value
     if isinstance(value, dict):
         return {key: _copy_trajectory_provenance_value(item) for key, item in value.items()}
     if isinstance(value, list):
