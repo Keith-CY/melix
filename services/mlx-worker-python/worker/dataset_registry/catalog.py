@@ -995,6 +995,29 @@ def _path_part_matches_split(
     split_dash_prefix: str,
     split_underscore_prefix: str,
 ) -> bool:
+    if not part or not normalized_split:
+        return False
+    first_char = part[0]
+    split_first_char = normalized_split[0]
+    if first_char != split_first_char and first_char.lower() != split_first_char:
+        return False
+    if (
+        part == normalized_split
+        or part.startswith(split_dash_prefix)
+        or part.startswith(split_underscore_prefix)
+    ):
+        return True
+    dot_index = part.rfind(".")
+    if dot_index > 0 and dot_index < len(part) - 1:
+        stem = part[:dot_index]
+        if (
+            stem == normalized_split
+            or stem.startswith(split_dash_prefix)
+            or stem.startswith(split_underscore_prefix)
+        ):
+            return True
+    if first_char == split_first_char:
+        return False
     lowered = part.lower()
     if (
         lowered == normalized_split
