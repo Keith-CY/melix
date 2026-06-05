@@ -188,6 +188,8 @@ Expected outcomes:
   bytes, chunk count, and SHA-256. The Swift control plane must prefer this streaming RPC for
   `ops.export_results`, validate chunk order and byte counts, and reconstruct the same
   `exportBundleJson` surface consumed by CLI, Window UI, benchmark, evaluation, and LoRA flows.
+  The worker must publish `export-bundle.json` through an atomic same-directory replacement before
+  streaming, so a concurrent export does not rewrite the file descriptor held by an active reader.
   The unary `ExportResults` RPC remains available only as a compatibility path for older clients
   and test doubles.
 - `melix bench export-summary-csv` writes canonical benchmark summary rows. The shared export

@@ -105,3 +105,51 @@ def test_export_results_stream_yields_failed_event_on_export_error(tmp_path: Pat
     assert events[0].HasField("failed")
     assert events[0].failed.code == "export_failed"
     assert events[0].failed.message == "export bundle unavailable"
+
+
+def test_export_results_stream_keeps_active_reader_stable_during_concurrent_export(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from worker import grpc_server as grpc_server_module
+
+    service = build_service(tmp_path)
+    jobs_root = tmp_path / "concurrent-export"
+    jobs_root.mkdir()
+    first_payload = b"a" * ((2 * 1024 * 1024) + 17)
+    second_payload = b"b" * ((2 * 1024 * 1024) + 17)
+    call_count = 0
+
+    def fake_write_export_bundle(jobs_root_arg: Path, export_path_arg: Path) -> Path:
+        nonlocal call_count
+        call_count += 1
+        payload = first_payload if call_count == 1 else second_payload
+        Path(export_path_arg).write_bytes(payload)
+        return Path(export_path_arg)
+
+    monkeypatch.setattr(grpc_server_module, "write_export_bundle", fake_write_export_bundle)
+
+    first_stream = service.ExportResultsStream(
+        maintenance_pb2.ExportResultsRequest(output_dir=str(jobs_root)),
+        context=None,
+    )
+    first_started = next(first_stream)
+    first_chunk = next(first_stream)
+    assert first_started.HasField("started")
+    assert first_chunk.HasField("chunk")
+
+    second_events = list(
+        service.ExportResultsStream(
+            maintenance_pb2.ExportResultsRequest(output_dir=str(jobs_root)),
+            context=None,
+        )
+    )
+
+    first_chunks = [bytes(first_chunk.chunk.data)]
+    first_chunks.extend(
+        bytes(event.chunk.data) for event in first_stream if event.HasField("chunk")
+    )
+    assert b"".join(first_chunks) == first_payload
+
+    second_chunks = [bytes(event.chunk.data) for event in second_events if event.HasField("chunk")]
+    assert b"".join(second_chunks) == second_payload

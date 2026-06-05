@@ -525,7 +525,21 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
     def _write_export_results_bundle(self, request) -> Path:
         jobs_root = Path(request.output_dir) if request.output_dir else self._evaluation_jobs_root.parent
         export_path = jobs_root / "export-bundle.json"
-        return write_export_bundle(jobs_root, export_path)
+        export_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_fd, temp_path = tempfile.mkstemp(
+            dir=export_path.parent,
+            prefix="export-bundle-",
+            suffix=".tmp",
+        )
+        os.close(temp_fd)
+        temp_bundle_path = Path(temp_path)
+        try:
+            write_export_bundle(jobs_root, temp_bundle_path)
+            os.replace(temp_bundle_path, export_path)
+        except Exception:
+            temp_bundle_path.unlink(missing_ok=True)
+            raise
+        return export_path
 
     def SubmitResults(self, request, context):
         try:

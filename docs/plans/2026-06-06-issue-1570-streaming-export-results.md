@@ -19,9 +19,10 @@ automation loses the expected JSON receipt and summary artifacts.
 
 `ExportResults` remains available as a backward-compatible unary RPC, but the
 primary control-plane and CLI path uses a new streaming export RPC. The worker
-writes the bundle to disk, emits a small metadata event, streams bounded byte
-chunks, and emits a terminal completion event. Swift reconstructs the bundle
-from chunks and decodes it exactly as today.
+writes the bundle through a same-directory temporary file and atomically replaces
+`export-bundle.json`, emits a small metadata event, streams bounded byte chunks,
+and emits a terminal completion event. Swift reconstructs the bundle from chunks
+and decodes it exactly as today.
 
 The fix must preserve these properties:
 
@@ -53,7 +54,8 @@ clients can continue using the unary RPC.
 
 1. Python worker receives `ExportResultsStream`.
 2. Worker builds `export-bundle.json` using the same `write_export_bundle`
-   function used by unary export.
+   function used by unary export, publishing through atomic replace so
+   concurrent exports cannot corrupt active stream readers.
 3. Worker streams metadata and chunks from the bundle file.
 4. Swift `ModelOperationsWorkerClientProtocol` exposes a streaming-export
    method that returns either reconstructed JSON plus export metadata or a small
