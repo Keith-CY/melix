@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import threading
+from collections.abc import Mapping
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -327,6 +329,18 @@ def test_serving_diagnostics_empty_effective_config_skips_profile_receipt_scan(
 
     effective_config = json.loads(paths["effective_config"].read_text(encoding="utf-8"))
     assert effective_config == {}
+
+
+def test_stable_json_object_empty_mapping_skips_item_iteration() -> None:
+    class EmptyMapping:
+        def __bool__(self) -> bool:
+            return False
+
+        def items(self) -> object:
+            raise AssertionError("empty mappings should not be sorted or iterated")  # pragma: no cover
+
+    payload = cast("Mapping[str, object]", EmptyMapping())
+    assert serving_diagnostics_module._stable_json_object(payload) == {}
 
 
 def test_serving_diagnostics_event_empty_attributes_match_explicit_empty_mapping() -> None:
