@@ -25,6 +25,8 @@ This follow-up slice keeps the same category semantics but moves the common non-
 
 The 2026-05-19 slice keeps that direct-key category label path and narrows another hot aggregation step: it replaces `defaultdict(lambda: [0, 0, 0])` with an explicit `dict.get(...)` miss path, avoids calling `str(...)` for already-string category labels, and increments correctness counters only when the row field is truthy. Missing, blank, non-string, sorted-key, and rounding semantics remain unchanged.
 
+The 2026-06-05 follow-up slice keeps the same direct-key and explicit-miss behavior while binding the hot `isinstance` predicate once before the row loop. The probe workload uses string category labels on every row, so this avoids a repeated global lookup without changing the non-string fallback, missing-key skip, blank-label skip, truthiness, or sorted-output semantics.
+
 ## Acceptance Metric
 
 Accept only if the registered category breakdown probe keeps the same checksum/sample counts and improves `elapsed_ms_mean` versus the origin/main baseline in repeated local samples.

@@ -2792,7 +2792,7 @@
     ],
     "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q tests/test_changed_scope_coverage.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_changed_scope_coverage_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_changed_scope_coverage_parser_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs",
     "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q tests/test_changed_scope_coverage.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_changed_scope_coverage_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_changed_scope_coverage_parser_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 scripts/changed_scope_coverage.py --coverage-json coverage.json scripts/changed_scope_coverage.py scripts/changed_scope_coverage_measured_probe.py tests/test_changed_scope_coverage.py services/mlx-worker-python/tests/test_pr_scoped_performance.py",
-    "probe_command": "python3 -c 'import importlib.util,json,pathlib,statistics,tempfile,time\nrepo=pathlib.Path.cwd()\nspec=importlib.util.spec_from_file_location(\"target\", repo/\"scripts\"/\"changed_scope_coverage.py\")\nmodule=importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\npath_count=300; measured_lines_per_path=500; sample_count=7\nelapsed=[]\nwith tempfile.TemporaryDirectory(prefix=\"melix-changed-scope-measured-probe-\") as tmp:\n    root=pathlib.Path(tmp)\n    rel_paths=[f\"pkg/module_{index}.py\" for index in range(path_count)]\n    for rel_path in rel_paths:\n        source_path=root/rel_path; source_path.parent.mkdir(parents=True, exist_ok=True); source_path.write_text(\"covered = 1\\nmissed = 2\\n\", encoding=\"utf-8\")\n    coverage_payload={\"files\": {rel_path: {\"executed_lines\": list(range(1, measured_lines_per_path+1, 2)), \"missing_lines\": list(range(2, measured_lines_per_path+1, 2))} for rel_path in rel_paths}}\n    changed_lines={measured_lines_per_path+1, measured_lines_per_path+2}\n    for _ in range(sample_count):\n        start=time.perf_counter()\n        for rel_path in rel_paths:\n            measurable, covered, missed = module._measurable_changed_lines(root, coverage_payload, rel_path, changed_lines)\n            if measurable or covered or missed: raise RuntimeError(\"empty changed sets must not produce measurable lines\")\n        elapsed.append((time.perf_counter()-start)*1000.0)\nprint(json.dumps({\"elapsed_ms_mean\": statistics.fmean(elapsed), \"source_read_calls_mean\": 0.0, \"path_count\": float(path_count), \"measured_lines_per_path\": float(measured_lines_per_path), \"sample_count\": float(sample_count)}, sort_keys=True))'",
+    "probe_command": "python3 scripts/changed_scope_coverage_measured_probe.py",
     "probe_impl": "command_json",
     "coverage_replays_tests": true,
     "metrics": [
@@ -2811,6 +2811,18 @@
       },
       {
         "key": "measured_lines_per_path",
+        "unit": "count",
+        "direction": "informational"
+      },
+      {
+        "key": "allowlist_parse_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0,
+        "warn_abs": 0.05
+      },
+      {
+        "key": "allowlist_parse_count",
         "unit": "count",
         "direction": "informational"
       }
@@ -2893,7 +2905,7 @@
     ],
     "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_embedding_runtime.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_embedding_project_digest_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_smokes_return_metrics_against_current_repo services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_deterministic_embedding_project_digest_probe_script_smoke",
     "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_embedding_runtime.py services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_embedding_project_digest_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_probe_smokes_return_metrics_against_current_repo services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_deterministic_embedding_project_digest_probe_script_smoke && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/embedding_backends.py services/mlx-worker-python/tests/test_embedding_runtime.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/deterministic_embedding_project_digest_probe.py",
-    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python python3 -c 'import gc,json,time,tracemalloc; from worker.runtime.embedding_backends import BERTEmbeddingBackend; b=BERTEmbeddingBackend(); d=4097; n=500; s=3; texts=[f\"bert::synthetic projection row {i % 251}::{i}\" for i in range(n)]; es=[]; ps=[]; c=0.0\nfor _ in range(s):\n gc.collect(); tracemalloc.start(); t=time.perf_counter()\n for text in texts:\n  v=b._project_digest(text,d)\n  if len(v)!=d: raise AssertionError(f\"unexpected vector length: {len(v)}\")\n  c += v[0] + v[-1]\n es.append((time.perf_counter()-t)*1000.0); ps.append(float(tracemalloc.get_traced_memory()[1])); tracemalloc.stop()\nprint(json.dumps({\"elapsed_ms_mean\":round(sum(es)/len(es),6),\"peak_bytes_mean\":round(sum(ps)/len(ps),6),\"sample_count\":float(s),\"vector_count\":float(n),\"dimensions\":float(d),\"checksum\":round(c,6)}, sort_keys=True))'",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" MELIX_EMBEDDING_PROJECT_DIGEST_REPO_ROOT=\"$PWD\" uv run --project services/mlx-worker-python bash -c 'SCRIPT=\"scripts/deterministic_embedding_project_digest_probe.py\"; CANDIDATES=(); if [ \"$(basename \"$PWD\")\" = \"base\" ]; then CANDIDATES+=(\"../head/$SCRIPT\" \"${GITHUB_WORKSPACE:-}/head/$SCRIPT\"); fi; CANDIDATES+=(\"$SCRIPT\" \"../head/$SCRIPT\"); for CANDIDATE in \"${CANDIDATES[@]}\"; do if [ -f \"$CANDIDATE\" ]; then python3 \"$CANDIDATE\"; exit $?; fi; done; echo \"missing probe script fallback for $SCRIPT\" >&2; exit 2'",
     "probe_impl": "command_json",
     "coverage_replays_tests": true,
     "metrics": [
@@ -2905,6 +2917,18 @@
       },
       {
         "key": "peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "default_dimension_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "default_dimension_peak_bytes_mean",
         "unit": "bytes",
         "direction": "lower_is_better",
         "warn_pct": 5.0
