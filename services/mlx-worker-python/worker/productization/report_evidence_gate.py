@@ -351,8 +351,10 @@ def _rule_matches_report(
                         return True
                 elif str(value).strip():
                     return True
-    required_probe_phases = _string_frozenset(rule.get("probe_phases", ()))
-    return bool(required_probe_phases and required_probe_phases.issubset(probe_phases))
+    required_probe_phases = rule.get("probe_phases", ())
+    if not required_probe_phases:
+        return False
+    return _string_frozenset(required_probe_phases).issubset(probe_phases)
 
 
 @lru_cache(maxsize=128)

@@ -430,6 +430,30 @@ def test_report_evidence_gate_probe_phase_list_rules_reflect_mutation() -> None:
     )
 
 
+def test_report_evidence_gate_empty_probe_phase_rules_skip_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_string_frozenset(values: object) -> frozenset[str]:  # pragma: no cover
+        raise AssertionError("empty probe phase rules should skip set normalization")
+
+    monkeypatch.setattr(report_evidence_gate_module, "_string_frozenset", fail_string_frozenset)
+
+    assert not report_evidence_gate_module._rule_matches_report(
+        rule={},
+        runs=[],
+        targets=[],
+        metrics=[],
+        probe_phases={"runtime_prepare"},
+    )
+    assert not report_evidence_gate_module._rule_matches_report(
+        rule={"probe_phases": ()},
+        runs=[],
+        targets=[],
+        metrics=[],
+        probe_phases={"runtime_prepare"},
+    )
+
+
 def test_report_evidence_gate_run_kind_list_rules_reflect_mutation() -> None:
     run_kinds = ["evaluation"]
     rule = {"run_kinds": run_kinds}
