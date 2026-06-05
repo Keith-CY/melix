@@ -1738,7 +1738,7 @@ def _semantic_action_match_payload(
 def _semantic_field_values(field_name: str, event: dict[str, object]) -> list[str]:
     value = event.get(field_name)
     if field_name == "actor":
-        return list(_cached_semantic_actor_field_values(_event_field_cache_key(value)))
+        return [*_cached_semantic_actor_field_values(_event_field_cache_key(value))]
     return _normalize_unique_event_field(value)
 
 
