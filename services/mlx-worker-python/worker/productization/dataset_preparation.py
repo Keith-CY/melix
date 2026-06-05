@@ -457,9 +457,11 @@ def list_dataset_versions(
     started = time.perf_counter()
     versions_root = Path(output_root).expanduser() / dataset_id / "versions"
     versions: list[dict[str, Any]] = []
+    versions_append = versions.append
+    read_json_file = _read_json_file
     for manifest_path in _iter_dataset_version_manifest_paths(versions_root):
-        version = _read_json_file(manifest_path)
-        versions.append(
+        version = read_json_file(manifest_path)
+        versions_append(
             {
                 "dataset_id": version.get("dataset_id", ""),
                 "version_id": version.get("version_id", ""),
@@ -469,10 +471,11 @@ def list_dataset_versions(
                 "validation_count": version.get("validation_count", 0),
                 "failed_count": version.get("failed_count", 0),
                 "quality_summary_path": version.get("quality_summary_path", ""),
-                "dataset_version_path": str(manifest_path),
+                "dataset_version_path": manifest_path,
             }
         )
-    versions.sort(key=lambda item: (str(item["created_at"]), str(item["version_id"])))
+    as_str = str
+    versions.sort(key=lambda item: (as_str(item["created_at"]), as_str(item["version_id"])))
     return {
         "schema_version": DATASET_VERSION_LIST_SCHEMA_VERSION,
         "workspace_manifest_path": str(Path(workspace_manifest_path)),
