@@ -539,10 +539,24 @@ def _is_macho_file(path: Path) -> bool:
 
 def _iter_nested_macho_signing_targets(app_path: Path) -> list[Path]:
     targets: list[Path] = []
-    for root, _dirnames, filenames in os.walk(app_path, followlinks=False):
-        root_path = Path(root)
-        for filename in filenames:
-            path = root_path / filename
+    stack = [app_path]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as iterator:
+                entries = sorted(iterator, key=lambda entry: entry.name)
+        except OSError:
+            continue
+        for entry in reversed(entries):
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    stack.append(Path(entry.path))
+                    continue
+                if entry.is_symlink() or not entry.is_file(follow_symlinks=False):
+                    continue
+            except OSError:
+                continue
+            path = Path(entry.path)
             if _is_macho_file(path):
                 targets.append(path)
     targets.sort(key=lambda candidate: candidate.as_posix())
