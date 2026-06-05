@@ -41,6 +41,22 @@ def _run_split(splitter, raw_value: str, iterations: int) -> tuple[float, int, i
     return (time.perf_counter() - started) * 1000.0, checksum, segment_count
 
 
+def _run_empty_split(splitter, iterations: int) -> tuple[float, int]:
+    checksum = 0
+    started = time.perf_counter()
+    for _ in range(iterations):
+        empty_values = splitter("")
+        whitespace_values = splitter(" \t\n ")
+        singleton_values = splitter(" text ")
+        if empty_values or whitespace_values or singleton_values != ["text"]:
+            raise SystemExit(
+                "unexpected empty/singleton split output: "
+                f"{empty_values!r}, {whitespace_values!r}, {singleton_values!r}"
+            )
+        checksum += len(singleton_values)
+    return (time.perf_counter() - started) * 1000.0, checksum
+
+
 def main() -> int:
     iterations = int(os.environ.get("MELIX_MAINTENANCE_CAPABILITY_SPLIT_ITERATIONS", "50000"))
     sample_count = int(os.environ.get("MELIX_MAINTENANCE_CAPABILITY_SPLIT_SAMPLES", "5"))
@@ -54,8 +70,11 @@ def main() -> int:
 
     baseline_elapsed: list[float] = []
     optimized_elapsed: list[float] = []
+    empty_baseline_elapsed: list[float] = []
+    empty_optimized_elapsed: list[float] = []
     peak_bytes: list[float] = []
     checksum = 0
+    empty_checksum = 0
     segment_total = 0
     for _ in range(sample_count):
         elapsed_ms, checksum, segment_total = _run_split(
@@ -65,12 +84,24 @@ def main() -> int:
         )
         baseline_elapsed.append(elapsed_ms)
 
+        elapsed_ms, empty_checksum = _run_empty_split(
+            _baseline_split,
+            iterations,
+        )
+        empty_baseline_elapsed.append(elapsed_ms)
+
         elapsed_ms, checksum, segment_total = _run_split(
             _split_capability_values,
             raw_value,
             iterations,
         )
         optimized_elapsed.append(elapsed_ms)
+
+        elapsed_ms, empty_checksum = _run_empty_split(
+            _split_capability_values,
+            iterations,
+        )
+        empty_optimized_elapsed.append(elapsed_ms)
 
         tracemalloc.start()
         _run_split(
@@ -84,11 +115,17 @@ def main() -> int:
 
     baseline_mean = statistics.fmean(baseline_elapsed)
     optimized_mean = statistics.fmean(optimized_elapsed)
+    empty_baseline_mean = statistics.fmean(empty_baseline_elapsed)
+    empty_optimized_mean = statistics.fmean(empty_optimized_elapsed)
     metrics = {
         "baseline_elapsed_ms_mean": baseline_mean,
         "optimized_elapsed_ms_mean": optimized_mean,
         "elapsed_ms_mean": optimized_mean,
         "delta_ms_mean": optimized_mean - baseline_mean,
+        "empty_baseline_elapsed_ms_mean": empty_baseline_mean,
+        "empty_optimized_elapsed_ms_mean": empty_optimized_mean,
+        "empty_delta_ms_mean": empty_optimized_mean - empty_baseline_mean,
+        "empty_speedup": empty_baseline_mean / empty_optimized_mean if empty_optimized_mean > 0 else 0.0,
         "speedup": baseline_mean / optimized_mean if optimized_mean > 0 else 0.0,
         "peak_bytes_mean": statistics.fmean(peak_bytes),
         "segment_count": float(value_segments),
@@ -96,6 +133,7 @@ def main() -> int:
         "sample_count": float(sample_count),
         "split_values_per_sample": float(segment_total),
         "checksum": float(checksum),
+        "empty_checksum": float(empty_checksum),
     }
     print(json.dumps(metrics, sort_keys=True))
     return 0

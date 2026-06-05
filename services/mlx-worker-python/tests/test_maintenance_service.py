@@ -4872,6 +4872,9 @@ def test_get_model_info_uses_kind_fallbacks_for_audio_and_image_models(tmp_path:
 
 
 def test_split_capability_values_strips_once_and_drops_empty_segments() -> None:
+    assert maintenance_core_module._split_capability_values("") == []
+    assert maintenance_core_module._split_capability_values(" \t\n ") == []
+    assert maintenance_core_module._split_capability_values(" text ") == ["text"]
     assert maintenance_core_module._split_capability_values(
         " text, image ,, qwen ,\ttool\n, "
     ) == ["text", "image", "qwen", "tool"]
