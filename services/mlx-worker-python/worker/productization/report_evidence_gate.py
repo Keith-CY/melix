@@ -241,6 +241,7 @@ def _release_matrix_rows(
 ) -> list[dict[str, object]]:
     evidence_by_role: dict[str, set[str]] = {}
     matrix_roles = set(matrix)
+    to_string = str
     for report in reports:
         roles = report.get("release_matrix_roles")
         source_evidence_ids = report.get("source_evidence_ids", [])
@@ -255,9 +256,9 @@ def _release_matrix_rows(
             if role in matrix_roles:
                 evidence_ids_for_role = evidence_by_role.setdefault(role, set())
                 for evidence_id in source_evidence_ids:
-                    evidence_ids_for_role.add(str(evidence_id))
+                    evidence_ids_for_role.add(to_string(evidence_id))
             continue
-        evidence_ids = tuple(str(item) for item in source_evidence_ids)
+        evidence_ids = tuple(to_string(item) for item in source_evidence_ids)
         for role in roles:
             if role not in matrix_roles:
                 continue
