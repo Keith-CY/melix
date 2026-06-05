@@ -64,6 +64,10 @@ class DeterministicEmbeddingBackend:
             return [0.0] * dimensions
         inverse_l2_norm = 1.0 / l2_norm
         normalized_base = [round(value * inverse_l2_norm, 6) for value in base_values]
+        if remainder == 0:
+            if full_repeats == 1:
+                return normalized_base
+            return normalized_base * full_repeats
         result = normalized_base * full_repeats
         if remainder == 1:
             result.append(normalized_base[0])
