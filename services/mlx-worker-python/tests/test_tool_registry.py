@@ -78,6 +78,17 @@ def test_built_in_tool_config_returns_isolated_template_copies() -> None:
     assert second_config.schema_version == tool_registry_module.TOOL_REGISTRY_SCHEMA_VERSION
 
 
+def test_built_in_tool_config_full_tuple_selection_returns_full_template_copy() -> None:
+    selected_config = built_in_tool_config(BUILTIN_AGENTIC_TOOL_NAMES)
+    selected_config.tools.pop()
+    selected_config.schema_version = "mutated"
+
+    next_selected_config = built_in_tool_config(BUILTIN_AGENTIC_TOOL_NAMES)
+
+    assert [tool.name for tool in next_selected_config.tools] == list(BUILTIN_AGENTIC_TOOL_NAMES)
+    assert next_selected_config.schema_version == tool_registry_module.TOOL_REGISTRY_SCHEMA_VERSION
+
+
 def test_built_in_tool_config_selection_returns_isolated_template_copies() -> None:
     first_config = built_in_tool_config(("image_crop", "local_compute"))
     first_config.tools.pop()
