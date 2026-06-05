@@ -39,3 +39,11 @@ The affected path is covered by the existing registered PR-scoped probe
 
 This is a Python-only slice and is locally verifiable on Linux. No Swift runtime
 effect is claimed.
+
+## Slice Result
+
+Implemented by checking the trailing unit bytes before slicing the numeric
+prefix, preserving the generic split fallback for unusual unit casing and
+invalid units. Local Linux probe results against the same worktree baseline:
+`elapsed_ms_mean` 1489.547 -> 1486.842 ms, `size_hint_calls_mean` unchanged at
+40000, and `payload_compatibility_elapsed_ms_mean` 211.760 -> 210.237 ms.
