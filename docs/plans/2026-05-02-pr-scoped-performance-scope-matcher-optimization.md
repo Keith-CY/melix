@@ -45,6 +45,10 @@ This slice keeps the existing registry and probe shape intact. The affected path
 - Return the cached `frozenset[int]` from `_match_probe_indexes(...)` directly instead of allocating a defensive `set(...)` copy on every scope report.
 - The result is consumed through membership checks and equality-compatible assertions, so the scope-selection behavior and selected probe ordering remain unchanged while repeated scope reports avoid one matched-index allocation.
 
+## Slice update: exact-glob equality fast path
+- Short-circuit `_glob_matches_path(...)` to direct string equality when the watch glob has no metacharacters.
+- This preserves exact-path semantics while avoiding literal-prefix lookup and regex cache access for direct watch-glob comparisons that still flow through the explicit matcher helper, such as changed-scope coverage path derivation.
+
 ## Performance probe
 - Probe target: `build_scope_report(...)` on a synthetic large changed-file set and current probe registry.
 - Primary metrics:
