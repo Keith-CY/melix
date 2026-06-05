@@ -34,15 +34,17 @@ def _parse_diff_header_new_path(line: str) -> str | None:
 
 def _parse_hunk_new_start_from_digit(line: str, digit_index: int) -> int | None:
     value = 0
-    digit_seen = False
-    for index in range(digit_index, len(line)):
-        character_code = ord(line[index])
+    index = digit_index
+    line_length = len(line)
+    ord_char = ord
+    while index < line_length:
+        character_code = ord_char(line[index])
         if _ASCII_ZERO <= character_code <= _ASCII_NINE:
             value = value * 10 + (character_code - _ASCII_ZERO)
-            digit_seen = True
+            index += 1
             continue
         if character_code == _ASCII_COMMA or character_code == _ASCII_SPACE:
-            return value if digit_seen else None
+            return value if index > digit_index else None
         return None
     return None
 
@@ -61,6 +63,7 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
     header_separator = _DIFF_HEADER_SEPARATOR
     header_prefix_len = len(header_prefix)
     header_separator_len = len(header_separator)
+    parse_hunk_new_start_from_digit = _parse_hunk_new_start_from_digit
     add_changed_line = None
     new_line: int | None = None
     for line in diff_text.splitlines():
@@ -82,7 +85,7 @@ def _parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
             if new_range_index < 0:
                 new_line = None
                 continue
-            new_line = _parse_hunk_new_start_from_digit(line, new_range_index + 2)
+            new_line = parse_hunk_new_start_from_digit(line, new_range_index + 2)
             continue
         if add_changed_line is None or new_line is None:
             continue
