@@ -311,6 +311,11 @@ def test_dataset_catalog_path_match_checks_filename_before_parent_parts() -> Non
         catalog._path_matches_split(Path("custom/train-00000.jsonl"), "validation")
         is False
     )
+    assert (
+        catalog._path_matches_split(Path("Custom/Validation-00000.jsonl"), "validation")
+        is True
+    )
+    assert catalog._path_part_matches_split("", "validation", "validation-", "validation_") is False
 
 
 def test_dataset_catalog_row_reader_respects_limit(tmp_path: Path) -> None:
