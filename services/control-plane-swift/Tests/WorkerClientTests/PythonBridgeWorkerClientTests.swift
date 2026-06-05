@@ -812,6 +812,8 @@ struct PythonBridgeWorkerClientTests {
         )
 
         let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
+        #expect(await client.supportsExportResultsStream())
+
         let exported = try await client.exportResultsStream(request: exportRequest)
         let recordedRequests = try await runner.recordedExportResultsStreamRequests()
 
@@ -839,14 +841,11 @@ struct PythonBridgeWorkerClientTests {
         )
 
         let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
-        do {
+        await #expect(throws: WorkerClientError.requestFailed(
+            code: "resource_exhausted",
+            message: "export bundle exceeded worker memory budget"
+        )) {
             _ = try await client.exportResultsStream(request: exportRequest)
-            Issue.record("Expected streamed export failed event to surface an error.")
-        } catch let error as WorkerClientError {
-            #expect(error == .requestFailed(
-                code: "resource_exhausted",
-                message: "export bundle exceeded worker memory budget"
-            ))
         }
     }
 
@@ -855,7 +854,7 @@ struct PythonBridgeWorkerClientTests {
         arguments: malformedExportStreams()
     )
     func streamedExportRejectsMalformedEventSequences(
-        expectedCode: String,
+        expectedError: WorkerClientError,
         events: [Melix_Worker_V1_ExportResultsEvent]
     ) async throws {
         let runner = ScriptedBridgeRunner()
@@ -865,15 +864,8 @@ struct PythonBridgeWorkerClientTests {
         )
 
         let client = PythonBridgeWorkerClient(socketPath: "/tmp/melix-test.sock", runner: runner)
-        do {
+        await #expect(throws: expectedError) {
             _ = try await client.exportResultsStream(request: Melix_Worker_V1_ExportResultsRequest())
-            Issue.record("Expected malformed streamed export to fail.")
-        } catch let error as WorkerClientError {
-            guard case .requestFailed(let code, _) = error else {
-                Issue.record("Expected requestFailed, got \(error).")
-                return
-            }
-            #expect(code == expectedCode)
         }
     }
 
@@ -2319,9 +2311,7 @@ private final class PythonTestMaintenanceService:
     func getModelInfo(
         request: Melix_Worker_V1_GetModelInfoRequest,
         context: ServerContext
-    ) async throws -> Melix_Worker_V1_GetModelInfoResponse {
-        Melix_Worker_V1_GetModelInfoResponse()
-    }
+    ) async throws -> Melix_Worker_V1_GetModelInfoResponse { Melix_Worker_V1_GetModelInfoResponse() }
 
     func convertModel(
         request: Melix_Worker_V1_ConvertModelRequest,
@@ -2332,9 +2322,7 @@ private final class PythonTestMaintenanceService:
     func runDoctor(
         request: Melix_Worker_V1_RunDoctorRequest,
         context: ServerContext
-    ) async throws -> Melix_Worker_V1_RunDoctorResponse {
-        Melix_Worker_V1_RunDoctorResponse()
-    }
+    ) async throws -> Melix_Worker_V1_RunDoctorResponse { Melix_Worker_V1_RunDoctorResponse() }
 
     func runBench(
         request: Melix_Worker_V1_RunBenchRequest,
@@ -2345,23 +2333,17 @@ private final class PythonTestMaintenanceService:
     func runBenchMatrix(
         request: Melix_Worker_V1_RunBenchMatrixRequest,
         context: ServerContext
-    ) async throws -> Melix_Worker_V1_RunBenchMatrixResponse {
-        Melix_Worker_V1_RunBenchMatrixResponse()
-    }
+    ) async throws -> Melix_Worker_V1_RunBenchMatrixResponse { Melix_Worker_V1_RunBenchMatrixResponse() }
 
     func runEvaluation(
         request: Melix_Worker_V1_RunEvaluationRequest,
         context: ServerContext
-    ) async throws -> Melix_Worker_V1_RunEvaluationResponse {
-        Melix_Worker_V1_RunEvaluationResponse()
-    }
+    ) async throws -> Melix_Worker_V1_RunEvaluationResponse { Melix_Worker_V1_RunEvaluationResponse() }
 
     func exportResults(
         request: Melix_Worker_V1_ExportResultsRequest,
         context: ServerContext
-    ) async throws -> Melix_Worker_V1_ExportResultsResponse {
-        Melix_Worker_V1_ExportResultsResponse()
-    }
+    ) async throws -> Melix_Worker_V1_ExportResultsResponse { Melix_Worker_V1_ExportResultsResponse() }
 
     func exportResultsStream(
         request: Melix_Worker_V1_ExportResultsRequest,
@@ -2376,23 +2358,17 @@ private final class PythonTestMaintenanceService:
     func submitResults(
         request: Melix_Worker_V1_SubmitResultsRequest,
         context: ServerContext
-    ) async throws -> Melix_Worker_V1_SubmitResultsResponse {
-        Melix_Worker_V1_SubmitResultsResponse()
-    }
+    ) async throws -> Melix_Worker_V1_SubmitResultsResponse { Melix_Worker_V1_SubmitResultsResponse() }
 
     func searchHubModels(
         request: Melix_Worker_V1_SearchHubModelsRequest,
         context: ServerContext
-    ) async throws -> Melix_Worker_V1_SearchHubModelsResponse {
-        Melix_Worker_V1_SearchHubModelsResponse()
-    }
+    ) async throws -> Melix_Worker_V1_SearchHubModelsResponse { Melix_Worker_V1_SearchHubModelsResponse() }
 
     func getHubModelCard(
         request: Melix_Worker_V1_GetHubModelCardRequest,
         context: ServerContext
-    ) async throws -> Melix_Worker_V1_GetHubModelCardResponse {
-        Melix_Worker_V1_GetHubModelCardResponse()
-    }
+    ) async throws -> Melix_Worker_V1_GetHubModelCardResponse { Melix_Worker_V1_GetHubModelCardResponse() }
 }
 
 private final class PythonTestInferenceService: Melix_Worker_V1_InferenceService.SimpleServiceProtocol, @unchecked Sendable {
@@ -2514,45 +2490,63 @@ private func makeExportCompleted(
     return event
 }
 
-private func malformedExportStreams() -> [(String, [Melix_Worker_V1_ExportResultsEvent])] {
+private func malformedExportStreams() -> [(WorkerClientError, [Melix_Worker_V1_ExportResultsEvent])] {
     let payload = Data("{\"kind\":\"benchmark\"}".utf8)
     let empty = Melix_Worker_V1_ExportResultsEvent()
     return [
         (
-            "export_stream_sequence_mismatch",
+            .requestFailed(
+                code: "export_stream_sequence_mismatch",
+                message: "Export stream chunk sequence 1 arrived while expecting 0."
+            ),
             [
                 makeExportChunk(sequence: 1, data: payload),
                 makeExportCompleted(path: "/tmp/export.json", totalBytes: UInt64(payload.count), chunkCount: 1),
             ]
         ),
         (
-            "export_stream_empty_event",
+            .requestFailed(
+                code: "export_stream_empty_event",
+                message: "Export stream emitted an event without a payload."
+            ),
             [
                 empty,
             ]
         ),
         (
-            "export_stream_missing_completed",
+            .requestFailed(
+                code: "export_stream_missing_completed",
+                message: "Export stream ended without a completed event."
+            ),
             [
                 makeExportChunk(sequence: 0, data: payload),
             ]
         ),
         (
-            "export_stream_chunk_count_mismatch",
+            .requestFailed(
+                code: "export_stream_chunk_count_mismatch",
+                message: "Export stream completed after 1 chunks, expected 2."
+            ),
             [
                 makeExportChunk(sequence: 0, data: payload),
                 makeExportCompleted(path: "/tmp/export.json", totalBytes: UInt64(payload.count), chunkCount: 2),
             ]
         ),
         (
-            "export_stream_size_mismatch",
+            .requestFailed(
+                code: "export_stream_size_mismatch",
+                message: "Export stream completed with 20 bytes, expected 21."
+            ),
             [
                 makeExportChunk(sequence: 0, data: payload),
                 makeExportCompleted(path: "/tmp/export.json", totalBytes: UInt64(payload.count + 1), chunkCount: 1),
             ]
         ),
         (
-            "export_stream_size_mismatch",
+            .requestFailed(
+                code: "export_stream_size_mismatch",
+                message: "Export stream started with 21 bytes, completed with 20."
+            ),
             [
                 makeExportStarted(path: "/tmp/export.json", totalBytes: UInt64(payload.count + 1), chunkSize: 64),
                 makeExportChunk(sequence: 0, data: payload),
@@ -2560,14 +2554,20 @@ private func malformedExportStreams() -> [(String, [Melix_Worker_V1_ExportResult
             ]
         ),
         (
-            "export_stream_checksum_mismatch",
+            .requestFailed(
+                code: "export_stream_checksum_mismatch",
+                message: "Export stream SHA-256 did not match the completed event."
+            ),
             [
                 makeExportChunk(sequence: 0, data: payload),
                 makeExportCompleted(path: "/tmp/export.json", totalBytes: UInt64(payload.count), chunkCount: 1, sha256: "bad"),
             ]
         ),
         (
-            "export_stream_invalid_utf8",
+            .requestFailed(
+                code: "export_stream_invalid_utf8",
+                message: "Export stream payload is not valid UTF-8."
+            ),
             [
                 makeExportChunk(sequence: 0, data: Data([0xff])),
                 makeExportCompleted(path: "/tmp/export.json", totalBytes: 1, chunkCount: 1),

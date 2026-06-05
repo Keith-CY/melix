@@ -566,6 +566,10 @@ public struct PythonBridgeWorkerClient:
         }
     }
 
+    public func supportsExportResultsStream() async -> Bool {
+        true
+    }
+
     public func exportResultsStream(
         request: Melix_Worker_V1_ExportResultsRequest
     ) async throws -> Melix_Worker_V1_ExportResultsResponse {

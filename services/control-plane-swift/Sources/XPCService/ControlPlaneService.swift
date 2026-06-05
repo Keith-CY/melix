@@ -1579,7 +1579,9 @@ public actor ControlPlaneService {
 
         do {
             let workerResponse: Melix_Worker_V1_ExportResultsResponse
-            if let streamingClient = workerClient as? any StreamingExportResultsWorkerClientProtocol {
+            if await workerClient.supportsExportResultsStream(),
+               let streamingClient = workerClient as? any StreamingExportResultsWorkerClientProtocol
+            {
                 workerResponse = try await streamingClient.exportResultsStream(request: workerRequest)
             } else {
                 workerResponse = try await workerClient.exportResults(request: workerRequest)
