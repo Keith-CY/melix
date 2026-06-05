@@ -220,6 +220,7 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
         images: list[bytes] = []
         total_output_bytes = 0
         model_id = str(loaded_model.get("model_id", "image-model"))
+        edit_strength = float(request.strength or 0.0)
         render_edit_payload = self._render_edit_payload
         write_bytes = self._write_bytes
         artifact_metadata = self._artifact_metadata
@@ -236,7 +237,7 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
                 height=height,
                 variant=index,
                 model_id=model_id,
-                strength=float(request.strength or 0.0),
+                strength=edit_strength,
                 source_digest=source_digest,
                 mask_digest=mask_digest,
             )
