@@ -79,6 +79,7 @@ Rules:
 """
 SEMANTIC_JUDGE_PROMPT_HASH = f"sha256:{sha256(SEMANTIC_JUDGE_SYSTEM_PROMPT.encode('utf-8')).hexdigest()}"
 _JSON_DECODER = json.JSONDecoder()
+_JSON_RAW_DECODE = _JSON_DECODER.raw_decode
 _JSON_FENCE_PREFIX = "```json\n"
 _JSON_FENCE_PREFIX_LENGTH = len(_JSON_FENCE_PREFIX)
 _CLOSING_FENCE_WITH_LEADING_NEWLINE = "\n```"
@@ -2855,7 +2856,7 @@ def _coerce_string_list(value: object) -> list[str]:
 def _parse_response_json(response_text: str) -> dict[str, object]:
     response_length = len(response_text)
     if response_text.startswith(_JSON_FENCE_PREFIX):
-        parsed, end_index = _JSON_DECODER.raw_decode(
+        parsed, end_index = _JSON_RAW_DECODE(
             response_text,
             _JSON_FENCE_PREFIX_LENGTH,
         )
@@ -2870,7 +2871,7 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
         response_start += 1
 
     if response_text.startswith(_JSON_FENCE_PREFIX, response_start):
-        parsed, end_index = _JSON_DECODER.raw_decode(
+        parsed, end_index = _JSON_RAW_DECODE(
             response_text,
             response_start + _JSON_FENCE_PREFIX_LENGTH,
         )
@@ -2883,7 +2884,7 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
     if response_text.startswith("```", response_start):
         newline_index = response_text.find("\n", response_start)
         if newline_index >= 0:
-            parsed, end_index = _JSON_DECODER.raw_decode(response_text, newline_index + 1)
+            parsed, end_index = _JSON_RAW_DECODE(response_text, newline_index + 1)
             if not _has_only_optional_closing_fence(response_text, end_index, response_length):
                 raise json.JSONDecodeError("Extra data", response_text, end_index)
             if not isinstance(parsed, dict):
