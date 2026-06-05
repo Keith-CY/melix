@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import GRPCCore
 import GRPCNIOTransportHTTP2Posix
@@ -34,6 +35,7 @@ public enum BridgeCommandKind: String, Sendable {
     case runBenchMatrix = "run-bench-matrix"
     case runEvaluation = "run-evaluation"
     case exportResults = "export-results"
+    case exportResultsStream = "export-results-stream"
     case submitResults = "submit-results"
 }
 
@@ -180,6 +182,11 @@ public protocol PythonWorkerRPCRunning: Sendable {
         request: Melix_Worker_V1_ExportResultsRequest
     ) async throws -> Melix_Worker_V1_ExportResultsResponse
 
+    func exportResultsStream(
+        socketPath: String,
+        request: Melix_Worker_V1_ExportResultsRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExportResultsEvent, Error>
+
     func submitResults(
         socketPath: String,
         request: Melix_Worker_V1_SubmitResultsRequest
@@ -198,6 +205,7 @@ public struct PythonBridgeWorkerClient:
     CacheIntrospectingWorkerClientProtocol,
     RuntimeIntrospectingWorkerClientProtocol,
     ModelOperationsWorkerClientProtocol,
+    StreamingExportResultsWorkerClientProtocol,
     Sendable
 {
     private let socketPath: String
@@ -556,6 +564,23 @@ public struct PythonBridgeWorkerClient:
         case .rpc(let runner):
             return try await runner.exportResults(socketPath: socketPath, request: request)
         }
+    }
+
+    public func exportResultsStream(
+        request: Melix_Worker_V1_ExportResultsRequest
+    ) async throws -> Melix_Worker_V1_ExportResultsResponse {
+        let eventStream: AsyncThrowingStream<Melix_Worker_V1_ExportResultsEvent, Error>
+        switch transport {
+        case .bridge:
+            eventStream = try await sendStream(
+                kind: .exportResultsStream,
+                request: request,
+                as: Melix_Worker_V1_ExportResultsEvent.self
+            )
+        case .rpc(let runner):
+            eventStream = try await runner.exportResultsStream(socketPath: socketPath, request: request)
+        }
+        return try await ExportResultsStreamAssembler().assemble(eventStream)
     }
 
     public func submitResults(
@@ -1626,6 +1651,92 @@ public enum BootstrapWorkerPreparation {
     }
 }
 
+private struct ExportResultsStreamAssembler: Sendable {
+    func assemble(
+        _ events: AsyncThrowingStream<Melix_Worker_V1_ExportResultsEvent, Error>
+    ) async throws -> Melix_Worker_V1_ExportResultsResponse {
+        var started: Melix_Worker_V1_ExportResultsStarted?
+        var completed: Melix_Worker_V1_ExportResultsCompleted?
+        var payload = Data()
+        var expectedSequence: UInt64 = 0
+
+        for try await event in events {
+            switch event.payload {
+            case .started(let eventStarted):
+                started = eventStarted
+            case .chunk(let chunk):
+                guard chunk.sequence == expectedSequence else {
+                    throw WorkerClientError.requestFailed(
+                        code: "export_stream_sequence_mismatch",
+                        message: "Export stream chunk sequence \(chunk.sequence) arrived while expecting \(expectedSequence)."
+                    )
+                }
+                payload.append(chunk.data)
+                expectedSequence += 1
+            case .completed(let eventCompleted):
+                completed = eventCompleted
+            case .failed(let error):
+                throw WorkerClientError.requestFailed(
+                    code: error.code.isEmpty ? "export_failed" : error.code,
+                    message: error.message.isEmpty ? "Export request failed." : error.message
+                )
+            case .none:
+                throw WorkerClientError.requestFailed(
+                    code: "export_stream_empty_event",
+                    message: "Export stream emitted an event without a payload."
+                )
+            }
+        }
+
+        guard let completed else {
+            throw WorkerClientError.requestFailed(
+                code: "export_stream_missing_completed",
+                message: "Export stream ended without a completed event."
+            )
+        }
+        if completed.chunkCount != expectedSequence {
+            throw WorkerClientError.requestFailed(
+                code: "export_stream_chunk_count_mismatch",
+                message: "Export stream completed after \(expectedSequence) chunks, expected \(completed.chunkCount)."
+            )
+        }
+        if completed.totalBytes != UInt64(payload.count) {
+            throw WorkerClientError.requestFailed(
+                code: "export_stream_size_mismatch",
+                message: "Export stream completed with \(payload.count) bytes, expected \(completed.totalBytes)."
+            )
+        }
+        if let started, started.totalBytes != 0, started.totalBytes != completed.totalBytes {
+            throw WorkerClientError.requestFailed(
+                code: "export_stream_size_mismatch",
+                message: "Export stream started with \(started.totalBytes) bytes, completed with \(completed.totalBytes)."
+            )
+        }
+        if !completed.sha256.isEmpty && sha256Hex(payload) != completed.sha256 {
+            throw WorkerClientError.requestFailed(
+                code: "export_stream_checksum_mismatch",
+                message: "Export stream SHA-256 did not match the completed event."
+            )
+        }
+        guard let exportJSON = String(data: payload, encoding: .utf8) else {
+            throw WorkerClientError.requestFailed(
+                code: "export_stream_invalid_utf8",
+                message: "Export stream payload is not valid UTF-8."
+            )
+        }
+
+        var response = Melix_Worker_V1_ExportResultsResponse()
+        response.ok = true
+        response.exportJson = exportJSON
+        response.exportPath = completed.exportPath.isEmpty ? started?.exportPath ?? "" : completed.exportPath
+        return response
+    }
+
+    private func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
 private struct WorkerBridgeLine: Decodable {
     let kind: String
     let messageBase64: String?
@@ -2005,6 +2116,32 @@ public struct GRPCPythonWorkerRunner: PythonWorkerRPCRunning, Sendable {
     ) async throws -> Melix_Worker_V1_ExportResultsResponse {
         try await withRPCClients(socketPath: socketPath) { _, _, _, maintenanceClient in
             try await maintenanceClient.exportResults(request)
+        }
+    }
+
+    public func exportResultsStream(
+        socketPath: String,
+        request: Melix_Worker_V1_ExportResultsRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExportResultsEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    try await withRPCClients(socketPath: socketPath) { _, _, _, maintenanceClient in
+                        try await maintenanceClient.exportResultsStream(request) { response in
+                            for try await event in response.messages {
+                                continuation.yield(event)
+                            }
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: workerClientError(from: error))
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
         }
     }
 

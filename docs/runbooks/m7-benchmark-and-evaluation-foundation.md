@@ -138,6 +138,7 @@ Expected outcomes:
 - packaged dataset execution is deterministic
 - `RunEvaluation` returns typed worker job and result payloads
 - `ExportResults` writes a machine-readable bundle to the reported path
+- `ExportResultsStream` streams bounded export chunks for large bundles
 - `SubmitResults` returns a typed `melix.submission.v1` payload
 - the Python control-plane bridge forwards `run-evaluation`
 
@@ -173,7 +174,7 @@ Expected outcomes:
 - canonical benchmark fields are validated and forwarded to the worker request
 - `ops.run_evaluation` maps to the model-operations worker
 - typed `evaluationJob` and `evaluationResults` fields are populated on `OpsReply`
-- `ops.export_results` surfaces `exportBundleJson`
+- `ops.export_results` reconstructs the streamed export bundle and surfaces `exportBundleJson`
 - `ops.submit_results` surfaces `submissionJson`
 - canonical evaluation summary rows decode and export correctly from the shared bundle
 
@@ -182,6 +183,13 @@ Expected outcomes:
 - `ExportResults` reads persisted benchmark artifacts from `model-ops/bench/` and persisted
   evaluation artifacts from `model-ops/evaluation/`, then writes `export-bundle.json` at the
   reported `export_path`.
+- `ExportResultsStream` uses the same bundle writer as `ExportResults`, then emits a
+  `started` event, ordered raw-byte `chunk` events, and a terminal `completed` event with total
+  bytes, chunk count, and SHA-256. The Swift control plane must prefer this streaming RPC for
+  `ops.export_results`, validate chunk order and byte counts, and reconstruct the same
+  `exportBundleJson` surface consumed by CLI, Window UI, benchmark, evaluation, and LoRA flows.
+  The unary `ExportResults` RPC remains available only as a compatibility path for older clients
+  and test doubles.
 - `melix bench export-summary-csv` writes canonical benchmark summary rows. The shared export
   bundle also preserves context-sweep and batch-sweep rows for the Window UI and future lab-style
   analysis.

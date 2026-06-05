@@ -1578,7 +1578,12 @@ public actor ControlPlaneService {
         workerRequest.outputDir = command.outputDir
 
         do {
-            let workerResponse = try await workerClient.exportResults(request: workerRequest)
+            let workerResponse: Melix_Worker_V1_ExportResultsResponse
+            if let streamingClient = workerClient as? any StreamingExportResultsWorkerClientProtocol {
+                workerResponse = try await streamingClient.exportResultsStream(request: workerRequest)
+            } else {
+                workerResponse = try await workerClient.exportResults(request: workerRequest)
+            }
             guard workerResponse.ok else {
                 return errorResponse(
                     for: request,
@@ -1590,6 +1595,12 @@ public actor ControlPlaneService {
             var reply = Melix_Controlplane_V1_OpsReply()
             reply.exportBundleJson = workerResponse.exportJson
             return okResponse(for: request, ops: reply)
+        } catch let WorkerClientError.requestFailed(code, message) {
+            return errorResponse(
+                for: request,
+                code: code.isEmpty ? "unavailable" : code,
+                message: message.isEmpty ? "Export worker request failed." : message
+            )
         } catch {
             return errorResponse(for: request, code: "unavailable", message: "Export worker request failed: \(error)")
         }

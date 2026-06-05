@@ -7156,6 +7156,60 @@ struct ControlPlaneServiceTests {
         #expect(response.ops.exportBundleJson.contains("\"export_schema_version\":\"melix.benchmark_export.v1\""))
     }
 
+    @Test("execute prefers streamed ops.export_results when the worker supports it")
+    func executePrefersStreamedOpsExportResultsWhenTheWorkerSupportsIt() async throws {
+        let modelOpsClient = ScriptedStreamingExportResultsWorkerClient()
+        await modelOpsClient.setStreamResponse({
+            var response = Melix_Worker_V1_ExportResultsResponse()
+            response.ok = true
+            response.exportJson = """
+            {"export_schema_version":"melix.benchmark_export.v1","benchmark_jobs":[{"job_id":"bench-stream"}]}
+            """
+            response.exportPath = "/tmp/melix-export-bundle.json"
+            return response
+        }())
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeExportResultsRequest())
+        let streamRequests = await modelOpsClient.streamRequests
+        let unaryRequests = await modelOpsClient.unaryRequests
+
+        #expect(response.ok)
+        #expect(streamRequests.map(\.outputDir) == ["/tmp/melix-export"])
+        #expect(unaryRequests.isEmpty)
+        #expect(response.ops.exportBundleJson.contains("bench-stream"))
+    }
+
+    @Test("execute preserves typed streamed ops.export_results worker errors")
+    func executePreservesTypedStreamedOpsExportResultsWorkerErrors() async throws {
+        let modelOpsClient = ScriptedStreamingExportResultsWorkerClient()
+        await modelOpsClient.setStreamError(
+            WorkerClientError.requestFailed(
+                code: "resource_exhausted",
+                message: "export bundle exceeded receive budget"
+            )
+        )
+        let service = ControlPlaneService(
+            modelCatalog: ModelCatalog(seedModels: ModelCatalog.phaseFiveSeedModels()),
+            workerRegistry: WorkerRegistry(
+                defaultTextClient: NullWorkerClient(),
+                modelOperationsClient: modelOpsClient
+            )
+        )
+
+        let response = try await service.execute(makeExportResultsRequest())
+
+        #expect(response.ok == false)
+        #expect(response.error.code == "resource_exhausted")
+        #expect(response.error.message == "export bundle exceeded receive budget")
+    }
+
     @Test("execute handles ops.submit_results through the model-operations worker")
     func executeHandlesOpsSubmitResultsThroughTheModelOperationsWorker() async throws {
         let modelOpsClient = ScriptedModelOperationsWorkerClient()
@@ -11351,6 +11405,121 @@ private actor ScriptedModelOperationsWorkerClient: WorkerRoutingClient, ModelOpe
     ) async throws -> Melix_Worker_V1_SubmitResultsResponse {
         lastSubmitRequest = request
         return submitResponse
+    }
+}
+
+private actor ScriptedStreamingExportResultsWorkerClient:
+    WorkerRoutingClient,
+    StreamingExportResultsWorkerClientProtocol
+{
+    private(set) var unaryRequests: [Melix_Worker_V1_ExportResultsRequest] = []
+    private(set) var streamRequests: [Melix_Worker_V1_ExportResultsRequest] = []
+    private var streamResponse = Melix_Worker_V1_ExportResultsResponse()
+    private var streamError: Error?
+
+    func setStreamResponse(_ response: Melix_Worker_V1_ExportResultsResponse) {
+        streamResponse = response
+        streamError = nil
+    }
+
+    func setStreamError(_ error: Error?) {
+        streamError = error
+    }
+
+    func canDispatchRequests() async -> Bool {
+        true
+    }
+
+    func generate(
+        request: Melix_Worker_V1_GenerateRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ExecuteEvent, Error> {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func abort(requestID: String) async throws -> Bool {
+        _ = requestID
+        return false
+    }
+
+    func loadModel(
+        request: Melix_Worker_V1_LoadModelRequest
+    ) async throws -> Melix_Worker_V1_LoadModelResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func getModelInfo(
+        request: Melix_Worker_V1_GetModelInfoRequest
+    ) async throws -> Melix_Worker_V1_GetModelInfoResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func convertModel(
+        request: Melix_Worker_V1_ConvertModelRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_ConvertModelEvent, Error> {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func runDoctor(
+        request: Melix_Worker_V1_RunDoctorRequest
+    ) async throws -> Melix_Worker_V1_RunDoctorResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func searchHubModels(
+        request: Melix_Worker_V1_SearchHubModelsRequest
+    ) async throws -> Melix_Worker_V1_SearchHubModelsResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func getHubModelCard(
+        request: Melix_Worker_V1_GetHubModelCardRequest
+    ) async throws -> Melix_Worker_V1_GetHubModelCardResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func runBench(
+        request: Melix_Worker_V1_RunBenchRequest
+    ) async throws -> AsyncThrowingStream<Melix_Worker_V1_RunBenchEvent, Error> {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func runEvaluation(
+        request: Melix_Worker_V1_RunEvaluationRequest
+    ) async throws -> Melix_Worker_V1_RunEvaluationResponse {
+        _ = request
+        throw WorkerClientError.unavailable
+    }
+
+    func exportResults(
+        request: Melix_Worker_V1_ExportResultsRequest
+    ) async throws -> Melix_Worker_V1_ExportResultsResponse {
+        unaryRequests.append(request)
+        throw WorkerClientError.unavailable
+    }
+
+    func exportResultsStream(
+        request: Melix_Worker_V1_ExportResultsRequest
+    ) async throws -> Melix_Worker_V1_ExportResultsResponse {
+        streamRequests.append(request)
+        if let streamError {
+            throw streamError
+        }
+        return streamResponse
+    }
+
+    func submitResults(
+        request: Melix_Worker_V1_SubmitResultsRequest
+    ) async throws -> Melix_Worker_V1_SubmitResultsResponse {
+        _ = request
+        throw WorkerClientError.unavailable
     }
 }
 

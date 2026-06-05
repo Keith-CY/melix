@@ -181,6 +181,12 @@ public extension ModelOperationsWorkerClientProtocol {
     }
 }
 
+public protocol StreamingExportResultsWorkerClientProtocol: ModelOperationsWorkerClientProtocol {
+    func exportResultsStream(
+        request: Melix_Worker_V1_ExportResultsRequest
+    ) async throws -> Melix_Worker_V1_ExportResultsResponse
+}
+
 public struct NullWorkerClient: WorkerRoutingClient {
     public init() {}
 

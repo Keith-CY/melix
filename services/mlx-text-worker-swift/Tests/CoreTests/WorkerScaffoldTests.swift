@@ -10633,6 +10633,7 @@ final class WorkerScaffoldTests: XCTestCase {
         let services = makeServices()
         let convertWriter = RecordingRPCWriter<Melix_Worker_V1_ConvertModelEvent>()
         let benchWriter = RecordingRPCWriter<Melix_Worker_V1_RunBenchEvent>()
+        let exportStreamWriter = RecordingRPCWriter<Melix_Worker_V1_ExportResultsEvent>()
 
         try await withTestServerContextRPCCancellationHandle { handle in
             try await services.maintenance.convertModel(
@@ -10756,8 +10757,22 @@ final class WorkerScaffoldTests: XCTestCase {
             )
         }
 
+        try await withTestServerContextRPCCancellationHandle { handle in
+            try await services.maintenance.exportResultsStream(
+                request: Melix_Worker_V1_ExportResultsRequest(),
+                response: RPCWriter(wrapping: exportStreamWriter),
+                context: ServerContext(
+                    descriptor: Melix_Worker_V1_MaintenanceService.Method.ExportResultsStream.descriptor,
+                    remotePeer: "in-process:test",
+                    localPeer: "in-process:test",
+                    cancellation: handle
+                )
+            )
+        }
+
         let convertEvents = await convertWriter.snapshot()
         let benchEvents = await benchWriter.snapshot()
+        let exportStreamEvents = await exportStreamWriter.snapshot()
 
         XCTAssertEqual(convertEvents.count, 1)
         XCTAssertEqual(convertEvents[0].failed.error.code, "unimplemented")
@@ -10783,6 +10798,8 @@ final class WorkerScaffoldTests: XCTestCase {
         XCTAssertEqual(modelCardResponse.error.code, "unimplemented")
         XCTAssertEqual(benchEvents.count, 1)
         XCTAssertEqual(benchEvents[0].failed.error.code, "unimplemented")
+        XCTAssertEqual(exportStreamEvents.count, 1)
+        XCTAssertEqual(exportStreamEvents[0].failed.code, "unimplemented")
     }
 
     func testBootstrapBuildsServerWithDeterministicConfiguration() throws {

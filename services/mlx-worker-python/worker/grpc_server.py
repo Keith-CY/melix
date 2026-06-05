@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import tempfile
@@ -59,6 +60,7 @@ from worker.productization.submission_builder import build_submission_payload
 
 
 _BUILTIN_EVENT_EXTRACTION_TOP20_DATASET_ID = "top200.event-extraction.top20.v1"
+_EXPORT_RESULTS_STREAM_CHUNK_BYTES = 1024 * 1024
 
 
 class BootstrapMetricsExporter:
@@ -465,9 +467,7 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
 
     def ExportResults(self, request, context):
         try:
-            jobs_root = Path(request.output_dir) if request.output_dir else self._evaluation_jobs_root.parent
-            export_path = jobs_root / "export-bundle.json"
-            bundle_path = write_export_bundle(jobs_root, export_path)
+            bundle_path = self._write_export_results_bundle(request)
             export_json = bundle_path.read_text(encoding="utf-8")
             return maintenance_pb2.ExportResultsResponse(
                 ok=True,
@@ -479,6 +479,53 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
                 ok=False,
                 error=common_pb2.ErrorStatus(code="export_failed", message=str(exc)),
             )
+
+    def ExportResultsStream(self, request, context):
+        try:
+            bundle_path = self._write_export_results_bundle(request)
+            total_bytes = bundle_path.stat().st_size
+            chunk_size = _EXPORT_RESULTS_STREAM_CHUNK_BYTES
+            yield maintenance_pb2.ExportResultsEvent(
+                started=maintenance_pb2.ExportResultsStarted(
+                    export_path=str(bundle_path),
+                    total_bytes=total_bytes,
+                    chunk_size=chunk_size,
+                )
+            )
+
+            checksum = hashlib.sha256()
+            chunk_count = 0
+            with bundle_path.open("rb") as bundle_file:
+                while True:
+                    data = bundle_file.read(chunk_size)
+                    if not data:
+                        break
+                    checksum.update(data)
+                    yield maintenance_pb2.ExportResultsEvent(
+                        chunk=maintenance_pb2.ExportResultsChunk(
+                            sequence=chunk_count,
+                            data=data,
+                        )
+                    )
+                    chunk_count += 1
+
+            yield maintenance_pb2.ExportResultsEvent(
+                completed=maintenance_pb2.ExportResultsCompleted(
+                    export_path=str(bundle_path),
+                    total_bytes=total_bytes,
+                    chunk_count=chunk_count,
+                    sha256=checksum.hexdigest(),
+                )
+            )
+        except Exception as exc:
+            yield maintenance_pb2.ExportResultsEvent(
+                failed=common_pb2.ErrorStatus(code="export_failed", message=str(exc))
+            )
+
+    def _write_export_results_bundle(self, request) -> Path:
+        jobs_root = Path(request.output_dir) if request.output_dir else self._evaluation_jobs_root.parent
+        export_path = jobs_root / "export-bundle.json"
+        return write_export_bundle(jobs_root, export_path)
 
     def SubmitResults(self, request, context):
         try:

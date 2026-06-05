@@ -8,6 +8,11 @@
 // For information on using the generated types, please see the documentation:
 //   https://github.com/apple/swift-protobuf/
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
+import Foundation
+#endif
 import SwiftProtobuf
 
 // If the compiler emits an error on this type, it is because this file
@@ -1299,6 +1304,106 @@ public nonisolated struct Melix_Worker_V1_ExportResultsResponse: Sendable {
   public init() {}
 
   fileprivate var _error: Melix_Worker_V1_ErrorStatus? = nil
+}
+
+public nonisolated struct Melix_Worker_V1_ExportResultsStarted: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var exportPath: String = String()
+
+  public var totalBytes: UInt64 = 0
+
+  public var chunkSize: UInt64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Worker_V1_ExportResultsChunk: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var sequence: UInt64 = 0
+
+  public var data: Data = Data()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Worker_V1_ExportResultsCompleted: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var exportPath: String = String()
+
+  public var totalBytes: UInt64 = 0
+
+  public var chunkCount: UInt64 = 0
+
+  public var sha256: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Melix_Worker_V1_ExportResultsEvent: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var payload: Melix_Worker_V1_ExportResultsEvent.OneOf_Payload? = nil
+
+  public var started: Melix_Worker_V1_ExportResultsStarted {
+    get {
+      if case .started(let v)? = payload {return v}
+      return Melix_Worker_V1_ExportResultsStarted()
+    }
+    set {payload = .started(newValue)}
+  }
+
+  public var chunk: Melix_Worker_V1_ExportResultsChunk {
+    get {
+      if case .chunk(let v)? = payload {return v}
+      return Melix_Worker_V1_ExportResultsChunk()
+    }
+    set {payload = .chunk(newValue)}
+  }
+
+  public var completed: Melix_Worker_V1_ExportResultsCompleted {
+    get {
+      if case .completed(let v)? = payload {return v}
+      return Melix_Worker_V1_ExportResultsCompleted()
+    }
+    set {payload = .completed(newValue)}
+  }
+
+  public var failed: Melix_Worker_V1_ErrorStatus {
+    get {
+      if case .failed(let v)? = payload {return v}
+      return Melix_Worker_V1_ErrorStatus()
+    }
+    set {payload = .failed(newValue)}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public nonisolated enum OneOf_Payload: Equatable, Sendable {
+    case started(Melix_Worker_V1_ExportResultsStarted)
+    case chunk(Melix_Worker_V1_ExportResultsChunk)
+    case completed(Melix_Worker_V1_ExportResultsCompleted)
+    case failed(Melix_Worker_V1_ErrorStatus)
+
+  }
+
+  public init() {}
 }
 
 public nonisolated struct Melix_Worker_V1_SubmitResultsRequest: Sendable {
@@ -4269,6 +4374,227 @@ nonisolated extension Melix_Worker_V1_ExportResultsResponse: SwiftProtobuf.Messa
     if lhs._error != rhs._error {return false}
     if lhs.exportJson != rhs.exportJson {return false}
     if lhs.exportPath != rhs.exportPath {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Worker_V1_ExportResultsStarted: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ExportResultsStarted"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}export_path\0\u{3}total_bytes\0\u{3}chunk_size\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.exportPath) }()
+      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.totalBytes) }()
+      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.chunkSize) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.exportPath.isEmpty {
+      try visitor.visitSingularStringField(value: self.exportPath, fieldNumber: 1)
+    }
+    if self.totalBytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.totalBytes, fieldNumber: 2)
+    }
+    if self.chunkSize != 0 {
+      try visitor.visitSingularUInt64Field(value: self.chunkSize, fieldNumber: 3)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_ExportResultsStarted, rhs: Melix_Worker_V1_ExportResultsStarted) -> Bool {
+    if lhs.exportPath != rhs.exportPath {return false}
+    if lhs.totalBytes != rhs.totalBytes {return false}
+    if lhs.chunkSize != rhs.chunkSize {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Worker_V1_ExportResultsChunk: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ExportResultsChunk"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}sequence\0\u{1}data\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.sequence) }()
+      case 2: try { try decoder.decodeSingularBytesField(value: &self.data) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.sequence != 0 {
+      try visitor.visitSingularUInt64Field(value: self.sequence, fieldNumber: 1)
+    }
+    if !self.data.isEmpty {
+      try visitor.visitSingularBytesField(value: self.data, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_ExportResultsChunk, rhs: Melix_Worker_V1_ExportResultsChunk) -> Bool {
+    if lhs.sequence != rhs.sequence {return false}
+    if lhs.data != rhs.data {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Worker_V1_ExportResultsCompleted: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ExportResultsCompleted"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}export_path\0\u{3}total_bytes\0\u{3}chunk_count\0\u{1}sha256\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.exportPath) }()
+      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.totalBytes) }()
+      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.chunkCount) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.sha256) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.exportPath.isEmpty {
+      try visitor.visitSingularStringField(value: self.exportPath, fieldNumber: 1)
+    }
+    if self.totalBytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.totalBytes, fieldNumber: 2)
+    }
+    if self.chunkCount != 0 {
+      try visitor.visitSingularUInt64Field(value: self.chunkCount, fieldNumber: 3)
+    }
+    if !self.sha256.isEmpty {
+      try visitor.visitSingularStringField(value: self.sha256, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_ExportResultsCompleted, rhs: Melix_Worker_V1_ExportResultsCompleted) -> Bool {
+    if lhs.exportPath != rhs.exportPath {return false}
+    if lhs.totalBytes != rhs.totalBytes {return false}
+    if lhs.chunkCount != rhs.chunkCount {return false}
+    if lhs.sha256 != rhs.sha256 {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Melix_Worker_V1_ExportResultsEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ExportResultsEvent"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}started\0\u{1}chunk\0\u{1}completed\0\u{1}failed\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try {
+        var v: Melix_Worker_V1_ExportResultsStarted?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .started(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .started(v)
+        }
+      }()
+      case 2: try {
+        var v: Melix_Worker_V1_ExportResultsChunk?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .chunk(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .chunk(v)
+        }
+      }()
+      case 3: try {
+        var v: Melix_Worker_V1_ExportResultsCompleted?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .completed(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .completed(v)
+        }
+      }()
+      case 4: try {
+        var v: Melix_Worker_V1_ErrorStatus?
+        var hadOneofValue = false
+        if let current = self.payload {
+          hadOneofValue = true
+          if case .failed(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.payload = .failed(v)
+        }
+      }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    switch self.payload {
+    case .started?: try {
+      guard case .started(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    }()
+    case .chunk?: try {
+      guard case .chunk(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    }()
+    case .completed?: try {
+      guard case .completed(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    }()
+    case .failed?: try {
+      guard case .failed(let v)? = self.payload else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
+    }()
+    case nil: break
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Melix_Worker_V1_ExportResultsEvent, rhs: Melix_Worker_V1_ExportResultsEvent) -> Bool {
+    if lhs.payload != rhs.payload {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

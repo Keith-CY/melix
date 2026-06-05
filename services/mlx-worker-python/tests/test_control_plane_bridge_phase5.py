@@ -245,6 +245,36 @@ class FakeMaintenanceStub:
             export_path="/tmp/model-ops/export.json",
         )
 
+    def ExportResultsStream(self, request):
+        payload = json.dumps(
+            {
+                "output_dir": request.output_dir,
+                "kind": "benchmark",
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+        yield maintenance_pb2.ExportResultsEvent(
+            started=maintenance_pb2.ExportResultsStarted(
+                export_path="/tmp/model-ops/export.json",
+                total_bytes=len(payload),
+                chunk_size=12,
+            )
+        )
+        for sequence, offset in enumerate(range(0, len(payload), 12)):
+            yield maintenance_pb2.ExportResultsEvent(
+                chunk=maintenance_pb2.ExportResultsChunk(
+                    sequence=sequence,
+                    data=payload[offset : offset + 12],
+                )
+            )
+        yield maintenance_pb2.ExportResultsEvent(
+            completed=maintenance_pb2.ExportResultsCompleted(
+                export_path="/tmp/model-ops/export.json",
+                total_bytes=len(payload),
+                chunk_count=(len(payload) + 11) // 12,
+            )
+        )
+
     def SubmitResults(self, request):
         return maintenance_pb2.SubmitResultsResponse(
             ok=True,
@@ -522,6 +552,30 @@ def test_bridge_helper_forwards_phase5_unary_and_streaming_commands(monkeypatch,
     assert export_payload.ok is True
     assert export_payload.export_path == "/tmp/model-ops/export.json"
     assert json.loads(export_payload.export_json)["output_dir"] == "/tmp/model-ops/export"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_plane_bridge.py",
+            "export-results-stream",
+            "--socket-path",
+            "/tmp/unused.sock",
+            "--request-b64",
+            base64.b64encode(export_request.SerializeToString()).decode("ascii"),
+        ],
+    )
+    control_plane_bridge.main()
+    export_stream_lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    export_stream_events = [
+        maintenance_pb2.ExportResultsEvent.FromString(base64.b64decode(line["message_b64"]))
+        for line in export_stream_lines
+    ]
+    assert export_stream_events[0].started.export_path == "/tmp/model-ops/export.json"
+    assert export_stream_events[-1].completed.export_path == "/tmp/model-ops/export.json"
+    export_stream_chunks = [event.chunk.data for event in export_stream_events if event.HasField("chunk")]
+    assert export_stream_events[-1].completed.chunk_count == len(export_stream_chunks)
+    assert json.loads(b"".join(export_stream_chunks).decode("utf-8"))["output_dir"] == "/tmp/model-ops/export"
 
     submit_request = maintenance_pb2.SubmitResultsRequest(
         output_dir="/tmp/model-ops/export",
