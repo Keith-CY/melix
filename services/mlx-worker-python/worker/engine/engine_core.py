@@ -455,8 +455,12 @@ class EngineCore:
                 finish_reason = last_finish_reason
 
             assembled = assembler.completed()
-            parser_metrics = {key: _parser_metric_text(value) for key, value in assembled.metrics.items()}
-            parser_metrics.update(_text_native_mtp_parser_metrics(last_token_event))
+            if assembled.metrics:
+                parser_metrics = {key: _parser_metric_text(value) for key, value in assembled.metrics.items()}
+            else:
+                parser_metrics = {}
+            if last_token_event is not None:
+                parser_metrics.update(_text_native_mtp_parser_metrics(last_token_event))
             resolved_stop_token_count = str(stop_contract.resolved_stop_token_count)
             created = execution_ext.get("melix.response.created", "")
             allowed_tools_receipt_json = self._allowed_tools_receipt_json(request)
