@@ -659,30 +659,25 @@ def _size_hint_bytes(payload: dict[str, Any], *, card_data: dict[str, Any] | Non
 
 
 def _direct_size_hint_from_text(text: str) -> int:
-    if text.endswith(" MB"):
+    if len(text) >= 4 and text[-3].isspace():
         value_text = text[:-3]
-        if value_text.isdecimal():
-            return int(value_text) * _SIZE_HINT_MB
-    if text.endswith(" mb"):
-        value_text = text[:-3]
-        if value_text.isdecimal():
-            return int(value_text) * _SIZE_HINT_MB
-    if text.endswith(" GB"):
-        value_text = text[:-3]
-        if value_text.isdecimal():
-            return int(value_text) * _SIZE_HINT_GB
-    if text.endswith(" gb"):
-        value_text = text[:-3]
-        if value_text.isdecimal():
-            return int(value_text) * _SIZE_HINT_GB
-    if text.endswith(" KB"):
-        value_text = text[:-3]
-        if value_text.isdecimal():
-            return int(value_text) * _SIZE_HINT_KB
-    if text.endswith(" kb"):
-        value_text = text[:-3]
-        if value_text.isdecimal():
-            return int(value_text) * _SIZE_HINT_KB
+        unit_text = text[-2:]
+        if unit_text == "MB" or unit_text == "mb":
+            multiplier = _SIZE_HINT_MB
+        elif unit_text == "GB" or unit_text == "gb":
+            multiplier = _SIZE_HINT_GB
+        elif unit_text == "KB" or unit_text == "kb":
+            multiplier = _SIZE_HINT_KB
+        else:
+            multiplier = 0
+        if multiplier:
+            if value_text.isdecimal():
+                return int(value_text) * multiplier
+            try:
+                return int(float(value_text) * multiplier)
+            except ValueError:
+                return 0
+
     parts = text.split(maxsplit=2)
     if len(parts) != 2:
         return 0
@@ -690,6 +685,8 @@ def _direct_size_hint_from_text(text: str) -> int:
     multiplier = _SIZE_HINT_MULTIPLIERS.get(unit_text.lower())
     if multiplier is None:
         return 0
+    if value_text.isdecimal():
+        return int(value_text) * multiplier
     try:
         return int(float(value_text) * multiplier)
     except ValueError:
