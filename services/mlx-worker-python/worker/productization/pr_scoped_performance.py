@@ -2667,6 +2667,8 @@ def _glob_literal_prefix(glob: str) -> str:
 
 
 def _glob_matches_path(path: str, glob: str) -> bool:
+    if not _glob_has_magic(glob):
+        return path == glob
     prefix = _glob_literal_prefix(glob)
     if prefix and not path.startswith(prefix):
         return False
