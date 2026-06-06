@@ -40,12 +40,13 @@ class RerankCore:
 
         ranked = self._rank_scores(scores, top_k=int(request.top_k) if request.top_k else None)
 
-        return inference_pb2.RerankResponse(
-            items=[
-                inference_pb2.RerankItem(index=index, score=score)
-                for index, score in ranked
-            ]
-        )
+        response = inference_pb2.RerankResponse()
+        add_item = response.items.add
+        for index, score in ranked:
+            item = add_item()
+            item.index = index
+            item.score = score
+        return response
 
     @staticmethod
     def _rank_scores(scores: list[float], *, top_k: int | None) -> list[tuple[int, float]]:
