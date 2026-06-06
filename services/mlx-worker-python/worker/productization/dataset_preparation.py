@@ -489,13 +489,14 @@ def list_dataset_versions(
 
 
 def _iter_dataset_version_manifest_paths(versions_root: Path) -> Iterable[str]:
+    is_file = os.path.isfile
     try:
         with os.scandir(versions_root) as entries:
             for entry in entries:
                 if not entry.is_dir(follow_symlinks=False):
                     continue
-                manifest_path = os.path.join(entry.path, "dataset-version.json")
-                if os.path.isfile(manifest_path):
+                manifest_path = f"{entry.path}/dataset-version.json"
+                if is_file(manifest_path):
                     yield manifest_path
     except OSError:
         return
