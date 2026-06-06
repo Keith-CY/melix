@@ -368,6 +368,46 @@ def test_normalize_trajectory_provenance_copies_nested_json_containers() -> None
     assert copied_quality["components"][0]["score"] == 1.0
 
 
+def test_normalize_trajectory_provenance_copies_containers_without_empty_string_compare() -> None:
+    class DictSubclass(dict):
+        def __eq__(self, other: object) -> bool:
+            raise AssertionError("container values should not be compared to empty strings")
+
+    source = {
+        "trajectory_quality_metrics": DictSubclass(
+            {"reward_coverage_count": 1, "components": [{"name": "format"}]}
+        )
+    }
+
+    normalized = normalize_trajectory_provenance(source)
+
+    assert normalized["trajectory_quality_metrics"] == {
+        "reward_coverage_count": 1,
+        "components": [{"name": "format"}],
+    }
+    assert normalized["trajectory_quality_metrics"] is not source["trajectory_quality_metrics"]
+
+
+def test_normalize_trajectory_provenance_keeps_scalars_and_skips_empty_values() -> None:
+    class EmptySentinel:
+        def __eq__(self, other: object) -> bool:
+            return other == ""
+
+    source = {
+        "trajectory_dataset_id": "agentic-snapshot",
+        "trajectory_dataset_version": "",
+        "trajectory_toolset_version": 3,
+        "trajectory_registry_schema_version": EmptySentinel(),
+    }
+
+    normalized = normalize_trajectory_provenance(source)
+
+    assert normalized == {
+        "trajectory_dataset_id": "agentic-snapshot",
+        "trajectory_toolset_version": 3,
+    }
+
+
 def test_copy_trajectory_provenance_value_falls_back_for_custom_mutables() -> None:
     class CustomMutable:
         def __init__(self, value: int) -> None:
