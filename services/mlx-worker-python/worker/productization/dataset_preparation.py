@@ -489,13 +489,14 @@ def list_dataset_versions(
 
 
 def _iter_dataset_version_manifest_paths(versions_root: Path) -> Iterable[str]:
+    is_file = os.path.isfile
     try:
         with os.scandir(versions_root) as entries:
             for entry in entries:
                 if not entry.is_dir(follow_symlinks=False):
                     continue
-                manifest_path = os.path.join(entry.path, "dataset-version.json")
-                if os.path.isfile(manifest_path):
+                manifest_path = f"{entry.path}/dataset-version.json"
+                if is_file(manifest_path):
                     yield manifest_path
     except OSError:
         return
@@ -955,7 +956,9 @@ def _quality_summary(
     failed_count: int,
     latency_ms: float,
 ) -> dict[str, Any]:
-    success_count = len(train_rows) + len(validation_rows)
+    train_count = len(train_rows)
+    validation_count = len(validation_rows)
+    success_count = train_count + validation_count
     total_count = success_count + failed_count
     success_rate = success_count / total_count if total_count else 0.0
     score = round(success_rate, 6)
@@ -976,8 +979,8 @@ def _quality_summary(
         "grade": _quality_grade(score),
         "success_rate": success_rate,
         "failed_count": failed_count,
-        "train_count": len(train_rows),
-        "validation_count": len(validation_rows),
+        "train_count": train_count,
+        "validation_count": validation_count,
         "pii_mask_count": int(quality_controls.get("pii_mask_count", 0) or 0),
         "dedup_ratio": (exact_dedup_count + fuzzy_dedup_count) / source_record_count if source_record_count else 0,
         "mean_output_length": output_length_total / output_length_count if output_length_count else 0,
