@@ -30,7 +30,9 @@ def test_run_swift_smoke_uses_menubar_specific_swift_harness(
     class _Completed:
         returncode = 0
         stdout = (
-            'M15_DESKTOP_POLISH_SMOKE={"chat":{"presentation_lag_ms":1,"presentation_flush_count":2},'
+            'M15_DESKTOP_POLISH_SMOKE={"chat":{"presentation_lag_ms":1,"presentation_flush_count":2,'
+            '"stream_event_count":4,"token_delta_count":1,'
+            '"stream_transcript_bytes":12,"transcript_parity_mismatch_count":0},'
             '"signals":{"top_banner_title":"Download Recovery Available","download_recovery_visible":1,'
             '"update_signal_visible":1,"update_signal_dismissible":1},'
             '"persistence":{"operator_session_restore_ms":3,"operator_session_persist_write_ms":4,'
@@ -75,7 +77,14 @@ def test_run_swift_smoke_uses_menubar_specific_swift_harness(
 def test_run_smoke_projects_payload(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     module = _load_module()
     marker_payload = {
-        "chat": {"presentation_lag_ms": 2, "presentation_flush_count": 3},
+        "chat": {
+            "presentation_lag_ms": 2,
+            "presentation_flush_count": 3,
+            "stream_event_count": 4,
+            "token_delta_count": 1,
+            "stream_transcript_bytes": 12,
+            "transcript_parity_mismatch_count": 0,
+        },
         "signals": {
             "top_banner_title": "Download Recovery Available",
             "download_recovery_visible": 1,
@@ -97,6 +106,10 @@ def test_run_smoke_projects_payload(monkeypatch: pytest.MonkeyPatch, tmp_path: P
 
     assert payload["ok"] is True
     assert payload["repo_root"] == str(tmp_path)
+    assert payload["chat"]["stream_event_count"] == 4
+    assert payload["chat"]["token_delta_count"] == 1
+    assert payload["chat"]["stream_transcript_bytes"] == 12
+    assert payload["chat"]["transcript_parity_mismatch_count"] == 0
     assert payload["signals"]["top_banner_title"] == "Download Recovery Available"
     assert payload["signals"]["download_recovery_visible"] is True
     assert payload["persistence"]["restored_selected_tool_section"] == "downloads"
@@ -142,7 +155,9 @@ def test_run_swift_smoke_retries_transient_swiftpm_lock_conflicts(
         _Completed(
             returncode=0,
             stdout=(
-                'M15_DESKTOP_POLISH_SMOKE={"chat":{"presentation_lag_ms":1,"presentation_flush_count":2},'
+                'M15_DESKTOP_POLISH_SMOKE={"chat":{"presentation_lag_ms":1,"presentation_flush_count":2,'
+                '"stream_event_count":4,"token_delta_count":1,'
+                '"stream_transcript_bytes":12,"transcript_parity_mismatch_count":0},'
                 '"signals":{"top_banner_title":"Download Recovery Available","download_recovery_visible":1,'
                 '"update_signal_visible":1,"update_signal_dismissible":1},'
                 '"persistence":{"operator_session_restore_ms":3,"operator_session_persist_write_ms":4,'

@@ -2017,7 +2017,7 @@ private struct ChatPresentationFragment: Sendable {
     let title: String
     let detail: String
     var remainingText: String
-    let firstQueuedAt: Date
+    let firstQueuedAt: ContinuousClock.Instant
 }
 
 private enum RuntimeLoraWorkflowOperation: String, Sendable {
@@ -3154,6 +3154,7 @@ public final class RuntimeViewModel {
     private var activeToolEntryIDs: [String: String] = [:]
     private var chatPresentationFragments: [ChatPresentationFragment] = []
     private var chatPresentationTask: Task<Void, Never>?
+    private var chatPresentationLastFlushAt: ContinuousClock.Instant?
     private var chatPresentationMaxLagMs = 0.0
     private var chatPresentationFlushCount = 0.0
     private var persistedServerSessions: [DesktopServerSessionState] = []
@@ -7388,8 +7389,14 @@ public final class RuntimeViewModel {
             var recordedFirstDelta = false
             var reasoningDeltaCount = 0
             var toolDeltaCount = 0
+            var streamEventCount = 0
+            var tokenDeltaCount = 0
+            var streamedAssistantText = ""
+            var transcriptParityMismatchCount = 0
 
             for try await event in execution.stream {
+                streamEventCount += 1
+                var shouldNotifyAfterEvent = true
                 if recordedFirstDelta == false {
                     switch event {
                     case .tokenDelta, .reasoningDelta, .toolCallDelta:
@@ -7413,22 +7420,34 @@ public final class RuntimeViewModel {
                 case .decodeStarted(let decodeHandle, _):
                     chatStatusText = decodeHandle.isEmpty ? "Decode" : "Decode • \(decodeHandle)"
                 case .tokenDelta(let text):
+                    tokenDeltaCount += 1
+                    streamedAssistantText += text
                     appendAssistantDelta(text, requestID: execution.requestID)
+                    shouldNotifyAfterEvent = false
                     await Task.yield()
                 case .reasoningDelta(let text):
                     reasoningDeltaCount += 1
                     appendReasoningDelta(text, requestID: execution.requestID)
+                    shouldNotifyAfterEvent = false
                     await Task.yield()
                 case .toolCallDelta(let callID, let toolName, let argumentsFragment):
                     toolDeltaCount += 1
-                    appendToolDelta(callID: callID, toolName: toolName, argumentsFragment: argumentsFragment)
+                    appendToolDelta(
+                        callID: callID,
+                        toolName: toolName,
+                        argumentsFragment: argumentsFragment
+                    )
+                    shouldNotifyAfterEvent = false
                     await Task.yield()
                 case .annotationDelta, .toolResultDelta:
-                    break
+                    shouldNotifyAfterEvent = false
                 case .usage(let promptTokens, let completionTokens):
                     lastChatUsageText = "\(promptTokens) prompt • \(completionTokens) completion"
                 case .completed(let finishReason, let assistantText, let reasoningText):
                     flushPendingChatPresentation()
+                    if !streamedAssistantText.isEmpty, !assistantText.isEmpty, streamedAssistantText != assistantText {
+                        transcriptParityMismatchCount += 1
+                    }
                     chatStatusText = finishReason.isEmpty ? "Completed" : "Completed • \(finishReason)"
                     finalizeAssistantText(assistantText, requestID: execution.requestID)
                     finalizeReasoningText(reasoningText, requestID: execution.requestID)
@@ -7450,7 +7469,9 @@ public final class RuntimeViewModel {
                     chatStatusText = "Streaming"
                 }
 
-                notifyStateChanged()
+                if shouldNotifyAfterEvent {
+                    notifyStateChanged()
+                }
             }
 
             flushPendingChatPresentation()
@@ -7466,6 +7487,16 @@ public final class RuntimeViewModel {
             await metrics.record(
                 name: "menu.chat_tool_delta_count",
                 valueMs: Double(toolDeltaCount)
+            )
+            await metrics.record(name: "menu.chat_stream_event_count", valueMs: Double(streamEventCount))
+            await metrics.record(name: "menu.chat_token_delta_count", valueMs: Double(tokenDeltaCount))
+            await metrics.record(
+                name: "menu.chat_stream_transcript_bytes",
+                valueMs: Double(streamedAssistantText.utf8.count)
+            )
+            await metrics.record(
+                name: "menu.chat_transcript_parity_mismatch_count",
+                valueMs: Double(transcriptParityMismatchCount)
             )
             await recordChatPresentationMetricsIfNeeded()
             commitAssistantMessageIfNeeded()
@@ -14731,11 +14762,12 @@ public final class RuntimeViewModel {
         }
     }
 
-    private func appendAssistantDelta(_ text: String, requestID: String) {
-        guard !text.isEmpty else { return }
+    @discardableResult
+    private func appendAssistantDelta(_ text: String, requestID: String) -> Bool {
+        guard !text.isEmpty else { return false }
         let entryID = activeAssistantEntryID ?? "assistant-\(requestID)"
         activeAssistantEntryID = entryID
-        enqueueChatPresentationText(
+        return enqueueChatPresentationText(
             text,
             entryID: entryID,
             kind: .assistant,
@@ -14744,11 +14776,12 @@ public final class RuntimeViewModel {
         )
     }
 
-    private func appendReasoningDelta(_ text: String, requestID: String) {
-        guard !text.isEmpty else { return }
+    @discardableResult
+    private func appendReasoningDelta(_ text: String, requestID: String) -> Bool {
+        guard !text.isEmpty else { return false }
         let entryID = activeReasoningEntryID ?? "reasoning-\(requestID)"
         activeReasoningEntryID = entryID
-        enqueueChatPresentationText(
+        return enqueueChatPresentationText(
             text,
             entryID: entryID,
             kind: .reasoning,
@@ -14757,13 +14790,14 @@ public final class RuntimeViewModel {
         )
     }
 
-    private func appendToolDelta(callID: String, toolName: String, argumentsFragment: String) {
+    @discardableResult
+    private func appendToolDelta(callID: String, toolName: String, argumentsFragment: String) -> Bool {
         let normalizedCallID = callID.isEmpty ? UUID().uuidString : callID
         let entryID = activeToolEntryIDs[normalizedCallID] ?? "tool-\(normalizedCallID)"
         activeToolEntryIDs[normalizedCallID] = entryID
         let title = toolName.isEmpty ? "Tool Call" : "Tool • \(toolName)"
-        guard !argumentsFragment.isEmpty else { return }
-        enqueueChatPresentationText(
+        guard !argumentsFragment.isEmpty else { return false }
+        return enqueueChatPresentationText(
             argumentsFragment,
             entryID: entryID,
             kind: .tool,
@@ -14800,14 +14834,15 @@ public final class RuntimeViewModel {
         }
     }
 
+    @discardableResult
     private func enqueueChatPresentationText(
         _ text: String,
         entryID: String,
         kind: DesktopChatTranscriptEntry.Kind,
         title: String,
         detail: String
-    ) {
-        guard !text.isEmpty else { return }
+    ) -> Bool {
+        guard !text.isEmpty else { return false }
         if let index = chatPresentationFragments.indices.last,
            chatPresentationFragments[index].entryID == entryID,
            chatPresentationFragments[index].kind == kind,
@@ -14822,14 +14857,13 @@ public final class RuntimeViewModel {
                     title: title,
                     detail: detail,
                     remainingText: text,
-                    firstQueuedAt: Date()
+                    firstQueuedAt: ContinuousClock().now
                 )
             )
         }
-        if chatPresentationTask == nil {
-            _ = flushNextChatPresentationChunk(forceComplete: false)
-        }
+        let didFlush = flushNextChatPresentationChunkIfCadenceAllows()
         startChatPresentationLoopIfNeeded()
+        return didFlush
     }
 
     private func startChatPresentationLoopIfNeeded() {
@@ -14851,12 +14885,15 @@ public final class RuntimeViewModel {
         }
 
         while Task.isCancelled == false {
-            guard flushNextChatPresentationChunk(forceComplete: false) else {
-                return
+            let waitDuration = chatPresentationWaitUntilNextFlush()
+            if waitDuration > .zero {
+                do {
+                    try await Task.sleep(for: waitDuration)
+                } catch {
+                    return
+                }
             }
-            do {
-                try await Task.sleep(for: Self.chatPresentationFlushInterval)
-            } catch {
+            guard flushNextChatPresentationChunk(forceComplete: false) else {
                 return
             }
         }
@@ -14866,6 +14903,29 @@ public final class RuntimeViewModel {
         chatPresentationTask?.cancel()
         chatPresentationTask = nil
         while flushNextChatPresentationChunk(forceComplete: true) {}
+    }
+
+    private func flushNextChatPresentationChunkIfCadenceAllows() -> Bool {
+        guard chatPresentationCanFlushNow() else {
+            return false
+        }
+        return flushNextChatPresentationChunk(forceComplete: false)
+    }
+
+    private func chatPresentationCanFlushNow() -> Bool {
+        guard let chatPresentationLastFlushAt else {
+            return true
+        }
+        return ContinuousClock().now >= chatPresentationLastFlushAt + Self.chatPresentationFlushInterval
+    }
+
+    private func chatPresentationWaitUntilNextFlush() -> Duration {
+        guard let chatPresentationLastFlushAt else {
+            return .zero
+        }
+        let nextFlushAt = chatPresentationLastFlushAt + Self.chatPresentationFlushInterval
+        let remaining = nextFlushAt - ContinuousClock().now
+        return remaining > .zero ? remaining : .zero
     }
 
     @discardableResult
@@ -14881,7 +14941,7 @@ public final class RuntimeViewModel {
             return false
         }
 
-        let lagMs = Date().timeIntervalSince(fragment.firstQueuedAt) * 1_000
+        let lagMs = Self.milliseconds(from: fragment.firstQueuedAt.duration(to: ContinuousClock().now))
         chatPresentationMaxLagMs = max(chatPresentationMaxLagMs, lagMs)
         chatPresentationFlushCount += 1
         appendBody(
@@ -14891,6 +14951,7 @@ public final class RuntimeViewModel {
             title: fragment.title,
             detail: fragment.detail
         )
+        chatPresentationLastFlushAt = ContinuousClock().now
 
         if remainder.isEmpty == false {
             fragment.remainingText = remainder
@@ -14905,6 +14966,7 @@ public final class RuntimeViewModel {
         chatPresentationTask?.cancel()
         chatPresentationTask = nil
         chatPresentationFragments.removeAll()
+        chatPresentationLastFlushAt = nil
         chatPresentationMaxLagMs = 0
         chatPresentationFlushCount = 0
     }
@@ -14915,6 +14977,11 @@ public final class RuntimeViewModel {
         }
         await metrics.record(name: "menu.chat_presentation_lag_ms", valueMs: chatPresentationMaxLagMs)
         await metrics.record(name: "menu.chat_presentation_flush_count", valueMs: chatPresentationFlushCount)
+    }
+
+    private static func milliseconds(from duration: Duration) -> Double {
+        (Double(duration.components.seconds) * 1_000.0)
+            + (Double(duration.components.attoseconds) / 1_000_000_000_000_000.0)
     }
 
     private static func consumePresentationPrefix(

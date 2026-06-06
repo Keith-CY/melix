@@ -19,7 +19,14 @@ def test_run_smoke_projects_the_swift_payload(tmp_path: Path, monkeypatch: pytes
         m15_desktop_polish_smoke,
         "run_swift_smoke",
         lambda repo_root: {
-            "chat": {"presentation_lag_ms": 24.0, "presentation_flush_count": 3},
+            "chat": {
+                "presentation_lag_ms": 24.0,
+                "presentation_flush_count": 3,
+                "stream_event_count": 4,
+                "token_delta_count": 1,
+                "stream_transcript_bytes": 12,
+                "transcript_parity_mismatch_count": 0,
+            },
             "signals": {
                 "top_banner_title": "Download Recovery Available",
                 "download_recovery_visible": 1,
@@ -45,6 +52,8 @@ def test_run_smoke_projects_the_swift_payload(tmp_path: Path, monkeypatch: pytes
     assert payload["ok"] is True
     assert payload["repo_root"] == str(tmp_path)
     assert payload["chat"]["presentation_flush_count"] == 3
+    assert payload["chat"]["stream_event_count"] == 4
+    assert payload["chat"]["transcript_parity_mismatch_count"] == 0
     assert payload["signals"]["download_recovery_visible"] is True
     assert payload["signals"]["update_signal_dismissible"] is True
     assert payload["persistence"]["restored_selected_tool_section"] == "Downloads"

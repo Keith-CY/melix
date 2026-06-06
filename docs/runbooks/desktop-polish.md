@@ -23,6 +23,10 @@ The smoke wraps a focused Swift test suite and emits a machine-readable payload 
 - `chat`
   - `presentation_lag_ms`
   - `presentation_flush_count`
+  - `stream_event_count`
+  - `token_delta_count`
+  - `stream_transcript_bytes`
+  - `transcript_parity_mismatch_count`
 - `signals`
   - `top_banner_title`
   - `download_recovery_visible`
@@ -72,6 +76,11 @@ uv run --project services/mlx-worker-python pytest tests/integration/test_deskto
 
 - If `presentation_flush_count <= 1`, inspect the UI-side chat presentation queue in
   `RuntimeViewModel` before assuming worker-side stream chunking regressed.
+- If `presentation_flush_count` is close to `token_delta_count` during high-rate local decode,
+  inspect the UI cadence gate before changing worker-side stream delivery.
+- If `transcript_parity_mismatch_count > 0`, treat the run as a transcript-fidelity regression:
+  compare the raw token delta accumulator with the terminal assistant transcript before changing
+  markdown rendering.
 - If the top banner is not `Download Recovery Available`, inspect the download queue payload from
   `registry_snapshot` and confirm the row still reports `resume_ready=true`.
 - If `grounded_surface_count` or `grounded_tool_section_count` drops, inspect the corresponding

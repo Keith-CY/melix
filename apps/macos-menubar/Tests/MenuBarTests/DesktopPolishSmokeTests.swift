@@ -164,28 +164,42 @@ struct DesktopPolishSmokeTests {
         let surfaceGroundingCount = groundedSurfaceCount(for: groundingViewModel)
         let toolSectionGroundingCount = groundedToolSectionCount(for: groundingViewModel)
 
+        let chatPayload: [String: Any] = [
+            "presentation_lag_ms": metricsSnapshot["menu.chat_presentation_lag_ms"] ?? -1,
+            "presentation_flush_count": metricsSnapshot["menu.chat_presentation_flush_count"] ?? -1,
+            "stream_event_count": metricsSnapshot["menu.chat_stream_event_count"] ?? -1,
+            "token_delta_count": metricsSnapshot["menu.chat_token_delta_count"] ?? -1,
+            "stream_transcript_bytes": metricsSnapshot["menu.chat_stream_transcript_bytes"] ?? -1,
+            "transcript_parity_mismatch_count": metricsSnapshot["menu.chat_transcript_parity_mismatch_count"] ?? -1,
+        ]
+        let signalsPayload: [String: Any] = [
+            "top_banner_title": viewModel.desktopBannerState?.title ?? "",
+            "download_recovery_visible": viewModel.desktopSignalStates.contains {
+                $0.title == "Download Recovery Available"
+            } ? 1 : 0,
+            "update_signal_visible": viewModel.desktopSignalStates.contains {
+                $0.title == "Update available: 0.2.0"
+            } ? 1 : 0,
+            "update_signal_dismissible": viewModel.desktopSignalStates.contains {
+                $0.title == "Update available: 0.2.0" && $0.isDismissible
+            } ? 1 : 0,
+        ]
+        let persistencePayload: [String: Any] = [
+            "operator_session_restore_ms": restoreMs,
+            "operator_session_persist_write_ms": persistWriteMs,
+            "persisted_download_queue_count": persistedQueue.count,
+            "restored_download_queue_count": restoredViewModel.downloadQueue.count,
+            "restored_selected_tool_section": restoredSelectedToolSection.rawValue,
+        ]
+        let navigationPayload: [String: Any] = [
+            "grounded_surface_count": surfaceGroundingCount,
+            "grounded_tool_section_count": toolSectionGroundingCount,
+        ]
         let payload: [String: Any] = [
-            "chat": [
-                "presentation_lag_ms": metricsSnapshot["menu.chat_presentation_lag_ms"] ?? -1,
-                "presentation_flush_count": metricsSnapshot["menu.chat_presentation_flush_count"] ?? -1,
-            ],
-            "signals": [
-                "top_banner_title": viewModel.desktopBannerState?.title ?? "",
-                "download_recovery_visible": viewModel.desktopSignalStates.contains(where: { $0.title == "Download Recovery Available" }) ? 1 : 0,
-                "update_signal_visible": viewModel.desktopSignalStates.contains(where: { $0.title == "Update available: 0.2.0" }) ? 1 : 0,
-                "update_signal_dismissible": viewModel.desktopSignalStates.contains(where: { $0.title == "Update available: 0.2.0" && $0.isDismissible }) ? 1 : 0,
-            ],
-            "persistence": [
-                "operator_session_restore_ms": restoreMs,
-                "operator_session_persist_write_ms": persistWriteMs,
-                "persisted_download_queue_count": persistedQueue.count,
-                "restored_download_queue_count": restoredViewModel.downloadQueue.count,
-                "restored_selected_tool_section": restoredSelectedToolSection.rawValue,
-            ],
-            "navigation": [
-                "grounded_surface_count": surfaceGroundingCount,
-                "grounded_tool_section_count": toolSectionGroundingCount,
-            ],
+            "chat": chatPayload,
+            "signals": signalsPayload,
+            "persistence": persistencePayload,
+            "navigation": navigationPayload,
         ]
 
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
@@ -194,6 +208,10 @@ struct DesktopPolishSmokeTests {
 
         #expect((metricsSnapshot["menu.chat_presentation_lag_ms"] ?? -1) >= 0)
         #expect((metricsSnapshot["menu.chat_presentation_flush_count"] ?? 0) > 1)
+        #expect(metricsSnapshot["menu.chat_stream_event_count"] == 4)
+        #expect(metricsSnapshot["menu.chat_token_delta_count"] == 1)
+        #expect(metricsSnapshot["menu.chat_stream_transcript_bytes"] == Double(smoothedAssistantText.utf8.count))
+        #expect(metricsSnapshot["menu.chat_transcript_parity_mismatch_count"] == 0)
         #expect(viewModel.desktopBannerState?.title == "Download Recovery Available")
         #expect(persistedQueue.count == 1)
         #expect(restoredViewModel.downloadQueue.count == 1)

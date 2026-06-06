@@ -11893,6 +11893,55 @@ struct RuntimeViewModelTests {
         #expect((metricsSnapshot["menu.chat_presentation_flush_count"] ?? 0) > 1)
     }
 
+    @Test("chat prompt coalesces render cadence without dropping stream transcript events")
+    @MainActor
+    func chatPromptCoalescesRenderCadenceWithoutDroppingStreamTranscriptEvents() async throws {
+        let client = FakeControlPlaneXPCClient()
+        let tokenFragments = (0..<240).map { index in
+            "t\(String(format: "%03d", index))|"
+        }
+        let assistantText = tokenFragments.joined()
+        let streamEvents: [ControlPlaneChatStreamEvent] = [
+            .queued(lane: "text.decode.interactive", queuePosition: 0, backpressure: 0),
+            .admitted(lane: "text.decode.interactive", workerID: "swift-text-worker", queueDelayMs: 0.5),
+        ] + tokenFragments.map(ControlPlaneChatStreamEvent.tokenDelta) + [
+            .completed(finishReason: "stop", assistantText: assistantText, reasoningText: ""),
+        ]
+        await client.configureChatEvents(streamEvents)
+        let metrics = MenuBarMetricsStore()
+        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+        var visibleAssistantBodies: [String] = []
+        var lastVisibleAssistantBody = ""
+        var completedCallbackAssistantBody = ""
+        viewModel.onStateChanged = {
+            let assistantBody = viewModel.chatTranscript.first { $0.kind == .assistant }?.body ?? ""
+            if assistantBody.isEmpty == false, assistantBody != lastVisibleAssistantBody {
+                visibleAssistantBodies.append(assistantBody)
+                lastVisibleAssistantBody = assistantBody
+            }
+            if completedCallbackAssistantBody.isEmpty, viewModel.chatStatusText.hasPrefix("Completed") {
+                completedCallbackAssistantBody = assistantBody
+            }
+        }
+
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.chatComposerText = "Stress render cadence"
+
+        await viewModel.submitChatPrompt()
+
+        let finalAssistantEntry = try #require(viewModel.chatTranscript.first { $0.kind == .assistant })
+        let metricsSnapshot = await metrics.snapshot()
+        #expect(finalAssistantEntry.body == assistantText)
+        #expect(completedCallbackAssistantBody == assistantText)
+        #expect(visibleAssistantBodies.count <= 8)
+        #expect(metricsSnapshot["menu.chat_stream_event_count"] == Double(streamEvents.count))
+        #expect(metricsSnapshot["menu.chat_token_delta_count"] == Double(tokenFragments.count))
+        #expect(metricsSnapshot["menu.chat_stream_transcript_bytes"] == Double(assistantText.utf8.count))
+        #expect(metricsSnapshot["menu.chat_transcript_parity_mismatch_count"] == 0)
+        #expect((metricsSnapshot["menu.chat_presentation_flush_count"] ?? 0) <= 8)
+    }
+
     @Test("chat prompt creates a transient assistant pending row before the first token")
     @MainActor
     func chatPromptCreatesTransientAssistantPendingRowBeforeFirstToken() async throws {
