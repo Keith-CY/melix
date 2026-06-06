@@ -240,6 +240,38 @@ def test_load_trajectory_provenance_from_snapshot_manifest_reads_bytes(
     }
 
 
+def test_load_trajectory_provenance_from_snapshot_manifest_accepts_dict_subclass(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ManifestPayload(dict[str, object]):
+        pass
+
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(b"{}")
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_JSON_LOADS",
+        lambda _payload: ManifestPayload(
+            {
+                "format": "agentic_tool_trace",
+                "source_dataset_id": "agentic-snapshot",
+                "version": "2026-05-25",
+                "trajectory_trace_digest": "abc123",
+            }
+        ),
+    )
+
+    assert load_trajectory_provenance_from_snapshot_manifest(manifest_path) == {
+        "trajectory_dataset_id": "agentic-snapshot",
+        "trajectory_dataset_version": "2026-05-25",
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_snapshot_manifest_path": str(manifest_path),
+        "trajectory_split": "train",
+        "trajectory_trace_digest": "abc123",
+    }
+
+
 def test_trajectory_provenance_helpers_ignore_empty_or_unrelated_inputs(
     tmp_path: Path,
 ) -> None:

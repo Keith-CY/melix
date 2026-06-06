@@ -177,7 +177,7 @@ def load_trajectory_provenance_from_snapshot_manifest(
     if not isinstance(manifest_path, Path):
         manifest_path = Path(manifest_path)
     payload = loads(read_bytes(manifest_path))
-    if not isinstance(payload, dict):
+    if type(payload) is not dict and not isinstance(payload, dict):
         return {}
     return extract_provenance(
         payload,

@@ -455,6 +455,7 @@ def _iter_python_native_binary_candidates(
                     entries = sorted(iterator, key=lambda entry: entry.name)
             except OSError:
                 continue
+            include_current_runtime_executables = include_runtime_executables and current.name == "bin"
             for entry in reversed(entries):
                 try:
                     if entry.is_dir(follow_symlinks=False):
@@ -464,11 +465,10 @@ def _iter_python_native_binary_candidates(
                         continue
                 except OSError:
                     continue
-                suffix = os.path.splitext(entry.name)[1]
-                if suffix in _PYTHON_NATIVE_BINARY_SUFFIXES:
+                if entry.name.endswith(_PYTHON_NATIVE_BINARY_SUFFIXES):
                     selected.append(Path(entry.path))
                     continue
-                if not include_runtime_executables or os.path.basename(os.path.dirname(entry.path)) != "bin":
+                if not include_current_runtime_executables:
                     continue
                 if entry.name in _PYTHON_RUNTIME_EXECUTABLE_NAMES or entry.name.startswith("python3."):
                     selected.append(Path(entry.path))
