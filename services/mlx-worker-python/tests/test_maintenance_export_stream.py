@@ -107,6 +107,38 @@ def test_export_results_stream_yields_failed_event_on_export_error(tmp_path: Pat
     assert events[0].failed.message == "export bundle unavailable"
 
 
+def test_export_results_stream_writes_json_named_temporary_bundle(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from worker import grpc_server as grpc_server_module
+
+    service = build_service(tmp_path)
+    jobs_root = tmp_path / "json-temporary-bundle"
+    jobs_root.mkdir()
+    observed_path: Path | None = None
+
+    def fake_write_export_bundle(jobs_root_arg: Path, export_path_arg: Path) -> Path:
+        nonlocal observed_path
+        observed_path = Path(export_path_arg)
+        observed_path.write_text("{}", encoding="utf-8")
+        return observed_path
+
+    monkeypatch.setattr(grpc_server_module, "write_export_bundle", fake_write_export_bundle)
+
+    events = list(
+        service.ExportResultsStream(
+            maintenance_pb2.ExportResultsRequest(output_dir=str(jobs_root)),
+            context=None,
+        )
+    )
+
+    assert events[-1].HasField("completed")
+    assert observed_path is not None
+    assert observed_path.name.startswith("export-bundle-")
+    assert observed_path.name.endswith(".json.tmp")
+
+
 def test_export_results_stream_keeps_active_reader_stable_during_concurrent_export(
     tmp_path: Path,
     monkeypatch,

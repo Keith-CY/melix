@@ -530,7 +530,7 @@ class WorkerMaintenanceService(maintenance_pb2_grpc.MaintenanceServiceServicer):
         temp_fd, temp_path = tempfile.mkstemp(
             dir=export_path.parent,
             prefix="export-bundle-",
-            suffix=".tmp",
+            suffix=".json.tmp",
         )
         os.close(temp_fd)
         temp_bundle_path = Path(temp_path)
