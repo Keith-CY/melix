@@ -70,6 +70,13 @@ struct WorkerClientTests {
         }
     }
 
+    @Test("model-operations default streaming export capability is disabled")
+    func modelOperationsDefaultStreamingExportCapabilityIsDisabled() async {
+        let client = DefaultModelOperationsWorkerClient()
+
+        #expect(await client.supportsExportResultsStream() == false)
+    }
+
     @Test("worker memory evidence normalizes shared runtime stats fields")
     func workerMemoryEvidenceNormalizesSharedRuntimeStatsFields() {
         var stats = Melix_Worker_V1_RuntimeStats()

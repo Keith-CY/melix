@@ -12,6 +12,7 @@ service MaintenanceService {
   rpc RunBenchMatrix(RunBenchMatrixRequest) returns (RunBenchMatrixResponse);
   rpc RunEvaluation(RunEvaluationRequest) returns (RunEvaluationResponse);
   rpc ExportResults(ExportResultsRequest) returns (ExportResultsResponse);
+  rpc ExportResultsStream(ExportResultsRequest) returns (stream ExportResultsEvent);
   rpc SubmitResults(SubmitResultsRequest) returns (SubmitResultsResponse);
   rpc SearchHubModels(SearchHubModelsRequest) returns (SearchHubModelsResponse);
   rpc GetHubModelCard(GetHubModelCardRequest) returns (GetHubModelCardResponse);
@@ -371,6 +372,33 @@ message ExportResultsResponse {
   ErrorStatus error = 2;
   string export_json = 3;
   string export_path = 4;
+}
+
+message ExportResultsStarted {
+  string export_path = 1;
+  uint64 total_bytes = 2;
+  uint64 chunk_size = 3;
+}
+
+message ExportResultsChunk {
+  uint64 sequence = 1;
+  bytes data = 2;
+}
+
+message ExportResultsCompleted {
+  string export_path = 1;
+  uint64 total_bytes = 2;
+  uint64 chunk_count = 3;
+  string sha256 = 4;
+}
+
+message ExportResultsEvent {
+  oneof payload {
+    ExportResultsStarted started = 1;
+    ExportResultsChunk chunk = 2;
+    ExportResultsCompleted completed = 3;
+    ErrorStatus failed = 4;
+  }
 }
 
 message SubmitResultsRequest {

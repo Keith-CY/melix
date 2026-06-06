@@ -718,6 +718,18 @@ final class MaintenanceRPCService: Melix_Worker_V1_MaintenanceService.SimpleServ
         return response
     }
 
+    func exportResultsStream(
+        request: Melix_Worker_V1_ExportResultsRequest,
+        response: GRPCCore.RPCWriter<Melix_Worker_V1_ExportResultsEvent>,
+        context: GRPCCore.ServerContext
+    ) async throws {
+        metrics.increment("swift_text.unimplemented_rpc_count")
+
+        var event = Melix_Worker_V1_ExportResultsEvent()
+        event.failed = makeUnimplementedStatus("ExportResultsStream is handled by the Python worker family.")
+        try await response.write(event)
+    }
+
     func submitResults(
         request: Melix_Worker_V1_SubmitResultsRequest,
         context: GRPCCore.ServerContext

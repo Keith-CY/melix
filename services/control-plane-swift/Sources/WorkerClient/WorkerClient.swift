@@ -167,6 +167,8 @@ public protocol ModelOperationsWorkerClientProtocol: WorkerClient {
         request: Melix_Worker_V1_ExportResultsRequest
     ) async throws -> Melix_Worker_V1_ExportResultsResponse
 
+    func supportsExportResultsStream() async -> Bool
+
     func submitResults(
         request: Melix_Worker_V1_SubmitResultsRequest
     ) async throws -> Melix_Worker_V1_SubmitResultsResponse
@@ -179,6 +181,16 @@ public extension ModelOperationsWorkerClientProtocol {
         _ = request
         throw WorkerClientError.unavailable
     }
+
+    func supportsExportResultsStream() async -> Bool {
+        false
+    }
+}
+
+public protocol StreamingExportResultsWorkerClientProtocol: ModelOperationsWorkerClientProtocol {
+    func exportResultsStream(
+        request: Melix_Worker_V1_ExportResultsRequest
+    ) async throws -> Melix_Worker_V1_ExportResultsResponse
 }
 
 public struct NullWorkerClient: WorkerRoutingClient {

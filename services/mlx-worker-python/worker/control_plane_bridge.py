@@ -50,6 +50,7 @@ def main() -> None:
             "run-bench-matrix",
             "run-evaluation",
             "export-results",
+            "export-results-stream",
             "submit-results",
         ],
     )
@@ -173,6 +174,11 @@ def main() -> None:
                 stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
                 request = maintenance_pb2.ExportResultsRequest.FromString(request_bytes)
                 emit_message(stub.ExportResults(request).SerializeToString())
+            elif args.command == "export-results-stream":
+                stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
+                request = maintenance_pb2.ExportResultsRequest.FromString(request_bytes)
+                for event in stub.ExportResultsStream(request):
+                    emit_message(event.SerializeToString())
             elif args.command == "submit-results":
                 stub = maintenance_pb2_grpc.MaintenanceServiceStub(channel)
                 request = maintenance_pb2.SubmitResultsRequest.FromString(request_bytes)

@@ -111,6 +111,19 @@ public enum Melix_Worker_V1_MaintenanceService: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "ExportResultsStream" metadata.
+        public enum ExportResultsStream: Sendable {
+            /// Request type for "ExportResultsStream".
+            public typealias Input = Melix_Worker_V1_ExportResultsRequest
+            /// Response type for "ExportResultsStream".
+            public typealias Output = Melix_Worker_V1_ExportResultsEvent
+            /// Descriptor for "ExportResultsStream".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "melix.worker.v1.MaintenanceService"),
+                method: "ExportResultsStream",
+                type: .serverStreaming
+            )
+        }
         /// Namespace for "SubmitResults" metadata.
         public enum SubmitResults: Sendable {
             /// Request type for "SubmitResults".
@@ -159,6 +172,7 @@ public enum Melix_Worker_V1_MaintenanceService: Sendable {
             RunBenchMatrix.descriptor,
             RunEvaluation.descriptor,
             ExportResults.descriptor,
+            ExportResultsStream.descriptor,
             SubmitResults.descriptor,
             SearchHubModels.descriptor,
             GetHubModelCard.descriptor
@@ -284,6 +298,20 @@ extension Melix_Worker_V1_MaintenanceService {
             request: GRPCCore.StreamingServerRequest<Melix_Worker_V1_ExportResultsRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Melix_Worker_V1_ExportResultsResponse>
+
+        /// Handle the "ExportResultsStream" method.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Melix_Worker_V1_ExportResultsRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Melix_Worker_V1_ExportResultsEvent` messages.
+        func exportResultsStream(
+            request: GRPCCore.StreamingServerRequest<Melix_Worker_V1_ExportResultsRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Melix_Worker_V1_ExportResultsEvent>
 
         /// Handle the "SubmitResults" method.
         ///
@@ -434,6 +462,20 @@ extension Melix_Worker_V1_MaintenanceService {
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.ServerResponse<Melix_Worker_V1_ExportResultsResponse>
 
+        /// Handle the "ExportResultsStream" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Melix_Worker_V1_ExportResultsRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Melix_Worker_V1_ExportResultsEvent` messages.
+        func exportResultsStream(
+            request: GRPCCore.ServerRequest<Melix_Worker_V1_ExportResultsRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Melix_Worker_V1_ExportResultsEvent>
+
         /// Handle the "SubmitResults" method.
         ///
         /// - Parameters:
@@ -583,6 +625,21 @@ extension Melix_Worker_V1_MaintenanceService {
             context: GRPCCore.ServerContext
         ) async throws -> Melix_Worker_V1_ExportResultsResponse
 
+        /// Handle the "ExportResultsStream" method.
+        ///
+        /// - Parameters:
+        ///   - request: A `Melix_Worker_V1_ExportResultsRequest` message.
+        ///   - response: A response stream of `Melix_Worker_V1_ExportResultsEvent` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        func exportResultsStream(
+            request: Melix_Worker_V1_ExportResultsRequest,
+            response: GRPCCore.RPCWriter<Melix_Worker_V1_ExportResultsEvent>,
+            context: GRPCCore.ServerContext
+        ) async throws
+
         /// Handle the "SubmitResults" method.
         ///
         /// - Parameters:
@@ -709,6 +766,17 @@ extension Melix_Worker_V1_MaintenanceService.StreamingServiceProtocol {
             }
         )
         router.registerHandler(
+            forMethod: Melix_Worker_V1_MaintenanceService.Method.ExportResultsStream.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Melix_Worker_V1_ExportResultsRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Melix_Worker_V1_ExportResultsEvent>(),
+            handler: { request, context in
+                try await self.exportResultsStream(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
             forMethod: Melix_Worker_V1_MaintenanceService.Method.SubmitResults.descriptor,
             deserializer: GRPCProtobuf.ProtobufDeserializer<Melix_Worker_V1_SubmitResultsRequest>(),
             serializer: GRPCProtobuf.ProtobufSerializer<Melix_Worker_V1_SubmitResultsResponse>(),
@@ -822,6 +890,17 @@ extension Melix_Worker_V1_MaintenanceService.ServiceProtocol {
             context: context
         )
         return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func exportResultsStream(
+        request: GRPCCore.StreamingServerRequest<Melix_Worker_V1_ExportResultsRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Melix_Worker_V1_ExportResultsEvent> {
+        let response = try await self.exportResultsStream(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return response
     }
 
     public func submitResults(
@@ -957,6 +1036,23 @@ extension Melix_Worker_V1_MaintenanceService.SimpleServiceProtocol {
                 context: context
             ),
             metadata: [:]
+        )
+    }
+
+    public func exportResultsStream(
+        request: GRPCCore.ServerRequest<Melix_Worker_V1_ExportResultsRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Melix_Worker_V1_ExportResultsEvent> {
+        return GRPCCore.StreamingServerResponse<Melix_Worker_V1_ExportResultsEvent>(
+            metadata: [:],
+            producer: { writer in
+                try await self.exportResultsStream(
+                    request: request.message,
+                    response: writer,
+                    context: context
+                )
+                return [:]
+            }
         )
     }
 
@@ -1140,6 +1236,25 @@ extension Melix_Worker_V1_MaintenanceService {
             deserializer: some GRPCCore.MessageDeserializer<Melix_Worker_V1_ExportResultsResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Melix_Worker_V1_ExportResultsResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "ExportResultsStream" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Melix_Worker_V1_ExportResultsRequest` message.
+        ///   - serializer: A serializer for `Melix_Worker_V1_ExportResultsRequest` messages.
+        ///   - deserializer: A deserializer for `Melix_Worker_V1_ExportResultsEvent` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        func exportResultsStream<Result>(
+            request: GRPCCore.ClientRequest<Melix_Worker_V1_ExportResultsRequest>,
+            serializer: some GRPCCore.MessageSerializer<Melix_Worker_V1_ExportResultsRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Melix_Worker_V1_ExportResultsEvent>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Melix_Worker_V1_ExportResultsEvent>) async throws -> Result
         ) async throws -> Result where Result: Sendable
 
         /// Call the "SubmitResults" method.
@@ -1422,6 +1537,34 @@ extension Melix_Worker_V1_MaintenanceService {
             )
         }
 
+        /// Call the "ExportResultsStream" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Melix_Worker_V1_ExportResultsRequest` message.
+        ///   - serializer: A serializer for `Melix_Worker_V1_ExportResultsRequest` messages.
+        ///   - deserializer: A deserializer for `Melix_Worker_V1_ExportResultsEvent` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response, the result of which is
+        ///       returned to the caller. Returning from the closure will cancel the RPC if it
+        ///       hasn't already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func exportResultsStream<Result>(
+            request: GRPCCore.ClientRequest<Melix_Worker_V1_ExportResultsRequest>,
+            serializer: some GRPCCore.MessageSerializer<Melix_Worker_V1_ExportResultsRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Melix_Worker_V1_ExportResultsEvent>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Melix_Worker_V1_ExportResultsEvent>) async throws -> Result
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.serverStreaming(
+                request: request,
+                descriptor: Melix_Worker_V1_MaintenanceService.Method.ExportResultsStream.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
         /// Call the "SubmitResults" method.
         ///
         /// - Parameters:
@@ -1683,6 +1826,29 @@ extension Melix_Worker_V1_MaintenanceService.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Melix_Worker_V1_ExportResultsRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Melix_Worker_V1_ExportResultsResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "ExportResultsStream" method.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Melix_Worker_V1_ExportResultsRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func exportResultsStream<Result>(
+        request: GRPCCore.ClientRequest<Melix_Worker_V1_ExportResultsRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Melix_Worker_V1_ExportResultsEvent>) async throws -> Result
+    ) async throws -> Result where Result: Sendable {
+        try await self.exportResultsStream(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Melix_Worker_V1_ExportResultsRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Melix_Worker_V1_ExportResultsEvent>(),
             options: options,
             onResponse: handleResponse
         )
@@ -1960,6 +2126,33 @@ extension Melix_Worker_V1_MaintenanceService.ClientProtocol {
             metadata: metadata
         )
         return try await self.exportResults(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "ExportResultsStream" method.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response, the result of which is
+    ///       returned to the caller. Returning from the closure will cancel the RPC if it
+    ///       hasn't already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func exportResultsStream<Result>(
+        _ message: Melix_Worker_V1_ExportResultsRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Melix_Worker_V1_ExportResultsEvent>) async throws -> Result
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Melix_Worker_V1_ExportResultsRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.exportResultsStream(
             request: request,
             options: options,
             onResponse: handleResponse
