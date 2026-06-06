@@ -22,6 +22,7 @@ from worker.model_ops.hub_catalog import (
     _payload_is_mlx_compatible,
     _quantization_summary,
     _size_hint_from_text,
+    _string_list,
 )
 
 
@@ -85,6 +86,15 @@ def test_quantization_summary_preserves_alias_order_from_lowered_tags() -> None:
         _quantization_summary(["2-bit", "3bit", "8-bit", "float32", "bf16"])
         == "2-bit, 3-bit, 8-bit, fp32, bf16"
     )
+
+
+def test_string_list_preserves_exact_list_and_list_subclass_inputs() -> None:
+    class TagList(list[str]):
+        pass
+
+    assert _string_list(["mlx", 7, "safetensors"]) == ["mlx", "safetensors"]
+    assert _string_list(TagList(["mlx", "4-bit"])) == ["mlx", "4-bit"]
+    assert _string_list("mlx") == ["mlx"]
 
 
 def test_bytes_per_parameter_preserves_quantization_priority_without_joining_tags() -> None:
