@@ -28,6 +28,10 @@
   - Gate non-terminal presentation flushes with `chatPresentationFlushInterval`.
   - Avoid per-token outer `notifyStateChanged()` calls when no visible state was flushed.
   - Record separate stream and render metrics.
+- Modify `apps/macos-menubar/Tests/MenuBarTests/DesktopPolishSmokeTests.swift`
+  - Extend smoke payload metrics while keeping nested JSON construction compiler-friendly.
+- Modify `services/control-plane-swift/Tests/ControlPlaneTests/EventSubscriptionHubTests.swift`
+  - Stabilize CI verification by waiting for the first queued admission snapshot instead of relying on a fixed scheduler sleep.
 - Modify `docs/runbooks/desktop-polish.md`
   - Document the new stream/render metrics used to diagnose cadence regressions.
 
@@ -80,3 +84,10 @@
 - [x] Run the focused macOS menu bar tests for the touched chat streaming behavior.
 - [x] Run `make swift-test`.
 - [x] Run the repository pre-commit hook before commit and include coverage/metrics evidence in the PR body.
+
+### Task 5: Address PR CI follow-up failures
+
+- [x] Split the desktop polish smoke JSON payload into explicit sub-dictionaries so CI Swift type-checking does not time out.
+- [x] Replace fixed sleeps in the impacted AdmissionGate cohort tests with the existing snapshot wait helper.
+- [x] Run `make swift-test-menubar` and `make swift-test-control-core`.
+- [x] Record follow-up changed-line coverage for the smoke payload and AdmissionGate test changes.

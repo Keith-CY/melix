@@ -422,9 +422,10 @@ struct CoreUtilityTests {
                 maxBatchSize: 2
             )
         }
-        try? await Task.sleep(nanoseconds: 10_000_000)
 
-        let snapshotBeforeSecond = await gate.snapshot()
+        let snapshotBeforeSecond = await waitForAdmissionGateSnapshot(gate) { snapshot in
+            snapshot.queuedRequestIDs == ["req-forming-1"]
+        }
         #expect(snapshotBeforeSecond.activeRequestIDs.isEmpty)
         #expect(snapshotBeforeSecond.queuedRequestIDs == ["req-forming-1"])
         #expect(await gate.nextQueuePosition(cohortID: "swift-text|forming", maxBatchSize: 2) == 2)
@@ -465,7 +466,9 @@ struct CoreUtilityTests {
                 maxBatchSize: 2
             )
         }
-        try? await Task.sleep(nanoseconds: 10_000_000)
+        _ = await waitForAdmissionGateSnapshot(gate) { snapshot in
+            snapshot.queuedRequestIDs == ["req-forming-wide"]
+        }
 
         let secondTask = Task {
             await gate.acquire(
