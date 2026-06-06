@@ -54,6 +54,7 @@ _GENERATION_CONFIG_MAX_TOKENS_KEY = "melix.generation_config.max_tokens"
 _GENERATION_CONFIG_DO_SAMPLE_KEY = "melix.generation_config.do_sample"
 _REGISTRY_SCAN_PRUNED_DIR_NAMES = frozenset({"blobs", ".git", "__pycache__"})
 _HF_CACHE_PRUNED_SUBTREE_NAMES = frozenset({"snapshots", "refs"})
+_MODEL_WEIGHT_FILE_SUFFIXES = (".safetensors", ".npz")
 
 
 @dataclass(frozen=True)
@@ -416,7 +417,7 @@ def _has_model_weight_files(model_dir: Path) -> bool:
     try:
         with os.scandir(os.fspath(model_dir)) as entries:
             for entry in entries:
-                if not entry.name.endswith((".safetensors", ".npz")):
+                if not entry.name.endswith(_MODEL_WEIGHT_FILE_SUFFIXES):
                     continue
                 try:
                     if entry.is_file():
@@ -2178,7 +2179,7 @@ class WorkerModelCatalog:
                             if entry_name == "model.safetensors.index.json" and entry.is_file():
                                 has_model_weight_files = True
                                 continue
-                            if entry_name.endswith((".safetensors", ".npz")) and entry.is_file():
+                            if entry_name.endswith(_MODEL_WEIGHT_FILE_SUFFIXES) and entry.is_file():
                                 has_model_weight_files = True
                                 continue
                             if entry.is_dir():
