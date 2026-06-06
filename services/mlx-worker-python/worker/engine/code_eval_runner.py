@@ -671,11 +671,18 @@ def _sandbox_static_profile_environment_fingerprint() -> tuple[object, ...]:
 
 def _sandbox_static_profile_key() -> tuple[object, ...]:
     global _SANDBOX_STATIC_PROFILE_KEY_CACHE
-    fingerprint = _sandbox_static_profile_environment_fingerprint()
     if _SANDBOX_STATIC_PROFILE_KEY_CACHE is not None:
         cached_fingerprint, cached_key = _SANDBOX_STATIC_PROFILE_KEY_CACHE
-        if cached_fingerprint == fingerprint:
+        if (
+            cached_fingerprint[0] == sys.executable
+            and cached_fingerprint[1] == sys.prefix
+            and cached_fingerprint[2] == sys.exec_prefix
+            and cached_fingerprint[3] == sys.base_prefix
+            and cached_fingerprint[4] == sys.base_exec_prefix
+            and cached_fingerprint[5] == id(sysconfig.get_paths)
+        ):
             return cached_key
+    fingerprint = _sandbox_static_profile_environment_fingerprint()
     key = (
         *fingerprint[:-1],
         tuple(sorted((key, value or "") for key, value in sysconfig.get_paths().items())),
