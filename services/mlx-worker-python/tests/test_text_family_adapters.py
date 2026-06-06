@@ -9,6 +9,7 @@ from worker.runtime.text_family_adapters import (
     ResolvedTextFamilyConfig,
     TextFamilyDescriptor,
     TextFamilyDetection,
+    _inferred_attention_profile,
     _inferred_expert_count,
     _split_csv,
     detect_text_family_identity,
@@ -70,6 +71,18 @@ def test_split_csv_short_circuits_empty_values_without_split() -> None:
 
     assert _split_csv(NoSplitEmpty("")) == []
     assert _split_csv(" text, qwen ,, tools ") == ["text", "qwen", "tools"]
+
+
+def test_inferred_attention_profile_skips_non_string_hints_and_preserves_use_mla_fallback() -> None:
+    assert (
+        _inferred_attention_profile(
+            {"attention_type": 0, "attn_type": None, "attention_impl": [], "use_mla": True},
+            default="gqa",
+        )
+        == "mla"
+    )
+    assert _inferred_attention_profile({"attention_impl": "flash-mla"}, default="gqa") == "mla"
+    assert _inferred_attention_profile({"attention_impl": 0}, default="gqa") == "gqa"
 
 
 def test_detect_text_family_identity_prefers_explicit_supported_override() -> None:

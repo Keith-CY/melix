@@ -325,10 +325,17 @@ def _model_type(config_payload: Mapping[str, Any] | None) -> str:
 def _inferred_attention_profile(config_payload: Mapping[str, Any] | None, *, default: str) -> str:
     config_payload = _config_mapping(config_payload)
     for key in ("attention_type", "attn_type", "attention_impl", "attn_impl"):
-        value = _string(config_payload.get(key)).lower()
-        if "mla" in value:
+        try:
+            value = config_payload[key]
+        except KeyError:
+            continue
+        if isinstance(value, str) and "mla" in value.lower():
             return "mla"
-    if _bool_from_any(config_payload.get("use_mla")):
+    try:
+        use_mla = config_payload["use_mla"]
+    except KeyError:
+        return default
+    if _bool_from_any(use_mla):
         return "mla"
     return default
 
