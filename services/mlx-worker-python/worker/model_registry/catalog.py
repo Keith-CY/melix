@@ -55,6 +55,8 @@ _GENERATION_CONFIG_DO_SAMPLE_KEY = "melix.generation_config.do_sample"
 _REGISTRY_SCAN_PRUNED_DIR_NAMES = frozenset({"blobs", ".git", "__pycache__"})
 _HF_CACHE_PRUNED_SUBTREE_NAMES = frozenset({"snapshots", "refs"})
 _MODEL_WEIGHT_FILE_SUFFIXES = (".safetensors", ".npz")
+_GEMMA4_QAT_AUTOMATIC_ORG = "mlx-community"
+_GEMMA4_QAT_AUTOMATIC_SCOPE = "mlx-community-gemma4-q4"
 
 
 @dataclass(frozen=True)
@@ -1206,6 +1208,139 @@ def _gemma4_mtp_assistant_metadata(
     }
 
 
+def _gemma4_qat_metadata(
+    *,
+    model_id: str,
+    model_dir: Path,
+    config_payload: Mapping[str, object] | None,
+    text_prefix_cache: dict[Path, tuple[int, int, int, int, str]] | None = None,
+) -> dict[str, str]:
+    if not _is_gemma4_vlm_config(config_payload):
+        return {}
+
+    readme_text = _read_text_prefix(
+        model_dir / "README.md",
+        text_prefix_cache=text_prefix_cache,
+    )
+    combined = " ".join((model_id, readme_text)).lower()
+    if ("gemma-4" not in combined and "gemma4" not in combined) or "qat" not in combined:
+        return {}
+    if "mlx" not in combined:
+        return {}
+
+    model_size = _gemma4_qat_model_size(combined)
+    quantization_family = _gemma4_qat_quantization_family(combined)
+    if not model_size or not quantization_family:
+        return {}
+
+    organization = _model_id_organization(model_id)
+    auto_supported = organization == _GEMMA4_QAT_AUTOMATIC_ORG
+    companion = _gemma4_qat_is_draft_companion(combined)
+    source_model = _gemma4_qat_source_model(
+        readme_text,
+        model_size=model_size,
+        companion=companion,
+    )
+    default_policy = "auto_pair_when_available" if auto_supported else "manual_override_only"
+    ext = {
+        "melix.qat.enabled": "true",
+        "melix.qat.family": "gemma4",
+        "melix.qat.asset_format": "mlx",
+        "melix.qat.hf_organization": organization,
+        "melix.qat.auto_supported": "true" if auto_supported else "false",
+        "melix.qat.support_scope": (
+            _GEMMA4_QAT_AUTOMATIC_SCOPE if auto_supported else "manual_experimental"
+        ),
+        "melix.qat.model_size": model_size,
+        "melix.qat.quantization_family": quantization_family,
+        "melix.draft_companion.role": "companion" if companion else "target",
+        "melix.draft_companion.default_policy": default_policy,
+        "melix.draft_companion.override_supported": "true",
+        "melix.draft_companion.auto_pair_key": (
+            f"gemma4:{model_size}:qat:{quantization_family}"
+        ),
+    }
+    if source_model:
+        ext["melix.qat.source_model"] = source_model
+    if not companion:
+        ext["melix.draft_companion.missing_policy"] = "baseline_generation"
+    return ext
+
+
+def _gemma4_qat_fast_candidate(model_id: str) -> bool:
+    lowered = model_id.lower()
+    return ("gemma-4" in lowered or "gemma4" in lowered) and "qat" in lowered
+
+
+def _model_id_organization(model_id: str) -> str:
+    separator_index = model_id.find("/")
+    if separator_index < 0:
+        return ""
+    return model_id[:separator_index].lower()
+
+
+def _gemma4_qat_model_size(value: str) -> str:
+    for token in ("26b-a4b", "12b", "e4b", "e2b"):
+        if token in value:
+            return token
+    return ""
+
+
+def _gemma4_qat_quantization_family(value: str) -> str:
+    for source, normalized in (
+        ("mxfp8", "mxfp8"),
+        ("mxfp4", "mxfp4"),
+        ("nvfp4", "nvfp4"),
+        ("bf16", "bf16"),
+        ("8-bit", "8bit"),
+        ("8bit", "8bit"),
+        ("6-bit", "6bit"),
+        ("6bit", "6bit"),
+        ("5-bit", "5bit"),
+        ("5bit", "5bit"),
+        ("4-bit", "4bit"),
+        ("4bit", "4bit"),
+        ("q4_0", "4bit"),
+    ):
+        if source in value:
+            return normalized
+    return ""
+
+
+def _gemma4_qat_is_draft_companion(value: str) -> bool:
+    return (
+        "assistant" in value
+        or "draft-model" in value
+        or "drafter" in value
+        or ("mtp" in value and "speculative" in value)
+    )
+
+
+def _gemma4_qat_source_model(
+    readme_text: str,
+    *,
+    model_size: str,
+    companion: bool,
+) -> str:
+    for line in readme_text.splitlines():
+        stripped = line.strip().strip("'\"")
+        if stripped.startswith("base_model:"):
+            value = stripped.split(":", 1)[1].strip().strip("'\"")
+            if value:
+                return value
+
+    size_name = {
+        "e2b": "E2B",
+        "e4b": "E4B",
+        "12b": "12B",
+        "26b-a4b": "26B-A4B",
+    }.get(model_size)
+    if not size_name:
+        return ""
+    suffix = "-assistant" if companion else ""
+    return f"google/gemma-4-{size_name}-it-qat-q4_0-unquantized{suffix}"
+
+
 def _multimodal_load_receipt_metadata(
     *,
     model_dir: Path,
@@ -2298,6 +2433,15 @@ class WorkerModelCatalog:
                 text_prefix_cache=self._text_prefix_cache,
             )
         )
+        if _gemma4_qat_fast_candidate(model_id):
+            ext.update(
+                _gemma4_qat_metadata(
+                    model_id=model_id,
+                    model_dir=model_dir,
+                    config_payload=config_payload,
+                    text_prefix_cache=self._text_prefix_cache,
+                )
+            )
         _merge_generation_config_metadata(
             model_dir,
             ext=ext,
@@ -2407,6 +2551,15 @@ class WorkerModelCatalog:
                 text_prefix_cache=self._text_prefix_cache,
             )
         )
+        if _gemma4_qat_fast_candidate(model_id):
+            normalized_ext.update(
+                _gemma4_qat_metadata(
+                    model_id=model_id,
+                    model_dir=runtime_model_dir,
+                    config_payload=config_payload,
+                    text_prefix_cache=self._text_prefix_cache,
+                )
+            )
         if model_kind == "image":
             normalized_ext.update(
                 _image_capability_metadata(

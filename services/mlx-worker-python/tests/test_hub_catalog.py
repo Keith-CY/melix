@@ -179,6 +179,141 @@ def test_search_models_with_mlx_only_keeps_repo_ids_with_mlx_suffix() -> None:
     assert [item.repo_id for item in page.items] == ["unsloth/gemma-4-E4B-it-MLX-8bit"]
 
 
+def test_search_models_marks_mlx_community_gemma4_qat_mlx_as_auto_supported() -> None:
+    payload = [
+        {
+            "id": "mlx-community/gemma-4-E4B-it-qat-4bit",
+            "author": "mlx-community",
+            "pipeline_tag": "image-text-to-text",
+            "tags": ["mlx", "safetensors", "gemma4", "image-text-to-text", "4-bit"],
+            "siblings": [{"rfilename": "model.safetensors", "size": 2 * GB}],
+            "cardData": {
+                "base_model": "google/gemma-4-E4B-it-qat-q4_0-unquantized",
+                "tags": ["mlx", "gemma4", "qat", "4-bit"],
+            },
+        }
+    ]
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=32)
+    page = catalog.search_models(query="gemma-4 qat", page_size=10, cursor="", mlx_only=False)
+
+    model = page.items[0]
+    assert model.repo_id == "mlx-community/gemma-4-E4B-it-qat-4bit"
+    assert model.mlx_compatible is True
+    assert model.local_fit_status == "good"
+    assert model.recommended_action == "download"
+    assert model.quantization_summary == "4-bit, QAT"
+    assert "Gemma 4 QAT MLX asset is in the automatic support scope." in model.local_fit_reasons
+    assert "Matching MTP draft companion can be auto-paired when available." in model.local_fit_reasons
+
+
+def test_search_models_marks_non_mlx_gemma4_qat_runtime_formats_as_unavailable() -> None:
+    payload = [
+        {
+            "id": "google/gemma-4-E4B-it-qat-q4_0-unquantized",
+            "author": "google",
+            "pipeline_tag": "image-text-to-text",
+            "tags": ["gemma4", "qat", "transformers", "compressed-tensors"],
+            "siblings": [{"rfilename": "model.safetensors", "size": 2 * GB}],
+            "cardData": {"tags": ["gemma4", "qat", "compressed-tensors"]},
+        },
+        {
+            "id": "google/gemma-4-E4B-it-qat-mobile-transformers",
+            "author": "google",
+            "pipeline_tag": "image-text-to-text",
+            "tags": ["gemma4", "qat", "mobile-transformers"],
+            "siblings": [{"rfilename": "model.safetensors", "size": 2 * GB}],
+            "cardData": {"tags": ["gemma4", "qat", "mobile-transformers"]},
+        },
+    ]
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=32)
+    page = catalog.search_models(query="gemma-4 qat", page_size=10, cursor="", mlx_only=False)
+
+    assert [item.repo_id for item in page.items] == [
+        "google/gemma-4-E4B-it-qat-q4_0-unquantized",
+        "google/gemma-4-E4B-it-qat-mobile-transformers",
+    ]
+    for model in page.items:
+        assert model.mlx_compatible is False
+        assert model.local_fit_status == "blocked"
+        assert model.recommended_action == "unavailable"
+        assert model.quantization_summary == "QAT"
+    assert (
+        "Unsupported Gemma 4 QAT runtime format for Melix: compressed_tensors."
+        in page.items[0].local_fit_reasons
+    )
+    assert (
+        "Unsupported Gemma 4 QAT runtime format for Melix: mobile_transformers."
+        in page.items[1].local_fit_reasons
+    )
+
+
+def test_search_models_marks_third_party_gemma4_qat_mlx_as_manual_experimental() -> None:
+    payload = [
+        {
+            "id": "lmstudio-community/gemma-4-26B-A4B-it-QAT-MLX-4bit",
+            "author": "lmstudio-community",
+            "pipeline_tag": "image-text-to-text",
+            "tags": ["mlx", "safetensors", "gemma4", "qat", "4-bit"],
+            "siblings": [{"rfilename": "model.safetensors", "size": 8 * GB}],
+            "cardData": {"tags": ["mlx", "gemma4", "qat", "4-bit"]},
+        }
+    ]
+
+    def opener(_request: Request):
+        return FakeHTTPResponse(payload)
+
+    catalog = HubCatalog(opener=opener, local_memory_gb=32)
+    page = catalog.search_models(query="gemma-4 qat", page_size=10, cursor="", mlx_only=False)
+
+    model = page.items[0]
+    assert model.repo_id == "lmstudio-community/gemma-4-26B-A4B-it-QAT-MLX-4bit"
+    assert model.mlx_compatible is True
+    assert model.local_fit_status == "unknown"
+    assert model.recommended_action == "inspect_metadata"
+    assert model.quantization_summary == "4-bit, QAT"
+    assert (
+        "Experimental Gemma 4 QAT MLX asset outside mlx-community; manual import required."
+        in model.local_fit_reasons
+    )
+
+
+def test_gemma4_qat_hub_evidence_handles_defensive_branches() -> None:
+    assert hub_catalog_module._gemma4_qat_fast_candidate("owner/plain", set()) is False
+    assert hub_catalog_module._gemma4_qat_evidence(
+        repo_id_lower="owner/plain",
+        tags=[],
+        lowered_tags=set(),
+        card_data={},
+    ) == {}
+    assert hub_catalog_module._gemma4_qat_evidence(
+        repo_id_lower="owner/gemma-4-e4b-it",
+        tags=[],
+        lowered_tags={"gemma4"},
+        card_data={"tags": ["mlx"]},
+    ) == {}
+    assert hub_catalog_module._gemma4_qat_evidence(
+        repo_id_lower="google/gemma-4-e4b-it-qat-4bit",
+        tags=["gemma4", "qat", "4-bit"],
+        lowered_tags={"gemma4", "qat", "4-bit"},
+        card_data={},
+    ) == {"enabled": "true", "unsupported_format": "non_mlx"}
+    assert (
+        hub_catalog_module._gemma4_qat_unsupported_format(
+            "google/gemma-4-e4b-it-qat-q4_0-unquantized"
+        )
+        == "compressed_tensors"
+    )
+    assert hub_catalog_module._repo_organization("bare-model") == ""
+
+
 def test_payload_mlx_tag_match_stays_exact_and_case_insensitive() -> None:
     assert _payload_is_mlx_compatible({"tags": ["mLx", object()], "cardData": {}}) is True
     assert _payload_is_mlx_compatible({"tags": "MLX", "cardData": {}}) is True

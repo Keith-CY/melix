@@ -14,6 +14,7 @@ from worker.productization.device_identity import collect_device_identity
 
 MEMORY_COMFORT_BUDGET_FACTOR = 0.60
 RESIDENT_MEMORY_OVERHEAD_FACTOR = 1.35
+GEMMA4_QAT_AUTOMATIC_ORG = "mlx-community"
 
 _SIZE_HINT_KB = 1024
 _SIZE_HINT_MB = _SIZE_HINT_KB * 1024
@@ -473,8 +474,37 @@ def _local_fit_evidence(
     )
     gated = _gated(payload.get("gated"))
     reasons: list[str] = []
+    gemma4_qat: dict[str, str] = {}
+    if "qat" in lowered_tags or "qat" in repo_id or "QAT" in repo_id:
+        repo_id_lower = repo_id.lower()
+    else:
+        repo_id_lower = ""
+    if repo_id_lower and _gemma4_qat_fast_candidate(repo_id_lower, lowered_tags):
+        gemma4_qat = _gemma4_qat_evidence(
+            repo_id_lower=repo_id_lower,
+            tags=tags,
+            lowered_tags=lowered_tags,
+            card_data=card_data,
+        )
+    if gemma4_qat.get("enabled") == "true" and "QAT" not in quantization_summary.split(", "):
+        quantization_summary = (
+            f"{quantization_summary}, QAT" if quantization_summary else "QAT"
+        )
 
     if not mlx_compatible:
+        unsupported_format = gemma4_qat.get("unsupported_format", "")
+        if unsupported_format:
+            reasons.append(f"Unsupported Gemma 4 QAT runtime format for Melix: {unsupported_format}.")
+            return {
+                "status": "blocked",
+                "reasons": reasons,
+                "estimated_artifact_bytes": artifact_bytes,
+                "estimated_resident_bytes": estimated_resident_bytes,
+                "parameter_count": parameter_count,
+                "quantization_summary": quantization_summary,
+                "gated": gated,
+                "recommended_action": "unavailable",
+            }
         reasons.append("No MLX compatibility signal")
         return {
             "status": "blocked",
@@ -512,6 +542,21 @@ def _local_fit_evidence(
             "quantization_summary": quantization_summary,
             "gated": gated,
             "recommended_action": "request_access",
+        }
+
+    if gemma4_qat.get("enabled") == "true" and gemma4_qat.get("auto_supported") != "true":
+        reasons.append(
+            "Experimental Gemma 4 QAT MLX asset outside mlx-community; manual import required."
+        )
+        return {
+            "status": "unknown",
+            "reasons": reasons,
+            "estimated_artifact_bytes": artifact_bytes,
+            "estimated_resident_bytes": estimated_resident_bytes,
+            "parameter_count": parameter_count,
+            "quantization_summary": quantization_summary,
+            "gated": gated,
+            "recommended_action": "inspect_metadata",
         }
 
     if artifact_bytes <= 0 and estimated_resident_bytes <= 0:
@@ -558,6 +603,10 @@ def _local_fit_evidence(
         reasons.append("Estimated resident bytes are within the memory comfort budget.")
         status = "good"
         recommended_action = "download"
+
+    if gemma4_qat.get("auto_supported") == "true":
+        reasons.append("Gemma 4 QAT MLX asset is in the automatic support scope.")
+        reasons.append("Matching MTP draft companion can be auto-paired when available.")
 
     return {
         "status": status,
@@ -918,7 +967,80 @@ def _quantization_summary(tags: list[str], *, lowered_tags: set[str] | None = No
         values.append("bf16")
     if "fp16" in lowered or "float16" in lowered:
         values.append("fp16")
+    if "qat" in lowered:
+        values.append("QAT")
     return ", ".join(values)
+
+
+def _gemma4_qat_fast_candidate(repo_id_lower: str, lowered_tags: set[str]) -> bool:
+    has_qat = "qat" in repo_id_lower or "qat" in lowered_tags
+    if not has_qat:
+        return False
+    return (
+        "gemma-4" in repo_id_lower
+        or "gemma4" in repo_id_lower
+        or "gemma-4" in lowered_tags
+        or "gemma4" in lowered_tags
+    )
+
+
+def _gemma4_qat_evidence(
+    *,
+    repo_id_lower: str,
+    tags: list[str],
+    lowered_tags: set[str] | None,
+    card_data: dict[str, Any] | None,
+) -> dict[str, str]:
+    lowered = _normalized_lowered_tags(tags, lowered_tags)
+    card_data = card_data or {}
+    combined_parts = [repo_id_lower, *lowered]
+    for value in _base_models(card_data.get("base_model")):
+        combined_parts.append(value.lower())
+    pre_card_combined = " ".join(combined_parts)
+    if (
+        "gemma-4" not in pre_card_combined
+        and "gemma4" not in pre_card_combined
+        and "qat" not in pre_card_combined
+    ):
+        return {}
+    raw_card_tags = card_data.get("tags")
+    if raw_card_tags:
+        combined_parts.extend(tag.lower() for tag in _string_list(raw_card_tags))
+    combined = " ".join(combined_parts)
+    if ("gemma-4" not in combined and "gemma4" not in combined) or "qat" not in combined:
+        return {}
+
+    unsupported_format = _gemma4_qat_unsupported_format(combined)
+    if unsupported_format:
+        return {"enabled": "true", "unsupported_format": unsupported_format}
+
+    if "mlx" not in combined:
+        return {"enabled": "true", "unsupported_format": "non_mlx"}
+
+    organization = _repo_organization(repo_id_lower)
+    return {
+        "enabled": "true",
+        "asset_format": "mlx",
+        "organization": organization,
+        "auto_supported": "true" if organization == GEMMA4_QAT_AUTOMATIC_ORG else "false",
+    }
+
+
+def _gemma4_qat_unsupported_format(value: str) -> str:
+    if "mobile-transformers" in value or "mobile_transformers" in value:
+        return "mobile_transformers"
+    if "compressed-tensors" in value or "compressed_tensors" in value or "-ct" in value:
+        return "compressed_tensors"
+    if "q4_0-unquantized" in value and "mlx" not in value:
+        return "compressed_tensors"
+    return ""
+
+
+def _repo_organization(repo_id: str) -> str:
+    separator_index = repo_id.find("/")
+    if separator_index < 0:
+        return ""
+    return repo_id[:separator_index].lower()
 
 
 def _gated(value: Any) -> bool:

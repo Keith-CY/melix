@@ -183,12 +183,16 @@ A durable local or remote runtime configuration shown in the desktop Servers dom
 _Avoid_: Hidden provider, implicit default server, model asset
 
 **Model Asset**:
-A downloaded, imported, or remote-referenced model artifact managed by the Models domain. It can be validated, quantized, used to create a server, or associated with adapters, but it is not itself a running endpoint.
-_Avoid_: Server profile, active runtime, running model
+A downloaded, imported, or remote-referenced model artifact managed by the Models domain. It can carry precision and quantization lineage, including QAT lineage, and can be validated, quantized, used to create a server, or associated with adapters, but it is not itself a running endpoint.
+_Avoid_: Server profile, active runtime, running model, QAT asset
 
 **Adapter Asset**:
 A fine-tuned artifact, such as a LoRA adapter, that can be attached to a compatible model asset or server after validation. It is usually produced by a Workflow and surfaced through Models and Jobs lineage.
 _Avoid_: Model asset, server profile, training job
+
+**Draft Companion**:
+A model asset paired with a target model asset to propose tokens for speculative decoding. It is not a normal serving target and is distinct from chat assistant messages or adapter assets.
+_Avoid_: Assistant, drafter, adapter asset, server profile
 
 **Job**:
 A durable operation record for downloads, training, evaluation, benchmark, image generation or editing, batch runs, capability refreshes, and debug-bundle exports. Jobs have source domains, execution state, evidence, and produced artifacts.

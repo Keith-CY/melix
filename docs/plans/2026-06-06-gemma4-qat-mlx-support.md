@@ -1,0 +1,237 @@
+# Gemma 4 QAT MLX Support
+
+## Goal
+
+Define the Melix implementation path for Gemma 4 Quantization-Aware Training
+(QAT) assets so Apple Silicon operators can discover, import, serve, and
+measure official or community-converted QAT MLX model assets without confusing
+them with Melix's existing adapter-derived QAT export workflow.
+
+## Confirmed Direction
+
+The first supported direction is MLX-first:
+
+- Prefer existing Hugging Face MLX QAT assets when available.
+- Do not implement local conversion from Google's `qat-q4_0-unquantized`
+  checkpoints in the first implementation path.
+- Keep QAT assets inside the existing `Model Asset` category and expose QAT as
+  lineage, quantization metadata, and compatibility receipts rather than as a
+  separate operator-facing asset category.
+- Pair compatible Gemma 4 QAT target assets with matching MTP assistant assets
+  automatically by default for prompt-only speculative decode, while allowing an
+  explicit operator override for compatibility experiments.
+- If no compatible draft companion is present, baseline generation remains
+  available and speculative capability is marked degraded; Melix must not
+  automatically download the missing companion.
+- Keep compressed-tensors, mobile compressed-tensors, and LiteRT-LM/mobile
+  runtime support outside the first implementation slice, but keep those assets
+  visible in Hub and Models surfaces as unsupported for Melix-native serving.
+- Limit automatic support, automatic pairing, and release-gate evidence in the
+  first slice to `mlx-community/gemma-4-*qat*` assets. Other organizations'
+  Gemma 4 QAT MLX assets remain visible but experimental and require manual
+  operator selection.
+
+Current Hugging Face API evidence on 2026-06-06 shows these relevant MLX QAT
+assets already exist:
+
+- `mlx-community/gemma-4-E2B-it-qat-4bit`
+- `mlx-community/gemma-4-E4B-it-qat-4bit`
+- `mlx-community/gemma-4-12B-it-qat-4bit`
+- `mlx-community/gemma-4-26B-A4B-it-qat-nvfp4`
+- matching `mlx-community/gemma-4-*-it-qat-assistant-*` MTP assistant variants
+  for E2B and E4B, with tags such as `mtp`, `speculative-decoding`, and
+  `draft-model`.
+
+## Non-Goals
+
+- Do not make Google compressed-tensors (`*-ct`) assets a native Melix runtime
+  target in the first slice.
+- Do not add a LiteRT-LM or mobile-transformers runtime in the first slice.
+- Do not implement a local conversion fallback from Google unquantized QAT
+  checkpoints in the first slice.
+- Do not add a distinct QAT asset category beside `Model Asset`.
+- Do not automatically download a missing draft companion during model import,
+  server creation, or chat execution.
+- Do not reclassify Melix's existing adapter-derived QAT export path as official
+  Gemma 4 QAT checkpoint support.
+- Do not hand-roll Gemma 4 speculative verification outside the existing
+  MLX/MLX-VLM drafter integration boundary.
+
+## Existing Anchors
+
+- `CONTEXT.md` defines `Model Asset` as a downloaded, imported, or
+  remote-referenced model artifact managed by the Models domain.
+- `docs/plans/2026-05-06-gemma4-mtp-speculative-decode.md` already defines the
+  prompt-only Gemma 4 MTP speculative decode boundary and keeps multimodal MTP
+  out of scope until upstream support is stable.
+- `services/mlx-worker-python/worker/model_registry/catalog.py` already detects
+  Gemma 4 MTP assistant assets and marks them with
+  `melix.speculative.role=assistant`, `melix.speculative.kind=mtp`, and
+  `melix.serving.hidden=true`.
+- `services/mlx-worker-python/worker/model_ops/quantization_pipeline.py`
+  already has `quantization_mode=qat`, but that path currently describes
+  adapter-derived QAT-aware export evidence and MLX-LM conversion rather than
+  official Google Gemma 4 QAT asset import.
+
+## Required Optimizations
+
+1. Model registry and Hub catalog detection
+   - Recognize `mlx-community/gemma-4-*-qat-*` target assets as Gemma 4 QAT MLX
+     model assets.
+   - Treat third-party Gemma 4 QAT MLX assets outside `mlx-community` as
+     experimental manual imports: visible, inspectable, but excluded from
+     automatic pairing and release gates.
+   - Keep non-MLX Gemma 4 QAT assets visible but blocked with local-fit evidence
+     such as `local_fit_status=blocked`, `recommended_action=unavailable`, and an
+     unsupported runtime format reason.
+   - Preserve base-model lineage from Hugging Face tags such as
+     `base_model:google/gemma-4-*-qat-q4_0-unquantized`.
+   - Distinguish QAT MLX assets from ordinary PTQ MLX assets and from Melix
+     adapter-derived QAT export bundles.
+   - Keep MTP assistant variants hidden from normal serving pickers while still
+     making them available as compatible draft companion assets.
+
+2. Model asset metadata and compatibility receipts
+   - Record QAT source lineage, quantization family, MLX quantization mode, and
+     draft companion compatibility in stable metadata.
+   - Expose compatibility receipts that show whether the asset can serve
+     text-only, multimodal, and prompt-only speculative decode requests.
+   - Surface missing or mismatched draft companion assets as degraded speculative
+     capability, not as a failure to serve baseline generation.
+   - Include an explicit operator remediation such as downloading or selecting a
+     compatible draft companion, but do not perform that remediation implicitly.
+
+3. Import and fallback conversion flow
+   - Prefer direct download/import of existing MLX QAT assets.
+   - Reject or defer non-MLX QAT assets instead of converting them locally in the
+     first slice, while keeping their catalog rows visible with explicit
+     unsupported-format evidence.
+   - Keep imported assets tied back to source model, QAT lineage, and local smoke
+     evidence.
+
+4. Runtime loading and routing
+   - Validate that target QAT MLX assets load through the existing MLX/MLX-VLM
+     runtime path before advertising them as routeable.
+   - Preserve the current boundary that media-bearing requests do not enter the
+     MTP speculative path.
+   - Bind compatible draft companion assets only for prompt-only Gemma 4
+     text-backed speculative decode.
+   - Default pairing should match family, size, QAT lineage, and quantization
+     family. Operator override remains available for advanced experiments such
+     as comparing bit widths or using a BF16 companion.
+   - Automatic pairing should only use `mlx-community` first-slice assets.
+
+5. Measurement and release gates
+   - Add real-model smoke evidence for both E2B and E4B QAT 4-bit targets with
+     matching draft companions.
+   - Keep E2B as the lightweight default development smoke and E4B as the
+     release/performance evidence target.
+   - Measure memory footprint, load latency, TTFT, decode tokens per second,
+     speculative acceptance counters, fallback counters, and baseline-vs-MTP
+     deltas.
+   - Keep quantization release evidence separate from LoRA/adaptation quality
+     metrics.
+
+## Work Plan
+
+1. Add Hub/catalog tests for Gemma 4 QAT MLX target and draft companion assets.
+2. Add registry metadata for QAT lineage and draft companion compatibility.
+3. Add import/download behavior that accepts existing MLX QAT assets and rejects
+   non-MLX QAT assets with an explicit unsupported-format reason.
+4. Extend compatibility receipts and route declarations so baseline serving,
+   multimodal serving, and prompt-only speculative decode are independently
+   visible.
+5. Add runtime smoke and performance evidence for E2B and E4B QAT 4-bit targets
+   plus matching draft companions.
+6. Update operator-facing docs after the implemented slices produce evidence.
+
+## Delivery Slices
+
+1. Registry and catalog foundation
+   - Land QAT MLX target detection, draft companion detection, QAT lineage
+     metadata, automatic pairing, override metadata, and explicit non-MLX QAT
+     blocked/unavailable classification before adding real runtime gates.
+   - Keep first-slice automatic support scoped to `mlx-community` model IDs and
+     classify other organizations' QAT MLX assets as experimental.
+   - This slice should be covered by deterministic Hub/catalog fixtures and does
+     not require downloading model weights.
+2. Compatibility receipts and operator surfaces
+   - Surface baseline generation, multimodal generation, prompt-only speculative
+     decode, degraded missing-companion state, and hidden draft companion status
+     from stable metadata.
+   - Keep server creation and chat admission available for baseline generation
+     when the draft companion is missing.
+3. Runtime evidence and release gates
+   - Add real-model E2B and E4B QAT smoke/performance evidence after the metadata
+     contract is stable, so runtime probes use the same IDs and pairing rules as
+     production.
+
+## Verification
+
+Slice 1 focused verification:
+
+```bash
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 \
+uv run --project services/mlx-worker-python --extra mlx pytest -q \
+  services/mlx-worker-python/tests/test_model_registry_catalog.py \
+  services/mlx-worker-python/tests/test_hub_catalog.py
+```
+
+Expected slice 1 behavior evidence:
+
+- `mlx-community/gemma-4-*qat*` MLX targets receive QAT lineage metadata and a
+  deterministic `melix.draft_companion.auto_pair_key`.
+- Matching `mlx-community/gemma-4-*qat-assistant*` assets remain hidden normal
+  serving targets and are marked as MTP draft companions.
+- Non-MLX Gemma 4 QAT CT/mobile assets remain visible in Hub catalog responses
+  but are marked unavailable with an explicit unsupported runtime format.
+- Gemma 4 QAT MLX assets outside `mlx-community` remain visible but require
+  manual experimental import/selection.
+
+Slice 1 coverage and metrics command:
+
+```bash
+mkdir -p .runtime/coverage && \
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 \
+uv run --project services/mlx-worker-python --extra mlx coverage run \
+  --source=services/mlx-worker-python/worker,services/mlx-worker-python/tests \
+  -m pytest -q \
+  services/mlx-worker-python/tests/test_model_registry_catalog.py \
+  services/mlx-worker-python/tests/test_hub_catalog.py && \
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 \
+uv run --project services/mlx-worker-python --extra mlx coverage json \
+  -o .runtime/coverage/gemma4_qat_catalog.json && \
+python3 scripts/changed_scope_coverage.py \
+  --coverage-json .runtime/coverage/gemma4_qat_catalog.json \
+  services/mlx-worker-python/worker/model_registry/catalog.py \
+  services/mlx-worker-python/worker/model_ops/hub_catalog.py \
+  services/mlx-worker-python/tests/test_model_registry_catalog.py \
+  services/mlx-worker-python/tests/test_hub_catalog.py
+```
+
+Slice 1 runtime metrics are `N/A`: this slice changes deterministic model
+catalog and registry metadata only, with no model load, token generation, or
+request path execution. Runtime E2B/E4B smoke, memory, TTFT, decode rate, and
+speculative acceptance metrics remain part of slice 3.
+
+Final implementation verification must also include the relevant repository
+gates from `AGENTS.md`. Slice 3 must run real-model E2B/E4B probes and the
+registered PR-scoped performance report before release-gate claims.
+
+## Acceptance Criteria
+
+- Gemma 4 QAT MLX target assets are discoverable and distinguishable from PTQ
+  assets.
+- First-slice automatic support and release-gate evidence are scoped to
+  `mlx-community/gemma-4-*qat*` target and draft companion assets.
+- Compatible QAT draft companion assets are discoverable but hidden from normal
+  serving target lists.
+- Baseline generation remains available when assistant pairing is missing.
+- Missing draft companion state is reported as degraded speculative capability
+  with an explicit operator remediation and no implicit download.
+- Prompt-only speculative decode records MTP evidence when a compatible assistant
+  is paired.
+- E2B and E4B QAT 4-bit targets each have real-model smoke evidence with their
+  matching draft companions.
+- Mobile/CT assets are not advertised as first-slice Melix-native runtime
+  targets, but remain visible with explicit unsupported runtime format evidence.
