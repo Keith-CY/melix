@@ -204,9 +204,12 @@ def test_report_evidence_gate_run_kind_probe_script_emits_metrics(
     assert metrics["run_kind_elapsed_ms_mean"] >= 0.0
     assert metrics["metric_prefix_elapsed_ms_mean"] >= 0.0
     assert metrics["target_field_elapsed_ms_mean"] >= 0.0
+    assert metrics["matrix_roles_elapsed_ms_mean"] >= 0.0
     assert metrics["run_kind_count"] == 65.0
     assert metrics["metric_prefix_count"] == 65.0
     assert metrics["target_field_count"] == 65.0
+    assert metrics["matrix_roles_role_count"] == 32.0
+    assert metrics["matrix_roles_probe_phase_rows"] == 2048.0
     assert metrics["metrics_per_call"] == 80.0
     assert metrics["targets_per_call"] == 80.0
 
