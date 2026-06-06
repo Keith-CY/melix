@@ -25,6 +25,10 @@ text.
   in a wrong envelope such as a `python` code fence.
 - Preserve parser metrics for malformed fragments, markup leaks, name
   normalization, unknown tools, and the effective parser configuration receipt.
+- Treat `stream_parser_rescue_path` as a parser configuration receipt. The
+  field records that local tool-call rescue parsing was wired for the request;
+  it is not a per-fragment "rescue fired" signal. Actual malformed or unknown
+  tool activity remains reported through the existing parser counters.
 
 ## Non-Goals
 
@@ -34,11 +38,11 @@ text.
 
 ## Performance Probes
 
-The changed path is token-stream parsing. The relevant probe is the existing
-PR-scoped stream assembler parser-mode cache probe if selected by the
-performance harness. Success is no in-scope regression in the PR performance
-report and no increase in parser failure metrics for the existing tool-call
-fixture dataset.
+The changed path is token-stream parsing. The relevant probes are the existing
+PR-scoped stream assembler parser-mode cache probe, structural-prefix probe,
+and token-byte fast-decode probe if selected by the performance harness.
+Success is no in-scope regression in the PR performance report and no increase
+in parser failure metrics for the existing tool-call fixture dataset.
 
 The parser-mode probe keeps the same metrics and thresholds but uses 512
 samples by default so sub-2 ms parser measurements are not dominated by a

@@ -393,6 +393,8 @@ class RequestStreamAssembler:
                 if self._tool_parsing_enabled_value
                 else "[]"
             ),
+            # Configuration receipt: this declares whether rescue parsing was
+            # wired for the request, not whether a rescue branch actually fired.
             "stream_parser_rescue_path": (
                 "local_tool_call_format_rescue" if self._tool_rescue_enabled_value else ""
             ),
@@ -1389,33 +1391,7 @@ class RequestStreamAssembler:
             name = resolved_name
 
         call_id = str(payload.get("id") or payload.get("call_id") or "").strip()
-        # Prefer model-provided call ids for dedupe so identical repeated calls
-        # can be emitted. When a call id has already been seen, skip before
-        # canonicalizing arguments because the fragment will be discarded.
-        if call_id:
-            key = ("call_id", call_id)
-            if key in self._emitted_tool_keys:
-                self._metrics["duplicate_tool_delta_count"] += 1
-                return None
-            arguments_fragment = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
-        else:
-            arguments_fragment = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
-            # Legacy call-id-less fragments keep content dedupe to suppress
-            # non-monotonic replay from older parsers.
-            key = ("legacy", f"{name}\0{arguments_fragment}")
-            if key in self._emitted_tool_keys:
-                self._metrics["duplicate_tool_delta_count"] += 1
-                return None
-        self._emitted_tool_keys.add(key)
-
-        self._tool_fragment_index += 1
-        return AssembledToolCall(
-            call_id=call_id or f"{self._request_id}-tool-{self._tool_fragment_index}",
-            tool_name=name,
-            arguments_json_fragment=arguments_fragment,
-            fragment_index=self._tool_fragment_index,
-            parser_mode=self._tool_parser_mode,
-        )
+        return self._emit_resolved_tool_call(name=name, call_id=call_id, arguments=arguments)
 
     def _standard_tool_delta_from_payload(
         self,
@@ -1444,6 +1420,18 @@ class RequestStreamAssembler:
             name = resolved_name
 
         call_id = str(payload.get("id") or payload.get("call_id") or "").strip()
+        return self._emit_resolved_tool_call(name=name, call_id=call_id, arguments=arguments)
+
+    def _emit_resolved_tool_call(
+        self,
+        *,
+        name: str,
+        call_id: str,
+        arguments: dict[str, object],
+    ) -> AssembledToolCall | None:
+        # Prefer model-provided call ids for dedupe so identical repeated calls
+        # can be emitted. When a call id has already been seen, skip before
+        # canonicalizing arguments because the fragment will be discarded.
         if call_id:
             key = ("call_id", call_id)
             if key in self._emitted_tool_keys:
@@ -1452,6 +1440,8 @@ class RequestStreamAssembler:
             arguments_fragment = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
         else:
             arguments_fragment = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
+            # Legacy call-id-less fragments keep content dedupe to suppress
+            # non-monotonic replay from older parsers.
             key = ("legacy", f"{name}\0{arguments_fragment}")
             if key in self._emitted_tool_keys:
                 self._metrics["duplicate_tool_delta_count"] += 1
