@@ -35,6 +35,7 @@ Step-by-step operating procedures for specific workflows. Use these when you nee
 |---|---|
 | [Agent UI Walkthrough](runbooks/agent-ui-walkthrough.md) | Browser-based walkthrough workflow for substantial UI/UX changes before App implementation |
 | [Local Stack](runbooks/phase-1-local-stack.md) | Runtime layout, environment exports, and alternate startup modes |
+| [Local Job Remediation](runbooks/local-job-remediation.md) | Log-driven local job diagnoses, bounded retry decisions, and operator-safe remediation receipts |
 | [Benchmark, Matrix & LoRA](runbooks/benchmark-matrix-evaluation-and-lora.md) | Full operator guide: benchmarking, matrix runs, evaluation, and LoRA fine-tuning |
 | [Workflow Recipes And URI Inspection](runbooks/workflow-recipes.md) | Built-in workflow recipes, URI inspection, planning, and pipeline-backed apply |
 | [LoRA Adapter Workflow](runbooks/phase-8-lora-adapter-workflow.md) | Training, activating, publishing, and removing LoRA adapters |
