@@ -3389,6 +3389,16 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert "stderr=sys.stderr" in swift_probe.probe_command
 
 
+def test_stream_assembler_parser_mode_probe_command_pins_sample_count() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "stream-assembler-parser-mode-cache"
+    )
+
+    assert "MELIX_STREAM_ASSEMBLER_PARSER_MODE_SAMPLES=64" in probe.probe_command
+
+
 def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -> None:
     registry_payload = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
     seen_ids: set[str] = set()
