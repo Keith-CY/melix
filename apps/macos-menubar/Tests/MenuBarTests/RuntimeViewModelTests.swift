@@ -1237,6 +1237,32 @@ struct RuntimeViewModelTests {
         #expect(imageOnlyViewModel.selectedLoraModel == nil)
     }
 
+    @Test("lora model picker includes text capable Hugging Face cache VLM models")
+    @MainActor
+    func loraModelPickerIncludesTextCapableHFCacheVLMModels() async throws {
+        let modelID = "unsloth/gemma-4-E4B-it-MLX-8bit"
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(makeSnapshot(serverState: .serverReady, models: []))
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeEvaluationRegistrySnapshotManifest()
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+
+        #expect(viewModel.loraCapableModels.map(\.modelID).contains(modelID))
+
+        viewModel.selectedLoraModelID = modelID
+
+        #expect(viewModel.selectedLoraModel?.modelID == modelID)
+    }
+
     @Test("restoresSelectedSurfaceAndServerSession from operator-session state")
     @MainActor
     func restoresSelectedSurfaceAndServerSessionFromOperatorSessionState() async throws {
@@ -6936,6 +6962,60 @@ struct RuntimeViewModelTests {
         #expect(viewModel.selectedServerSession?.modelID == "unsloth/gemma-4-E4B-it-MLX-8bit")
         #expect(viewModel.serverTargets.contains { target in
             target.kind == .localServer && target.modelID == "unsloth/gemma-4-E4B-it-MLX-8bit"
+        })
+    }
+
+    @Test("chat sends through a server session created from a text capable Hugging Face cache VLM model")
+    @MainActor
+    func chatSendsThroughServerCreatedFromTextCapableHFCacheVLMModel() async throws {
+        let modelID = "unsloth/gemma-4-E4B-it-MLX-8bit"
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(makeSnapshot(serverState: .serverReady, models: []))
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeEvaluationRegistrySnapshotManifest()
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+        viewModel.createServerSession(modelID: modelID)
+        let server = try #require(viewModel.selectedServerSession)
+
+        await viewModel.startSelectedServerSession()
+        viewModel.bindSelectedChatSessionToServer(serverSessionID: server.id)
+        viewModel.chatComposerText = "Explain this image-ready model in text."
+
+        await viewModel.submitChatPrompt()
+
+        #expect(await client.recordedActions.contains("chat:\(modelID)"))
+    }
+
+    @Test("chat capability list includes text capable Hugging Face cache VLM models")
+    @MainActor
+    func chatCapabilityListIncludesTextCapableHFCacheVLMModels() async throws {
+        let modelID = "unsloth/gemma-4-E4B-it-MLX-8bit"
+        let client = FakeControlPlaneXPCClient()
+        await client.configureSnapshot(makeSnapshot(serverState: .serverReady, models: []))
+        await client.configureModelOperation(
+            makeNamedModelOperationResult(
+                operation: "registry_snapshot",
+                outputPath: "/tmp/melix-model-ops-registry/registry_snapshot.json",
+                manifestJSON: makeEvaluationRegistrySnapshotManifest()
+            ),
+            forNamedOperation: "registry_snapshot"
+        )
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        await viewModel.refreshModelOpsProductState()
+
+        #expect(viewModel.chatCapabilities.contains { capability in
+            capability.id == "vlm" && capability.modelID == modelID
         })
     }
 
