@@ -40,6 +40,10 @@ performance harness. Success is no in-scope regression in the PR performance
 report and no increase in parser failure metrics for the existing tool-call
 fixture dataset.
 
+The parser-mode probe keeps the same metrics and thresholds but uses 64
+samples by default so sub-2 ms parser measurements are not dominated by a
+single scheduler outlier.
+
 ## Verification
 
 - Add failing assembler tests for XML invoke, fenced JSON, MiniMax tool code,
