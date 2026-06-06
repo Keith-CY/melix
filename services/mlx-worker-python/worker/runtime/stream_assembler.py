@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 from functools import lru_cache
 import json
 import logging
+import re
 
 from worker.runtime import tool_call_rescue
 
@@ -262,6 +263,10 @@ class RequestStreamAssembler:
     _VISIBLE_TAIL_MARKERS = ("\nFinal answer", "\nFinal:", "\nAnswer:", "\nAssistant:", "\nResult:")
     _HIDDEN_PIPE_CHANNELS = frozenset({"analysis", "thought", "reasoning"})
     _VISIBLE_PIPE_CHANNELS = frozenset({"commentary", "final"})
+    _PIPE_CALL_RE = re.compile(
+        r"^\s*call:(?P<name>[A-Za-z0-9_.:/-]+)\s*(?P<args>\{.*\}|\(\s*\))\s*$",
+        re.DOTALL,
+    )
 
     def __init__(
         self,
@@ -1308,7 +1313,7 @@ class RequestStreamAssembler:
             try:
                 payload = json.loads(body)
             except json.JSONDecodeError:
-                payload = self._parse_pipe_tool_body(body)
+                payload = self._parse_standard_pipe_tool_body(body)
                 if payload is None:
                     self._metrics["malformed_tool_fragment_count"] += 1
                     return None
@@ -1475,6 +1480,28 @@ class RequestStreamAssembler:
 
     def _looks_like_tool_payload(self, body: str) -> bool:
         return tool_call_rescue.looks_like_tool_payload(body)
+
+    def _parse_standard_pipe_tool_body(self, body: str) -> dict[str, object] | None:
+        match = self._PIPE_CALL_RE.match(body)
+        if match is None:
+            return None
+        if match.group("args").startswith("("):
+            return {
+                "name": match.group("name"),
+                "arguments": {},
+            }
+        try:
+            arguments = json.loads(match.group("args"))
+        except json.JSONDecodeError:
+            arguments = tool_call_rescue.parse_relaxed_object_arguments(match.group("args"))
+            if arguments is None:
+                return None
+        if not isinstance(arguments, dict):
+            return None
+        return {
+            "name": match.group("name"),
+            "arguments": arguments,
+        }
 
     def _parse_pipe_tool_body(self, body: str) -> dict[str, object] | None:
         return tool_call_rescue.parse_pipe_tool_body(body)

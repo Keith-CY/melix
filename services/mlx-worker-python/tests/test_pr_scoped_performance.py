@@ -152,6 +152,38 @@ def test_scope_report_selects_stream_assembler_probe() -> None:
     }
 
 
+def _assert_stream_assembler_probe_covers_standard_pipe_parser(probe_id: str) -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == probe_id
+    )
+
+    focused_test = (
+        "services/mlx-worker-python/tests/test_stream_assembler.py::"
+        "test_standard_qwen_pipe_tool_parser_keeps_rescue_parser_off"
+    )
+    stream_assembler_tests = "services/mlx-worker-python/tests/test_stream_assembler.py"
+    coverage_pytest_selection = probe.coverage_command.split("&&", 1)[0]
+
+    assert focused_test in probe.test_command
+    assert focused_test in coverage_pytest_selection or (
+        f" {stream_assembler_tests} " in f" {coverage_pytest_selection} "
+    )
+
+
+def test_stream_assembler_structural_prefix_probe_covers_standard_pipe_parser() -> None:
+    _assert_stream_assembler_probe_covers_standard_pipe_parser(
+        "stream-assembler-structural-prefix-cache"
+    )
+
+
+def test_stream_assembler_token_byte_probe_covers_standard_pipe_parser() -> None:
+    _assert_stream_assembler_probe_covers_standard_pipe_parser(
+        "stream-assembler-token-byte-fast-decode"
+    )
+
+
 def test_scope_report_selects_runtime_utils_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -3396,7 +3428,7 @@ def test_stream_assembler_parser_mode_probe_command_pins_sample_count() -> None:
         if probe.probe_id == "stream-assembler-parser-mode-cache"
     )
 
-    assert "MELIX_STREAM_ASSEMBLER_PARSER_MODE_SAMPLES=64" in probe.probe_command
+    assert "MELIX_STREAM_ASSEMBLER_PARSER_MODE_SAMPLES=512" in probe.probe_command
 
 
 def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -> None:

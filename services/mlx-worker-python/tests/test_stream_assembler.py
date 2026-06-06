@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from unittest.mock import Mock
 
 import pytest
 
@@ -436,20 +437,25 @@ def _token_count_routing_probe() -> None:
         )
     )
     original_rescue_parse_tool_body = stream_assembler.tool_call_rescue.parse_tool_body
-    standard_qwen_pipe_rescue_parse_called = False
-
-    def forbidden_rescue_parse_tool_body(body: str) -> object:
-        nonlocal standard_qwen_pipe_rescue_parse_called
-        standard_qwen_pipe_rescue_parse_called = True
-        raise AssertionError(f"standard qwen parser used rescue parser for {body!r}")
+    original_rescue_parse_pipe_tool_body = stream_assembler.tool_call_rescue.parse_pipe_tool_body
+    forbidden_rescue_parse_tool_body = Mock(
+        side_effect=AssertionError("standard qwen parser used rescue parser")
+    )
+    forbidden_rescue_parse_pipe_tool_body = Mock(
+        side_effect=AssertionError("standard qwen parser used rescue pipe parser")
+    )
 
     stream_assembler.tool_call_rescue.parse_tool_body = forbidden_rescue_parse_tool_body
+    stream_assembler.tool_call_rescue.parse_pipe_tool_body = forbidden_rescue_parse_pipe_tool_body
     try:
         standard_qwen_pipe_payload = standard_qwen_assembler._tool_delta(
             'call:search{"q":"pipe"}'
         )
     finally:
         stream_assembler.tool_call_rescue.parse_tool_body = original_rescue_parse_tool_body
+        stream_assembler.tool_call_rescue.parse_pipe_tool_body = (
+            original_rescue_parse_pipe_tool_body
+        )
     rescue_branch_assembler = RequestStreamAssembler(
         request_id="req-channel-state-rescue-branches",
         reasoning_enabled=True,
@@ -672,7 +678,8 @@ def _token_count_routing_probe() -> None:
     assert standard_qwen_pipe_payload is not None
     assert standard_qwen_pipe_payload.tool_name == "search"
     assert standard_qwen_pipe_payload.arguments_json_fragment == '{"q":"pipe"}'
-    assert standard_qwen_pipe_rescue_parse_called is False
+    assert forbidden_rescue_parse_tool_body.called is False
+    assert forbidden_rescue_parse_pipe_tool_body.called is False
     assert standard_qwen_assembler._metrics["malformed_tool_fragment_count"] == 2
     assert standard_qwen_assembler._metrics["partial_tool_candidate_count"] == 1
     assert standard_qwen_assembler._metrics["duplicate_tool_delta_count"] == 2
@@ -1278,6 +1285,56 @@ def test_pipe_tool_call_relaxed_object_arguments_are_parsed() -> None:
 
     assert len(calls) == 1
     assert calls[0].arguments_json_fragment == '{"command":"gh auth status"}'
+
+
+def test_standard_qwen_pipe_tool_parser_keeps_rescue_parser_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    forbidden_rescue_parse_tool_body = Mock(
+        side_effect=AssertionError("standard qwen parser used rescue parser")
+    )
+    forbidden_rescue_parse_pipe_tool_body = Mock(
+        side_effect=AssertionError("standard qwen parser used rescue pipe parser")
+    )
+    monkeypatch.setattr(
+        stream_assembler.tool_call_rescue,
+        "parse_tool_body",
+        forbidden_rescue_parse_tool_body,
+    )
+    monkeypatch.setattr(
+        stream_assembler.tool_call_rescue,
+        "parse_pipe_tool_body",
+        forbidden_rescue_parse_pipe_tool_body,
+    )
+    assembler = RequestStreamAssembler(
+        request_id="req-standard-qwen-pipe",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+        allowed_tool_names=("search", "github_auth"),
+    )
+
+    json_call = assembler._tool_delta('call:search{"q":"pipe"}')
+    relaxed_call = assembler._tool_delta('call:search{q: "relaxed"}')
+    parens_call = assembler._tool_delta("call:github_auth.check()")
+    malformed_call = assembler._tool_delta("call:search{")
+    scalar_payload = assembler._tool_delta('"not-object"')
+    string_arguments = assembler._tool_delta('{"name":"search","arguments":"{}"}')
+
+    assert json_call is not None
+    assert json_call.tool_name == "search"
+    assert json_call.arguments_json_fragment == '{"q":"pipe"}'
+    assert relaxed_call is not None
+    assert relaxed_call.arguments_json_fragment == '{"q":"relaxed"}'
+    assert parens_call is not None
+    assert parens_call.tool_name == "github_auth"
+    assert parens_call.arguments_json_fragment == "{}"
+    assert malformed_call is None
+    assert scalar_payload is None
+    assert string_arguments is None
+    assert forbidden_rescue_parse_tool_body.called is False
+    assert forbidden_rescue_parse_pipe_tool_body.called is False
+    assert assembler._metrics["malformed_tool_fragment_count"] == 3
 
 
 def test_pipe_tool_call_empty_parentheses_arguments_are_parsed() -> None:
