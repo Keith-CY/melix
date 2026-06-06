@@ -2017,7 +2017,7 @@ private struct ChatPresentationFragment: Sendable {
     let title: String
     let detail: String
     var remainingText: String
-    let firstQueuedAt: Date
+    let firstQueuedAt: ContinuousClock.Instant
 }
 
 private enum RuntimeLoraWorkflowOperation: String, Sendable {
@@ -3154,10 +3154,9 @@ public final class RuntimeViewModel {
     private var activeToolEntryIDs: [String: String] = [:]
     private var chatPresentationFragments: [ChatPresentationFragment] = []
     private var chatPresentationTask: Task<Void, Never>?
-    private var chatPresentationLastFlushAt: Date?
+    private var chatPresentationLastFlushAt: ContinuousClock.Instant?
     private var chatPresentationMaxLagMs = 0.0
     private var chatPresentationFlushCount = 0.0
-    private var chatPresentationRenderUpdateCount = 0.0
     private var persistedServerSessions: [DesktopServerSessionState] = []
     private var diagnosticsServerTargetSelectionUserOverridden = false
     private var dismissedBannerIDs: Set<String> = []
@@ -3391,7 +3390,6 @@ public final class RuntimeViewModel {
         ),
     ]
     private static let chatPresentationFlushInterval: Duration = .milliseconds(24)
-    private static let chatPresentationFlushIntervalSeconds = 0.024
     private static let chatPresentationCharactersPerFlush = 8
 
     public init(
@@ -7424,17 +7422,17 @@ public final class RuntimeViewModel {
                 case .tokenDelta(let text):
                     tokenDeltaCount += 1
                     streamedAssistantText += text
-                    _ = appendAssistantDelta(text, requestID: execution.requestID)
+                    appendAssistantDelta(text, requestID: execution.requestID)
                     shouldNotifyAfterEvent = false
                     await Task.yield()
                 case .reasoningDelta(let text):
                     reasoningDeltaCount += 1
-                    _ = appendReasoningDelta(text, requestID: execution.requestID)
+                    appendReasoningDelta(text, requestID: execution.requestID)
                     shouldNotifyAfterEvent = false
                     await Task.yield()
                 case .toolCallDelta(let callID, let toolName, let argumentsFragment):
                     toolDeltaCount += 1
-                    _ = appendToolDelta(
+                    appendToolDelta(
                         callID: callID,
                         toolName: toolName,
                         argumentsFragment: argumentsFragment
@@ -14859,7 +14857,7 @@ public final class RuntimeViewModel {
                     title: title,
                     detail: detail,
                     remainingText: text,
-                    firstQueuedAt: Date()
+                    firstQueuedAt: ContinuousClock().now
                 )
             )
         }
@@ -14918,19 +14916,16 @@ public final class RuntimeViewModel {
         guard let chatPresentationLastFlushAt else {
             return true
         }
-        return Date().timeIntervalSince(chatPresentationLastFlushAt) >= Self.chatPresentationFlushIntervalSeconds
+        return ContinuousClock().now >= chatPresentationLastFlushAt + Self.chatPresentationFlushInterval
     }
 
     private func chatPresentationWaitUntilNextFlush() -> Duration {
         guard let chatPresentationLastFlushAt else {
             return .zero
         }
-        let elapsed = Date().timeIntervalSince(chatPresentationLastFlushAt)
-        let remainingSeconds = Self.chatPresentationFlushIntervalSeconds - elapsed
-        guard remainingSeconds > 0 else {
-            return .zero
-        }
-        return .milliseconds(Int((remainingSeconds * 1_000).rounded(.up)))
+        let nextFlushAt = chatPresentationLastFlushAt + Self.chatPresentationFlushInterval
+        let remaining = nextFlushAt - ContinuousClock().now
+        return remaining > .zero ? remaining : .zero
     }
 
     @discardableResult
@@ -14946,10 +14941,9 @@ public final class RuntimeViewModel {
             return false
         }
 
-        let lagMs = Date().timeIntervalSince(fragment.firstQueuedAt) * 1_000
+        let lagMs = Self.milliseconds(from: fragment.firstQueuedAt.duration(to: ContinuousClock().now))
         chatPresentationMaxLagMs = max(chatPresentationMaxLagMs, lagMs)
         chatPresentationFlushCount += 1
-        chatPresentationRenderUpdateCount += 1
         appendBody(
             prefix,
             toEntryID: fragment.entryID,
@@ -14957,7 +14951,7 @@ public final class RuntimeViewModel {
             title: fragment.title,
             detail: fragment.detail
         )
-        chatPresentationLastFlushAt = Date()
+        chatPresentationLastFlushAt = ContinuousClock().now
 
         if remainder.isEmpty == false {
             fragment.remainingText = remainder
@@ -14975,7 +14969,6 @@ public final class RuntimeViewModel {
         chatPresentationLastFlushAt = nil
         chatPresentationMaxLagMs = 0
         chatPresentationFlushCount = 0
-        chatPresentationRenderUpdateCount = 0
     }
 
     private func recordChatPresentationMetricsIfNeeded() async {
@@ -14984,7 +14977,11 @@ public final class RuntimeViewModel {
         }
         await metrics.record(name: "menu.chat_presentation_lag_ms", valueMs: chatPresentationMaxLagMs)
         await metrics.record(name: "menu.chat_presentation_flush_count", valueMs: chatPresentationFlushCount)
-        await metrics.record(name: "menu.chat_render_update_count", valueMs: chatPresentationRenderUpdateCount)
+    }
+
+    private static func milliseconds(from duration: Duration) -> Double {
+        (Double(duration.components.seconds) * 1_000.0)
+            + (Double(duration.components.attoseconds) / 1_000_000_000_000_000.0)
     }
 
     private static func consumePresentationPrefix(

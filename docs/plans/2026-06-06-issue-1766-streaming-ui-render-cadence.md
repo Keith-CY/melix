@@ -27,13 +27,13 @@
   - Track raw chat stream event, token event, and transcript byte counts.
   - Gate non-terminal presentation flushes with `chatPresentationFlushInterval`.
   - Avoid per-token outer `notifyStateChanged()` calls when no visible state was flushed.
-  - Record separate stream and render metrics.
+  - Record separate stream and presentation flush metrics.
 - Modify `apps/macos-menubar/Tests/MenuBarTests/DesktopPolishSmokeTests.swift`
   - Extend smoke payload metrics while keeping nested JSON construction compiler-friendly.
 - Modify `services/control-plane-swift/Tests/ControlPlaneTests/EventSubscriptionHubTests.swift`
   - Stabilize CI verification by waiting for the first queued admission snapshot instead of relying on a fixed scheduler sleep.
 - Modify `docs/runbooks/desktop-polish.md`
-  - Document the new stream/render metrics used to diagnose cadence regressions.
+  - Document the new stream and presentation metrics used to diagnose cadence regressions.
 
 ## Performance Probes and Success Metrics
 
@@ -41,8 +41,8 @@
   - raw stream event count: `menu.chat_stream_event_count`
   - raw token delta count: `menu.chat_token_delta_count`
   - raw assistant transcript bytes: `menu.chat_stream_transcript_bytes`
-  - visible render update count: `menu.chat_render_update_count`
   - presentation flush count and lag: existing `menu.chat_presentation_flush_count` and `menu.chat_presentation_lag_ms`
+  - visible assistant transcript callback count: `RuntimeViewModel.onStateChanged` test observer
   - transcript parity mismatch count: `menu.chat_transcript_parity_mismatch_count`
 - Success metrics:
   - a high-rate 240-token fixture records all 240 token events
@@ -74,7 +74,7 @@
 - [x] Count all stream events in the `for try await event in execution.stream` loop.
 - [x] Count token deltas separately from reasoning/tool side-channel deltas.
 - [x] Accumulate raw assistant transcript bytes from token deltas.
-- [x] Record render update count from presentation flushes.
+- [x] Record presentation flush count as the UI cadence metric.
 - [x] Record transcript parity mismatch count by comparing non-empty raw assistant text with non-empty terminal assistant text.
 - [x] Re-run the focused tests.
 
@@ -91,3 +91,10 @@
 - [x] Replace fixed sleeps in the impacted AdmissionGate cohort tests with the existing snapshot wait helper.
 - [x] Run `make swift-test-menubar` and `make swift-test-control-core`.
 - [x] Record follow-up changed-line coverage for the smoke payload and AdmissionGate test changes.
+
+### Task 6: Address PR review feedback
+
+- [x] Replace wall-clock presentation cadence state with `ContinuousClock.Instant`.
+- [x] Keep cadence sleeps and eligibility checks on `Duration` arithmetic.
+- [x] Remove the duplicate `menu.chat_render_update_count` metric because presentation flush count already records that cadence boundary.
+- [x] Remove redundant discard assignments at token, reasoning, and tool delta call sites.

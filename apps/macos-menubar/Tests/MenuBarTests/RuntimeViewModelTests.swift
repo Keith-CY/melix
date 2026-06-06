@@ -11939,7 +11939,7 @@ struct RuntimeViewModelTests {
         #expect(metricsSnapshot["menu.chat_token_delta_count"] == Double(tokenFragments.count))
         #expect(metricsSnapshot["menu.chat_stream_transcript_bytes"] == Double(assistantText.utf8.count))
         #expect(metricsSnapshot["menu.chat_transcript_parity_mismatch_count"] == 0)
-        #expect((metricsSnapshot["menu.chat_render_update_count"] ?? 0) <= 8)
+        #expect((metricsSnapshot["menu.chat_presentation_flush_count"] ?? 0) <= 8)
     }
 
     @Test("chat prompt creates a transient assistant pending row before the first token")

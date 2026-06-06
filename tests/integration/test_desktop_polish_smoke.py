@@ -18,7 +18,6 @@ def test_desktop_polish_smoke_verifies_navigation_signals_and_queue_restore() ->
     assert payload["ok"] is True
     assert payload["chat"]["presentation_lag_ms"] >= 0
     assert payload["chat"]["presentation_flush_count"] > 1
-    assert payload["chat"]["render_update_count"] > 1
     assert payload["chat"]["stream_event_count"] == 4
     assert payload["chat"]["token_delta_count"] == 1
     assert payload["chat"]["stream_transcript_bytes"] > 0
