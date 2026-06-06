@@ -1,9 +1,9 @@
-# Embedding project digest SHA binding
+# Embedding project digest default-dimension fast path
 
 ## Scope
 
 This Python-only performance slice is limited to `worker.runtime.embedding_backends.DeterministicEmbeddingBackend._project_digest`.
-The deterministic embedding projection hashes every input seed before expanding the digest into a normalized vector; repeated embeddings should avoid avoidable module attribute lookup overhead on that hot path.
+The deterministic embedding projection hashes every input seed before expanding the digest into a normalized vector; default 8-dimension embeddings should skip the generic repeat/remainder expansion path after the first digest block is normalized while preserving the same zero-norm guard as the generic path.
 
 ## Registered probe
 
@@ -13,9 +13,11 @@ The registry entry includes focused `test_command`, `coverage_command`, and `pro
 ## Plan
 
 1. Preserve deterministic projection values for all supported dimensions.
-2. Bind the SHA-256 constructor at module load and reuse the binding inside `_project_digest`.
-3. Verify with focused embedding tests, changed-scope coverage, and the registered probe locally on Linux.
-4. Use PR-scoped performance CI as the merge gate.
+2. Add a direct `dimensions == 8` path that returns the normalized first digest block without running the generic repeat/remainder expansion path.
+3. Keep the normal 8-dimension hot path on the existing sum/list-comprehension shape and handle the defensive zero-norm case on the exceptional path.
+4. Increase the registered probe sample count outside pytest smoke runs so the sub-second digest microbenchmark is less sensitive to one-sample scheduler noise.
+5. Verify the zero-norm contract inside the registered project-digest probe, then run focused embedding tests, changed-scope coverage, and the registered probe locally on Linux.
+6. Use PR-scoped performance CI as the merge gate.
 
 ## Success metrics
 
