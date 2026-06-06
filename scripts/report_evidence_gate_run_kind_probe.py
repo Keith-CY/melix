@@ -12,7 +12,11 @@ REPO_ROOT = Path(os.environ.get("MELIX_REPORT_EVIDENCE_GATE_REPO_ROOT", Path(__f
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 
-from worker.productization.report_evidence_gate import _release_matrix_rows, _rule_matches_report  # noqa: E402
+from worker.productization.report_evidence_gate import (  # noqa: E402
+    _release_matrix_rows,
+    _rule_matches_report,
+    _slowest_probe_phases,
+)
 
 
 def _measure_run_kind(iterations: int, sample_count: int) -> tuple[dict[str, float], float]:
@@ -154,6 +158,40 @@ def _measure_release_matrix_rows(iterations: int, sample_count: int) -> tuple[di
     )
 
 
+def _measure_slowest_probe_phases(iterations: int, sample_count: int) -> tuple[dict[str, float], float]:
+    slowest_phases = [
+        {"phase": f"probe_phase_{index}", "duration_ms": float((index * 37) % 997)}
+        for index in range(2000)
+    ]
+    report = {
+        "probe_summary": {
+            "baseline": {"slowest_phases": slowest_phases[:1000]},
+            "candidate": {"slowest_phases": slowest_phases[1000:]},
+        }
+    }
+    elapsed_samples: list[float] = []
+    checksum = 0.0
+
+    for _ in range(sample_count):
+        started = time.perf_counter()
+        for _index in range(iterations):
+            rows = _slowest_probe_phases(report)
+            if len(rows) != 5:
+                raise RuntimeError("expected five slowest probe phases")
+            checksum += sum(float(row["duration_ms"]) for row in rows)
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+
+    elapsed_mean = statistics.fmean(elapsed_samples)
+    return (
+        {
+            "slowest_probe_phase_elapsed_ms_mean": elapsed_mean,
+            "slowest_probe_phase_rows_per_call": float(len(slowest_phases)),
+            "slowest_probe_phase_checksum": checksum,
+        },
+        elapsed_mean,
+    )
+
+
 def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     run_kind_metrics, run_kind_elapsed = _measure_run_kind(iterations, sample_count)
     metric_prefix_metrics, metric_prefix_elapsed = _measure_metric_prefix(iterations, sample_count)
@@ -163,14 +201,23 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         release_matrix_iterations,
         sample_count,
     )
+    slowest_probe_phase_iterations = max(1, iterations // 500)
+    slowest_probe_phase_metrics, slowest_probe_phase_elapsed = _measure_slowest_probe_phases(
+        slowest_probe_phase_iterations,
+        sample_count,
+    )
     return {
-        "elapsed_ms_mean": run_kind_elapsed + metric_prefix_elapsed + target_field_elapsed,
+        "elapsed_ms_mean": run_kind_elapsed
+        + metric_prefix_elapsed
+        + target_field_elapsed
+        + slowest_probe_phase_elapsed,
         "iterations": float(iterations),
         "sample_count": float(sample_count),
         **run_kind_metrics,
         **metric_prefix_metrics,
         **target_field_metrics,
         **release_matrix_metrics,
+        **slowest_probe_phase_metrics,
     }
 
 
