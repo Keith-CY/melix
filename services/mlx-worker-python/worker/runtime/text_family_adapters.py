@@ -389,10 +389,10 @@ def _resolved_expert_count(
 def _expert_count_from_config(config_payload: Mapping[str, Any] | None) -> int | None:
     config_payload = _config_mapping(config_payload)
     value = config_payload.get("num_local_experts")
+    if type(value) is int:
+        return max(0, value)
     if isinstance(value, bool):
         pass
-    elif isinstance(value, int):
-        return max(0, value)
     elif isinstance(value, float):
         return max(0, int(value))
     elif isinstance(value, str) and value.strip():
