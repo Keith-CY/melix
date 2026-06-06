@@ -240,6 +240,261 @@ def _token_count_routing_probe() -> None:
         StreamFragment(raw_text="<|channel>analysis<channel|>hidden")
     )
     hidden_pipe_completed = hidden_pipe_assembler.completed()
+    bracket_rescue_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-bracket-rescue",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+        allowed_tool_names=("text_search",),
+    )
+    bracket_rescue_first = bracket_rescue_assembler.accept(StreamFragment(raw_text="before [TOOL_"))
+    bracket_rescue_second = bracket_rescue_assembler.accept(
+        StreamFragment(
+            raw_text=(
+                'before [TOOL_CALL]{"name":"search","arguments":{"query":"Melix"}}'
+                "[/TOOL_CALL] after"
+            )
+        )
+    )
+    bracket_rescue_completed = bracket_rescue_assembler.completed()
+    rescue_array_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-rescue-array",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+        allowed_tool_names=("text_search", "visit"),
+    )
+    rescue_array_deltas = rescue_array_assembler.accept(
+        StreamFragment(
+            raw_text=(
+                'lead [TOOL_CALL][{"name":"search","arguments":{"query":"Melix"}},'
+                '"bad",{"name":"browse","arguments":{"url":"fixture://docs"}}][/TOOL_CALL]'
+            )
+        )
+    )
+    rescue_array_completed = rescue_array_assembler.completed()
+    fenced_visible_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-visible-fence",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+        allowed_tool_names=("text_search",),
+    )
+    fenced_visible_deltas = fenced_visible_assembler.accept(
+        StreamFragment(raw_text='```json\n{"status":"ok"}\n```')
+    )
+    fenced_visible_completed = fenced_visible_assembler.completed()
+    unclosed_rescue_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-unclosed-rescue",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+        allowed_tool_names=("text_search",),
+    )
+    assert unclosed_rescue_assembler.accept(StreamFragment(raw_text="<invoke")) == []
+    unclosed_rescue_completed = unclosed_rescue_assembler.completed()
+    invalid_rescue_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-invalid-rescue",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+        allowed_tool_names=("text_search",),
+    )
+    invalid_rescue_deltas = invalid_rescue_assembler.accept(
+        StreamFragment(raw_text="[TOOL_CALL]not a call[/TOOL_CALL]")
+    )
+    invalid_rescue_completed = invalid_rescue_assembler.completed()
+    unknown_rescue_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-unknown-rescue",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+        allowed_tool_names=("text_search",),
+    )
+    unknown_rescue_deltas = unknown_rescue_assembler.accept(
+        StreamFragment(raw_text='[TOOL_CALL]{"name":"unknown","arguments":{}}[/TOOL_CALL]')
+    )
+    unknown_rescue_completed = unknown_rescue_assembler.completed()
+    duplicate_rescue_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-duplicate-rescue",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+        allowed_tool_names=("text_search",),
+    )
+    duplicate_rescue_deltas = duplicate_rescue_assembler.accept(
+        StreamFragment(
+            raw_text=(
+                '[TOOL_CALL]{"id":"same","name":"search","arguments":{"query":"Melix"}}'
+                '[/TOOL_CALL][TOOL_CALL]{"id":"same","name":"search","arguments":{"query":"Melix"}}'
+                "[/TOOL_CALL]"
+            )
+        )
+    )
+    duplicate_rescue_completed = duplicate_rescue_assembler.completed()
+    wrong_envelope_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-wrong-envelope-python-fence",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+        allowed_tool_names=("text_search",),
+    )
+    wrong_envelope_assembler.channel_state.pending_marker_tail = "```p"
+    wrong_envelope_assembler.channel_state.open_tool_event_count = 1
+    wrong_envelope_deltas = wrong_envelope_assembler.accept(
+        StreamFragment(
+            raw_text=(
+                "```python\n"
+                '{"name":"search","arguments":{"query":"Melix wrong envelope"}}'
+                "\n```"
+            )
+        )
+    )
+    wrong_envelope_completed = wrong_envelope_assembler.completed()
+    partial_payload_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-partial-payload",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+        allowed_tool_names=("text_search",),
+    )
+    assert partial_payload_assembler._tool_deltas_for_rescue_fragment("{}") == []
+    assert (
+        partial_payload_assembler._tool_deltas_for_rescue_fragment(
+            '[{"name":"search"},{"name":"search","arguments":[]}]'
+        )
+        == []
+    )
+    partial_payload_completed = partial_payload_assembler.completed()
+    invalid_array_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-invalid-array",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+    )
+    assert invalid_array_assembler._tool_deltas_for_rescue_fragment("[1]") == []
+    invalid_array_completed = invalid_array_assembler.completed()
+    plain_probe_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-plain-probe",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="",
+    )
+    disabled_rescue_checks = (
+        plain_probe_assembler._may_contain_structural_markup("plain"),
+        plain_probe_assembler._buffer_has_tool_rescue_marker_start(),
+        plain_probe_assembler._next_tool_rescue_tag(),
+    )
+    direct_probe_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-direct-probe",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+        allowed_tool_names=("text_search",),
+    )
+    direct_probe_assembler._buffer = "lead <tool_call>{}</tool_call> [TOOL_CALL]{}[/TOOL_CALL]"
+    direct_probe_results = (
+        direct_probe_assembler._next_structural_tag_after(19),
+        direct_probe_assembler._may_contain_structural_markup("<invoke"),
+        direct_probe_assembler._buffer_has_tool_rescue_marker_start(start=19),
+        direct_probe_assembler._partial_tool_rescue_tag_suffix(),
+        direct_probe_assembler._parse_pipe_tool_body('call:search{"query":"Melix"}'),
+        direct_probe_assembler._is_action_qualified_tool_name("browser.visit", "browser"),
+        direct_probe_assembler._resolve_tool_name("search"),
+    )
+    standard_qwen_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-standard-qwen-branches",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="qwen",
+        allowed_tool_names=("search", "browser"),
+    )
+    standard_qwen_named_payload = standard_qwen_assembler._tool_delta_from_payload(
+        {"name": "search", "arguments": {"q": "Melix"}}
+    )
+    standard_qwen_casefold_name = standard_qwen_assembler._resolve_tool_name("SEARCH")
+    standard_qwen_prefix_name = standard_qwen_assembler._resolve_tool_name("browser.open")
+    standard_qwen_unknown_name = standard_qwen_assembler._resolve_tool_name("unknown")
+    standard_qwen_missing_function_payload = (
+        standard_qwen_assembler._tool_delta_from_payload(
+            {"function": {"name": "search"}, "arguments": {"q": "ignored"}}
+        )
+    )
+    standard_qwen_string_arguments = standard_qwen_assembler._tool_delta_from_payload(
+        {"name": "search", "arguments": "{}"}
+    )
+    standard_qwen_empty_payload = standard_qwen_assembler._standard_tool_delta_from_payload({})
+    standard_qwen_duplicate_payload = standard_qwen_assembler._standard_tool_delta_from_payload(
+        {"name": "search", "arguments": {"q": "Melix"}}
+    )
+    standard_qwen_call_id_payload = standard_qwen_assembler._standard_tool_delta_from_payload(
+        {"id": "call-a", "name": "browser.open", "arguments": {"url": "fixture://docs"}}
+    )
+    standard_qwen_duplicate_call_id_payload = (
+        standard_qwen_assembler._standard_tool_delta_from_payload(
+            {"id": "call-a", "name": "browser.open", "arguments": {"url": "fixture://docs"}}
+        )
+    )
+    original_rescue_parse_tool_body = stream_assembler.tool_call_rescue.parse_tool_body
+    standard_qwen_pipe_rescue_parse_called = False
+
+    def forbidden_rescue_parse_tool_body(body: str) -> object:
+        nonlocal standard_qwen_pipe_rescue_parse_called
+        standard_qwen_pipe_rescue_parse_called = True
+        raise AssertionError(f"standard qwen parser used rescue parser for {body!r}")
+
+    stream_assembler.tool_call_rescue.parse_tool_body = forbidden_rescue_parse_tool_body
+    try:
+        standard_qwen_pipe_payload = standard_qwen_assembler._tool_delta(
+            'call:search{"q":"pipe"}'
+        )
+    finally:
+        stream_assembler.tool_call_rescue.parse_tool_body = original_rescue_parse_tool_body
+    rescue_branch_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-rescue-branches",
+        reasoning_enabled=True,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+        allowed_tool_names=("text_search",),
+    )
+    rescue_branch_assembler._buffer = "<think>hidden</think> [TOOL_CALL]{}[/TOOL_CALL]"
+    rescue_standard_tag_step = rescue_branch_assembler._drain_rescue_before_standard_tag(
+        final=False
+    )
+    rescue_branch_assembler._buffer = "[TOOL_CALL]"
+    rescue_incomplete_step = rescue_branch_assembler._drain_rescue_before_standard_tag(
+        final=False
+    )
+    rescue_branch_assembler._buffer = "[TOOL_CALL"
+    rescue_final_partial_step = rescue_branch_assembler._drain_rescue_before_standard_tag(
+        final=True
+    )
+    rescue_branch_assembler._buffer = '```json\n{"status":"ok"}\n```'
+    rescue_branch_assembler.channel_state.pending_marker_tail = "```j"
+    rescue_visible_fence = rescue_branch_assembler._drain_tool_rescue_tag("```", final=True)
+    rescue_disabled_partial_suffix = plain_probe_assembler._partial_tool_rescue_tag_suffix()
+    rescue_malformed_payload = rescue_branch_assembler._tool_deltas_for_rescue_fragment("[1]")
+    rescue_fallback_name_payload = rescue_branch_assembler._tool_delta_from_payload(
+        {"function": {"name": "search"}, "arguments": {"query": "Melix"}}
+    )
+    rescue_decoded_function_payload = rescue_branch_assembler._parse_tool_body(
+        "search(query='Melix')"
+    )
+    rescue_invalid_json_payload = rescue_branch_assembler._parse_tool_body("{bad")
+    rescue_relaxed_arguments = rescue_branch_assembler._parse_relaxed_object_arguments(
+        "{'query': 'Melix'}"
+    )
+    leak_probe_assembler = RequestStreamAssembler(
+        request_id="req-channel-state-bracket-leak",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+    )
+    leak_probe_assembler._content_delta("[TOOL_CALL leaked")
+    leak_probe_completed = leak_probe_assembler.completed()
+    assert assembler._drain_tool_rescue_tag("unknown", final=False) == []
+    assembler.channel_state.open_tool_event_count = 1
+    assembler._flush_orphan_tool_rescue_fragment()
 
     assert [
         (
@@ -347,6 +602,99 @@ def _token_count_routing_probe() -> None:
     assert hidden_pipe_deltas == []
     assert hidden_pipe_completed.reasoning_text == "hidden"
     assert hidden_pipe_completed.metrics["channel_state_preferred_source"] == "reasoning_tag"
+    assert [delta.content_text for delta in bracket_rescue_first if delta.content_text] == [
+        "before "
+    ]
+    assert [
+        delta.tool_call.tool_name for delta in bracket_rescue_second if delta.tool_call
+    ] == ["text_search"]
+    assert bracket_rescue_completed.assistant_text == "before  after"
+    assert bracket_rescue_completed.metrics["stream_prefix_hold_chars"] == len("[TOOL_")
+    assert bracket_rescue_completed.metrics["tool_call_markup_leak_count"] == 0
+    assert [delta.content_text for delta in rescue_array_deltas if delta.content_text] == ["lead "]
+    assert [delta.tool_call.tool_name for delta in rescue_array_deltas if delta.tool_call] == [
+        "text_search",
+        "visit",
+    ]
+    assert rescue_array_completed.metrics["malformed_tool_fragment_count"] == 1
+    assert [delta.content_text for delta in fenced_visible_deltas if delta.content_text] == [
+        '```json\n{"status":"ok"}\n```'
+    ]
+    assert fenced_visible_completed.metrics["tool_call_markup_leak_count"] == 0
+    assert unclosed_rescue_completed.metrics["malformed_tool_fragment_count"] == 1
+    assert invalid_rescue_deltas == []
+    assert invalid_rescue_completed.metrics["malformed_tool_fragment_count"] == 1
+    assert unknown_rescue_deltas == []
+    assert unknown_rescue_completed.metrics["unknown_tool_delta_count"] == 1
+    assert [delta.tool_call.tool_name for delta in duplicate_rescue_deltas if delta.tool_call] == [
+        "text_search"
+    ]
+    assert duplicate_rescue_completed.metrics["duplicate_tool_delta_count"] == 1
+    assert wrong_envelope_deltas == []
+    assert wrong_envelope_completed.assistant_text == ""
+    assert wrong_envelope_completed.tool_call_count == 0
+    assert wrong_envelope_completed.metrics["tool_parser_retryable_error_count"] == 1
+    assert wrong_envelope_completed.metrics["tool_parser_retryable_error_code"] == (
+        "tool_call_wrong_envelope_python_fence"
+    )
+    assert "accepted tool-call envelope" in str(
+        wrong_envelope_completed.metrics["tool_parser_retryable_error_message"]
+    )
+    assert wrong_envelope_completed.metrics["open_tool_event_count"] == 0
+    assert wrong_envelope_completed.metrics["pending_marker_tail_chars"] == 0
+    assert wrong_envelope_completed.metrics["tool_call_markup_leak_count"] == 0
+    assert partial_payload_completed.metrics["partial_tool_candidate_count"] == 2
+    assert partial_payload_completed.metrics["malformed_tool_fragment_count"] == 1
+    assert invalid_array_completed.metrics["malformed_tool_fragment_count"] == 1
+    assert disabled_rescue_checks == (False, False, None)
+    assert direct_probe_results == (
+        31,
+        True,
+        True,
+        "",
+        {"name": "search", "arguments": {"query": "Melix"}},
+        True,
+        "text_search",
+    )
+    assert standard_qwen_named_payload is not None
+    assert standard_qwen_named_payload.tool_name == "search"
+    assert standard_qwen_named_payload.arguments_json_fragment == '{"q":"Melix"}'
+    assert standard_qwen_casefold_name == "search"
+    assert standard_qwen_prefix_name == "browser"
+    assert standard_qwen_unknown_name is None
+    assert standard_qwen_missing_function_payload is None
+    assert standard_qwen_string_arguments is None
+    assert standard_qwen_empty_payload is None
+    assert standard_qwen_duplicate_payload is None
+    assert standard_qwen_call_id_payload is not None
+    assert standard_qwen_call_id_payload.tool_name == "browser"
+    assert standard_qwen_duplicate_call_id_payload is None
+    assert standard_qwen_pipe_payload is not None
+    assert standard_qwen_pipe_payload.tool_name == "search"
+    assert standard_qwen_pipe_payload.arguments_json_fragment == '{"q":"pipe"}'
+    assert standard_qwen_pipe_rescue_parse_called is False
+    assert standard_qwen_assembler._metrics["malformed_tool_fragment_count"] == 2
+    assert standard_qwen_assembler._metrics["partial_tool_candidate_count"] == 1
+    assert standard_qwen_assembler._metrics["duplicate_tool_delta_count"] == 2
+    assert rescue_standard_tag_step is None
+    assert rescue_incomplete_step == ([], False)
+    assert rescue_final_partial_step is None
+    assert [delta.content_text for delta in rescue_visible_fence or []] == [
+        '```json\n{"status":"ok"}\n```'
+    ]
+    assert rescue_branch_assembler.channel_state.pending_marker_tail == ""
+    assert rescue_disabled_partial_suffix == ""
+    assert rescue_malformed_payload == []
+    assert rescue_fallback_name_payload is not None
+    assert rescue_fallback_name_payload.tool_name == "text_search"
+    assert rescue_decoded_function_payload == {
+        "name": "search",
+        "arguments": {"query": "Melix"},
+    }
+    assert rescue_invalid_json_payload is None
+    assert rescue_relaxed_arguments == {"query": "Melix"}
+    assert leak_probe_completed.metrics["tool_call_markup_leak_count"] == 1
+    assert assembler.channel_state.open_tool_event_count == 0
 
 
 def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:
@@ -379,7 +727,6 @@ def test_structural_tag_prefixes_are_cached_per_parser_mode() -> None:
         structured_output_mode="",
         tool_parser_mode="",
     )
-
     assert tool_enabled._structural_tag_prefixes == (
         think_prefixes + pipe_channel_prefixes + tool_prefixes + pipe_tool_prefixes
     )
@@ -1930,6 +2277,7 @@ def test_effective_parser_config_receipt_is_available_from_completion_metrics() 
         "reasoning_enabled": True,
         "request_context_mode": "tool_parser",
         "structured_output_mode": "json_schema",
+        "tool_parser_fallback_mode": "",
         "tool_parser_mode": "qwen",
     }
 

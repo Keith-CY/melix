@@ -5,12 +5,12 @@ from dataclasses import dataclass, field, replace
 from functools import lru_cache
 import json
 import logging
-import re
+
+from worker.runtime import tool_call_rescue
 
 logger = logging.getLogger(__name__)
 _UTF8_INCREMENTAL_DECODER = codecs.getincrementaldecoder("utf-8")
 _COMPACT_SORTED_JSON_ENCODER = json.JSONEncoder(separators=(",", ":"), sort_keys=True)
-_MISSING_TOOL_ARGUMENTS = object()
 
 
 @lru_cache(maxsize=32)
@@ -19,12 +19,14 @@ def _cached_effective_parser_config_json(
     request_context_mode: str,
     structured_output_mode: str,
     tool_parser_mode: str,
+    tool_parser_fallback_mode: str,
 ) -> str:
     return _COMPACT_SORTED_JSON_ENCODER.encode(
         {
             "reasoning_enabled": reasoning_enabled,
             "request_context_mode": request_context_mode,
             "structured_output_mode": structured_output_mode,
+            "tool_parser_fallback_mode": tool_parser_fallback_mode,
             "tool_parser_mode": tool_parser_mode,
         },
     )
@@ -260,10 +262,6 @@ class RequestStreamAssembler:
     _VISIBLE_TAIL_MARKERS = ("\nFinal answer", "\nFinal:", "\nAnswer:", "\nAssistant:", "\nResult:")
     _HIDDEN_PIPE_CHANNELS = frozenset({"analysis", "thought", "reasoning"})
     _VISIBLE_PIPE_CHANNELS = frozenset({"commentary", "final"})
-    _PIPE_CALL_RE = re.compile(
-        r"^\s*call:(?P<name>[A-Za-z0-9_.:/-]+)\s*(?P<args>\{.*\}|\(\s*\))\s*$",
-        re.DOTALL,
-    )
 
     def __init__(
         self,
@@ -271,12 +269,14 @@ class RequestStreamAssembler:
         reasoning_enabled: bool,
         structured_output_mode: str = "",
         tool_parser_mode: str = "",
+        tool_parser_fallback_mode: str = "",
         allowed_tool_names: tuple[str, ...] | None = None,
     ) -> None:
         self._request_id = request_id
         self._reasoning_enabled = reasoning_enabled
         self._structured_output_mode = structured_output_mode.strip().lower()
         self._tool_parser_mode = tool_parser_mode.strip().lower()
+        self._tool_parser_fallback_mode = tool_parser_fallback_mode.strip().lower()
         if allowed_tool_names:
             self._allowed_tool_names = tuple(
                 dict.fromkeys(name.strip() for name in allowed_tool_names if name.strip())
@@ -296,6 +296,9 @@ class RequestStreamAssembler:
             self._allowed_tool_names_by_casefold = {}
             self._allowed_tool_names_by_prefix = ()
         self._tool_parsing_enabled_value = bool(self._tool_parser_mode)
+        self._tool_rescue_enabled_value = self._tool_parsing_enabled_value and (
+            self._tool_parser_mode != "qwen" or self._tool_parser_fallback_mode == "xml"
+        )
         self._is_json_structured_output_value = self._structured_output_mode in {
             "json_object",
             "json_schema",
@@ -360,6 +363,9 @@ class RequestStreamAssembler:
             "tool_call_name_normalized_count": 0,
             "unknown_tool_delta_count": 0,
             "partial_tool_candidate_count": 0,
+            "tool_parser_retryable_error_count": 0,
+            "tool_parser_retryable_error_code": "",
+            "tool_parser_retryable_error_message": "",
             "harmony_channel_hidden_count": 0,
             "harmony_channel_unknown_count": 0,
             "harmony_channel_markup_leak_count": 0,
@@ -373,6 +379,18 @@ class RequestStreamAssembler:
             "annotation_payload_resolved_count": 0,
             "annotation_payload_missing_count": 0,
             "tool_result_payload_buffered_count": 0,
+            "stream_parser_accepted_wire_formats": (
+                (
+                    tool_call_rescue.ACCEPTED_WIRE_FORMATS_JSON
+                    if self._tool_rescue_enabled_value
+                    else tool_call_rescue.STANDARD_WIRE_FORMATS_JSON
+                )
+                if self._tool_parsing_enabled_value
+                else "[]"
+            ),
+            "stream_parser_rescue_path": (
+                "local_tool_call_format_rescue" if self._tool_rescue_enabled_value else ""
+            ),
         }
 
     def accept(self, fragment: StreamFragment) -> list[AssemblyDelta]:
@@ -407,11 +425,33 @@ class RequestStreamAssembler:
             return []
 
         raw_delta_from_token_bytes = byte_delta is not None
-        if (
+        if not self._tool_rescue_enabled_value:
+            if (
+                not self._is_json_only_structured_output_value
+                and not self._buffer
+                and not fragment.parser_observation
+                and "<" not in delta
+            ):
+                self._assistant_parts.append(delta)
+                if raw_delta_from_token_bytes:
+                    self._raw_seen_assistant_part_count += 1
+                if token_count < 2:
+                    return [AssemblyDelta(content_text=delta, raw_text=delta)]
+                self._metrics["stream_interval_delta_flush_count"] += 1
+                return [
+                    TokenCountedAssemblyDelta(
+                        content_text=delta,
+                        raw_text=delta,
+                        token_count=token_count,
+                    )
+                ]
+        elif (
             not self._is_json_only_structured_output_value
             and not self._buffer
             and not fragment.parser_observation
             and "<" not in delta
+            and "[" not in delta
+            and "`" not in delta
         ):
             self._assistant_parts.append(delta)
             if raw_delta_from_token_bytes:
@@ -584,6 +624,7 @@ class RequestStreamAssembler:
             self._request_context_mode_value,
             self._structured_output_mode,
             self._tool_parser_mode,
+            self._tool_parser_fallback_mode,
         )
 
     def _annotate_deltas(
@@ -647,7 +688,17 @@ class RequestStreamAssembler:
         deltas: list[AssemblyDelta] = []
         channel_state = self.channel_state
         metrics = self._metrics
+        rescue_enabled = self._tool_rescue_enabled_value
         while self._buffer:
+            if rescue_enabled:
+                rescue_step = self._drain_rescue_before_standard_tag(final)
+                if rescue_step is not None:
+                    rescue_deltas, should_continue = rescue_step
+                    deltas.extend(rescue_deltas)
+                    if should_continue:
+                        continue
+                    break
+
             if "<" not in self._buffer:
                 content = self._buffer
                 self._buffer = ""
@@ -775,6 +826,109 @@ class RequestStreamAssembler:
             break
         return deltas
 
+    def _drain_rescue_before_standard_tag(
+        self,
+        final: bool,
+    ) -> tuple[list[AssemblyDelta], bool] | None:
+        if not self._buffer_has_tool_rescue_marker_start():
+            return None
+        rescue_tag = self._next_tool_rescue_tag()
+        if rescue_tag is None:
+            held_suffix = self._partial_tool_rescue_tag_suffix()
+            if not held_suffix:
+                return None
+            visible_prefix = self._buffer[: -len(held_suffix)]
+            if visible_prefix:
+                self._buffer = held_suffix
+                self._record_prefix_hold(held_suffix)
+                return [self._content_delta(visible_prefix)], True
+            if not final:
+                self._record_prefix_hold(held_suffix)
+                return [], False
+            return None
+
+        standard_tag = self._next_structural_tag()
+        if standard_tag is not None and standard_tag[1] <= rescue_tag[1]:
+            return None
+
+        tag, offset = rescue_tag
+        if offset > 0:
+            content = self._buffer[:offset]
+            self._buffer = self._buffer[offset:]
+            return [self._content_delta(content)], True
+
+        rescue_deltas = self._drain_tool_rescue_tag(tag, final=final)
+        if rescue_deltas is None:
+            return [], False
+        return rescue_deltas, True
+
+    def _drain_tool_rescue_tag(
+        self,
+        tag: str,
+        *,
+        final: bool,
+    ) -> list[AssemblyDelta] | None:
+        envelope = tool_call_rescue.extract_rescue_envelope(self._buffer, tag, final=final)
+        if envelope is None:
+            return None
+        if envelope.incomplete_prefix:
+            self._record_prefix_hold(envelope.incomplete_prefix)
+            return None
+        if not envelope.fragment and envelope.consumed_until == 0:
+            self._flush_orphan_tool_rescue_fragment()
+            self._buffer = ""
+            return []
+
+        channel_state = self.channel_state
+        self._buffer = self._buffer[envelope.consumed_until :]
+        if (
+            tag == tool_call_rescue.FENCE_OPEN
+            and tool_call_rescue.is_wrong_envelope_fence_label(envelope.label)
+            and self._looks_like_tool_payload(envelope.fragment)
+        ):
+            self._record_retryable_tool_parser_error(
+                tool_call_rescue.WRONG_ENVELOPE_PYTHON_FENCE_ERROR_CODE,
+                tool_call_rescue.WRONG_ENVELOPE_PYTHON_FENCE_ERROR_MESSAGE,
+            )
+            if channel_state.pending_marker_tail:
+                channel_state.pending_marker_tail = ""
+            channel_state.open_tool_event_count = 0
+            return []
+        if tag == tool_call_rescue.FENCE_OPEN and not self._looks_like_tool_payload(
+            envelope.fragment
+        ):
+            if channel_state.pending_marker_tail:
+                channel_state.pending_marker_tail = ""
+            channel_state.open_tool_event_count = 0
+            return [self._content_delta(envelope.visible_fallback)]
+        if channel_state.pending_marker_tail:
+            channel_state.pending_marker_tail = ""
+        channel_state.preferred_channel_source = "tool_call_tag"
+        if channel_state.open_tool_event_count == 0:
+            channel_state.open_tool_event_count = 1
+        tool_deltas = self._tool_deltas_for_rescue_fragment(envelope.fragment)
+        channel_state.open_tool_event_count = 0
+        if not tool_deltas:
+            return []
+        return [
+            AssemblyDelta(raw_text=envelope.fragment if index == 0 else "", tool_call=tool_delta)
+            for index, tool_delta in enumerate(tool_deltas)
+        ]
+
+    def _flush_orphan_tool_rescue_fragment(self) -> None:
+        self._metrics["malformed_tool_fragment_count"] += 1
+        if self.channel_state.open_tool_event_count:
+            self.channel_state.orphan_tool_event_flush_count += (
+                self.channel_state.open_tool_event_count
+            )
+        self.channel_state.open_tool_event_count = 0
+
+    def _record_retryable_tool_parser_error(self, code: str, message: str) -> None:
+        self._metrics["tool_parser_retryable_error_count"] += 1
+        if not self._metrics["tool_parser_retryable_error_code"]:
+            self._metrics["tool_parser_retryable_error_code"] = code
+            self._metrics["tool_parser_retryable_error_message"] = message
+
     def _annotate_token_counts(
         self,
         deltas: list[AssemblyDelta],
@@ -901,7 +1055,15 @@ class RequestStreamAssembler:
 
     def _next_structural_tag_after(self, start: int) -> int:
         buffer = self._buffer
-        if buffer.find("<", start) < 0:
+        rescue_tag = None
+        rescue_enabled = self._tool_rescue_enabled_value
+        if rescue_enabled:
+            rescue_tag = (
+                self._next_tool_rescue_tag(start=start)
+                if self._buffer_has_tool_rescue_marker_start(start=start)
+                else None
+            )
+        if buffer.find("<", start) < 0 and rescue_tag is None:
             return -1
         earliest = buffer.find(self._THINK_OPEN, start)
         pipe_channel_index = buffer.find(self._PIPE_CHANNEL_OPEN, start)
@@ -914,7 +1076,37 @@ class RequestStreamAssembler:
             pipe_tool_index = buffer.find(self._PIPE_TOOL_OPEN, start)
             if pipe_tool_index >= 0 and (earliest < 0 or pipe_tool_index < earliest):
                 earliest = pipe_tool_index
+            if rescue_tag is not None and (earliest < 0 or rescue_tag[1] < earliest):
+                earliest = rescue_tag[1]
         return earliest
+
+    def _may_contain_structural_markup(self, text: str) -> bool:
+        if "<" in text:
+            return True
+        return self._tool_rescue_enabled_value and tool_call_rescue.has_non_angle_rescue_marker(
+            text
+        )
+
+    def _buffer_has_tool_rescue_marker_start(self, start: int = 0) -> bool:
+        if not self._tool_rescue_enabled_value:
+            return False
+        buffer = self._buffer
+        if start <= 0:
+            return (
+                "[" in buffer
+                or "`" in buffer
+                or "<" in buffer
+            )
+        return (
+            buffer.find("[", start) >= 0
+            or buffer.find("`", start) >= 0
+            or buffer.find("<", start) >= 0
+        )
+
+    def _next_tool_rescue_tag(self, start: int = 0) -> tuple[str, int] | None:
+        if not self._tool_rescue_enabled_value:
+            return None
+        return tool_call_rescue.next_rescue_tag(self._buffer, start=start)
 
     def _has_partial_structural_tag_suffix(self) -> bool:
         return bool(self._partial_structural_tag_suffix())
@@ -928,6 +1120,11 @@ class RequestStreamAssembler:
         if suffix in self._partial_structural_tag_suffixes_value:
             return suffix
         return ""
+
+    def _partial_tool_rescue_tag_suffix(self) -> str:
+        if not self._tool_rescue_enabled_value:
+            return ""
+        return tool_call_rescue.partial_rescue_tag_suffix(self._buffer)
 
     def _contains_reasoning_leak_marker(self, content: str) -> bool:
         return self._REASONING_LEAK_PREFIXES[0] in content or (
@@ -977,13 +1174,18 @@ class RequestStreamAssembler:
 
     def _content_delta(self, content: str) -> AssemblyDelta:
         if "<" in content:
-            if self._tool_parsing_enabled_value and (
-                "<tool_call" in content or ("<|" in content and "<|tool_call" in content)
-            ):
-                self._metrics["tool_call_markup_leak_count"] += 1
+            if self._tool_parsing_enabled_value:
+                if "<tool_call" in content or ("<|" in content and "<|tool_call" in content):
+                    self._metrics["tool_call_markup_leak_count"] += 1
+                elif self._tool_rescue_enabled_value and (
+                    "<invoke" in content or "<tool_code" in content
+                ):
+                    self._metrics["tool_call_markup_leak_count"] += 1
             if self._contains_reasoning_leak_marker(content):
                 self._metrics["reasoning_leak_count"] += 1
                 self._metrics["harmony_channel_markup_leak_count"] += 1
+        elif self._tool_rescue_enabled_value and "[TOOL_CALL" in content:
+            self._metrics["tool_call_markup_leak_count"] += 1
         self._assistant_parts.append(content)
         return AssemblyDelta(content_text=content, raw_text=content)
 
@@ -1102,6 +1304,19 @@ class RequestStreamAssembler:
         return deltas
 
     def _tool_delta(self, body: str) -> AssembledToolCall | None:
+        if not self._tool_rescue_enabled_value:
+            try:
+                payload = json.loads(body)
+            except json.JSONDecodeError:
+                payload = self._parse_pipe_tool_body(body)
+                if payload is None:
+                    self._metrics["malformed_tool_fragment_count"] += 1
+                    return None
+            if not isinstance(payload, dict):
+                self._metrics["malformed_tool_fragment_count"] += 1
+                return None
+            return self._standard_tool_delta_from_payload(payload)
+
         payload = self._parse_tool_body(body)
         if payload is None:
             return None
@@ -1109,18 +1324,56 @@ class RequestStreamAssembler:
         if not isinstance(payload, dict):
             self._metrics["malformed_tool_fragment_count"] += 1
             return None
+        return self._tool_delta_from_payload(payload)
+
+    def _tool_deltas_for_rescue_fragment(self, body: str) -> list[AssembledToolCall]:
+        payload = self._parse_tool_body(body)
+        if payload is None:
+            return []
+        if isinstance(payload, dict):
+            tool_delta = self._tool_delta_from_payload(payload)
+            return [tool_delta] if tool_delta is not None else []
+        if isinstance(payload, list):
+            deltas: list[AssembledToolCall] = []
+            for item in payload:
+                if not isinstance(item, dict):
+                    self._metrics["malformed_tool_fragment_count"] += 1
+                    continue
+                tool_delta = self._tool_delta_from_payload(item)
+                if tool_delta is not None:
+                    deltas.append(tool_delta)
+            return deltas
+        self._metrics["malformed_tool_fragment_count"] += 1
+        return []
+
+    def _tool_delta_from_payload(self, payload: dict[str, object]) -> AssembledToolCall | None:
         if not payload:
             self._metrics["partial_tool_candidate_count"] += 1
             return None
         name = str(payload.get("name") or payload.get("tool_name") or "").strip()
+        if not name and self._tool_rescue_enabled_value:
+            name = tool_call_rescue.tool_payload_name(payload)
         if not name:
             self._metrics["malformed_tool_fragment_count"] += 1
             return None
         # A named tool object without arguments is still incomplete; suppress it
         # so callers can use partial_tool_candidate_count for healing decisions.
-        arguments = payload.get("arguments", _MISSING_TOOL_ARGUMENTS)
-        if arguments is _MISSING_TOOL_ARGUMENTS:
+        arguments = payload.get("arguments", tool_call_rescue.MISSING_ARGUMENTS)
+        if arguments is tool_call_rescue.MISSING_ARGUMENTS and self._tool_rescue_enabled_value:
+            arguments = tool_call_rescue.tool_payload_arguments(payload)
+        if arguments is tool_call_rescue.MISSING_ARGUMENTS:
             self._metrics["partial_tool_candidate_count"] += 1
+            return None
+        if isinstance(arguments, dict):
+            coerced_arguments = arguments
+        elif not self._tool_rescue_enabled_value:
+            self._metrics["malformed_tool_fragment_count"] += 1
+            return None
+        else:
+            coerced_arguments = tool_call_rescue.coerce_tool_arguments(arguments)
+        arguments = coerced_arguments
+        if arguments is None:
+            self._metrics["malformed_tool_fragment_count"] += 1
             return None
         resolved_name = self._resolve_tool_name(name)
         if resolved_name is None:
@@ -1159,166 +1412,100 @@ class RequestStreamAssembler:
             parser_mode=self._tool_parser_mode,
         )
 
+    def _standard_tool_delta_from_payload(
+        self,
+        payload: dict[str, object],
+    ) -> AssembledToolCall | None:
+        if not payload:
+            self._metrics["partial_tool_candidate_count"] += 1
+            return None
+        name = str(payload.get("name") or payload.get("tool_name") or "").strip()
+        if not name:
+            self._metrics["malformed_tool_fragment_count"] += 1
+            return None
+        arguments = payload.get("arguments", tool_call_rescue.MISSING_ARGUMENTS)
+        if arguments is tool_call_rescue.MISSING_ARGUMENTS:
+            self._metrics["partial_tool_candidate_count"] += 1
+            return None
+        if not isinstance(arguments, dict):
+            self._metrics["malformed_tool_fragment_count"] += 1
+            return None
+        resolved_name = self._resolve_tool_name(name)
+        if resolved_name is None:
+            self._metrics["unknown_tool_delta_count"] += 1
+            return None
+        if resolved_name != name:
+            self._metrics["tool_call_name_normalized_count"] += 1
+            name = resolved_name
+
+        call_id = str(payload.get("id") or payload.get("call_id") or "").strip()
+        if call_id:
+            key = ("call_id", call_id)
+            if key in self._emitted_tool_keys:
+                self._metrics["duplicate_tool_delta_count"] += 1
+                return None
+            arguments_fragment = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
+        else:
+            arguments_fragment = json.dumps(arguments, sort_keys=True, separators=(",", ":"))
+            key = ("legacy", f"{name}\0{arguments_fragment}")
+            if key in self._emitted_tool_keys:
+                self._metrics["duplicate_tool_delta_count"] += 1
+                return None
+        self._emitted_tool_keys.add(key)
+
+        self._tool_fragment_index += 1
+        return AssembledToolCall(
+            call_id=call_id or f"{self._request_id}-tool-{self._tool_fragment_index}",
+            tool_name=name,
+            arguments_json_fragment=arguments_fragment,
+            fragment_index=self._tool_fragment_index,
+            parser_mode=self._tool_parser_mode,
+        )
+
     def _parse_tool_body(self, body: str) -> dict[str, object] | list[object] | None:
         try:
             return json.loads(body)
         except json.JSONDecodeError:
-            return self._parse_pipe_tool_body(body)
+            pass
+        parsed = tool_call_rescue.parse_tool_body(body)
+        if parsed is not None:
+            return parsed
+        self._metrics["malformed_tool_fragment_count"] += 1
+        return None
+
+    def _looks_like_tool_payload(self, body: str) -> bool:
+        return tool_call_rescue.looks_like_tool_payload(body)
 
     def _parse_pipe_tool_body(self, body: str) -> dict[str, object] | None:
-        match = self._PIPE_CALL_RE.match(body)
-        if match is None:
-            self._metrics["malformed_tool_fragment_count"] += 1
-            return None
-        if match.group("args").startswith("("):
-            return {
-                "name": match.group("name"),
-                "arguments": {},
-            }
-        try:
-            arguments = json.loads(match.group("args"))
-        except json.JSONDecodeError:
-            arguments = self._parse_relaxed_object_arguments(match.group("args"))
-            if arguments is None:
-                self._metrics["malformed_tool_fragment_count"] += 1
-                return None
-        if not isinstance(arguments, dict):
-            self._metrics["malformed_tool_fragment_count"] += 1
-            return None
-        return {
-            "name": match.group("name"),
-            "arguments": arguments,
-        }
+        return tool_call_rescue.parse_pipe_tool_body(body)
 
     def _resolve_tool_name(self, name: str) -> str | None:
-        if not self._allowed_tool_names:
-            return name
-        if name in self._allowed_tool_name_set:
-            return name
-        declared = self._allowed_tool_names_by_casefold.get(name.casefold())
-        if declared is not None:
-            return declared
-        for declared in self._allowed_tool_names_by_prefix:
-            if self._is_action_qualified_tool_name(name, declared):
+        if not self._tool_rescue_enabled_value:
+            if not self._allowed_tool_names:
+                return name
+            if name in self._allowed_tool_name_set:
+                return name
+            declared = self._allowed_tool_names_by_casefold.get(name.casefold())
+            if declared is not None:
                 return declared
-        return None
+            for declared in self._allowed_tool_names_by_prefix:
+                if self._is_action_qualified_tool_name(name, declared):
+                    return declared
+            return None
+        return tool_call_rescue.resolve_tool_name(
+            name,
+            allowed_tool_names=self._allowed_tool_names,
+            allowed_tool_name_set=self._allowed_tool_name_set,
+            allowed_tool_names_by_casefold=self._allowed_tool_names_by_casefold,
+            allowed_tool_names_by_prefix=self._allowed_tool_names_by_prefix,
+        )
 
     @staticmethod
     def _is_action_qualified_tool_name(name: str, declared: str) -> bool:
-        folded_name = name.casefold()
-        folded_declared = declared.casefold()
-        if len(folded_name) <= len(folded_declared):
-            return False
-        if not folded_name.startswith(folded_declared):
-            return False
-        return folded_name[len(folded_declared)] in {".", ":", "/"}
+        return tool_call_rescue.is_action_qualified_tool_name(name, declared)
 
     def _parse_relaxed_object_arguments(self, text: str) -> dict[str, object] | None:
-        stripped = text.strip()
-        if not (stripped.startswith("{") and stripped.endswith("}")):
-            return None
-        content = stripped[1:-1].strip()
-        if not content:
-            return {}
-        values: dict[str, object] = {}
-        for item in self._split_relaxed_object_items(content):
-            separator_index = self._relaxed_key_value_separator(item)
-            if separator_index is None:
-                return None
-            key = item[:separator_index]
-            value = item[separator_index + 1 :]
-            normalized_key = key.strip().strip("\"'")
-            if not normalized_key:
-                return None
-            values[normalized_key] = self._parse_relaxed_scalar(value.strip())
-        return values
-
-    @staticmethod
-    def _split_relaxed_object_items(content: str) -> list[str]:
-        items: list[str] = []
-        start = 0
-        quote: str | None = None
-        escaped = False
-        for index, char in enumerate(content):
-            if quote is not None:
-                if escaped:
-                    escaped = False
-                elif char == "\\":
-                    escaped = True
-                elif char == quote:
-                    quote = None
-                continue
-            if char == '"' or char == "'":
-                quote = char
-                continue
-            if char == ",":
-                items.append(content[start:index].strip())
-                start = index + 1
-        items.append(content[start:].strip())
-        return items
-
-    @staticmethod
-    def _relaxed_key_value_separator(item: str) -> int | None:
-        quote: str | None = None
-        escaped = False
-        for index, char in enumerate(item):
-            if quote is not None:
-                if escaped:
-                    escaped = False
-                elif char == "\\":
-                    escaped = True
-                elif char == quote:
-                    quote = None
-                continue
-            if char == '"' or char == "'":
-                quote = char
-                continue
-            if char == ":":
-                return index
-        return None
-
-    @staticmethod
-    def _parse_relaxed_scalar(value: str) -> object:
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-            return RequestStreamAssembler._unescape_relaxed_quoted_string(value[1:-1])
-        lowered = value.lower()
-        if lowered == "true":
-            return True
-        if lowered == "false":
-            return False
-        if lowered == "null":
-            return None
-        try:
-            if any(marker in value for marker in (".", "e", "E")):
-                return float(value)
-            return int(value)
-        except ValueError:
-            return value
-
-    @staticmethod
-    def _unescape_relaxed_quoted_string(value: str) -> str:
-        if "\\" not in value:
-            return value
-        decoded: list[str] = []
-        escaped = False
-        escapes = {
-            "n": "\n",
-            "r": "\r",
-            "t": "\t",
-            "b": "\b",
-            "f": "\f",
-        }
-        for char in value:
-            if escaped:
-                decoded.append(escapes.get(char, char))
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            else:
-                decoded.append(char)
-        if escaped:
-            decoded.append("\\")
-        return "".join(decoded)
+        return tool_call_rescue.parse_relaxed_object_arguments(text)
 
     def _first_json_delimiter(self, text: str) -> int | None:
         object_index = text.find("{")
