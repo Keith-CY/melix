@@ -10,6 +10,7 @@ from worker.productization.dataset_preparation import (
     DatasetIngestRequest,
     DatasetRetryFailedRequest,
     DatasetVersionRequest,
+    _quality_summary,
     _sample_output_length_stats,
     _sample_output_lengths,
     list_dataset_versions,
@@ -129,6 +130,40 @@ def test_dataset_quality_output_lengths_preserve_completion_and_message_semantic
     assert _sample_output_lengths(train_rows, validation_rows) == [3, 5, 7, 0, 4, 10, 0]
     assert _sample_output_length_stats(train_rows, validation_rows) == (7, 29, 10)
     assert _sample_output_length_stats([], []) == (0, 0, 0)
+
+
+def test_dataset_quality_summary_reuses_train_validation_counts() -> None:
+    class CountingRows(list[dict[str, object]]):
+        len_calls = 0
+
+        def __len__(self) -> int:
+            self.len_calls += 1
+            return super().__len__()
+
+    train_rows = CountingRows([{"completion": "abc"}, {"completion": "def"}])
+    validation_rows = CountingRows([{"messages": [{"content": "hello"}]}])
+
+    summary = _quality_summary(
+        request=DatasetVersionRequest(
+            workspace_manifest_path=Path("workspace-manifest.json"),
+            ingest_receipt_path=Path("ingest-receipt.json"),
+            output_root=Path("datasets"),
+            dataset_id="support-chat",
+            version_id="support-chat-v1",
+        ),
+        ingest_receipt={"quality_control_summary": {"source_record_count": 3}},
+        version_id="support-chat-v1",
+        train_rows=train_rows,
+        validation_rows=validation_rows,
+        failed_count=0,
+        latency_ms=0.0,
+    )
+
+    assert summary["train_count"] == 2
+    assert summary["validation_count"] == 1
+    assert summary["metrics"]["generated_sample_count"] == 3
+    assert train_rows.len_calls == 1
+    assert validation_rows.len_calls == 1
 
 
 def test_dataset_version_rejects_blocked_workspace_preflight_receipt_before_reading_segments(
