@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import time
 import tracemalloc
+from unittest.mock import patch
 
 
 def _repo_root() -> Path:
@@ -22,11 +23,24 @@ def main() -> int:
     from worker.runtime.embedding_backends import BERTEmbeddingBackend
 
     backend = BERTEmbeddingBackend()
+    running_under_pytest = "PYTEST_CURRENT_TEST" in os.environ
+    if running_under_pytest:
+        with (
+            patch("worker.runtime.embedding_backends._UNPACK_DIGEST_UINT32", lambda digest: (1,) * 8),
+            patch("worker.runtime.embedding_backends._DIGEST_UINT32_SCALE", 1.0),
+        ):
+            assert backend._project_digest("bert::zero norm", 8) == [0.0] * 8
+
     dimensions = 4097
     default_dimensions = 8
     vector_count = 500
     default_vector_count = 5000
-    sample_count = 3
+    sample_count = int(
+        os.environ.get(
+            "MELIX_EMBEDDING_PROJECT_DIGEST_SAMPLES",
+            "3" if running_under_pytest else "9",
+        )
+    )
     seed_texts = [f"bert::synthetic projection row {index % 251}::{index}" for index in range(vector_count)]
     default_seed_texts = [
         f"bert::default projection row {index % 251}::{index}" for index in range(default_vector_count)
