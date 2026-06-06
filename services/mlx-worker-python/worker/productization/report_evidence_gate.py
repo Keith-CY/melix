@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import heapq
 import json
 from functools import lru_cache
 from pathlib import Path
@@ -418,18 +419,30 @@ def _telemetry_failures(report: dict[str, object]) -> list[str]:
     return failures
 
 
+def _probe_phase_duration_key(row: dict[str, object]) -> float:
+    duration = row.get("duration_ms")
+    if isinstance(duration, (float, int, str)):
+        return float(duration or 0.0)
+    return 0.0
+
+
 def _slowest_probe_phases(report: dict[str, object]) -> list[dict[str, object]]:
     probe_summary = report.get("probe_summary")
     if not isinstance(probe_summary, dict):
         return []
-    rows: list[dict[str, object]] = []
+    rows: list[tuple[float, int, str, dict[str, object]]] = []
+    row_index = 0
     for side in ("baseline", "candidate"):
         side_summary = probe_summary.get(side)
         if not isinstance(side_summary, dict):
             continue
         for row in _dict_list(side_summary.get("slowest_phases")):
-            rows.append({"side": side, **row})
-    return sorted(rows, key=lambda row: float(row.get("duration_ms") or 0.0), reverse=True)[:5]
+            rows.append((_probe_phase_duration_key(row), -row_index, side, row))
+            row_index += 1
+    return [
+        {"side": side, **row}
+        for _duration_ms, _row_order, side, row in heapq.nlargest(5, rows)
+    ]
 
 
 def _probe_phases(report: dict[str, object]) -> set[str]:
