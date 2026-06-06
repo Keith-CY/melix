@@ -14,6 +14,7 @@ sys.path.insert(0, str(REPO_ROOT / "services/mlx-worker-python"))
 
 from worker.productization.report_evidence_gate import (  # noqa: E402
     _release_matrix_rows,
+    _report_matrix_roles,
     _rule_matches_report,
     _slowest_probe_phases,
 )
@@ -158,6 +159,54 @@ def _measure_release_matrix_rows(iterations: int, sample_count: int) -> tuple[di
     )
 
 
+def _measure_matrix_roles(iterations: int, sample_count: int) -> tuple[dict[str, float], float]:
+    matrix = {
+        f"role_{index}": {"run_kinds": (f"kind_{index}",), "description": "probe role"}
+        for index in range(32)
+    }
+    report = {
+        "runs": [{"run_kind": f"kind_{index}"} for index in range(32)],
+        "probe_summary": {
+            side: {
+                bucket: [
+                    {"phase": f"probe_phase_{index}", "duration_ms": float(index)}
+                    for index in range(256)
+                ]
+                for bucket in (
+                    "slowest_phases",
+                    "failed_phases",
+                    "skipped_phases",
+                    "fallback_phases",
+                )
+            }
+            for side in ("baseline", "candidate")
+        },
+    }
+    elapsed_samples: list[float] = []
+    emitted_roles = 0
+
+    for _ in range(sample_count):
+        started = time.perf_counter()
+        for _index in range(iterations):
+            roles = _report_matrix_roles(report, matrix)
+            if len(roles) != len(matrix):
+                raise RuntimeError("expected one matrix role per run kind")
+            emitted_roles += len(roles)
+        elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+
+    elapsed_mean = statistics.fmean(elapsed_samples)
+    return (
+        {
+            "matrix_roles_elapsed_ms_mean": elapsed_mean,
+            "matrix_roles_report_count": 1.0,
+            "matrix_roles_role_count": float(len(matrix)),
+            "matrix_roles_probe_phase_rows": 2048.0,
+            "matrix_roles_emitted_roles": float(emitted_roles),
+        },
+        elapsed_mean,
+    )
+
+
 def _measure_slowest_probe_phases(iterations: int, sample_count: int) -> tuple[dict[str, float], float]:
     slowest_phases = [
         {"phase": f"probe_phase_{index}", "duration_ms": float((index * 37) % 997)}
@@ -201,6 +250,11 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         release_matrix_iterations,
         sample_count,
     )
+    matrix_roles_iterations = max(1, iterations // 200)
+    matrix_roles_metrics, matrix_roles_elapsed = _measure_matrix_roles(
+        matrix_roles_iterations,
+        sample_count,
+    )
     slowest_probe_phase_iterations = max(1, iterations // 500)
     slowest_probe_phase_metrics, slowest_probe_phase_elapsed = _measure_slowest_probe_phases(
         slowest_probe_phase_iterations,
@@ -210,6 +264,7 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         "elapsed_ms_mean": run_kind_elapsed
         + metric_prefix_elapsed
         + target_field_elapsed
+        + matrix_roles_elapsed
         + slowest_probe_phase_elapsed,
         "iterations": float(iterations),
         "sample_count": float(sample_count),
@@ -217,6 +272,7 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         **metric_prefix_metrics,
         **target_field_metrics,
         **release_matrix_metrics,
+        **matrix_roles_metrics,
         **slowest_probe_phase_metrics,
     }
 

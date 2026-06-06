@@ -473,6 +473,59 @@ def test_report_evidence_gate_empty_probe_phase_rules_skip_normalization(
     )
 
 
+def test_report_matrix_roles_skip_probe_phase_scan_without_phase_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_probe_phases(report: dict[str, object]) -> set[str]:  # pragma: no cover
+        raise AssertionError("run-kind-only matrices should not scan probe phases")
+
+    monkeypatch.setattr(report_evidence_gate_module, "_probe_phases", fail_probe_phases)
+
+    roles = report_evidence_gate_module._report_matrix_roles(
+        {
+            "runs": [{"run_kind": "serving_benchmark"}],
+            "probe_summary": {
+                "baseline": {
+                    "slowest_phases": [
+                        {"phase": "runtime_prepare", "duration_ms": 1.0}
+                    ]
+                }
+            },
+        },
+        {
+            "serving": {"run_kinds": ("serving_benchmark",)},
+            "adapter": {"metric_prefixes": ("adapter.",)},
+            "runtime": {"target_fields": ("adapter_id",)},
+        },
+    )
+
+    assert roles == ["serving"]
+
+
+def test_report_matrix_roles_scans_probe_phases_once_for_phase_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def count_probe_phases(report: dict[str, object]) -> set[str]:
+        nonlocal calls
+        calls += 1
+        return {"runtime_prepare", "decode"}
+
+    monkeypatch.setattr(report_evidence_gate_module, "_probe_phases", count_probe_phases)
+
+    roles = report_evidence_gate_module._report_matrix_roles(
+        {},
+        {
+            "runtime": {"probe_phases": ("runtime_prepare",)},
+            "decode": {"probe_phases": ("decode",)},
+        },
+    )
+
+    assert roles == ["runtime", "decode"]
+    assert calls == 1
+
+
 def test_report_evidence_gate_run_kind_list_rules_reflect_mutation() -> None:
     run_kinds = ["evaluation"]
     rule = {"run_kinds": run_kinds}
