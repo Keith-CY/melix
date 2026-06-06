@@ -93,6 +93,11 @@ def run_smoke(repo_root: Path) -> dict[str, object]:
         "chat": {
             "presentation_lag_ms": chat["presentation_lag_ms"],
             "presentation_flush_count": chat["presentation_flush_count"],
+            "render_update_count": chat["render_update_count"],
+            "stream_event_count": chat["stream_event_count"],
+            "token_delta_count": chat["token_delta_count"],
+            "stream_transcript_bytes": chat["stream_transcript_bytes"],
+            "transcript_parity_mismatch_count": chat["transcript_parity_mismatch_count"],
         },
         "signals": {
             "top_banner_title": signals["top_banner_title"],

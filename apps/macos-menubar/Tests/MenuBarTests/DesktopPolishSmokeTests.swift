@@ -168,6 +168,11 @@ struct DesktopPolishSmokeTests {
             "chat": [
                 "presentation_lag_ms": metricsSnapshot["menu.chat_presentation_lag_ms"] ?? -1,
                 "presentation_flush_count": metricsSnapshot["menu.chat_presentation_flush_count"] ?? -1,
+                "render_update_count": metricsSnapshot["menu.chat_render_update_count"] ?? -1,
+                "stream_event_count": metricsSnapshot["menu.chat_stream_event_count"] ?? -1,
+                "token_delta_count": metricsSnapshot["menu.chat_token_delta_count"] ?? -1,
+                "stream_transcript_bytes": metricsSnapshot["menu.chat_stream_transcript_bytes"] ?? -1,
+                "transcript_parity_mismatch_count": metricsSnapshot["menu.chat_transcript_parity_mismatch_count"] ?? -1,
             ],
             "signals": [
                 "top_banner_title": viewModel.desktopBannerState?.title ?? "",
@@ -194,6 +199,11 @@ struct DesktopPolishSmokeTests {
 
         #expect((metricsSnapshot["menu.chat_presentation_lag_ms"] ?? -1) >= 0)
         #expect((metricsSnapshot["menu.chat_presentation_flush_count"] ?? 0) > 1)
+        #expect((metricsSnapshot["menu.chat_render_update_count"] ?? 0) > 1)
+        #expect(metricsSnapshot["menu.chat_stream_event_count"] == 4)
+        #expect(metricsSnapshot["menu.chat_token_delta_count"] == 1)
+        #expect(metricsSnapshot["menu.chat_stream_transcript_bytes"] == Double(smoothedAssistantText.utf8.count))
+        #expect(metricsSnapshot["menu.chat_transcript_parity_mismatch_count"] == 0)
         #expect(viewModel.desktopBannerState?.title == "Download Recovery Available")
         #expect(persistedQueue.count == 1)
         #expect(restoredViewModel.downloadQueue.count == 1)
