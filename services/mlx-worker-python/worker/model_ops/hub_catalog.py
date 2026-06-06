@@ -329,6 +329,8 @@ def _int(value: Any) -> int:
 
 
 def _string_list(value: Any) -> list[str]:
+    if type(value) is list:
+        return [item for item in value if isinstance(item, str)]
     if isinstance(value, list):
         return [item for item in value if isinstance(item, str)]
     if isinstance(value, str) and value:
