@@ -268,7 +268,7 @@ def looks_like_tool_payload(body: str) -> bool:
 def function_call_syntax(body: str) -> bool:
     try:
         expression = ast.parse(body, mode="eval").body
-    except SyntaxError:
+    except (SyntaxError, ValueError, RecursionError):
         return False
     return isinstance(expression, ast.Call)
 
@@ -325,7 +325,7 @@ def parse_xml_tool_body(body: str) -> dict[str, object] | None:
 def parse_function_tool_body(body: str) -> dict[str, object] | None:
     try:
         expression = ast.parse(body, mode="eval").body
-    except SyntaxError:
+    except (SyntaxError, ValueError, RecursionError):
         return None
     if not isinstance(expression, ast.Call):
         return None
@@ -338,7 +338,7 @@ def parse_function_tool_body(body: str) -> dict[str, object] | None:
             return None
         try:
             positional = ast.literal_eval(expression.args[0])
-        except (ValueError, SyntaxError):
+        except (ValueError, SyntaxError, TypeError, RecursionError):
             return None
         if not isinstance(positional, dict):
             return None
@@ -348,7 +348,7 @@ def parse_function_tool_body(body: str) -> dict[str, object] | None:
             return None
         try:
             arguments[keyword.arg] = ast.literal_eval(keyword.value)
-        except (ValueError, SyntaxError):
+        except (ValueError, SyntaxError, TypeError, RecursionError):
             return None
     return {"name": name, "arguments": arguments}
 
@@ -551,11 +551,20 @@ def parse_relaxed_scalar(value: str) -> object:
 
 
 def unescape_relaxed_quoted_string(value: str) -> str:
+    if "\\" not in value:
+        return value
     result: list[str] = []
     escaped = False
+    escapes = {
+        "n": "\n",
+        "r": "\r",
+        "t": "\t",
+        "b": "\b",
+        "f": "\f",
+    }
     for char in value:
         if escaped:
-            result.append(char)
+            result.append(escapes.get(char, char))
             escaped = False
         elif char == "\\":
             escaped = True

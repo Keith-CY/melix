@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 import xml.etree.ElementTree as ElementTree
 
+import pytest
+
 from worker.runtime import tool_call_rescue
 from worker.runtime.stream_assembler import RequestStreamAssembler, StreamFragment
 
@@ -161,6 +163,34 @@ def test_tool_call_rescue_parses_nested_and_function_envelopes() -> None:
         assert calls[0].arguments_json_fragment == expected_arguments
         assert completed.metrics["malformed_tool_fragment_count"] == 0
         assert completed.metrics["tool_call_markup_leak_count"] == 0
+
+
+def test_tool_call_rescue_decodes_relaxed_argument_escapes() -> None:
+    assembler = RequestStreamAssembler(
+        request_id="req-rescue-relaxed-escaped-arguments",
+        reasoning_enabled=False,
+        structured_output_mode="",
+        tool_parser_mode="xml",
+        allowed_tool_names=("text_search",),
+    )
+
+    deltas = assembler.accept(
+        StreamFragment(
+            raw_text=(
+                "<invoke tool=\"search\" "
+                "arguments=\"{query: 'first\\nsecond', tab: 'a\\tb', "
+                "path: 'docs\\\\index'}\"></invoke>"
+            )
+        )
+    )
+    completed = assembler.completed()
+    calls = [delta.tool_call for delta in deltas if delta.tool_call]
+
+    assert len(calls) == 1
+    assert calls[0].arguments_json_fragment == (
+        '{"path":"docs\\\\index","query":"first\\nsecond","tab":"a\\tb"}'
+    )
+    assert completed.metrics["malformed_tool_fragment_count"] == 0
 
 
 def test_tool_call_rescue_parses_fenced_json_tool_call_arrays() -> None:
@@ -439,3 +469,21 @@ def test_tool_call_rescue_helper_branches_cover_defensive_shapes() -> None:
         )
         is None
     )
+
+
+def test_tool_call_rescue_ast_helpers_treat_parser_errors_as_unparseable() -> None:
+    malformed_call = "browse(\x00)"
+
+    assert tool_call_rescue.function_call_syntax(malformed_call) is False
+    assert tool_call_rescue.parse_function_tool_body(malformed_call) is None
+
+
+def test_tool_call_rescue_literal_eval_errors_are_unparseable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_type_error(_node: ast.AST) -> object:
+        raise TypeError("synthetic literal eval failure")
+
+    monkeypatch.setattr(tool_call_rescue.ast, "literal_eval", raise_type_error)
+
+    assert tool_call_rescue.parse_function_tool_body("browse(url='fixture://docs')") is None
