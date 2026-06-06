@@ -50,6 +50,15 @@ class DeterministicEmbeddingBackend:
             raw * _DIGEST_UINT32_SCALE - 1.0
             for raw in _UNPACK_DIGEST_UINT32(_SHA256(seed_text.encode("utf-8")).digest())
         ]
+        if dimensions == 8:
+            try:
+                inverse_l2_norm = 1.0 / math.sqrt(sum(value * value for value in base_values))
+            except ZeroDivisionError:
+                return [0.0] * 8
+            return [round(value * inverse_l2_norm, 6) for value in base_values]
+        return self._project_digest_expanded(base_values, dimensions)
+
+    def _project_digest_expanded(self, base_values: list[float], dimensions: int) -> list[float]:
         full_repeats, remainder = divmod(dimensions, 8)
         squared_sum = sum(value * value for value in base_values) * full_repeats
         if remainder == 1:
