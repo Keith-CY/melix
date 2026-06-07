@@ -5141,6 +5141,11 @@
         "warn_pct": 0.0
       },
       {
+        "key": "irrelevant_mtp_entries",
+        "unit": "count",
+        "direction": "informational"
+      },
+      {
         "key": "weight_load_old_mean_ms",
         "unit": "ms",
         "direction": "informational"
