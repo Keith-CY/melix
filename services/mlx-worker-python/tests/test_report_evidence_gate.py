@@ -166,6 +166,35 @@ def test_report_evidence_gate_slowest_probe_phases_keeps_top_five_order() -> Non
     assert {row["side"] for row in rows} == {"candidate"}
 
 
+def test_report_evidence_gate_slowest_probe_phases_preserves_tie_order() -> None:
+    report: dict[str, object] = {
+        "probe_summary": {
+            "baseline": {
+                "slowest_phases": [
+                    {"phase": f"baseline-{index}", "duration_ms": 10.0}
+                    for index in range(4)
+                ]
+            },
+            "candidate": {
+                "slowest_phases": [
+                    {"phase": f"candidate-{index}", "duration_ms": 10.0}
+                    for index in range(4)
+                ]
+            },
+        }
+    }
+
+    rows = report_evidence_gate_module._slowest_probe_phases(report)
+
+    assert [row["phase"] for row in rows] == [
+        "baseline-0",
+        "baseline-1",
+        "baseline-2",
+        "baseline-3",
+        "candidate-0",
+    ]
+
+
 def test_report_evidence_gate_slowest_probe_phases_accepts_typed_durations() -> None:
     report: dict[str, object] = {
         "probe_summary": {
