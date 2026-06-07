@@ -96,9 +96,11 @@ By default, Melix accepts loopback hosts only:
 - `::1`
 - `localhost`
 
-Requests with a different `Host` return `403 host_not_allowed`. Same-host
-server-to-server requests that do not send an `Origin` header remain accepted
-subject to the active gateway auth policy.
+Requests with a different `Host` return `403 host_not_allowed`. Raw HTTP/1.1
+requests that omit `Host` are rejected by the gateway parser with
+`400 missing_host_header` before route handling. Same-host server-to-server
+requests that do not send an `Origin` header remain accepted subject to the
+active gateway auth policy.
 
 Browser CORS is default-denied. Requests with an `Origin` header return
 `403 origin_not_allowed` unless the origin is explicitly allowlisted. Melix does
@@ -111,12 +113,14 @@ export MELIX_ALLOWED_HOSTS='127.0.0.1,localhost'
 export MELIX_ALLOWED_ORIGINS='http://localhost:5173'
 ```
 
-Allowed origins are exact matches. `http://localhost:5173` and
-`http://localhost:5173/app` are different origins for this policy. When an
-origin is allowed, responses echo only that origin and add `Vary: Origin`.
-Browser preflight requests use `OPTIONS` and are admitted after Host/Origin
-validation, before API-key authentication, so browser clients can preflight
-authenticated routes without exposing credentials in the preflight request.
+Allowed origin configuration is normalized to scheme, host, and optional port;
+paths, queries, and fragments are ignored because browser `Origin` headers do
+not include them. Runtime `Origin` checks are exact matches against those
+normalized origins. When an origin is allowed, responses echo only that origin
+and add `Vary: Origin`. Browser preflight requests use `OPTIONS` and are
+admitted after Host/Origin validation, before API-key authentication, so browser
+clients can preflight authenticated routes without exposing credentials in the
+preflight request.
 
 The authenticated diagnostics endpoint reports the effective policy under
 `local_server_security`:

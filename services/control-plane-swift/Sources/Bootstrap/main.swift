@@ -281,7 +281,7 @@ private final class BootstrapHTTPServer: @unchecked Sendable {
 
     private func recordParserRefusal(_ parseError: HTTPGatewayRequestParseError) async {
         switch parseError {
-        case .headersTooLarge, .duplicateHeader:
+        case .headersTooLarge, .duplicateHeader, .missingHostHeader:
             await metricsStore.increment("http.request_header_rejected_count")
         case .bodyTooLarge, .unsupportedChunkedBody:
             await metricsStore.increment("http.request_body_rejected_count")

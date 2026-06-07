@@ -33,15 +33,10 @@ public struct LocalServerSecurityReceipt: Codable, Equatable, Sendable {
         case browserCorsPolicy = "browser_cors_policy"
     }
 
-    public var payload: [String: Any] {
-        [
-            "schema_version": schemaVersion,
-            "bind_host": bindHost,
-            "allowed_hosts": allowedHosts,
-            "allowed_origins": allowedOrigins,
-            "loopback_only_host_policy": loopbackOnlyHostPolicy,
-            "browser_cors_policy": browserCorsPolicy,
-        ]
+    public func jsonObject(encoder: JSONEncoder) throws -> [String: Any] {
+        let data = try encoder.encode(self)
+        let object = try JSONSerialization.jsonObject(with: data)
+        return object as? [String: Any] ?? [:]
     }
 }
 
@@ -89,10 +84,8 @@ public struct LocalServerSecurityPolicy: Equatable, Sendable {
 
     public init(
         bindHost: String,
-        port: UInt32,
         environment: [String: String]
     ) {
-        _ = port
         let resolvedBindHost = Self.trimmed(bindHost).isEmpty ? "127.0.0.1" : Self.trimmed(bindHost)
         let explicitHosts = Self.normalizedList(environment["MELIX_ALLOWED_HOSTS"], normalize: Self.normalizedHostForAllowlist)
         let explicitOrigins = Self.normalizedList(
@@ -115,6 +108,8 @@ public struct LocalServerSecurityPolicy: Equatable, Sendable {
     }
 
     public func admit(headers: [String: String]) -> Admission {
+        // In-process tests and server-to-server callers can bypass raw HTTP parsing.
+        // Network HTTP/1.1 requests without Host are rejected by HTTPGatewayRequestParser.
         if let host = header(named: "host", in: headers) {
             guard !host.isEmpty, isAllowedHost(host) else {
                 return .rejected(reason: .hostNotAllowed, headerValue: host)

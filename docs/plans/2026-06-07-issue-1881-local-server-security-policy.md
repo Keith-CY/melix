@@ -17,8 +17,9 @@ This PR implements the shared policy and wires it into the Swift OpenAI-compatib
 The slice covers:
 
 - a typed policy helper for Host and Origin admission;
+- raw HTTP/1.1 parser rejection for requests that omit `Host`;
 - default loopback Host allowlists and default-deny browser Origin handling;
-- exact-match allowlist overrides from `MELIX_ALLOWED_HOSTS` and `MELIX_ALLOWED_ORIGINS`;
+- allowlist overrides from `MELIX_ALLOWED_HOSTS` and `MELIX_ALLOWED_ORIGINS`, with browser origins normalized to scheme, host, and optional port;
 - handler-level rejection before auth, rate limits, or route execution;
 - exact CORS response headers only for an explicitly allowlisted origin;
 - `OPTIONS` preflight support for explicitly allowlisted browser origins before API-key auth;
@@ -31,6 +32,7 @@ The slice covers:
 The policy path runs once per HTTP request and uses small normalized sets built at handler initialization. Success criteria for this slice:
 
 - no request reaches model/auth/routing logic after a Host or Origin rejection;
+- raw HTTP/1.1 requests without `Host` fail during parsing before route handling;
 - no response emits wildcard `Access-Control-Allow-Origin`;
 - explicit Origin opt-in adds only exact `Access-Control-Allow-Origin` and `Vary: Origin`;
 - browser preflight uses `OPTIONS` with exact CORS headers and no auth failure;

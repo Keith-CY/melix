@@ -658,7 +658,6 @@ public struct OpenAIHandler: Sendable {
         self.persistentAuthSessionStore = persistentAuthSessionStore
         self.localServerSecurityPolicy = LocalServerSecurityPolicy(
             bindHost: gatewayRuntimeBinding.host,
-            port: gatewayRuntimeBinding.port,
             environment: environment
         )
         self.environment = environment
@@ -3633,7 +3632,9 @@ public struct OpenAIHandler: Sendable {
                     "code": reason.errorCode,
                     "message": reason.message,
                     "header_value": headerValue,
-                    "local_server_security": localServerSecurityPolicy.receipt.payload,
+                    "local_server_security": (
+                        try? localServerSecurityPolicy.receipt.jsonObject(encoder: encoder)
+                    ) ?? [:],
                 ],
             ]
         )
