@@ -1951,6 +1951,8 @@ private struct GatewayConfigProjection: Equatable, Sendable {
     let effectivePort: Int
     let defaultModelID: String
     let servedModelIDs: [String]
+    let allowedHosts: [String]
+    let allowedOrigins: [String]
     let rateLimitPerMinute: Int
     let timeoutSeconds: Int
     let modelIdleTimeoutSeconds: Int
@@ -11200,7 +11202,9 @@ public final class RuntimeViewModel {
                     servedModelIDs: serverSession.servedModelIDs,
                     rateLimitPerMinute: serverSession.rateLimitPerMinute,
                     timeoutSeconds: serverSession.timeoutSeconds,
-                    modelIdleTimeoutSeconds: serverSession.modelIdleTimeoutSeconds
+                    modelIdleTimeoutSeconds: serverSession.modelIdleTimeoutSeconds,
+                    allowedHosts: serverSession.allowedHosts,
+                    allowedOrigins: serverSession.allowedOrigins
                 )
             }
             await metrics.record(
@@ -13235,6 +13239,8 @@ public final class RuntimeViewModel {
         session.rateLimitPerMinute = projection.rateLimitPerMinute
         session.timeoutSeconds = projection.timeoutSeconds
         session.modelIdleTimeoutSeconds = projection.modelIdleTimeoutSeconds
+        session.allowedHosts = projection.allowedHosts
+        session.allowedOrigins = projection.allowedOrigins
         session.gatewayConfigSourceText = projection.sourceText
         session.gatewayConfigActiveBinding = projection.activeBinding
         session.gatewayConfigRequiresRestart = projection.requiresRestart
@@ -13449,6 +13455,8 @@ public final class RuntimeViewModel {
             effectivePort: listener.effectivePort == 0 ? Int(listener.requestedPort) : Int(listener.effectivePort),
             defaultModelID: defaultModelID,
             servedModelIDs: servedModelIDs,
+            allowedHosts: listener.allowedHosts,
+            allowedOrigins: listener.allowedOrigins,
             rateLimitPerMinute: Int(listener.rateLimitPerMinute),
             timeoutSeconds: Int(listener.timeoutSeconds),
             modelIdleTimeoutSeconds: Int(listener.modelIdleTimeoutSeconds),

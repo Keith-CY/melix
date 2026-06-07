@@ -1233,6 +1233,8 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
     public var servedModelIDs: [String]
     public var host: String
     public var port: Int
+    public var allowedHosts: [String]
+    public var allowedOrigins: [String]
     public var effectiveHost: String
     public var effectivePort: Int
     public var gatewayConfigSourceText: String
@@ -1282,6 +1284,8 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         servedModelIDs: [String] = [],
         host: String = MelixGatewayDefaults.host,
         port: Int = MelixGatewayDefaults.port,
+        allowedHosts: [String] = [],
+        allowedOrigins: [String] = [],
         effectiveHost: String? = nil,
         effectivePort: Int? = nil,
         gatewayConfigSourceText: String = "Built-in Defaults",
@@ -1325,6 +1329,8 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         )
         self.host = host
         self.port = port
+        self.allowedHosts = allowedHosts
+        self.allowedOrigins = allowedOrigins
         self.effectiveHost = effectiveHost ?? host
         self.effectivePort = effectivePort ?? port
         self.gatewayConfigSourceText = gatewayConfigSourceText
@@ -1436,6 +1442,8 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         case servedModelIDs = "served_model_ids"
         case host
         case port
+        case allowedHosts = "allowed_hosts"
+        case allowedOrigins = "allowed_origins"
         case effectiveHost = "effective_host"
         case effectivePort = "effective_port"
         case gatewayConfigSourceText = "gateway_config_source_text"
@@ -1482,6 +1490,8 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         )
         host = try container.decodeIfPresent(String.self, forKey: .host) ?? MelixGatewayDefaults.host
         port = try container.decodeIfPresent(Int.self, forKey: .port) ?? MelixGatewayDefaults.port
+        allowedHosts = try container.decodeIfPresent([String].self, forKey: .allowedHosts) ?? []
+        allowedOrigins = try container.decodeIfPresent([String].self, forKey: .allowedOrigins) ?? []
         effectiveHost = try container.decodeIfPresent(String.self, forKey: .effectiveHost) ?? host
         effectivePort = try container.decodeIfPresent(Int.self, forKey: .effectivePort) ?? port
         gatewayConfigSourceText = try container.decodeIfPresent(String.self, forKey: .gatewayConfigSourceText)
@@ -1524,6 +1534,8 @@ public struct DesktopServerSessionState: Codable, Identifiable, Equatable, Senda
         try container.encode(servedModelIDs, forKey: .servedModelIDs)
         try container.encode(host, forKey: .host)
         try container.encode(port, forKey: .port)
+        try container.encode(allowedHosts, forKey: .allowedHosts)
+        try container.encode(allowedOrigins, forKey: .allowedOrigins)
         try container.encode(effectiveHost, forKey: .effectiveHost)
         try container.encode(effectivePort, forKey: .effectivePort)
         try container.encode(gatewayConfigSourceText, forKey: .gatewayConfigSourceText)

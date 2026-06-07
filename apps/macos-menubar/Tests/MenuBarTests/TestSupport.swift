@@ -447,6 +447,8 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         let rateLimitPerMinute: Int
         let timeoutSeconds: Int
         let modelIdleTimeoutSeconds: Int
+        let allowedHosts: [String]
+        let allowedOrigins: [String]
     }
 
     struct RecordedServingDefaultsApplyRequest: Equatable, Sendable {
@@ -1324,7 +1326,9 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
         servedModelIDs: [String],
         rateLimitPerMinute: Int,
         timeoutSeconds: Int,
-        modelIdleTimeoutSeconds: Int
+        modelIdleTimeoutSeconds: Int,
+        allowedHosts: [String],
+        allowedOrigins: [String]
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
         recordedActions.append("gateway.config:\(serverSessionID)")
         if let applyGatewayConfigError {
@@ -1340,7 +1344,9 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
                 servedModelIDs: normalizedServedModelIDs,
                 rateLimitPerMinute: rateLimitPerMinute,
                 timeoutSeconds: timeoutSeconds,
-                modelIdleTimeoutSeconds: modelIdleTimeoutSeconds
+                modelIdleTimeoutSeconds: modelIdleTimeoutSeconds,
+                allowedHosts: allowedHosts,
+                allowedOrigins: allowedOrigins
             )
         )
 
@@ -1356,6 +1362,8 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             config.listeners[existingIndex].rateLimitPerMinute = UInt32(max(1, rateLimitPerMinute))
             config.listeners[existingIndex].timeoutSeconds = UInt32(max(1, timeoutSeconds))
             config.listeners[existingIndex].modelIdleTimeoutSeconds = UInt32(max(0, modelIdleTimeoutSeconds))
+            config.listeners[existingIndex].allowedHosts = allowedHosts
+            config.listeners[existingIndex].allowedOrigins = allowedOrigins
             config.listeners[existingIndex].source = .operatorOverride
             config.listeners[existingIndex].activeBinding = true
             config.listeners[existingIndex].requiresRestart = false
@@ -1371,6 +1379,8 @@ actor FakeControlPlaneXPCClient: ControlPlaneXPCClient {
             listener.rateLimitPerMinute = UInt32(max(1, rateLimitPerMinute))
             listener.timeoutSeconds = UInt32(max(1, timeoutSeconds))
             listener.modelIdleTimeoutSeconds = UInt32(max(0, modelIdleTimeoutSeconds))
+            listener.allowedHosts = allowedHosts
+            listener.allowedOrigins = allowedOrigins
             listener.source = .operatorOverride
             listener.activeBinding = true
             listener.requiresRestart = false

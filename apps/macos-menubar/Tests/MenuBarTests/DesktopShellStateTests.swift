@@ -366,6 +366,8 @@ struct DesktopShellStateTests {
             modelID: "melix-dev-text",
             host: "0.0.0.0",
             port: 18080,
+            allowedHosts: ["operator.lan"],
+            allowedOrigins: ["http://localhost:5173"],
             effectiveHost: "127.0.0.1",
             effectivePort: 12436,
             gatewayConfigSourceText: "Operator Override",
@@ -411,6 +413,8 @@ struct DesktopShellStateTests {
 
         #expect(decoded.host == "0.0.0.0")
         #expect(decoded.port == 18080)
+        #expect(decoded.allowedHosts == ["operator.lan"])
+        #expect(decoded.allowedOrigins == ["http://localhost:5173"])
         #expect(decoded.effectiveHost == "127.0.0.1")
         #expect(decoded.effectivePort == 12436)
         #expect(decoded.gatewayConfigSourceText == "Operator Override")

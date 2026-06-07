@@ -281,6 +281,8 @@ message ApplyGatewayConfig {
   uint32 timeout_seconds = 6;
   repeated string served_model_ids = 7;
   uint32 model_idle_timeout_seconds = 8;
+  repeated string allowed_hosts = 9;
+  repeated string allowed_origins = 10;
 }
 message ApplyServingDefaults {
   string server_session_id = 1;
@@ -1265,6 +1267,8 @@ message GatewayListenerConfigSummary {
   int64 updated_at_unix_ms = 12;
   repeated string served_model_ids = 13;
   uint32 model_idle_timeout_seconds = 14;
+  repeated string allowed_hosts = 15;
+  repeated string allowed_origins = 16;
 }
 
 message GatewayConfigSummary {

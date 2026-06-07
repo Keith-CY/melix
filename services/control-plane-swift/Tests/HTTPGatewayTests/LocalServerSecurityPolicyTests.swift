@@ -85,6 +85,8 @@ struct LocalServerSecurityPolicyTests {
     func explicitAllowlistsAreNormalizedDeduplicatedAndExactMatched() {
         let policy = LocalServerSecurityPolicy(
             bindHost: "0.0.0.0",
+            allowedHosts: ["dev.local:12436", "DEV.local"],
+            allowedOrigins: ["https://operator.example.test/workbench"],
             environment: [
                 "MELIX_ALLOWED_HOSTS": "operator.lan:12436, operator.lan:12436, 192.168.1.44",
                 "MELIX_ALLOWED_ORIGINS": "http://localhost:5173, http://localhost:5173/, https://app.example.test",
@@ -102,10 +104,21 @@ struct LocalServerSecurityPolicyTests {
         ])
 
         #expect(accepted == .accepted(cors: .init(origin: "http://localhost:5173")))
+        #expect(
+            policy.admit(headers: [
+                "host": "dev.local:12436",
+                "origin": "https://operator.example.test",
+            ]) == .accepted(cors: .init(origin: "https://operator.example.test"))
+        )
         #expect(rejected == .rejected(reason: .originNotAllowed, headerValue: "http://localhost:5173/path"))
+        #expect(receipt.allowedHosts.contains("dev.local"))
         #expect(receipt.allowedHosts.contains("operator.lan"))
         #expect(receipt.allowedHosts.contains("192.168.1.44"))
-        #expect(receipt.allowedOrigins == ["http://localhost:5173", "https://app.example.test"])
+        #expect(receipt.allowedOrigins == [
+            "https://operator.example.test",
+            "http://localhost:5173",
+            "https://app.example.test",
+        ])
         #expect(receipt.browserCorsPolicy == "explicit_allowlist")
     }
 
