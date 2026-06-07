@@ -32,6 +32,7 @@ PARSER_FAILURE_METRICS = (
     "malformed_tool_fragment_count",
     "tool_call_markup_leak_count",
     "duplicate_tool_delta_count",
+    "unknown_tool_delta_count",
     "reasoning_leak_count",
 )
 SoftJudge = Callable[[dict[str, Any], str, dict[str, Any]], dict[str, Any]]
@@ -114,11 +115,17 @@ def validate_cases(cases: list[dict[str, Any]], *, dataset_path: Path | None = N
             raise ValueError(f"Case {case_id} requires_soft_judge must include semantic_expectation.")
 
 
-def parse_tool_calls(raw_response: str) -> tuple[list[ParsedToolCall], str, dict[str, int | str]]:
+def parse_tool_calls(
+    raw_response: str,
+    *,
+    allowed_tool_names: tuple[str, ...] = (),
+) -> tuple[list[ParsedToolCall], str, dict[str, int | str]]:
     assembler = RequestStreamAssembler(
         request_id="tool-call-eval",
         reasoning_enabled=False,
         tool_parser_mode="qwen",
+        tool_parser_fallback_mode="xml",
+        allowed_tool_names=allowed_tool_names or None,
     )
     deltas = assembler.accept(StreamFragment(raw_text=raw_response))
     completion = assembler.completed()
@@ -148,9 +155,12 @@ def score_case(
     *,
     soft_judge: SoftJudge | None = None,
 ) -> dict[str, Any]:
-    parsed_calls, assistant_text, parser_metrics = parse_tool_calls(raw_response)
-    expected_calls = _expected_calls(case)
     allowed_tools = set(_string_list(case.get("allowed_tools")))
+    parsed_calls, assistant_text, parser_metrics = parse_tool_calls(
+        raw_response,
+        allowed_tool_names=tuple(sorted(allowed_tools)),
+    )
+    expected_calls = _expected_calls(case)
     failure_reasons: list[str] = []
 
     actual_calls = [call.to_dict() for call in parsed_calls]

@@ -31,12 +31,16 @@ def test_fixture_dataset_scores_all_cases_passed() -> None:
     )
 
     assert report["status"] == "passed"
-    assert report["metrics"]["tool_call_eval.case_count"] == 26.0
+    assert report["metrics"]["tool_call_eval.case_count"] == 31.0
     assert report["metrics"]["tool_call_eval.pass_rate"] == 1.0
     assert report["metrics"]["tool_call_eval.exact_tool_call_match_rate"] == 1.0
     assert report["metrics"]["tool_call_eval.schema_valid_rate"] == 1.0
     assert report["metrics"]["tool_call_eval.parser.malformed_tool_fragment_count"] == 0.0
     assert report["cases"][0]["actual_tool_calls"][0]["name"] == "text_search"
+    assert report["cases"][-1]["actual_tool_calls"][0]["name"] == "local_compute"
+    assert "xml_invoke_tool_call" in str(
+        report["cases"][-1]["parser_metrics"]["stream_parser_accepted_wire_formats"]
+    )
 
 
 def test_dataset_manifest_matches_cases_and_required_dimensions() -> None:
@@ -54,6 +58,7 @@ def test_dataset_manifest_matches_cases_and_required_dimensions() -> None:
     assert manifest["toolset_version"] == "melix.agentic_tools.builtin.v1"
     assert "parallel_tool_use" in manifest["risk_coverage"]
     assert "missing_required_user_parameter" in manifest["risk_coverage"]
+    assert "tool_call_format_rescue" in manifest["risk_coverage"]
     assert "no_reasoning_leak" in manifest["risk_coverage"]
     assert "BFCL" in manifest["external_calibration"]
 
@@ -77,7 +82,7 @@ def test_scorer_fails_public_text_and_tool_mismatch() -> None:
 
     assert result["passed"] is False
     assert "tool_call_mismatch" in result["failure_reasons"]
-    assert "unexpected_tool" in result["failure_reasons"]
+    assert "parser_metric:unknown_tool_delta_count" in result["failure_reasons"]
     assert "unexpected_public_text" in result["failure_reasons"]
 
 
