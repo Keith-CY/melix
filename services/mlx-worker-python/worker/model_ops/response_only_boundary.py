@@ -43,9 +43,10 @@ class _ChatTemplateTokenizer(Protocol):
         ...
 
 
-@dataclass(frozen=True, slots=True, init=False)
 class ResponseOnlyBoundary:
     """Per-sample response-only boundary record persisted in the manifest."""
+
+    __slots__ = ("assistant_offset", "total_tokens")
 
     assistant_offset: int
     total_tokens: int
@@ -58,6 +59,23 @@ class ResponseOnlyBoundary:
     ) -> None:
         _set_attr(self, "assistant_offset", assistant_offset)
         _set_attr(self, "total_tokens", total_tokens)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        raise AttributeError("cannot assign to field " + repr(name))
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, ResponseOnlyBoundary):
+            return (
+                self.assistant_offset == other.assistant_offset
+                and self.total_tokens == other.total_tokens
+            )
+        return NotImplemented
+
+    def __repr__(self) -> str:
+        return (
+            "ResponseOnlyBoundary(assistant_offset="
+            f"{self.assistant_offset!r}, total_tokens={self.total_tokens!r})"
+        )
 
     @property
     def response_tokens(self) -> int:
