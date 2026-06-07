@@ -471,8 +471,10 @@ def list_dataset_versions(
     output_root: Path | str,
     dataset_id: str,
 ) -> dict[str, Any]:
-    started = time.perf_counter()
+    perf_counter = time.perf_counter
+    started = perf_counter()
     versions_root = Path(output_root).expanduser() / dataset_id / "versions"
+    manifest_path_string = os.fspath(workspace_manifest_path)
     versions: list[dict[str, Any]] = []
     versions_append = versions.append
     read_json_file = _read_json_file
@@ -495,11 +497,11 @@ def list_dataset_versions(
     versions.sort(key=lambda item: (as_str(item["created_at"]), as_str(item["version_id"])))
     return {
         "schema_version": DATASET_VERSION_LIST_SCHEMA_VERSION,
-        "workspace_manifest_path": str(Path(workspace_manifest_path)),
+        "workspace_manifest_path": manifest_path_string,
         "dataset_id": dataset_id,
         "versions": versions,
         "metrics": {
-            "dataset_version_listing_latency_ms": (time.perf_counter() - started) * 1000.0,
+            "dataset_version_listing_latency_ms": (perf_counter() - started) * 1000.0,
             "dataset_version_count": len(versions),
         },
     }

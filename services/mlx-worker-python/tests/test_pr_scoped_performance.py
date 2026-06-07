@@ -2692,6 +2692,11 @@ def test_stream_assembler_token_bytes_probe_script_emits_metrics(
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["checksum"] > 0
+    assert metrics["delta_token_count_old_ms_mean"] >= 0
+    assert metrics["delta_token_count_new_ms_mean"] >= 0
+    assert metrics["delta_token_count_speedup"] > 0
+    assert metrics["delta_token_count_text_count"] == 4096.0
+    assert metrics["delta_token_count_checksum"] > 0
 
 
 def test_runtime_utils_kwarg_cache_probe_script_emits_metrics(
@@ -3349,6 +3354,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert "test_has_mlx_signal_skips_config_text_fallback_for_nonempty_payload_without_mlx_signal" in registry_probe.test_command
     assert "test_metadata_payload_has_mlx_signal_does_not_request_sorted_json" in registry_probe.test_command
     assert "test_has_mlx_signal_config_payload_fast_path_avoids_json_dump" in registry_probe.test_command
+    assert "test_registry_snapshot_keeps_gemma4_qat_target_when_readme_mentions_assistant" in registry_probe.test_command
     assert "scripts/changed_scope_coverage.py" not in registry_probe.watch_globs
     assert "test_registry_snapshot_reuses_hf_cache_config_payload" in registry_probe.coverage_command
     assert "test_raw_model_spec_loads_config_payload_when_not_supplied" in registry_probe.coverage_command
@@ -3356,6 +3362,7 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert "test_has_mlx_signal_skips_config_text_fallback_for_nonempty_payload_without_mlx_signal" in registry_probe.coverage_command
     assert "test_metadata_payload_has_mlx_signal_does_not_request_sorted_json" in registry_probe.coverage_command
     assert "test_has_mlx_signal_config_payload_fast_path_avoids_json_dump" in registry_probe.coverage_command
+    assert "test_registry_snapshot_keeps_gemma4_qat_target_when_readme_mentions_assistant" in registry_probe.coverage_command
     assert "scripts/changed_scope_coverage.py" in registry_probe.coverage_command
 
     assert maintenance_probe is not None
