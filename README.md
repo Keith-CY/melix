@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/Keith-CY/melix/actions/workflows/release-gates.yml"><img src="https://img.shields.io/github/actions/workflow/status/Keith-CY/melix/release-gates.yml?branch=main&label=release%20gates" alt="release gates"></a>
-  <a href="https://github.com/Keith-CY/melix/actions/workflows/package-self-contained-app.yml"><img src="https://img.shields.io/github/actions/workflow/status/Keith-CY/melix/package-self-contained-app.yml?branch=main&label=app%20packaging" alt="app packaging"></a>
+  <a href="https://github.com/Keith-CY/melix/actions/workflows/package-self-contained-app.yml?query=event%3Aschedule+branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/Keith-CY/melix/package-self-contained-app.yml?branch=main&event=schedule&label=app%20packaging" alt="app packaging"></a>
   <img src="https://img.shields.io/badge/platform-Apple%20Silicon-black" alt="platform">
   <img src="https://img.shields.io/badge/macOS-15%2B-000000" alt="macOS">
   <img src="https://img.shields.io/badge/focus-LoRA%20%2B%20Bench%20%2F%20Eval-0F766E" alt="focus">
