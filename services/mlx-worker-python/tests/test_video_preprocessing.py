@@ -291,6 +291,7 @@ def test_parse_video_reference_preserves_pathlib_suffix_edges(
 
 
 def test_uri_identity_hash_preserves_nul_framed_payload_digest() -> None:
+    _uri_identity_hash.cache_clear()
     expected = "e3730f5d0390fa0e5ca66427b4af3d8222d03dbcbabde46cb417fe93681038f5"
 
     assert (
@@ -307,6 +308,38 @@ def test_uri_identity_hash_preserves_nul_framed_payload_digest() -> None:
         )
         == expected
     )
+
+
+def test_uri_identity_hash_caches_repeated_metadata_frames() -> None:
+    _uri_identity_hash.cache_clear()
+
+    first = _uri_identity_hash(
+        uri="https://example.com/media/reused.mov",
+        mime_type="video/quicktime",
+        format_name="mov",
+        filename="reused.mov",
+        byte_length=4096,
+        duration_ms=12_000,
+        frame_budget=12,
+        start_ms=500,
+        end_ms=3_500,
+    )
+    second = _uri_identity_hash(
+        uri="https://example.com/media/reused.mov",
+        mime_type="video/quicktime",
+        format_name="mov",
+        filename="reused.mov",
+        byte_length=4096,
+        duration_ms=12_000,
+        frame_budget=12,
+        start_ms=500,
+        end_ms=3_500,
+    )
+    cache_info = _uri_identity_hash.cache_info()
+
+    assert second == first
+    assert cache_info.hits == 1
+    assert cache_info.misses == 1
 
 
 @pytest.mark.parametrize(

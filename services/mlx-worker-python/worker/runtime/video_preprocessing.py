@@ -289,6 +289,7 @@ def _filename_from_reference(reference: str | ParsedVideoReference) -> str:
     return parsed_reference.path_name
 
 
+@lru_cache(maxsize=VIDEO_REFERENCE_PARSE_CACHE_SIZE)
 def _uri_identity_hash(
     *,
     uri: str,
