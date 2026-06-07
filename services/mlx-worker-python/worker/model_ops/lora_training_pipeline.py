@@ -140,6 +140,7 @@ class LoRATrainingPipeline:
         normalized_manifest_overrides: dict[str, Any] = {
             "validation_strategy": config.validation_strategy,
             "validation_sample_count": config.validation_sample_count,
+            "training_template_receipt": dict(config.training_template_receipt),
         }
         if config.validation_split:
             normalized_manifest_overrides["hf_valid_split"] = config.validation_split
@@ -294,6 +295,7 @@ class LoRATrainingPipeline:
             "grad_clip_policy": dict(config.grad_clip_policy),
             "eval_batch_size": dict(config.eval_batch_size),
             "scheduler_kwargs_omitted": dict(config.scheduler_kwargs_omitted),
+            "training_template_receipt": dict(config.training_template_receipt),
             "training_mode": config.training_mode,
             "training_objective": config.training_objective,
             "adapter_algorithm": config.adapter_algorithm,

@@ -163,7 +163,9 @@ Use the following `ext` keys as the stable operator-facing inputs:
   "response_only": "true",
   "gradient_checkpointing": "false",
   "mask_prompt": "true",
-  "max_seq_length": "2048"
+  "max_seq_length": "2048",
+  "custom_training_template": "User: {INPUT}\n<|assistant|>{OUTPUT}",
+  "assistant_generation_marker": "<|assistant|>"
 }
 ```
 
@@ -225,6 +227,18 @@ Expected training behavior:
   `training_objective` overrides fail before backend execution
 - adapter receipts keep the source trace count in `dataset_sample_count` and
   record expanded trainer rows in `trainer_dataset_sample_count`
+- custom SFT training templates must pass worker admission before backend
+  execution. `custom_training_template` must include `{INPUT}` and `{OUTPUT}`.
+  Response-only templates must also include either the configured
+  `assistant_generation_marker` or a supported assistant marker such as
+  `<|assistant|>`, `<|assistant_start|>`, or
+  `<|start_header_id|>assistant<|end_header_id|>`. Requests with
+  `template_example_count=2` must include a recoverable example separator such
+  as `{EXAMPLE_SEPARATOR}` or a visible `---` separator. Invalid templates fail
+  with `invalid_training_template` and typed 422-style details before training
+  starts.
+- accepted template controls are copied into `training_template_receipt` in the
+  normalized dataset manifest and final adapter manifest.
 - Hugging Face dataset materialization is cached under `<jobs_root>/datasets/<cache-key>`
 - Melix supports `lora`, `qlora`, `dora`, `dpo`, `orpo`, and `cpt` through the same `train_lora` surface
 - `dora` records `adapter_algorithm=dora` and `dora_enabled=true` in the adapter manifest

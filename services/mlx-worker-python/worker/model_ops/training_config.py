@@ -27,6 +27,7 @@ from worker.model_ops.training_receipts import (
     grad_clip_policy_receipt,
     resolved_bounds_receipt,
     scheduler_kwargs_omitted_receipt,
+    training_template_receipt,
     typed_validation_details,
     format_bound_value,
 )
@@ -90,6 +91,7 @@ class LoRATrainingConfig:
     grad_clip_policy: dict[str, object] = field(default_factory=dict)
     eval_batch_size: dict[str, object] = field(default_factory=dict)
     scheduler_kwargs_omitted: dict[str, object] = field(default_factory=dict)
+    training_template_receipt: dict[str, object] = field(default_factory=dict)
     training_planner_receipt: dict[str, object] = field(default_factory=dict)
     training_objective: str = "supervised_finetuning"
     adapter_algorithm: str = "lora"
@@ -676,6 +678,11 @@ def normalize_training_config(
         ),
     )
     scheduler_kwargs_omitted = scheduler_kwargs_omitted_receipt(ext)
+    resolved_training_template_receipt = training_template_receipt(
+        ext,
+        dataset_format=dataset_format,
+        response_only=response_only,
+    )
     training_planner_receipt = build_training_planner_receipt(
         source_model=source_model,
         ext=ext,
@@ -748,6 +755,7 @@ def normalize_training_config(
         grad_clip_policy=grad_clip_policy,
         eval_batch_size=eval_batch_size,
         scheduler_kwargs_omitted=scheduler_kwargs_omitted,
+        training_template_receipt=resolved_training_template_receipt,
         training_planner_receipt=training_planner_receipt,
         training_objective=mode_contract["training_objective"],
         adapter_algorithm=adapter_record.adapter_algorithm,
