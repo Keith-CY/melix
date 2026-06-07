@@ -3356,6 +3356,7 @@ def test_normalized_answer_skips_extractors_for_free_text(monkeypatch: pytest.Mo
     assert EvaluationCore._normalized_answer("   ") == ""
     assert EvaluationCore._normalized_answer("``") == ""
     assert EvaluationCore._normalized_answer("'quoted'") == "quoted"
+    assert EvaluationCore._normalized_answer('"quoted"') == "quoted"
     assert EvaluationCore._normalized_answer("''") == ""
     assert EvaluationCore._normalized_answer("9.0") == "9"
     assert EvaluationCore._normalized_answer("+9.00") == "9"
