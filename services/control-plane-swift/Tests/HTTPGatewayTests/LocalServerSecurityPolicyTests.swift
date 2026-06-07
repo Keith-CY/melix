@@ -43,6 +43,19 @@ struct LocalServerSecurityPolicyTests {
         #expect(originRejected == .rejected(reason: .originNotAllowed, headerValue: "https://attacker.test"))
     }
 
+    @Test("present empty host is rejected")
+    func presentEmptyHostIsRejected() {
+        let policy = LocalServerSecurityPolicy(
+            bindHost: "127.0.0.1",
+            port: 12_436,
+            environment: [:]
+        )
+
+        let admission = policy.admit(headers: ["host": ""])
+
+        #expect(admission == .rejected(reason: .hostNotAllowed, headerValue: ""))
+    }
+
     @Test("bind-all listeners still default to loopback host allowlists")
     func bindAllListenersStillDefaultToLoopbackHostAllowlists() {
         let policy = LocalServerSecurityPolicy(
@@ -87,6 +100,30 @@ struct LocalServerSecurityPolicyTests {
         #expect(receipt.allowedHosts.contains("192.168.1.44"))
         #expect(receipt.allowedOrigins == ["http://localhost:5173", "https://app.example.test"])
         #expect(receipt.browserCorsPolicy == "explicit_allowlist")
+    }
+
+    @Test("explicit origins discard paths queries and fragments")
+    func explicitOriginsDiscardPathsQueriesAndFragments() {
+        let policy = LocalServerSecurityPolicy(
+            bindHost: "127.0.0.1",
+            port: 12_436,
+            environment: [
+                "MELIX_ALLOWED_ORIGINS": "http://localhost:5173/app?debug=1#section, https://APP.example.test/path",
+            ]
+        )
+
+        let localAccepted = policy.admit(headers: [
+            "host": "127.0.0.1:12436",
+            "origin": "http://localhost:5173",
+        ])
+        let appAccepted = policy.admit(headers: [
+            "host": "127.0.0.1:12436",
+            "origin": "https://app.example.test",
+        ])
+
+        #expect(localAccepted == .accepted(cors: .init(origin: "http://localhost:5173")))
+        #expect(appAccepted == .accepted(cors: .init(origin: "https://app.example.test")))
+        #expect(policy.receipt.allowedOrigins == ["http://localhost:5173", "https://app.example.test"])
     }
 
     @Test("vary helper appends origin without duplicating existing origin entries")

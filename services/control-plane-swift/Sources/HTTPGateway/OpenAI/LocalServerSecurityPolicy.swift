@@ -115,10 +115,10 @@ public struct LocalServerSecurityPolicy: Equatable, Sendable {
     }
 
     public func admit(headers: [String: String]) -> Admission {
-        if let host = header(named: "host", in: headers),
-           !host.isEmpty,
-           !isAllowedHost(host) {
-            return .rejected(reason: .hostNotAllowed, headerValue: host)
+        if let host = header(named: "host", in: headers) {
+            guard !host.isEmpty, isAllowedHost(host) else {
+                return .rejected(reason: .hostNotAllowed, headerValue: host)
+            }
         }
 
         guard let origin = header(named: "origin", in: headers), !origin.isEmpty else {
@@ -153,7 +153,7 @@ public struct LocalServerSecurityPolicy: Equatable, Sendable {
 
     private func header(named expectedName: String, in headers: [String: String]) -> String? {
         headers.first { key, value in
-            key.caseInsensitiveCompare(expectedName) == .orderedSame && !value.isEmpty
+            key.caseInsensitiveCompare(expectedName) == .orderedSame
         }?.value
     }
 
@@ -205,17 +205,17 @@ public struct LocalServerSecurityPolicy: Equatable, Sendable {
         guard !candidate.isEmpty else {
             return nil
         }
-        guard candidate.hasPrefix("http://") || candidate.hasPrefix("https://") else {
+        guard let components = URLComponents(string: candidate),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = components.host?.lowercased()
+        else {
             return nil
         }
-        if candidate.hasSuffix("/"),
-           let components = URLComponents(string: candidate),
-           components.path == "/",
-           components.query == nil,
-           components.fragment == nil {
-            return String(candidate.dropLast())
+        if let port = components.port {
+            return "\(scheme)://\(host):\(port)"
         }
-        return candidate
+        return "\(scheme)://\(host)"
     }
 
     private static func isLoopbackAllowedHost(_ value: String) -> Bool {
