@@ -10,6 +10,8 @@ The prior helper used a list comprehension that read `entry.name` twice for ever
 
 The probe is extended to measure the model safetensor listing path directly against the historical `glob.glob(str(model_dir / "model*.safetensors"))` baseline, while preserving the existing index JSON, sidecar shard, and key predicate metrics.
 
+2026-06-07 follow-up slice: the same registered probe now also seeds duplicate native-MTP metadata entries that do not end in `.safetensors`. The loader filters those names before the duplicate-set lookup, keeping missing-path warnings and `os.path.exists()` checks limited to candidate sidecar shard paths while reducing set churn on noisy index maps.
+
 ## Verification plan
 
 ```bash
