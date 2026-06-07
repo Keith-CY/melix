@@ -4,11 +4,12 @@ import heapq
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import AbstractSet, Any
 
 from worker.productization.benchmark_evaluation_report import validate_report_payload
 
 REPORT_EVIDENCE_GATE_SCHEMA_VERSION = "melix.report_evidence_gate.v1"
+_EMPTY_PROBE_PHASES: frozenset[str] = frozenset()
 
 DEFAULT_RELEASE_EVIDENCE_MATRIX: dict[str, dict[str, object]] = {
     "serving_benchmark": {
@@ -288,14 +289,16 @@ def _report_matrix_roles(
     runs = _dict_list(report.get("runs"))
     targets = _dict_list(report.get("targets"))
     metrics = _dict_list(report.get("metrics"))
-    probe_phases = _probe_phases(report)
+    probe_phases: set[str] | None = None
     for role, rule in matrix.items():
+        if rule.get("probe_phases") and probe_phases is None:
+            probe_phases = _probe_phases(report)
         if _rule_matches_report(
             rule=rule,
             runs=runs,
             targets=targets,
             metrics=metrics,
-            probe_phases=probe_phases,
+            probe_phases=probe_phases if probe_phases is not None else _EMPTY_PROBE_PHASES,
         ):
             roles.append(role)
     return roles
@@ -307,7 +310,7 @@ def _rule_matches_report(
     runs: list[dict[str, object]],
     targets: list[dict[str, object]],
     metrics: list[dict[str, object]],
-    probe_phases: set[str],
+    probe_phases: AbstractSet[str],
 ) -> bool:
     run_kinds = rule.get("run_kinds", ())
     if run_kinds:
@@ -432,12 +435,19 @@ def _slowest_probe_phases(report: dict[str, object]) -> list[dict[str, object]]:
         return []
     rows: list[tuple[float, int, str, dict[str, object]]] = []
     row_index = 0
+    rows_append = rows.append
+    dict_list = _dict_list
     for side in ("baseline", "candidate"):
         side_summary = probe_summary.get(side)
         if not isinstance(side_summary, dict):
             continue
-        for row in _dict_list(side_summary.get("slowest_phases")):
-            rows.append((_probe_phase_duration_key(row), -row_index, side, row))
+        for row in dict_list(side_summary.get("slowest_phases")):
+            duration = row.get("duration_ms")
+            if isinstance(duration, (float, int, str)):
+                duration_ms = float(duration or 0.0)
+            else:
+                duration_ms = 0.0
+            rows_append((duration_ms, -row_index, side, row))
             row_index += 1
     return [
         {"side": side, **row}

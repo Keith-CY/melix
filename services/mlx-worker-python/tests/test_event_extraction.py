@@ -163,6 +163,13 @@ def test_parse_response_json_accepts_unfenced_json_without_pretrim_copy() -> Non
     }
 
 
+def test_parse_response_json_rejects_unfenced_closing_fence() -> None:
+    response = '{"events": []}\n```'
+
+    with pytest.raises(json.JSONDecodeError, match="Extra data"):
+        event_extraction_module._parse_response_json(response)
+
+
 def test_parse_response_json_rejects_trailing_text_after_fenced_json() -> None:
     response = '```json\n{"events": []}\ntrailing text'
 

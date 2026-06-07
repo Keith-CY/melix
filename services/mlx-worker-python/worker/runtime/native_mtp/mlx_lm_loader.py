@@ -46,6 +46,19 @@ def _model_safetensor_files(model_path: Path) -> list[str]:
     return weight_files
 
 
+def _load_weight_shards(load: Callable[[str], dict], weight_files: list[str], extra_files: list[Path]) -> dict:
+    """Load base and native-MTP sidecar shards without combining path lists."""
+
+    weights = {}
+    weights_update = weights.update
+    to_text = str
+    for path in weight_files:
+        weights_update(load(path))
+    for path in extra_files:
+        weights_update(load(to_text(path)))
+    return weights
+
+
 def extra_mtp_safetensor_files(model_path: Path) -> list[Path]:
     index_payload = _load_json_payload(model_path / "model.safetensors.index.json")
     weight_map = index_payload.get("weight_map")
@@ -135,9 +148,7 @@ def apply() -> bool:
         if not weight_files and strict:
             raise FileNotFoundError(f"No safetensors found in {model_path}")
 
-        weights = {}
-        for wf in [*weight_files, *(str(path) for path in extra_files)]:
-            weights.update(mx.load(wf))
+        weights = _load_weight_shards(mx.load, weight_files, extra_files)
 
         if (model_file := config.get("model_file")) is not None:
             spec = importlib.util.spec_from_file_location(

@@ -8,10 +8,11 @@ public enum HTTPGatewayRequestParseError: Error, Equatable, Sendable {
     case bodyTooLarge(declaredBytes: Int, maxBytes: Int)
     case unsupportedChunkedBody
     case invalidForwardedPrefix(String)
+    case missingHostHeader
 
     public var statusCode: Int {
         switch self {
-        case .incomplete, .invalidRequest, .duplicateHeader, .invalidForwardedPrefix:
+        case .incomplete, .invalidRequest, .duplicateHeader, .invalidForwardedPrefix, .missingHostHeader:
             return 400
         case .headersTooLarge:
             return 431
@@ -34,6 +35,8 @@ public enum HTTPGatewayRequestParseError: Error, Equatable, Sendable {
             return "chunked_request_body_unsupported"
         case .invalidForwardedPrefix:
             return "invalid_forwarded_prefix"
+        case .missingHostHeader:
+            return "missing_host_header"
         }
     }
 
@@ -51,6 +54,8 @@ public enum HTTPGatewayRequestParseError: Error, Equatable, Sendable {
             return "Transfer-Encoding: chunked is not supported by the local gateway."
         case .invalidForwardedPrefix:
             return "X-Forwarded-Prefix must be a relative path prefix without scheme, query, fragment, traversal, or empty path segments."
+        case .missingHostHeader:
+            return "HTTP/1.1 requests to the local gateway must include a Host header."
         }
     }
 }
@@ -97,6 +102,8 @@ public enum HTTPGatewayRequestParser {
             method = .post
         case "DELETE":
             method = .delete
+        case "OPTIONS":
+            method = .options
         default:
             return .failure(.invalidRequest)
         }
@@ -110,6 +117,10 @@ public enum HTTPGatewayRequestParser {
                 return .failure(.duplicateHeader(key))
             }
             headers[key] = String(pair[1]).trimmingCharacters(in: .whitespaces)
+        }
+
+        guard headers["host"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            return .failure(.missingHostHeader)
         }
 
         if let transferEncoding = headers["transfer-encoding"],

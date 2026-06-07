@@ -719,6 +719,33 @@ def test_sandbox_profile_reuses_static_runtime_fragments(
     code_eval_runner._sandbox_static_profile_key_cache_clear()
 
 
+def test_sandbox_static_profile_key_reuses_cached_fingerprint_without_tuple_rebuild(
+    monkeypatch,
+) -> None:
+    code_eval_runner._sandbox_static_profile_key_cache_clear()
+    fingerprint_calls = 0
+    original_fingerprint = code_eval_runner._sandbox_static_profile_environment_fingerprint
+
+    def tracked_fingerprint() -> tuple[object, ...]:
+        nonlocal fingerprint_calls
+        fingerprint_calls += 1
+        return original_fingerprint()
+
+    monkeypatch.setattr(
+        code_eval_runner,
+        "_sandbox_static_profile_environment_fingerprint",
+        tracked_fingerprint,
+    )
+
+    first_key = code_eval_runner._sandbox_static_profile_key()
+    second_key = code_eval_runner._sandbox_static_profile_key()
+
+    assert first_key is second_key
+    assert fingerprint_calls == 1
+
+    code_eval_runner._sandbox_static_profile_key_cache_clear()
+
+
 def test_runner_script_reuses_dedented_static_payload(monkeypatch) -> None:
     code_eval_runner._runner_script.cache_clear()
     calls = 0

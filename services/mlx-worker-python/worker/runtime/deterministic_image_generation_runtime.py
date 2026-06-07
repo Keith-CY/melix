@@ -18,6 +18,7 @@ _IMAGE_MIME_TYPES = {
     "jpeg": "image/jpeg",
     "webp": "image/webp",
 }
+_SUPPORTED_IMAGE_FORMATS = frozenset((*_IMAGE_MIME_TYPES, "jpg"))
 
 
 class ImageGenerationCancelled(RuntimeError):
@@ -300,7 +301,7 @@ class DeterministicImageGenerationRuntime(DeterministicProbeMixin[ImageGeneratio
     @staticmethod
     def _normalized_format(response_format: str) -> str:
         normalized = (response_format or "png").strip().lower()
-        if normalized in {"png", "jpeg", "jpg", "webp"}:
+        if normalized in _SUPPORTED_IMAGE_FORMATS:
             return "jpeg" if normalized == "jpg" else normalized
         raise ValueError(f"Unsupported image response format: {response_format}")
 

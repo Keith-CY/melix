@@ -473,42 +473,47 @@ class EngineCore:
             if last_token_event is not None:
                 parser_metrics.update(_text_native_mtp_parser_metrics(last_token_event))
             resolved_stop_token_count = str(stop_contract.resolved_stop_token_count)
-            created = execution_ext.get("melix.response.created", "")
-            allowed_tools_receipt_json = self._allowed_tools_receipt_json(request)
             if plain_text_fast_path:
-                response_history_normalized_count = execution_ext.get(
-                    "melix.response_history.normalized_count",
-                    "0",
-                )
-                compat_policy_receipt_json = execution_ext.get(
-                    "melix.compat.policy_receipt_json",
-                    "",
-                )
-                compat_effective_config_hash = execution_ext.get(
-                    "melix.compat.effective_config_hash",
-                    "",
-                )
+                if execution_ext:
+                    created = execution_ext.get("melix.response.created", "")
+                    response_history_normalized_count = execution_ext.get(
+                        "melix.response_history.normalized_count",
+                        "0",
+                    )
+                    compat_policy_receipt_json = execution_ext.get(
+                        "melix.compat.policy_receipt_json",
+                        "",
+                    )
+                    compat_effective_config_hash = execution_ext.get(
+                        "melix.compat.effective_config_hash",
+                        "",
+                    )
+                    allowed_tools_receipt_json = self._allowed_tools_receipt_json(request)
+                else:
+                    created = ""
+                    response_history_normalized_count = "0"
+                    compat_policy_receipt_json = ""
+                    compat_effective_config_hash = ""
+                    allowed_tools_receipt_json = _DEFAULT_OMITTED_ALLOWED_TOOLS_RECEIPT_JSON
                 generated_tool_call_delta_count_text = str(generated_tool_call_delta_count)
                 if token_route_receipt is not None:
                     token_route_receipt_json = token_route_receipt.to_json()
-                parser_metrics.update(
-                    {
-                        "resolved_stop_token_count": resolved_stop_token_count,
-                        "response_history_normalized_count": response_history_normalized_count,
-                        "native_tool_exemplar_injected_count": "0",
-                        "reasoning_flag_source": reasoning.mode_source or "unspecified",
-                        "compat_policy_receipt_json": compat_policy_receipt_json,
-                        "compat_effective_config_hash": compat_effective_config_hash,
-                        "turn_boundary_stop_reason": turn_boundary_stop_reason or finish_reason,
-                        "generated_reasoning_delta_count": "0",
-                        "generated_tool_call_delta_count": generated_tool_call_delta_count_text,
-                        "annotation_delta_count": str(annotation_delta_count),
-                        "tool_result_delta_count": str(tool_result_delta_count),
-                        "token_route_receipt_json": token_route_receipt_json,
-                        "allowed_tools_receipt_json": allowed_tools_receipt_json,
-                    }
-                )
+                parser_metrics["resolved_stop_token_count"] = resolved_stop_token_count
+                parser_metrics["response_history_normalized_count"] = response_history_normalized_count
+                parser_metrics["native_tool_exemplar_injected_count"] = "0"
+                parser_metrics["reasoning_flag_source"] = reasoning.mode_source or "unspecified"
+                parser_metrics["compat_policy_receipt_json"] = compat_policy_receipt_json
+                parser_metrics["compat_effective_config_hash"] = compat_effective_config_hash
+                parser_metrics["turn_boundary_stop_reason"] = turn_boundary_stop_reason or finish_reason
+                parser_metrics["generated_reasoning_delta_count"] = "0"
+                parser_metrics["generated_tool_call_delta_count"] = generated_tool_call_delta_count_text
+                parser_metrics["annotation_delta_count"] = str(annotation_delta_count)
+                parser_metrics["tool_result_delta_count"] = str(tool_result_delta_count)
+                parser_metrics["token_route_receipt_json"] = token_route_receipt_json
+                parser_metrics["allowed_tools_receipt_json"] = allowed_tools_receipt_json
             else:
+                created = execution_ext.get("melix.response.created", "")
+                allowed_tools_receipt_json = self._allowed_tools_receipt_json(request)
                 parser_metrics["resolved_stop_token_count"] = resolved_stop_token_count
                 parser_metrics["response_history_normalized_count"] = execution_ext.get(
                     "melix.response_history.normalized_count",
@@ -926,6 +931,7 @@ class EngineCore:
             reasoning_enabled=reasoning_enabled,
             structured_output_mode=ext.get("melix.structured_output.mode", ""),
             tool_parser_mode=ext.get("melix.tool_parser.mode", ""),
+            tool_parser_fallback_mode=ext.get("melix.tool_parser.fallback_mode", ""),
             allowed_tool_names=(
                 tuple(tool.name for tool in request.execution.tool_config.tools)
                 if request.execution.tool_config.tools else None

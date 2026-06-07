@@ -50,18 +50,19 @@ def extract_candidate_code(raw_response: str) -> tuple[str, str]:
     if not normalized:
         return "", "empty_prediction"
 
-    closing = normalized.rfind("```")
+    fence = "```"
+    closing = normalized.rfind(fence)
     if closing >= 0:
-        opening = normalized.rfind("```", 0, closing)
+        opening = normalized.rfind(fence, 0, closing)
         if opening >= 0:
             content_start = _code_block_content_start(normalized, opening + 3)
             candidate = normalized[content_start:closing].strip()
             if candidate:
                 return candidate, "parsed_code_block"
-            if normalized.count("```") % 2 == 0:
+            if normalized.count(fence) % 2 == 0:
                 return candidate, "parsed_code_block"
             closing = opening
-            opening = normalized.rfind("```", 0, closing)
+            opening = normalized.rfind(fence, 0, closing)
             if opening >= 0:
                 content_start = _code_block_content_start(normalized, opening + 3)
                 return normalized[content_start:closing].strip(), "parsed_code_block"
@@ -671,11 +672,18 @@ def _sandbox_static_profile_environment_fingerprint() -> tuple[object, ...]:
 
 def _sandbox_static_profile_key() -> tuple[object, ...]:
     global _SANDBOX_STATIC_PROFILE_KEY_CACHE
-    fingerprint = _sandbox_static_profile_environment_fingerprint()
     if _SANDBOX_STATIC_PROFILE_KEY_CACHE is not None:
         cached_fingerprint, cached_key = _SANDBOX_STATIC_PROFILE_KEY_CACHE
-        if cached_fingerprint == fingerprint:
+        if (
+            cached_fingerprint[0] == sys.executable
+            and cached_fingerprint[1] == sys.prefix
+            and cached_fingerprint[2] == sys.exec_prefix
+            and cached_fingerprint[3] == sys.base_prefix
+            and cached_fingerprint[4] == sys.base_exec_prefix
+            and cached_fingerprint[5] == id(sysconfig.get_paths)
+        ):
             return cached_key
+    fingerprint = _sandbox_static_profile_environment_fingerprint()
     key = (
         *fingerprint[:-1],
         tuple(sorted((key, value or "") for key, value in sysconfig.get_paths().items())),

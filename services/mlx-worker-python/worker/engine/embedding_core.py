@@ -40,5 +40,6 @@ class EmbeddingCore:
         add_embedding = embeddings.add
         for values in vectors:
             embedding = add_embedding()
-            embedding.values.extend(values)
+            embedding_values = embedding.values
+            embedding_values.extend(values)
         return response

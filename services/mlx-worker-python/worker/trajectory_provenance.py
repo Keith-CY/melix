@@ -58,15 +58,23 @@ def normalize_trajectory_provenance(
     if not provenance:
         return {}
     normalized: dict[str, Any] = {}
+    provenance_get = provenance.get
+    copy_value = _copy_trajectory_provenance_value
     for field in TRAJECTORY_PROVENANCE_FIELDS:
-        value = provenance.get(field)
-        if value in ("", None):
+        value = provenance_get(field)
+        if value is None:
             continue
         value_type = type(value)
-        if value_type is dict or value_type is list:
-            normalized[field] = _copy_trajectory_provenance_value(value)
+        if value_type is str:
+            if value == "":
+                continue
+            normalized[field] = value
+        elif value_type is dict or value_type is list:
+            normalized[field] = copy_value(value)
         elif isinstance(value, (dict, list)):
-            normalized[field] = _copy_trajectory_provenance_value(value)
+            normalized[field] = copy_value(value)
+        elif value == "":
+            continue
         else:
             normalized[field] = value
     return normalized
@@ -169,7 +177,7 @@ def load_trajectory_provenance_from_snapshot_manifest(
     if not isinstance(manifest_path, Path):
         manifest_path = Path(manifest_path)
     payload = loads(read_bytes(manifest_path))
-    if not isinstance(payload, dict):
+    if type(payload) is not dict and not isinstance(payload, dict):
         return {}
     return extract_provenance(
         payload,

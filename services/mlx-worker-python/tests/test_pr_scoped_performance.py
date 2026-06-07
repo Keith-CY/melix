@@ -152,6 +152,38 @@ def test_scope_report_selects_stream_assembler_probe() -> None:
     }
 
 
+def _assert_stream_assembler_probe_covers_standard_pipe_parser(probe_id: str) -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == probe_id
+    )
+
+    focused_test = (
+        "services/mlx-worker-python/tests/test_stream_assembler.py::"
+        "test_standard_qwen_pipe_tool_parser_keeps_rescue_parser_off"
+    )
+    stream_assembler_tests = "services/mlx-worker-python/tests/test_stream_assembler.py"
+    coverage_pytest_selection = probe.coverage_command.split("&&", 1)[0]
+
+    assert focused_test in probe.test_command
+    assert focused_test in coverage_pytest_selection or (
+        f" {stream_assembler_tests} " in f" {coverage_pytest_selection} "
+    )
+
+
+def test_stream_assembler_structural_prefix_probe_covers_standard_pipe_parser() -> None:
+    _assert_stream_assembler_probe_covers_standard_pipe_parser(
+        "stream-assembler-structural-prefix-cache"
+    )
+
+
+def test_stream_assembler_token_byte_probe_covers_standard_pipe_parser() -> None:
+    _assert_stream_assembler_probe_covers_standard_pipe_parser(
+        "stream-assembler-token-byte-fast-decode"
+    )
+
+
 def test_scope_report_selects_runtime_utils_probe() -> None:
     scope = build_scope_report(
         registry_path=REGISTRY_PATH,
@@ -204,9 +236,12 @@ def test_report_evidence_gate_run_kind_probe_script_emits_metrics(
     assert metrics["run_kind_elapsed_ms_mean"] >= 0.0
     assert metrics["metric_prefix_elapsed_ms_mean"] >= 0.0
     assert metrics["target_field_elapsed_ms_mean"] >= 0.0
+    assert metrics["matrix_roles_elapsed_ms_mean"] >= 0.0
     assert metrics["run_kind_count"] == 65.0
     assert metrics["metric_prefix_count"] == 65.0
     assert metrics["target_field_count"] == 65.0
+    assert metrics["matrix_roles_role_count"] == 32.0
+    assert metrics["matrix_roles_probe_phase_rows"] == 2048.0
     assert metrics["metrics_per_call"] == 80.0
     assert metrics["targets_per_call"] == 80.0
 
@@ -336,6 +371,7 @@ def test_native_mtp_loader_safetensor_scandir_probe_script_emits_metrics(
     monkeypatch.setenv("MELIX_NATIVE_MTP_LOADER_DISTRACTOR_FILES", "8")
     monkeypatch.setenv("MELIX_NATIVE_MTP_LOADER_SAMPLES", "1")
     monkeypatch.setenv("MELIX_NATIVE_MTP_LOADER_KEY_ITERATIONS", "2")
+    monkeypatch.setenv("MELIX_NATIVE_MTP_LOADER_WEIGHT_LOAD_ITERATIONS", "2")
     probe_script = runpy.run_path(
         str(REPO_ROOT / "scripts/native_mtp_loader_safetensor_scandir_probe.py")
     )
@@ -355,6 +391,10 @@ def test_native_mtp_loader_safetensor_scandir_probe_script_emits_metrics(
     assert metrics["key_count"] == 26
     assert metrics["key_true_count"] == 17
     assert metrics["key_iterations"] == 2
+    assert metrics["weight_load_iterations"] == 2
+    assert metrics["weight_load_result_count"] == 18
+    assert metrics["weight_load_old_mean_ms"] >= 0.0
+    assert metrics["weight_load_new_mean_ms"] >= 0.0
     assert metrics["key_old_mean_ms"] >= 0.0
     assert metrics["key_new_mean_ms"] >= 0.0
 
@@ -3384,6 +3424,16 @@ def test_registered_probes_expose_focused_commands() -> None:
     assert swift_probe.probe_command.startswith("python3 - <<'PY'")
     assert "stdout=sys.stderr" in swift_probe.probe_command
     assert "stderr=sys.stderr" in swift_probe.probe_command
+
+
+def test_stream_assembler_parser_mode_probe_command_pins_sample_count() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "stream-assembler-parser-mode-cache"
+    )
+
+    assert "MELIX_STREAM_ASSEMBLER_PARSER_MODE_SAMPLES=512" in probe.probe_command
 
 
 def test_registered_probe_registry_entries_validate_commands_and_watch_globs() -> None:

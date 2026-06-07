@@ -377,6 +377,7 @@ public enum HTTPMethod: String, Sendable {
     case get = "GET"
     case post = "POST"
     case delete = "DELETE"
+    case options = "OPTIONS"
 }
 
 public enum HTTPBody: Sendable {
@@ -416,6 +417,22 @@ public struct HTTPResponse: Sendable {
         self.statusCode = statusCode
         self.headers = headers
         self.body = body
+    }
+}
+
+private extension HTTPResponse {
+    func withLocalServerCORS(_ cors: LocalServerSecurityPolicy.CORS?) -> HTTPResponse {
+        guard let cors else {
+            return self
+        }
+        var headers = self.headers
+        headers["access-control-allow-origin"] = cors.origin
+        headers["vary"] = LocalServerSecurityPolicy.varyHeader(includingOriginFrom: headers["vary"])
+        return HTTPResponse(
+            statusCode: statusCode,
+            headers: headers,
+            body: body
+        )
     }
 }
 
@@ -583,6 +600,7 @@ public struct OpenAIHandler: Sendable {
     private let gatewayRuntimeBinding: GatewayRuntimeBinding
     private let gatewayRateLimiter: GatewayRateLimiter
     private let persistentAuthSessionStore: PersistentAuthSessionStore?
+    private let localServerSecurityPolicy: LocalServerSecurityPolicy
     private let environment: [String: String]
     private let imageRequestTimeoutSeconds: UInt32
     private let now: @Sendable () -> Date
@@ -638,6 +656,10 @@ public struct OpenAIHandler: Sendable {
         self.gatewayRuntimeBinding = gatewayRuntimeBinding
         self.gatewayRateLimiter = gatewayRateLimiter ?? GatewayRateLimiter()
         self.persistentAuthSessionStore = persistentAuthSessionStore
+        self.localServerSecurityPolicy = LocalServerSecurityPolicy(
+            bindHost: gatewayRuntimeBinding.host,
+            environment: environment
+        )
         self.environment = environment
         self.imageRequestTimeoutSeconds = Self.resolveImageRequestTimeoutSeconds(environment: environment)
         self.now = now
@@ -663,67 +685,108 @@ public struct OpenAIHandler: Sendable {
     }
 
     public func handle(_ request: HTTPRequest) async throws -> HTTPResponse {
+        let cors: LocalServerSecurityPolicy.CORS?
+        switch localServerSecurityPolicy.admit(headers: request.headers) {
+        case .accepted(let acceptedCORS):
+            cors = acceptedCORS
+            if acceptedCORS != nil {
+                await metricsStore.increment("local_server_security.accepted_origin_count")
+            }
+        case let .rejected(reason, headerValue):
+            return await localServerSecurityRejectionResponse(reason: reason, headerValue: headerValue)
+        }
+
+        if request.method == .options {
+            return localServerSecurityPreflightResponse(cors: cors).withLocalServerCORS(cors)
+        }
+
         let authorization = await authorizationContext(for: request)
+        let response: HTTPResponse
         switch authorization {
         case .failure(let authorizationFailure):
-            return authorizationFailure
+            response = authorizationFailure
         case .success(let authorizationContext):
             if let rateLimitFailure = await rateLimitFailureResponse(
                 for: request,
                 authorization: authorizationContext
             ) {
-                return rateLimitFailure
+                response = rateLimitFailure
+                break
             }
             switch (request.method, request.path) {
             case (.get, "/.well-known/melix.json"):
-                return try await handleDiscoveryWellKnown()
+                response = try await handleDiscoveryWellKnown()
             case (.get, "/api/capabilities"):
-                return try await handleDiscoveryCapabilities()
+                response = try await handleDiscoveryCapabilities()
             case (.get, "/api/instructions"):
-                return try await handleDiscoveryInstructions()
+                response = try await handleDiscoveryInstructions()
             case (.get, "/api/config-metadata"):
-                return try await handleDiscoveryConfigMetadata()
+                response = try await handleDiscoveryConfigMetadata()
             case (.get, "/v1/models"):
-                return try await handleModels()
+                response = try await handleModels()
             case (.get, "/health"):
-                return try await handleHealth()
+                response = try await handleHealth()
             case (.get, "/v1/melix/health"):
-                return try await handleHealthDiagnostics()
+                response = try await handleHealthDiagnostics()
             case (.get, "/v1/cache/stats"):
-                return try await handleCacheStats()
+                response = try await handleCacheStats()
             case (.post, "/v1/melix/auth/session"):
-                return try await handleCreateAuthSession(request, authorization: authorizationContext)
+                response = try await handleCreateAuthSession(request, authorization: authorizationContext)
             case (.get, "/v1/melix/auth/session"):
-                return try await handleCurrentAuthSession(authorization: authorizationContext)
+                response = try await handleCurrentAuthSession(authorization: authorizationContext)
             case (.delete, "/v1/melix/auth/session"):
-                return try await handleDeleteAuthSession(authorization: authorizationContext)
+                response = try await handleDeleteAuthSession(authorization: authorizationContext)
             case (.post, "/v1/chat/completions"):
-                return try await handleChatCompletions(request)
+                response = try await handleChatCompletions(request)
             case (.post, "/v1/completions"):
-                return try await handleCompletions(request)
+                response = try await handleCompletions(request)
             case (.post, "/v1/responses"):
-                return try await handleResponses(request)
+                response = try await handleResponses(request)
             case (.post, "/v1/messages"):
-                return try await handleMessages(request)
+                response = try await handleMessages(request)
             case (.post, "/v1/embeddings"):
-                return try await handleEmbeddings(request)
+                response = try await handleEmbeddings(request)
             case (.post, "/v1/rerank"):
-                return try await handleRerank(request)
+                response = try await handleRerank(request)
             case (.post, "/v1/audio/transcriptions"):
-                return try await handleAudioTranscriptions(request)
+                response = try await handleAudioTranscriptions(request)
             case (.post, "/v1/audio/speech"):
-                return try await handleAudioSpeech(request)
+                response = try await handleAudioSpeech(request)
             case (.post, "/v1/images/generations"):
-                return try await handleImageGenerations(request)
+                response = try await handleImageGenerations(request)
             case (.post, "/v1/images/edits"):
-                return try await handleImageEdits(request)
+                response = try await handleImageEdits(request)
             default:
-                return jsonResponse(
+                response = jsonResponse(
                     statusCode: 404,
                     payload: ["error": ["code": "not_found", "message": "Unknown route."]]
                 )
             }
         }
+        return response.withLocalServerCORS(cors)
+    }
+
+    private func localServerSecurityPreflightResponse(cors: LocalServerSecurityPolicy.CORS?) -> HTTPResponse {
+        guard cors != nil else {
+            return jsonResponse(
+                statusCode: 403,
+                payload: [
+                    "error": [
+                        "code": "origin_not_allowed",
+                        "message": "CORS preflight requires an explicitly allowed Origin.",
+                    ],
+                ]
+            )
+        }
+        return HTTPResponse(
+            statusCode: 204,
+            headers: [
+                "access-control-allow-headers": "authorization, content-type, x-api-key, x-melix-auth-session",
+                "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
+                "access-control-max-age": "600",
+            ],
+            body: .data(Data())
+        )
     }
 
     private func authorizationContext(
@@ -882,7 +945,8 @@ public struct OpenAIHandler: Sendable {
             modelsTotal: models.count,
             models: models
                 .filter(ModelCatalogPresentation.isUserVisible)
-                .map(HealthDiagnosticsModelResponse.init(model:))
+                .map(HealthDiagnosticsModelResponse.init(model:)),
+            localServerSecurity: localServerSecurityPolicy.receipt
         )
         await metricsStore.set(
             Date().timeIntervalSince(startedAt) * 1000,
@@ -3550,6 +3614,32 @@ public struct OpenAIHandler: Sendable {
         )
     }
 
+    private func localServerSecurityRejectionResponse(
+        reason: LocalServerSecurityPolicy.RejectionReason,
+        headerValue: String
+    ) async -> HTTPResponse {
+        await metricsStore.increment("local_server_security.rejected_request_count")
+        switch reason {
+        case .hostNotAllowed:
+            await metricsStore.increment("local_server_security.rejected_host_count")
+        case .originNotAllowed:
+            await metricsStore.increment("local_server_security.rejected_origin_count")
+        }
+        return jsonResponse(
+            statusCode: 403,
+            payload: [
+                "error": [
+                    "code": reason.errorCode,
+                    "message": reason.message,
+                    "header_value": headerValue,
+                    "local_server_security": (
+                        try? localServerSecurityPolicy.receipt.jsonObject(encoder: encoder)
+                    ) ?? [:],
+                ],
+            ]
+        )
+    }
+
     private func jsonData(_ payload: [String: Any]) -> Data {
         let sanitizedPayload = Self.sanitizeJSONValue(payload)
         recordSanitizedOutputMetrics(sanitizedPayload.metrics)
@@ -5256,6 +5346,7 @@ private struct HealthDiagnosticsResponse: Codable {
     let modelsReady: Int
     let modelsTotal: Int
     let models: [HealthDiagnosticsModelResponse]
+    let localServerSecurity: LocalServerSecurityReceipt
 
     enum CodingKeys: String, CodingKey {
         case status
@@ -5263,6 +5354,7 @@ private struct HealthDiagnosticsResponse: Codable {
         case modelsReady = "models_ready"
         case modelsTotal = "models_total"
         case models
+        case localServerSecurity = "local_server_security"
     }
 }
 

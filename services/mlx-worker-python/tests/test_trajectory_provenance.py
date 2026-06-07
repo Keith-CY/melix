@@ -240,6 +240,38 @@ def test_load_trajectory_provenance_from_snapshot_manifest_reads_bytes(
     }
 
 
+def test_load_trajectory_provenance_from_snapshot_manifest_accepts_dict_subclass(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ManifestPayload(dict[str, object]):
+        pass
+
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(b"{}")
+    monkeypatch.setattr(
+        trajectory_provenance_module,
+        "_JSON_LOADS",
+        lambda _payload: ManifestPayload(
+            {
+                "format": "agentic_tool_trace",
+                "source_dataset_id": "agentic-snapshot",
+                "version": "2026-05-25",
+                "trajectory_trace_digest": "abc123",
+            }
+        ),
+    )
+
+    assert load_trajectory_provenance_from_snapshot_manifest(manifest_path) == {
+        "trajectory_dataset_id": "agentic-snapshot",
+        "trajectory_dataset_version": "2026-05-25",
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_snapshot_manifest_path": str(manifest_path),
+        "trajectory_split": "train",
+        "trajectory_trace_digest": "abc123",
+    }
+
+
 def test_trajectory_provenance_helpers_ignore_empty_or_unrelated_inputs(
     tmp_path: Path,
 ) -> None:
@@ -366,6 +398,46 @@ def test_normalize_trajectory_provenance_copies_nested_json_containers() -> None
 
     source["trajectory_quality_metrics"]["components"][0]["score"] = 0.0
     assert copied_quality["components"][0]["score"] == 1.0
+
+
+def test_normalize_trajectory_provenance_copies_containers_without_empty_string_compare() -> None:
+    class DictSubclass(dict):
+        def __eq__(self, other: object) -> bool:
+            raise AssertionError("container values should not be compared to empty strings")
+
+    source = {
+        "trajectory_quality_metrics": DictSubclass(
+            {"reward_coverage_count": 1, "components": [{"name": "format"}]}
+        )
+    }
+
+    normalized = normalize_trajectory_provenance(source)
+
+    assert normalized["trajectory_quality_metrics"] == {
+        "reward_coverage_count": 1,
+        "components": [{"name": "format"}],
+    }
+    assert normalized["trajectory_quality_metrics"] is not source["trajectory_quality_metrics"]
+
+
+def test_normalize_trajectory_provenance_keeps_scalars_and_skips_empty_values() -> None:
+    class EmptySentinel:
+        def __eq__(self, other: object) -> bool:
+            return other == ""
+
+    source = {
+        "trajectory_dataset_id": "agentic-snapshot",
+        "trajectory_dataset_version": "",
+        "trajectory_toolset_version": 3,
+        "trajectory_registry_schema_version": EmptySentinel(),
+    }
+
+    normalized = normalize_trajectory_provenance(source)
+
+    assert normalized == {
+        "trajectory_dataset_id": "agentic-snapshot",
+        "trajectory_toolset_version": 3,
+    }
 
 
 def test_copy_trajectory_provenance_value_falls_back_for_custom_mutables() -> None:

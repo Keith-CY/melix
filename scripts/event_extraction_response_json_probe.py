@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthetic probe for event-extraction fenced JSON response parsing."""
+"""Synthetic probe for event-extraction response JSON parsing."""
 from __future__ import annotations
 
 import json
@@ -37,9 +37,9 @@ def _response(event_count: int) -> str:
         }
         for index in range(event_count)
     ]
-    # Include a closing fence plus trailing whitespace to exercise the parser's
-    # fence-trailer path without making an intermediate stripped copy.
-    return "```json\n" + json.dumps({"events": events}, ensure_ascii=False, separators=(",", ":")) + "\n```   \n"
+    # Include leading and trailing whitespace to exercise the unfenced JSON
+    # parser path without making json.loads perform its own leading scan.
+    return "   \n" + json.dumps({"events": events}, ensure_ascii=False, separators=(",", ":")) + "\n  "
 
 
 def run_probe(*, event_count: int = 1600, iterations: int = 80, samples: int = 5) -> dict[str, float]:

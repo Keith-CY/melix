@@ -2890,7 +2890,9 @@ def _parse_response_json(response_text: str) -> dict[str, object]:
             if not isinstance(parsed, dict):
                 raise ValueError("LLM response must be a JSON object")
             return parsed
-    parsed = json.loads(response_text)
+    parsed, end_index = _JSON_RAW_DECODE(response_text, response_start)
+    if not _has_only_trailing_whitespace(response_text, end_index, response_length):
+        raise json.JSONDecodeError("Extra data", response_text, end_index)
     if not isinstance(parsed, dict):
         raise ValueError("LLM response must be a JSON object")
     return parsed
@@ -2909,6 +2911,12 @@ def _has_only_optional_closing_fence(response_text: str, start: int, response_le
     if not response_text.startswith("```", start):
         return False
     start += 3
+    while start < response_length and response_text[start].isspace():
+        start += 1
+    return start == response_length
+
+
+def _has_only_trailing_whitespace(response_text: str, start: int, response_length: int) -> bool:
     while start < response_length and response_text[start].isspace():
         start += 1
     return start == response_length
