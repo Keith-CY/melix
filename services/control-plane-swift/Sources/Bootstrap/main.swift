@@ -335,6 +335,10 @@ private final class BootstrapHTTPServer: @unchecked Sendable {
             return "OK"
         case 400:
             return "Bad Request"
+        case 401:
+            return "Unauthorized"
+        case 403:
+            return "Forbidden"
         case 404:
             return "Not Found"
         case 409:
@@ -343,8 +347,12 @@ private final class BootstrapHTTPServer: @unchecked Sendable {
             return "Payload Too Large"
         case 431:
             return "Request Header Fields Too Large"
+        case 500:
+            return "Internal Server Error"
         case 503:
             return "Service Unavailable"
+        case 504:
+            return "Gateway Timeout"
         default:
             return "OK"
         }

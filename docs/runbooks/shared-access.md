@@ -83,6 +83,50 @@ Rejected requests return `429 rate_limited` with `retry-after`,
 only the normalized credential identity, limit, and retry delay; raw tokens are
 not echoed.
 
+## Local Server Host and Browser Origin Policy
+
+The OpenAI-compatible local gateway validates `Host` and browser `Origin`
+headers before authentication, rate limiting, request decoding, or route
+execution.
+
+By default, Melix accepts loopback hosts only:
+
+- `127.0.0.1`
+- `[::1]`
+- `::1`
+- `localhost`
+
+Requests with a different `Host` return `403 host_not_allowed`. Same-host
+server-to-server requests that do not send an `Origin` header remain accepted
+subject to the active gateway auth policy.
+
+Browser CORS is default-denied. Requests with an `Origin` header return
+`403 origin_not_allowed` unless the origin is explicitly allowlisted. Melix does
+not emit wildcard `Access-Control-Allow-Origin`.
+
+For a trusted browser client, allow the browser host and origin explicitly:
+
+```bash
+export MELIX_ALLOWED_HOSTS='127.0.0.1,localhost'
+export MELIX_ALLOWED_ORIGINS='http://localhost:5173'
+```
+
+Allowed origins are exact matches. `http://localhost:5173` and
+`http://localhost:5173/app` are different origins for this policy. When an
+origin is allowed, responses echo only that origin and add `Vary: Origin`.
+Browser preflight requests use `OPTIONS` and are admitted after Host/Origin
+validation, before API-key authentication, so browser clients can preflight
+authenticated routes without exposing credentials in the preflight request.
+
+The authenticated diagnostics endpoint reports the effective policy under
+`local_server_security`:
+
+```bash
+curl -sS \
+  -H 'x-api-key: sk-codex' \
+  http://127.0.0.1:${MELIX_HTTP_PORT:-12436}/v1/melix/health
+```
+
 ## Operator Checks
 
 ### Models Endpoint

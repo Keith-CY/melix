@@ -97,6 +97,8 @@ public enum HTTPGatewayRequestParser {
             method = .post
         case "DELETE":
             method = .delete
+        case "OPTIONS":
+            method = .options
         default:
             return .failure(.invalidRequest)
         }

@@ -47,6 +47,29 @@ struct HTTPGatewayRequestParserTests {
         #expect(request.body.isEmpty)
     }
 
+    @Test("parser accepts options preflight requests")
+    func parserAcceptsOptionsPreflightRequests() throws {
+        let raw = Data(
+            (
+                "OPTIONS /v1/responses HTTP/1.1\r\n"
+                    + "Host: 127.0.0.1\r\n"
+                    + "Origin: http://localhost:5173\r\n"
+                    + "Access-Control-Request-Method: POST\r\n"
+                    + "Content-Length: 0\r\n"
+                    + "\r\n"
+            ).utf8
+        )
+
+        let result = HTTPGatewayRequestParser.parseRequest(from: raw, maxBodyBytes: 0)
+        let request = try #require(result.successValue)
+
+        #expect(request.method == .options)
+        #expect(request.path == "/v1/responses")
+        #expect(request.headers["origin"] == "http://localhost:5173")
+        #expect(request.headers["access-control-request-method"] == "POST")
+        #expect(request.body.isEmpty)
+    }
+
     @Test("parser rejects oversized declared bodies before waiting for payload bytes")
     func parserRejectsOversizedDeclaredBodies() throws {
         let raw = Data(
