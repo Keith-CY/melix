@@ -1136,6 +1136,21 @@ def test_registry_snapshot_reuses_plain_local_tree_scan_and_config_payload(
     test_registry_snapshot_rejects_generic_adapter_as_renamed_projector(tensor_cases_root / "generic-adapter")
     test_registry_snapshot_records_draft_model_type_optional_head_receipt(tensor_cases_root / "draft-model-type")
     test_multimodal_receipt_helpers_handle_defensive_branches(tensor_cases_root / "receipt-defensive")
+    test_registry_snapshot_marks_mlx_community_gemma4_qat_target_for_auto_pairing(
+        tensor_cases_root / "qat-target"
+    )
+    test_registry_snapshot_pairs_mlx_community_gemma4_qat_target_with_draft_companion(
+        tensor_cases_root / "qat-paired"
+    )
+    test_registry_snapshot_marks_missing_gemma4_qat_draft_companion_as_degraded(
+        tensor_cases_root / "qat-missing-companion"
+    )
+    test_registry_snapshot_marks_gemma4_qat_assistant_as_draft_companion(
+        tensor_cases_root / "qat-assistant"
+    )
+    test_registry_snapshot_marks_third_party_gemma4_qat_mlx_as_manual_experimental(
+        tensor_cases_root / "qat-third-party"
+    )
 
 
 
@@ -1289,6 +1304,106 @@ def test_raw_model_spec_loads_config_payload_when_not_supplied(
 
     assert tokenizer_model.max_context == 65_536
     assert tokenizer_model.ext["melix.context_window.source"] == "tokenizer_config.model_max_length"
+
+    qat_model_dir = tmp_path / "gemma-4-E4B-it-qat-4bit"
+    _write_model_config(
+        qat_model_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": {"model_type": "siglip"},
+        },
+    )
+    (qat_model_dir / "README.md").write_text(
+        "---\n"
+        "library_name: mlx\n"
+        "base_model: google/gemma-4-E4B-it-qat-q4_0-unquantized\n"
+        "tags:\n"
+        "- mlx\n"
+        "- gemma4\n"
+        "- qat\n"
+        "- 4-bit\n"
+        "---\n",
+        encoding="utf-8",
+    )
+    _write_weights(qat_model_dir)
+    qat_model = catalog._raw_model_spec(
+        model_id="mlx-community/gemma-4-E4B-it-qat-4bit",
+        model_dir=qat_model_dir.resolve(),
+        revision="local",
+        source_kind="local_mlx_directory",
+        metadata={},
+    )
+
+    assert qat_model.model_kind == "vlm"
+    assert qat_model.ext["melix.qat.enabled"] == "true"
+    assert qat_model.ext["melix.draft_companion.default_policy"] == "auto_pair_when_available"
+
+    gemma4_config = {
+        "model_type": "gemma4",
+        "architectures": ["Gemma4ForConditionalGeneration"],
+        "text_config": {"model_type": "gemma4_text"},
+        "vision_config": {"model_type": "siglip"},
+    }
+    assert catalog_module._gemma4_qat_metadata(
+        model_id="mlx-community/gemma-4-E4B-it-qat-4bit",
+        model_dir=qat_model_dir.resolve(),
+        config_payload={"model_type": "qwen3"},
+    ) == {}
+    plain_readme_dir = tmp_path / "plain-readme"
+    plain_readme_dir.mkdir()
+    (plain_readme_dir / "README.md").write_text(
+        "---\n"
+        "library_name: mlx\n"
+        "tags:\n"
+        "- qwen3\n"
+        "---\n",
+        encoding="utf-8",
+    )
+    assert catalog_module._gemma4_qat_metadata(
+        model_id="mlx-community/plain-4bit",
+        model_dir=plain_readme_dir.resolve(),
+        config_payload=gemma4_config,
+    ) == {}
+    non_mlx_readme_dir = tmp_path / "non-mlx-readme"
+    non_mlx_readme_dir.mkdir()
+    (non_mlx_readme_dir / "README.md").write_text(
+        "---\n"
+        "library_name: transformers\n"
+        "tags:\n"
+        "- gemma4\n"
+        "- qat\n"
+        "- 4-bit\n"
+        "---\n",
+        encoding="utf-8",
+    )
+    assert catalog_module._gemma4_qat_metadata(
+        model_id="google/gemma-4-E4B-it-qat-4bit",
+        model_dir=non_mlx_readme_dir.resolve(),
+        config_payload=gemma4_config,
+    ) == {}
+    assert catalog_module._gemma4_qat_metadata(
+        model_id="mlx-community/gemma-4-it-qat",
+        model_dir=tmp_path / "missing-size-quant-readme",
+        config_payload=gemma4_config,
+    ) == {}
+    assert catalog_module._model_id_organization("bare-model") == ""
+    assert catalog_module._gemma4_qat_model_size("gemma4 qat mlx") == ""
+    assert catalog_module._gemma4_qat_quantization_family("gemma4 qat mlx") == ""
+    assert catalog_module._gemma4_qat_source_model(
+        "",
+        model_size="unknown",
+        companion=False,
+    ) == ""
+    assert (
+        catalog_module._gemma4_qat_source_model(
+            "base_model: [google/gemma-4-E4B-it-qat-q4_0-unquantized]\n",
+            model_size="e4b",
+            companion=False,
+        )
+        == "google/gemma-4-E4B-it-qat-q4_0-unquantized"
+    )
 
 
 def test_registry_snapshot_does_not_stat_plain_local_manifest_after_tree_scan(
@@ -2529,6 +2644,323 @@ def test_registry_snapshot_marks_gemma4_mtp_assistant_as_draft_only(tmp_path: Pa
     assert model.ext["melix.speculative.kind"] == "mtp"
     assert model.ext["melix.speculative.target_family"] == "gemma4-v1"
     assert model.ext["melix.serving.hidden"] == "true"
+
+
+def test_registry_snapshot_marks_mlx_community_gemma4_qat_target_for_auto_pairing(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "gemma-4-E4B-it-qat-4bit" / "main"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/gemma-4-E4B-it-qat-4bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": {"model_type": "siglip"},
+        },
+    )
+    (variant_dir / "README.md").write_text(
+        "---\n"
+        "library_name: mlx\n"
+        "base_model: google/gemma-4-E4B-it-qat-q4_0-unquantized\n"
+        "tags:\n"
+        "- mlx\n"
+        "- gemma4\n"
+        "- image-text-to-text\n"
+        "- 4-bit\n"
+        "---\n",
+        encoding="utf-8",
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": os.fspath(root)})
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+
+    model = discovered["mlx-community/gemma-4-E4B-it-qat-4bit"]
+    assert model.model_kind == "vlm"
+    assert model.ext["melix.qat.enabled"] == "true"
+    assert model.ext["melix.qat.asset_format"] == "mlx"
+    assert model.ext["melix.qat.hf_organization"] == "mlx-community"
+    assert model.ext["melix.qat.source_model"] == "google/gemma-4-E4B-it-qat-q4_0-unquantized"
+    assert model.ext["melix.qat.auto_supported"] == "true"
+    assert model.ext["melix.qat.support_scope"] == "mlx-community-gemma4-q4"
+    assert model.ext["melix.qat.model_size"] == "e4b"
+    assert model.ext["melix.qat.quantization_family"] == "4bit"
+    assert model.ext["melix.draft_companion.role"] == "target"
+    assert model.ext["melix.draft_companion.default_policy"] == "auto_pair_when_available"
+    assert model.ext["melix.draft_companion.missing_policy"] == "baseline_generation"
+    assert model.ext["melix.draft_companion.auto_pair_key"] == "gemma4:e4b:qat:4bit"
+
+
+def test_registry_snapshot_keeps_gemma4_qat_target_when_readme_mentions_assistant(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "gemma-4-E4B-it-qat-4bit" / "main"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/gemma-4-E4B-it-qat-4bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": {"model_type": "siglip"},
+        },
+    )
+    (variant_dir / "README.md").write_text(
+        "---\n"
+        "library_name: mlx\n"
+        "base_model: google/gemma-4-E4B-it-qat-q4_0-unquantized\n"
+        "tags:\n"
+        "- mlx\n"
+        "- gemma4\n"
+        "- image-text-to-text\n"
+        "- 4-bit\n"
+        "---\n"
+        "Optimized for assistant-style conversations.\n",
+        encoding="utf-8",
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": os.fspath(root)})
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+
+    model = discovered["mlx-community/gemma-4-E4B-it-qat-4bit"]
+    assert model.ext["melix.draft_companion.role"] == "target"
+    assert model.ext["melix.draft_companion.missing_policy"] == "baseline_generation"
+    assert "melix.serving.hidden" not in model.ext
+
+
+def test_registry_snapshot_pairs_mlx_community_gemma4_qat_target_with_draft_companion(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    target_dir = root / "mlx-community" / "gemma-4-E4B-it-qat-4bit" / "main"
+    draft_dir = root / "mlx-community" / "gemma-4-E4B-it-qat-assistant-4bit" / "main"
+    _write_registry_manifest(
+        target_dir,
+        model_id="mlx-community/gemma-4-E4B-it-qat-4bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        target_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": {"model_type": "siglip"},
+        },
+    )
+    (target_dir / "README.md").write_text(
+        "---\n"
+        "library_name: mlx\n"
+        "base_model: google/gemma-4-E4B-it-qat-q4_0-unquantized\n"
+        "tags:\n"
+        "- mlx\n"
+        "- gemma4\n"
+        "- image-text-to-text\n"
+        "- 4-bit\n"
+        "---\n",
+        encoding="utf-8",
+    )
+    _write_registry_manifest(
+        draft_dir,
+        model_id="mlx-community/gemma-4-E4B-it-qat-assistant-4bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        draft_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": None,
+        },
+    )
+    (draft_dir / "README.md").write_text(
+        "---\n"
+        "library_name: mlx\n"
+        "base_model: google/gemma-4-E4B-it-qat-q4_0-unquantized-assistant\n"
+        "tags:\n"
+        "- mlx\n"
+        "- speculative-decoding\n"
+        "- mtp\n"
+        "- draft-model\n"
+        "- 4-bit\n"
+        "---\n",
+        encoding="utf-8",
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": os.fspath(root)})
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+
+    target = discovered["mlx-community/gemma-4-E4B-it-qat-4bit"]
+    draft = discovered["mlx-community/gemma-4-E4B-it-qat-assistant-4bit"]
+    assert target.ext["melix.draft_companion.status"] == "available"
+    assert target.ext["melix.draft_companion.model_ids"] == draft.model_id
+    assert target.ext["melix.acceleration.supported_modes"] == "baseline,speculative_decode"
+    assert target.ext["melix.acceleration.valid_draft_model_ids"] == draft.model_id
+    assert target.ext["melix.acceleration.target_capability"] == "speculative_decode"
+    assert target.ext["melix.acceleration.drafter_capability"] == "speculative_draft"
+    assert target.ext["melix.acceleration.receipt_provenance"] == "model_registry.gemma4_qat"
+    assert draft.ext["melix.draft_companion.status"] == "available"
+    assert draft.ext["melix.draft_companion.target_model_ids"] == target.model_id
+    assert draft.ext["melix.acceleration.drafter_capability"] == "speculative_draft"
+
+
+def test_registry_snapshot_marks_missing_gemma4_qat_draft_companion_as_degraded(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    target_dir = root / "mlx-community" / "gemma-4-E2B-it-qat-4bit" / "main"
+    _write_registry_manifest(
+        target_dir,
+        model_id="mlx-community/gemma-4-E2B-it-qat-4bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        target_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": {"model_type": "siglip"},
+        },
+    )
+    (target_dir / "README.md").write_text(
+        "---\n"
+        "library_name: mlx\n"
+        "base_model: google/gemma-4-E2B-it-qat-q4_0-unquantized\n"
+        "tags:\n"
+        "- mlx\n"
+        "- gemma4\n"
+        "- image-text-to-text\n"
+        "- 4-bit\n"
+        "---\n",
+        encoding="utf-8",
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": os.fspath(root)})
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+
+    target = discovered["mlx-community/gemma-4-E2B-it-qat-4bit"]
+    assert target.ext["melix.draft_companion.status"] == "missing"
+    assert target.ext["melix.draft_companion.recovery_hint"] == (
+        "Download or select a compatible Gemma 4 QAT draft companion."
+    )
+    assert target.ext["melix.acceleration.supported_modes"] == "baseline,speculative_decode"
+    assert target.ext["melix.acceleration.target_capability"] == "speculative_decode"
+    assert "melix.acceleration.valid_draft_model_ids" not in target.ext
+    assert "melix.acceleration.drafter_capability" not in target.ext
+
+
+def test_registry_snapshot_marks_gemma4_qat_assistant_as_draft_companion(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "gemma-4-E4B-it-qat-assistant-4bit" / "main"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/gemma-4-E4B-it-qat-assistant-4bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": None,
+        },
+    )
+    (variant_dir / "README.md").write_text(
+        "---\n"
+        "library_name: mlx\n"
+        "base_model: google/gemma-4-E4B-it-qat-q4_0-unquantized-assistant\n"
+        "tags:\n"
+        "- mlx\n"
+        "- speculative-decoding\n"
+        "- mtp\n"
+        "- draft-model\n"
+        "- 4-bit\n"
+        "---\n",
+        encoding="utf-8",
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": os.fspath(root)})
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+
+    model = discovered["mlx-community/gemma-4-E4B-it-qat-assistant-4bit"]
+    assert model.model_kind == "vlm"
+    assert model.ext["melix.speculative.role"] == "assistant"
+    assert model.ext["melix.speculative.kind"] == "mtp"
+    assert model.ext["melix.serving.hidden"] == "true"
+    assert model.ext["melix.qat.enabled"] == "true"
+    assert model.ext["melix.qat.auto_supported"] == "true"
+    assert model.ext["melix.qat.model_size"] == "e4b"
+    assert model.ext["melix.qat.quantization_family"] == "4bit"
+    assert model.ext["melix.draft_companion.role"] == "companion"
+    assert model.ext["melix.draft_companion.status"] == "available"
+    assert model.ext["melix.draft_companion.auto_pair_key"] == "gemma4:e4b:qat:4bit"
+    assert model.ext["melix.acceleration.drafter_capability"] == "speculative_draft"
+
+
+def test_registry_snapshot_marks_third_party_gemma4_qat_mlx_as_manual_experimental(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "lmstudio-community" / "gemma-4-26B-A4B-it-QAT-MLX-4bit" / "main"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="lmstudio-community/gemma-4-26B-A4B-it-QAT-MLX-4bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": {"model_type": "siglip"},
+        },
+    )
+    (variant_dir / "README.md").write_text(
+        "---\n"
+        "library_name: mlx\n"
+        "tags:\n"
+        "- mlx\n"
+        "- gemma4\n"
+        "- qat\n"
+        "- 4-bit\n"
+        "---\n",
+        encoding="utf-8",
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": os.fspath(root)})
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+
+    model = discovered["lmstudio-community/gemma-4-26B-A4B-it-QAT-MLX-4bit"]
+    assert model.model_kind == "vlm"
+    assert model.ext["melix.qat.enabled"] == "true"
+    assert model.ext["melix.qat.asset_format"] == "mlx"
+    assert model.ext["melix.qat.hf_organization"] == "lmstudio-community"
+    assert model.ext["melix.qat.auto_supported"] == "false"
+    assert model.ext["melix.qat.support_scope"] == "manual_experimental"
+    assert model.ext["melix.draft_companion.default_policy"] == "manual_override_only"
 
 
 def test_gemma4_mtp_assistant_metadata_handles_unserializable_config_values(tmp_path: Path) -> None:
