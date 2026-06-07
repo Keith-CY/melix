@@ -126,6 +126,7 @@ public struct ProviderEndpointHealthProbe: Sendable {
         httpRequest.httpMethod = "GET"
         httpRequest.timeoutInterval = TimeInterval(request.timeoutSeconds == 0 ? 30 : request.timeoutSeconds)
         httpRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+        // Keep OpenAI/Python first for providers that key compatibility behavior off SDK user agents.
         httpRequest.setValue("OpenAI/Python 1.0.0 Melix/0.1", forHTTPHeaderField: "User-Agent")
         let trimmedAPIKey = request.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         configureAuthenticationHeaders(on: &httpRequest, providerKind: providerKind, apiKey: trimmedAPIKey)
@@ -232,6 +233,7 @@ public struct ProviderEndpointHealthProbe: Sendable {
         while normalized.hasSuffix("/") {
             normalized.removeLast()
         }
+        // Strip one endpoint suffix only; keep this list ordered from most specific to broadest.
         for suffix in ["/chat/completions", "/messages", "/api/chat", "/api/generate", "/api/tags", "/models"] {
             if normalized.hasSuffix(suffix) {
                 normalized.removeLast(suffix.count)
