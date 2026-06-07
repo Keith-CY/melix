@@ -57,6 +57,9 @@ _HF_CACHE_PRUNED_SUBTREE_NAMES = frozenset({"snapshots", "refs"})
 _MODEL_WEIGHT_FILE_SUFFIXES = (".safetensors", ".npz")
 _GEMMA4_QAT_AUTOMATIC_ORG = "mlx-community"
 _GEMMA4_QAT_AUTOMATIC_SCOPE = "mlx-community-gemma4-q4"
+_GEMMA4_QAT_DRAFT_COMPANION_RECOVERY_HINT = (
+    "Download or select a compatible Gemma 4 QAT draft companion."
+)
 
 
 @dataclass(frozen=True)
@@ -1267,6 +1270,134 @@ def _gemma4_qat_metadata(
     return ext
 
 
+def _apply_gemma4_qat_companion_metadata(
+    models: Iterable[common_pb2.ModelSpec],
+) -> None:
+    companions_by_key: dict[str, list[common_pb2.ModelSpec]] = {}
+    targets_by_key: dict[str, list[common_pb2.ModelSpec]] = {}
+    for model in models:
+        if not _gemma4_qat_auto_supported_model(model):
+            continue
+        pair_key = _normalized(model.ext.get("melix.draft_companion.auto_pair_key"))
+        if not pair_key:
+            continue
+        role = _normalized(model.ext.get("melix.draft_companion.role")).lower()
+        if role == "companion":
+            companions_by_key.setdefault(pair_key, []).append(model)
+        elif role == "target":
+            targets_by_key.setdefault(pair_key, []).append(model)
+
+    target_ids_by_companion: dict[str, set[str]] = {}
+    for pair_key, targets in targets_by_key.items():
+        companions = sorted(
+            companions_by_key.get(pair_key, ()),
+            key=lambda model: model.model_id,
+        )
+        companion_ids = [model.model_id for model in companions]
+        for target in targets:
+            _merge_csv_ext(
+                target,
+                "melix.acceleration.supported_modes",
+                ("baseline", "speculative_decode"),
+            )
+            _set_ext_default(
+                target,
+                "melix.acceleration.target_capability",
+                "speculative_decode",
+            )
+            _set_ext_default(
+                target,
+                "melix.acceleration.receipt_provenance",
+                "model_registry.gemma4_qat",
+            )
+            if companion_ids:
+                _set_ext_default(target, "melix.draft_companion.status", "available")
+                _merge_csv_ext(
+                    target,
+                    "melix.draft_companion.model_ids",
+                    companion_ids,
+                )
+                _merge_csv_ext(
+                    target,
+                    "melix.acceleration.valid_draft_model_ids",
+                    companion_ids,
+                )
+                _set_ext_default(
+                    target,
+                    "melix.acceleration.drafter_capability",
+                    "speculative_draft",
+                )
+                for companion_id in companion_ids:
+                    target_ids_by_companion.setdefault(companion_id, set()).add(target.model_id)
+            else:
+                _set_ext_default(target, "melix.draft_companion.status", "missing")
+                _set_ext_default(
+                    target,
+                    "melix.draft_companion.recovery_hint",
+                    _GEMMA4_QAT_DRAFT_COMPANION_RECOVERY_HINT,
+                )
+
+    for companions in companions_by_key.values():
+        for companion in companions:
+            target_ids = sorted(target_ids_by_companion.get(companion.model_id, ()))
+            _set_ext_default(companion, "melix.draft_companion.status", "available")
+            if target_ids:
+                _merge_csv_ext(
+                    companion,
+                    "melix.draft_companion.target_model_ids",
+                    target_ids,
+                )
+            _set_ext_default(
+                companion,
+                "melix.acceleration.drafter_capability",
+                "speculative_draft",
+            )
+            _set_ext_default(
+                companion,
+                "melix.acceleration.receipt_provenance",
+                "model_registry.gemma4_qat",
+            )
+
+
+def _gemma4_qat_auto_supported_model(model: common_pb2.ModelSpec) -> bool:
+    return (
+        _normalized(model.ext.get("melix.qat.enabled")).lower() == "true"
+        and _normalized(model.ext.get("melix.qat.family")).lower() == "gemma4"
+        and _normalized(model.ext.get("melix.qat.asset_format")).lower() == "mlx"
+        and _normalized(model.ext.get("melix.qat.auto_supported")).lower() == "true"
+    )
+
+
+def _set_ext_default(model: common_pb2.ModelSpec, key: str, value: str) -> None:
+    if not _normalized(model.ext.get(key)):
+        model.ext[key] = value
+
+
+def _merge_csv_ext(
+    model: common_pb2.ModelSpec,
+    key: str,
+    values: Iterable[str],
+) -> None:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for raw_value in (*_split_csv(model.ext.get(key)), *values):
+        value = _normalized(raw_value)
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        merged.append(value)
+    if merged:
+        model.ext[key] = ",".join(merged)
+
+
+def _split_csv(raw_value: str | None) -> tuple[str, ...]:
+    return tuple(
+        part.strip()
+        for part in (raw_value or "").split(",")
+        if part.strip()
+    )
+
+
 def _gemma4_qat_fast_candidate(model_id: str) -> bool:
     lowered = model_id.lower()
     return ("gemma-4" in lowered or "gemma4" in lowered) and "qat" in lowered
@@ -1998,6 +2129,7 @@ class WorkerModelCatalog:
     def _refresh_registry_snapshot(self, registry_roots: tuple[str, ...]) -> RegistrySnapshot:
         self._prune_text_prefix_cache()
         roots, discovered_models = self._scan_registry_roots(registry_roots)
+        _apply_gemma4_qat_companion_metadata(discovered_models.values())
         return RegistrySnapshot(
             roots=tuple(roots),
             models=tuple(discovered_models[model_id] for model_id in sorted(discovered_models)),

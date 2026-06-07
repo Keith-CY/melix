@@ -161,6 +161,9 @@ assets already exist:
      from stable metadata.
    - Keep server creation and chat admission available for baseline generation
      when the draft companion is missing.
+   - Emit receipt-ready `melix.acceleration.*` metadata from the model registry
+     rather than adding a separate QAT asset category or a Gemma-specific
+     control-plane receipt path.
 3. Runtime evidence and release gates
    - Add real-model E2B and E4B QAT smoke/performance evidence after the metadata
      contract is stable, so runtime probes use the same IDs and pairing rules as
@@ -188,6 +191,40 @@ Expected slice 1 behavior evidence:
 - Gemma 4 QAT MLX assets outside `mlx-community` remain visible but require
   manual experimental import/selection.
 
+Slice 2 focused verification:
+
+```bash
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 \
+uv run --project services/mlx-worker-python --extra mlx pytest -q \
+  services/mlx-worker-python/tests/test_model_registry_catalog.py \
+  services/mlx-worker-python/tests/test_hub_catalog.py
+```
+
+Expected slice 2 behavior evidence:
+
+- Matching automatic-scope Gemma 4 QAT target and assistant assets with the same
+  `melix.draft_companion.auto_pair_key` produce target-side
+  `melix.draft_companion.status=available`,
+  `melix.draft_companion.model_ids=<assistant-id>`,
+  `melix.acceleration.supported_modes=baseline,speculative_decode`,
+  `melix.acceleration.valid_draft_model_ids=<assistant-id>`,
+  `melix.acceleration.target_capability=speculative_decode`, and
+  `melix.acceleration.drafter_capability=speculative_draft`.
+- Hidden assistant assets produce
+  `melix.draft_companion.status=available` and
+  `melix.acceleration.drafter_capability=speculative_draft`, with
+  `melix.draft_companion.target_model_ids` added only when a compatible target is
+  present in the same registry snapshot.
+- Missing assistant assets produce
+  `melix.draft_companion.status=missing` and an explicit remediation hint while
+  preserving `baseline` in `melix.acceleration.supported_modes`. The target keeps
+  `speculative_decode` visible as degraded capability but omits
+  `melix.acceleration.valid_draft_model_ids`, so the existing control-plane
+  acceleration receipt resolves speculative requests back to baseline with a
+  missing-draft reason.
+- Automatic pairing remains limited to `mlx-community` Gemma 4 QAT MLX assets;
+  third-party QAT MLX assets remain manual experimental imports.
+
 Slice 1 coverage and metrics command:
 
 ```bash
@@ -213,6 +250,11 @@ Slice 1 runtime metrics are `N/A`: this slice changes deterministic model
 catalog and registry metadata only, with no model load, token generation, or
 request path execution. Runtime E2B/E4B smoke, memory, TTFT, decode rate, and
 speculative acceptance metrics remain part of slice 3.
+
+Slice 2 runtime metrics are also `N/A`: this slice enriches registry metadata for
+existing capability receipts only. It does not load QAT weights, start a server,
+or execute prompt-only speculative decode. Runtime E2B/E4B smoke, memory, TTFT,
+decode rate, and speculative acceptance metrics remain part of slice 3.
 
 Final implementation verification must also include the relevant repository
 gates from `AGENTS.md`. Slice 3 must run real-model E2B/E4B probes and the

@@ -1139,6 +1139,12 @@ def test_registry_snapshot_reuses_plain_local_tree_scan_and_config_payload(
     test_registry_snapshot_marks_mlx_community_gemma4_qat_target_for_auto_pairing(
         tensor_cases_root / "qat-target"
     )
+    test_registry_snapshot_pairs_mlx_community_gemma4_qat_target_with_draft_companion(
+        tensor_cases_root / "qat-paired"
+    )
+    test_registry_snapshot_marks_missing_gemma4_qat_draft_companion_as_degraded(
+        tensor_cases_root / "qat-missing-companion"
+    )
     test_registry_snapshot_marks_gemma4_qat_assistant_as_draft_companion(
         tensor_cases_root / "qat-assistant"
     )
@@ -2684,6 +2690,131 @@ def test_registry_snapshot_marks_mlx_community_gemma4_qat_target_for_auto_pairin
     assert model.ext["melix.draft_companion.auto_pair_key"] == "gemma4:e4b:qat:4bit"
 
 
+def test_registry_snapshot_pairs_mlx_community_gemma4_qat_target_with_draft_companion(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    target_dir = root / "mlx-community" / "gemma-4-E4B-it-qat-4bit" / "main"
+    draft_dir = root / "mlx-community" / "gemma-4-E4B-it-qat-assistant-4bit" / "main"
+    _write_registry_manifest(
+        target_dir,
+        model_id="mlx-community/gemma-4-E4B-it-qat-4bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        target_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": {"model_type": "siglip"},
+        },
+    )
+    (target_dir / "README.md").write_text(
+        "---\n"
+        "library_name: mlx\n"
+        "base_model: google/gemma-4-E4B-it-qat-q4_0-unquantized\n"
+        "tags:\n"
+        "- mlx\n"
+        "- gemma4\n"
+        "- image-text-to-text\n"
+        "- 4-bit\n"
+        "---\n",
+        encoding="utf-8",
+    )
+    _write_registry_manifest(
+        draft_dir,
+        model_id="mlx-community/gemma-4-E4B-it-qat-assistant-4bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        draft_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": None,
+        },
+    )
+    (draft_dir / "README.md").write_text(
+        "---\n"
+        "library_name: mlx\n"
+        "base_model: google/gemma-4-E4B-it-qat-q4_0-unquantized-assistant\n"
+        "tags:\n"
+        "- mlx\n"
+        "- speculative-decoding\n"
+        "- mtp\n"
+        "- draft-model\n"
+        "- 4-bit\n"
+        "---\n",
+        encoding="utf-8",
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": os.fspath(root)})
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+
+    target = discovered["mlx-community/gemma-4-E4B-it-qat-4bit"]
+    draft = discovered["mlx-community/gemma-4-E4B-it-qat-assistant-4bit"]
+    assert target.ext["melix.draft_companion.status"] == "available"
+    assert target.ext["melix.draft_companion.model_ids"] == draft.model_id
+    assert target.ext["melix.acceleration.supported_modes"] == "baseline,speculative_decode"
+    assert target.ext["melix.acceleration.valid_draft_model_ids"] == draft.model_id
+    assert target.ext["melix.acceleration.target_capability"] == "speculative_decode"
+    assert target.ext["melix.acceleration.drafter_capability"] == "speculative_draft"
+    assert target.ext["melix.acceleration.receipt_provenance"] == "model_registry.gemma4_qat"
+    assert draft.ext["melix.draft_companion.status"] == "available"
+    assert draft.ext["melix.draft_companion.target_model_ids"] == target.model_id
+    assert draft.ext["melix.acceleration.drafter_capability"] == "speculative_draft"
+
+
+def test_registry_snapshot_marks_missing_gemma4_qat_draft_companion_as_degraded(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    target_dir = root / "mlx-community" / "gemma-4-E2B-it-qat-4bit" / "main"
+    _write_registry_manifest(
+        target_dir,
+        model_id="mlx-community/gemma-4-E2B-it-qat-4bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        target_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": {"model_type": "siglip"},
+        },
+    )
+    (target_dir / "README.md").write_text(
+        "---\n"
+        "library_name: mlx\n"
+        "base_model: google/gemma-4-E2B-it-qat-q4_0-unquantized\n"
+        "tags:\n"
+        "- mlx\n"
+        "- gemma4\n"
+        "- image-text-to-text\n"
+        "- 4-bit\n"
+        "---\n",
+        encoding="utf-8",
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": os.fspath(root)})
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+
+    target = discovered["mlx-community/gemma-4-E2B-it-qat-4bit"]
+    assert target.ext["melix.draft_companion.status"] == "missing"
+    assert target.ext["melix.draft_companion.recovery_hint"] == (
+        "Download or select a compatible Gemma 4 QAT draft companion."
+    )
+    assert target.ext["melix.acceleration.supported_modes"] == "baseline,speculative_decode"
+    assert target.ext["melix.acceleration.target_capability"] == "speculative_decode"
+    assert "melix.acceleration.valid_draft_model_ids" not in target.ext
+    assert "melix.acceleration.drafter_capability" not in target.ext
+
+
 def test_registry_snapshot_marks_gemma4_qat_assistant_as_draft_companion(
     tmp_path: Path,
 ) -> None:
@@ -2731,7 +2862,9 @@ def test_registry_snapshot_marks_gemma4_qat_assistant_as_draft_companion(
     assert model.ext["melix.qat.model_size"] == "e4b"
     assert model.ext["melix.qat.quantization_family"] == "4bit"
     assert model.ext["melix.draft_companion.role"] == "companion"
+    assert model.ext["melix.draft_companion.status"] == "available"
     assert model.ext["melix.draft_companion.auto_pair_key"] == "gemma4:e4b:qat:4bit"
+    assert model.ext["melix.acceleration.drafter_capability"] == "speculative_draft"
 
 
 def test_registry_snapshot_marks_third_party_gemma4_qat_mlx_as_manual_experimental(
