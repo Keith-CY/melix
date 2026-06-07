@@ -237,9 +237,10 @@ def prepare_dataset_version(request: DatasetVersionRequest) -> dict[str, Any]:
         raise ValueError(f"DATASET_VERSION_OUTPUT_EXISTS: {version_dir}")
     version_dir.mkdir(parents=True, exist_ok=False)
 
-    fail_segment_ids = set(request.fail_segment_ids)
-    successful_segments = [segment for segment in segments if segment.get("segment_id") not in fail_segment_ids]
-    failed_segments = [segment for segment in segments if segment.get("segment_id") in fail_segment_ids]
+    successful_segments, failed_segments = _partition_failed_segments(
+        segments,
+        request.fail_segment_ids,
+    )
     sample_rows = [
         _sample_row(segment, request.output_format, request.generator_model)
         for segment in successful_segments
@@ -322,6 +323,22 @@ def _raise_if_ingest_receipt_blocked(ingest_receipt: dict[str, Any]) -> None:
     ] if isinstance(failures, list) else []
     code_suffix = ",".join(failure_codes) if failure_codes else "unknown"
     raise ValueError(f"DATASET_VERSION_SOURCE_RECEIPT_BLOCKED: {code_suffix}")
+
+
+def _partition_failed_segments(
+    segments: list[dict[str, Any]],
+    fail_segment_ids: tuple[str, ...],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not fail_segment_ids:
+        return segments, []
+    failed_id_set = set(fail_segment_ids)
+    successful_segments = [
+        segment for segment in segments if segment.get("segment_id") not in failed_id_set
+    ]
+    failed_segments = [
+        segment for segment in segments if segment.get("segment_id") in failed_id_set
+    ]
+    return successful_segments, failed_segments
 
 
 def retry_failed_dataset_version(request: DatasetRetryFailedRequest) -> dict[str, Any]:
