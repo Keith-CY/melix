@@ -456,12 +456,16 @@ def _slowest_probe_phases(report: dict[str, object]) -> list[dict[str, object]]:
     rows: list[tuple[float, int, str, dict[str, object]]] = []
     row_index = 0
     rows_append = rows.append
-    dict_list = _dict_list
     for side in ("baseline", "candidate"):
         side_summary = probe_summary.get(side)
         if not isinstance(side_summary, dict):
             continue
-        for row in dict_list(side_summary.get("slowest_phases")):
+        slowest_phases = side_summary.get("slowest_phases")
+        if not isinstance(slowest_phases, list):
+            continue
+        for row in slowest_phases:
+            if not isinstance(row, dict):
+                continue
             duration = row.get("duration_ms")
             if type(duration) is float:
                 duration_ms = duration

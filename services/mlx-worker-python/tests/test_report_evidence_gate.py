@@ -148,15 +148,16 @@ def _write_report(
 
 
 def test_report_evidence_gate_slowest_probe_phases_keeps_top_five_order() -> None:
-    slowest_phases = [
+    slowest_phases: list[object] = [
         {"phase": f"phase-{index}", "duration_ms": float(index)}
         for index in range(20)
     ]
     slowest_phases.insert(0, {"phase": "missing-duration"})
+    slowest_phases.insert(1, "not-a-phase-row")
     report: dict[str, object] = {
         "probe_summary": {
-            "baseline": {"slowest_phases": slowest_phases[:10]},
-            "candidate": {"slowest_phases": slowest_phases[10:]},
+            "baseline": {"slowest_phases": "not-a-list"},
+            "candidate": {"slowest_phases": slowest_phases},
         }
     }
 
