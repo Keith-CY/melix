@@ -156,9 +156,10 @@ def compare_versions(left: str, right: str) -> int:
             return 0
         if right_index and right_length == left_length + 1 and right_cleaned.startswith(left_cleaned, 1):
             return 0
+    next_normalized_version_part = _next_normalized_version_part
     while True:
-        left_value, left_index, left_done = _next_normalized_version_part(left_cleaned, left_index)
-        right_value, right_index, right_done = _next_normalized_version_part(right_cleaned, right_index)
+        left_value, left_index, left_done = next_normalized_version_part(left_cleaned, left_index)
+        right_value, right_index, right_done = next_normalized_version_part(right_cleaned, right_index)
         if left_done and right_done:
             return 0
         if left_value < right_value:
