@@ -2692,6 +2692,11 @@ def test_stream_assembler_token_bytes_probe_script_emits_metrics(
     assert metrics["elapsed_ms_mean"] >= 0
     assert metrics["peak_bytes_mean"] > 0
     assert metrics["checksum"] > 0
+    assert metrics["delta_token_count_old_ms_mean"] >= 0
+    assert metrics["delta_token_count_new_ms_mean"] >= 0
+    assert metrics["delta_token_count_speedup"] > 0
+    assert metrics["delta_token_count_text_count"] == 4096.0
+    assert metrics["delta_token_count_checksum"] > 0
 
 
 def test_runtime_utils_kwarg_cache_probe_script_emits_metrics(

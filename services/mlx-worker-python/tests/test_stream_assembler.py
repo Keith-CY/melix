@@ -934,6 +934,54 @@ def test_plain_token_metadata_keeps_fast_path_and_metrics(monkeypatch) -> None:
     assert completed.metrics["stream_short_reply_flush_count"] == 0
 
 
+def test_estimated_delta_token_count_matches_split_semantics_without_ascii_allocation() -> None:
+    samples = (
+        "plain ascii chunk",
+        "single",
+        " leading space",
+        "trailing space ",
+        "double  space",
+        "tab\tseparated",
+        "newline\nseparated",
+        "unicode\u2003space",
+        "emoji 😀 token",
+    )
+
+    for sample in samples:
+        assert stream_assembler._whitespace_token_count(sample) == len(sample.split())
+
+    assert RequestStreamAssembler._estimated_delta_token_count(
+        AssemblyDelta(content_text="plain ascii chunk")
+    ) == 3
+    assert RequestStreamAssembler._estimated_delta_token_count(
+        AssemblyDelta(reasoning_text="unicode\u2003space")
+    ) == 2
+
+
+def test_delta_token_annotation_uses_ascii_count_fast_path(monkeypatch) -> None:
+    calls: list[str] = []
+    original_count = stream_assembler._whitespace_token_count
+
+    def tracked_count(text: str) -> int:
+        calls.append(text)
+        return original_count(text)
+
+    monkeypatch.setattr(stream_assembler, "_whitespace_token_count", tracked_count)
+    assembler = RequestStreamAssembler("req-delta-count-fast-path", True, "", "qwen")
+
+    annotated = assembler._annotate_token_counts(
+        [
+            AssemblyDelta(content_text="visible plain text"),
+            AssemblyDelta(reasoning_text="hidden reasoning text"),
+            AssemblyDelta(tool_call=AssembledToolCall("call-fast", "search", "{}", 1, "qwen")),
+        ],
+        7,
+    )
+
+    assert [delta.token_count for delta in annotated] == [3, 3, 1]
+    assert calls == ["visible plain text", "hidden reasoning text"]
+
+
 def test_token_byte_delta_decodes_complete_ascii_without_incremental_decoder(monkeypatch) -> None:
     assembler = RequestStreamAssembler(
         request_id="req-token-byte-fast-path",
