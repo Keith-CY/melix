@@ -2779,6 +2779,14 @@ def test_run_subprocess_extracts_terminal_structured_result_without_splitlines(
         "or disable response-only masking."
     )
     assert response_exc.value.details["response_only_trainable_response_token_count"] == "0"
+    object.__setattr__(response_request.config, "max_seq_length", "not-an-int")
+    with pytest.raises(ModelOperationError) as invalid_length_exc:
+        mlx_lm_runner_module._validate_response_only_trainable_tokens(
+            response_request,
+            response_aggregate,
+        )
+    assert invalid_length_exc.value.details["suggested_minimum_sequence_length"] == "9"
+    assert invalid_length_exc.value.details["requested_sequence_length"] == "not-an-int"
 
     normalized_dir = tmp_path / "normalized-media"
     normalized_dir.mkdir()

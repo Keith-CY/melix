@@ -750,7 +750,9 @@ def _validate_response_only_trainable_tokens(
         if aggregate.fully_truncated_response_sample_count > 0
         else aggregate.sample_count
     )
-    suggested_minimum = max(int(aggregate.boundary_max) + 1, int(request.config.max_seq_length) + 1)
+    max_seq_length = _positive_int(getattr(request.config, "max_seq_length", 0))
+    boundary_max = _positive_int(getattr(aggregate, "boundary_max", 0))
+    suggested_minimum = max(boundary_max + 1, max_seq_length + 1)
     raise ModelOperationError(
         code="response_only_labels_truncated",
         message=(
