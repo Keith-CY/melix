@@ -547,7 +547,9 @@ public protocol ControlPlaneXPCClient: Sendable {
         servedModelIDs: [String],
         rateLimitPerMinute: Int,
         timeoutSeconds: Int,
-        modelIdleTimeoutSeconds: Int
+        modelIdleTimeoutSeconds: Int,
+        allowedHosts: [String],
+        allowedOrigins: [String]
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot
     func applyServerSessionServingDefaults(
         serverSessionID: String,
@@ -772,7 +774,9 @@ public extension ControlPlaneXPCClient {
         servedModelIDs: [String],
         rateLimitPerMinute: Int,
         timeoutSeconds: Int,
-        modelIdleTimeoutSeconds: Int
+        modelIdleTimeoutSeconds: Int,
+        allowedHosts: [String] = [],
+        allowedOrigins: [String] = []
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
         _ = serverSessionID
         _ = host
@@ -782,6 +786,8 @@ public extension ControlPlaneXPCClient {
         _ = rateLimitPerMinute
         _ = timeoutSeconds
         _ = modelIdleTimeoutSeconds
+        _ = allowedHosts
+        _ = allowedOrigins
         throw ControlPlaneXPCClientError.requestFailed(
             code: "unimplemented",
             message: "Gateway config apply is not implemented for this control-plane client."
@@ -1115,7 +1121,9 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         servedModelIDs: [String],
         rateLimitPerMinute: Int,
         timeoutSeconds: Int,
-        modelIdleTimeoutSeconds: Int
+        modelIdleTimeoutSeconds: Int,
+        allowedHosts: [String] = [],
+        allowedOrigins: [String] = []
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
         try await execute(
             makeApplyServerSessionGatewayConfigRequest(
@@ -1126,7 +1134,9 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
                 servedModelIDs: servedModelIDs,
                 rateLimitPerMinute: rateLimitPerMinute,
                 timeoutSeconds: timeoutSeconds,
-                modelIdleTimeoutSeconds: modelIdleTimeoutSeconds
+                modelIdleTimeoutSeconds: modelIdleTimeoutSeconds,
+                allowedHosts: allowedHosts,
+                allowedOrigins: allowedOrigins
             )
         ) { response in
             response.server.snapshot
@@ -1623,7 +1633,9 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         servedModelIDs: [String],
         rateLimitPerMinute: Int,
         timeoutSeconds: Int,
-        modelIdleTimeoutSeconds: Int
+        modelIdleTimeoutSeconds: Int,
+        allowedHosts: [String],
+        allowedOrigins: [String]
     ) -> Melix_Controlplane_V1_ControlPlaneRequest {
         var request = Melix_Controlplane_V1_ControlPlaneRequest()
         request.requestID = "menubar-apply-gateway-config-\(serverSessionID)"
@@ -1639,6 +1651,8 @@ public actor LocalControlPlaneXPCClient: ControlPlaneXPCClient {
         request.server.applyGatewayConfig.rateLimitPerMinute = UInt32(max(0, rateLimitPerMinute))
         request.server.applyGatewayConfig.timeoutSeconds = UInt32(max(0, timeoutSeconds))
         request.server.applyGatewayConfig.modelIdleTimeoutSeconds = UInt32(max(0, modelIdleTimeoutSeconds))
+        request.server.applyGatewayConfig.allowedHosts = allowedHosts
+        request.server.applyGatewayConfig.allowedOrigins = allowedOrigins
         return request
     }
 

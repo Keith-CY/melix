@@ -1245,6 +1245,8 @@ public struct ServerControlOptions: Equatable, Sendable {
     public let servedModelIDs: [String]
     public let host: String
     public let port: Int
+    public let allowedHosts: [String]
+    public let allowedOrigins: [String]
     public let rateLimitPerMinute: Int
     public let timeoutSeconds: Int
     public let modelIdleTimeoutSeconds: Int
@@ -1257,6 +1259,8 @@ public struct ServerControlOptions: Equatable, Sendable {
         servedModelIDs: [String] = [],
         host: String = "",
         port: Int = 0,
+        allowedHosts: [String] = [],
+        allowedOrigins: [String] = [],
         rateLimitPerMinute: Int = 0,
         timeoutSeconds: Int = 0,
         modelIdleTimeoutSeconds: Int = 0,
@@ -1282,10 +1286,16 @@ public struct ServerControlOptions: Equatable, Sendable {
             )
         self.host = host
         self.port = port
+        self.allowedHosts = Self.normalizedList(allowedHosts)
+        self.allowedOrigins = Self.normalizedList(allowedOrigins)
         self.rateLimitPerMinute = rateLimitPerMinute
         self.timeoutSeconds = timeoutSeconds
         self.modelIdleTimeoutSeconds = modelIdleTimeoutSeconds
         self.json = json
+    }
+
+    private static func normalizedList(_ values: [String]) -> [String] {
+        values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
     }
 
 }
@@ -1891,6 +1901,8 @@ public struct ServerSessionCreateOptions: Equatable, Sendable {
     public let servedModelIDs: [String]
     public let host: String
     public let port: Int
+    public let allowedHosts: [String]
+    public let allowedOrigins: [String]
     public let rateLimitPerMinute: Int
     public let timeoutSeconds: Int
     public let modelIdleTimeoutSeconds: Int
@@ -1906,6 +1918,8 @@ public struct ServerSessionCreateOptions: Equatable, Sendable {
         servedModelIDs: [String] = [],
         host: String = MelixGatewayDefaults.host,
         port: Int = MelixGatewayDefaults.port,
+        allowedHosts: [String] = [],
+        allowedOrigins: [String] = [],
         rateLimitPerMinute: Int = 120,
         timeoutSeconds: Int = 120,
         modelIdleTimeoutSeconds: Int = 600,
@@ -1930,6 +1944,8 @@ public struct ServerSessionCreateOptions: Equatable, Sendable {
         )
         self.host = host
         self.port = port
+        self.allowedHosts = Self.normalizedList(allowedHosts)
+        self.allowedOrigins = Self.normalizedList(allowedOrigins)
         self.rateLimitPerMinute = rateLimitPerMinute
         self.timeoutSeconds = timeoutSeconds
         self.modelIdleTimeoutSeconds = modelIdleTimeoutSeconds
@@ -1938,6 +1954,10 @@ public struct ServerSessionCreateOptions: Equatable, Sendable {
         self.draftModelID = draftModelID
         self.numDraftTokens = numDraftTokens
         self.json = json
+    }
+
+    private static func normalizedList(_ values: [String]) -> [String] {
+        values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
     }
 
 }
@@ -1949,6 +1969,10 @@ public struct ServerSessionUpdateOptions: Equatable, Sendable {
     public let servedModelIDs: [String]
     public let host: String
     public let port: Int
+    public let allowedHosts: [String]
+    public let allowedOrigins: [String]
+    public let clearAllowedHosts: Bool
+    public let clearAllowedOrigins: Bool
     public let rateLimitPerMinute: Int
     public let timeoutSeconds: Int
     public let modelIdleTimeoutSeconds: Int
@@ -1965,6 +1989,10 @@ public struct ServerSessionUpdateOptions: Equatable, Sendable {
         servedModelIDs: [String] = [],
         host: String = "",
         port: Int = 0,
+        allowedHosts: [String] = [],
+        allowedOrigins: [String] = [],
+        clearAllowedHosts: Bool = false,
+        clearAllowedOrigins: Bool = false,
         rateLimitPerMinute: Int = 0,
         timeoutSeconds: Int = 0,
         modelIdleTimeoutSeconds: Int = 0,
@@ -1989,6 +2017,10 @@ public struct ServerSessionUpdateOptions: Equatable, Sendable {
             )
         self.host = host
         self.port = port
+        self.allowedHosts = Self.normalizedList(allowedHosts)
+        self.allowedOrigins = Self.normalizedList(allowedOrigins)
+        self.clearAllowedHosts = clearAllowedHosts
+        self.clearAllowedOrigins = clearAllowedOrigins
         self.rateLimitPerMinute = rateLimitPerMinute
         self.timeoutSeconds = timeoutSeconds
         self.modelIdleTimeoutSeconds = modelIdleTimeoutSeconds
@@ -1997,6 +2029,10 @@ public struct ServerSessionUpdateOptions: Equatable, Sendable {
         self.draftModelID = draftModelID
         self.numDraftTokens = numDraftTokens
         self.json = json
+    }
+
+    private static func normalizedList(_ values: [String]) -> [String] {
+        values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
     }
 }
 
@@ -2577,11 +2613,11 @@ public enum MelixCLIParser {
       melix model roots rescan [--json]
       melix server snapshot [--json]
       melix server session list [--json]
-      melix server session create --title TITLE (--model MODEL_ID ... | --models MODEL_ID[,MODEL_ID...]) [--default-model MODEL_ID] [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--model-idle-timeout-seconds N] [--acceleration-profile PROFILE] [--acceleration-mode MODE] [--draft-model-id MODEL_ID] [--num-draft-tokens N] [--json]
-      melix server session update --server-session-id ID [--title TITLE] [--model MODEL_ID ... | --models MODEL_ID[,MODEL_ID...]] [--default-model MODEL_ID] [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--model-idle-timeout-seconds N] [--acceleration-profile PROFILE] [--acceleration-mode MODE] [--draft-model-id MODEL_ID] [--num-draft-tokens N] [--json]
+      melix server session create --title TITLE (--model MODEL_ID ... | --models MODEL_ID[,MODEL_ID...]) [--default-model MODEL_ID] [--host HOST] [--port PORT] [--allowed-host HOST ...] [--allowed-origin ORIGIN ...] [--rate-limit-per-minute N] [--timeout-seconds N] [--model-idle-timeout-seconds N] [--acceleration-profile PROFILE] [--acceleration-mode MODE] [--draft-model-id MODEL_ID] [--num-draft-tokens N] [--json]
+      melix server session update --server-session-id ID [--title TITLE] [--model MODEL_ID ... | --models MODEL_ID[,MODEL_ID...]] [--default-model MODEL_ID] [--host HOST] [--port PORT] [--allowed-host HOST ... | --clear-allowed-hosts] [--allowed-origin ORIGIN ... | --clear-allowed-origins] [--rate-limit-per-minute N] [--timeout-seconds N] [--model-idle-timeout-seconds N] [--acceleration-profile PROFILE] [--acceleration-mode MODE] [--draft-model-id MODEL_ID] [--num-draft-tokens N] [--json]
       melix server session remove --server-session-id ID [--json]
       melix server session select --server-session-id ID [--json]
-      melix server start [TITLE] [--model MODEL_ID ... | --models MODEL_ID[,MODEL_ID...]] [--default-model MODEL_ID] [--host HOST] [--port PORT] [--rate-limit-per-minute N] [--timeout-seconds N] [--model-idle-timeout-seconds N] [--server-session-id ID] [--json]
+      melix server start [TITLE] [--model MODEL_ID ... | --models MODEL_ID[,MODEL_ID...]] [--default-model MODEL_ID] [--host HOST] [--port PORT] [--allowed-host HOST ...] [--allowed-origin ORIGIN ...] [--rate-limit-per-minute N] [--timeout-seconds N] [--model-idle-timeout-seconds N] [--server-session-id ID] [--json]
       melix server pause [--server-session-id ID] [--json]
       melix server resume [--server-session-id ID] [--json]
       melix server wake [--server-session-id ID] [--json]
@@ -3735,7 +3771,9 @@ public enum MelixCLIParser {
             serverTitle = ""
             optionArguments = arguments
         }
-        let values = try ArgumentCursor(arguments: optionArguments).parse(multiValueOptions: ["--model", "--models"])
+        let values = try ArgumentCursor(arguments: optionArguments).parse(
+            multiValueOptions: ["--model", "--models", "--allowed-host", "--allowed-origin"]
+        )
         let serverSessionID = values.single["--server-session-id"] ?? ServerSessionRuntimeStore.defaultServerSessionID
         let json = values.flags.contains("--json")
         let modelIDs = parsedModelRoster(
@@ -3752,6 +3790,8 @@ public enum MelixCLIParser {
             servedModelIDs: modelIDs,
             host: values.single["--host"] ?? "",
             port: try parseIntValue(values.single["--port"], option: "--port", defaultValue: 0) ?? 0,
+            allowedHosts: values.multi["--allowed-host"] ?? [],
+            allowedOrigins: values.multi["--allowed-origin"] ?? [],
             rateLimitPerMinute: try parseIntValue(
                 values.single["--rate-limit-per-minute"],
                 option: "--rate-limit-per-minute",
@@ -3776,7 +3816,11 @@ public enum MelixCLIParser {
             throw MelixCLIError.usage(usageText)
         }
         let values = try ArgumentCursor(arguments: Array(arguments.dropFirst())).parse(
-            multiValueOptions: ["--model", "--models"]
+            multiValueOptions: ["--model", "--models", "--allowed-host", "--allowed-origin"],
+            valueLessFlags: ArgumentCursor.defaultValueLessFlags.union([
+                "--clear-allowed-hosts",
+                "--clear-allowed-origins",
+            ])
         )
         switch action {
         case "list":
@@ -3823,6 +3867,8 @@ public enum MelixCLIParser {
                     servedModelIDs: modelIDs,
                     host: values.single["--host"] ?? MelixGatewayDefaults.host,
                     port: port,
+                    allowedHosts: values.multi["--allowed-host"] ?? [],
+                    allowedOrigins: values.multi["--allowed-origin"] ?? [],
                     rateLimitPerMinute: rateLimit,
                     timeoutSeconds: timeoutSeconds,
                     modelIdleTimeoutSeconds: modelIdleTimeoutSeconds,
@@ -3836,6 +3882,14 @@ public enum MelixCLIParser {
         case "update":
             guard let serverSessionID = values.single["--server-session-id"], !serverSessionID.isEmpty else {
                 throw MelixCLIError.missingRequired("--server-session-id is required for melix server session update.")
+            }
+            let clearAllowedHosts = values.flags.contains("--clear-allowed-hosts")
+            let clearAllowedOrigins = values.flags.contains("--clear-allowed-origins")
+            if clearAllowedHosts && (values.multi["--allowed-host"] ?? []).isEmpty == false {
+                throw MelixCLIError.usage("--allowed-host and --clear-allowed-hosts are mutually exclusive.")
+            }
+            if clearAllowedOrigins && (values.multi["--allowed-origin"] ?? []).isEmpty == false {
+                throw MelixCLIError.usage("--allowed-origin and --clear-allowed-origins are mutually exclusive.")
             }
             let modelIDs = parsedModelRoster(
                 singleModel: "",
@@ -3853,6 +3907,10 @@ public enum MelixCLIParser {
                     servedModelIDs: modelIDs,
                     host: values.single["--host"] ?? "",
                     port: try parseIntValue(values.single["--port"], option: "--port", defaultValue: 0) ?? 0,
+                    allowedHosts: values.multi["--allowed-host"] ?? [],
+                    allowedOrigins: values.multi["--allowed-origin"] ?? [],
+                    clearAllowedHosts: clearAllowedHosts,
+                    clearAllowedOrigins: clearAllowedOrigins,
                     rateLimitPerMinute: try parseIntValue(
                         values.single["--rate-limit-per-minute"],
                         option: "--rate-limit-per-minute",
@@ -6921,7 +6979,9 @@ public actor MelixCLIRunner {
             servedModelIDs: configuredSession.servedModelIDs,
             rateLimitPerMinute: configuredSession.rateLimitPerMinute,
             timeoutSeconds: configuredSession.timeoutSeconds,
-            modelIdleTimeoutSeconds: configuredSession.modelIdleTimeoutSeconds
+            modelIdleTimeoutSeconds: configuredSession.modelIdleTimeoutSeconds,
+            allowedHosts: configuredSession.allowedHosts,
+            allowedOrigins: configuredSession.allowedOrigins
         )
     }
 
@@ -8051,6 +8111,8 @@ public actor MelixCLIRunner {
                     servedModelIDs: options.servedModelIDs,
                     host: options.host,
                     port: options.port,
+                    allowedHosts: options.allowedHosts,
+                    allowedOrigins: options.allowedOrigins,
                     rateLimitPerMinute: options.rateLimitPerMinute,
                     timeoutSeconds: options.timeoutSeconds,
                     modelIdleTimeoutSeconds: options.modelIdleTimeoutSeconds,
@@ -8096,6 +8158,16 @@ public actor MelixCLIRunner {
                 }
                 if options.port > 0 {
                     session.port = options.port
+                }
+                if options.allowedHosts.isEmpty == false {
+                    session.allowedHosts = options.allowedHosts
+                } else if options.clearAllowedHosts {
+                    session.allowedHosts = []
+                }
+                if options.allowedOrigins.isEmpty == false {
+                    session.allowedOrigins = options.allowedOrigins
+                } else if options.clearAllowedOrigins {
+                    session.allowedOrigins = []
                 }
                 if options.rateLimitPerMinute > 0 {
                     session.rateLimitPerMinute = options.rateLimitPerMinute
@@ -8182,7 +8254,9 @@ public actor MelixCLIRunner {
                 servedModelIDs: configuredSession.servedModelIDs,
                 rateLimitPerMinute: configuredSession.rateLimitPerMinute,
                 timeoutSeconds: configuredSession.timeoutSeconds,
-                modelIdleTimeoutSeconds: configuredSession.modelIdleTimeoutSeconds
+                modelIdleTimeoutSeconds: configuredSession.modelIdleTimeoutSeconds,
+                allowedHosts: configuredSession.allowedHosts,
+                allowedOrigins: configuredSession.allowedOrigins
             )
             _ = try await client.applyServerSessionServingDefaults(
                 serverSessionID: configuredSession.id,
@@ -9702,6 +9776,12 @@ public actor MelixCLIRunner {
         if options.modelIdleTimeoutSeconds > 0 {
             session.modelIdleTimeoutSeconds = options.modelIdleTimeoutSeconds
         }
+        if options.allowedHosts.isEmpty == false {
+            session.allowedHosts = options.allowedHosts
+        }
+        if options.allowedOrigins.isEmpty == false {
+            session.allowedOrigins = options.allowedOrigins
+        }
     }
 
     private func normalizedServedModelIDs(
@@ -9723,6 +9803,8 @@ public actor MelixCLIRunner {
             || options.servedModelIDs.isEmpty == false
             || host.isEmpty == false
             || options.port > 0
+            || options.allowedHosts.isEmpty == false
+            || options.allowedOrigins.isEmpty == false
             || options.rateLimitPerMinute > 0
             || options.timeoutSeconds > 0
             || options.modelIdleTimeoutSeconds > 0
@@ -9730,7 +9812,7 @@ public actor MelixCLIRunner {
             return options.serverSessionID
         }
         guard title.isEmpty == false else {
-            throw MelixCLIError.missingRequired("TITLE is required when passing --model, --models, --default-model, --host, --port, --rate-limit-per-minute, --timeout-seconds, or --model-idle-timeout-seconds to melix server start.")
+            throw MelixCLIError.missingRequired("TITLE is required when passing --model, --models, --default-model, --host, --port, --allowed-host, --allowed-origin, --rate-limit-per-minute, --timeout-seconds, or --model-idle-timeout-seconds to melix server start.")
         }
         guard !options.defaultModelID.isEmpty else {
             throw MelixCLIError.missingRequired("--model or --models is required when starting a titled server session.")
@@ -9774,6 +9856,8 @@ public actor MelixCLIRunner {
                     servedModelIDs: options.servedModelIDs,
                     host: host.isEmpty ? "127.0.0.1" : host,
                     port: options.port > 0 ? options.port : 8080,
+                    allowedHosts: options.allowedHosts,
+                    allowedOrigins: options.allowedOrigins,
                     rateLimitPerMinute: options.rateLimitPerMinute > 0 ? options.rateLimitPerMinute : 120,
                     timeoutSeconds: options.timeoutSeconds > 0 ? options.timeoutSeconds : 120,
                     modelIdleTimeoutSeconds: options.modelIdleTimeoutSeconds > 0

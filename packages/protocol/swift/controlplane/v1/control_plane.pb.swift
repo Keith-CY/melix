@@ -3263,6 +3263,10 @@ public nonisolated struct Melix_Controlplane_V1_ApplyGatewayConfig: Sendable {
 
   public var modelIdleTimeoutSeconds: UInt32 = 0
 
+  public var allowedHosts: [String] = []
+
+  public var allowedOrigins: [String] = []
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -5757,6 +5761,10 @@ public nonisolated struct Melix_Controlplane_V1_GatewayListenerConfigSummary: Se
   public var servedModelIds: [String] = []
 
   public var modelIdleTimeoutSeconds: UInt32 = 0
+
+  public var allowedHosts: [String] = []
+
+  public var allowedOrigins: [String] = []
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -10653,7 +10661,7 @@ nonisolated extension Melix_Controlplane_V1_ApplyGatewayAccess: SwiftProtobuf.Me
 
 nonisolated extension Melix_Controlplane_V1_ApplyGatewayConfig: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ApplyGatewayConfig"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{1}host\0\u{1}port\0\u{3}default_model_id\0\u{3}rate_limit_per_minute\0\u{3}timeout_seconds\0\u{3}served_model_ids\0\u{3}model_idle_timeout_seconds\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{1}host\0\u{1}port\0\u{3}default_model_id\0\u{3}rate_limit_per_minute\0\u{3}timeout_seconds\0\u{3}served_model_ids\0\u{3}model_idle_timeout_seconds\0\u{3}allowed_hosts\0\u{3}allowed_origins\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -10669,6 +10677,8 @@ nonisolated extension Melix_Controlplane_V1_ApplyGatewayConfig: SwiftProtobuf.Me
       case 6: try { try decoder.decodeSingularUInt32Field(value: &self.timeoutSeconds) }()
       case 7: try { try decoder.decodeRepeatedStringField(value: &self.servedModelIds) }()
       case 8: try { try decoder.decodeSingularUInt32Field(value: &self.modelIdleTimeoutSeconds) }()
+      case 9: try { try decoder.decodeRepeatedStringField(value: &self.allowedHosts) }()
+      case 10: try { try decoder.decodeRepeatedStringField(value: &self.allowedOrigins) }()
       default: break
       }
     }
@@ -10699,6 +10709,12 @@ nonisolated extension Melix_Controlplane_V1_ApplyGatewayConfig: SwiftProtobuf.Me
     if self.modelIdleTimeoutSeconds != 0 {
       try visitor.visitSingularUInt32Field(value: self.modelIdleTimeoutSeconds, fieldNumber: 8)
     }
+    if !self.allowedHosts.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.allowedHosts, fieldNumber: 9)
+    }
+    if !self.allowedOrigins.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.allowedOrigins, fieldNumber: 10)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -10711,6 +10727,8 @@ nonisolated extension Melix_Controlplane_V1_ApplyGatewayConfig: SwiftProtobuf.Me
     if lhs.timeoutSeconds != rhs.timeoutSeconds {return false}
     if lhs.servedModelIds != rhs.servedModelIds {return false}
     if lhs.modelIdleTimeoutSeconds != rhs.modelIdleTimeoutSeconds {return false}
+    if lhs.allowedHosts != rhs.allowedHosts {return false}
+    if lhs.allowedOrigins != rhs.allowedOrigins {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -15998,7 +16016,7 @@ nonisolated extension Melix_Controlplane_V1_GatewayAccessSummary: SwiftProtobuf.
 
 nonisolated extension Melix_Controlplane_V1_GatewayListenerConfigSummary: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GatewayListenerConfigSummary"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}requested_host\0\u{3}requested_port\0\u{3}effective_host\0\u{3}effective_port\0\u{3}default_model_id\0\u{3}rate_limit_per_minute\0\u{3}timeout_seconds\0\u{1}source\0\u{3}active_binding\0\u{3}requires_restart\0\u{3}updated_at_unix_ms\0\u{3}served_model_ids\0\u{3}model_idle_timeout_seconds\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}server_session_id\0\u{3}requested_host\0\u{3}requested_port\0\u{3}effective_host\0\u{3}effective_port\0\u{3}default_model_id\0\u{3}rate_limit_per_minute\0\u{3}timeout_seconds\0\u{1}source\0\u{3}active_binding\0\u{3}requires_restart\0\u{3}updated_at_unix_ms\0\u{3}served_model_ids\0\u{3}model_idle_timeout_seconds\0\u{3}allowed_hosts\0\u{3}allowed_origins\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -16020,6 +16038,8 @@ nonisolated extension Melix_Controlplane_V1_GatewayListenerConfigSummary: SwiftP
       case 12: try { try decoder.decodeSingularInt64Field(value: &self.updatedAtUnixMs) }()
       case 13: try { try decoder.decodeRepeatedStringField(value: &self.servedModelIds) }()
       case 14: try { try decoder.decodeSingularUInt32Field(value: &self.modelIdleTimeoutSeconds) }()
+      case 15: try { try decoder.decodeRepeatedStringField(value: &self.allowedHosts) }()
+      case 16: try { try decoder.decodeRepeatedStringField(value: &self.allowedOrigins) }()
       default: break
       }
     }
@@ -16068,6 +16088,12 @@ nonisolated extension Melix_Controlplane_V1_GatewayListenerConfigSummary: SwiftP
     if self.modelIdleTimeoutSeconds != 0 {
       try visitor.visitSingularUInt32Field(value: self.modelIdleTimeoutSeconds, fieldNumber: 14)
     }
+    if !self.allowedHosts.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.allowedHosts, fieldNumber: 15)
+    }
+    if !self.allowedOrigins.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.allowedOrigins, fieldNumber: 16)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -16086,6 +16112,8 @@ nonisolated extension Melix_Controlplane_V1_GatewayListenerConfigSummary: SwiftP
     if lhs.updatedAtUnixMs != rhs.updatedAtUnixMs {return false}
     if lhs.servedModelIds != rhs.servedModelIds {return false}
     if lhs.modelIdleTimeoutSeconds != rhs.modelIdleTimeoutSeconds {return false}
+    if lhs.allowedHosts != rhs.allowedHosts {return false}
+    if lhs.allowedOrigins != rhs.allowedOrigins {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

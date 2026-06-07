@@ -1793,7 +1793,14 @@ public actor ControlPlaneService {
                 forKey: "gateway.config_apply_ms"
             )
             let requiresRestart = command.serverSessionID == gatewayRuntimeBinding.activeServerSessionID
-                && (command.host != gatewayRuntimeBinding.host || command.port != gatewayRuntimeBinding.port)
+                && (
+                    command.host != gatewayRuntimeBinding.host
+                        || command.port != gatewayRuntimeBinding.port
+                        || LocalServerSecurityPolicy.normalizedAllowedHosts(command.allowedHosts)
+                            != gatewayRuntimeBinding.allowedHosts
+                        || LocalServerSecurityPolicy.normalizedAllowedOrigins(command.allowedOrigins)
+                            != gatewayRuntimeBinding.allowedOrigins
+                )
             await metricsStore.set(requiresRestart ? 1 : 0, forKey: "gateway.config_requires_restart_count")
 
             var reply = Melix_Controlplane_V1_ServerReply()

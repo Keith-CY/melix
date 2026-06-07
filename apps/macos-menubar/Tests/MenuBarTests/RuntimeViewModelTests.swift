@@ -597,9 +597,34 @@ struct RuntimeViewModelTests {
     @Test("applySelectedServerGatewayConfig sends a typed request and hydrates effective listener state")
     @MainActor
     func applySelectedServerGatewayConfigSendsATypedRequestAndHydratesEffectiveListenerState() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-gateway-allowlist-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let restoredSession = DesktopServerSessionState(
+            id: "server-session-allowlist",
+            title: "Allowlist Server",
+            modelID: "melix-dev-text",
+            allowedHosts: ["operator.lan"],
+            allowedOrigins: ["http://localhost:5173"]
+        )
+        try operatorSessionStore.save(
+            OperatorSessionState(
+                selectedSurface: .api,
+                selectedServerSessionID: restoredSession.id,
+                serverSessions: [restoredSession]
+            )
+        )
         let client = FakeControlPlaneXPCClient()
         let metrics = MenuBarMetricsStore()
-        let viewModel = RuntimeViewModel(client: client, metrics: metrics)
+        let viewModel = RuntimeViewModel(
+            client: client,
+            metrics: metrics,
+            operatorSessionStore: operatorSessionStore
+        )
 
         await viewModel.start()
         viewModel.updateSelectedServerSessionHost("0.0.0.0")
@@ -608,6 +633,7 @@ struct RuntimeViewModelTests {
         viewModel.updateSelectedServerSessionRateLimit(240)
         viewModel.updateSelectedServerSessionTimeout(90)
 
+        await viewModel.applySelectedServerGatewayConfig()
         await viewModel.applySelectedServerGatewayConfig()
 
         let request = try #require(await client.recordedGatewayConfigApplyRequests.last)
@@ -621,8 +647,12 @@ struct RuntimeViewModelTests {
         #expect(request.rateLimitPerMinute == 240)
         #expect(request.timeoutSeconds == 90)
         #expect(request.modelIdleTimeoutSeconds == 600)
+        #expect(request.allowedHosts == ["operator.lan"])
+        #expect(request.allowedOrigins == ["http://localhost:5173"])
         #expect(session.host == "0.0.0.0")
         #expect(session.port == 18_080)
+        #expect(session.allowedHosts == ["operator.lan"])
+        #expect(session.allowedOrigins == ["http://localhost:5173"])
         #expect(session.effectiveHost == "0.0.0.0")
         #expect(session.effectivePort == 18_080)
         #expect(session.modelID == "melix-dev-text")
@@ -934,11 +964,31 @@ struct RuntimeViewModelTests {
     @Test("starting a selected server session persists gateway config and serving defaults before the lifecycle mutation")
     @MainActor
     func startingASelectedServerSessionPersistsGatewayConfigAndServingDefaultsBeforeTheLifecycleMutation() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("melix-menubar-start-allowlist-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let melixHome = MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        let operatorSessionStore = OperatorSessionStore(melixHome: melixHome)
+        let restoredSession = DesktopServerSessionState(
+            id: "server-session-start-allowlist",
+            title: "Start Allowlist Server",
+            modelID: "melix-dev-text",
+            allowedHosts: ["operator.lan"],
+            allowedOrigins: ["http://localhost:5173"]
+        )
+        try operatorSessionStore.save(
+            OperatorSessionState(
+                selectedSurface: .api,
+                selectedServerSessionID: restoredSession.id,
+                serverSessions: [restoredSession]
+            )
+        )
         let client = FakeControlPlaneXPCClient()
-        let viewModel = RuntimeViewModel(client: client)
+        let viewModel = RuntimeViewModel(client: client, operatorSessionStore: operatorSessionStore)
 
         await viewModel.start()
-        viewModel.createServerSession()
         let serverSessionID = try #require(viewModel.selectedServerSession?.id)
         viewModel.updateSelectedServerSessionHost("127.0.0.1")
         viewModel.updateSelectedServerSessionPort(18081)
@@ -955,6 +1005,9 @@ struct RuntimeViewModelTests {
         #expect(applyServingDefaultsIndex < startIndex)
         #expect(await client.recordedGatewayConfigApplyRequests.count == 1)
         #expect(await client.recordedServingDefaultsApplyRequests.count == 1)
+        let request = try #require(await client.recordedGatewayConfigApplyRequests.last)
+        #expect(request.allowedHosts == ["operator.lan"])
+        #expect(request.allowedOrigins == ["http://localhost:5173"])
         #expect(viewModel.selectedServerSession?.lifecycle == .running)
     }
 

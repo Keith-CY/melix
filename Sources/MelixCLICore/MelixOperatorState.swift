@@ -114,6 +114,8 @@ public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
     public var servedModelIDs: [String]
     public var host: String
     public var port: Int
+    public var allowedHosts: [String]
+    public var allowedOrigins: [String]
     public var rateLimitPerMinute: Int
     public var timeoutSeconds: Int
     public var modelIdleTimeoutSeconds: Int
@@ -134,6 +136,8 @@ public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
         servedModelIDs: [String] = [],
         host: String = MelixGatewayDefaults.host,
         port: Int = MelixGatewayDefaults.port,
+        allowedHosts: [String] = [],
+        allowedOrigins: [String] = [],
         rateLimitPerMinute: Int = 120,
         timeoutSeconds: Int = 120,
         modelIdleTimeoutSeconds: Int = 600,
@@ -157,6 +161,8 @@ public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
         )
         self.host = host
         self.port = port
+        self.allowedHosts = allowedHosts
+        self.allowedOrigins = allowedOrigins
         self.rateLimitPerMinute = rateLimitPerMinute
         self.timeoutSeconds = timeoutSeconds
         self.modelIdleTimeoutSeconds = modelIdleTimeoutSeconds
@@ -179,6 +185,8 @@ public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
         case servedModelIDs = "served_model_ids"
         case host
         case port
+        case allowedHosts = "allowed_hosts"
+        case allowedOrigins = "allowed_origins"
         case rateLimitPerMinute = "rate_limit_per_minute"
         case timeoutSeconds = "timeout_seconds"
         case modelIdleTimeoutSeconds = "model_idle_timeout_seconds"
@@ -205,6 +213,8 @@ public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
                 ?? (defaultModelID.isEmpty ? [] : [defaultModelID]),
             host: try container.decodeIfPresent(String.self, forKey: .host) ?? MelixGatewayDefaults.host,
             port: try container.decodeIfPresent(Int.self, forKey: .port) ?? MelixGatewayDefaults.port,
+            allowedHosts: try container.decodeIfPresent([String].self, forKey: .allowedHosts) ?? [],
+            allowedOrigins: try container.decodeIfPresent([String].self, forKey: .allowedOrigins) ?? [],
             rateLimitPerMinute: try container.decodeIfPresent(Int.self, forKey: .rateLimitPerMinute) ?? 120,
             timeoutSeconds: try container.decodeIfPresent(Int.self, forKey: .timeoutSeconds) ?? 120,
             modelIdleTimeoutSeconds: try container.decodeIfPresent(
@@ -234,6 +244,8 @@ public struct MelixOperatorServerSessionState: Codable, Equatable, Sendable {
         try container.encode(servedModelIDs, forKey: .servedModelIDs)
         try container.encode(host, forKey: .host)
         try container.encode(port, forKey: .port)
+        try container.encode(allowedHosts, forKey: .allowedHosts)
+        try container.encode(allowedOrigins, forKey: .allowedOrigins)
         try container.encode(rateLimitPerMinute, forKey: .rateLimitPerMinute)
         try container.encode(timeoutSeconds, forKey: .timeoutSeconds)
         try container.encode(modelIdleTimeoutSeconds, forKey: .modelIdleTimeoutSeconds)

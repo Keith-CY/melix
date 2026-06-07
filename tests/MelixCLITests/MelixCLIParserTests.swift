@@ -2029,6 +2029,8 @@ struct MelixCLIParserTests {
             "--default-model", "melix-secondary",
             "--host", "127.0.0.1",
             "--port", "12434",
+            "--allowed-host", "operator.lan:12436",
+            "--allowed-origin", "http://localhost:5173/app",
             "--model-idle-timeout-seconds", "300",
             "--acceleration-profile", "throughput",
             "--draft-model-id", "z-lab/Qwen3.5-27B-DFlash",
@@ -2044,6 +2046,8 @@ struct MelixCLIParserTests {
             "--model", "melix-secondary",
             "--default-model", "melix-secondary",
             "--port", "12434",
+            "--allowed-host", "dev.local:12436",
+            "--allowed-origin", "https://operator.example.test/workbench",
             "--timeout-seconds", "90",
             "--model-idle-timeout-seconds", "240",
             "--acceleration-profile", "low_memory",
@@ -2089,6 +2093,8 @@ struct MelixCLIParserTests {
         ])
         #expect(createOptions.host == "127.0.0.1")
         #expect(createOptions.port == 12434)
+        #expect(createOptions.allowedHosts == ["operator.lan:12436"])
+        #expect(createOptions.allowedOrigins == ["http://localhost:5173/app"])
         #expect(createOptions.modelIdleTimeoutSeconds == 300)
         #expect(createOptions.accelerationProfile == "throughput")
         #expect(createOptions.accelerationMode == "speculative_decode")
@@ -2102,6 +2108,10 @@ struct MelixCLIParserTests {
             "melix-secondary",
         ])
         #expect(updateOptions.port == 12434)
+        #expect(updateOptions.allowedHosts == ["dev.local:12436"])
+        #expect(updateOptions.allowedOrigins == ["https://operator.example.test/workbench"])
+        #expect(updateOptions.clearAllowedHosts == false)
+        #expect(updateOptions.clearAllowedOrigins == false)
         #expect(updateOptions.timeoutSeconds == 90)
         #expect(updateOptions.modelIdleTimeoutSeconds == 240)
         #expect(updateOptions.accelerationProfile == "low-memory")
@@ -2196,6 +2206,54 @@ struct MelixCLIParserTests {
         }
     }
 
+    @Test("server session update parses allowlist clear flags and rejects mixed clear and set")
+    func serverSessionUpdateParsesAllowlistClearFlags() throws {
+        let command = try MelixCLIParser.parse([
+            "server",
+            "session",
+            "update",
+            "--server-session-id", "server-session-qwen",
+            "--clear-allowed-hosts",
+            "--clear-allowed-origins",
+            "--json",
+        ])
+
+        let options = try #require(command.serverSessionUpdateOptions)
+        #expect(options.serverSessionID == "server-session-qwen")
+        #expect(options.allowedHosts.isEmpty)
+        #expect(options.allowedOrigins.isEmpty)
+        #expect(options.clearAllowedHosts)
+        #expect(options.clearAllowedOrigins)
+        #expect(options.json)
+
+        let arguments = try MelixCLICommandCodec.arguments(for: command)
+        #expect(arguments.contains("--clear-allowed-hosts"))
+        #expect(arguments.contains("--clear-allowed-origins"))
+        #expect(Self.optionValue("--allowed-host", in: arguments) == nil)
+        #expect(Self.optionValue("--allowed-origin", in: arguments) == nil)
+
+        #expect(throws: MelixCLIError.usage("--allowed-host and --clear-allowed-hosts are mutually exclusive.")) {
+            _ = try MelixCLIParser.parse([
+                "server",
+                "session",
+                "update",
+                "--server-session-id", "server-session-qwen",
+                "--allowed-host", "operator.lan",
+                "--clear-allowed-hosts",
+            ])
+        }
+        #expect(throws: MelixCLIError.usage("--allowed-origin and --clear-allowed-origins are mutually exclusive.")) {
+            _ = try MelixCLIParser.parse([
+                "server",
+                "session",
+                "update",
+                "--server-session-id", "server-session-qwen",
+                "--allowed-origin", "http://localhost:5173",
+                "--clear-allowed-origins",
+            ])
+        }
+    }
+
     @Test("server session codec normalizes equals-form profile launch flags")
     func serverSessionCodecNormalizesEqualsFormProfileLaunchFlags() throws {
         let createCommand = try MelixCLIParser.parse([
@@ -2207,6 +2265,8 @@ struct MelixCLIParserTests {
             "--default-model=mlx-community/Qwen3.5-0.8B-OptiQ-4bit",
             "--host=127.0.0.1",
             "--port=12434",
+            "--allowed-host=operator.lan:12436",
+            "--allowed-origin=http://localhost:5173/app",
             "--rate-limit-per-minute=60",
             "--timeout-seconds=90",
             "--model-idle-timeout-seconds=240",
@@ -2223,6 +2283,8 @@ struct MelixCLIParserTests {
             "--server-session-id=server-session-qwen",
             "--models=mlx-community/Qwen3.5-0.8B-OptiQ-4bit,melix-secondary",
             "--default-model=melix-secondary",
+            "--allowed-host=dev.local",
+            "--allowed-origin=https://operator.example.test/workbench",
             "--acceleration-profile=low_memory",
             "--acceleration-mode=baseline",
             "--json",
@@ -2231,6 +2293,8 @@ struct MelixCLIParserTests {
         let createOptions = try #require(createCommand.serverSessionCreateOptions)
         let updateOptions = try #require(updateCommand.serverSessionUpdateOptions)
         #expect(createOptions.accelerationProfile == "throughput")
+        #expect(createOptions.allowedHosts == ["operator.lan:12436"])
+        #expect(createOptions.allowedOrigins == ["http://localhost:5173/app"])
         #expect(createOptions.accelerationMode == "speculative_decode")
         #expect(createOptions.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
         #expect(createOptions.numDraftTokens == 8)
@@ -2240,6 +2304,8 @@ struct MelixCLIParserTests {
             "melix-secondary",
         ])
         #expect(updateOptions.defaultModelID == "melix-secondary")
+        #expect(updateOptions.allowedHosts == ["dev.local"])
+        #expect(updateOptions.allowedOrigins == ["https://operator.example.test/workbench"])
         #expect(updateOptions.accelerationProfile == "low-memory")
         #expect(updateOptions.accelerationMode == "baseline")
         #expect(updateOptions.draftModelID.isEmpty)
@@ -2250,9 +2316,13 @@ struct MelixCLIParserTests {
         #expect(createArguments.contains { $0.contains("=") && $0.hasPrefix("--") } == false)
         #expect(updateArguments.contains { $0.contains("=") && $0.hasPrefix("--") } == false)
         #expect(Self.optionValue("--acceleration-profile", in: createArguments) == "throughput")
+        #expect(Self.optionValue("--allowed-host", in: createArguments) == "operator.lan:12436")
+        #expect(Self.optionValue("--allowed-origin", in: createArguments) == "http://localhost:5173/app")
         #expect(Self.optionValue("--acceleration-mode", in: createArguments) == "speculative_decode")
         #expect(Self.optionValue("--draft-model-id", in: createArguments) == "z-lab/Qwen3.5-27B-DFlash")
         #expect(Self.optionValue("--num-draft-tokens", in: createArguments) == "8")
+        #expect(Self.optionValue("--allowed-host", in: updateArguments) == "dev.local")
+        #expect(Self.optionValue("--allowed-origin", in: updateArguments) == "https://operator.example.test/workbench")
         #expect(Self.optionValue("--acceleration-profile", in: updateArguments) == "low-memory")
         #expect(Self.optionValue("--acceleration-mode", in: updateArguments) == "baseline")
         #expect(Self.optionValue("--draft-model-id", in: updateArguments) == nil)
@@ -2285,6 +2355,8 @@ struct MelixCLIParserTests {
             "--default-model", "melix-secondary",
             "--host", "127.0.0.1",
             "--port", "12434",
+            "--allowed-host", "operator.lan:12436",
+            "--allowed-origin", "http://localhost:5173/app",
             "--rate-limit-per-minute", "60",
             "--timeout-seconds", "240",
             "--model-idle-timeout-seconds", "300",
@@ -2349,6 +2421,8 @@ struct MelixCLIParserTests {
         ])
         #expect(titledStartOptions.host == "127.0.0.1")
         #expect(titledStartOptions.port == 12434)
+        #expect(titledStartOptions.allowedHosts == ["operator.lan:12436"])
+        #expect(titledStartOptions.allowedOrigins == ["http://localhost:5173/app"])
         #expect(titledStartOptions.rateLimitPerMinute == 60)
         #expect(titledStartOptions.timeoutSeconds == 240)
         #expect(titledStartOptions.modelIdleTimeoutSeconds == 300)
