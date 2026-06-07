@@ -19,8 +19,18 @@ from worker.productization import release_gates as release_gates_module
 
 def test_make_phase8_release_gate_keeps_redirected_output_json_clean() -> None:
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
-    target = makefile.split("\nphase8-release-gate:\n", 1)[1].split("\nphase8-metrics:", 1)[0]
-    target_lines = target.splitlines()
+    target_lines: list[str] = []
+    in_target = False
+    for line in makefile.splitlines():
+        if line.startswith("phase8-release-gate:"):
+            in_target = True
+            continue
+        if not in_target:
+            continue
+        if line.startswith("\t"):
+            target_lines.append(line)
+        elif line.strip() and not line.startswith("#"):
+            break
 
     assert '\t@mkdir -p "$(UV_CACHE_DIR)"' in target_lines
     assert any(

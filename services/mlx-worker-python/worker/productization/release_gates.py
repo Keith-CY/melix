@@ -682,7 +682,7 @@ def _write_release_gate_evaluation_compare_evidence(
         if existing is not None:
             continue
 
-        suite_policy = _resolve_evaluation_compare_suite_policy(policy, suite_id)
+        suite_policy = _resolve_evaluation_compare_suite_policy(policy, suite_id) or {}
         effect_threshold = float(suite_policy.get("effect_threshold", 0.1) or 0.1)
         confidence_level = float(suite_policy.get("confidence_level", 0.95) or 0.95)
         bootstrap_iterations = int(suite_policy.get("bootstrap_iterations", 400) or 400)
@@ -786,11 +786,15 @@ def _write_release_gate_real_workload_evidence(
         else copy.deepcopy(DEFAULT_REAL_WORKLOAD_GATE_POLICY)
     )
     family_rules = active_policy.get("families", {}) if isinstance(active_policy, dict) else {}
-    family_ids = [
-        str(family_id)
-        for family_id, rules in family_rules.items()
-        if isinstance(rules, dict)
-    ] or list(_DEFAULT_REAL_WORKLOAD_EVIDENCE.keys())
+    family_ids = (
+        [
+            str(family_id)
+            for family_id, rules in family_rules.items()
+            if isinstance(rules, dict)
+        ]
+        if isinstance(family_rules, dict)
+        else []
+    ) or list(_DEFAULT_REAL_WORKLOAD_EVIDENCE.keys())
 
     real_workload_root = jobs_root / "real_workload"
     real_workload_root.mkdir(parents=True, exist_ok=True)
@@ -804,7 +808,9 @@ def _write_release_gate_real_workload_evidence(
 
 
 def _write_release_gate_gemma_e4b_profile_evidence(jobs_root: Path) -> None:
-    evidence_path = jobs_root / "gemma_e4b_profile_gate" / "evidence.json"
+    evidence_dir = jobs_root / "gemma_e4b_profile_gate"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    evidence_path = evidence_dir / "evidence.json"
     if evidence_path.exists():
         return
     _write_json(evidence_path, default_passing_gemma_e4b_profile_evidence())

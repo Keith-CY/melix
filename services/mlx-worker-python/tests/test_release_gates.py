@@ -1784,6 +1784,28 @@ def test_build_release_gate_report_prepares_release_owned_evidence(
     assert (jobs_root / "gemma_e4b_profile_gate" / "evidence.json").exists()
 
 
+def test_prepare_release_gate_evidence_handles_malformed_policy_sections(tmp_path: Path) -> None:
+    jobs_root = tmp_path / "jobs"
+
+    release_gates_module.prepare_release_gate_evidence(
+        jobs_root,
+        policy={
+            "evaluation_compare": {"mmlu": "not-a-dict"},
+            "real_workload": {"families": "not-a-dict"},
+        },
+    )
+
+    assert (
+        jobs_root
+        / "evaluation"
+        / "runs"
+        / "eval-compare-release-gate-mmlu"
+        / "evaluation-compare-summary.json"
+    ).exists()
+    assert (jobs_root / "real_workload" / "qwen.json").exists()
+    assert (jobs_root / "gemma_e4b_profile_gate" / "evidence.json").exists()
+
+
 def test_evaluate_release_gate_fails_closed_for_observability_regression() -> None:
     failures = evaluate_release_gate(
         {
