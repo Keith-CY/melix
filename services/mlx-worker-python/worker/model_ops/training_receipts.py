@@ -312,6 +312,143 @@ def scheduler_kwargs_omitted_receipt(ext: dict[str, str]) -> dict[str, object]:
     }
 
 
+_INPUT_PLACEHOLDER = "{INPUT}"
+_OUTPUT_PLACEHOLDER = "{OUTPUT}"
+_ASSISTANT_MARKERS = (
+    "<|assistant|>",
+    "<|assistant_start|>",
+    "<|start_header_id|>assistant<|end_header_id|>",
+)
+_TWO_EXAMPLE_SEPARATORS = (
+    "{EXAMPLE_SEPARATOR}",
+    "\n---\n",
+    "\n\n---\n\n",
+    "\n### Example 2",
+)
+
+
+def training_template_receipt(
+    ext: dict[str, str],
+    *,
+    dataset_format: str,
+    response_only: bool,
+) -> dict[str, object]:
+    template = ext.get("custom_training_template", "").strip()
+    if not template:
+        return {
+            "template_source": "builtin",
+            "template_path": "",
+            "template_kind": dataset_format,
+            "required_placeholders": [],
+            "assistant_marker_policy": {
+                "required": False,
+                "marker": "",
+                "source": "builtin",
+            },
+        }
+
+    missing_placeholders = [
+        placeholder
+        for placeholder in (_INPUT_PLACEHOLDER, _OUTPUT_PLACEHOLDER)
+        if placeholder not in template
+    ]
+    if missing_placeholders:
+        _raise_invalid_training_template(
+            field="custom_training_template",
+            reason="missing_required_placeholder",
+            received=template,
+            details={
+                "required_placeholders": ",".join((_INPUT_PLACEHOLDER, _OUTPUT_PLACEHOLDER)),
+                "missing_placeholders": ",".join(missing_placeholders),
+            },
+        )
+
+    marker = _resolve_assistant_marker(ext, template)
+    marker_required = response_only
+    if marker_required and not marker:
+        _raise_invalid_training_template(
+            field="assistant_generation_marker",
+            reason="missing_assistant_generation_marker",
+            received=template,
+            details={
+                "required_markers": ",".join(_ASSISTANT_MARKERS),
+            },
+        )
+    _validate_two_example_template(ext, template)
+
+    return {
+        "template_source": "request",
+        "template_path": "custom_training_template",
+        "template_kind": "custom_prompt_completion",
+        "required_placeholders": [_INPUT_PLACEHOLDER, _OUTPUT_PLACEHOLDER],
+        "assistant_marker_policy": {
+            "required": marker_required,
+            "marker": marker,
+            "source": "request" if ext.get("assistant_generation_marker", "").strip() else (
+                "template" if marker else ""
+            ),
+        },
+    }
+
+
+def _validate_two_example_template(ext: dict[str, str], template: str) -> None:
+    raw_example_count = ext.get("template_example_count", "").strip()
+    if raw_example_count != "2":
+        return
+    if any(separator in template for separator in _TWO_EXAMPLE_SEPARATORS):
+        return
+    _raise_invalid_training_template(
+        field="template_example_separator",
+        reason="missing_two_example_separator",
+        received=template,
+        details={
+            "required_placeholders": ",".join((_INPUT_PLACEHOLDER, _OUTPUT_PLACEHOLDER)),
+            "required_separators": ",".join(
+                separator.replace("\n", "\\n") for separator in _TWO_EXAMPLE_SEPARATORS
+            ),
+        },
+    )
+
+
+def _resolve_assistant_marker(ext: dict[str, str], template: str) -> str:
+    requested_marker = ext.get("assistant_generation_marker", "").strip()
+    if requested_marker:
+        if requested_marker not in template:
+            _raise_invalid_training_template(
+                field="assistant_generation_marker",
+                reason="marker_not_found_in_template",
+                received=requested_marker,
+                details={},
+            )
+        return requested_marker
+    for marker in _ASSISTANT_MARKERS:
+        if marker in template:
+            return marker
+    return ""
+
+
+def _raise_invalid_training_template(
+    *,
+    field: str,
+    reason: str,
+    received: str,
+    details: dict[str, str],
+) -> None:
+    from worker.model_ops.errors import ModelOperationError
+
+    raise ModelOperationError(
+        code="invalid_training_template",
+        message=f"Invalid training template: {reason}.",
+        details={
+            "field": field,
+            "reason": reason,
+            "received": received,
+            "http_status": "422",
+            **details,
+        },
+    )
+
+
 def capability_gate_receipt(
     *,
     config: Any,
