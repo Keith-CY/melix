@@ -7232,6 +7232,89 @@ struct DesktopFoundationViewTests {
         #expect(viewModel.lastChatUsageText == "12 prompt • 24 completion")
     }
 
+    @Test("chat artifact preview trigger swaps the right rail from inspector to preview")
+    @MainActor
+    func chatArtifactPreviewTriggerSwapsTheRightRailFromInspectorToPreview() async throws {
+        #expect(
+            DesktopChatArtifactPathDetector.firstPath(
+                in: #"{"path":"/tmp/melix-chat/report.md"}"#
+            ) == "/tmp/melix-chat/report.md"
+        )
+        #expect(
+            DesktopChatArtifactPathDetector.firstPath(
+                in: "artifact=s3://melix-runs/report.jsonl"
+            ) == "s3://melix-runs/report.jsonl"
+        )
+        #expect(
+            DesktopChatArtifactPathDetector.firstPath(
+                in: #"{"path":"/tmp/melix-chat/already-sanitized.json"}"#,
+                isSanitized: true
+            ) == "/tmp/melix-chat/already-sanitized.json"
+        )
+        #expect(
+            DesktopChatArtifactPathDetector.firstPath(
+                in: "artifact=s3://melix-runs/report.jsonl trailing /tmp/later.md",
+                isSanitized: true
+            ) == "s3://melix-runs/report.jsonl"
+        )
+        #expect(
+            DesktopChatArtifactPathDetector.firstPath(
+                in: "plain status text without an artifact path"
+            ) == nil
+        )
+
+        let client = FakeControlPlaneXPCClient()
+        await client.configureChatEvents([
+            .toolCallDelta(
+                callID: "artifact-1",
+                toolName: "filesystem",
+                argumentsFragment: #"{"path":"/tmp/melix-chat/report.md"}"#
+            ),
+            .completed(finishReason: "stop", assistantText: "Report is ready.", reasoningText: ""),
+        ])
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+        viewModel.chatComposerText = "Create an artifact preview"
+
+        await viewModel.submitChatPrompt()
+
+        #expect(viewModel.chatTranscript.contains {
+            $0.kind == .tool && $0.body.contains("/tmp/melix-chat/report.md")
+        })
+        let toolEntry = try #require(viewModel.chatTranscript.first { $0.kind == .tool })
+        var selectedPreview: DesktopChatArtifactPreviewState?
+        let rowView = hostView(DesktopChatTranscriptRowView(entry: toolEntry) { preview in
+            selectedPreview = preview
+        })
+
+        #expect(renderedTextValues(in: rowView).contains("/tmp/melix-chat/report.md"))
+        #expect(accessibilityPressElement(labeled: "Preview Artifact", in: rowView))
+        #expect(selectedPreview?.path == "/tmp/melix-chat/report.md")
+
+        let preview = try #require(selectedPreview)
+        let previewView = hostView(DesktopChatArtifactPreviewRail(preview: preview) {
+            selectedPreview = nil
+        })
+        let renderedTexts = renderedTextValues(in: previewView)
+        let source = try String(
+            contentsOf: repositoryRootForDesktopFoundationTests()
+                .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
+            encoding: .utf8
+        )
+
+        #expect(renderedTexts.contains("Artifact Preview"))
+        #expect(renderedTexts.contains("/tmp/melix-chat/report.md"))
+        #expect(source.contains("DesktopChatTabContentView"))
+        #expect(source.contains("if let artifactPreview"))
+        #expect(source.contains("DesktopChatArtifactPreviewRail(preview: artifactPreview)"))
+        #expect(source.contains("isSanitized: Bool = false"))
+        #expect(source.contains("unicodeScalars.lazy.split"))
+        #expect(source.contains("isSanitized: true"))
+        selectedPreview = nil
+        #expect(selectedPreview == nil)
+    }
+
     @Test("chat tab renders terminal error entries")
     @MainActor
     func chatTabRendersTerminalErrorEntries() async throws {
@@ -7272,6 +7355,364 @@ struct DesktopFoundationViewTests {
         ))
 
         #expect(view.subviews.isEmpty == false)
+    }
+
+    @Test("chat transcript rows expose light workspace role treatments")
+    @MainActor
+    func chatTranscriptRowsExposeLightWorkspaceRoleTreatments() throws {
+        let reasoningView = hostView(DesktopChatTranscriptRowView(
+            entry: DesktopChatTranscriptEntry(
+                id: "reasoning-complete",
+                kind: .reasoning,
+                title: "Reasoning",
+                body: "Checked local runtime state.",
+                detail: "trace"
+            ),
+            isStreaming: false
+        ))
+        let streamingToolView = hostView(DesktopChatTranscriptRowView(
+            entry: DesktopChatTranscriptEntry(
+                id: "tool-streaming",
+                kind: .tool,
+                title: "Tool",
+                body: "{\"path\":\"/tmp/report.md\"}",
+                detail: "filesystem"
+            ),
+            isStreaming: true
+        ))
+        let source = try String(
+            contentsOf: repositoryRootForDesktopFoundationTests()
+                .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
+            encoding: .utf8
+        )
+
+        #expect(renderedTextValues(in: reasoningView).contains("Thought recorded"))
+        #expect(renderedTextValues(in: streamingToolView).contains("Calling tool"))
+        #expect(source.contains("DesktopChatUserBubbleView"))
+        #expect(source.contains("DesktopChatAssistantDocumentView"))
+        #expect(source.contains("DesktopChatActivityBlockView"))
+        #expect(source.contains(".accessibilityElement(children: .combine)"))
+        #expect(source.contains("User message: \\(accessibilityMessageBody)"))
+    }
+
+    @Test("chat activity blocks expose thinking and tool summary decisions")
+    @MainActor
+    func chatActivityBlocksExposeThinkingAndToolSummaryDecisions() throws {
+        let reasoningBlock = DesktopChatActivityBlockView(
+            kind: .reasoning,
+            title: "Reasoning",
+            messageBody: "## Plan\n- Inspect runtime",
+            detail: "",
+            isStreaming: false
+        )
+        let toolBlock = DesktopChatActivityBlockView(
+            kind: .tool,
+            title: "",
+            messageBody: "",
+            detail: "",
+            isStreaming: true
+        )
+        let source = try String(
+            contentsOf: repositoryRootForDesktopFoundationTests()
+                .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
+            encoding: .utf8
+        )
+
+        #expect(reasoningBlock.summaryText == "Thought recorded")
+        #expect(reasoningBlock.systemImageName == "brain.head.profile")
+        #expect(toolBlock.summaryText == "Calling tool")
+        #expect(toolBlock.systemImageName == "hammer")
+        #expect(hostView(reasoningBlock.activityBody).fittingSize.width >= 0)
+        #expect(hostView(toolBlock.activityBody).fittingSize.width >= 0)
+        #expect(source.contains(".onChange(of: isStreaming)"))
+        #expect(source.contains("isExpanded = newValue"))
+    }
+
+    @Test("chat composer runtime controls select server recovery actions")
+    @MainActor
+    func chatComposerRuntimeControlsSelectServerRecoveryActions() {
+        var openedServerCount = 0
+        var startCount = 0
+        var resumeCount = 0
+        var wakeCount = 0
+
+        let baseSession = DesktopServerSessionState(
+            id: "server-session-chat-controls",
+            title: "Chat Runtime",
+            modelID: "melix-dev-text",
+            lifecycle: .running,
+            powerState: .active
+        )
+        let capability = DesktopChatCapabilityRow(
+            id: "text",
+            title: "Interactive Text",
+            modelID: "melix-dev-text",
+            detail: "melix-dev-text • Ready",
+            isReady: true
+        )
+
+        let chooseStrip = DesktopChatRuntimeControlStrip(
+            serverSession: nil,
+            capabilities: [],
+            onOpenServer: { openedServerCount += 1 },
+            onStartServer: { startCount += 1 },
+            onResumeServer: { resumeCount += 1 },
+            onWakeServer: { wakeCount += 1 }
+        )
+        #expect(chooseStrip.recoveryAction?.title == "Choose Server")
+        if let action = chooseStrip.recoveryAction {
+            chooseStrip.perform(action)
+        }
+        chooseStrip.onOpenServer()
+
+        var stoppedSession = baseSession
+        stoppedSession.lifecycle = .stopped
+        stoppedSession.powerState = .stopped
+        let stoppedStrip = DesktopChatRuntimeControlStrip(
+            serverSession: stoppedSession,
+            capabilities: [capability],
+            onOpenServer: { openedServerCount += 1 },
+            onStartServer: { startCount += 1 },
+            onResumeServer: { resumeCount += 1 },
+            onWakeServer: { wakeCount += 1 }
+        )
+        #expect(stoppedStrip.recoveryAction?.title == "Start Server")
+        #expect(stoppedStrip.recoveryAction?.isProminent == true)
+        if let action = stoppedStrip.recoveryAction {
+            stoppedStrip.perform(action)
+        }
+
+        var pausedSession = baseSession
+        pausedSession.lifecycle = .paused
+        let pausedStrip = DesktopChatRuntimeControlStrip(
+            serverSession: pausedSession,
+            capabilities: [capability],
+            onOpenServer: { openedServerCount += 1 },
+            onStartServer: { startCount += 1 },
+            onResumeServer: { resumeCount += 1 },
+            onWakeServer: { wakeCount += 1 }
+        )
+        #expect(pausedStrip.recoveryAction?.title == "Resume Server")
+        if let action = pausedStrip.recoveryAction {
+            pausedStrip.perform(action)
+        }
+
+        var sleepingSession = baseSession
+        sleepingSession.lifecycle = .sleeping
+        sleepingSession.powerState = .deepSleep
+        let sleepingStrip = DesktopChatRuntimeControlStrip(
+            serverSession: sleepingSession,
+            capabilities: [capability],
+            onOpenServer: { openedServerCount += 1 },
+            onStartServer: { startCount += 1 },
+            onResumeServer: { resumeCount += 1 },
+            onWakeServer: { wakeCount += 1 }
+        )
+        #expect(sleepingStrip.recoveryAction?.title == "Wake")
+        #expect(sleepingStrip.recoveryAction?.isProminent == false)
+        if let action = sleepingStrip.recoveryAction {
+            sleepingStrip.perform(action)
+        }
+
+        var errorSession = baseSession
+        errorSession.lifecycle = .error
+        errorSession.lastError = "worker failed"
+        let errorStrip = DesktopChatRuntimeControlStrip(
+            serverSession: errorSession,
+            capabilities: [capability],
+            onOpenServer: { openedServerCount += 1 },
+            onStartServer: { startCount += 1 },
+            onResumeServer: { resumeCount += 1 },
+            onWakeServer: { wakeCount += 1 }
+        )
+        #expect(errorStrip.recoveryAction?.title == "Open Server")
+        #expect(errorStrip.recoveryAction?.isProminent == true)
+        if let action = errorStrip.recoveryAction {
+            errorStrip.perform(action)
+        }
+
+        let runningStrip = DesktopChatRuntimeControlStrip(
+            serverSession: baseSession,
+            capabilities: [capability],
+            onOpenServer: { openedServerCount += 1 },
+            onStartServer: { startCount += 1 },
+            onResumeServer: { resumeCount += 1 },
+            onWakeServer: { wakeCount += 1 }
+        )
+        #expect(runningStrip.recoveryAction == nil)
+        #expect(hostView(runningStrip).subviews.isEmpty == false)
+
+        #expect(openedServerCount == 3)
+        #expect(startCount == 1)
+        #expect(resumeCount == 1)
+        #expect(wakeCount == 1)
+    }
+
+    @Test("chat composer surface routes primary clear and command submit actions")
+    @MainActor
+    func chatComposerSurfaceRoutesPrimaryClearAndCommandSubmitActions() {
+        var submitCount = 0
+        var clearCount = 0
+        var commandDraft = ""
+        var text = "Send this"
+        let composer = DesktopChatComposerSurface(
+            text: Binding(get: { text }, set: { text = $0 }),
+            isSubmitAvailable: true,
+            isSendDisabled: false,
+            isStreaming: false,
+            statusText: "Ready",
+            usageText: "12 prompt • 24 completion",
+            serverSession: DesktopServerSessionState(
+                id: "server-session-compose",
+                title: "Compose Runtime",
+                modelID: "melix-dev-text",
+                lifecycle: .running,
+                powerState: .active
+            ),
+            capabilities: [],
+            onCommandSubmit: { draft in
+                commandDraft = draft
+            },
+            onSubmit: {
+                submitCount += 1
+            },
+            onClear: {
+                clearCount += 1
+            },
+            onOpenServer: {},
+            onStartServer: {},
+            onResumeServer: {},
+            onWakeServer: {}
+        )
+
+        #expect(hostView(composer.primaryActionLabel).fittingSize.width >= 0)
+        composer.primaryAction()
+        composer.onClear()
+        #expect(submitCount == 1)
+        #expect(clearCount == 1)
+        #expect(commandDraft.isEmpty)
+    }
+
+    @Test("chat workspace preview and recovery helpers update shell state")
+    @MainActor
+    func chatWorkspacePreviewAndRecoveryHelpersUpdateShellState() async throws {
+        let client = FakeControlPlaneXPCClient()
+        var snapshot = Melix_Controlplane_V1_ServerSnapshot()
+        snapshot.serverState = .serverReady
+        snapshot.models = [makeMenuBarModelSummary(modelID: "melix-dev-text", state: .modelWarm)]
+        snapshot.runtimeSessions = [
+            makeDesktopRuntimeSession(lifecycleState: .stopped, powerState: .stopped),
+        ]
+        await client.configureSnapshot(snapshot)
+
+        let viewModel = RuntimeViewModel(client: client)
+        await viewModel.start()
+        try bindSelectedChatSessionToPrimaryServer(viewModel)
+
+        var showsSidebar = true
+        var showsInspector = false
+        var previewState: DesktopChatArtifactPreviewState?
+        let toolEntry = DesktopChatTranscriptEntry(
+            id: "tool-preview",
+            kind: .tool,
+            title: "Tool",
+            body: "/tmp/melix-chat/preview.json",
+            detail: ""
+        )
+        let preview = DesktopChatArtifactPreviewState(entry: toolEntry, path: "/tmp/melix-chat/preview.json")
+        let tabContent = DesktopChatTabContentView(
+            viewModel: viewModel,
+            showsSidebar: Binding(get: { showsSidebar }, set: { showsSidebar = $0 }),
+            showsInspector: Binding(get: { showsInspector }, set: { showsInspector = $0 }),
+            artifactPreview: Binding(get: { previewState }, set: { previewState = $0 })
+        )
+
+        tabContent.selectArtifactPreview(preview)
+        #expect(previewState == preview)
+        #expect(showsInspector)
+        tabContent.clearArtifactPreview()
+        #expect(previewState == nil)
+
+        var workspace = DesktopChatSessionWorkspace(
+            viewModel: viewModel,
+            showsSidebar: Binding(get: { showsSidebar }, set: { showsSidebar = $0 }),
+            showsInspector: Binding(get: { showsInspector }, set: { showsInspector = $0 })
+        )
+        workspace.openServerSurface()
+        #expect(viewModel.selectedSurface == .server)
+
+        workspace.startSelectedChatServerSession()
+        try await waitForRecordedClientAction("server.start:server-session-1", client: client)
+
+        workspace.resumeSelectedChatServerSession()
+        try await waitForRecordedClientAction("server.resume:server-session-1", client: client)
+
+        workspace.wakeSelectedChatServerSession()
+        try await waitForRecordedClientAction("server.wake:server-session-1", client: client)
+
+        let emptyClient = FakeControlPlaneXPCClient()
+        var emptySnapshot = Melix_Controlplane_V1_ServerSnapshot()
+        emptySnapshot.serverState = .serverReady
+        await emptyClient.configureSnapshot(emptySnapshot)
+        let emptyViewModel = RuntimeViewModel(client: emptyClient)
+        await emptyViewModel.start()
+        workspace = DesktopChatSessionWorkspace(
+            viewModel: emptyViewModel,
+            showsSidebar: Binding(get: { showsSidebar }, set: { showsSidebar = $0 }),
+            showsInspector: Binding(get: { showsInspector }, set: { showsInspector = $0 })
+        )
+        workspace.startSelectedChatServerSession()
+        try await waitForDesktopFoundationCondition("expected missing bound server to open server surface") {
+            emptyViewModel.selectedSurface == .server
+        }
+    }
+
+    @Test("chat composer streaming guard and server capsule status cover alternate states")
+    @MainActor
+    func chatComposerStreamingGuardAndServerCapsuleStatusCoverAlternateStates() {
+        var submitCount = 0
+        var text = "Streaming draft"
+        let streamingComposer = DesktopChatComposerSurface(
+            text: Binding(get: { text }, set: { text = $0 }),
+            isSubmitAvailable: false,
+            isSendDisabled: true,
+            isStreaming: true,
+            statusText: "Streaming",
+            usageText: "",
+            serverSession: nil,
+            capabilities: [],
+            onCommandSubmit: { _ in },
+            onSubmit: {
+                submitCount += 1
+            },
+            onClear: {},
+            onOpenServer: {},
+            onStartServer: {},
+            onResumeServer: {},
+            onWakeServer: {}
+        )
+        streamingComposer.primaryAction()
+        #expect(submitCount == 0)
+        #expect(hostView(streamingComposer.primaryActionLabel).fittingSize.width >= 0)
+
+        let emptyCapsule = DesktopChatRuntimeServerCapsule(serverSession: nil)
+        var errorSession = DesktopServerSessionState(
+            id: "server-session-error",
+            title: "Broken Runtime",
+            modelID: "melix-dev-text",
+            lifecycle: .error,
+            powerState: .active,
+            lastError: "worker failed"
+        )
+        let errorCapsule = DesktopChatRuntimeServerCapsule(serverSession: errorSession)
+        errorSession.lifecycle = .starting
+        let startingCapsule = DesktopChatRuntimeServerCapsule(serverSession: errorSession)
+
+        #expect(emptyCapsule.serverTitle == "No Server")
+        #expect(emptyCapsule.serverDetail == "Choose Server")
+        #expect(errorCapsule.serverDetail == "Error • melix-dev-text")
+        #expect(errorCapsule.statusColor == MelixDesignTokens.StatusColor.error)
+        #expect(startingCapsule.statusColor == MelixDesignTokens.StatusColor.warning)
     }
 
     @Test("chat transcript auto-scroll snapshot tracks trailing content growth")
@@ -8248,6 +8689,24 @@ struct DesktopFoundationViewTests {
         #expect(source.contains("MelixSectionCard(\"Runtime\")") == false)
         #expect(source.contains("Text(\"request \\(") == false)
         #expect(source.contains("MelixSectionCard(\"Analysis Routes\")") == false)
+    }
+
+    @Test("chat composer owns runtime control strip inside the input surface")
+    @MainActor
+    func chatComposerOwnsRuntimeControlStripInsideTheInputSurface() throws {
+        let source = try String(
+            contentsOf: repositoryRootForDesktopFoundationTests()
+                .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
+            encoding: .utf8
+        )
+
+        #expect(source.contains("DesktopChatComposerSurface"))
+        #expect(source.contains("DesktopChatRuntimeControlStrip"))
+        #expect(source.contains("Label(\"Send\", systemImage: \"paperplane.fill\")"))
+        #expect(source.contains("Label(\"Stop\", systemImage: \"stop.fill\")"))
+        #expect(source.contains("DesktopChatComposerTextView("))
+        #expect(source.contains("DesktopChatArtifactPreviewRail"))
+        #expect(source.contains("DesktopChatArtifactPreviewTrigger"))
     }
 
     @Test("chat composer keyboard policy submits only command return")
@@ -10426,6 +10885,87 @@ private func renderedButtons(in rootView: NSView) -> [NSButton] {
     return buttons
 }
 
+@MainActor
+private func accessibilityPressElement(labeled targetLabel: String, in rootView: NSView) -> Bool {
+    var visitedObjects = Set<ObjectIdentifier>()
+
+    func accessibilityString(_ object: NSObject, selectorName: String) -> String? {
+        let selector = NSSelectorFromString(selectorName)
+        guard object.responds(to: selector),
+              let value = object.perform(selector)?.takeUnretainedValue() as? String
+        else {
+            return nil
+        }
+        return value
+    }
+
+    func accessibilityChildren(_ object: NSObject) -> [Any] {
+        let selector = NSSelectorFromString("accessibilityChildren")
+        guard object.responds(to: selector),
+              let children = object.perform(selector)?.takeUnretainedValue() as? [Any]
+        else {
+            return []
+        }
+        return children
+    }
+
+    func press(_ object: NSObject) -> Bool {
+        if let button = object as? NSButton,
+           button.title == targetLabel || button.accessibilityLabel() == targetLabel {
+            button.performClick(nil)
+            return true
+        }
+        guard accessibilityString(object, selectorName: "accessibilityLabel") == targetLabel else {
+            return false
+        }
+        let selector = NSSelectorFromString("accessibilityPerformPress")
+        guard object.responds(to: selector) else {
+            return false
+        }
+        _ = object.perform(selector)
+        return true
+    }
+
+    func visitAccessibilityElement(_ element: Any) -> Bool {
+        if let view = element as? NSView {
+            return visit(view)
+        }
+        guard let object = element as? NSObject else {
+            return false
+        }
+        let identifier = ObjectIdentifier(object)
+        guard visitedObjects.insert(identifier).inserted else {
+            return false
+        }
+        if press(object) {
+            return true
+        }
+        for child in accessibilityChildren(object) where visitAccessibilityElement(child) {
+            return true
+        }
+        return false
+    }
+
+    func visit(_ view: NSView) -> Bool {
+        let identifier = ObjectIdentifier(view)
+        guard visitedObjects.insert(identifier).inserted else {
+            return false
+        }
+        if press(view) {
+            return true
+        }
+        for subview in view.subviews where visit(subview) {
+            return true
+        }
+        for child in view.accessibilityChildren() ?? [] where visitAccessibilityElement(child) {
+            return true
+        }
+        return false
+    }
+
+    return visit(rootView)
+}
+
 private func expectedDesktopJobTimestampText(_ unixMS: Int64) -> String {
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -10464,6 +11004,23 @@ private func waitForDesktopFoundationCondition(
     }
 
     throw MenuBarTestError(description: description)
+}
+
+private func waitForRecordedClientAction(
+    _ expectedAction: String,
+    client: FakeControlPlaneXPCClient,
+    timeout: Duration = .seconds(2),
+    pollInterval: Duration = .milliseconds(10)
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if await client.recordedActions.contains(expectedAction) {
+            return
+        }
+        try await Task.sleep(for: pollInterval)
+    }
+
+    throw MenuBarTestError(description: "expected recorded client action \(expectedAction)")
 }
 
 private func waitForRecordedCLICommandCount(
