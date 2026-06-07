@@ -1701,6 +1701,111 @@ def test_build_release_gate_report_passes_with_supplied_recovery_evidence(
     assert report["observability"]["probe_policy"]["noop_overhead_threshold_passed"] == 1.0
 
 
+def test_build_release_gate_report_prepares_release_owned_evidence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_root = tmp_path / "repo"
+    jobs_root = tmp_path / "jobs"
+    repo_root.mkdir()
+    monkeypatch.setattr(
+        release_gates_module,
+        "collect_cache_recovery_benchmark_evidence",
+        lambda repo_root: {
+            "metrics": {
+                "bench.recovery.hot_followup_ttft_delta_ms": 12.5,
+                "bench.recovery.cold_l2_hit_rate": 100.0,
+                "bench.recovery.partial_restore_ratio_pct": 80.0,
+            }
+        },
+    )
+    monkeypatch.setattr(
+        release_gates_module,
+        "collect_quantization_benchmark_evidence",
+        lambda jobs_root: {
+            "summary": {"profile_count": 7, "smoke_pass_rate": 100.0},
+            "profiles": {
+                profile_id: {
+                    "job_ms": 1.0,
+                    "artifact_bytes": 670,
+                    "manifest_bytes": 1747,
+                    "calibration_sample_count": 16 if profile_id == "q8" else 32,
+                    "smoke_test_passed": True,
+                }
+                for profile_id in ("q2", "q3", "q4", "q5", "q6", "q7", "q8")
+            },
+        },
+    )
+    monkeypatch.setattr(
+        release_gates_module,
+        "collect_m9_evidence",
+        lambda repo_root, policy=None: _passing_m9_evidence(policy),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        release_gates_module,
+        "collect_lora_path_evidence",
+        lambda jobs_root: _passing_lora_path_evidence(),
+    )
+    monkeypatch.setattr(
+        release_gates_module,
+        "collect_observability_evidence",
+        _passing_observability_evidence,
+    )
+
+    report = build_release_gate_report(
+        repo_root,
+        jobs_root=jobs_root,
+        recovery={
+            "restart_recovery_ms": 420.0,
+            "restart_recovery_success_rate": 100.0,
+        },
+        runtime_core={
+            "multi_model_ready_count": 3.0,
+            "multi_model_request_success_rate": 100.0,
+            "prefill_memory_guard_rejection_count": 1.0,
+            "prefill_memory_guard_success_rate": 100.0,
+        },
+    )
+
+    assert report["passed"] is True
+    assert report["evaluation_compare"]["suite_id"] == "mmlu"
+    assert report["evaluation_compare"]["verdict"] == "improvement"
+    assert report["real_workload"]["summary"]["family_count"] == 3.0
+    assert report["gemma_e4b_profile"]["status"] == "passed"
+    assert (
+        jobs_root
+        / "evaluation"
+        / "runs"
+        / "eval-compare-release-gate-mmlu"
+        / "evaluation-compare-summary.json"
+    ).exists()
+    assert (jobs_root / "real_workload" / "qwen.json").exists()
+    assert (jobs_root / "gemma_e4b_profile_gate" / "evidence.json").exists()
+
+
+def test_prepare_release_gate_evidence_handles_malformed_policy_sections(tmp_path: Path) -> None:
+    jobs_root = tmp_path / "jobs"
+
+    release_gates_module.prepare_release_gate_evidence(
+        jobs_root,
+        policy={
+            "evaluation_compare": {"mmlu": "not-a-dict"},
+            "real_workload": {"families": "not-a-dict"},
+        },
+    )
+
+    assert (
+        jobs_root
+        / "evaluation"
+        / "runs"
+        / "eval-compare-release-gate-mmlu"
+        / "evaluation-compare-summary.json"
+    ).exists()
+    assert (jobs_root / "real_workload" / "qwen.json").exists()
+    assert (jobs_root / "gemma_e4b_profile_gate" / "evidence.json").exists()
+
+
 def test_evaluate_release_gate_fails_closed_for_observability_regression() -> None:
     failures = evaluate_release_gate(
         {

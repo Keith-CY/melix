@@ -282,8 +282,8 @@ phase8-install-smoke:
 	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx python scripts/phase8_install_smoke.py $(PHASE8_INSTALL_SMOKE_ARGS)
 
 phase8-release-gate:
-	mkdir -p "$(UV_CACHE_DIR)"
-	PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx python scripts/phase8_release_gate.py $(PHASE8_RELEASE_GATE_ARGS)
+	@mkdir -p "$(UV_CACHE_DIR)"
+	@PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python" UV_CACHE_DIR="$(UV_CACHE_DIR)" uv run --project services/mlx-worker-python --extra mlx python scripts/phase8_release_gate.py $(PHASE8_RELEASE_GATE_ARGS)
 
 phase8-metrics:
 	mkdir -p "$(UV_CACHE_DIR)"
