@@ -556,6 +556,36 @@ def test_report_matrix_roles_skip_probe_phase_scan_without_phase_rules(
     assert roles == ["serving"]
 
 
+def test_report_matrix_roles_reuses_run_kind_value_set_for_run_kind_only_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    original_report_run_kind_values = report_evidence_gate_module._report_run_kind_values
+
+    def count_report_run_kind_values(runs: list[dict[str, object]]) -> frozenset[str]:
+        nonlocal calls
+        calls += 1
+        return original_report_run_kind_values(runs)
+
+    monkeypatch.setattr(
+        report_evidence_gate_module,
+        "_report_run_kind_values",
+        count_report_run_kind_values,
+    )
+
+    roles = report_evidence_gate_module._report_matrix_roles(
+        {"runs": [{"run_kind": 42}, {"run_kind": "serving_benchmark"}]},
+        {
+            "serving": {"run_kinds": ("serving_benchmark",)},
+            "numeric": {"run_kinds": ("42",)},
+            "missing": {"run_kinds": ("evaluation",)},
+        },
+    )
+
+    assert roles == ["serving", "numeric"]
+    assert calls == 1
+
+
 def test_report_matrix_roles_scans_probe_phases_once_for_phase_rules(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
