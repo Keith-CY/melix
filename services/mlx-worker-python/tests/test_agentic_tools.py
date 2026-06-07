@@ -122,9 +122,11 @@ def test_agentic_tool_runtime_accepts_wildcard_string_status_control() -> None:
 def test_agentic_tool_runtime_covers_edge_payload_branches() -> None:
     run = execute_agentic_tool_calls(
         [
-            {"id": "tuple-1", "name": "text_search", "arguments": {"query": "alpha", "max_results": "bad"}},
+            {"id": "tuple-1", "name": "text_search", "arguments": {"query": "alpha", "max_results": 1}},
+            {"id": "image-1", "name": "image_search", "arguments": {"query": "receipt", "max_results": 1}},
+            {"id": "missing-visit", "name": "visit", "arguments": {"url": "fixture://missing"}},
             {"id": "visit-1", "name": "visit", "arguments": {"url": "fixture://text"}},
-            {"id": "layout-1", "name": "layout_parse", "arguments": {"media_ref": "bad-layout"}},
+            {"id": "layout-1", "name": "layout_parse", "arguments": {"media_ref": "empty-layout"}},
             {
                 "id": "crop-1",
                 "name": "image_crop",
@@ -135,20 +137,43 @@ def test_agentic_tool_runtime_covers_edge_payload_branches() -> None:
             {"id": "zero-1", "name": "local_compute", "arguments": {"code": "1 / 0"}},
         ],
         fixture_context={
-            "text_corpus": {"default": [{"id": "doc-1", "text": "alpha beta"}]},
+            "text_corpus": {
+                "default": [
+                    {"id": "doc-1", "text": "alpha beta"},
+                    {"id": "doc-2", "text": "alpha gamma"},
+                ]
+            },
+            "image_corpus": {
+                "default": [
+                    {"id": "image-1", "media_ref": "img-1", "caption": "receipt front"},
+                    {"id": "image-2", "media_ref": "img-2", "caption": "receipt back"},
+                ]
+            },
             "pages": {"fixture://text": "plain page"},
-            "layouts": {"bad-layout": {"not": "a list"}},
+            "layouts": {"empty-layout": []},
             "crops": {"img-2": "raw crop text"},
         },
     )
 
     assert run.observations[0]["payload"]["result_count"] == 1
-    assert run.observations[1]["payload"]["text"] == "plain page"
-    assert run.observations[2]["payload"]["elements"] == []
-    assert run.observations[3]["payload"]["purpose"] == "read label"
-    assert run.observations[4]["payload"]["result"] == 4
-    assert run.observations[5]["payload"]["result"] == 2
-    assert run.observations[6]["status"] == "failed"
+    assert run.observations[1]["payload"]["results"][0]["media_ref"] == "img-1"
+    assert run.observations[2]["payload"]["found"] is False
+    assert run.observations[3]["payload"]["text"] == "plain page"
+    assert run.observations[4]["payload"]["elements"] == []
+    assert run.observations[5]["payload"]["purpose"] == "read label"
+    assert run.observations[6]["payload"]["result"] == 4
+    assert run.observations[7]["payload"]["result"] == 2
+    assert run.observations[8]["status"] == "failed"
+
+
+def test_agentic_tool_runtime_preserves_non_typed_execution_errors() -> None:
+    run = execute_agentic_tool_calls(
+        [{"id": "syntax-1", "name": "local_compute", "arguments": {"code": "("}}],
+    )
+
+    observation = run.observations[0]
+    assert observation["status"] == "failed"
+    assert "never closed" in observation["payload"]["error"]
 
 
 @pytest.mark.parametrize(
@@ -187,3 +212,130 @@ def test_agentic_tool_runtime_rejects_non_object_status_controls() -> None:
 
     assert run.observations[0]["status"] == "failed"
     assert "status override must be a string or JSON object" in run.observations[0]["payload"]["error"]
+
+
+@pytest.mark.parametrize(
+    ("tool_call", "fixture_context", "expected_field", "expected_source_type", "expected_source_id"),
+    [
+        (
+            {"id": "visit-arg", "name": "visit", "arguments": {"url": {"not": "a url"}}},
+            {},
+            "arguments.url",
+            "tool_argument",
+            "visit-arg",
+        ),
+        (
+            {"id": "visit-page", "name": "visit", "arguments": {"url": "fixture://bad-page"}},
+            {"pages": {"fixture://bad-page": {"title": "Bad Page", "text": ["not", "text"]}}},
+            "pages.text",
+            "retrieved_page",
+            "fixture://bad-page",
+        ),
+        (
+            {"id": "text-doc", "name": "text_search", "arguments": {"query": "melix"}},
+            {"text_corpus": [{"id": "doc-bad", "text": {"nested": "instruction"}}]},
+            "text_corpus.text",
+            "retrieved_document",
+            "doc-bad",
+        ),
+        (
+            {"id": "status-message", "name": "visit", "arguments": {"url": "fixture://page"}},
+            {"tool_status_overrides": {"visit": {"status": "failed", "message": ["not", "text"]}}},
+            "tool_status_overrides.message",
+            "tool_status_override",
+            "visit",
+        ),
+        (
+            {
+                "id": "layout-detail",
+                "name": "layout_parse",
+                "arguments": {"media_ref": "img-1", "detail_level": ["not", "string"]},
+            },
+            {},
+            "arguments.detail_level",
+            "tool_argument",
+            "layout-detail",
+        ),
+        (
+            {
+                "id": "crop-purpose",
+                "name": "image_crop",
+                "arguments": {"media_ref": "img-1", "region": "whole", "purpose": []},
+            },
+            {},
+            "arguments.purpose",
+            "tool_argument",
+            "crop-purpose",
+        ),
+    ],
+)
+def test_agentic_tool_runtime_fails_closed_for_invalid_untrusted_value_types(
+    tool_call: dict[str, object],
+    fixture_context: dict[str, object],
+    expected_field: str,
+    expected_source_type: str,
+    expected_source_id: str,
+) -> None:
+    run = execute_agentic_tool_calls([tool_call], fixture_context=fixture_context)
+
+    observation = run.observations[0]
+    assert observation["status"] == "failed"
+    assert observation["payload"]["reason"] == "invalid_untrusted_input_type"
+    assert observation["payload"]["field"] == expected_field
+    assert observation["payload"]["source_type"] == expected_source_type
+    assert observation["payload"]["source_id"] == expected_source_id
+    assert observation["payload"]["expected_type"] == "str"
+    assert observation["payload"]["corrective_action"] == "Provide this untrusted value as a JSON string."
+    assert run.metrics["agentic_tool.failed_count"] == 1.0
+
+
+@pytest.mark.parametrize(
+    (
+        "tool_call",
+        "fixture_context",
+        "expected_field",
+        "expected_source_type",
+        "expected_source_id",
+        "expected_type",
+        "actual_type",
+    ),
+    [
+        (
+            {"id": "layout-container", "name": "layout_parse", "arguments": {"media_ref": "img-bad"}},
+            {"layouts": {"img-bad": {"not": "layout elements"}}},
+            "layouts",
+            "retrieved_layout",
+            "img-bad",
+            "list",
+            "dict",
+        ),
+        (
+            {"id": "crop-list", "name": "image_crop", "arguments": {"media_ref": "img-2", "region": "whole"}},
+            {"crops": {"img-2#whole": ["not", "crop text"]}},
+            "crops.text",
+            "retrieved_crop",
+            "img-2#whole",
+            "str",
+            "list",
+        ),
+    ],
+)
+def test_agentic_tool_runtime_fails_closed_for_invalid_layout_and_crop_payloads(
+    tool_call: dict[str, object],
+    fixture_context: dict[str, object],
+    expected_field: str,
+    expected_source_type: str,
+    expected_source_id: str,
+    expected_type: str,
+    actual_type: str,
+) -> None:
+    run = execute_agentic_tool_calls([tool_call], fixture_context=fixture_context)
+
+    observation = run.observations[0]
+    assert observation["status"] == "failed"
+    assert observation["payload"]["reason"] == "invalid_untrusted_input_type"
+    assert observation["payload"]["field"] == expected_field
+    assert observation["payload"]["source_type"] == expected_source_type
+    assert observation["payload"]["source_id"] == expected_source_id
+    assert observation["payload"]["expected_type"] == expected_type
+    assert observation["payload"]["actual_type"] == actual_type

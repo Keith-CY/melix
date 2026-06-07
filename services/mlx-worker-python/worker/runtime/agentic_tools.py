@@ -14,7 +14,9 @@ from worker.runtime.tool_registry import ToolDescriptor, ToolRegistry, built_in_
 
 
 class AgenticToolRuntimeError(ValueError):
-    pass
+    def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.details = dict(details or {})
 
 
 @dataclass(frozen=True)
@@ -127,7 +129,10 @@ class DeterministicAgenticToolRuntime:
                 tool_call_id=tool_call_id,
                 arguments=arguments,
             )
-        except (AgenticToolRuntimeError, SyntaxError, TypeError, ValueError) as exc:
+        except AgenticToolRuntimeError as exc:
+            payload = {"error": str(exc), "_status": "failed"}
+            payload.update(exc.details)
+        except (SyntaxError, TypeError, ValueError) as exc:
             payload = {"error": str(exc), "_status": "failed"}
         status = str(payload.pop("_status", "completed"))
         observation = normalize_tool_observation(
@@ -175,17 +180,37 @@ class DeterministicAgenticToolRuntime:
         if status_override is not None:
             return status_override
         if tool_name == "text_search":
-            return _text_search_payload(arguments=arguments, fixture_context=self._fixture_context)
+            return _text_search_payload(
+                arguments=arguments,
+                fixture_context=self._fixture_context,
+                tool_call_id=tool_call_id,
+            )
         if tool_name == "image_search":
-            return _image_search_payload(arguments=arguments, fixture_context=self._fixture_context)
+            return _image_search_payload(
+                arguments=arguments,
+                fixture_context=self._fixture_context,
+                tool_call_id=tool_call_id,
+            )
         if tool_name == "visit":
-            return _visit_payload(arguments=arguments, fixture_context=self._fixture_context)
+            return _visit_payload(
+                arguments=arguments,
+                fixture_context=self._fixture_context,
+                tool_call_id=tool_call_id,
+            )
         if tool_name == "layout_parse":
-            return _layout_parse_payload(arguments=arguments, fixture_context=self._fixture_context)
+            return _layout_parse_payload(
+                arguments=arguments,
+                fixture_context=self._fixture_context,
+                tool_call_id=tool_call_id,
+            )
         if tool_name == "image_crop":
-            return _image_crop_payload(arguments=arguments, fixture_context=self._fixture_context)
+            return _image_crop_payload(
+                arguments=arguments,
+                fixture_context=self._fixture_context,
+                tool_call_id=tool_call_id,
+            )
         if tool_name == "local_compute":
-            return _local_compute_payload(arguments=arguments)
+            return _local_compute_payload(arguments=arguments, tool_call_id=tool_call_id)
         raise AgenticToolRuntimeError(f"Unsupported agentic tool: {tool_name}")
 
 
@@ -253,9 +278,24 @@ def _status_override_payload(
     else:
         raise AgenticToolRuntimeError("Agentic tool status override must be a string or JSON object.")
 
-    raw_status = str(override.get("status", "")).strip().lower()
-    message = str(override.get("message", "")).strip()
-    failure_stage = str(override.get("failure_stage", "")).strip()
+    raw_status = _optional_untrusted_text(
+        override.get("status", ""),
+        field="tool_status_overrides.status",
+        source_type="tool_status_override",
+        source_id=tool_name,
+    ).lower()
+    message = _optional_untrusted_text(
+        override.get("message", ""),
+        field="tool_status_overrides.message",
+        source_type="tool_status_override",
+        source_id=tool_name,
+    )
+    failure_stage = _optional_untrusted_text(
+        override.get("failure_stage", ""),
+        field="tool_status_overrides.failure_stage",
+        source_type="tool_status_override",
+        source_id=tool_name,
+    )
     if raw_status == "timeout":
         return {
             "text": message or f"{tool_name} timed out before producing a result.",
@@ -278,81 +318,171 @@ def _status_override_payload(
     raise AgenticToolRuntimeError(f"Unsupported agentic tool status override: {raw_status or '<empty>'}")
 
 
-def _text_search_payload(*, arguments: dict[str, Any], fixture_context: dict[str, Any]) -> dict[str, Any]:
-    query = str(arguments.get("query", "")).strip()
+def _text_search_payload(
+    *,
+    arguments: dict[str, Any],
+    fixture_context: dict[str, Any],
+    tool_call_id: str,
+) -> dict[str, Any]:
+    query = _tool_argument_text(arguments, "query", tool_call_id=tool_call_id)
     max_results = _positive_int(arguments.get("max_results"), default=3)
-    corpus_ref = str(arguments.get("corpus_ref", "")).strip() or "default"
+    corpus_ref = _optional_tool_argument_text(arguments, "corpus_ref", tool_call_id=tool_call_id) or "default"
     corpus = _context_list(fixture_context, "text_corpus", corpus_ref)
     lowered_query = query.lower()
-    results = [
-        {
-            "id": str(item.get("id", f"doc-{index}")),
-            "text": str(item.get("text", "")),
-        }
-        for index, item in enumerate(corpus, start=1)
-        if lowered_query in str(item.get("text", "")).lower()
-    ][:max_results]
+    results: list[dict[str, str]] = []
+    for index, item in enumerate(corpus, start=1):
+        source_id = _source_id(item.get("id"), default=f"doc-{index}")
+        text = _optional_untrusted_text(
+            item.get("text", ""),
+            field="text_corpus.text",
+            source_type="retrieved_document",
+            source_id=source_id,
+            strip=False,
+        )
+        if lowered_query in text.lower():
+            results.append({"id": source_id, "text": text})
+        if len(results) >= max_results:
+            break
     return {"query": query, "corpus_ref": corpus_ref, "results": results, "result_count": len(results)}
 
 
-def _image_search_payload(*, arguments: dict[str, Any], fixture_context: dict[str, Any]) -> dict[str, Any]:
-    query = str(arguments.get("query", "")).strip()
+def _image_search_payload(
+    *,
+    arguments: dict[str, Any],
+    fixture_context: dict[str, Any],
+    tool_call_id: str,
+) -> dict[str, Any]:
+    query = _tool_argument_text(arguments, "query", tool_call_id=tool_call_id)
     max_results = _positive_int(arguments.get("max_results"), default=3)
-    corpus_ref = str(arguments.get("corpus_ref", "")).strip() or "default"
+    corpus_ref = _optional_tool_argument_text(arguments, "corpus_ref", tool_call_id=tool_call_id) or "default"
     corpus = _context_list(fixture_context, "image_corpus", corpus_ref)
     lowered_query = query.lower()
-    results = [
-        {
-            "id": str(item.get("id", f"image-{index}")),
-            "media_ref": str(item.get("media_ref", item.get("uri", ""))),
-            "caption": str(item.get("caption", "")),
-        }
-        for index, item in enumerate(corpus, start=1)
-        if lowered_query in str(item.get("caption", "")).lower()
-    ][:max_results]
+    results: list[dict[str, str]] = []
+    for index, item in enumerate(corpus, start=1):
+        source_id = _source_id(item.get("id"), default=f"image-{index}")
+        caption = _optional_untrusted_text(
+            item.get("caption", ""),
+            field="image_corpus.caption",
+            source_type="retrieved_image",
+            source_id=source_id,
+            strip=False,
+        )
+        if lowered_query in caption.lower():
+            media_ref = _optional_untrusted_text(
+                item.get("media_ref", item.get("uri", "")),
+                field="image_corpus.media_ref",
+                source_type="retrieved_image",
+                source_id=source_id,
+            )
+            results.append({"id": source_id, "media_ref": media_ref, "caption": caption})
+        if len(results) >= max_results:
+            break
     return {"query": query, "corpus_ref": corpus_ref, "results": results, "result_count": len(results)}
 
 
-def _visit_payload(*, arguments: dict[str, Any], fixture_context: dict[str, Any]) -> dict[str, Any]:
-    url = str(arguments.get("url", "")).strip()
+def _visit_payload(
+    *,
+    arguments: dict[str, Any],
+    fixture_context: dict[str, Any],
+    tool_call_id: str,
+) -> dict[str, Any]:
+    url = _tool_argument_text(arguments, "url", tool_call_id=tool_call_id)
     pages = _context_mapping(fixture_context, "pages")
     page = pages.get(url)
     if isinstance(page, dict):
-        return {"url": url, "title": str(page.get("title", "")), "text": str(page.get("text", ""))}
-    return {"url": url, "text": str(page or ""), "found": bool(page)}
-
-
-def _layout_parse_payload(*, arguments: dict[str, Any], fixture_context: dict[str, Any]) -> dict[str, Any]:
-    media_ref = str(arguments.get("media_ref", "")).strip()
-    layouts = _context_mapping(fixture_context, "layouts")
-    layout = layouts.get(media_ref, [])
-    elements = layout if isinstance(layout, list) else []
+        return {
+            "url": url,
+            "title": _optional_untrusted_text(
+                page.get("title", ""),
+                field="pages.title",
+                source_type="retrieved_page",
+                source_id=url,
+                strip=False,
+            ),
+            "text": _optional_untrusted_text(
+                page.get("text", ""),
+                field="pages.text",
+                source_type="retrieved_page",
+                source_id=url,
+                strip=False,
+            ),
+        }
+    if page is None:
+        return {"url": url, "text": "", "found": False}
     return {
-        "media_ref": media_ref,
-        "detail_level": str(arguments.get("detail_level", "") or "blocks"),
-        "elements": elements,
-        "element_count": len(elements),
+        "url": url,
+        "text": _optional_untrusted_text(
+            page,
+            field="pages.text",
+            source_type="retrieved_page",
+            source_id=url,
+            strip=False,
+        ),
+        "found": True,
     }
 
 
-def _image_crop_payload(*, arguments: dict[str, Any], fixture_context: dict[str, Any]) -> dict[str, Any]:
-    media_ref = str(arguments.get("media_ref", "")).strip()
-    region = str(arguments.get("region", "")).strip()
+def _layout_parse_payload(
+    *,
+    arguments: dict[str, Any],
+    fixture_context: dict[str, Any],
+    tool_call_id: str,
+) -> dict[str, Any]:
+    media_ref = _tool_argument_text(arguments, "media_ref", tool_call_id=tool_call_id)
+    layouts = _context_mapping(fixture_context, "layouts")
+    layout = layouts.get(media_ref, [])
+    if not isinstance(layout, list):
+        raise _invalid_untrusted_value_type(
+            field="layouts",
+            source_type="retrieved_layout",
+            source_id=media_ref,
+            expected_type="list",
+            actual_type=type(layout).__name__,
+        )
+    detail_level = (
+        _optional_tool_argument_text(arguments, "detail_level", tool_call_id=tool_call_id)
+        or "blocks"
+    )
+    return {
+        "media_ref": media_ref,
+        "detail_level": detail_level,
+        "elements": layout,
+        "element_count": len(layout),
+    }
+
+
+def _image_crop_payload(
+    *,
+    arguments: dict[str, Any],
+    fixture_context: dict[str, Any],
+    tool_call_id: str,
+) -> dict[str, Any]:
+    media_ref = _tool_argument_text(arguments, "media_ref", tool_call_id=tool_call_id)
+    region = _tool_argument_text(arguments, "region", tool_call_id=tool_call_id)
     crops = _context_mapping(fixture_context, "crops")
     crop_key = f"{media_ref}#{region}"
     crop = crops.get(crop_key, crops.get(media_ref, {}))
     if isinstance(crop, dict):
         payload = dict(crop)
     else:
-        payload = {"text": str(crop)}
+        payload = {
+            "text": _optional_untrusted_text(
+                crop,
+                field="crops.text",
+                source_type="retrieved_crop",
+                source_id=crop_key if crop_key in crops else media_ref,
+                strip=False,
+            )
+        }
     payload.update({"media_ref": media_ref, "region": region})
-    if arguments.get("purpose"):
-        payload["purpose"] = str(arguments.get("purpose"))
+    purpose = _optional_tool_argument_text(arguments, "purpose", tool_call_id=tool_call_id)
+    if purpose:
+        payload["purpose"] = purpose
     return payload
 
 
-def _local_compute_payload(*, arguments: dict[str, Any]) -> dict[str, Any]:
-    code = str(arguments.get("code", "")).strip()
+def _local_compute_payload(*, arguments: dict[str, Any], tool_call_id: str) -> dict[str, Any]:
+    code = _tool_argument_text(arguments, "code", tool_call_id=tool_call_id)
     if code == "timeout":
         return {"text": "local_compute timed out before producing a result.", "_status": "timeout"}
     result = _safe_arithmetic_eval(code)
@@ -397,6 +527,71 @@ def _context_list(fixture_context: dict[str, Any], key: str, corpus_ref: str) ->
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
+
+
+def _tool_argument_text(arguments: dict[str, Any], name: str, *, tool_call_id: str) -> str:
+    return _optional_untrusted_text(
+        arguments.get(name, ""),
+        field=f"arguments.{name}",
+        source_type="tool_argument",
+        source_id=tool_call_id,
+    )
+
+
+def _optional_tool_argument_text(arguments: dict[str, Any], name: str, *, tool_call_id: str) -> str:
+    return _optional_untrusted_text(
+        arguments.get(name, ""),
+        field=f"arguments.{name}",
+        source_type="tool_argument",
+        source_id=tool_call_id,
+    )
+
+
+def _optional_untrusted_text(
+    value: Any,
+    *,
+    field: str,
+    source_type: str,
+    source_id: str,
+    strip: bool = True,
+) -> str:
+    if value in (None, ""):
+        return ""
+    if not isinstance(value, str):
+        raise _invalid_untrusted_value_type(
+            field=field,
+            source_type=source_type,
+            source_id=source_id,
+            expected_type="str",
+            actual_type=type(value).__name__,
+        )
+    return value.strip() if strip else value
+
+
+def _invalid_untrusted_value_type(
+    *,
+    field: str,
+    source_type: str,
+    source_id: str,
+    expected_type: str,
+    actual_type: str,
+) -> AgenticToolRuntimeError:
+    return AgenticToolRuntimeError(
+        f"Invalid untrusted value type for {field}: expected {expected_type}, got {actual_type}.",
+        details={
+            "reason": "invalid_untrusted_input_type",
+            "field": field,
+            "source_type": source_type,
+            "source_id": source_id,
+            "expected_type": expected_type,
+            "actual_type": actual_type,
+            "corrective_action": "Provide this untrusted value as a JSON string.",
+        },
+    )
+
+
+def _source_id(value: Any, *, default: str) -> str:
+    return value.strip() if isinstance(value, str) and value.strip() else default
 
 
 def _positive_int(value: object, *, default: int) -> int:
