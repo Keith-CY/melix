@@ -111,30 +111,76 @@ def _trajectory_provenance_from_snapshot_manifest(
 ) -> dict[str, Any]:
     manifest_get = manifest.get
     to_str = _STR
-    if (
-        to_str(manifest_get("format", "")).strip() != "agentic_tool_trace"
-        and not to_str(manifest_get("trajectory_trace_digest", "")).strip()
-    ):
-        return {}
+    format_value = manifest_get("format", "")
+    if format_value != "agentic_tool_trace":
+        if (
+            to_str(format_value).strip() != "agentic_tool_trace"
+            and not to_str(manifest_get("trajectory_trace_digest", "")).strip()
+        ):
+            return {}
 
     provenance: dict[str, Any] = {}
-    dataset_id = to_str(
-        manifest_get("source_dataset_id") or manifest_get("dataset_id") or ""
-    ).strip()
+    dataset_id_value = manifest_get("source_dataset_id") or manifest_get("dataset_id") or ""
+    if type(dataset_id_value) is str:
+        dataset_id = (
+            dataset_id_value
+            if dataset_id_value
+            and dataset_id_value[0] > " "
+            and dataset_id_value[-1] > " "
+            else dataset_id_value.strip()
+        )
+    else:
+        dataset_id = to_str(dataset_id_value).strip()
     if dataset_id:
         provenance["trajectory_dataset_id"] = dataset_id
-    dataset_version = to_str(manifest_get("version") or "").strip()
+    dataset_version_value = manifest_get("version") or ""
+    if type(dataset_version_value) is str:
+        dataset_version = (
+            dataset_version_value
+            if dataset_version_value
+            and dataset_version_value[0] > " "
+            and dataset_version_value[-1] > " "
+            else dataset_version_value.strip()
+        )
+    else:
+        dataset_version = to_str(dataset_version_value).strip()
     if dataset_version:
         provenance["trajectory_dataset_version"] = dataset_version
-    schema_version = to_str(
-        manifest_get("trajectory_schema_version") or "melix.agentic_tool_trace.v1"
-    ).strip()
+    schema_version_value = manifest_get("trajectory_schema_version") or "melix.agentic_tool_trace.v1"
+    if type(schema_version_value) is str:
+        schema_version = (
+            schema_version_value
+            if schema_version_value
+            and schema_version_value[0] > " "
+            and schema_version_value[-1] > " "
+            else schema_version_value.strip()
+        )
+    else:
+        schema_version = to_str(schema_version_value).strip()
     if schema_version:
         provenance["trajectory_schema_version"] = schema_version
-    split = to_str(manifest_get("trajectory_split") or "train").strip()
+    split_value = manifest_get("trajectory_split") or "train"
+    if type(split_value) is str:
+        split = (
+            split_value
+            if split_value and split_value[0] > " " and split_value[-1] > " "
+            else split_value.strip()
+        )
+    else:
+        split = to_str(split_value).strip()
     if split:
         provenance["trajectory_split"] = split
-    trace_digest = to_str(manifest_get("trajectory_trace_digest") or "").strip()
+    trace_digest_value = manifest_get("trajectory_trace_digest") or ""
+    if type(trace_digest_value) is str:
+        trace_digest = (
+            trace_digest_value
+            if trace_digest_value
+            and trace_digest_value[0] > " "
+            and trace_digest_value[-1] > " "
+            else trace_digest_value.strip()
+        )
+    else:
+        trace_digest = to_str(trace_digest_value).strip()
     if trace_digest:
         provenance["trajectory_trace_digest"] = trace_digest
     if snapshot_manifest_path is not None:

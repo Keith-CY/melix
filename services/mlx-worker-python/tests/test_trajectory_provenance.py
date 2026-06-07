@@ -240,6 +240,33 @@ def test_load_trajectory_provenance_from_snapshot_manifest_reads_bytes(
     }
 
 
+def test_load_trajectory_provenance_from_snapshot_manifest_trims_string_fields(
+    tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_bytes(
+        json.dumps(
+            {
+                "format": " agentic_tool_trace ",
+                "source_dataset_id": " agentic-snapshot ",
+                "version": " 2026-05-25 ",
+                "trajectory_schema_version": " melix.agentic_tool_trace.v1 ",
+                "trajectory_split": " train ",
+                "trajectory_trace_digest": " abc123 ",
+            }
+        ).encode("utf-8")
+    )
+
+    assert load_trajectory_provenance_from_snapshot_manifest(manifest_path) == {
+        "trajectory_dataset_id": "agentic-snapshot",
+        "trajectory_dataset_version": "2026-05-25",
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_snapshot_manifest_path": str(manifest_path),
+        "trajectory_split": "train",
+        "trajectory_trace_digest": "abc123",
+    }
+
+
 def test_load_trajectory_provenance_from_snapshot_manifest_accepts_dict_subclass(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -296,6 +323,32 @@ def test_trajectory_provenance_helpers_ignore_empty_or_unrelated_inputs(
     ) == {
         "trajectory_schema_version": "melix.agentic_tool_trace.v1",
         "trajectory_split": "train",
+        "trajectory_trace_digest": "abc123",
+    }
+    assert trajectory_provenance_from_snapshot_manifest(
+        {
+            "format": 0,
+            "trajectory_trace_digest": 123,
+        }
+    ) == {
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_split": "train",
+        "trajectory_trace_digest": "123",
+    }
+    assert trajectory_provenance_from_snapshot_manifest(
+        {
+            "format": "agentic_tool_trace",
+            "source_dataset_id": 123,
+            "version": 456,
+            "trajectory_schema_version": 789,
+            "trajectory_split": 10,
+            "trajectory_trace_digest": "abc123",
+        }
+    ) == {
+        "trajectory_dataset_id": "123",
+        "trajectory_dataset_version": "456",
+        "trajectory_schema_version": "789",
+        "trajectory_split": "10",
         "trajectory_trace_digest": "abc123",
     }
     assert (
