@@ -710,6 +710,14 @@ def test_next_cursor_from_link_accepts_cursor_at_query_start() -> None:
     assert hub_catalog_module._next_cursor_from_link(link_header) == "page/start"
 
 
+def test_next_cursor_from_link_preserves_utf8_and_malformed_percent_decoding() -> None:
+    unicode_header = '<https://huggingface.co/api/models?cursor=page%E2%9C%93+ok>; rel="next"'
+    malformed_header = '<https://huggingface.co/api/models?cursor=page%ZZ+ok>; rel="next"'
+
+    assert hub_catalog_module._next_cursor_from_link(unicode_header) == "page✓ ok"
+    assert hub_catalog_module._next_cursor_from_link(malformed_header) == "page%ZZ ok"
+
+
 def test_next_cursor_from_link_ignores_rel_marker_inside_previous_url() -> None:
     link_header = (
         '<https://huggingface.co/api/models?cursor=prev&note=rel%3D%22next%22>; rel="prev", '

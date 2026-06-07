@@ -28,6 +28,30 @@ _SIZE_HINT_MULTIPLIERS = {
 _BARE_SIZE_HINT_RE = re.compile(r"(?:model\s+size\s*[:|]?\s*)?(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
 _EXPLICIT_SIZE_HINT_RE = re.compile(r"\bmodel\s+size\s*[:|]?\s*(\d+(?:\.\d+)?)\s*(kb|mb|gb)\b", re.IGNORECASE)
 _NEXT_LINK_REL_MARKER = 'rel="next"'
+_URL_HEX_DIGITS = {
+    "0": 0,
+    "1": 1,
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7,
+    "8": 8,
+    "9": 9,
+    "a": 10,
+    "b": 11,
+    "c": 12,
+    "d": 13,
+    "e": 14,
+    "f": 15,
+    "A": 10,
+    "B": 11,
+    "C": 12,
+    "D": 13,
+    "E": 14,
+    "F": 15,
+}
 _LOWERCASE_WEIGHT_OR_CONFIG_SUFFIXES = (".safetensors", ".npz", ".gguf", "config.json", "tokenizer.json")
 @dataclass(frozen=True, slots=True)
 class HubModelSummaryRecord:
@@ -289,7 +313,24 @@ def _next_cursor_from_link(link_header: str) -> str:
         if url_start < 0:
             search_start = relation_start + marker_len
             continue
-        return _cursor_query_value(link_header, url_start + 1, url_end)
+        query_start = link_header.rfind("?", url_start + 1, url_end)
+        if query_start < 0:
+            return ""
+        query_end = link_header.find("#", query_start + 1, url_end)
+        if query_end < 0:
+            query_end = url_end
+        value_start = query_start + 1
+        if link_header.startswith("cursor=", value_start, query_end):
+            value_start += len("cursor=")
+        else:
+            cursor_start = link_header.find("&cursor=", value_start, query_end)
+            if cursor_start < 0:
+                return ""
+            value_start = cursor_start + len("&cursor=")
+        value_end = link_header.find("&", value_start, query_end)
+        if value_end < 0:
+            value_end = query_end
+        return _unquote_plus_ascii_cursor(link_header[value_start:value_end])
 
 
 def _cursor_query_value(url: str, start: int, end: int) -> str:
@@ -312,7 +353,36 @@ def _cursor_query_value(url: str, start: int, end: int) -> str:
     value_end = url.find("&", value_start, query_end)
     if value_end < 0:
         value_end = query_end
-    return unquote_plus(url[value_start:value_end])
+    return _unquote_plus_ascii_cursor(url[value_start:value_end])
+
+
+def _unquote_plus_ascii_cursor(value: str) -> str:
+    if "%" not in value and "+" not in value:
+        return value
+    hex_digits = _URL_HEX_DIGITS
+    output: list[str] = []
+    append = output.append
+    index = 0
+    value_len = len(value)
+    while index < value_len:
+        char = value[index]
+        if char == "+":
+            append(" ")
+            index += 1
+            continue
+        if char == "%" and index + 2 < value_len:
+            high = hex_digits.get(value[index + 1])
+            low = hex_digits.get(value[index + 2])
+            if high is not None and low is not None:
+                codepoint = (high << 4) + low
+                if codepoint > 0x7F:
+                    return unquote_plus(value)
+                append(chr(codepoint))
+                index += 3
+                continue
+        append(char)
+        index += 1
+    return "".join(output)
 
 
 def _string(value: Any) -> str:
