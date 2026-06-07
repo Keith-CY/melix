@@ -166,6 +166,31 @@ def test_report_evidence_gate_slowest_probe_phases_keeps_top_five_order() -> Non
     assert {row["side"] for row in rows} == {"candidate"}
 
 
+def test_report_evidence_gate_slowest_probe_phases_accepts_typed_durations() -> None:
+    report: dict[str, object] = {
+        "probe_summary": {
+            "baseline": {
+                "slowest_phases": [
+                    {"phase": "float", "duration_ms": 4.0},
+                    {"phase": "string", "duration_ms": "7.5"},
+                    {"phase": "int", "duration_ms": 6},
+                ]
+            },
+            "candidate": {
+                "slowest_phases": [
+                    {"phase": "empty", "duration_ms": ""},
+                    {"phase": "missing"},
+                    {"phase": "none", "duration_ms": None},
+                ]
+            },
+        }
+    }
+
+    rows = report_evidence_gate_module._slowest_probe_phases(report)
+
+    assert [row["phase"] for row in rows] == ["string", "int", "float", "empty", "missing"]
+
+
 def test_report_evidence_gate_run_kind_rules_accept_non_tuple_iterables() -> None:
     assert report_evidence_gate_module._rule_matches_report(
         rule={"run_kinds": {"evaluation", "serving_benchmark"}},
