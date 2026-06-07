@@ -125,10 +125,64 @@ enum DesktopChatComposerReturnCommandPolicy {
     }
 }
 
+struct DesktopChatArtifactPreviewState: Equatable, Identifiable {
+    let id: String
+    let entryID: String
+    let title: String
+    let path: String
+    let sourceKind: DesktopChatTranscriptEntry.Kind
+
+    init(entry: DesktopChatTranscriptEntry, path: String) {
+        self.id = "\(entry.id)-\(path)"
+        self.entryID = entry.id
+        self.title = entry.title.isEmpty ? "Chat Artifact" : entry.title
+        self.path = path
+        self.sourceKind = entry.kind
+    }
+}
+
+enum DesktopChatArtifactPathDetector {
+    static func firstPath(in text: String) -> String? {
+        let sanitizedText = RichOutputSanitizer.sanitized(text)
+        let separators = CharacterSet.whitespacesAndNewlines
+            .union(CharacterSet(charactersIn: "\"'`()[]{}<>,="))
+        return sanitizedText
+            .components(separatedBy: separators)
+            .compactMap { token in
+                normalizedArtifactPath(token)
+            }
+            .first
+    }
+
+    private static func normalizedArtifactPath(_ token: String) -> String? {
+        let trimmed = token.trimmingCharacters(in: CharacterSet(charactersIn: ".:;"))
+        guard trimmed.hasPrefix("/") || trimmed.hasPrefix("s3://") || trimmed.hasPrefix("lakefs://") else {
+            return nil
+        }
+        let lowercased = trimmed.lowercased()
+        guard lowercased.contains("/tmp/")
+            || lowercased.contains(".artifact")
+            || lowercased.hasSuffix(".md")
+            || lowercased.hasSuffix(".json")
+            || lowercased.hasSuffix(".jsonl")
+            || lowercased.hasSuffix(".csv")
+            || lowercased.hasSuffix(".html")
+            || lowercased.hasSuffix(".png")
+            || lowercased.hasSuffix(".jpg")
+            || lowercased.hasSuffix(".jpeg")
+            || lowercased.hasSuffix(".gif")
+        else {
+            return nil
+        }
+        return trimmed
+    }
+}
+
 struct DesktopChatTabView: View {
     let viewModel: RuntimeViewModel
     @Binding private var showsSidebar: Bool
     @Binding private var showsInspector: Bool
+    @State private var artifactPreview: DesktopChatArtifactPreviewState? = nil
 
     init(
         viewModel: RuntimeViewModel,
@@ -151,6 +205,22 @@ struct DesktopChatTabView: View {
     }
 
     var body: some View {
+        DesktopChatTabContentView(
+            viewModel: viewModel,
+            showsSidebar: $showsSidebar,
+            showsInspector: $showsInspector,
+            artifactPreview: $artifactPreview
+        )
+    }
+}
+
+struct DesktopChatTabContentView: View {
+    let viewModel: RuntimeViewModel
+    @Binding var showsSidebar: Bool
+    @Binding var showsInspector: Bool
+    @Binding var artifactPreview: DesktopChatArtifactPreviewState?
+
+    var body: some View {
         HStack(spacing: 0) {
             DesktopWorkspacePaneSlot(
                 role: .sidebar,
@@ -163,7 +233,10 @@ struct DesktopChatTabView: View {
             DesktopChatSessionWorkspace(
                 viewModel: viewModel,
                 showsSidebar: $showsSidebar,
-                showsInspector: $showsInspector
+                showsInspector: $showsInspector,
+                onPreviewArtifact: { preview in
+                    selectArtifactPreview(preview)
+                }
             )
             .frame(maxWidth: DesktopChatLayoutMetrics.readableWorkspaceMaxWidth, maxHeight: .infinity)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -173,9 +246,24 @@ struct DesktopChatTabView: View {
                 isVisible: showsInspector,
                 idealWidth: DesktopChatLayoutMetrics.inspectorIdealWidth
             ) {
-                DesktopChatSessionInspector(viewModel: viewModel)
+                if let artifactPreview {
+                    DesktopChatArtifactPreviewRail(preview: artifactPreview) {
+                        clearArtifactPreview()
+                    }
+                } else {
+                    DesktopChatSessionInspector(viewModel: viewModel)
+                }
             }
         }
+    }
+
+    func selectArtifactPreview(_ preview: DesktopChatArtifactPreviewState) {
+        artifactPreview = preview
+        showsInspector = true
+    }
+
+    func clearArtifactPreview() {
+        artifactPreview = nil
     }
 }
 
@@ -256,6 +344,7 @@ struct DesktopChatSessionWorkspace: View {
     let viewModel: RuntimeViewModel
     @Binding var showsSidebar: Bool
     @Binding var showsInspector: Bool
+    var onPreviewArtifact: (DesktopChatArtifactPreviewState) -> Void = { _ in }
 
     private var isSendDisabled: Bool {
         viewModel.chatComposerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -265,6 +354,40 @@ struct DesktopChatSessionWorkspace: View {
 
     private func submitChatPrompt() {
         Task { await viewModel.submitChatPrompt() }
+    }
+
+    func openServerSurface() {
+        viewModel.selectSurface(.server)
+    }
+
+    func startSelectedChatServerSession() {
+        Task {
+            guard let serverSessionID = viewModel.selectedChatServerSession?.id else {
+                openServerSurface()
+                return
+            }
+            await viewModel.startServerSession(id: serverSessionID)
+        }
+    }
+
+    func resumeSelectedChatServerSession() {
+        Task {
+            guard let serverSessionID = viewModel.selectedChatServerSession?.id else {
+                openServerSurface()
+                return
+            }
+            await viewModel.resumeServerSession(id: serverSessionID)
+        }
+    }
+
+    func wakeSelectedChatServerSession() {
+        Task {
+            guard let serverSessionID = viewModel.selectedChatServerSession?.id else {
+                openServerSurface()
+                return
+            }
+            await viewModel.wakeServerSession(id: serverSessionID)
+        }
     }
 
     private var chatTranscriptScrollSnapshot: DesktopChatTranscriptAutoScroll.Snapshot {
@@ -306,51 +429,7 @@ struct DesktopChatSessionWorkspace: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             if let notice = viewModel.selectedChatServerSession?.chatWorkspaceNoticeState {
-                VStack(alignment: .leading, spacing: 10) {
-                    DesktopInlineNoticeCardView(notice: notice)
-                    HStack {
-                        switch viewModel.selectedChatServerSession?.lifecycle {
-                        case .paused:
-                            Button("Resume Server") {
-                                Task {
-                                    if let serverSessionID = viewModel.selectedChatServerSession?.id {
-                                        await viewModel.resumeServerSession(id: serverSessionID)
-                                    }
-                                }
-                            }
-                            .buttonStyle(.borderedProminent)
-                        case .sleeping:
-                            Button("Wake Now") {
-                                Task {
-                                    if let serverSessionID = viewModel.selectedChatServerSession?.id {
-                                        await viewModel.wakeServerSession(id: serverSessionID)
-                                    }
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                        case .starting, .stopping:
-                            EmptyView()
-                        case .stopped, .draft, .unavailable:
-                            Button("Start Server") {
-                                Task {
-                                    if let serverSessionID = viewModel.selectedChatServerSession?.id {
-                                        await viewModel.startServerSession(id: serverSessionID)
-                                    }
-                                }
-                            }
-                            .buttonStyle(.borderedProminent)
-                        case .error:
-                            EmptyView()
-                        case .running, .none:
-                            EmptyView()
-                        }
-
-                        Button("Open Server") {
-                            viewModel.selectSurface(.server)
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                }
+                DesktopInlineNoticeCardView(notice: notice)
             }
 
             ScrollViewReader { proxy in
@@ -362,7 +441,8 @@ struct DesktopChatSessionWorkspace: View {
                                     entry: entry,
                                     isPending: viewModel.isPendingAssistantTranscriptEntry(entry),
                                     isStreaming: viewModel.isStreamingAssistantTranscriptEntry(entry),
-                                    pendingStatusText: viewModel.chatStatusText
+                                    pendingStatusText: viewModel.chatStatusText,
+                                    onPreviewArtifact: onPreviewArtifact
                                 )
                                 .id(entry.id)
                             }
@@ -382,52 +462,30 @@ struct DesktopChatSessionWorkspace: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                DesktopChatComposerTextView(
-                    text: Binding(
-                        get: { viewModel.chatComposerText },
-                        set: { viewModel.chatComposerText = $0 }
-                    ),
-                    isSubmitAvailable: viewModel.isChatStreaming == false
-                    && viewModel.selectedChatServerSession?.isInteractiveReady == true,
-                    onCommandSubmit: { draft in
-                        viewModel.chatComposerText = draft
-                        submitChatPrompt()
-                    }
-                )
-                .frame(height: DesktopChatLayoutMetrics.composerMinHeight)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.lg)
-                        .fill(Color(nsColor: .textBackgroundColor).opacity(0.75))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.lg)
-                        .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.interactive), lineWidth: 1)
-                )
-
-                HStack {
-                    Text(viewModel.chatStatusText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    if !viewModel.lastChatUsageText.isEmpty {
-                        Text(viewModel.lastChatUsageText)
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                    Button("Clear") {
-                        viewModel.clearChatTranscript()
-                    }
-                    .buttonStyle(.bordered)
-                    Button("Send \u{2318}\u{21A9}") {
-                        submitChatPrompt()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isSendDisabled)
-                }
-            }
+            DesktopChatComposerSurface(
+                text: Binding(
+                    get: { viewModel.chatComposerText },
+                    set: { viewModel.chatComposerText = $0 }
+                ),
+                isSubmitAvailable: viewModel.isChatStreaming == false
+                && viewModel.selectedChatServerSession?.isInteractiveReady == true,
+                isSendDisabled: isSendDisabled,
+                isStreaming: viewModel.isChatStreaming,
+                statusText: viewModel.chatStatusText,
+                usageText: viewModel.lastChatUsageText,
+                serverSession: viewModel.selectedChatServerSession,
+                capabilities: viewModel.chatCapabilities,
+                onCommandSubmit: { draft in
+                    viewModel.chatComposerText = draft
+                    submitChatPrompt()
+                },
+                onSubmit: submitChatPrompt,
+                onClear: viewModel.clearChatTranscript,
+                onOpenServer: openServerSurface,
+                onStartServer: startSelectedChatServerSession,
+                onResumeServer: resumeSelectedChatServerSession,
+                onWakeServer: wakeSelectedChatServerSession
+            )
         }
         .padding(16)
     }
@@ -493,6 +551,70 @@ struct DesktopChatSessionInspector: View {
         ]
         .compactMap { $0 }
         .filter { $0.isEmpty == false }
+    }
+}
+
+struct DesktopChatArtifactPreviewRail: View {
+    let preview: DesktopChatArtifactPreviewState
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Artifact Preview")
+                    .font(.headline)
+                    .textSelection(.enabled)
+                Spacer()
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .help("Close Preview")
+                .accessibilityLabel("Close Preview")
+            }
+
+            GroupBox("Source") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(preview.title)
+                        .font(.caption.weight(.semibold))
+                    Text(preview.sourceKind.rawValue.capitalized)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(preview.entryID)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            GroupBox("Path") {
+                Text(preview.path)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(5)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            GroupBox("Preview") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.title3)
+                        .foregroundStyle(MelixDesignTokens.accent)
+                    Text("Ready for artifact preview.")
+                        .font(.caption.weight(.semibold))
+                    Text("Open the referenced output from the owning workflow for full inspection.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(20)
     }
 }
 
@@ -733,6 +855,281 @@ private struct DesktopChatSessionRowActions: View {
         .help("Chat Actions")
         .accessibilityLabel("Chat Actions")
         .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
+struct DesktopChatComposerSurface: View {
+    @Binding var text: String
+    let isSubmitAvailable: Bool
+    let isSendDisabled: Bool
+    let isStreaming: Bool
+    let statusText: String
+    let usageText: String
+    let serverSession: DesktopServerSessionState?
+    let capabilities: [DesktopChatCapabilityRow]
+    let onCommandSubmit: (String) -> Void
+    let onSubmit: () -> Void
+    let onClear: () -> Void
+    let onOpenServer: () -> Void
+    let onStartServer: () -> Void
+    let onResumeServer: () -> Void
+    let onWakeServer: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            DesktopChatRuntimeControlStrip(
+                serverSession: serverSession,
+                capabilities: capabilities,
+                onOpenServer: onOpenServer,
+                onStartServer: onStartServer,
+                onResumeServer: onResumeServer,
+                onWakeServer: onWakeServer
+            )
+
+            HStack(alignment: .bottom, spacing: 10) {
+                DesktopChatComposerTextView(
+                    text: $text,
+                    isSubmitAvailable: isSubmitAvailable,
+                    onCommandSubmit: onCommandSubmit
+                )
+                .frame(height: DesktopChatLayoutMetrics.composerMinHeight)
+
+                VStack(spacing: 6) {
+                    Button(action: primaryAction) {
+                        primaryActionLabel
+                    }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
+                    .disabled(isStreaming || isSendDisabled)
+                    .help(isStreaming ? "Streaming cancellation is not available yet" : "Send")
+                    .accessibilityLabel(isStreaming ? "Stop" : "Send")
+
+                    Button(action: onClear) {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Clear Chat")
+                    .accessibilityLabel("Clear Chat")
+                }
+                .fixedSize(horizontal: true, vertical: false)
+            }
+
+            HStack(spacing: 10) {
+                Text(statusText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                if usageText.isEmpty == false {
+                    Text(usageText)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.lg)
+                .fill(Color(nsColor: .textBackgroundColor).opacity(0.82))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.lg)
+                .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.interactive), lineWidth: 1)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Chat Composer")
+    }
+
+    func primaryAction() {
+        guard isStreaming == false else {
+            return
+        }
+        onSubmit()
+    }
+
+    @ViewBuilder
+    var primaryActionLabel: some View {
+        if isStreaming {
+            Label("Stop", systemImage: "stop.fill")
+        } else {
+            Label("Send", systemImage: "paperplane.fill")
+        }
+    }
+}
+
+struct DesktopChatRuntimeControlStrip: View {
+    enum RecoveryActionKind {
+        case openServer
+        case startServer
+        case resumeServer
+        case wakeServer
+    }
+
+    struct RecoveryAction {
+        let title: String
+        let kind: RecoveryActionKind
+        let isProminent: Bool
+    }
+
+    let serverSession: DesktopServerSessionState?
+    let capabilities: [DesktopChatCapabilityRow]
+    let onOpenServer: () -> Void
+    let onStartServer: () -> Void
+    let onResumeServer: () -> Void
+    let onWakeServer: () -> Void
+
+    var recoveryAction: RecoveryAction? {
+        switch serverSession?.lifecycle {
+        case .none:
+            return RecoveryAction(title: "Choose Server", kind: .openServer, isProminent: false)
+        case .paused:
+            return RecoveryAction(title: "Resume Server", kind: .resumeServer, isProminent: true)
+        case .sleeping:
+            return RecoveryAction(title: "Wake", kind: .wakeServer, isProminent: false)
+        case .draft, .stopped, .unavailable:
+            return RecoveryAction(title: "Start Server", kind: .startServer, isProminent: true)
+        case .error:
+            return RecoveryAction(title: "Open Server", kind: .openServer, isProminent: true)
+        case .starting, .stopping, .running:
+            return nil
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            DesktopChatRuntimeServerCapsule(serverSession: serverSession)
+
+            if capabilities.isEmpty == false {
+                DesktopChatInlineCapabilityCluster(capabilities: Array(capabilities.prefix(5)))
+            }
+
+            Spacer(minLength: 8)
+
+            recoveryActionButton
+
+            Button(action: onOpenServer) {
+                Image(systemName: "server.rack")
+                    .frame(width: 18, height: 18)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("Open Server")
+            .accessibilityLabel("Open Server")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    var recoveryActionButton: some View {
+        if let recoveryAction {
+            if recoveryAction.isProminent {
+                Button(recoveryAction.title) {
+                    perform(recoveryAction)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            } else {
+                Button(recoveryAction.title) {
+                    perform(recoveryAction)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        } else {
+            EmptyView()
+        }
+    }
+
+    func perform(_ action: RecoveryAction) {
+        switch action.kind {
+        case .openServer:
+            onOpenServer()
+        case .startServer:
+            onStartServer()
+        case .resumeServer:
+            onResumeServer()
+        case .wakeServer:
+            onWakeServer()
+        }
+    }
+}
+
+struct DesktopChatRuntimeServerCapsule: View {
+    let serverSession: DesktopServerSessionState?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(statusColor)
+                .frame(width: 7, height: 7)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(serverTitle)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Text(serverDetail)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Color.secondary.opacity(0.06), in: Capsule())
+        .overlay(
+            Capsule()
+                .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.hairline), lineWidth: 1)
+        )
+        .help(serverSession?.runtimeDetailText ?? "Choose a server for this chat")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(serverTitle), \(serverDetail)")
+    }
+
+    var serverTitle: String {
+        serverSession?.title ?? "No Server"
+    }
+
+    var serverDetail: String {
+        guard let serverSession else {
+            return "Choose Server"
+        }
+        return "\(serverSession.lifecycle.rawValue) • \(serverSession.modelID)"
+    }
+
+    var statusColor: Color {
+        switch serverSession?.lifecycle {
+        case .running, .sleeping:
+            return MelixDesignTokens.StatusColor.success
+        case .paused, .starting, .stopping, .stopped, .draft, .unavailable:
+            return MelixDesignTokens.StatusColor.warning
+        case .error:
+            return MelixDesignTokens.StatusColor.error
+        case .none:
+            return Color.secondary.opacity(0.55)
+        }
+    }
+}
+
+struct DesktopChatInlineCapabilityCluster: View {
+    let capabilities: [DesktopChatCapabilityRow]
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(capabilities) { capability in
+                Image(systemName: capability.systemImageName)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(capability.isReady ? MelixDesignTokens.accent : Color.secondary)
+                    .frame(width: 22, height: 22)
+                    .background(Color.primary.opacity(0.035), in: Circle())
+                    .help("\(capability.title): \(capability.detail)")
+                    .accessibilityLabel("\(capability.title), \(capability.isReady ? "ready" : "unavailable")")
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Model Capabilities")
     }
 }
 
@@ -997,50 +1394,210 @@ struct DesktopChatTranscriptRowView: View {
     let isPending: Bool
     let isStreaming: Bool
     let pendingStatusText: String
+    let onPreviewArtifact: (DesktopChatArtifactPreviewState) -> Void
 
     init(
         entry: DesktopChatTranscriptEntry,
         isPending: Bool = false,
         isStreaming: Bool = false,
-        pendingStatusText: String = ""
+        pendingStatusText: String = "",
+        onPreviewArtifact: @escaping (DesktopChatArtifactPreviewState) -> Void = { _ in }
     ) {
         self.entry = entry
         self.isPending = isPending
         self.isStreaming = isStreaming
         self.pendingStatusText = pendingStatusText
+        self.onPreviewArtifact = onPreviewArtifact
     }
 
     var body: some View {
-        let sanitizedTitle = RichOutputSanitizer.sanitized(entry.title)
-        let sanitizedDetail = RichOutputSanitizer.sanitized(entry.detail)
-        let sanitizedBody = RichOutputSanitizer.sanitized(entry.body)
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(sanitizedTitle)
-                    .font(.headline)
-                Spacer()
-                if !sanitizedDetail.isEmpty {
-                    Text(sanitizedDetail)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
+            rowContent
+            if let artifactPreview {
+                DesktopChatArtifactPreviewTrigger(preview: artifactPreview) {
+                    onPreviewArtifact(artifactPreview)
                 }
-            }
-            if isPending {
-                pendingAssistantView
-            } else if DesktopChatMarkdownRenderer.usesMarkdown(for: entry.kind) {
-                DesktopChatMarkdownBodyView(
-                    rawText: sanitizedBody.isEmpty ? "…" : sanitizedBody,
-                    isStreaming: isStreaming
-                )
-            } else {
-                Text(sanitizedBody.isEmpty ? "…" : sanitizedBody)
-                    .font(entry.kind == .tool ? .caption.monospaced() : .body)
-                    .textSelection(.enabled)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(backgroundStyle, in: RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.xl))
+    }
+
+    @ViewBuilder
+    private var rowContent: some View {
+        switch entry.kind {
+        case .user:
+            DesktopChatUserBubbleView(messageBody: sanitizedBody)
+        case .assistant:
+            DesktopChatAssistantDocumentView(
+                messageBody: sanitizedBody,
+                isPending: isPending,
+                isStreaming: isStreaming,
+                pendingStatusText: sanitizedPendingStatusText
+            )
+        case .reasoning:
+            DesktopChatActivityBlockView(
+                kind: .reasoning,
+                title: sanitizedTitle,
+                messageBody: sanitizedBody,
+                detail: sanitizedDetail,
+                isStreaming: isStreaming
+            )
+        case .tool:
+            DesktopChatActivityBlockView(
+                kind: .tool,
+                title: sanitizedTitle,
+                messageBody: sanitizedBody,
+                detail: sanitizedDetail,
+                isStreaming: isStreaming
+            )
+        case .error:
+            DesktopChatErrorBlockView(
+                title: sanitizedTitle,
+                messageBody: sanitizedBody,
+                detail: sanitizedDetail
+            )
+        }
+    }
+
+    private var artifactPreview: DesktopChatArtifactPreviewState? {
+        if let path = DesktopChatArtifactPathDetector.firstPath(in: sanitizedBody) {
+            return DesktopChatArtifactPreviewState(entry: entry, path: path)
+        }
+        if let path = DesktopChatArtifactPathDetector.firstPath(in: sanitizedDetail) {
+            return DesktopChatArtifactPreviewState(entry: entry, path: path)
+        }
+        return nil
+    }
+
+    private var sanitizedTitle: String {
+        RichOutputSanitizer.sanitized(entry.title)
+    }
+
+    private var sanitizedDetail: String {
+        RichOutputSanitizer.sanitized(entry.detail)
+    }
+
+    private var sanitizedBody: String {
+        RichOutputSanitizer.sanitized(entry.body)
+    }
+
+    private var sanitizedPendingStatusText: String {
+        RichOutputSanitizer.sanitized(pendingStatusText)
+    }
+}
+
+struct DesktopChatArtifactPreviewTrigger: View {
+    let preview: DesktopChatArtifactPreviewState
+    let onPreview: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            DesktopChatArtifactPreviewButton(
+                title: "Preview Artifact",
+                systemImageName: "doc.text.magnifyingglass",
+                action: onPreview
+            )
+            .fixedSize(horizontal: true, vertical: true)
+            Text(preview.path)
+                .font(.caption2.monospaced())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .textSelection(.enabled)
+        }
+        .padding(.leading, 11)
+    }
+}
+
+struct DesktopChatArtifactPreviewButton: NSViewRepresentable {
+    let title: String
+    let systemImageName: String
+    let action: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton(title: title, target: context.coordinator, action: #selector(Coordinator.performAction))
+        button.bezelStyle = .rounded
+        button.controlSize = .small
+        button.image = NSImage(systemSymbolName: systemImageName, accessibilityDescription: nil)
+        button.imagePosition = .imageLeading
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        button.setContentCompressionResistancePriority(.required, for: .horizontal)
+        button.setAccessibilityLabel(title)
+        return button
+    }
+
+    func updateNSView(_ button: NSButton, context: Context) {
+        context.coordinator.action = action
+        button.title = title
+        button.image = NSImage(systemSymbolName: systemImageName, accessibilityDescription: nil)
+        button.setAccessibilityLabel(title)
+    }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc
+        func performAction() {
+            action()
+        }
+    }
+}
+
+struct DesktopChatUserBubbleView: View {
+    let messageBody: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 0) {
+            Spacer(minLength: 72)
+            Text(messageBody.isEmpty ? "…" : messageBody)
+                .font(.body)
+                .textSelection(.enabled)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(
+                    RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.lg)
+                        .fill(Color.secondary.opacity(0.10))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.lg)
+                        .stroke(Color.primary.opacity(MelixDesignTokens.StrokeOpacity.hairline), lineWidth: 1)
+                )
+                .frame(maxWidth: 560, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("User message")
+    }
+}
+
+struct DesktopChatAssistantDocumentView: View {
+    let messageBody: String
+    let isPending: Bool
+    let isStreaming: Bool
+    let pendingStatusText: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if isPending {
+                pendingAssistantView
+            } else {
+                DesktopChatMarkdownBodyView(
+                    rawText: messageBody.isEmpty ? "…" : messageBody,
+                    isStreaming: isStreaming
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Assistant message")
     }
 
     private var pendingAssistantView: some View {
@@ -1051,9 +1608,8 @@ struct DesktopChatTranscriptRowView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Thinking...")
                     .font(.body)
-                let sanitizedStatus = RichOutputSanitizer.sanitized(pendingStatusText)
-                if sanitizedStatus.isEmpty == false {
-                    Text(sanitizedStatus)
+                if pendingStatusText.isEmpty == false {
+                    Text(pendingStatusText)
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
                 }
@@ -1062,19 +1618,163 @@ struct DesktopChatTranscriptRowView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Assistant is thinking")
     }
+}
 
-    private var backgroundStyle: some ShapeStyle {
-        switch entry.kind {
-        case .user:
-            return MelixDesignTokens.BubbleTint.user.opacity(MelixDesignTokens.BubbleOpacity.user)
-        case .assistant:
-            return MelixDesignTokens.BubbleTint.assistant.opacity(MelixDesignTokens.BubbleOpacity.assistant)
-        case .reasoning:
-            return MelixDesignTokens.BubbleTint.reasoning.opacity(MelixDesignTokens.BubbleOpacity.reasoning)
-        case .tool:
-            return MelixDesignTokens.BubbleTint.tool.opacity(MelixDesignTokens.BubbleOpacity.tool)
-        case .error:
-            return MelixDesignTokens.BubbleTint.error.opacity(MelixDesignTokens.BubbleOpacity.error)
+struct DesktopChatActivityBlockView: View {
+    enum ActivityKind {
+        case reasoning
+        case tool
+    }
+
+    let kind: ActivityKind
+    let title: String
+    let messageBody: String
+    let detail: String
+    let isStreaming: Bool
+    @State private var isExpanded: Bool
+
+    init(
+        kind: ActivityKind,
+        title: String,
+        messageBody: String,
+        detail: String,
+        isStreaming: Bool
+    ) {
+        self.kind = kind
+        self.title = title
+        self.messageBody = messageBody
+        self.detail = detail
+        self.isStreaming = isStreaming
+        _isExpanded = State(initialValue: isStreaming)
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Rectangle()
+                .fill(tint.opacity(0.55))
+                .frame(width: 2)
+                .padding(.vertical, 5)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Button {
+                        isExpanded.toggle()
+                    } label: {
+                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .frame(width: 14, height: 14)
+                    }
+                    .buttonStyle(.plain)
+                    .help(isExpanded ? "Hide activity details" : "Show activity details")
+                    .accessibilityLabel(isExpanded ? "Hide Activity Details" : "Show Activity Details")
+
+                    Image(systemName: systemImageName)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(tint)
+                        .frame(width: 16)
+                    Text(summaryText)
+                        .font(.caption.weight(.semibold))
+                        .textSelection(.enabled)
+                    if detail.isEmpty == false {
+                        Text(detail)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    } else if title.isEmpty == false {
+                        Text(title)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                if isExpanded {
+                    activityBody
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(summaryText)
+    }
+
+    @ViewBuilder
+    var activityBody: some View {
+        if messageBody.isEmpty {
+            Text(isStreaming ? "Waiting for details..." : "No details recorded.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else if kind == .reasoning && DesktopChatMarkdownRenderer.usesMarkdown(for: .reasoning) {
+            DesktopChatMarkdownBodyView(rawText: messageBody, isStreaming: isStreaming)
+        } else {
+            Text(messageBody)
+                .font(kind == .tool ? .caption.monospaced() : .caption)
+                .textSelection(.enabled)
+        }
+    }
+
+    var summaryText: String {
+        switch kind {
+        case .reasoning:
+            return isStreaming ? "Thinking..." : "Thought recorded"
+        case .tool:
+            return isStreaming ? "Calling tool" : "Tool completed"
+        }
+    }
+
+    var systemImageName: String {
+        switch kind {
+        case .reasoning:
+            return "brain.head.profile"
+        case .tool:
+            return "hammer"
+        }
+    }
+
+    var tint: Color {
+        switch kind {
+        case .reasoning:
+            return MelixDesignTokens.BubbleTint.reasoning
+        case .tool:
+            return MelixDesignTokens.BubbleTint.tool
+        }
+    }
+}
+
+private struct DesktopChatErrorBlockView: View {
+    let title: String
+    let messageBody: String
+    let detail: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(MelixDesignTokens.StatusColor.error)
+                Text(title.isEmpty ? "Error" : title)
+                    .font(.headline)
+                if detail.isEmpty == false {
+                    Text(detail)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Text(messageBody.isEmpty ? "Request failed." : messageBody)
+                .font(.body)
+                .textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.lg)
+                .fill(MelixDesignTokens.BubbleTint.error.opacity(MelixDesignTokens.BubbleOpacity.error))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: MelixDesignTokens.Radius.lg)
+                .stroke(MelixDesignTokens.StatusColor.error.opacity(0.22), lineWidth: 1)
+        )
     }
 }
