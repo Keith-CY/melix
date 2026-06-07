@@ -48,6 +48,7 @@ from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.native_mtp.mlx_lm_loader import (
     _is_mtp_weight_key,
     _load_json_payload,
+    _load_weight_shards,
     _model_safetensor_files,
     extra_mtp_safetensor_files,
 )
@@ -1653,6 +1654,21 @@ def test_native_mtp_extra_safetensor_files_filters_names_before_path_join(
         "mtp-00002.safetensors",
     ]
     assert basename_candidate_names == []
+
+
+def test_native_mtp_load_weight_shards_streams_base_and_extra_paths() -> None:
+    base_paths = ["model-a.safetensors", "model-b.safetensors"]
+    extra_paths = [Path("mtp-a.safetensors"), Path("nested/mtp-b.safetensors")]
+    loaded_paths: list[str] = []
+
+    def load(path: str) -> dict[str, str]:
+        loaded_paths.append(path)
+        return {path: path}
+
+    weights = _load_weight_shards(load, base_paths, extra_paths)
+
+    assert loaded_paths == [*base_paths, *(str(path) for path in extra_paths)]
+    assert weights == {path: path for path in loaded_paths}
 
 
 def test_native_mtp_patched_loader_uses_scandir_model_weight_listing(

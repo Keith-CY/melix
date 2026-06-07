@@ -371,6 +371,7 @@ def test_native_mtp_loader_safetensor_scandir_probe_script_emits_metrics(
     monkeypatch.setenv("MELIX_NATIVE_MTP_LOADER_DISTRACTOR_FILES", "8")
     monkeypatch.setenv("MELIX_NATIVE_MTP_LOADER_SAMPLES", "1")
     monkeypatch.setenv("MELIX_NATIVE_MTP_LOADER_KEY_ITERATIONS", "2")
+    monkeypatch.setenv("MELIX_NATIVE_MTP_LOADER_WEIGHT_LOAD_ITERATIONS", "2")
     probe_script = runpy.run_path(
         str(REPO_ROOT / "scripts/native_mtp_loader_safetensor_scandir_probe.py")
     )
@@ -390,6 +391,10 @@ def test_native_mtp_loader_safetensor_scandir_probe_script_emits_metrics(
     assert metrics["key_count"] == 26
     assert metrics["key_true_count"] == 17
     assert metrics["key_iterations"] == 2
+    assert metrics["weight_load_iterations"] == 2
+    assert metrics["weight_load_result_count"] == 18
+    assert metrics["weight_load_old_mean_ms"] >= 0.0
+    assert metrics["weight_load_new_mean_ms"] >= 0.0
     assert metrics["key_old_mean_ms"] >= 0.0
     assert metrics["key_new_mean_ms"] >= 0.0
 
