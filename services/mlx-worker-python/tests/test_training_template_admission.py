@@ -182,6 +182,9 @@ def test_train_lora_rejects_two_example_custom_template_without_separator(
     assert events[-1].failed.error.details["field"] == "template_example_separator"
     assert events[-1].failed.error.details["reason"] == "missing_two_example_separator"
     assert events[-1].failed.error.details["required_placeholders"] == "{INPUT},{OUTPUT}"
+    assert events[-1].failed.error.details["required_separators"] == (
+        "{EXAMPLE_SEPARATOR},\\n---\\n,\\n\\n---\\n\\n,\\n### Example 2"
+    )
     assert events[-1].failed.error.details["http_status"] == "422"
 
 
@@ -262,6 +265,7 @@ def test_training_template_receipt_accepts_custom_template_and_rejects_marker_dr
     assert marker_error.value.code == "invalid_training_template"
     assert marker_error.value.details["field"] == "assistant_generation_marker"
     assert marker_error.value.details["reason"] == "marker_not_found_in_template"
+    assert "required_markers" not in marker_error.value.details
     assert marker_error.value.details["http_status"] == "422"
 
 

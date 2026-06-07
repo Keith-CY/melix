@@ -403,7 +403,9 @@ def _validate_two_example_template(ext: dict[str, str], template: str) -> None:
         received=template,
         details={
             "required_placeholders": ",".join((_INPUT_PLACEHOLDER, _OUTPUT_PLACEHOLDER)),
-            "required_separators": ",".join(_TWO_EXAMPLE_SEPARATORS),
+            "required_separators": ",".join(
+                separator.replace("\n", "\\n") for separator in _TWO_EXAMPLE_SEPARATORS
+            ),
         },
     )
 
@@ -416,9 +418,7 @@ def _resolve_assistant_marker(ext: dict[str, str], template: str) -> str:
                 field="assistant_generation_marker",
                 reason="marker_not_found_in_template",
                 received=requested_marker,
-                details={
-                    "required_markers": ",".join(_ASSISTANT_MARKERS),
-                },
+                details={},
             )
         return requested_marker
     for marker in _ASSISTANT_MARKERS:
