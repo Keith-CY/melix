@@ -10,7 +10,7 @@ import re
 import subprocess
 import sys
 import time
-from typing import Any
+from typing import Any, Iterable
 
 from worker.model_ops.errors import ModelOperationError
 from worker.model_ops.multimodal_lora_contracts import (
@@ -286,6 +286,7 @@ class MLXLMRunner:
         # stats returned carry enabled=False + chunk_count=0 so they fall
         # through into forward-compatible defaults on TrainingMetrics.
         chunk_stats = _maybe_chunk_training_dataset(request, tokenizer)
+        _validate_media_token_truncation(request)
         train_set, valid_set, _ = load_local_dataset(
             request.normalized_dataset_dir,
             tokenizer,
@@ -744,6 +745,14 @@ def _validate_response_only_trainable_tokens(
         return
     if aggregate.trainable_response_token_count > 0:
         return
+    affected_sample_count = (
+        aggregate.fully_truncated_response_sample_count
+        if aggregate.fully_truncated_response_sample_count > 0
+        else aggregate.sample_count
+    )
+    max_seq_length = _positive_int(getattr(request.config, "max_seq_length", 0))
+    boundary_max = _positive_int(getattr(aggregate, "boundary_max", 0))
+    suggested_minimum = max(boundary_max + 1, max_seq_length + 1)
     raise ModelOperationError(
         code="response_only_labels_truncated",
         message=(
@@ -753,6 +762,18 @@ def _validate_response_only_trainable_tokens(
             "or disable response-only masking."
         ),
         details={
+            "field": "max_length",
+            "reason": "no_unmasked_completion_tokens",
+            "http_status": "422",
+            "sample_count": str(aggregate.sample_count),
+            "affected_sample_count": str(affected_sample_count),
+            "requested_sequence_length": str(request.config.max_seq_length),
+            "effective_sequence_length": str(request.config.max_seq_length),
+            "suggested_minimum_sequence_length": str(suggested_minimum),
+            "corrective_action": (
+                "Increase max_seq_length, shorten the prompt/context before the assistant response, "
+                "or disable response-only masking."
+            ),
             "max_seq_length": str(request.config.max_seq_length),
             "response_only_boundary_sample_count": str(aggregate.sample_count),
             "response_only_boundary_min": str(aggregate.boundary_min),
@@ -767,6 +788,119 @@ def _validate_response_only_trainable_tokens(
             ),
         },
     )
+
+
+_MEDIA_TOKEN_TOTAL_HINT_FIELDS = (
+    "media_token_count",
+    "media_tokens",
+    "media_token_length",
+)
+_MEDIA_TOKEN_MODALITY_HINT_FIELDS = (
+    "image_token_count",
+    "video_token_count",
+    "audio_token_count",
+)
+_MEDIA_TOKEN_HINT_FIELDS = (
+    *_MEDIA_TOKEN_TOTAL_HINT_FIELDS,
+    *_MEDIA_TOKEN_MODALITY_HINT_FIELDS,
+)
+
+
+def _validate_media_token_truncation(request: TrainingRequest) -> None:
+    """Fail before MLX-LM when media-token hints cannot fit max_seq_length."""
+
+    if request.dataset_format != "chat_messages":
+        return
+    max_seq_length = int(getattr(request.config, "max_seq_length", 0) or 0)
+    if max_seq_length <= 0:
+        return
+    train_path = request.normalized_dataset_dir / "train.jsonl"
+    if not train_path.is_file():
+        return
+
+    for sample_index, sample in _iter_jsonl_samples(train_path):
+        media_token_count = _sample_media_token_count(sample)
+        if media_token_count < max_seq_length:
+            continue
+        raise ModelOperationError(
+            code="training_tokens_truncated",
+            message=(
+                "LoRA training media tokens would consume the configured "
+                f"max_seq_length={max_seq_length} before any text supervision "
+                "can fit. Increase max_seq_length or reduce media tokens before training."
+            ),
+            details={
+                "field": "max_length",
+                "reason": "media_tokens_truncated",
+                "http_status": "422",
+                "sample_index": str(sample_index),
+                "affected_sample_count": "1",
+                "requested_sequence_length": str(max_seq_length),
+                "effective_sequence_length": str(max_seq_length),
+                "media_token_count": str(media_token_count),
+                "suggested_minimum_sequence_length": str(media_token_count + 1),
+                "corrective_action": (
+                    "Increase max_seq_length or reduce media tokens before training."
+                ),
+                "max_seq_length": str(max_seq_length),
+            },
+        )
+
+
+def _iter_jsonl_samples(path: Path) -> Iterable[tuple[int, dict[str, Any]]]:
+    with path.open("r", encoding="utf-8") as handle:
+        for index, raw_line in enumerate(handle):
+            line = raw_line.strip()
+            if not line:
+                continue
+            payload = json.loads(line)
+            if isinstance(payload, dict):
+                yield index, payload
+
+
+def _sample_media_token_count(sample: dict[str, Any]) -> int:
+    sample_total = _direct_media_token_hint(sample)
+    if sample_total > 0:
+        return sample_total
+
+    total = 0
+    total += _media_refs_token_count(sample.get("media_refs"))
+
+    messages = sample.get("messages")
+    if isinstance(messages, list):
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            total += _direct_media_token_hint(message)
+            total += _media_refs_token_count(message.get("media_refs"))
+    return total
+
+
+def _direct_media_token_hint(payload: dict[str, Any]) -> int:
+    for field in _MEDIA_TOKEN_TOTAL_HINT_FIELDS:
+        count = _positive_int(payload.get(field))
+        if count > 0:
+            return count
+    return sum(_positive_int(payload.get(field)) for field in _MEDIA_TOKEN_MODALITY_HINT_FIELDS)
+
+
+def _media_refs_token_count(media_refs: Any) -> int:
+    if not isinstance(media_refs, list):
+        return 0
+    total = 0
+    for media_ref in media_refs:
+        if not isinstance(media_ref, dict):
+            continue
+        total += _direct_media_token_hint(media_ref)
+    return total
+
+
+def _positive_int(value: Any) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(parsed, 0)
 
 
 def _maybe_chunk_training_dataset(
