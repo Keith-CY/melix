@@ -1473,6 +1473,7 @@ def _patch_gemma4_shared_kv_layers(model: Any, config: Any) -> int:
                 try:
                     delattr(attention, attribute)
                 except (AttributeError, TypeError):
+                    # Read-only upstream properties are equivalent to absent shared-KV weights here.
                     pass
         patched_count += 1
     return patched_count
@@ -2833,6 +2834,7 @@ class MLXVLMRuntime:
             return "draft_model_id is required"
         if not self._is_gemma4_target(loaded_model):
             return "target model is not Gemma 4"
+        # Prompt-only multimodal-loaded Gemma 4 models are gated by media inputs below.
         _ = execution_mode
         if prepared_request.images or prepared_request.videos:
             return "media inputs are not supported by the Gemma 4 MTP path yet"
