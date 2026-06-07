@@ -10,6 +10,7 @@ from worker.productization.dataset_preparation import (
     DatasetIngestRequest,
     DatasetRetryFailedRequest,
     DatasetVersionRequest,
+    _partition_failed_segments,
     _quality_summary,
     _sample_output_length_stats,
     _sample_output_lengths,
@@ -112,6 +113,32 @@ def test_dataset_version_writes_schema_backed_package_and_quality_summary(
     assert quality["pii_mask_count"] == 1
     assert quality["dedup_ratio"] == 0
     assert quality["metrics"]["quality_scoring_latency_ms"] >= 0
+
+
+def test_dataset_version_failed_segment_partition_fast_paths_empty_failures() -> None:
+    segments = [
+        {"segment_id": "a", "text": "first"},
+        {"segment_id": "b", "text": "second"},
+    ]
+
+    successful_segments, failed_segments = _partition_failed_segments(segments, ())
+
+    assert successful_segments is segments
+    assert failed_segments == []
+
+
+def test_dataset_version_failed_segment_partition_preserves_failed_id_semantics() -> None:
+    segments = [
+        {"segment_id": "a", "text": "first"},
+        {"segment_id": "b", "text": "second"},
+        {"segment_id": "b", "text": "duplicate"},
+        {"segment_id": "c", "text": "third"},
+    ]
+
+    successful_segments, failed_segments = _partition_failed_segments(segments, ("b",))
+
+    assert successful_segments == [segments[0], segments[3]]
+    assert failed_segments == [segments[1], segments[2]]
 
 
 def test_dataset_quality_output_lengths_preserve_completion_and_message_semantics() -> None:
