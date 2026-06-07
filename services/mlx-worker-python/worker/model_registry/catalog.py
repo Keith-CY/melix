@@ -1225,7 +1225,8 @@ def _gemma4_qat_metadata(
         model_dir / "README.md",
         text_prefix_cache=text_prefix_cache,
     )
-    combined = " ".join((model_id, readme_text)).lower()
+    model_id_lower = model_id.lower()
+    combined = " ".join((model_id_lower, readme_text)).lower()
     if ("gemma-4" not in combined and "gemma4" not in combined) or "qat" not in combined:
         return {}
     if "mlx" not in combined:
@@ -1238,7 +1239,10 @@ def _gemma4_qat_metadata(
 
     organization = _model_id_organization(model_id)
     auto_supported = organization == _GEMMA4_QAT_AUTOMATIC_ORG
-    companion = _gemma4_qat_is_draft_companion(combined)
+    companion = _gemma4_qat_is_draft_companion(
+        combined,
+        model_id_lower=model_id_lower,
+    )
     source_model = _gemma4_qat_source_model(
         readme_text,
         model_size=model_size,
@@ -1438,9 +1442,9 @@ def _gemma4_qat_quantization_family(value: str) -> str:
     return ""
 
 
-def _gemma4_qat_is_draft_companion(value: str) -> bool:
+def _gemma4_qat_is_draft_companion(value: str, *, model_id_lower: str) -> bool:
     return (
-        "assistant" in value
+        "assistant" in model_id_lower
         or "draft-model" in value
         or "drafter" in value
         or ("mtp" in value and "speculative" in value)

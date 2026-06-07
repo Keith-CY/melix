@@ -2698,6 +2698,49 @@ def test_registry_snapshot_marks_mlx_community_gemma4_qat_target_for_auto_pairin
     assert model.ext["melix.draft_companion.auto_pair_key"] == "gemma4:e4b:qat:4bit"
 
 
+def test_registry_snapshot_keeps_gemma4_qat_target_when_readme_mentions_assistant(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    variant_dir = root / "mlx-community" / "gemma-4-E4B-it-qat-4bit" / "main"
+    _write_registry_manifest(
+        variant_dir,
+        model_id="mlx-community/gemma-4-E4B-it-qat-4bit",
+        model_kind="text",
+    )
+    _write_model_config(
+        variant_dir,
+        {
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "text_config": {"model_type": "gemma4_text"},
+            "vision_config": {"model_type": "siglip"},
+        },
+    )
+    (variant_dir / "README.md").write_text(
+        "---\n"
+        "library_name: mlx\n"
+        "base_model: google/gemma-4-E4B-it-qat-q4_0-unquantized\n"
+        "tags:\n"
+        "- mlx\n"
+        "- gemma4\n"
+        "- image-text-to-text\n"
+        "- 4-bit\n"
+        "---\n"
+        "Optimized for assistant-style conversations.\n",
+        encoding="utf-8",
+    )
+
+    catalog = WorkerModelCatalog(environment={"MELIX_MODEL_ROOTS": os.fspath(root)})
+    snapshot = catalog.registry_snapshot()
+    discovered = {model.model_id: model for model in snapshot.models}
+
+    model = discovered["mlx-community/gemma-4-E4B-it-qat-4bit"]
+    assert model.ext["melix.draft_companion.role"] == "target"
+    assert model.ext["melix.draft_companion.missing_policy"] == "baseline_generation"
+    assert "melix.serving.hidden" not in model.ext
+
+
 def test_registry_snapshot_pairs_mlx_community_gemma4_qat_target_with_draft_companion(
     tmp_path: Path,
 ) -> None:
