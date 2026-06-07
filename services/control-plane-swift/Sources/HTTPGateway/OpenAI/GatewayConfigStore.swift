@@ -63,15 +63,21 @@ public struct GatewayRuntimeBinding: Equatable, Sendable {
     public let activeServerSessionID: String
     public let host: String
     public let port: UInt32
+    public let allowedHosts: [String]
+    public let allowedOrigins: [String]
 
     public init(
         activeServerSessionID: String = ServerSessionRuntimeStore.defaultServerSessionID,
         host: String,
-        port: UInt32
+        port: UInt32,
+        allowedHosts: [String] = [],
+        allowedOrigins: [String] = []
     ) {
         self.activeServerSessionID = activeServerSessionID
         self.host = host
         self.port = port
+        self.allowedHosts = LocalServerSecurityPolicy.normalizedAllowedHosts(allowedHosts)
+        self.allowedOrigins = LocalServerSecurityPolicy.normalizedAllowedOrigins(allowedOrigins)
     }
 }
 
@@ -81,6 +87,8 @@ private struct GatewayConfigDefaults: Equatable, Sendable {
     let rateLimitPerMinute: UInt32
     let timeoutSeconds: UInt32
     let modelIdleTimeoutSeconds: UInt32
+    let allowedHosts: [String]
+    let allowedOrigins: [String]
     let source: Melix_Controlplane_V1_GatewayConfigSource
 }
 
@@ -93,6 +101,8 @@ private struct PersistedGatewayListenerRecord: Codable, Equatable, Sendable {
     let rateLimitPerMinute: UInt32
     let timeoutSeconds: UInt32
     let modelIdleTimeoutSeconds: UInt32
+    let allowedHosts: [String]
+    let allowedOrigins: [String]
     let sourceRawValue: Int
     let updatedAtUnixMS: Int64
 
@@ -105,6 +115,8 @@ private struct PersistedGatewayListenerRecord: Codable, Equatable, Sendable {
         case rateLimitPerMinute = "rate_limit_per_minute"
         case timeoutSeconds = "timeout_seconds"
         case modelIdleTimeoutSeconds = "model_idle_timeout_seconds"
+        case allowedHosts = "allowed_hosts"
+        case allowedOrigins = "allowed_origins"
         case sourceRawValue = "source"
         case updatedAtUnixMS = "updated_at_unix_ms"
     }
@@ -118,6 +130,8 @@ private struct PersistedGatewayListenerRecord: Codable, Equatable, Sendable {
         rateLimitPerMinute: UInt32,
         timeoutSeconds: UInt32,
         modelIdleTimeoutSeconds: UInt32,
+        allowedHosts: [String],
+        allowedOrigins: [String],
         sourceRawValue: Int,
         updatedAtUnixMS: Int64
     ) {
@@ -129,6 +143,8 @@ private struct PersistedGatewayListenerRecord: Codable, Equatable, Sendable {
         self.rateLimitPerMinute = rateLimitPerMinute
         self.timeoutSeconds = timeoutSeconds
         self.modelIdleTimeoutSeconds = modelIdleTimeoutSeconds
+        self.allowedHosts = allowedHosts
+        self.allowedOrigins = allowedOrigins
         self.sourceRawValue = sourceRawValue
         self.updatedAtUnixMS = updatedAtUnixMS
     }
@@ -150,6 +166,8 @@ private struct PersistedGatewayListenerRecord: Codable, Equatable, Sendable {
                 UInt32.self,
                 forKey: .modelIdleTimeoutSeconds
             ) ?? 0,
+            allowedHosts: try container.decodeIfPresent([String].self, forKey: .allowedHosts) ?? [],
+            allowedOrigins: try container.decodeIfPresent([String].self, forKey: .allowedOrigins) ?? [],
             sourceRawValue: try container.decode(Int.self, forKey: .sourceRawValue),
             updatedAtUnixMS: try container.decode(Int64.self, forKey: .updatedAtUnixMS)
         )
@@ -165,6 +183,8 @@ private struct PersistedGatewayListenerRecord: Codable, Equatable, Sendable {
         try container.encode(rateLimitPerMinute, forKey: .rateLimitPerMinute)
         try container.encode(timeoutSeconds, forKey: .timeoutSeconds)
         try container.encode(modelIdleTimeoutSeconds, forKey: .modelIdleTimeoutSeconds)
+        try container.encode(allowedHosts, forKey: .allowedHosts)
+        try container.encode(allowedOrigins, forKey: .allowedOrigins)
         try container.encode(sourceRawValue, forKey: .sourceRawValue)
         try container.encode(updatedAtUnixMS, forKey: .updatedAtUnixMS)
     }
@@ -226,7 +246,9 @@ public actor GatewayConfigStore {
         return GatewayRuntimeBinding(
             activeServerSessionID: resolvedServerSessionID,
             host: record?.host ?? defaults.host,
-            port: record?.port ?? defaults.port
+            port: record?.port ?? defaults.port,
+            allowedHosts: record?.allowedHosts ?? defaults.allowedHosts,
+            allowedOrigins: record?.allowedOrigins ?? defaults.allowedOrigins
         )
     }
 
@@ -265,6 +287,8 @@ public actor GatewayConfigStore {
         guard command.timeoutSeconds > 0 else {
             throw GatewayConfigValidationError.invalidTimeout
         }
+        let allowedHosts = LocalServerSecurityPolicy.normalizedAllowedHosts(command.allowedHosts)
+        let allowedOrigins = LocalServerSecurityPolicy.normalizedAllowedOrigins(command.allowedOrigins)
 
         let record = PersistedGatewayListenerRecord(
             serverSessionID: serverSessionID,
@@ -275,6 +299,8 @@ public actor GatewayConfigStore {
             rateLimitPerMinute: command.rateLimitPerMinute,
             timeoutSeconds: command.timeoutSeconds,
             modelIdleTimeoutSeconds: command.modelIdleTimeoutSeconds,
+            allowedHosts: allowedHosts,
+            allowedOrigins: allowedOrigins,
             sourceRawValue: Melix_Controlplane_V1_GatewayConfigSource.operatorOverride.rawValue,
             updatedAtUnixMS: nowUnixMS()
         )
@@ -305,6 +331,8 @@ public actor GatewayConfigStore {
             let rateLimitPerMinute = record?.rateLimitPerMinute ?? defaults.rateLimitPerMinute
             let timeoutSeconds = record?.timeoutSeconds ?? defaults.timeoutSeconds
             let modelIdleTimeoutSeconds = record?.modelIdleTimeoutSeconds ?? defaults.modelIdleTimeoutSeconds
+            let allowedHosts = record?.allowedHosts ?? defaults.allowedHosts
+            let allowedOrigins = record?.allowedOrigins ?? defaults.allowedOrigins
             let isActiveBinding = serverSessionID == runtimeBinding.activeServerSessionID
 
             var listener = Melix_Controlplane_V1_GatewayListenerConfigSummary()
@@ -318,10 +346,16 @@ public actor GatewayConfigStore {
             listener.rateLimitPerMinute = rateLimitPerMinute
             listener.timeoutSeconds = timeoutSeconds
             listener.modelIdleTimeoutSeconds = modelIdleTimeoutSeconds
+            listener.allowedHosts = allowedHosts
+            listener.allowedOrigins = allowedOrigins
             listener.source = record?.source ?? defaults.source
             listener.activeBinding = isActiveBinding
-            listener.requiresRestart = isActiveBinding
-                && (requestedHost != runtimeBinding.host || requestedPort != runtimeBinding.port)
+            listener.requiresRestart = isActiveBinding && (
+                requestedHost != runtimeBinding.host
+                    || requestedPort != runtimeBinding.port
+                    || allowedHosts != runtimeBinding.allowedHosts
+                    || allowedOrigins != runtimeBinding.allowedOrigins
+            )
             listener.updatedAtUnixMs = record?.updatedAtUnixMS ?? 0
             return listener
         }
@@ -403,12 +437,16 @@ public actor GatewayConfigStore {
         let envRateLimit = UInt32(trimmed(environment["MELIX_GATEWAY_RATE_LIMIT_PER_MINUTE"])) ?? 0
         let envTimeout = UInt32(trimmed(environment["MELIX_GATEWAY_TIMEOUT_SECONDS"])) ?? 0
         let envModelIdleTimeout = UInt32(trimmed(environment["MELIX_MODEL_IDLE_TIMEOUT_SECONDS"])) ?? 0
+        let envAllowedHosts = LocalServerSecurityPolicy.normalizedAllowedHosts(environment["MELIX_ALLOWED_HOSTS"])
+        let envAllowedOrigins = LocalServerSecurityPolicy.normalizedAllowedOrigins(environment["MELIX_ALLOWED_ORIGINS"])
 
         let usesEnvironmentDefaults = !envHost.isEmpty
             || envPort > 0
             || envRateLimit > 0
             || envTimeout > 0
             || envModelIdleTimeout > 0
+            || envAllowedHosts.isEmpty == false
+            || envAllowedOrigins.isEmpty == false
 
         return GatewayConfigDefaults(
             host: envHost.isEmpty ? builtInHost : envHost,
@@ -416,6 +454,8 @@ public actor GatewayConfigStore {
             rateLimitPerMinute: envRateLimit > 0 ? envRateLimit : builtInRateLimit,
             timeoutSeconds: envTimeout > 0 ? envTimeout : builtInTimeout,
             modelIdleTimeoutSeconds: envModelIdleTimeout > 0 ? envModelIdleTimeout : builtInModelIdleTimeout,
+            allowedHosts: envAllowedHosts,
+            allowedOrigins: envAllowedOrigins,
             source: usesEnvironmentDefaults ? .environmentDefaults : .builtInDefaults
         )
     }

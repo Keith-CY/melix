@@ -658,6 +658,8 @@ public struct OpenAIHandler: Sendable {
         self.persistentAuthSessionStore = persistentAuthSessionStore
         self.localServerSecurityPolicy = LocalServerSecurityPolicy(
             bindHost: gatewayRuntimeBinding.host,
+            allowedHosts: gatewayRuntimeBinding.allowedHosts,
+            allowedOrigins: gatewayRuntimeBinding.allowedOrigins,
             environment: environment
         )
         self.environment = environment
