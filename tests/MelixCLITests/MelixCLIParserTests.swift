@@ -1168,6 +1168,7 @@ struct MelixCLIParserTests {
             (.recipesPlan(.init(recipeID: "import.hf-mlx-model", version: "1", values: ["repo_id": "org/model", "model_id": "model"], outputPath: "/tmp/plan.json", json: true)), "recipes.plan"),
             (.recipesApply(.init(recipeID: "benchmark.eval.smoke", version: "1", values: ["model_id": "model"], dryRun: true, resume: true, fromStepID: "benchmark", json: true)), "recipes.apply"),
             (.recipesInit(.init(sourceURI: "hf://model/org/model", task: "import", outputPath: "/tmp/import.recipe.json", json: true)), "recipes.init"),
+            (.cookbookRecommend(.init(modelID: "mlx/qwen", workload: "chat", serverPlatform: "macos", serverArch: "arm64", json: true)), "cookbook.recommend"),
             (.modelRootsList(.init(json: true)), "model.roots.list"),
             (.modelRootsAdd(.init(path: "/models", json: true)), "model.roots.add"),
             (.modelRootsRemove(.init(path: "/models", json: true)), "model.roots.remove"),
@@ -1265,6 +1266,7 @@ struct MelixCLIParserTests {
             .recipesPlan(.init(recipeID: "import.hf-mlx-model", version: "1", values: ["repo_id": "org/model", "model_id": "model"], outputPath: "/tmp/plan.json", json: true)),
             .recipesApply(.init(recipeID: "benchmark.eval.smoke", version: "1", values: ["model_id": "model"], dryRun: true, resume: true, fromStepID: "benchmark", json: true)),
             .recipesInit(.init(sourceURI: "hf://model/org/model", task: "import", outputPath: "/tmp/import.recipe.json", json: true)),
+            .cookbookRecommend(.init(modelID: "mlx/qwen", workload: "chat", serverPlatform: "macos", serverArch: "arm64", json: true)),
             .modelRootsList(.init(json: true)),
             .modelRootsAdd(.init(path: "/models", json: true)),
             .modelRootsRemove(.init(path: "/models", json: true)),
@@ -1915,6 +1917,57 @@ struct MelixCLIParserTests {
         }
         #expect(throws: MelixCLIError.missingRequired("--task is required for melix recipes init.")) {
             try MelixCLIParser.parse(["recipes", "init", "--from", "hf://model/org/repo"])
+        }
+    }
+
+    @Test("parses cookbook recommendation host source options")
+    func parsesCookbookRecommendationHostSourceOptions() throws {
+        let command = try MelixCLIParser.parse([
+            "cookbook",
+            "recommend",
+            "mlx-community/Qwen3.5-9B-MLX-4bit",
+            "--workload", "chat",
+            "--server-platform", "macos",
+            "--server-arch", "arm64",
+            "--operator-platform", "linux",
+            "--operator-arch", "x86_64",
+            "--browser-platform", "windows",
+            "--browser-arch", "x86_64",
+            "--json",
+        ])
+
+        #expect(
+            command ==
+                .cookbookRecommend(
+                    .init(
+                        modelID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+                        workload: "chat",
+                        serverPlatform: "macos",
+                        serverArch: "arm64",
+                        operatorPlatform: "linux",
+                        operatorArch: "x86_64",
+                        browserPlatform: "windows",
+                        browserArch: "x86_64",
+                        json: true
+                    )
+                )
+        )
+
+        let arguments = try MelixCLICommandCodec.arguments(for: command)
+        #expect(arguments.contains("cookbook"))
+        #expect(arguments.contains("recommend"))
+        #expect(Self.optionValue("--server-platform", in: arguments) == "macos")
+        #expect(Self.optionValue("--browser-platform", in: arguments) == "windows")
+        #expect(arguments.contains("--json"))
+
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            try MelixCLIParser.parse(["cookbook"])
+        }
+        #expect(throws: MelixCLIError.missingRequired("--workload is required for melix cookbook recommend.")) {
+            try MelixCLIParser.parse(["cookbook", "recommend", "mlx-community/Qwen3.5-9B-MLX-4bit"])
+        }
+        #expect(throws: MelixCLIError.usage(MelixCLIParser.usageText)) {
+            try MelixCLIParser.parse(["cookbook", "show", "mlx-community/Qwen3.5-9B-MLX-4bit"])
         }
     }
 

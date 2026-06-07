@@ -102,6 +102,8 @@ public enum MelixCLICommandCodec {
             return "recipes.apply"
         case .recipesInit:
             return "recipes.init"
+        case .cookbookRecommend:
+            return "cookbook.recommend"
         case .modelRootsList:
             return "model.roots.list"
         case .modelRootsAdd:
@@ -1047,6 +1049,16 @@ public enum MelixCLICommandCodec {
             appendOption("--from", value: options.sourceURI, into: &arguments)
             appendOption("--task", value: options.task, into: &arguments)
             appendOption("--output", value: options.outputPath, into: &arguments)
+            json = options.json
+        case .cookbookRecommend(let options):
+            arguments = ["cookbook", "recommend", options.modelID]
+            appendOption("--workload", value: options.workload, into: &arguments)
+            appendOption("--server-platform", value: options.serverPlatform, into: &arguments)
+            appendOption("--server-arch", value: options.serverArch, into: &arguments)
+            appendOption("--operator-platform", value: options.operatorPlatform, into: &arguments)
+            appendOption("--operator-arch", value: options.operatorArch, into: &arguments)
+            appendOption("--browser-platform", value: options.browserPlatform, into: &arguments)
+            appendOption("--browser-arch", value: options.browserArch, into: &arguments)
             json = options.json
         case .pipelineRun(let options):
             arguments = ["pipeline", "run"]
