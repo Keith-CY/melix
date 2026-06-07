@@ -2736,6 +2736,255 @@ def test_run_subprocess_extracts_terminal_structured_result_without_splitlines(
         == "melix.alignment_candidate_reward_trace.v1"
     )
 
+    response_config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={"max_seq_length": "8", "response_only": "true", "mask_prompt": "true"},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+    response_request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-truncated-labels",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=tmp_path / "normalized-response",
+        config=response_config,
+        dataset_format="chat_messages",
+    )
+    response_aggregate = mlx_lm_runner_module.aggregate_response_only_boundaries(
+        [
+            mlx_lm_runner_module.ResponseOnlyBoundary(assistant_offset=8, total_tokens=10),
+            mlx_lm_runner_module.ResponseOnlyBoundary(assistant_offset=8, total_tokens=10),
+        ],
+        max_seq_length=8,
+    )
+    with pytest.raises(ModelOperationError) as response_exc:
+        mlx_lm_runner_module._validate_response_only_trainable_tokens(
+            response_request,
+            response_aggregate,
+        )
+
+    assert response_exc.value.code == "response_only_labels_truncated"
+    assert response_exc.value.details["field"] == "max_length"
+    assert response_exc.value.details["reason"] == "no_unmasked_completion_tokens"
+    assert response_exc.value.details["sample_count"] == "2"
+    assert response_exc.value.details["affected_sample_count"] == "2"
+    assert response_exc.value.details["requested_sequence_length"] == "8"
+    assert response_exc.value.details["effective_sequence_length"] == "8"
+    assert response_exc.value.details["suggested_minimum_sequence_length"] == "9"
+    assert response_exc.value.details["corrective_action"] == (
+        "Increase max_seq_length, shorten the prompt/context before the assistant response, "
+        "or disable response-only masking."
+    )
+    assert response_exc.value.details["response_only_trainable_response_token_count"] == "0"
+
+    normalized_dir = tmp_path / "normalized-media"
+    normalized_dir.mkdir()
+    (normalized_dir / "train.jsonl").write_text(
+        "\n"
+        + json.dumps(["ignored"])
+        + "\n"
+        + json.dumps(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "Inspect image one.",
+                        "media_refs": [
+                            {"id": "image-a", "uri": "images/a.png", "image_token_count": 1},
+                            "ignored",
+                        ],
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "The image is visible.",
+                        "video_token_count": "1",
+                        "media_refs": [{"id": "audio-a", "audio_token_count": 1}],
+                    },
+                ],
+                "media_refs": [
+                    {"id": "image-b", "uri": "images/b.png", "image_token_count": "1"},
+                    {"id": "bad", "media_token_count": "not-an-int"},
+                ],
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "Describe this image."},
+                    {"role": "assistant", "content": "It is a chart."},
+                ],
+                "media_refs": [{"id": "image-c", "uri": "images/c.png", "media_token_count": 999}],
+                "media_token_count": 12,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    safe_config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={"max_seq_length": "99"},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+    safe_request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-media-ok",
+        base_model_id="melix-dev-vlm",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=normalized_dir,
+        config=safe_config,
+        dataset_format="chat_messages",
+    )
+
+    assert mlx_lm_runner_module._sample_media_token_count(
+        {
+            "media_refs": [{"image_token_count": 3}],
+            "messages": [
+                {"video_token_count": 4},
+                "ignored",
+                {"media_refs": [{"audio_token_count": 2}]},
+            ],
+        }
+    ) == 9
+    assert mlx_lm_runner_module._sample_media_token_count(
+        {"media_tokens": "7", "media_refs": [{"image_token_count": 99}]}
+    ) == 7
+    assert list(mlx_lm_runner_module._iter_jsonl_samples(normalized_dir / "train.jsonl"))[0][0] == 2
+    mlx_lm_runner_module._validate_media_token_truncation(safe_request)
+
+    zero_length_config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={"max_seq_length": "1"},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=1,
+    )
+    zero_length_request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-zero-length",
+        base_model_id="melix-dev-vlm",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=tmp_path / "missing-normalized",
+        config=zero_length_config,
+        dataset_format="chat_messages",
+    )
+    object.__setattr__(zero_length_request.config, "max_seq_length", 0)
+    mlx_lm_runner_module._validate_media_token_truncation(zero_length_request)
+
+    missing_train_request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-missing-jsonl",
+        base_model_id="melix-dev-vlm",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=tmp_path / "missing-normalized",
+        config=zero_length_config,
+        dataset_format="chat_messages",
+    )
+    mlx_lm_runner_module._validate_media_token_truncation(missing_train_request)
+
+    truncate_config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={"max_seq_length": "8"},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=2,
+    )
+    truncate_request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-media-truncated",
+        base_model_id="melix-dev-vlm",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=normalized_dir,
+        config=truncate_config,
+        dataset_format="chat_messages",
+    )
+    with pytest.raises(ModelOperationError) as media_exc:
+        mlx_lm_runner_module._validate_media_token_truncation(truncate_request)
+
+    assert media_exc.value.code == "training_tokens_truncated"
+    assert media_exc.value.details["field"] == "max_length"
+    assert media_exc.value.details["reason"] == "media_tokens_truncated"
+    assert media_exc.value.details["sample_index"] == "3"
+    assert media_exc.value.details["affected_sample_count"] == "1"
+    assert media_exc.value.details["requested_sequence_length"] == "8"
+    assert media_exc.value.details["effective_sequence_length"] == "8"
+    assert media_exc.value.details["media_token_count"] == "12"
+    assert media_exc.value.details["suggested_minimum_sequence_length"] == "13"
+
+    non_chat_config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={"max_seq_length": "8"},
+        dataset_format="text_completion",
+        response_only_supported=False,
+        sample_count=1,
+    )
+    non_chat_request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-text",
+        base_model_id="melix-dev-text",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=tmp_path / "missing-normalized",
+        config=non_chat_config,
+        dataset_format="text_completion",
+    )
+    mlx_lm_runner_module._validate_media_token_truncation(non_chat_request)
+
+    train_native_config = training_config_module.normalize_training_config(
+        source_model=_text_model(model_path=str(tmp_path / "base-model")),
+        ext={"max_seq_length": "8"},
+        dataset_format="chat_messages",
+        response_only_supported=True,
+        sample_count=1,
+    )
+    train_native_request = mlx_lm_runner_module.TrainingRequest(
+        job_id="train-native-media-truncated",
+        base_model_id="melix-dev-vlm",
+        model_path=tmp_path / "base-model",
+        model_revision="main",
+        adapter_output_dir=tmp_path / "adapter-output",
+        normalized_dataset_dir=normalized_dir,
+        config=train_native_config,
+        dataset_format="chat_messages",
+    )
+
+    fake_mlx_lm = types.ModuleType("mlx_lm")
+    fake_mlx_lm.__path__ = []
+    fake_tuner = types.ModuleType("mlx_lm.tuner")
+    fake_tuner.__path__ = []
+    fake_lora = types.ModuleType("mlx_lm.lora")
+    fake_callbacks = types.ModuleType("mlx_lm.tuner.callbacks")
+    fake_datasets = types.ModuleType("mlx_lm.tuner.datasets")
+    fake_utils = types.ModuleType("mlx_lm.utils")
+
+    class FakeTrainingCallback:
+        pass
+
+    fake_lora.train_model = lambda *args, **kwargs: None
+    fake_callbacks.TrainingCallback = FakeTrainingCallback
+    fake_datasets.load_local_dataset = lambda *args, **kwargs: pytest.fail("dataset loaded after truncation")
+    fake_utils.load = lambda *args, **kwargs: (object(), object())
+    monkeypatch.setitem(sys.modules, "mlx_lm", fake_mlx_lm)
+    monkeypatch.setitem(sys.modules, "mlx_lm.tuner", fake_tuner)
+    monkeypatch.setitem(sys.modules, "mlx_lm.lora", fake_lora)
+    monkeypatch.setitem(sys.modules, "mlx_lm.tuner.callbacks", fake_callbacks)
+    monkeypatch.setitem(sys.modules, "mlx_lm.tuner.datasets", fake_datasets)
+    monkeypatch.setitem(sys.modules, "mlx_lm.utils", fake_utils)
+
+    with pytest.raises(ModelOperationError) as native_media_exc:
+        mlx_lm_runner_module.MLXLMRunner().train_native(train_native_request)
+
+    assert native_media_exc.value.details["reason"] == "media_tokens_truncated"
+
 
 def test_run_subprocess_rejects_missing_structured_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     payload_path = tmp_path / "payload.json"

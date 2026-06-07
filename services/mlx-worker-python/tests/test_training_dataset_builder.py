@@ -280,6 +280,60 @@ def test_write_normalized_dataset_snapshot_applies_manifest_overrides(
     with pytest.raises(ModelOperationError, match="prompt_candidate reward_components must be a JSON object"):
         load_training_dataset_package(bad_prompt_candidate_package_path)
 
+    chat_package_path = tmp_path / "chat-package"
+    chat_package_path.mkdir(parents=True, exist_ok=True)
+    (chat_package_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "melix.training_dataset_package.v1",
+                "dataset_id": "chat-package",
+                "format": "chat_messages",
+                "sample_count": 1,
+                "version": "1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (chat_package_path / "samples.jsonl").write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "Inspect image one.",
+                        "media_refs": ["image-1"],
+                        "image_token_count": 576,
+                    },
+                    {"role": "assistant", "content": "The sign says stop."},
+                ],
+                "media_refs": [
+                    {
+                        "id": "image-1",
+                        "uri": "images/one.jpg",
+                        "media_token_count": 576,
+                    }
+                ],
+                "media_token_count": 576,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    chat_package = load_training_dataset_package(chat_package_path)
+    chat_sample = chat_package.normalized_samples[0]
+
+    assert chat_sample["messages"][0]["media_refs"] == ["image-1"]
+    assert chat_sample["messages"][0]["image_token_count"] == 576
+    assert chat_sample["media_refs"] == [
+        {
+            "id": "image-1",
+            "uri": "images/one.jpg",
+            "media_token_count": 576,
+        }
+    ]
+    assert chat_sample["media_token_count"] == 576
+
     agentic_package_path = tmp_path / "agentic-package"
     agentic_package_path.mkdir(parents=True, exist_ok=True)
     samples = [
