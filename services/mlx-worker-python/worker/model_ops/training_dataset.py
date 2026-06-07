@@ -32,6 +32,14 @@ _SUPPORTED_ROLES = {"system", "user", "assistant", "tool"}
 _HF_DATASETS_SERVER_URL = "https://datasets-server.huggingface.co"
 _QUALITY_REPORT_SAMPLE_LIMIT = 10
 _ALLOWED_CONTROL_CHARACTERS = frozenset({"\n", "\r", "\t"})
+_CHAT_MEDIA_TOKEN_HINT_FIELDS = (
+    "media_token_count",
+    "media_tokens",
+    "media_token_length",
+    "image_token_count",
+    "video_token_count",
+    "audio_token_count",
+)
 
 HFDatasetFetcher = Callable[[str, dict[str, str]], dict[str, Any]]
 
@@ -802,9 +810,16 @@ def _normalize_sample(
                     details={"message_index": str(index)},
                 )
             previous_role = role
-            normalized_messages.append(
-                {"role": role, "content": _truncate_text(content, max_characters_per_sample)}
-            )
+            normalized_message: dict[str, Any] = {
+                "role": role,
+                "content": _truncate_text(content, max_characters_per_sample),
+            }
+            if "media_refs" in message and isinstance(message["media_refs"], list):
+                normalized_message["media_refs"] = list(message["media_refs"])
+            for field in _CHAT_MEDIA_TOKEN_HINT_FIELDS:
+                if field in message:
+                    normalized_message[field] = message[field]
+            normalized_messages.append(normalized_message)
         if assistant_count == 0 or normalized_messages[-1]["role"] != "assistant":
             raise ModelOperationError(
                 code="invalid_dataset_package",
@@ -813,6 +828,11 @@ def _normalize_sample(
         payload: dict[str, Any] = {"messages": normalized_messages}
         if "tools" in sample and isinstance(sample["tools"], list):
             payload["tools"] = sample["tools"]
+        if "media_refs" in sample and isinstance(sample["media_refs"], list):
+            payload["media_refs"] = list(sample["media_refs"])
+        for field in _CHAT_MEDIA_TOKEN_HINT_FIELDS:
+            if field in sample:
+                payload[field] = sample[field]
         return payload
 
     if format_name == "agentic_tool_trace":
