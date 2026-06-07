@@ -4000,15 +4000,20 @@ class EvaluationCore:
         stripped = value.strip()
         if not stripped:
             return ""
-        if stripped[0] == "`" or stripped[-1] == "`":
+        first_char = stripped[0]
+        last_char = stripped[-1]
+        if first_char == "`" or last_char == "`":
             stripped = stripped.strip("`").strip()
             if not stripped:
                 return ""
-        if stripped[0] in "\"'" or stripped[-1] in "\"'":
+            first_char = stripped[0]
+            last_char = stripped[-1]
+        if first_char in "\"'" or last_char in "\"'":
             stripped = stripped.strip("\"'").strip()
             if not stripped:
                 return ""
-        if stripped.endswith("."):
+            last_char = stripped[-1]
+        if last_char == ".":
             stripped = stripped.rstrip(".")
         return stripped
 
