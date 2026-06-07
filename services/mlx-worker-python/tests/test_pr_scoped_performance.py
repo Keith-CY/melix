@@ -1466,12 +1466,25 @@ def test_scope_report_selects_macos_app_bundle_probes() -> None:
         changed_files=["services/mlx-worker-python/worker/productization/macos_app_bundle.py"],
     )
 
-    assert scope["selected_count"] == 3
+    assert scope["selected_count"] == 4
     assert _selected_probe_ids(scope) == [
         "macos-app-resource-bundle-scandir",
         "macos-app-native-binary-scandir",
+        "macos-app-path-size-scandir",
         "macos-app-signing-targets-scandir",
     ]
+
+
+def test_macos_app_path_size_probe_script_emits_metrics(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runpy.run_path(str(REPO_ROOT / "scripts/macos_app_path_size_probe.py"), run_name="__main__")
+
+    metrics = json.loads(capsys.readouterr().out)
+    assert metrics["file_count"] == 2500.0
+    assert metrics["measured_size_bytes"] > 0.0
+    assert metrics["elapsed_ms_mean"] > 0.0
+    assert metrics["sample_count"] == 9.0
 
 
 def test_macos_app_signing_targets_probe_script_emits_metrics(
@@ -3260,6 +3273,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "multimodal-preprocessing-image-uri-single-parse",
         "macos-app-resource-bundle-scandir",
         "macos-app-native-binary-scandir",
+        "macos-app-path-size-scandir",
         "macos-app-signing-targets-scandir",
         "package-macos-resolve-fallback-scandir",
         "melix-metrics-snapshot-runtime-scandir",

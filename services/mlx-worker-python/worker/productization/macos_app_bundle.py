@@ -344,22 +344,21 @@ def _path_size_bytes(path: Path) -> int:
         return 0
 
     total = 0
-    for root, dirnames, filenames in os.walk(path, followlinks=False):
-        root_path = Path(root)
-        for dirname in list(dirnames):
-            directory = root_path / dirname
-            try:
-                if directory.is_symlink():
-                    total += directory.lstat().st_size
-                    dirnames.remove(dirname)
-            except OSError:
-                continue
-        for filename in filenames:
-            file_path = root_path / filename
-            try:
-                total += file_path.lstat().st_size
-            except OSError:
-                continue
+    stack = [path]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(Path(entry.path))
+                            continue
+                        total += entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue
+        except OSError:
+            continue
     return total
 
 
