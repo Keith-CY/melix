@@ -521,6 +521,15 @@ def _context_mapping(fixture_context: dict[str, Any], key: str) -> dict[str, Any
 
 
 def _context_list(fixture_context: dict[str, Any], key: str, corpus_ref: str) -> list[dict[str, Any]]:
+    if key == "image_corpus":
+        item_source_type = "retrieved_image"
+        item_source_id_prefix = "image"
+    elif key == "text_corpus":
+        item_source_type = "retrieved_document"
+        item_source_id_prefix = "doc"
+    else:
+        raise AgenticToolRuntimeError(f"Unsupported retrieved corpus key: {key}.")
+
     value = fixture_context.get(key, [])
     if isinstance(value, dict):
         value = value.get(corpus_ref, [])
@@ -533,8 +542,6 @@ def _context_list(fixture_context: dict[str, Any], key: str, corpus_ref: str) ->
             actual_type=type(value).__name__,
         )
 
-    item_source_type = "retrieved_image" if key == "image_corpus" else "retrieved_document"
-    item_source_id_prefix = "image" if key == "image_corpus" else "doc"
     context_items: list[dict[str, Any]] = []
     for index, item in enumerate(value, start=1):
         if not isinstance(item, dict):

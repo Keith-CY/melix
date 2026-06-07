@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from worker.runtime.agentic_tools import AgenticToolRuntimeError, execute_agentic_tool_calls
+from worker.runtime.agentic_tools import AgenticToolRuntimeError, _context_list, execute_agentic_tool_calls
 from worker.runtime.tool_observation import ToolObservationPolicy
 
 
@@ -391,3 +391,8 @@ def test_agentic_tool_runtime_fails_closed_for_invalid_corpus_containers_and_row
     assert observation["payload"]["source_id"] == expected_source_id
     assert observation["payload"]["expected_type"] == expected_type
     assert observation["payload"]["actual_type"] == actual_type
+
+
+def test_agentic_tool_runtime_rejects_unknown_corpus_keys_before_defaulting_source_metadata() -> None:
+    with pytest.raises(AgenticToolRuntimeError, match="Unsupported retrieved corpus key: audio_corpus"):
+        _context_list({"audio_corpus": [{"id": "clip-1"}]}, "audio_corpus", "default")
