@@ -1029,6 +1029,8 @@ def _gemma4_qat_evidence(
 def _gemma4_qat_unsupported_format(value: str) -> str:
     if "mobile-transformers" in value or "mobile_transformers" in value:
         return "mobile_transformers"
+    if "litert" in value or "lite-rt" in value or "tflite" in value:
+        return "litert"
     if "compressed-tensors" in value or "compressed_tensors" in value or "-ct" in value:
         return "compressed_tensors"
     if "q4_0-unquantized" in value and "mlx" not in value:

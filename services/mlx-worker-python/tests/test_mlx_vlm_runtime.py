@@ -4109,6 +4109,11 @@ def _assert_gemma4_shared_kv_patch_removes_unused_kv_modules_from_shared_layers(
 
 
 def _assert_gemma4_shared_kv_patch_ignores_unpatchable_shapes() -> None:
+    class ReadOnlyAttention:
+        @property
+        def k_proj(self):
+            return object()
+
     assert _patch_gemma4_shared_kv_layers(
         SimpleNamespace(model=SimpleNamespace(layers=[])),
         SimpleNamespace(num_hidden_layers=2, num_kv_shared_layers=2),
@@ -4144,6 +4149,17 @@ def _assert_gemma4_shared_kv_patch_ignores_unpatchable_shapes() -> None:
         ),
         SimpleNamespace(num_hidden_layers=2, num_kv_shared_layers=1),
     ) == 0
+    assert _patch_gemma4_shared_kv_layers(
+        SimpleNamespace(
+            model=SimpleNamespace(
+                layers=[
+                    SimpleNamespace(),
+                    SimpleNamespace(self_attn=ReadOnlyAttention()),
+                ]
+            )
+        ),
+        SimpleNamespace(num_hidden_layers=2, num_kv_shared_layers=1),
+    ) == 1
 
 
 def _assert_gemma4_model_init_patch_applies_shared_kv_patch_to_language_model(

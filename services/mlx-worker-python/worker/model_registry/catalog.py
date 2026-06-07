@@ -1456,7 +1456,7 @@ def _gemma4_qat_source_model(
     for line in readme_text.splitlines():
         stripped = line.strip().strip("'\"")
         if stripped.startswith("base_model:"):
-            value = stripped.split(":", 1)[1].strip().strip("'\"")
+            value = stripped.split(":", 1)[1].strip().strip("'\"[] ")
             if value:
                 return value
 

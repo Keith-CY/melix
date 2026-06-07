@@ -191,8 +191,9 @@ Expected slice 1 behavior evidence:
   deterministic `melix.draft_companion.auto_pair_key`.
 - Matching `mlx-community/gemma-4-*qat-assistant*` assets remain hidden normal
   serving targets and are marked as MTP draft companions.
-- Non-MLX Gemma 4 QAT CT/mobile assets remain visible in Hub catalog responses
-  but are marked unavailable with an explicit unsupported runtime format.
+- Non-MLX Gemma 4 QAT CT/mobile/LiteRT assets remain visible in Hub catalog
+  responses but are marked unavailable with an explicit unsupported runtime
+  format.
 - Gemma 4 QAT MLX assets outside `mlx-community` remain visible but require
   manual experimental import/selection.
 
@@ -360,5 +361,6 @@ registered PR-scoped performance report before release-gate claims.
   is paired.
 - E2B and E4B QAT 4-bit targets each have real-model smoke evidence with their
   matching draft companions.
-- Mobile/CT assets are not advertised as first-slice Melix-native runtime
-  targets, but remain visible with explicit unsupported runtime format evidence.
+- Mobile/CT/LiteRT assets are not advertised as first-slice Melix-native
+  runtime targets, but remain visible with explicit unsupported runtime format
+  evidence.

@@ -311,6 +311,10 @@ def test_gemma4_qat_hub_evidence_handles_defensive_branches() -> None:
         )
         == "compressed_tensors"
     )
+    assert (
+        hub_catalog_module._gemma4_qat_unsupported_format("gemma4 qat litert tflite")
+        == "litert"
+    )
     assert hub_catalog_module._repo_organization("bare-model") == ""
 
 

@@ -1470,7 +1470,10 @@ def _patch_gemma4_shared_kv_layers(model: Any, config: Any) -> int:
             continue
         for attribute in ("k_proj", "v_proj", "k_norm", "v_norm"):
             if hasattr(attention, attribute):
-                delattr(attention, attribute)
+                try:
+                    delattr(attention, attribute)
+                except (AttributeError, TypeError):
+                    pass
         patched_count += 1
     return patched_count
 
