@@ -627,6 +627,29 @@ def test_generate_builds_routing_ext_for_empty_execution_ext_without_mutating_re
     ]
 
 
+def test_generate_empty_ext_plain_path_uses_default_allowed_tools_receipt(monkeypatch) -> None:
+    runtime = UsageCountingRuntime(prompt_tokens=0)
+    inference_service, model_handle = build_usage_counting_services(runtime)
+    calls = 0
+
+    def fail_allowed_tools_receipt(request):  # pragma: no cover - should not be called
+        nonlocal calls
+        calls += 1
+        raise AssertionError("empty plain-text requests should use the default receipt fast path")
+
+    monkeypatch.setattr(
+        engine_core_module.EngineCore,
+        "_allowed_tools_receipt_json",
+        staticmethod(fail_allowed_tools_receipt),
+    )
+
+    events = list(inference_service.Generate(generate_usage_request(model_handle, return_usage=False), context=None))
+    completed = next(event.completed for event in events if event.HasField("completed"))
+
+    assert calls == 0
+    assert completed.parser_metrics["allowed_tools_receipt_json"] == engine_core_module._DEFAULT_OMITTED_ALLOWED_TOOLS_RECEIPT_JSON
+
+
 def test_generate_routing_ext_preserves_client_ext_and_positive_block_size() -> None:
     runtime = UsageCountingRuntime(prompt_tokens=0)
     inference_service, model_handle = build_usage_counting_services(runtime)
