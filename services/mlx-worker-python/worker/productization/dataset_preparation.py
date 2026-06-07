@@ -561,7 +561,7 @@ def _iter_source_file_paths(input_path: Path) -> list[Path]:
         except OSError:
             continue
     file_paths.sort()
-    return list(map(Path, file_paths))
+    return [Path(file_path) for file_path in file_paths]
 
 
 def _source_kind(path: Path) -> str | None:
