@@ -17,6 +17,28 @@ import phase8_runtime_probes
 from worker.productization import release_gates as release_gates_module
 
 
+def test_make_phase8_release_gate_keeps_redirected_output_json_clean() -> None:
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    target_lines: list[str] = []
+    in_target = False
+    for line in makefile.splitlines():
+        if line.startswith("phase8-release-gate:"):
+            in_target = True
+            continue
+        if not in_target:
+            continue
+        if line.startswith("\t"):
+            target_lines.append(line)
+        elif line.strip() and not line.startswith("#"):
+            break
+
+    assert '\t@mkdir -p "$(UV_CACHE_DIR)"' in target_lines
+    assert any(
+        line.startswith('\t@PYTHONPATH="$(ROOT):$(ROOT)/services/mlx-worker-python"')
+        for line in target_lines
+    )
+
+
 def test_phase8_release_gate_main_emits_json_and_passes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -43,6 +43,13 @@ The command exits non-zero when:
 - a numeric threshold regresses past the checked-in policy
 - restart recovery cannot restore a persisted snapshot
 
+The full release-gate command prepares deterministic release-owned evidence
+under its jobs root before evaluating the policy. This includes selected
+evaluation-compare suites, real-workload family receipts, and the Gemma E4B
+profile gate. Standalone collectors still fail closed when called directly
+against an empty jobs root, so missing persisted evidence remains visible during
+collector-level diagnosis.
+
 ## Cache Recovery Benchmark Bundle
 
 The benchmark section also emits a machine-readable cache recovery report alongside the bench markdown report.
