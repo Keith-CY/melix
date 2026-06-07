@@ -5854,6 +5854,8 @@ struct MelixCLIRunnerTests {
                     servedModelIDs: ["melix-dev-vlm"],
                     host: "127.0.0.1",
                     port: 12434,
+                    allowedHosts: ["operator.lan:12436"],
+                    allowedOrigins: ["http://localhost:5173/app"],
                     accelerationMode: "speculative_decode",
                     draftModelID: "z-lab/Qwen3.5-27B-DFlash",
                     numDraftTokens: 4
@@ -5873,6 +5875,8 @@ struct MelixCLIRunnerTests {
         #expect(sessions.count == 1)
         #expect(sessions.first?["default_model_id"] as? String == "melix-dev-vlm")
         #expect(sessions.first?["served_model_ids"] as? [String] == ["melix-dev-vlm"])
+        #expect(sessions.first?["allowed_hosts"] as? [String] == ["operator.lan:12436"])
+        #expect(sessions.first?["allowed_origins"] as? [String] == ["http://localhost:5173/app"])
 
         _ = try await runner.run(
             .serverStart(.init(serverSessionID: "server-session-1"))
@@ -5884,6 +5888,8 @@ struct MelixCLIRunnerTests {
         #expect(gatewayConfigCall.serverSessionID == "server-session-1")
         #expect(gatewayConfigCall.defaultModelID == "melix-dev-vlm")
         #expect(gatewayConfigCall.servedModelIDs == ["melix-dev-vlm"])
+        #expect(gatewayConfigCall.allowedHosts == ["operator.lan:12436"])
+        #expect(gatewayConfigCall.allowedOrigins == ["http://localhost:5173/app"])
         #expect(servingDefaultsCall.serverSessionID == "server-session-1")
         #expect(servingDefaultsCall.accelerationMode == .speculativeDecode)
         #expect(servingDefaultsCall.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
@@ -5955,6 +5961,58 @@ struct MelixCLIRunnerTests {
         #expect(servingDefaultsCall.accelerationMode == .speculativeDecode)
         #expect(servingDefaultsCall.draftModelID == "z-lab/Qwen3.5-27B-DFlash")
         #expect(servingDefaultsCall.numDraftTokens == 4)
+    }
+
+    @Test("server session update clears persisted gateway allowlists before start")
+    func serverSessionUpdateClearsPersistedGatewayAllowlistsBeforeStart() async throws {
+        let temporaryRoot = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("melix-cli-runner-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: temporaryRoot)
+        }
+
+        let modelID = "mlx-community/Qwen3.5-27B-4bit"
+        let client = StubControlPlaneXPCClient()
+        await client.setServerSnapshot(makeServerSnapshot(models: [
+            makeModelSummary(id: modelID, kind: "text"),
+        ]))
+        let store = MelixOperatorSessionStore(
+            melixHome: MelixHome(environment: ["MELIX_HOME": temporaryRoot.path])
+        )
+        let runner = MelixCLIRunner(client: client, operatorSessionStore: store)
+
+        _ = try await runner.run(
+            .serverSessionCreate(
+                .init(
+                    title: "Qwen Session",
+                    servedModelIDs: [modelID],
+                    allowedHosts: ["operator.lan:12436"],
+                    allowedOrigins: ["http://localhost:5173/app"]
+                )
+            )
+        )
+        _ = try await runner.run(
+            .serverSessionUpdate(
+                .init(
+                    serverSessionID: "server-session-1",
+                    clearAllowedHosts: true,
+                    clearAllowedOrigins: true
+                )
+            )
+        )
+        _ = try await runner.run(
+            .serverStart(.init(serverSessionID: "server-session-1"))
+        )
+
+        let state = try #require(try store.load())
+        let session = try #require(state.serverSessions.first)
+        let gatewayConfigCall = try #require(await client.lastGatewayConfigApplyRequest)
+
+        #expect(session.allowedHosts.isEmpty)
+        #expect(session.allowedOrigins.isEmpty)
+        #expect(gatewayConfigCall.allowedHosts.isEmpty)
+        #expect(gatewayConfigCall.allowedOrigins.isEmpty)
     }
 
     @Test("server session update preserves roster when only default model changes")
@@ -6066,6 +6124,8 @@ struct MelixCLIRunnerTests {
                     servedModelIDs: [modelID],
                     host: "127.0.0.1",
                     port: 12434,
+                    allowedHosts: ["operator.lan"],
+                    allowedOrigins: ["http://localhost:5173"],
                     rateLimitPerMinute: 60,
                     timeoutSeconds: 240
                 )
@@ -6085,11 +6145,15 @@ struct MelixCLIRunnerTests {
         #expect(session.servedModelIDs == [modelID])
         #expect(session.host == "127.0.0.1")
         #expect(session.port == 12434)
+        #expect(session.allowedHosts == ["operator.lan"])
+        #expect(session.allowedOrigins == ["http://localhost:5173"])
         #expect(session.rateLimitPerMinute == 60)
         #expect(session.timeoutSeconds == 240)
         #expect(gatewayConfigCall.serverSessionID == "server-session-1")
         #expect(gatewayConfigCall.defaultModelID == modelID)
         #expect(gatewayConfigCall.servedModelIDs == [modelID])
+        #expect(gatewayConfigCall.allowedHosts == ["operator.lan"])
+        #expect(gatewayConfigCall.allowedOrigins == ["http://localhost:5173"])
         #expect(gatewayConfigCall.port == 12434)
         #expect(servingDefaultsCall.serverSessionID == "server-session-1")
         #expect(startedAction == .start("server-session-1"))
@@ -6452,7 +6516,7 @@ struct MelixCLIRunnerTests {
             )
         )
 
-        await #expect(throws: MelixCLIError.missingRequired("TITLE is required when passing --model, --models, --default-model, --host, --port, --rate-limit-per-minute, --timeout-seconds, or --model-idle-timeout-seconds to melix server start.")) {
+        await #expect(throws: MelixCLIError.missingRequired("TITLE is required when passing --model, --models, --default-model, --host, --port, --allowed-host, --allowed-origin, --rate-limit-per-minute, --timeout-seconds, or --model-idle-timeout-seconds to melix server start.")) {
             _ = try await runner.run(.serverStart(.init(servedModelIDs: ["mlx-community/gemma-4-31b-it-4bit"])))
         }
         await #expect(throws: MelixCLIError.missingRequired("--model or --models is required when starting a titled server session.")) {
@@ -12868,6 +12932,8 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         let rateLimitPerMinute: Int
         let timeoutSeconds: Int
         let modelIdleTimeoutSeconds: Int
+        let allowedHosts: [String]
+        let allowedOrigins: [String]
     }
 
     struct ServingDefaultsApplyCall: Sendable, Equatable {
@@ -13262,7 +13328,9 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
         servedModelIDs: [String],
         rateLimitPerMinute: Int,
         timeoutSeconds: Int,
-        modelIdleTimeoutSeconds: Int
+        modelIdleTimeoutSeconds: Int,
+        allowedHosts: [String],
+        allowedOrigins: [String]
     ) async throws -> Melix_Controlplane_V1_ServerSnapshot {
         lastGatewayConfigApplyRequest = GatewayConfigApplyCall(
             serverSessionID: serverSessionID,
@@ -13272,7 +13340,9 @@ private actor StubControlPlaneXPCClient: ControlPlaneXPCClient {
             servedModelIDs: servedModelIDs,
             rateLimitPerMinute: rateLimitPerMinute,
             timeoutSeconds: timeoutSeconds,
-            modelIdleTimeoutSeconds: modelIdleTimeoutSeconds
+            modelIdleTimeoutSeconds: modelIdleTimeoutSeconds,
+            allowedHosts: allowedHosts,
+            allowedOrigins: allowedOrigins
         )
         return snapshot
     }

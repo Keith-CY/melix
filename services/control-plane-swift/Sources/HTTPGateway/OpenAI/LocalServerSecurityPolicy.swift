@@ -84,13 +84,18 @@ public struct LocalServerSecurityPolicy: Equatable, Sendable {
 
     public init(
         bindHost: String,
+        allowedHosts: [String] = [],
+        allowedOrigins: [String] = [],
         environment: [String: String]
     ) {
         let resolvedBindHost = Self.trimmed(bindHost).isEmpty ? "127.0.0.1" : Self.trimmed(bindHost)
-        let explicitHosts = Self.normalizedList(environment["MELIX_ALLOWED_HOSTS"], normalize: Self.normalizedHostForAllowlist)
-        let explicitOrigins = Self.normalizedList(
-            environment["MELIX_ALLOWED_ORIGINS"],
-            normalize: Self.normalizedAllowedOrigin
+        let explicitHosts = Self.orderedUnique(
+            Self.normalizedAllowedHosts(allowedHosts)
+                + Self.normalizedAllowedHosts(environment["MELIX_ALLOWED_HOSTS"])
+        )
+        let explicitOrigins = Self.orderedUnique(
+            Self.normalizedAllowedOrigins(allowedOrigins)
+                + Self.normalizedAllowedOrigins(environment["MELIX_ALLOWED_ORIGINS"])
         )
         let defaultHosts = ["127.0.0.1", "[::1]", "::1", "localhost"]
         let bindHostEntry = Self.normalizedBindHostForAllowlist(resolvedBindHost)
@@ -137,6 +142,22 @@ public struct LocalServerSecurityPolicy: Equatable, Sendable {
             return existing
         }
         return existing + ", Origin"
+    }
+
+    public static func normalizedAllowedHosts(_ values: [String]) -> [String] {
+        orderedUnique(values.compactMap(normalizedHostForAllowlist))
+    }
+
+    public static func normalizedAllowedHosts(_ rawValue: String?) -> [String] {
+        normalizedList(rawValue, normalize: normalizedHostForAllowlist)
+    }
+
+    public static func normalizedAllowedOrigins(_ values: [String]) -> [String] {
+        orderedUnique(values.compactMap(normalizedAllowedOrigin))
+    }
+
+    public static func normalizedAllowedOrigins(_ rawValue: String?) -> [String] {
+        normalizedList(rawValue, normalize: normalizedAllowedOrigin)
     }
 
     private func isAllowedHost(_ rawValue: String) -> Bool {

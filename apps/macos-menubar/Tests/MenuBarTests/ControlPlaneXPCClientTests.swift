@@ -376,6 +376,34 @@ struct ControlPlaneXPCClientTests {
         }
     }
 
+    @Test("protocol default gateway config helper reports an unimplemented error")
+    func protocolDefaultGatewayConfigHelperReportsUnimplemented() async throws {
+        let client = DefaultingControlPlaneXPCClient()
+
+        do {
+            _ = try await client.applyServerSessionGatewayConfig(
+                serverSessionID: "server-session-1",
+                host: "127.0.0.1",
+                port: 12_436,
+                defaultModelID: "melix-dev-text",
+                servedModelIDs: ["melix-dev-text"],
+                rateLimitPerMinute: 120,
+                timeoutSeconds: 90,
+                modelIdleTimeoutSeconds: 600,
+                allowedHosts: ["operator.lan"],
+                allowedOrigins: ["http://localhost:5173"]
+            )
+            Issue.record("Expected the protocol default applyServerSessionGatewayConfig implementation to throw.")
+        } catch let error as ControlPlaneXPCClientError {
+            #expect(
+                error == .requestFailed(
+                    code: "unimplemented",
+                    message: "Gateway config apply is not implemented for this control-plane client."
+                )
+            )
+        }
+    }
+
     @Test("protocol default image defaults helper reports an unimplemented error")
     func protocolDefaultImageDefaultsHelperReportsUnimplemented() async throws {
         let client = DefaultingControlPlaneXPCClient()
@@ -827,6 +855,8 @@ struct ControlPlaneXPCClientTests {
         listener.rateLimitPerMinute = 240
         listener.timeoutSeconds = 90
         listener.modelIdleTimeoutSeconds = 600
+        listener.allowedHosts = ["operator.lan"]
+        listener.allowedOrigins = ["http://localhost:5173"]
         listener.source = .operatorOverride
         listener.activeBinding = true
         listener.requiresRestart = true
@@ -842,7 +872,9 @@ struct ControlPlaneXPCClientTests {
             servedModelIDs: ["melix-dev-text", "melix-dev-vlm"],
             rateLimitPerMinute: 240,
             timeoutSeconds: 90,
-            modelIdleTimeoutSeconds: 600
+            modelIdleTimeoutSeconds: 600,
+            allowedHosts: ["operator.lan"],
+            allowedOrigins: ["http://localhost:5173"]
         )
         let request = try #require(await service.lastExecuteRequest)
 
@@ -857,7 +889,11 @@ struct ControlPlaneXPCClientTests {
         #expect(request.server.applyGatewayConfig.rateLimitPerMinute == 240)
         #expect(request.server.applyGatewayConfig.timeoutSeconds == 90)
         #expect(request.server.applyGatewayConfig.modelIdleTimeoutSeconds == 600)
+        #expect(request.server.applyGatewayConfig.allowedHosts == ["operator.lan"])
+        #expect(request.server.applyGatewayConfig.allowedOrigins == ["http://localhost:5173"])
         #expect(snapshot.gatewayConfig.listeners.first?.effectiveHost == "127.0.0.1")
+        #expect(snapshot.gatewayConfig.listeners.first?.allowedHosts == ["operator.lan"])
+        #expect(snapshot.gatewayConfig.listeners.first?.allowedOrigins == ["http://localhost:5173"])
         #expect(snapshot.gatewayConfig.listeners.first?.requiresRestart == true)
     }
 

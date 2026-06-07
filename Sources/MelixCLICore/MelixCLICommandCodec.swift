@@ -527,6 +527,10 @@ public enum MelixCLICommandCodec {
             }
             appendOption("--host", value: options.host, into: &arguments)
             appendPositiveInt("--port", value: options.port, into: &arguments)
+            appendRepeatedOption("--allowed-host", values: options.allowedHosts, into: &arguments)
+            appendRepeatedOption("--allowed-origin", values: options.allowedOrigins, into: &arguments)
+            appendFlag("--clear-allowed-hosts", enabled: options.clearAllowedHosts, into: &arguments)
+            appendFlag("--clear-allowed-origins", enabled: options.clearAllowedOrigins, into: &arguments)
             appendPositiveInt("--rate-limit-per-minute", value: options.rateLimitPerMinute, into: &arguments)
             appendPositiveInt("--timeout-seconds", value: options.timeoutSeconds, into: &arguments)
             appendPositiveInt("--model-idle-timeout-seconds", value: options.modelIdleTimeoutSeconds, into: &arguments)
@@ -547,6 +551,8 @@ public enum MelixCLICommandCodec {
             }
             appendOption("--host", value: options.host, into: &arguments)
             appendPositiveInt("--port", value: options.port, into: &arguments)
+            appendRepeatedOption("--allowed-host", values: options.allowedHosts, into: &arguments)
+            appendRepeatedOption("--allowed-origin", values: options.allowedOrigins, into: &arguments)
             appendPositiveInt("--rate-limit-per-minute", value: options.rateLimitPerMinute, into: &arguments)
             appendPositiveInt("--timeout-seconds", value: options.timeoutSeconds, into: &arguments)
             appendPositiveInt("--model-idle-timeout-seconds", value: options.modelIdleTimeoutSeconds, into: &arguments)
@@ -579,6 +585,8 @@ public enum MelixCLICommandCodec {
             }
             appendOption("--host", value: options.host, into: &arguments)
             appendPositiveInt("--port", value: options.port, into: &arguments)
+            appendRepeatedOption("--allowed-host", values: options.allowedHosts, into: &arguments)
+            appendRepeatedOption("--allowed-origin", values: options.allowedOrigins, into: &arguments)
             appendPositiveInt("--rate-limit-per-minute", value: options.rateLimitPerMinute, into: &arguments)
             appendPositiveInt("--timeout-seconds", value: options.timeoutSeconds, into: &arguments)
             appendPositiveInt("--model-idle-timeout-seconds", value: options.modelIdleTimeoutSeconds, into: &arguments)
@@ -1133,6 +1141,18 @@ public enum MelixCLICommandCodec {
             return
         }
         arguments.append(contentsOf: [option, String(value)])
+    }
+
+    private static func appendRepeatedOption(_ option: String, values: [String], into arguments: inout [String]) {
+        for value in values {
+            appendOption(option, value: value, into: &arguments)
+        }
+    }
+
+    private static func appendFlag(_ option: String, enabled: Bool, into arguments: inout [String]) {
+        if enabled {
+            arguments.append(option)
+        }
     }
 
     private static func appendInt(_ option: String, value: Int, defaultValue: Int, force: Bool, into arguments: inout [String]) {

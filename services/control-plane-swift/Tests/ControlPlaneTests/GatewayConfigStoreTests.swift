@@ -39,6 +39,8 @@ struct GatewayConfigStoreTests {
                 "MELIX_GATEWAY_RATE_LIMIT_PER_MINUTE": "77",
                 "MELIX_GATEWAY_TIMEOUT_SECONDS": "99",
                 "MELIX_MODEL_IDLE_TIMEOUT_SECONDS": "321",
+                "MELIX_ALLOWED_HOSTS": "operator.lan:12436, operator.lan:12436",
+                "MELIX_ALLOWED_ORIGINS": "http://localhost:5173/app?debug=1, https://APP.example.test/path",
             ]
         )
 
@@ -52,6 +54,8 @@ struct GatewayConfigStoreTests {
 
         #expect(binding.host == "0.0.0.0")
         #expect(binding.port == 14_567)
+        #expect(binding.allowedHosts == ["operator.lan"])
+        #expect(binding.allowedOrigins == ["http://localhost:5173", "https://app.example.test"])
         #expect(listener.serverSessionID == ServerSessionRuntimeStore.defaultServerSessionID)
         #expect(listener.requestedHost == "0.0.0.0")
         #expect(listener.requestedPort == 14_567)
@@ -62,6 +66,8 @@ struct GatewayConfigStoreTests {
         #expect(listener.rateLimitPerMinute == 77)
         #expect(listener.timeoutSeconds == 99)
         #expect(listener.modelIdleTimeoutSeconds == 321)
+        #expect(listener.allowedHosts == ["operator.lan"])
+        #expect(listener.allowedOrigins == ["http://localhost:5173", "https://app.example.test"])
         #expect(listener.source == .environmentDefaults)
         #expect(listener.activeBinding)
         #expect(listener.requiresRestart == false)
@@ -90,6 +96,12 @@ struct GatewayConfigStoreTests {
         command.rateLimitPerMinute = 240
         command.timeoutSeconds = 45
         command.modelIdleTimeoutSeconds = 900
+        command.allowedHosts = ["operator.lan:12436", "operator.lan", "192.168.1.44"]
+        command.allowedOrigins = [
+            "http://localhost:5173/app?debug=1",
+            "http://localhost:5173",
+            "https://APP.example.test/path",
+        ]
         try await store.apply(command: command)
 
         let reloadedStore = GatewayConfigStore(storeURL: storeURL, defaults: [:])
@@ -103,6 +115,8 @@ struct GatewayConfigStoreTests {
 
         #expect(binding.host == "localhost")
         #expect(binding.port == 18_080)
+        #expect(binding.allowedHosts == ["operator.lan", "192.168.1.44"])
+        #expect(binding.allowedOrigins == ["http://localhost:5173", "https://app.example.test"])
         #expect(listener.requestedHost == "localhost")
         #expect(listener.requestedPort == 18_080)
         #expect(listener.defaultModelID == "melix-alt-text")
@@ -110,6 +124,8 @@ struct GatewayConfigStoreTests {
         #expect(listener.rateLimitPerMinute == 240)
         #expect(listener.timeoutSeconds == 45)
         #expect(listener.modelIdleTimeoutSeconds == 900)
+        #expect(listener.allowedHosts == ["operator.lan", "192.168.1.44"])
+        #expect(listener.allowedOrigins == ["http://localhost:5173", "https://app.example.test"])
         #expect(listener.source == .operatorOverride)
         #expect(listener.updatedAtUnixMs == 1_717_171_717_000)
     }
