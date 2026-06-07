@@ -439,9 +439,13 @@ def _layout_parse_payload(
             expected_type="list",
             actual_type=type(layout).__name__,
         )
+    detail_level = (
+        _optional_tool_argument_text(arguments, "detail_level", tool_call_id=tool_call_id)
+        or "blocks"
+    )
     return {
         "media_ref": media_ref,
-        "detail_level": str(arguments.get("detail_level", "") or "blocks"),
+        "detail_level": detail_level,
         "elements": layout,
         "element_count": len(layout),
     }
@@ -471,12 +475,9 @@ def _image_crop_payload(
             )
         }
     payload.update({"media_ref": media_ref, "region": region})
-    if arguments.get("purpose"):
-        payload["purpose"] = _optional_tool_argument_text(
-            arguments,
-            "purpose",
-            tool_call_id=tool_call_id,
-        )
+    purpose = _optional_tool_argument_text(arguments, "purpose", tool_call_id=tool_call_id)
+    if purpose:
+        payload["purpose"] = purpose
     return payload
 
 

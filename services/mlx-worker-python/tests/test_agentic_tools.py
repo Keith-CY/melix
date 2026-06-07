@@ -245,6 +245,28 @@ def test_agentic_tool_runtime_rejects_non_object_status_controls() -> None:
             "tool_status_override",
             "visit",
         ),
+        (
+            {
+                "id": "layout-detail",
+                "name": "layout_parse",
+                "arguments": {"media_ref": "img-1", "detail_level": ["not", "string"]},
+            },
+            {},
+            "arguments.detail_level",
+            "tool_argument",
+            "layout-detail",
+        ),
+        (
+            {
+                "id": "crop-purpose",
+                "name": "image_crop",
+                "arguments": {"media_ref": "img-1", "region": "whole", "purpose": []},
+            },
+            {},
+            "arguments.purpose",
+            "tool_argument",
+            "crop-purpose",
+        ),
     ],
 )
 def test_agentic_tool_runtime_fails_closed_for_invalid_untrusted_value_types(
