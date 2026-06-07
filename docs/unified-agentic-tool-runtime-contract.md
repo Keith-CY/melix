@@ -135,6 +135,34 @@ Payload handling must:
 - record timeout metadata when status is `timeout`
 - reject empty observations
 
+### Untrusted Fixture Boundary
+
+Fixture-backed tool arguments, retrieved corpus rows, page extracts, image
+captions, layout payloads, crop payloads, and status-control payloads are
+untrusted input even when they are loaded from local test fixtures or replay
+packages. The deterministic runtime must validate these values before URL
+lookup, corpus filtering, document parsing, tool-block parsing, or prompt
+assembly. It must not coerce unexpected containers or scalar values into
+strings because that can hide prompt-injection payloads inside trusted-looking
+tool evidence.
+
+When an unexpected untrusted value type is encountered, the runtime must fail
+closed with a failed observation rather than executing the adapter. The failed
+observation payload must include:
+
+- `reason = invalid_untrusted_input_type`
+- `source_type`
+- `source_id`
+- `field`
+- `expected_type`
+- `actual_type`
+- `corrective_action`
+
+The v1 Python worker slice applies this boundary to the deterministic agentic
+tool runtime. Later retrieval, skill, memory, workspace, and background-job
+entrypoints must reuse the same receipt shape when they introduce their own
+source-specific validators.
+
 The observation metric keys are:
 
 - `tool_observation.record_count`
