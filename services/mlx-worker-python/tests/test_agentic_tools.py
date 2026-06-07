@@ -339,3 +339,55 @@ def test_agentic_tool_runtime_fails_closed_for_invalid_layout_and_crop_payloads(
     assert observation["payload"]["source_id"] == expected_source_id
     assert observation["payload"]["expected_type"] == expected_type
     assert observation["payload"]["actual_type"] == actual_type
+
+
+@pytest.mark.parametrize(
+    (
+        "tool_call",
+        "fixture_context",
+        "expected_field",
+        "expected_source_type",
+        "expected_source_id",
+        "expected_type",
+        "actual_type",
+    ),
+    [
+        (
+            {"id": "text-corpus-container", "name": "text_search", "arguments": {"query": "melix"}},
+            {"text_corpus": {"default": {"not": "a corpus list"}}},
+            "text_corpus",
+            "retrieved_corpus",
+            "default",
+            "list",
+            "dict",
+        ),
+        (
+            {"id": "image-corpus-row", "name": "image_search", "arguments": {"query": "receipt"}},
+            {"image_corpus": [{"id": "image-1", "media_ref": "img-1", "caption": "receipt"}, ["not", "row"]]},
+            "image_corpus.item",
+            "retrieved_image",
+            "image-2",
+            "object",
+            "list",
+        ),
+    ],
+)
+def test_agentic_tool_runtime_fails_closed_for_invalid_corpus_containers_and_rows(
+    tool_call: dict[str, object],
+    fixture_context: dict[str, object],
+    expected_field: str,
+    expected_source_type: str,
+    expected_source_id: str,
+    expected_type: str,
+    actual_type: str,
+) -> None:
+    run = execute_agentic_tool_calls([tool_call], fixture_context=fixture_context)
+
+    observation = run.observations[0]
+    assert observation["status"] == "failed"
+    assert observation["payload"]["reason"] == "invalid_untrusted_input_type"
+    assert observation["payload"]["field"] == expected_field
+    assert observation["payload"]["source_type"] == expected_source_type
+    assert observation["payload"]["source_id"] == expected_source_id
+    assert observation["payload"]["expected_type"] == expected_type
+    assert observation["payload"]["actual_type"] == actual_type

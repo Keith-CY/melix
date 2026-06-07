@@ -146,6 +146,10 @@ assembly. It must not coerce unexpected containers or scalar values into
 strings because that can hide prompt-injection payloads inside trusted-looking
 tool evidence.
 
+Selected retrieved corpus containers and their rows are part of the same
+boundary. A selected text or image corpus must be a JSON list, and each corpus
+row must be a JSON object, before adapter filtering or result projection runs.
+
 When an unexpected untrusted value type is encountered, the runtime must fail
 closed with a failed observation rather than executing the adapter. The failed
 observation payload must include:

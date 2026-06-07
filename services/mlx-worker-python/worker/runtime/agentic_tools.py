@@ -525,8 +525,28 @@ def _context_list(fixture_context: dict[str, Any], key: str, corpus_ref: str) ->
     if isinstance(value, dict):
         value = value.get(corpus_ref, [])
     if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, dict)]
+        raise _invalid_untrusted_value_type(
+            field=key,
+            source_type="retrieved_corpus",
+            source_id=corpus_ref,
+            expected_type="list",
+            actual_type=type(value).__name__,
+        )
+
+    item_source_type = "retrieved_image" if key == "image_corpus" else "retrieved_document"
+    item_source_id_prefix = "image" if key == "image_corpus" else "doc"
+    context_items: list[dict[str, Any]] = []
+    for index, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            raise _invalid_untrusted_value_type(
+                field=f"{key}.item",
+                source_type=item_source_type,
+                source_id=f"{item_source_id_prefix}-{index}",
+                expected_type="object",
+                actual_type=type(item).__name__,
+            )
+        context_items.append(item)
+    return context_items
 
 
 def _tool_argument_text(arguments: dict[str, Any], name: str, *, tool_call_id: str) -> str:
