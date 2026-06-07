@@ -278,10 +278,14 @@ def _count_assert_nodes(
     _isinstance=isinstance,
     _type=type,
 ) -> int:
+    module_body = getattr(module, "body", ())
+    if module_body and all(_type(node) is _assert_type for node in module_body):
+        return len(module_body)
+
     count = 0
     stack: list[ast.AST] = []
     stack_append = stack.append
-    for node in getattr(module, "body", ()):
+    for node in module_body:
         if _type(node) is _assert_type:
             count += 1
         elif _isinstance(node, _stmt_container_types):
