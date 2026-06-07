@@ -289,8 +289,15 @@ def _report_matrix_roles(
     runs = _dict_list(report.get("runs"))
     targets = _dict_list(report.get("targets"))
     metrics = _dict_list(report.get("metrics"))
+    run_kind_values: frozenset[str] | None = None
     probe_phases: set[str] | None = None
     for role, rule in matrix.items():
+        if _run_kind_only_rule(rule):
+            if run_kind_values is None:
+                run_kind_values = _report_run_kind_values(runs)
+            if _string_frozenset(rule.get("run_kinds", ())) & run_kind_values:
+                roles.append(role)
+            continue
         if rule.get("probe_phases") and probe_phases is None:
             probe_phases = _probe_phases(report)
         if _rule_matches_report(
@@ -302,6 +309,19 @@ def _report_matrix_roles(
         ):
             roles.append(role)
     return roles
+
+
+def _run_kind_only_rule(rule: dict[str, object]) -> bool:
+    return bool(rule.get("run_kinds")) and not (
+        rule.get("metric_prefixes")
+        or rule.get("target_fields")
+        or rule.get("probe_phases")
+    )
+
+
+def _report_run_kind_values(runs: list[dict[str, object]]) -> frozenset[str]:
+    run_kind_key = "run_kind"
+    return frozenset(str(run.get(run_kind_key, "")) for run in runs)
 
 
 def _rule_matches_report(
