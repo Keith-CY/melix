@@ -126,7 +126,7 @@ def test_agentic_tool_runtime_covers_edge_payload_branches() -> None:
             {"id": "image-1", "name": "image_search", "arguments": {"query": "receipt", "max_results": 1}},
             {"id": "missing-visit", "name": "visit", "arguments": {"url": "fixture://missing"}},
             {"id": "visit-1", "name": "visit", "arguments": {"url": "fixture://text"}},
-            {"id": "layout-1", "name": "layout_parse", "arguments": {"media_ref": "bad-layout"}},
+            {"id": "layout-1", "name": "layout_parse", "arguments": {"media_ref": "empty-layout"}},
             {
                 "id": "crop-1",
                 "name": "image_crop",
@@ -150,7 +150,7 @@ def test_agentic_tool_runtime_covers_edge_payload_branches() -> None:
                 ]
             },
             "pages": {"fixture://text": "plain page"},
-            "layouts": {"bad-layout": {"not": "a list"}},
+            "layouts": {"empty-layout": []},
             "crops": {"img-2": "raw crop text"},
         },
     )
@@ -265,3 +265,55 @@ def test_agentic_tool_runtime_fails_closed_for_invalid_untrusted_value_types(
     assert observation["payload"]["expected_type"] == "str"
     assert observation["payload"]["corrective_action"] == "Provide this untrusted value as a JSON string."
     assert run.metrics["agentic_tool.failed_count"] == 1.0
+
+
+@pytest.mark.parametrize(
+    (
+        "tool_call",
+        "fixture_context",
+        "expected_field",
+        "expected_source_type",
+        "expected_source_id",
+        "expected_type",
+        "actual_type",
+    ),
+    [
+        (
+            {"id": "layout-container", "name": "layout_parse", "arguments": {"media_ref": "img-bad"}},
+            {"layouts": {"img-bad": {"not": "layout elements"}}},
+            "layouts",
+            "retrieved_layout",
+            "img-bad",
+            "list",
+            "dict",
+        ),
+        (
+            {"id": "crop-list", "name": "image_crop", "arguments": {"media_ref": "img-2", "region": "whole"}},
+            {"crops": {"img-2#whole": ["not", "crop text"]}},
+            "crops.text",
+            "retrieved_crop",
+            "img-2#whole",
+            "str",
+            "list",
+        ),
+    ],
+)
+def test_agentic_tool_runtime_fails_closed_for_invalid_layout_and_crop_payloads(
+    tool_call: dict[str, object],
+    fixture_context: dict[str, object],
+    expected_field: str,
+    expected_source_type: str,
+    expected_source_id: str,
+    expected_type: str,
+    actual_type: str,
+) -> None:
+    run = execute_agentic_tool_calls([tool_call], fixture_context=fixture_context)
+
+    observation = run.observations[0]
+    assert observation["status"] == "failed"
+    assert observation["payload"]["reason"] == "invalid_untrusted_input_type"
+    assert observation["payload"]["field"] == expected_field
+    assert observation["payload"]["source_type"] == expected_source_type
+    assert observation["payload"]["source_id"] == expected_source_id
+    assert observation["payload"]["expected_type"] == expected_type
+    assert observation["payload"]["actual_type"] == actual_type

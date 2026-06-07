@@ -431,12 +431,19 @@ def _layout_parse_payload(
     media_ref = _tool_argument_text(arguments, "media_ref", tool_call_id=tool_call_id)
     layouts = _context_mapping(fixture_context, "layouts")
     layout = layouts.get(media_ref, [])
-    elements = layout if isinstance(layout, list) else []
+    if not isinstance(layout, list):
+        raise _invalid_untrusted_value_type(
+            field="layouts",
+            source_type="retrieved_layout",
+            source_id=media_ref,
+            expected_type="list",
+            actual_type=type(layout).__name__,
+        )
     return {
         "media_ref": media_ref,
         "detail_level": str(arguments.get("detail_level", "") or "blocks"),
-        "elements": elements,
-        "element_count": len(elements),
+        "elements": layout,
+        "element_count": len(layout),
     }
 
 
@@ -454,7 +461,15 @@ def _image_crop_payload(
     if isinstance(crop, dict):
         payload = dict(crop)
     else:
-        payload = {"text": str(crop)}
+        payload = {
+            "text": _optional_untrusted_text(
+                crop,
+                field="crops.text",
+                source_type="retrieved_crop",
+                source_id=crop_key if crop_key in crops else media_ref,
+                strip=False,
+            )
+        }
     payload.update({"media_ref": media_ref, "region": region})
     if arguments.get("purpose"):
         payload["purpose"] = _optional_tool_argument_text(
