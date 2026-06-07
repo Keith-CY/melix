@@ -1447,6 +1447,68 @@ def _patch_gemma4_scaled_linear_quantization() -> None:
     scaled_linear.to_quantized = to_quantized
 
 
+def _patch_gemma4_shared_kv_layers(model: Any, config: Any) -> int:
+    num_layers = int(getattr(config, "num_hidden_layers", 0) or 0)
+    num_shared_layers = int(getattr(config, "num_kv_shared_layers", 0) or 0)
+    if num_layers <= 0 or num_shared_layers <= 0:
+        return 0
+    first_shared_layer = num_layers - num_shared_layers
+    if first_shared_layer <= 0:
+        return 0
+
+    inner_model = getattr(model, "model", None)
+    layers = getattr(inner_model, "layers", None)
+    if not isinstance(layers, list | tuple):
+        return 0
+
+    patched_count = 0
+    for layer_index, layer in enumerate(layers):
+        if layer_index < first_shared_layer:
+            continue
+        attention = getattr(layer, "self_attn", None)
+        if attention is None:
+            continue
+        for attribute in ("k_proj", "v_proj", "k_norm", "v_norm"):
+            if hasattr(attention, attribute):
+                delattr(attention, attribute)
+        patched_count += 1
+    return patched_count
+
+
+def _patch_gemma4_model_shared_kv_init() -> None:
+    try:
+        import mlx_vlm.models.gemma4.gemma4 as gemma4_model
+    except (ImportError, ModuleNotFoundError):
+        return
+    model_class = getattr(gemma4_model, "Model", None)
+    if model_class is None or getattr(model_class, "_melix_shared_kv_init_patched", False):
+        return
+    original_init = getattr(model_class, "__init__", None)
+    if not callable(original_init):
+        return
+
+    def patched_init(self, config):
+        original_init(self, config)
+        language_model = getattr(self, "language_model", None)
+        text_config = getattr(config, "text_config", None)
+        if language_model is not None and text_config is not None:
+            _patch_gemma4_shared_kv_layers(language_model, text_config)
+
+    model_class.__init__ = patched_init
+    model_class._melix_shared_kv_init_patched = True
+
+
+def _unwrap_mlx_vlm_drafter(drafter: Any) -> Any:
+    if callable(getattr(drafter, "reset", None)):
+        return drafter
+    if isinstance(drafter, tuple | list):
+        for item in drafter:
+            unwrapped_item = _unwrap_mlx_vlm_drafter(item)
+            if callable(getattr(unwrapped_item, "reset", None)):
+                return unwrapped_item
+    return drafter
+
+
 @dataclass
 class AutoMLXVLMBackend:
     load_fn: Any | None = None
@@ -1527,6 +1589,7 @@ class AutoMLXVLMBackend:
             drafter = self.load_drafter_fn(model_id, kind=kind)
         else:
             drafter = self.load_drafter_fn(model_id)
+        drafter = _unwrap_mlx_vlm_drafter(drafter)
         self._drafter_cache[cache_key] = drafter
         return drafter
 
@@ -1550,6 +1613,8 @@ class AutoMLXVLMBackend:
             load_kwargs: dict[str, Any] = {"revision": model_spec.revision or "main"}
             if trust_remote_code:
                 load_kwargs["trust_remote_code"] = True
+            if self._should_attempt_gemma4_text_backed_fallback(model_spec):
+                _patch_gemma4_model_shared_kv_init()
             model, processor = self.load_fn(model_spec.model_path, **load_kwargs)
             if self._should_attempt_gemma4_text_backed_fallback(model_spec):
                 execution_mode = _gemma4_loaded_execution_mode(model, processor)
@@ -1669,6 +1734,9 @@ class AutoMLXVLMBackend:
             ["text", "vision", "perceiver", "projector", "audio"],
         )
         model = model_class.Model(model_config)
+        language_model = getattr(model, "language_model", None)
+        if language_model is not None:
+            _patch_gemma4_shared_kv_layers(language_model, model_config.text_config)
         model.vision_tower = None
         model.embed_vision = None
         if not has_audio_weights:
@@ -1722,6 +1790,7 @@ class AutoMLXVLMBackend:
 
         model_config = TextConfig.from_dict(config)
         model = LanguageModel(model_config)
+        _patch_gemma4_shared_kv_layers(model, model_config)
         quantization = config.get("quantization")
         if quantization is not None:
             def get_class_predicate(path: str, module: Any):
@@ -2761,8 +2830,7 @@ class MLXVLMRuntime:
             return "draft_model_id is required"
         if not self._is_gemma4_target(loaded_model):
             return "target model is not Gemma 4"
-        if execution_mode != "text_backed":
-            return f"target execution mode is {execution_mode}"
+        _ = execution_mode
         if prepared_request.images or prepared_request.videos:
             return "media inputs are not supported by the Gemma 4 MTP path yet"
         if not self._sampling_is_greedy(sampling):
@@ -2849,8 +2917,10 @@ class MLXVLMRuntime:
 
     @staticmethod
     def _mtp_drafter_acceptance_stats(drafter: Any, draft_block_size: int) -> dict[str, float | int] | None:
-        drafter_model = getattr(drafter, "model", drafter)
-        accept_lens = getattr(drafter_model, "accept_lens", None)
+        accept_lens = getattr(drafter, "accept_lens", None)
+        if accept_lens is None:
+            drafter_model = getattr(drafter, "model", drafter)
+            accept_lens = getattr(drafter_model, "accept_lens", None)
         if not accept_lens:
             return None
         try:

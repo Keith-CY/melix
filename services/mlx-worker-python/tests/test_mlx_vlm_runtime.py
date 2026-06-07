@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import hashlib
 import json
 from pathlib import Path
@@ -36,6 +37,8 @@ from worker.runtime.mlx_vlm_runtime import (
     _callable_accepts_positional_arg_count,
     _TextOnlyVLMDecodeAdapter,
     maybe_apply_native_mtp_preload_patches,
+    _patch_gemma4_model_shared_kv_init,
+    _patch_gemma4_shared_kv_layers,
     _text_batch_generator_probe_kwargs,
     _text_only_streaming_decoder,
     _gemma4_loaded_execution_mode,
@@ -438,6 +441,7 @@ def _install_fake_mlx_vlm_modules(monkeypatch: pytest.MonkeyPatch) -> dict[str, 
     fake_base = ModuleType("mlx_vlm.models.base")
     fake_gemma4 = ModuleType("mlx_vlm.models.gemma4")
     fake_gemma4.__path__ = []
+    fake_gemma4_model = ModuleType("mlx_vlm.models.gemma4.gemma4")
     fake_language = ModuleType("mlx_vlm.models.gemma4.language")
     fake_utils = ModuleType("mlx_vlm.utils")
 
@@ -456,6 +460,7 @@ def _install_fake_mlx_vlm_modules(monkeypatch: pytest.MonkeyPatch) -> dict[str, 
     fake_utils.load_processor = lambda *args, **kwargs: None
     fake_utils.load_tokenizer = lambda *args, **kwargs: None
     fake_utils.update_module_configs = lambda *args, **kwargs: None
+    fake_gemma4.gemma4 = fake_gemma4_model
     fake_gemma4.language = fake_language
     fake_models.base = fake_base
     fake_models.gemma4 = fake_gemma4
@@ -467,6 +472,7 @@ def _install_fake_mlx_vlm_modules(monkeypatch: pytest.MonkeyPatch) -> dict[str, 
         "mlx_vlm.models": fake_models,
         "mlx_vlm.models.base": fake_base,
         "mlx_vlm.models.gemma4": fake_gemma4,
+        "mlx_vlm.models.gemma4.gemma4": fake_gemma4_model,
         "mlx_vlm.models.gemma4.language": fake_language,
         "mlx_vlm.utils": fake_utils,
     }
@@ -4066,6 +4072,382 @@ def test_gemma4_scaled_linear_patch_accepts_newer_language_api(monkeypatch: pyte
     assert hasattr(FakeScaledLinear, "to_quantized")
 
 
+def _assert_gemma4_shared_kv_patch_removes_unused_kv_modules_from_shared_layers() -> None:
+    layers = []
+    for _index in range(5):
+        layers.append(
+            SimpleNamespace(
+                self_attn=SimpleNamespace(
+                    q_proj=object(),
+                    k_proj=object(),
+                    v_proj=object(),
+                    o_proj=object(),
+                    q_norm=object(),
+                    k_norm=object(),
+                    v_norm=object(),
+                )
+            )
+        )
+    model = SimpleNamespace(model=SimpleNamespace(layers=layers))
+    config = SimpleNamespace(num_hidden_layers=5, num_kv_shared_layers=2)
+
+    assert _patch_gemma4_shared_kv_layers(model, config) == 2
+
+    for layer in layers[:3]:
+        assert hasattr(layer.self_attn, "k_proj")
+        assert hasattr(layer.self_attn, "v_proj")
+        assert hasattr(layer.self_attn, "k_norm")
+        assert hasattr(layer.self_attn, "v_norm")
+    for layer in layers[3:]:
+        assert hasattr(layer.self_attn, "q_proj")
+        assert hasattr(layer.self_attn, "o_proj")
+        assert hasattr(layer.self_attn, "q_norm")
+        assert not hasattr(layer.self_attn, "k_proj")
+        assert not hasattr(layer.self_attn, "v_proj")
+        assert not hasattr(layer.self_attn, "k_norm")
+        assert not hasattr(layer.self_attn, "v_norm")
+
+
+def _assert_gemma4_shared_kv_patch_ignores_unpatchable_shapes() -> None:
+    assert _patch_gemma4_shared_kv_layers(
+        SimpleNamespace(model=SimpleNamespace(layers=[])),
+        SimpleNamespace(num_hidden_layers=2, num_kv_shared_layers=2),
+    ) == 0
+    assert _patch_gemma4_shared_kv_layers(
+        SimpleNamespace(model=SimpleNamespace(layers=[])),
+        SimpleNamespace(num_hidden_layers=0, num_kv_shared_layers=1),
+    ) == 0
+    assert _patch_gemma4_shared_kv_layers(
+        SimpleNamespace(model=SimpleNamespace(layers=[])),
+        SimpleNamespace(num_hidden_layers=1, num_kv_shared_layers=1),
+    ) == 0
+    assert _patch_gemma4_shared_kv_layers(
+        SimpleNamespace(model=SimpleNamespace(layers="not-layers")),
+        SimpleNamespace(num_hidden_layers=2, num_kv_shared_layers=1),
+    ) == 0
+    assert _patch_gemma4_shared_kv_layers(
+        SimpleNamespace(model=SimpleNamespace(layers=[SimpleNamespace()])),
+        SimpleNamespace(num_hidden_layers=1, num_kv_shared_layers=1),
+    ) == 0
+    assert _patch_gemma4_shared_kv_layers(
+        SimpleNamespace(model=SimpleNamespace(layers=[SimpleNamespace()])),
+        SimpleNamespace(num_hidden_layers=2, num_kv_shared_layers=1),
+    ) == 0
+    assert _patch_gemma4_shared_kv_layers(
+        SimpleNamespace(
+            model=SimpleNamespace(
+                layers=[
+                    SimpleNamespace(self_attn=SimpleNamespace(k_proj=object())),
+                    SimpleNamespace(),
+                ]
+            )
+        ),
+        SimpleNamespace(num_hidden_layers=2, num_kv_shared_layers=1),
+    ) == 0
+
+
+def _assert_gemma4_model_init_patch_applies_shared_kv_patch_to_language_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as patch_context:
+        modules = _install_fake_mlx_vlm_modules(patch_context)
+        gemma4_model = modules["mlx_vlm.models.gemma4.gemma4"]
+
+        calls: list[object] = []
+
+        class FakeModel:
+            def __init__(self, config) -> None:
+                self.language_model = SimpleNamespace(model=SimpleNamespace(layers=[]))
+                calls.append(config)
+
+        patch_context.setattr(gemma4_model, "Model", FakeModel, raising=False)
+        patch_context.setattr(
+            mlx_vlm_runtime_module,
+            "_patch_gemma4_shared_kv_layers",
+            lambda language_model, text_config: calls.append((language_model, text_config)) or 2,
+        )
+        config = SimpleNamespace(text_config=SimpleNamespace(num_hidden_layers=5, num_kv_shared_layers=2))
+
+        _patch_gemma4_model_shared_kv_init()
+        model = FakeModel(config)
+
+        assert getattr(FakeModel, "_melix_shared_kv_init_patched") is True
+        assert calls[0] is config
+        assert calls[1] == (model.language_model, config.text_config)
+
+
+def _assert_gemma4_model_init_patch_ignores_unpatchable_upstream_shapes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as patch_context:
+        modules = _install_fake_mlx_vlm_modules(patch_context)
+        gemma4_model = modules["mlx_vlm.models.gemma4.gemma4"]
+
+        class AlreadyPatchedModel:
+            _melix_shared_kv_init_patched = True
+
+        patch_context.setattr(gemma4_model, "Model", AlreadyPatchedModel, raising=False)
+        _patch_gemma4_model_shared_kv_init()
+
+        class MissingInitModel:
+            __init__ = None
+
+        patch_context.setattr(gemma4_model, "Model", MissingInitModel, raising=False)
+        _patch_gemma4_model_shared_kv_init()
+
+
+def _assert_gemma4_model_init_patch_ignores_missing_upstream_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as patch_context:
+        original_import = builtins.__import__
+
+        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "mlx_vlm.models.gemma4.gemma4":
+                raise ModuleNotFoundError(name)
+            return original_import(name, globals, locals, fromlist, level)
+
+        patch_context.setattr(builtins, "__import__", fake_import)
+
+        _patch_gemma4_model_shared_kv_init()
+
+
+def _assert_gemma4_text_only_loader_patches_shared_kv_layers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as patch_context:
+        _install_fake_mlx_core(patch_context)
+        _install_fake_mlx_vlm_modules(patch_context)
+        import mlx.core as mx
+        import mlx_vlm.models.gemma4.language as language
+
+        calls: dict[str, object] = {}
+        layers = [
+            SimpleNamespace(self_attn=SimpleNamespace(k_proj=object(), v_proj=object())),
+            SimpleNamespace(self_attn=SimpleNamespace(k_proj=object(), v_proj=object())),
+        ]
+
+        class FakeTextConfig:
+            @classmethod
+            def from_dict(cls, config):
+                calls["config"] = dict(config)
+                return SimpleNamespace(
+                    model_type="gemma4_text",
+                    num_hidden_layers=2,
+                    num_kv_shared_layers=1,
+                )
+
+        class FakeLanguageModel:
+            def __init__(self, config):
+                self.config = config
+                self.model = SimpleNamespace(layers=layers, hidden_size_per_layer_input=0)
+
+            def sanitize(self, weights):
+                calls["sanitize"] = dict(weights)
+                return {}
+
+            def load_weights(self, weights):
+                calls["load_weights"] = list(weights)
+
+            def parameters(self):
+                return []
+
+            def eval(self):
+                calls["eval"] = True
+
+        patch_context.setattr(language, "TextConfig", FakeTextConfig)
+        patch_context.setattr(language, "LanguageModel", FakeLanguageModel)
+        patch_context.setattr(mx, "eval", lambda parameters: calls.setdefault("mx_eval", parameters))
+
+        model = AutoMLXVLMBackend._load_gemma4_text_only_language_model(
+            config={"model_type": "gemma4_text"},
+            weights={},
+        )
+
+        assert isinstance(model, _Gemma4TextBackedModelShim)
+        assert hasattr(layers[0].self_attn, "k_proj")
+        assert not hasattr(layers[1].self_attn, "k_proj")
+        assert not hasattr(layers[1].self_attn, "v_proj")
+        assert calls["eval"] is True
+
+
+def _assert_gemma4_text_backed_loader_patches_shared_kv_layers(
+    monkeypatch: pytest.MonkeyPatch,
+    model_path: Path,
+) -> None:
+    with monkeypatch.context() as patch_context:
+        _install_fake_mlx_core(patch_context)
+        modules = _install_fake_mlx_vlm_modules(patch_context)
+        import mlx.core as mx
+        import mlx_vlm.utils as utils
+
+        model_path.mkdir()
+        (model_path / "model.safetensors").write_bytes(b"")
+        calls: dict[str, object] = {}
+
+        modules["mlx_vlm.models.gemma4.language"].ScaledLinear = type(
+            "ScaledLinear",
+            (),
+            {"to_quantized": lambda self: self},
+        )
+
+        class FakeModelConfig:
+            eos_token_id = 2
+
+            @classmethod
+            def from_dict(cls, config):
+                calls["config"] = dict(config)
+                return SimpleNamespace(
+                    text_config=SimpleNamespace(num_hidden_layers=2, num_kv_shared_layers=1),
+                    eos_token_id=cls.eos_token_id,
+                )
+
+        class FakeModel:
+            def __init__(self, config):
+                self.config = config
+                self.language_model = SimpleNamespace(model=SimpleNamespace(layers=[]))
+                self.vision_tower = object()
+                self.embed_vision = object()
+                self.audio_tower = object()
+                self.embed_audio = object()
+
+            def load_weights(self, weights):
+                calls["load_weights"] = list(weights)
+
+        class FakeModelClass:
+            ModelConfig = FakeModelConfig
+            Model = FakeModel
+
+        patch_context.setattr(utils, "get_model_and_args", lambda *, config: (FakeModelClass, None))
+        patch_context.setattr(utils, "get_model_path", lambda *_args, **_kwargs: model_path)
+        patch_context.setattr(utils, "load_config", lambda *_args, **_kwargs: {"model_type": "gemma4"})
+        patch_context.setattr(
+            utils,
+            "update_module_configs",
+            lambda model_config, model_class, config, modules: model_config,
+        )
+        patch_context.setattr(utils, "load_processor", lambda *_args, **_kwargs: SimpleNamespace())
+        patch_context.setattr(mx, "load", lambda path: {"language_model.model.layers.0.weight": path})
+        patch_context.setattr(
+            mlx_vlm_runtime_module,
+            "_patch_gemma4_shared_kv_layers",
+            lambda language_model, text_config: calls.setdefault(
+                "shared_kv_patch",
+                (language_model, text_config),
+            )
+            or 1,
+        )
+
+        model, processor, execution_mode = AutoMLXVLMBackend._load_gemma4_text_backed_model(
+            model_spec=common_pb2.ModelSpec(model_path=str(model_path), revision="main"),
+            original_error=RuntimeError("original"),
+        )
+
+    assert calls["shared_kv_patch"] == (model.language_model, model.config.text_config)
+    assert processor is not None
+    assert execution_mode == "text_backed"
+
+
+def _assert_mtp_prompt_only_multimodal_requests_remain_supported() -> None:
+    def fake_generate_step(
+        *_args,
+        draft_model=None,
+        draft_kind=None,
+        draft_block_size=None,
+        **_kwargs,
+    ):
+        _ = draft_model, draft_kind, draft_block_size
+        return iter(())
+
+    runtime = MLXVLMRuntime(
+        backend=AutoMLXVLMBackend(
+            load_fn=lambda model_path, revision="main": (object(), object()),
+            stream_generate_fn=lambda *args, **kwargs: iter(()),
+            apply_chat_template_fn=lambda *args, **kwargs: "",
+            generate_step_fn=fake_generate_step,
+            load_drafter_fn=lambda model_id, *, kind="mtp": SimpleNamespace(reset=lambda model: None),
+        )
+    )
+    policy = common_pb2.AccelerationPolicy(
+        mode=common_pb2.ACCELERATION_MODE_SPECULATIVE_DECODE,
+        draft_model_id="draft-model",
+        num_draft_tokens=6,
+    )
+    loaded_gemma4 = {
+        "metadata": {
+            "vision_family_id": "gemma4-v1",
+            "melix.vlm.execution_mode": "multimodal",
+        },
+        "model": SimpleNamespace(config=SimpleNamespace(model_type="gemma4")),
+    }
+    prompt_only = PreparedVisionRequest(
+        prompt_text="Say hello.",
+        images=[],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=0,
+        preprocess_peak_memory_bytes=0,
+    )
+    with_image = PreparedVisionRequest(
+        prompt_text="Describe.",
+        images=[
+            PreparedImageInput(
+                bytes_data=b"image",
+                source_kind="inline",
+                reference="inline:image",
+                mime_type="image/jpeg",
+                format="jpg",
+                filename="image.jpg",
+                sha256_hex="deadbeef",
+            )
+        ],
+        videos=[],
+        video_frame_policies=[],
+        preprocess_latency_ms=0.0,
+        preprocess_input_bytes=len(b"image"),
+        preprocess_peak_memory_bytes=len(b"image"),
+    )
+
+    assert (
+        runtime._mtp_speculative_unsupported_reason(
+            loaded_model=loaded_gemma4,
+            prepared_request=prompt_only,
+            sampling=common_pb2.SamplingConfig(temperature=0.0, top_p=1.0, top_k=0),
+            execution_mode="multimodal",
+            acceleration_policy=policy,
+        )
+        == ""
+    )
+    assert "media inputs" in runtime._mtp_speculative_unsupported_reason(
+        loaded_model=loaded_gemma4,
+        prepared_request=with_image,
+        sampling=common_pb2.SamplingConfig(temperature=0.0, top_p=1.0, top_k=0),
+        execution_mode="multimodal",
+        acceleration_policy=policy,
+    )
+
+
+def _assert_auto_mlx_vlm_backend_unwraps_tuple_drafter_load_result() -> None:
+    loads: list[tuple[str, str]] = []
+    drafter = SimpleNamespace(reset=lambda model: None)
+
+    def fake_load_drafter(model_id: str, *, kind: str = "mtp"):
+        loads.append((model_id, kind))
+        return ("metadata", drafter)
+
+    backend = AutoMLXVLMBackend(
+        load_fn=lambda model_path, revision="main": (object(), object()),
+        stream_generate_fn=lambda *args, **kwargs: iter(()),
+        apply_chat_template_fn=lambda *args, **kwargs: "",
+        load_drafter_fn=fake_load_drafter,
+    )
+
+    assert backend.load_drafter("draft-model", kind="mtp") is drafter
+    assert backend.load_drafter("draft-model", kind="mtp") is drafter
+    assert loads == [("draft-model", "mtp")]
+
+
 def test_callables_and_text_backed_shims_expose_upstream_compatible_surfaces(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5120,6 +5502,27 @@ def test_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
     legacy_signature_path.mkdir()
     _assert_chunked_prompt_auxiliary_slicing_contract()
     _assert_mlx_vlm_runtime_probe_fixtures_record_position_slice_fallback_count()
+    _assert_gemma4_shared_kv_patch_removes_unused_kv_modules_from_shared_layers()
+    _assert_gemma4_shared_kv_patch_ignores_unpatchable_shapes()
+    _assert_gemma4_model_init_patch_applies_shared_kv_patch_to_language_model(monkeypatch)
+    _assert_gemma4_model_init_patch_ignores_unpatchable_upstream_shapes(monkeypatch)
+    _assert_gemma4_model_init_patch_ignores_missing_upstream_module(monkeypatch)
+    _assert_gemma4_text_only_loader_patches_shared_kv_layers(monkeypatch)
+    _assert_gemma4_text_backed_loader_patches_shared_kv_layers(
+        monkeypatch,
+        tmp_path / "shared-kv-text-backed",
+    )
+    _assert_auto_mlx_vlm_backend_unwraps_tuple_drafter_load_result()
+    assert MLXVLMRuntime._mtp_drafter_acceptance_stats(
+        SimpleNamespace(model=SimpleNamespace(), accept_lens=[2, 4]),
+        6,
+    ) == {
+        "acceptance_rate": 0.6,
+        "rollback_rate": 0.4,
+        "accepted_tokens": 6,
+        "rejected_tokens": 4,
+    }
+    _assert_mtp_prompt_only_multimodal_requests_remain_supported()
     _assert_mlx_vlm_runtime_uses_generate_step_for_mtp_when_available(
         monkeypatch,
         current_signature_path,
@@ -5656,13 +6059,6 @@ def test_mlx_vlm_runtime_reports_mtp_unsupported_reasons_without_loading_drafter
         prepared_request=prompt_only,
         sampling=common_pb2.SamplingConfig(temperature=0.0, top_p=1.0, top_k=0),
         execution_mode="text_backed",
-        acceleration_policy=policy,
-    )
-    assert "target execution mode" in runtime._mtp_speculative_unsupported_reason(
-        loaded_model=loaded_gemma4,
-        prepared_request=prompt_only,
-        sampling=common_pb2.SamplingConfig(temperature=0.0, top_p=1.0, top_k=0),
-        execution_mode="multimodal",
         acceleration_policy=policy,
     )
     assert "media inputs" in runtime._mtp_speculative_unsupported_reason(

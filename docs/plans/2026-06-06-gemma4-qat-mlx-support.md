@@ -31,7 +31,7 @@ The first supported direction is MLX-first:
   Gemma 4 QAT MLX assets remain visible but experimental and require manual
   operator selection.
 
-Current Hugging Face API evidence on 2026-06-06 shows these relevant MLX QAT
+Current Hugging Face API evidence on 2026-06-07 shows these relevant MLX QAT
 assets already exist:
 
 - `mlx-community/gemma-4-E2B-it-qat-4bit`
@@ -112,6 +112,11 @@ assets already exist:
 4. Runtime loading and routing
    - Validate that target QAT MLX assets load through the existing MLX/MLX-VLM
      runtime path before advertising them as routeable.
+   - Patch the current MLX-VLM Gemma 4 load boundary for QAT shared-KV layouts
+     where `num_kv_shared_layers` omits K/V projection and norm weights from
+     later layers.
+   - Normalize current MLX-VLM `load_drafter()` results from `(model,
+     resolved_kind)` to the drafter model object expected by `generate_step()`.
    - Preserve the current boundary that media-bearing requests do not enter the
      MTP speculative path.
    - Bind compatible draft companion assets only for prompt-only Gemma 4
@@ -224,6 +229,86 @@ Expected slice 2 behavior evidence:
   missing-draft reason.
 - Automatic pairing remains limited to `mlx-community` Gemma 4 QAT MLX assets;
   third-party QAT MLX assets remain manual experimental imports.
+
+Slice 3 focused verification:
+
+```bash
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 \
+uv run --project services/mlx-worker-python --extra mlx pytest -q \
+  services/mlx-worker-python/tests/test_mlx_vlm_runtime.py \
+  tests/test_gemma4_qat_runtime_evidence.py
+```
+
+Real-model E2B evidence command:
+
+```bash
+E2B_TARGET_SNAPSHOT="$(PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 \
+uv run --project services/mlx-worker-python --extra mlx python - <<'PY'
+from huggingface_hub import snapshot_download
+print(snapshot_download(repo_id="mlx-community/gemma-4-E2B-it-qat-4bit", revision="main", local_files_only=True))
+PY
+)"
+E2B_DRAFT_SNAPSHOT="$(PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 \
+uv run --project services/mlx-worker-python --extra mlx python - <<'PY'
+from huggingface_hub import snapshot_download
+print(snapshot_download(repo_id="mlx-community/gemma-4-E2B-it-qat-assistant-bf16", revision="main", local_files_only=True))
+PY
+)"
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 \
+uv run --project services/mlx-worker-python --extra mlx python \
+  scripts/gemma4_qat_runtime_evidence.py \
+  --target-model-id mlx-community/gemma-4-E2B-it-qat-4bit \
+  --draft-model-id mlx-community/gemma-4-E2B-it-qat-assistant-bf16 \
+  --target-model-path "$E2B_TARGET_SNAPSHOT" \
+  --draft-model-path "$E2B_DRAFT_SNAPSHOT" \
+  --max-tokens 16 \
+  --num-draft-tokens 6 \
+  --output .runtime/gemma4-qat-runtime-evidence/e2b.json
+```
+
+Real-model E4B evidence command:
+
+```bash
+PYTHONPATH="$PWD:$PWD/services/mlx-worker-python" UV_PYTHON=3.12 \
+uv run --project services/mlx-worker-python --extra mlx python \
+  scripts/gemma4_qat_runtime_evidence.py \
+  --target-model-id mlx-community/gemma-4-E4B-it-qat-4bit \
+  --draft-model-id mlx-community/gemma-4-E4B-it-qat-assistant-bf16 \
+  --download \
+  --max-tokens 16 \
+  --num-draft-tokens 6 \
+  --output .runtime/gemma4-qat-runtime-evidence/e4b.json
+```
+
+Slice 3 real-model evidence captured on 2026-06-07:
+
+- E2B target `mlx-community/gemma-4-E2B-it-qat-4bit` with
+  `mlx-community/gemma-4-E2B-it-qat-assistant-bf16`: baseline passed,
+  speculative decode passed, no implicit download, no baseline fallback,
+  completion tokens 16, baseline TTFT 826.231 ms, baseline decode 6.7079 tok/s,
+  baseline peak memory 4.4001 GB, speculative TTFT 3129.294 ms, speculative
+  decode 5.5667 tok/s, speculative peak memory 4.5566 GB, acceptance rate 0.2,
+  accepted tokens 8, rejected tokens 32, decode delta -17.0128 percent.
+- E4B target `mlx-community/gemma-4-E4B-it-qat-4bit` with
+  `mlx-community/gemma-4-E4B-it-qat-assistant-bf16`: baseline passed,
+  speculative decode passed, explicit download performed, no implicit download,
+  no baseline fallback, completion tokens 16, baseline TTFT 140.748 ms,
+  baseline decode 68.4346 tok/s, baseline peak memory 6.9023 GB,
+  speculative TTFT 277.052 ms, speculative decode 72.5255 tok/s, speculative
+  peak memory 7.0606 GB, acceptance rate 0.3, accepted tokens 9, rejected tokens
+  21, decode delta +5.9778 percent.
+
+Slice 3 runtime notes:
+
+- Short smoke samples are release-gate compatibility evidence, not a stable
+  performance claim. The E2B sample regressed decode throughput while the E4B
+  sample improved it.
+- Prompt-only Gemma 4 QAT requests may use MTP through the current MLX-VLM
+  `generate_step()` path. Media-bearing Gemma 4 requests still remain outside
+  MTP and use baseline generation.
+- The evidence script requires an existing local target and draft snapshot by
+  default. `--download` is explicit and records `download_performed`; Melix
+  runtime generation still does not implicitly download missing companions.
 
 Slice 1 coverage and metrics command:
 
