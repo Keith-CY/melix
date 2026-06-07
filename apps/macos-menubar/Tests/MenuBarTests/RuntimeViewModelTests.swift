@@ -634,7 +634,6 @@ struct RuntimeViewModelTests {
         viewModel.updateSelectedServerSessionTimeout(90)
 
         await viewModel.applySelectedServerGatewayConfig()
-        await viewModel.applySelectedServerGatewayConfig()
 
         let request = try #require(await client.recordedGatewayConfigApplyRequests.last)
         let session = try #require(viewModel.selectedServerSession)

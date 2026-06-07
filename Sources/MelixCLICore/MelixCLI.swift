@@ -1286,16 +1286,12 @@ public struct ServerControlOptions: Equatable, Sendable {
             )
         self.host = host
         self.port = port
-        self.allowedHosts = Self.normalizedList(allowedHosts)
-        self.allowedOrigins = Self.normalizedList(allowedOrigins)
+        self.allowedHosts = normalizedServerAllowlist(allowedHosts)
+        self.allowedOrigins = normalizedServerAllowlist(allowedOrigins)
         self.rateLimitPerMinute = rateLimitPerMinute
         self.timeoutSeconds = timeoutSeconds
         self.modelIdleTimeoutSeconds = modelIdleTimeoutSeconds
         self.json = json
-    }
-
-    private static func normalizedList(_ values: [String]) -> [String] {
-        values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
     }
 
 }
@@ -1944,8 +1940,8 @@ public struct ServerSessionCreateOptions: Equatable, Sendable {
         )
         self.host = host
         self.port = port
-        self.allowedHosts = Self.normalizedList(allowedHosts)
-        self.allowedOrigins = Self.normalizedList(allowedOrigins)
+        self.allowedHosts = normalizedServerAllowlist(allowedHosts)
+        self.allowedOrigins = normalizedServerAllowlist(allowedOrigins)
         self.rateLimitPerMinute = rateLimitPerMinute
         self.timeoutSeconds = timeoutSeconds
         self.modelIdleTimeoutSeconds = modelIdleTimeoutSeconds
@@ -1954,10 +1950,6 @@ public struct ServerSessionCreateOptions: Equatable, Sendable {
         self.draftModelID = draftModelID
         self.numDraftTokens = numDraftTokens
         self.json = json
-    }
-
-    private static func normalizedList(_ values: [String]) -> [String] {
-        values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
     }
 
 }
@@ -2017,8 +2009,8 @@ public struct ServerSessionUpdateOptions: Equatable, Sendable {
             )
         self.host = host
         self.port = port
-        self.allowedHosts = Self.normalizedList(allowedHosts)
-        self.allowedOrigins = Self.normalizedList(allowedOrigins)
+        self.allowedHosts = normalizedServerAllowlist(allowedHosts)
+        self.allowedOrigins = normalizedServerAllowlist(allowedOrigins)
         self.clearAllowedHosts = clearAllowedHosts
         self.clearAllowedOrigins = clearAllowedOrigins
         self.rateLimitPerMinute = rateLimitPerMinute
@@ -2031,9 +2023,10 @@ public struct ServerSessionUpdateOptions: Equatable, Sendable {
         self.json = json
     }
 
-    private static func normalizedList(_ values: [String]) -> [String] {
-        values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
-    }
+}
+
+private func normalizedServerAllowlist(_ values: [String]) -> [String] {
+    values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
 }
 
 public struct ServerSessionIDOptions: Equatable, Sendable {
