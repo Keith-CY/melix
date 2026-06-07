@@ -90,6 +90,8 @@ class ResolvedTextFamilyConfig:
 
 _DEFAULT_TEXT_FAMILY_ID = "llama"
 _EMPTY_CONFIG_PAYLOAD: Mapping[str, Any] = {}
+_TRUE_BOOL_LITERALS = frozenset(("1", "true", "yes", "on"))
+_FALSE_BOOL_LITERALS = frozenset(("0", "false", "no", "off"))
 _TEXT_FAMILY_ADAPTERS: dict[str, TextFamilyDescriptor] = {
     "llama": TextFamilyDescriptor(
         family_id="llama",
@@ -470,9 +472,9 @@ def _bool_from_any(value: Any) -> bool:
         return bool(value)
     if isinstance(value, str):
         normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
+        if normalized in _TRUE_BOOL_LITERALS:
             return True
-        if normalized in {"0", "false", "no", "off"}:
+        if normalized in _FALSE_BOOL_LITERALS:
             return False
     return False
 

@@ -9,6 +9,7 @@ from worker.runtime.text_family_adapters import (
     ResolvedTextFamilyConfig,
     TextFamilyDescriptor,
     TextFamilyDetection,
+    _bool_from_any,
     _inferred_attention_profile,
     _inferred_expert_count,
     _inferred_rope_profile,
@@ -262,6 +263,14 @@ def test_resolve_text_family_config_covers_fallback_parsing_and_bool_variants() 
     assert interleaved.tool_parser_xml_fallback is False
     assert mla.attention_profile == "mla"
     assert mla.moe_gate_dequant is True
+
+
+def test_bool_from_any_preserves_literal_string_variants() -> None:
+    assert _bool_from_any("on") is True
+    assert _bool_from_any(" YES ") is True
+    assert _bool_from_any("off") is False
+    assert _bool_from_any(" NO ") is False
+    assert _bool_from_any("maybe") is False
 
 
 def test_resolve_text_family_config_marks_family_default_expert_count_source() -> None:
