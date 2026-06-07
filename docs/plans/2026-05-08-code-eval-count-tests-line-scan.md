@@ -37,6 +37,15 @@ character-by-character fallback line counter with a compiled regex that matches
 each line containing at least one non-whitespace character while preserving LF,
 CRLF, CR, and Unicode whitespace behavior.
 
+## 2026-06-07 all-assert AST fast path
+
+This follow-up keeps the same registered `code-eval-count-tests-line-scan` probe
+and narrows the implementation to `_count_assert_nodes()` when parsed test code
+is made entirely of top-level `assert` statements. That common generated-test
+shape can return `len(module.body)` after exact-type checks, avoiding stack setup
+and nested-container traversal work while preserving the existing traversal for
+mixed or nested modules.
+
 ## Verification commands
 
 ```bash
