@@ -6636,7 +6636,7 @@ public final class RuntimeViewModel {
     }
 
     public var loraCapableModels: [RuntimeModelRow] {
-        models.filter { $0.kind == "text" }
+        catalogModelsIncludingRegistry.filter(Self.isTextGenerationCapableModel)
     }
 
     public var selectedLoraModel: RuntimeModelRow? {
@@ -10936,6 +10936,7 @@ public final class RuntimeViewModel {
             refreshModelRegistryEntries()
         }
         persistOperatorSessionState(force: true)
+        refreshChatCapabilities()
         refreshLoraSelectionState()
     }
 
@@ -14088,10 +14089,12 @@ public final class RuntimeViewModel {
             selectedChatModelID = serverModelID
             return serverModelID
         }
-        if models.contains(where: { $0.modelID == selectedChatModelID && $0.kind == "text" }) {
+        if catalogModelsIncludingRegistry.contains(where: { model in
+            model.modelID == selectedChatModelID && Self.isTextGenerationCapableModel(model)
+        }) {
             return selectedChatModelID
         }
-        if let textModel = models.first(where: { $0.kind == "text" }) {
+        if let textModel = catalogModelsIncludingRegistry.first(where: Self.isTextGenerationCapableModel) {
             selectedChatModelID = textModel.modelID
             return textModel.modelID
         }
@@ -14208,8 +14211,10 @@ public final class RuntimeViewModel {
     private func refreshChatCapabilities() {
         if let serverModelID = selectedChatServerSession?.modelID {
             selectedChatModelID = serverModelID
-        } else if models.contains(where: { $0.modelID == selectedChatModelID }) == false,
-                  let textModel = models.first(where: { $0.kind == "text" }) {
+        } else if catalogModelsIncludingRegistry.contains(where: { model in
+            model.modelID == selectedChatModelID && Self.isTextGenerationCapableModel(model)
+        }) == false,
+                  let textModel = catalogModelsIncludingRegistry.first(where: Self.isTextGenerationCapableModel) {
             selectedChatModelID = textModel.modelID
         }
 
@@ -14222,18 +14227,17 @@ public final class RuntimeViewModel {
         ]
 
         chatCapabilities = capabilitySpecs.compactMap { capabilityID, title, featureHints in
-            guard let model = latestSnapshot.models.first(where: { summary in
-                summary.kind == capabilityID || summary.features.contains(where: { featureHints.contains($0.lowercased()) })
+            guard let model = catalogModelsIncludingRegistry.first(where: { row in
+                row.kind == capabilityID || row.features.contains(where: { featureHints.contains($0.lowercased()) })
             }) else {
                 return nil
             }
-            let stateText = Self.modelStateText(model.state)
             return DesktopChatCapabilityRow(
                 id: capabilityID,
                 title: title,
                 modelID: model.modelID,
-                detail: "\(model.modelID) • \(stateText)",
-                isReady: model.state == .modelWarm || model.state == .modelPinned
+                detail: "\(model.modelID) • \(model.stateText)",
+                isReady: model.isLoaded
             )
         }
     }
@@ -16676,20 +16680,25 @@ public final class RuntimeViewModel {
         }
     }
 
-    private static func isEvaluationEligibleModel(_ model: RuntimeModelRow) -> Bool {
-        let supportedTasks = Set(model.supportedTasks.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
-        let features = Set(model.features.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
-        if model.kind == "text" {
+    private static func isTextGenerationCapableModel(_ model: RuntimeModelRow) -> Bool {
+        let kind = model.kind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if kind == "text" {
             return true
         }
+        let supportedTasks = Set(model.supportedTasks.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
+        let features = Set(model.features.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
         if supportedTasks.contains("text-generation") || supportedTasks.contains("chat") {
             return true
         }
         if supportedTasks.contains("generate"),
-           features.contains("text") || model.kind == "vlm" {
+           features.contains("text") || features.contains("chat") || kind == "vlm" {
             return true
         }
-        return model.kind == "vlm" && (features.contains("chat") || features.contains("text"))
+        return kind == "vlm" && (features.contains("chat") || features.contains("text"))
+    }
+
+    private static func isEvaluationEligibleModel(_ model: RuntimeModelRow) -> Bool {
+        isTextGenerationCapableModel(model)
     }
 
     private static func ensureBenchmarkExportDirectory() throws -> URL {
