@@ -239,6 +239,17 @@ Expected training behavior:
   starts.
 - accepted template controls are copied into `training_template_receipt` in the
   normalized dataset manifest and final adapter manifest.
+- response-only chat training with `mask_prompt=true` fails before backend
+  execution when `max_seq_length` truncates every assistant completion token.
+  The worker returns `response_only_labels_truncated` with
+  `field=max_length`, `reason=no_unmasked_completion_tokens`, affected sample
+  counts, requested/effective sequence length, and a suggested minimum sequence
+  length when the boundary can be derived.
+- chat training samples with media-token hints fail before backend execution
+  when the declared media-token count cannot fit inside `max_seq_length`.
+  The worker returns `training_tokens_truncated` with `field=max_length`,
+  `reason=media_tokens_truncated`, the sample index, media-token count,
+  requested/effective sequence length, and a suggested minimum sequence length.
 - Hugging Face dataset materialization is cached under `<jobs_root>/datasets/<cache-key>`
 - Melix supports `lora`, `qlora`, `dora`, `dpo`, `orpo`, and `cpt` through the same `train_lora` surface
 - `dora` records `adapter_algorithm=dora` and `dora_enabled=true` in the adapter manifest

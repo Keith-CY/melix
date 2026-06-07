@@ -12,6 +12,20 @@ from worker.runtime import tool_call_rescue
 logger = logging.getLogger(__name__)
 _UTF8_INCREMENTAL_DECODER = codecs.getincrementaldecoder("utf-8")
 _COMPACT_SORTED_JSON_ENCODER = json.JSONEncoder(separators=(",", ":"), sort_keys=True)
+_ASCII_TOKEN_COUNT_DISQUALIFIERS = ("  ", "\t", "\n", "\r", "\v", "\f")
+_ASCII_TOKEN_COUNT_FAST_PATH_MIN_CHARS = 256
+
+
+def _whitespace_token_count(text: str) -> int:
+    if (
+        len(text) >= _ASCII_TOKEN_COUNT_FAST_PATH_MIN_CHARS
+        and text.isascii()
+        and text[0] != " "
+        and text[-1] != " "
+        and not any(disqualifier in text for disqualifier in _ASCII_TOKEN_COUNT_DISQUALIFIERS)
+    ):
+        return text.count(" ") + 1
+    return len(text.split())
 
 
 @lru_cache(maxsize=32)
@@ -970,9 +984,9 @@ class RequestStreamAssembler:
     @staticmethod
     def _estimated_delta_token_count(delta: AssemblyDelta) -> int:
         if delta.content_text:
-            return max(1, len(delta.content_text.split()))
+            return max(1, _whitespace_token_count(delta.content_text))
         if delta.reasoning_text:
-            return max(1, len(delta.reasoning_text.split()))
+            return max(1, _whitespace_token_count(delta.reasoning_text))
         return 1
 
     @staticmethod
