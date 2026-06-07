@@ -344,8 +344,8 @@ def _inferred_rope_profile(config_payload: Mapping[str, Any] | None, *, default:
     config_payload = _config_mapping(config_payload)
     rope_scaling = config_payload.get("rope_scaling")
     if isinstance(rope_scaling, Mapping):
-        rope_type = _string(rope_scaling.get("rope_type") or rope_scaling.get("type")).lower()
-        if "yarn" in rope_type:
+        rope_type = rope_scaling.get("rope_type") or rope_scaling.get("type")
+        if isinstance(rope_type, str) and "yarn" in rope_type.lower():
             if _bool_from_any(rope_scaling.get("interleaved")) or _bool_from_any(config_payload.get("rope_interleaved")):
                 return "yarn_interleaved"
             return "yarn"

@@ -11,6 +11,7 @@ from worker.runtime.text_family_adapters import (
     TextFamilyDetection,
     _inferred_attention_profile,
     _inferred_expert_count,
+    _inferred_rope_profile,
     _split_csv,
     detect_text_family_identity,
     resolve_text_family_config,
@@ -83,6 +84,24 @@ def test_inferred_attention_profile_skips_non_string_hints_and_preserves_use_mla
     )
     assert _inferred_attention_profile({"attention_impl": "flash-mla"}, default="gqa") == "mla"
     assert _inferred_attention_profile({"attention_impl": 0}, default="gqa") == "gqa"
+
+
+def test_inferred_rope_profile_preserves_yarn_fallback_and_non_string_defaults() -> None:
+    assert (
+        _inferred_rope_profile(
+            {"rope_scaling": {"rope_type": "", "type": "yarn", "interleaved": True}},
+            default="standard",
+        )
+        == "yarn_interleaved"
+    )
+    assert (
+        _inferred_rope_profile(
+            {"rope_scaling": {"rope_type": 0, "type": "yarn"}},
+            default="standard",
+        )
+        == "yarn"
+    )
+    assert _inferred_rope_profile({"rope_scaling": {"type": 0}}, default="standard") == "standard"
 
 
 def test_detect_text_family_identity_prefers_explicit_supported_override() -> None:
