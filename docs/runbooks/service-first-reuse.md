@@ -26,6 +26,11 @@ when a consumer needs route readiness or model-count diagnostics.
 Use shared-access configuration only when more than one client needs to reach the same
 sidecar instance.
 
+The local gateway applies the Host and browser Origin policy described in
+`docs/runbooks/shared-access.md` before route handling. Same-host server clients
+that omit `Origin` continue to work with the active auth policy; browser clients
+must use explicit `MELIX_ALLOWED_ORIGINS` configuration.
+
 ## Sidecar Install
 
 Create a named local product layout for one consumer:

@@ -7,6 +7,232 @@ import MelixWorkerProtocol
 
 @Suite("OpenAI Handler")
 struct OpenAIHandlerTests {
+    @Test("local server security rejects attacker host before route handling")
+    func localServerSecurityRejectsAttackerHostBeforeRouteHandling() async throws {
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 12_436)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/health",
+                headers: ["host": "attacker.test:12436"],
+                body: Data()
+            )
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+
+        #expect(response.statusCode == 403)
+        #expect(error["code"] as? String == "host_not_allowed")
+        #expect(response.headers["access-control-allow-origin"] == nil)
+        #expect(await metricsStore.value(forKey: "local_server_security.rejected_host_count") == 1)
+        #expect(await metricsStore.value(forKey: "operator.health_latency_ms") == 0)
+    }
+
+    @Test("local server security default denies browser origins without wildcard CORS")
+    func localServerSecurityDefaultDeniesBrowserOriginsWithoutWildcardCORS() async throws {
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 12_436)
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/health",
+                headers: [
+                    "host": "127.0.0.1:12436",
+                    "origin": "https://attacker.test",
+                ],
+                body: Data()
+            )
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+
+        #expect(response.statusCode == 403)
+        #expect(error["code"] as? String == "origin_not_allowed")
+        #expect(response.headers["access-control-allow-origin"] == nil)
+        #expect(response.headers.values.contains("*") == false)
+        #expect(await metricsStore.value(forKey: "local_server_security.rejected_origin_count") == 1)
+    }
+
+    @Test("local server security allows explicit browser origin with exact CORS echo")
+    func localServerSecurityAllowsExplicitBrowserOriginWithExactCORSEcho() async throws {
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "browser-client", label: "Browser Client", tokenHint: "browser-client", token: "sk-browser"),
+                ]
+            ),
+            gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 12_436),
+            environment: [
+                "MELIX_ALLOWED_HOSTS": "127.0.0.1",
+                "MELIX_ALLOWED_ORIGINS": "http://localhost:5173",
+            ]
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/models",
+                headers: [
+                    "host": "127.0.0.1:12436",
+                    "origin": "http://localhost:5173",
+                    "x-api-key": "sk-browser",
+                ],
+                body: Data()
+            )
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 200)
+        #expect(payload.contains("\"id\":\"melix-dev-text\""))
+        #expect(response.headers["access-control-allow-origin"] == "http://localhost:5173")
+        #expect(response.headers["vary"] == "Origin")
+        #expect(response.headers.values.contains("*") == false)
+        #expect(await metricsStore.value(forKey: "local_server_security.accepted_origin_count") == 1)
+        #expect(await metricsStore.value(forKey: "gateway.auth_validation_failures") == 0)
+    }
+
+    @Test("local server security allows explicit browser preflight with exact CORS echo")
+    func localServerSecurityAllowsExplicitBrowserPreflightWithExactCORSEcho() async throws {
+        let metricsStore = MetricsStore()
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            metricsStore: metricsStore,
+            gatewayAccessPolicy: GatewayAccessPolicy(
+                mode: .apiKeys,
+                sharedAccessEnabled: true,
+                keys: [
+                    .init(keyID: "browser-client", label: "Browser Client", tokenHint: "browser-client", token: "sk-browser"),
+                ]
+            ),
+            gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 12_436),
+            environment: [
+                "MELIX_ALLOWED_HOSTS": "127.0.0.1",
+                "MELIX_ALLOWED_ORIGINS": "http://localhost:5173",
+            ]
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .options,
+                path: "/v1/responses",
+                headers: [
+                    "host": "127.0.0.1:12436",
+                    "origin": "http://localhost:5173",
+                    "access-control-request-method": "POST",
+                ],
+                body: Data()
+            )
+        )
+        let payload = try await collectBody(response.body)
+
+        #expect(response.statusCode == 204)
+        #expect(payload.isEmpty)
+        #expect(response.headers["access-control-allow-origin"] == "http://localhost:5173")
+        #expect(response.headers["access-control-allow-methods"] == "GET, POST, DELETE, OPTIONS")
+        #expect(response.headers["access-control-allow-headers"]?.contains("x-api-key") == true)
+        #expect(response.headers["vary"] == "Origin")
+        #expect(response.headers.values.contains("*") == false)
+        #expect(await metricsStore.value(forKey: "local_server_security.accepted_origin_count") == 1)
+        #expect(await metricsStore.value(forKey: "gateway.auth_validation_failures") == 0)
+    }
+
+    @Test("local server security rejects preflight without explicit origin")
+    func localServerSecurityRejectsPreflightWithoutExplicitOrigin() async throws {
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 12_436),
+            environment: [
+                "MELIX_ALLOWED_ORIGINS": "http://localhost:5173",
+            ]
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .options,
+                path: "/v1/responses",
+                headers: [
+                    "host": "127.0.0.1:12436",
+                    "access-control-request-method": "POST",
+                ],
+                body: Data()
+            )
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let error = try #require(payload["error"] as? [String: Any])
+
+        #expect(response.statusCode == 403)
+        #expect(error["code"] as? String == "origin_not_allowed")
+        #expect(response.headers["access-control-allow-origin"] == nil)
+    }
+
+    @Test("health diagnostics includes local server security receipt")
+    func healthDiagnosticsIncludesLocalServerSecurityReceipt() async throws {
+        let handler = OpenAIHandler(
+            modelCatalog: ModelCatalog(seedModels: [warmModel()]),
+            requestCoordinator: RequestCoordinator(
+                workerRegistry: WorkerRegistry(defaultTextClient: ScriptedWorkerClient(events: [])),
+                abortRegistry: AbortRegistry()
+            ),
+            gatewayRuntimeBinding: GatewayRuntimeBinding(host: "127.0.0.1", port: 12_436),
+            environment: [
+                "MELIX_ALLOWED_ORIGINS": "http://localhost:5173",
+            ]
+        )
+
+        let response = try await handler.handle(
+            HTTPRequest(
+                method: .get,
+                path: "/v1/melix/health",
+                headers: ["host": "127.0.0.1:12436"],
+                body: Data()
+            )
+        )
+        let payload = try await jsonPayload(from: response.body)
+        let receipt = try #require(payload["local_server_security"] as? [String: Any])
+
+        #expect(response.statusCode == 200)
+        #expect(receipt["schema_version"] as? String == "melix.local_server_security.v1")
+        #expect(receipt["bind_host"] as? String == "127.0.0.1")
+        #expect(receipt["browser_cors_policy"] as? String == "explicit_allowlist")
+        #expect((receipt["allowed_origins"] as? [String]) == ["http://localhost:5173"])
+    }
+
     @Test("GET /v1/models accepts configured shared-access API keys and records metrics")
     func getModelsAcceptsConfiguredSharedAccessAPIKeysAndRecordsMetrics() async throws {
         let metricsStore = MetricsStore()

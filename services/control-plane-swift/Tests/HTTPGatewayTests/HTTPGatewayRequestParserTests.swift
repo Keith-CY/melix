@@ -47,6 +47,48 @@ struct HTTPGatewayRequestParserTests {
         #expect(request.body.isEmpty)
     }
 
+    @Test("parser accepts options preflight requests")
+    func parserAcceptsOptionsPreflightRequests() throws {
+        let raw = Data(
+            (
+                "OPTIONS /v1/responses HTTP/1.1\r\n"
+                    + "Host: 127.0.0.1\r\n"
+                    + "Origin: http://localhost:5173\r\n"
+                    + "Access-Control-Request-Method: POST\r\n"
+                    + "Content-Length: 0\r\n"
+                    + "\r\n"
+            ).utf8
+        )
+
+        let result = HTTPGatewayRequestParser.parseRequest(from: raw, maxBodyBytes: 0)
+        let request = try #require(result.successValue)
+
+        #expect(request.method == .options)
+        #expect(request.path == "/v1/responses")
+        #expect(request.headers["origin"] == "http://localhost:5173")
+        #expect(request.headers["access-control-request-method"] == "POST")
+        #expect(request.body.isEmpty)
+    }
+
+    @Test("parser rejects HTTP/1.1 requests without host")
+    func parserRejectsHTTP11RequestsWithoutHost() throws {
+        let raw = Data(
+            (
+                "GET /health HTTP/1.1\r\n"
+                    + "Content-Length: 0\r\n"
+                    + "\r\n"
+            ).utf8
+        )
+
+        let result = HTTPGatewayRequestParser.parseRequest(from: raw, maxBodyBytes: 0)
+        let error = try #require(result.failureValue)
+        let response = HTTPGatewayRequestParser.errorResponse(for: error)
+
+        #expect(error == .missingHostHeader)
+        #expect(response.statusCode == 400)
+        #expect(error.errorCode == "missing_host_header")
+    }
+
     @Test("parser rejects oversized declared bodies before waiting for payload bytes")
     func parserRejectsOversizedDeclaredBodies() throws {
         let raw = Data(
@@ -116,8 +158,8 @@ struct HTTPGatewayRequestParserTests {
             (Data("GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n".utf8), .incomplete),
             (Data("PATCH /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".utf8), .invalidRequest),
             (Data("GET /health\r\nHost: 127.0.0.1\r\n\r\n".utf8), .invalidRequest),
-            (Data("POST /v1/responses HTTP/1.1\r\nContent-Length: nope\r\n\r\n".utf8), .invalidRequest),
-            (Data("POST /v1/responses HTTP/1.1\r\nContent-Length: 4\r\n\r\n{}".utf8), .incomplete),
+            (Data("POST /v1/responses HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: nope\r\n\r\n".utf8), .invalidRequest),
+            (Data("POST /v1/responses HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 4\r\n\r\n{}".utf8), .incomplete),
         ]
 
         for (raw, expectedError) in cases {
