@@ -370,6 +370,11 @@ def test_response_only_boundary_records_are_slotted() -> None:
 
     assert not hasattr(boundary, "__dict__")
     assert not hasattr(aggregate, "__dict__")
+    assert boundary == ResponseOnlyBoundary(assistant_offset=8, total_tokens=10)
+    assert boundary != object()
+    assert repr(boundary) == "ResponseOnlyBoundary(assistant_offset=8, total_tokens=10)"
+    with pytest.raises(AttributeError):
+        boundary.assistant_offset = 9
     assert boundary.response_tokens == 2
     assert aggregate.trainable_response_token_count == 2
     assert over_offset_aggregate.response_tokens_max == 0
