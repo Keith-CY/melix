@@ -39,7 +39,7 @@ def _build_chunks(chunk_count: int) -> tuple[list[str], int]:
 
 def main() -> int:
     chunk_count = int(os.environ.get("MELIX_STREAM_ASSEMBLER_PARSER_MODE_CHUNKS", "1200"))
-    sample_count = int(os.environ.get("MELIX_STREAM_ASSEMBLER_PARSER_MODE_SAMPLES", "8"))
+    sample_count = int(os.environ.get("MELIX_STREAM_ASSEMBLER_PARSER_MODE_SAMPLES", "64"))
     chunks, harmony_channel_count = _build_chunks(chunk_count)
 
     elapsed: list[float] = []
