@@ -443,7 +443,11 @@ def _slowest_probe_phases(report: dict[str, object]) -> list[dict[str, object]]:
             continue
         for row in dict_list(side_summary.get("slowest_phases")):
             duration = row.get("duration_ms")
-            if isinstance(duration, (float, int, str)):
+            if type(duration) is float:
+                duration_ms = duration
+            elif type(duration) is int:
+                duration_ms = float(duration)
+            elif isinstance(duration, str):
                 duration_ms = float(duration or 0.0)
             else:
                 duration_ms = 0.0
