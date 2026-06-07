@@ -16673,12 +16673,12 @@ public final class RuntimeViewModel {
     }
 
     private static func isTextGenerationCapableModel(_ model: RuntimeModelRow) -> Bool {
-        let supportedTasks = Set(model.supportedTasks.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
-        let features = Set(model.features.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
         let kind = model.kind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if kind == "text" {
             return true
         }
+        let supportedTasks = Set(model.supportedTasks.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
+        let features = Set(model.features.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
         if supportedTasks.contains("text-generation") || supportedTasks.contains("chat") {
             return true
         }
