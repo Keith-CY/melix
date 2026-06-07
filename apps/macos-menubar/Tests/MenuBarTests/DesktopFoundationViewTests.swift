@@ -7247,6 +7247,18 @@ struct DesktopFoundationViewTests {
         )
         #expect(
             DesktopChatArtifactPathDetector.firstPath(
+                in: #"{"path":"/tmp/melix-chat/already-sanitized.json"}"#,
+                isSanitized: true
+            ) == "/tmp/melix-chat/already-sanitized.json"
+        )
+        #expect(
+            DesktopChatArtifactPathDetector.firstPath(
+                in: "artifact=s3://melix-runs/report.jsonl trailing /tmp/later.md",
+                isSanitized: true
+            ) == "s3://melix-runs/report.jsonl"
+        )
+        #expect(
+            DesktopChatArtifactPathDetector.firstPath(
                 in: "plain status text without an artifact path"
             ) == nil
         )
@@ -7296,6 +7308,9 @@ struct DesktopFoundationViewTests {
         #expect(source.contains("DesktopChatTabContentView"))
         #expect(source.contains("if let artifactPreview"))
         #expect(source.contains("DesktopChatArtifactPreviewRail(preview: artifactPreview)"))
+        #expect(source.contains("isSanitized: Bool = false"))
+        #expect(source.contains("unicodeScalars.lazy.split"))
+        #expect(source.contains("isSanitized: true"))
         selectedPreview = nil
         #expect(selectedPreview == nil)
     }
@@ -7376,11 +7391,13 @@ struct DesktopFoundationViewTests {
         #expect(source.contains("DesktopChatUserBubbleView"))
         #expect(source.contains("DesktopChatAssistantDocumentView"))
         #expect(source.contains("DesktopChatActivityBlockView"))
+        #expect(source.contains(".accessibilityElement(children: .combine)"))
+        #expect(source.contains("User message: \\(accessibilityMessageBody)"))
     }
 
     @Test("chat activity blocks expose thinking and tool summary decisions")
     @MainActor
-    func chatActivityBlocksExposeThinkingAndToolSummaryDecisions() {
+    func chatActivityBlocksExposeThinkingAndToolSummaryDecisions() throws {
         let reasoningBlock = DesktopChatActivityBlockView(
             kind: .reasoning,
             title: "Reasoning",
@@ -7395,6 +7412,11 @@ struct DesktopFoundationViewTests {
             detail: "",
             isStreaming: true
         )
+        let source = try String(
+            contentsOf: repositoryRootForDesktopFoundationTests()
+                .appendingPathComponent("apps/macos-menubar/Sources/AppMain/Chat/DesktopChatView.swift"),
+            encoding: .utf8
+        )
 
         #expect(reasoningBlock.summaryText == "Thought recorded")
         #expect(reasoningBlock.systemImageName == "brain.head.profile")
@@ -7402,6 +7424,8 @@ struct DesktopFoundationViewTests {
         #expect(toolBlock.systemImageName == "hammer")
         #expect(hostView(reasoningBlock.activityBody).fittingSize.width >= 0)
         #expect(hostView(toolBlock.activityBody).fittingSize.width >= 0)
+        #expect(source.contains(".onChange(of: isStreaming)"))
+        #expect(source.contains("isExpanded = newValue"))
     }
 
     @Test("chat composer runtime controls select server recovery actions")

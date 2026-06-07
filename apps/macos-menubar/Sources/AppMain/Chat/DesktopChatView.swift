@@ -142,16 +142,19 @@ struct DesktopChatArtifactPreviewState: Equatable, Identifiable {
 }
 
 enum DesktopChatArtifactPathDetector {
-    static func firstPath(in text: String) -> String? {
-        let sanitizedText = RichOutputSanitizer.sanitized(text)
+    static func firstPath(in text: String, isSanitized: Bool = false) -> String? {
+        let sanitizedText = isSanitized ? text : RichOutputSanitizer.sanitized(text)
         let separators = CharacterSet.whitespacesAndNewlines
             .union(CharacterSet(charactersIn: "\"'`()[]{}<>,="))
-        return sanitizedText
-            .components(separatedBy: separators)
-            .compactMap { token in
-                normalizedArtifactPath(token)
+        for tokenScalars in sanitizedText.unicodeScalars.lazy.split(whereSeparator: { scalar in
+            separators.contains(scalar)
+        }) {
+            let token = String(String.UnicodeScalarView(tokenScalars))
+            if let path = normalizedArtifactPath(token) {
+                return path
             }
-            .first
+        }
+        return nil
     }
 
     private static func normalizedArtifactPath(_ token: String) -> String? {
@@ -1460,10 +1463,10 @@ struct DesktopChatTranscriptRowView: View {
     }
 
     private var artifactPreview: DesktopChatArtifactPreviewState? {
-        if let path = DesktopChatArtifactPathDetector.firstPath(in: sanitizedBody) {
+        if let path = DesktopChatArtifactPathDetector.firstPath(in: sanitizedBody, isSanitized: true) {
             return DesktopChatArtifactPreviewState(entry: entry, path: path)
         }
-        if let path = DesktopChatArtifactPathDetector.firstPath(in: sanitizedDetail) {
+        if let path = DesktopChatArtifactPathDetector.firstPath(in: sanitizedDetail, isSanitized: true) {
             return DesktopChatArtifactPreviewState(entry: entry, path: path)
         }
         return nil
@@ -1572,8 +1575,12 @@ struct DesktopChatUserBubbleView: View {
                 .frame(maxWidth: 560, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("User message")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("User message: \(accessibilityMessageBody)")
+    }
+
+    private var accessibilityMessageBody: String {
+        messageBody.isEmpty ? "Empty" : messageBody
     }
 }
 
@@ -1699,6 +1706,9 @@ struct DesktopChatActivityBlockView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(summaryText)
+        .onChange(of: isStreaming) { _, newValue in
+            isExpanded = newValue
+        }
     }
 
     @ViewBuilder

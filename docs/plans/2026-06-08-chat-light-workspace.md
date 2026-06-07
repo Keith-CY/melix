@@ -141,9 +141,13 @@ Success metric:
 - A blocked server session exposes the correct runtime recovery action near the
   composer.
 - User messages render as right-aligned lightweight bubbles.
+- User message accessibility exposes the message body, including an explicit
+  empty-state label.
 - Assistant messages render as readable document-style text.
 - Reasoning and tool entries render inline activity summaries and expandable
   details.
+- Streaming reasoning and tool rows expand while active and collapse when the
+  streaming state settles.
 - The right rail can switch between Inspector and Preview and return to
   Inspector.
 - Existing chat transcript sanitization, markdown rendering, streaming, and
