@@ -1272,6 +1272,7 @@ def _qat_q_bits_for_request(
 
 def _qat_fake_quant_source_stats(source_files: list[Path], *, q_bits: int) -> dict[str, Any]:
     digest = hashlib.sha256()
+    digest_update = digest.update
     source_file_count = 0
     source_byte_count = 0
     error_sum_units = 0
@@ -1280,20 +1281,26 @@ def _qat_fake_quant_source_stats(source_files: list[Path], *, q_bits: int) -> di
     # scan uses an integer translation table so per-byte aggregation runs in C.
     _qat_fake_quant_error_table(q_bits)
     error_byte_table = _qat_fake_quant_error_byte_table(q_bits)
+    error_max_possible = max(error_byte_table)
+    chunk_size = 1024 * 1024
+    sum_errors = sum
+    max_errors = max
     for source_file in source_files:
         source_file_count += 1
         with source_file.open("rb") as handle:
+            read_chunk = handle.read
             while True:
-                chunk = handle.read(1024 * 1024)
+                chunk = read_chunk(chunk_size)
                 if not chunk:
                     break
-                digest.update(chunk)
+                digest_update(chunk)
                 source_byte_count += len(chunk)
                 translated_errors = chunk.translate(error_byte_table)
-                error_sum_units += sum(translated_errors)
-                chunk_error_max = max(translated_errors)
-                if chunk_error_max > error_max_units:
-                    error_max_units = chunk_error_max
+                error_sum_units += sum_errors(translated_errors)
+                if error_max_units < error_max_possible:
+                    chunk_error_max = max_errors(translated_errors)
+                    if chunk_error_max > error_max_units:
+                        error_max_units = chunk_error_max
     if source_byte_count <= 0:
         raise ModelOperationError(
             code="invalid_qat_source_artifact",

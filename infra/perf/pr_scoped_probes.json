@@ -3894,8 +3894,8 @@
       "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
       "scripts/quantization_qat_source_scan_probe.py"
     ],
-    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_source_artifact_files_uses_scandir_stack_without_path_rglob services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_source_artifact_files_skips_bad_scandir_entries_and_empty_roots services/mlx-worker-python/tests/test_quantization_pipeline.py::test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_fake_quant_error_table_matches_reference_and_caches services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_fake_quant_source_stats_reuses_byte_error_table services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_quantization_qat_source_scan_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_quantization_qat_source_scan_probe_script_emits_metrics",
-    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_source_artifact_files_uses_scandir_stack_without_path_rglob services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_source_artifact_files_skips_bad_scandir_entries_and_empty_roots services/mlx-worker-python/tests/test_quantization_pipeline.py::test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_fake_quant_error_table_matches_reference_and_caches services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_fake_quant_source_stats_reuses_byte_error_table services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_quantization_qat_source_scan_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_quantization_qat_source_scan_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/model_ops/quantization_pipeline.py services/mlx-worker-python/tests/test_quantization_pipeline.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/quantization_qat_source_scan_probe.py",
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_source_artifact_files_uses_scandir_stack_without_path_rglob services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_source_artifact_files_skips_bad_scandir_entries_and_empty_roots services/mlx-worker-python/tests/test_quantization_pipeline.py::test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_fake_quant_error_table_matches_reference_and_caches services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_fake_quant_source_stats_reuses_byte_error_table services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_fake_quant_source_stats_preserves_partial_max_scan services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_quantization_qat_source_scan_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_quantization_qat_source_scan_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_source_artifact_files_uses_scandir_stack_without_path_rglob services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_source_artifact_files_skips_bad_scandir_entries_and_empty_roots services/mlx-worker-python/tests/test_quantization_pipeline.py::test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_fake_quant_error_table_matches_reference_and_caches services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_fake_quant_source_stats_reuses_byte_error_table services/mlx-worker-python/tests/test_quantization_pipeline.py::test_qat_fake_quant_source_stats_preserves_partial_max_scan services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_quantization_qat_source_scan_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_quantization_qat_source_scan_probe_script_emits_metrics && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/model_ops/quantization_pipeline.py services/mlx-worker-python/tests/test_quantization_pipeline.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/quantization_qat_source_scan_probe.py",
     "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" MELIX_QAT_SOURCE_SCAN_REPO_ROOT=\"$PWD\" uv run --project services/mlx-worker-python bash -c 'SCRIPT=\"${PWD}/scripts/quantization_qat_source_scan_probe.py\"; for CANDIDATE in \"${PWD}/../head/scripts/quantization_qat_source_scan_probe.py\" /tmp/melix-cron-opt-*/scripts/quantization_qat_source_scan_probe.py; do if [ -f \"$CANDIDATE\" ] && grep -q source_stats_elapsed_ms_mean \"$CANDIDATE\"; then SCRIPT=\"$CANDIDATE\"; break; fi; done; python3 \"$SCRIPT\"'",
     "probe_impl": "command_json",
     "coverage_replays_tests": true,
@@ -4978,8 +4978,8 @@
   },
   {
     "id": "native-mtp-loader-safetensor-scandir",
-    "name": "Native MTP loader sidecar filter fast path",
-    "description": "Filter native-MTP sidecar shard index names before Path joins while preserving index JSON byte loading and scandir shard listing guards.",
+    "name": "Native MTP loader shard load loops",
+    "description": "Load native-MTP base and sidecar shard weights without materializing a combined path list while preserving index JSON byte loading and scandir shard listing guards.",
     "watch_globs": [
       "services/mlx-worker-python/worker/runtime/native_mtp/mlx_lm_loader.py",
       "services/mlx-worker-python/tests/test_mlx_vlm_runtime.py",
@@ -4987,8 +4987,8 @@
       "scripts/native_mtp_loader_safetensor_scandir_probe.py",
       "infra/perf/pr_scoped_probes.json"
     ],
-    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_index_payload_loads_from_bytes services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_weight_key_detection_preserves_string_and_custom_keys services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_extra_safetensor_files_preserves_custom_file_names services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_model_safetensor_listing_uses_scandir_without_glob services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_extra_safetensor_files_filters_names_before_path_join services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_preload_patch_detects_qwen36_mtp_weights services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_patched_loader_uses_scandir_model_weight_listing services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_native_mtp_loader_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_native_mtp_loader_safetensor_scandir_probe_script_emits_metrics",
-    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run --source=worker.runtime.native_mtp.mlx_lm_loader -m pytest -q services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_index_payload_loads_from_bytes services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_weight_key_detection_preserves_string_and_custom_keys services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_extra_safetensor_files_preserves_custom_file_names services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_model_safetensor_listing_uses_scandir_without_glob services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_extra_safetensor_files_filters_names_before_path_join services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_preload_patch_detects_qwen36_mtp_weights services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_patched_loader_uses_scandir_model_weight_listing && uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/native_mtp/mlx_lm_loader.py",
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_index_payload_loads_from_bytes services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_weight_key_detection_preserves_string_and_custom_keys services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_extra_safetensor_files_preserves_custom_file_names services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_model_safetensor_listing_uses_scandir_without_glob services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_extra_safetensor_files_filters_names_before_path_join services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_load_weight_shards_streams_base_and_extra_paths services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_preload_patch_detects_qwen36_mtp_weights services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_patched_loader_uses_scandir_model_weight_listing services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_native_mtp_loader_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_native_mtp_loader_safetensor_scandir_probe_script_emits_metrics",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run --source=worker.runtime.native_mtp.mlx_lm_loader -m pytest -q services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_index_payload_loads_from_bytes services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_weight_key_detection_preserves_string_and_custom_keys services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_extra_safetensor_files_preserves_custom_file_names services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_model_safetensor_listing_uses_scandir_without_glob services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_extra_safetensor_files_filters_names_before_path_join services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_load_weight_shards_streams_base_and_extra_paths services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_preload_patch_detects_qwen36_mtp_weights services/mlx-worker-python/tests/test_mlx_vlm_runtime.py::test_native_mtp_patched_loader_uses_scandir_model_weight_listing && uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/runtime/native_mtp/mlx_lm_loader.py",
     "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" MELIX_NATIVE_MTP_LOADER_REPO_ROOT=\"$PWD\" uv run --project services/mlx-worker-python bash -c 'SCRIPT=\"scripts/native_mtp_loader_safetensor_scandir_probe.py\"; for CANDIDATE in \"${MELIX_NATIVE_MTP_LOADER_PROBE_SCRIPT:-}\" \"../head/$SCRIPT\" \"${GITHUB_WORKSPACE:-}/head/$SCRIPT\" \"$SCRIPT\"; do if [ -n \"$CANDIDATE\" ] && [ -f \"$CANDIDATE\" ]; then python3 \"$CANDIDATE\"; exit $?; fi; done; echo \"missing probe script fallback for $SCRIPT\" >&2; exit 2'",
     "probe_impl": "command_json",
     "coverage_replays_tests": true,
@@ -5112,6 +5112,51 @@
         "warn_pct": 0.0
       },
       {
+        "key": "weight_load_old_mean_ms",
+        "unit": "ms",
+        "direction": "informational"
+      },
+      {
+        "key": "weight_load_new_mean_ms",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "weight_load_delta_ms",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "weight_load_speedup",
+        "unit": "x",
+        "direction": "higher_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "weight_load_old_peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "informational"
+      },
+      {
+        "key": "weight_load_new_peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "weight_load_result_count",
+        "unit": "count",
+        "direction": "higher_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "weight_load_iterations",
+        "unit": "count",
+        "direction": "informational"
+      },
+      {
         "key": "key_old_mean_ms",
         "unit": "ms",
         "direction": "informational"
@@ -5137,7 +5182,8 @@
         "unit": "count",
         "direction": "informational"
       }
-    ]
+    ],
+    "runner": "ubuntu-latest"
   },
   {
     "id": "same-cohort-batching-probe-evidence",
