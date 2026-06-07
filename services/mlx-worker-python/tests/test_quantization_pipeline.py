@@ -1511,6 +1511,25 @@ def test_qat_fake_quant_source_stats_reuses_byte_error_table(tmp_path: Path) -> 
     assert _qat_fake_quant_error_table.cache_info().misses == 1
 
 
+def test_qat_fake_quant_source_stats_preserves_partial_max_scan(tmp_path: Path) -> None:
+    source_path = tmp_path / "partial.bin"
+    payload = b"\x00\x01\x02\x03\x04\x05" * 7
+    source_path.write_bytes(payload)
+
+    q_bits = 4
+    levels = (1 << q_bits) - 1
+    expected_errors = [
+        abs(value - round((round((value / 255.0) * levels) / levels) * 255.0)) / 255.0
+        for value in payload
+    ]
+
+    stats = _qat_fake_quant_source_stats([source_path], q_bits=q_bits)
+
+    assert stats["source_byte_count"] == len(payload)
+    assert stats["quant_error_proxy_mean"] == pytest.approx(sum(expected_errors) / len(payload))
+    assert stats["quant_error_proxy_max"] == max(expected_errors)
+
+
 def test_quantize_job_records_qat_mode_source_kind_and_release_gate_evidence(tmp_path: Path) -> None:
     service = build_service(tmp_path)
     source_artifact_path = tmp_path / "merged-adapter"
