@@ -106,12 +106,12 @@ public struct ProviderEndpointHealthReceipt: Codable, Equatable, Sendable, Custo
 
 public struct ProviderEndpointHealthProbe: Sendable {
     private let transport: any RemoteProviderHTTPTransport
-    private let latencyClock: @Sendable () -> UInt32
+    private let latencyClock: @Sendable () -> UInt64
 
     public init(
         transport: any RemoteProviderHTTPTransport = URLSessionRemoteProviderHTTPTransport(),
-        latencyClock: @escaping @Sendable () -> UInt32 = {
-            UInt32(clamping: DispatchTime.now().uptimeNanoseconds / 1_000_000)
+        latencyClock: @escaping @Sendable () -> UInt64 = {
+            DispatchTime.now().uptimeNanoseconds / 1_000_000
         }
     ) {
         self.transport = transport
@@ -135,9 +135,12 @@ public struct ProviderEndpointHealthProbe: Sendable {
         let response: HTTPURLResponse
         do {
             (data, response) = try await transport.data(for: httpRequest)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             return failureReceipt(
                 request: request,
+                providerKind: providerKind,
                 baseURL: normalizedBase,
                 latencyMS: elapsedMilliseconds(since: startedAtMS),
                 reason: "transport_failed"
@@ -146,6 +149,7 @@ public struct ProviderEndpointHealthProbe: Sendable {
         guard (200..<300).contains(response.statusCode) else {
             return failureReceipt(
                 request: request,
+                providerKind: providerKind,
                 baseURL: normalizedBase,
                 latencyMS: elapsedMilliseconds(since: startedAtMS),
                 reason: response.statusCode == 401 || response.statusCode == 403 ? "auth_failed" : "model_list_failed"
@@ -157,6 +161,7 @@ public struct ProviderEndpointHealthProbe: Sendable {
         } catch {
             return failureReceipt(
                 request: request,
+                providerKind: providerKind,
                 baseURL: normalizedBase,
                 latencyMS: elapsedMilliseconds(since: startedAtMS),
                 reason: "model_list_malformed"
@@ -164,7 +169,7 @@ public struct ProviderEndpointHealthProbe: Sendable {
         }
         return ProviderEndpointHealthReceipt(
             endpointID: request.endpointID,
-            providerKind: request.providerKind,
+            providerKind: providerKind,
             baseURLRedacted: normalizedBase.absoluteString,
             modelCount: summary.chatModelCount,
             capabilities: summary.capabilities,
@@ -172,20 +177,22 @@ public struct ProviderEndpointHealthProbe: Sendable {
         )
     }
 
-    private func elapsedMilliseconds(since startedAtMS: UInt32) -> UInt32 {
+    private func elapsedMilliseconds(since startedAtMS: UInt64) -> UInt32 {
         let endedAtMS = latencyClock()
-        return endedAtMS >= startedAtMS ? endedAtMS - startedAtMS : 0
+        let elapsed = endedAtMS >= startedAtMS ? endedAtMS - startedAtMS : 0
+        return UInt32(clamping: elapsed)
     }
 
     private func failureReceipt(
         request: ProviderEndpointProbeRequest,
+        providerKind: String,
         baseURL: URL,
         latencyMS: UInt32,
         reason: String
     ) -> ProviderEndpointHealthReceipt {
         ProviderEndpointHealthReceipt(
             endpointID: request.endpointID,
-            providerKind: request.providerKind,
+            providerKind: providerKind,
             baseURLRedacted: baseURL.absoluteString,
             modelCount: 0,
             capabilities: ProviderEndpointCapabilities(),
@@ -386,7 +393,9 @@ public struct ProviderEndpointHealthProbe: Sendable {
     }
 
     private func normalizedProviderKind(_ providerKind: String) -> String {
-        providerKind.trimmingCharacters(in: .whitespacesAndNewlines)
+        providerKind
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
     }
 
     private func boolValue(_ value: Any?) -> Bool {

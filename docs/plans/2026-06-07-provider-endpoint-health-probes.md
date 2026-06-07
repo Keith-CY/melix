@@ -244,12 +244,15 @@ Expected: all commands exit 0.
 Observed:
 
 - `git diff --check`: exited 0.
-- Changed-line coverage: `TOTAL 98.91% 636/643`; implementation file `97.94% 285/291`.
+- Changed-line coverage before review follow-up: `TOTAL 98.91% 636/643`; implementation file `97.94% 285/291`.
 - `make swift-test`: exited 0.
 - `make py-test`: `3624 passed, 14 skipped, 2 warnings`.
 - `make integration-test`: `117 passed, 1 skipped`.
+- Review follow-up focused tests: `RemoteProviderClientTests` passed with 17 tests in 1 suite.
+- Review follow-up changed-line coverage: `TOTAL 98.99% 683/690`; implementation file `98.00% 294/300`.
+- Review follow-up `git diff --check origin/main...HEAD`: exited 0.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 Run:
 
@@ -259,3 +262,9 @@ git add docs/plans/2026-06-07-provider-endpoint-health-probes.md \
   services/control-plane-swift/Tests/ControlPlaneTests/RemoteProviderClientTests.swift
 git commit -m "Add provider endpoint health probes"
 ```
+
+Review follow-up commit scope:
+
+- Normalize provider kind casing before routing and receipt serialization.
+- Propagate cooperative cancellation instead of turning it into a transport failure receipt.
+- Use an unwrapped monotonic `UInt64` clock source internally and clamp only the elapsed receipt value.

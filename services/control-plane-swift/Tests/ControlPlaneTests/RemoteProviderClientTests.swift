@@ -129,6 +129,31 @@ struct RemoteProviderClientTests {
         }
     }
 
+    @Test("endpoint probe normalizes provider kind casing for routing and receipts")
+    func endpointProbeNormalizesProviderKindCasingForRoutingAndReceipts() async throws {
+        let transport = RecordingRemoteProviderTransport(response: .init(
+            statusCode: 200,
+            headers: ["content-type": "application/json"],
+            body: Data(#"{ "data": [{ "id": "claude-sonnet-4.5", "type": "model" }] }"#.utf8)
+        ))
+        let probe = ProviderEndpointHealthProbe(transport: transport, latencyClock: { 1 })
+
+        let receipt = try await probe.probe(
+            ProviderEndpointProbeRequest(
+                endpointID: "anthropic-main",
+                providerKind: " Anthropic ",
+                baseURL: "https://api.anthropic.example/v1/messages",
+                apiKey: "anthropic-secret"
+            )
+        )
+
+        #expect(receipt.providerKind == "anthropic")
+        #expect(receipt.failureReason == "")
+        #expect(await transport.lastRequest?.url?.absoluteString == "https://api.anthropic.example/v1/models")
+        #expect(await transport.lastRequest?.value(forHTTPHeaderField: "Authorization") == nil)
+        #expect(await transport.lastRequest?.value(forHTTPHeaderField: "x-api-key") == "anthropic-secret")
+    }
+
     @Test("endpoint probe rejects malformed endpoint requests before transport")
     func endpointProbeRejectsMalformedEndpointRequestsBeforeTransport() async throws {
         let transport = RecordingRemoteProviderTransport(response: .init(
@@ -289,6 +314,23 @@ struct RemoteProviderClientTests {
         #expect(transportReceipt.failureReason == "transport_failed")
         #expect(String(describing: transportReceipt).contains("sk-secret") == false)
         #expect(String(describing: transportReceipt).contains("network lost") == false)
+    }
+
+    @Test("endpoint probe propagates cancellation instead of recording transport failure")
+    func endpointProbePropagatesCancellationInsteadOfRecordingTransportFailure() async throws {
+        let transport = RecordingRemoteProviderTransport(error: CancellationError())
+        let probe = ProviderEndpointHealthProbe(transport: transport, latencyClock: { 1 })
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await probe.probe(
+                ProviderEndpointProbeRequest(
+                    endpointID: "cancelled-endpoint",
+                    providerKind: "openai-compatible",
+                    baseURL: "https://api.example.test/v1",
+                    apiKey: ""
+                )
+            )
+        }
     }
 
     @Test("endpoint probe receipt encodes stable snake case JSON")
@@ -714,14 +756,14 @@ private actor RecordingRemoteProviderTransport: RemoteProviderHTTPTransport {
 
 private final class StepLatencyClock: @unchecked Sendable {
     private let lock = NSLock()
-    private let values: [UInt32]
+    private let values: [UInt64]
     private var index = 0
 
-    init(values: [UInt32]) {
+    init(values: [UInt64]) {
         self.values = values
     }
 
-    func next() -> UInt32 {
+    func next() -> UInt64 {
         lock.lock()
         defer { lock.unlock() }
         guard values.isEmpty == false else {
