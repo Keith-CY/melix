@@ -48,3 +48,11 @@ exactly two tokens. Two-token values keep the existing integer/float multiplier
 semantics, while values with extra words still return `0` so callers can fall
 back to the regex parser when appropriate. The registered
 `hub-catalog-size-hint-regex-precompile` probe remains the validation gate.
+
+## 2026-06-08 Follow-up: Uppercase Model Marker Fast Path
+
+This slice keeps the same registered `hub-catalog-size-hint-regex-precompile`
+probe and reorders `_may_contain_model_marker(...)` so uppercase `MODEL SIZE`
+text exits on the first substring scan. Hugging Face card/readme metadata often
+uses uppercase headings, while the helper still checks all four case combinations
+and preserves the downstream regex fallback behavior.
