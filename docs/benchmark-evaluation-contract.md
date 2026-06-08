@@ -1411,6 +1411,8 @@ Each row must include:
 - `media_refs`
 - `tool_calls`
 - `agentic_tool_observation_count`
+- `untrusted_context_receipt_count`
+- `untrusted_context_receipts`
 
 `messages` must contain the judge system instruction and a user payload with the
 question, expected answer, model final answer, parse status, scoring mode,
@@ -1428,6 +1430,25 @@ answer keys, reference solutions, provider credentials, API keys, tokens,
 passwords, or remote base URLs. Literal answer text remains allowed as a value
 inside `expected_answer`, `final_answer`, and executed observations because
 those fields are part of the explicit scoring boundary.
+
+Each admitted user-payload field must also have an untrusted-context receipt in
+the prompt snapshot. The receipt marks the segment as `trust_level =
+untrusted`, `policy = data_only`, `message_role = user`, and
+`boundary_checked = true`. These receipts document that sample-derived
+questions, expected answers, final answers, parse status, scoring mode,
+evidence ids, media refs, raw tool calls, and executed tool observations are
+prompt data only; they must not be projected into system or developer
+instructions. The receipt count must match the number of admitted user-payload
+fields.
+
+When the judge user-payload validator rejects context before prompt snapshot
+persistence, the validation error must expose `refusal_receipts` using the same
+`melix.untrusted_context_receipt.v1` schema. Refusal receipts mark the refused
+segment as `included = false`, `boundary_checked = true`, `policy =
+data_only`, and `message_role = user`. Unsupported top-level user-payload
+fields use `reason = unsupported_user_payload_field`; forbidden nested no-leak
+keys use `reason = forbidden_user_payload_key`. Rejected segments must not be
+included in the persisted `messages` payload.
 
 `agentic-judge-audit.jsonl` is one JSON object per selected sample. Each row
 must include:

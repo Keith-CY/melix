@@ -139,6 +139,7 @@ _AGENTIC_TOOL_METRIC_NAMES = (
 )
 _AGENTIC_JUDGE_PROMPT_SNAPSHOT_SCHEMA_VERSION = "melix.agentic_judge_prompt_snapshot.v1"
 _AGENTIC_JUDGE_AUDIT_SCHEMA_VERSION = "melix.agentic_judge_audit.v1"
+_UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION = "melix.untrusted_context_receipt.v1"
 _AGENTIC_JUDGE_PROMPT_VERSION = "agentic-answer-equivalence.v1"
 _AGENTIC_JUDGE_SYSTEM_PROMPT = """You are an answer equivalence judge for Melix agentic multimodal evaluation.
 
@@ -200,6 +201,12 @@ _AGENTIC_JUDGE_FORBIDDEN_CONTEXT_KEYS = frozenset(
         "token",
     )
 )
+
+
+class AgenticJudgeContextValidationError(ValueError):
+    def __init__(self, message: str, *, refusal_receipts: list[dict[str, object]]) -> None:
+        super().__init__(message)
+        self.refusal_receipts = refusal_receipts
 
 
 @dataclass(frozen=True)
@@ -2444,6 +2451,10 @@ class EvaluationCore:
             "tool_observations": tool_observations,
         }
         EvaluationCore._validate_agentic_judge_user_payload(user_payload)
+        untrusted_context_receipts = EvaluationCore._agentic_judge_untrusted_context_receipts(
+            sample_id=sample_record.sample_id,
+            user_payload=user_payload,
+        )
         return {
             "schema_version": _AGENTIC_JUDGE_PROMPT_SNAPSHOT_SCHEMA_VERSION,
             "job_id": job_id,
@@ -2467,6 +2478,70 @@ class EvaluationCore:
             "media_refs": media_refs,
             "tool_calls": tool_calls,
             "agentic_tool_observation_count": len(tool_observations),
+            "untrusted_context_receipt_count": len(untrusted_context_receipts),
+            "untrusted_context_receipts": untrusted_context_receipts,
+        }
+
+    @staticmethod
+    def _agentic_judge_untrusted_context_receipts(
+        *,
+        sample_id: str,
+        user_payload: dict[str, object],
+    ) -> list[dict[str, object]]:
+        return [
+            EvaluationCore._agentic_judge_untrusted_context_receipt(
+                sample_id=sample_id,
+                source_field=source_field,
+            )
+            for source_field in user_payload
+        ]
+
+    @staticmethod
+    def _agentic_judge_untrusted_context_receipt(
+        *,
+        sample_id: str,
+        source_field: str,
+    ) -> dict[str, object]:
+        return {
+            "schema_version": _UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION,
+            "segment_id": f"{sample_id}:{source_field}",
+            "source_type": "agentic_judge_user_payload",
+            "source_field": source_field,
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": True,
+            "owner_scope_checked": False,
+            "reason": "sample-derived context is prompt data, not instructions",
+            "corrective_action": (
+                "Keep this segment in the user payload and do not project it into "
+                "system or developer instructions."
+            ),
+        }
+
+    @staticmethod
+    def _agentic_judge_refusal_receipt(
+        *,
+        source_field: str,
+        reason: str,
+    ) -> dict[str, object]:
+        return {
+            "schema_version": _UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION,
+            "segment_id": f"agentic_judge_user_payload:{source_field}",
+            "source_type": "agentic_judge_user_payload",
+            "source_field": source_field,
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": False,
+            "reason": reason,
+            "corrective_action": (
+                "Remove this field before projecting the sample-derived context "
+                "into the judge user payload."
+            ),
         }
 
     @staticmethod
@@ -2509,13 +2584,28 @@ class EvaluationCore:
     def _validate_agentic_judge_user_payload(user_payload: dict[str, object]) -> None:
         unsupported_fields = sorted(set(user_payload) - _AGENTIC_JUDGE_USER_PAYLOAD_FIELDS)
         if unsupported_fields:
-            raise ValueError(
+            raise AgenticJudgeContextValidationError(
                 "agentic judge context contains unsupported user payload fields: "
-                + ", ".join(unsupported_fields)
+                + ", ".join(unsupported_fields),
+                refusal_receipts=[
+                    EvaluationCore._agentic_judge_refusal_receipt(
+                        source_field=source_field,
+                        reason="unsupported_user_payload_field",
+                    )
+                    for source_field in unsupported_fields
+                ],
             )
         for field_path, field_name in EvaluationCore._iter_json_field_paths(user_payload):
             if EvaluationCore._agentic_judge_context_key_is_forbidden(field_name):
-                raise ValueError(f"agentic judge context contains forbidden field {field_path}")
+                raise AgenticJudgeContextValidationError(
+                    f"agentic judge context contains forbidden field {field_path}",
+                    refusal_receipts=[
+                        EvaluationCore._agentic_judge_refusal_receipt(
+                            source_field=field_path,
+                            reason="forbidden_user_payload_key",
+                        )
+                    ],
+                )
 
     @staticmethod
     def _iter_json_field_paths(
