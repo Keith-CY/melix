@@ -36,6 +36,28 @@ private struct MelixCookbookStateReceipt {
     }
 }
 
+private struct MelixCookbookEvidenceReceipt {
+    let fitReceiptSchemaVersion: String
+    let fitReceiptSource: String
+    let profileReceiptSchemaVersion: String
+    let profileReceiptSource: String
+    let benchmarkReceipts: [String]
+    let missingReceipts: [String]
+    let effectiveConfigPath: String
+
+    var payload: [String: Any] {
+        [
+            "fit_receipt_schema_version": fitReceiptSchemaVersion,
+            "fit_receipt_source": fitReceiptSource,
+            "profile_receipt_schema_version": profileReceiptSchemaVersion,
+            "profile_receipt_source": profileReceiptSource,
+            "benchmark_receipts": benchmarkReceipts,
+            "missing_receipts": missingReceipts,
+            "effective_config_path": effectiveConfigPath,
+        ]
+    }
+}
+
 private enum MelixCookbookRecommendationPlanner {
     static let browserFallbackWarning =
         "Browser platform hints may describe the UI client rather than the Melix serving host."
@@ -46,6 +68,7 @@ private enum MelixCookbookRecommendationPlanner {
         let host = selectHost(options)
         let backend = recommendBackend(for: host)
         let state = makeStateReceipt(melixHome: melixHome)
+        let evidence = makeEvidenceReceipt()
         return [
             "schema_version": "melix.cookbook.recommendation.v1",
             "model_id": trimmedString(options.modelID),
@@ -60,6 +83,7 @@ private enum MelixCookbookRecommendationPlanner {
                 "command_family": backend.commandFamily,
             ],
             "state": state.payload,
+            "evidence": evidence.payload,
             "warnings": host.warnings,
             "probe": [
                 "name": "cookbook.host_source_selection",
@@ -72,6 +96,7 @@ private enum MelixCookbookRecommendationPlanner {
         let host = selectHost(options)
         let backend = recommendBackend(for: host)
         let state = makeStateReceipt(melixHome: melixHome)
+        let evidence = makeEvidenceReceipt()
         let hostDisplay = host.platform.isEmpty
             ? "unavailable (\(host.source.rawValue))"
             : "\(host.platform)/\(host.arch) (\(host.source.rawValue))"
@@ -85,6 +110,10 @@ private enum MelixCookbookRecommendationPlanner {
             "Data root: \(state.dataRoot)",
             "State path: \(state.statePath)",
             "Cache enabled: \(state.cacheEnabled)",
+            "Fit evidence: \(evidence.fitReceiptSource) (\(evidence.fitReceiptSchemaVersion))",
+            "Profile evidence: \(evidence.profileReceiptSource) (\(evidence.profileReceiptSchemaVersion))",
+            "Benchmark receipts: \(displayList(evidence.benchmarkReceipts))",
+            "Missing receipts: \(displayList(evidence.missingReceipts))",
         ]
         if state.disabledReason.isEmpty == false {
             lines.append("Cache disabled reason: \(state.disabledReason)")
@@ -125,6 +154,18 @@ private enum MelixCookbookRecommendationPlanner {
             statePath: statePath.path,
             cacheEnabled: disabledReason.isEmpty,
             disabledReason: disabledReason
+        )
+    }
+
+    private static func makeEvidenceReceipt() -> MelixCookbookEvidenceReceipt {
+        MelixCookbookEvidenceReceipt(
+            fitReceiptSchemaVersion: "melix.memory_fit_receipt.v1",
+            fitReceiptSource: "cookbook.host_selection",
+            profileReceiptSchemaVersion: "melix.cookbook.profile_receipt.v1",
+            profileReceiptSource: "cookbook.backend_selection",
+            benchmarkReceipts: [],
+            missingReceipts: ["effective_config", "benchmark_receipt", "model_fit_receipt"],
+            effectiveConfigPath: ""
         )
     }
 
@@ -211,6 +252,10 @@ private enum MelixCookbookRecommendationPlanner {
 
     private static func trimmedString(_ value: String) -> String {
         value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func displayList(_ values: [String]) -> String {
+        values.isEmpty ? "none" : values.joined(separator: ", ")
     }
 }
 
