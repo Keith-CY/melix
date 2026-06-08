@@ -106,6 +106,16 @@ def test_bytes_per_parameter_preserves_quantization_priority_without_joining_tag
     assert _bytes_per_parameter(["adapter", "2bit-mlx"], lowered_tags=None) == 0.25
 
 
+def test_mlx_library_atom_detection_preserves_mixed_case_without_lowercase_copy() -> None:
+    assert _is_mlx_compatible(
+        repo_id="plain/model",
+        tags=["Text-Generation"],
+        library_name="MlX",
+        card_data={},
+        lowered_tags={"text-generation"},
+    ) is True
+
+
 class FakeHTTPResponse:
     def __init__(self, payload: object):
         self._payload = json.dumps(payload).encode("utf-8")
