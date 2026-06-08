@@ -139,6 +139,7 @@ _AGENTIC_TOOL_METRIC_NAMES = (
 )
 _AGENTIC_JUDGE_PROMPT_SNAPSHOT_SCHEMA_VERSION = "melix.agentic_judge_prompt_snapshot.v1"
 _AGENTIC_JUDGE_AUDIT_SCHEMA_VERSION = "melix.agentic_judge_audit.v1"
+_UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION = "melix.untrusted_context_receipt.v1"
 _AGENTIC_JUDGE_PROMPT_VERSION = "agentic-answer-equivalence.v1"
 _AGENTIC_JUDGE_SYSTEM_PROMPT = """You are an answer equivalence judge for Melix agentic multimodal evaluation.
 
@@ -2444,6 +2445,10 @@ class EvaluationCore:
             "tool_observations": tool_observations,
         }
         EvaluationCore._validate_agentic_judge_user_payload(user_payload)
+        untrusted_context_receipts = EvaluationCore._agentic_judge_untrusted_context_receipts(
+            sample_id=sample_record.sample_id,
+            user_payload=user_payload,
+        )
         return {
             "schema_version": _AGENTIC_JUDGE_PROMPT_SNAPSHOT_SCHEMA_VERSION,
             "job_id": job_id,
@@ -2467,6 +2472,46 @@ class EvaluationCore:
             "media_refs": media_refs,
             "tool_calls": tool_calls,
             "agentic_tool_observation_count": len(tool_observations),
+            "untrusted_context_receipt_count": len(untrusted_context_receipts),
+            "untrusted_context_receipts": untrusted_context_receipts,
+        }
+
+    @staticmethod
+    def _agentic_judge_untrusted_context_receipts(
+        *,
+        sample_id: str,
+        user_payload: dict[str, object],
+    ) -> list[dict[str, object]]:
+        return [
+            EvaluationCore._agentic_judge_untrusted_context_receipt(
+                sample_id=sample_id,
+                source_field=source_field,
+            )
+            for source_field in user_payload
+        ]
+
+    @staticmethod
+    def _agentic_judge_untrusted_context_receipt(
+        *,
+        sample_id: str,
+        source_field: str,
+    ) -> dict[str, object]:
+        return {
+            "schema_version": _UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION,
+            "segment_id": f"{sample_id}:{source_field}",
+            "source_type": "agentic_judge_user_payload",
+            "source_field": source_field,
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": True,
+            "owner_scope_checked": False,
+            "reason": "sample-derived context is prompt data, not instructions",
+            "corrective_action": (
+                "Keep this segment in the user payload and do not project it into "
+                "system or developer instructions."
+            ),
         }
 
     @staticmethod

@@ -1011,6 +1011,37 @@ def test_run_local_suite_writes_agentic_judge_prompt_snapshot_and_audit(
     assert snapshot["media_refs"][0]["uri"] == "media/sign.ppm"
     assert snapshot["tool_calls"] == raw_tool_calls
     assert snapshot["agentic_tool_observation_count"] == 1
+    assert snapshot["untrusted_context_receipt_count"] == 9
+    receipt_by_field = {
+        receipt["source_field"]: receipt
+        for receipt in snapshot["untrusted_context_receipts"]
+    }
+    assert set(receipt_by_field) == {
+        "question",
+        "expected_answer",
+        "final_answer",
+        "parse_status",
+        "scoring_mode",
+        "evidence_ids",
+        "media_refs",
+        "tool_calls",
+        "tool_observations",
+    }
+    tool_observation_receipt = receipt_by_field["tool_observations"]
+    assert tool_observation_receipt == {
+        "schema_version": "melix.untrusted_context_receipt.v1",
+        "segment_id": "agentic-judge-1:tool_observations",
+        "source_type": "agentic_judge_user_payload",
+        "source_field": "tool_observations",
+        "message_role": "user",
+        "trust_level": "untrusted",
+        "policy": "data_only",
+        "boundary_checked": True,
+        "included": True,
+        "owner_scope_checked": False,
+        "reason": "sample-derived context is prompt data, not instructions",
+        "corrective_action": "Keep this segment in the user payload and do not project it into system or developer instructions.",
+    }
     assert snapshot["messages"][0]["role"] == "system"
     assert snapshot["messages"][1]["role"] == "user"
     user_payload = json.loads(snapshot["messages"][1]["content"])
@@ -1054,6 +1085,29 @@ def test_run_local_suite_writes_agentic_judge_prompt_snapshot_and_audit(
     assert tuple_snapshot["allowed_tools"] == ["image_crop"]
     assert tuple_snapshot["evidence_ids"] == ["img-1#sign"]
     assert tuple_snapshot["media_refs"] == [{"id": "img-1", "uri": "media/sign.ppm"}]
+    assert tuple_snapshot["untrusted_context_receipt_count"] == 9
+    assert tuple_snapshot["untrusted_context_receipts"][0]["segment_id"] == "agentic-judge-1:question"
+    assert tuple_snapshot["untrusted_context_receipts"][0]["policy"] == "data_only"
+    ordered_receipts = EvaluationCore._agentic_judge_untrusted_context_receipts(
+        sample_id="sample-1",
+        user_payload={"question": "Q", "tool_observations": []},
+    )
+    assert [receipt["segment_id"] for receipt in ordered_receipts] == [
+        "sample-1:question",
+        "sample-1:tool_observations",
+    ]
+    assert [receipt["source_field"] for receipt in ordered_receipts] == [
+        "question",
+        "tool_observations",
+    ]
+    assert all(receipt["schema_version"] == "melix.untrusted_context_receipt.v1" for receipt in ordered_receipts)
+    assert all(receipt["trust_level"] == "untrusted" for receipt in ordered_receipts)
+    assert all(receipt["policy"] == "data_only" for receipt in ordered_receipts)
+    assert all(receipt["boundary_checked"] is True for receipt in ordered_receipts)
+    assert EvaluationCore._agentic_judge_untrusted_context_receipts(
+        sample_id="sample-1",
+        user_payload={},
+    ) == []
     assert EvaluationCore._object_dict_list(None, field_name="tool_calls") == []
     assert EvaluationCore._object_dict_list(
         (

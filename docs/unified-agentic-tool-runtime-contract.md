@@ -195,6 +195,37 @@ search rows, image search rows, pages, layouts, and crops. Broader RAG stores,
 skill entrypoints, memory entrypoints, and background-job continuations must
 reuse the same receipt shape when they add owner-aware payloads under #1761.
 
+### Prompt Construction Boundary
+
+Retrieved documents, skills, memories, tool observations, media references,
+sample questions, expected answers, and model final answers must remain
+untrusted data when they are projected into prompt messages. Prompt assembly
+must keep those segments out of system and developer instructions unless the
+operator has explicitly configured them as trusted instructions.
+
+Prompt snapshots and prompt evidence should record one receipt for each
+admitted untrusted segment. The receipt shape is:
+
+- `schema_version = melix.untrusted_context_receipt.v1`
+- `segment_id`
+- `source_type`
+- `source_field`
+- `message_role`
+- `trust_level = untrusted`
+- `policy = data_only`
+- `boundary_checked = true`
+- `included`
+- `owner_scope_checked`
+- `reason`
+- `corrective_action`
+
+The v1 agentic judge prompt snapshot slice records this receipt for every
+sample-derived user-payload field admitted into the judge user message. It does
+not change judge prompt wording or scorer behavior. Broader chat prompt
+assembly, RAG stores, skill entrypoints, memory entrypoints, and background-job
+continuations must reuse this receipt shape when they add their prompt-context
+boundary evidence under #1761.
+
 ### Workspace Path Boundary
 
 Agent and workflow tools that read, write, or edit local files must resolve
