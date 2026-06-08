@@ -259,19 +259,32 @@ Workspace path receipts must include:
 - `allowed`
 - `refusal_reason`
 
-The deterministic `visit` tool is the first concrete consumer of this boundary.
-When a caller provides an explicit workspace root and asks `visit` to read a
-relative path, absolute path, or `file://` URI, the runtime must resolve the
-target through `WorkspacePathResolver` before reading. Successful local reads
-must attach a `workspace_path_receipt` to the page extraction payload. Refused
-paths must emit a failed observation with `reason = workspace_path_refused`,
+The v1 workspace resolver slice introduced the shared boundary primitive. The
+v1 Python worker file-tool slice adds `worker.runtime.workspace_file_tools` as
+the first concrete read/write/edit operator set. Those operators call
+`WorkspacePathResolver` before any file open, parent-directory creation, write,
+or exact-replacement edit mutation, and failed resolver decisions return a
+receipt instead of touching the target path. Filesystem and text-decoding
+failures after resolver admission must also stay inside this boundary as
+`status = failed` receipts rather than escaping into the worker or agent loop.
+Receipt byte counters describe completed tool effects only; failed receipts keep
+byte counters at zero even if a preflight read occurred before the operation was
+rejected.
+
+The deterministic `visit` adapter must reuse that same boundary for local
+workspace reads. When a caller provides an explicit workspace root and asks
+`visit` to read a relative path, absolute path, or local `file://` URI, the
+runtime must resolve the target before reading. Successful local reads must
+attach a `workspace_path_receipt` to the page extraction payload. Refused paths
+must emit a failed observation with `reason = workspace_path_refused`,
 `source_type = workspace_file`, `source_id`, `workspace_path_receipt`, and a
 corrective action. Fixture-backed pages and non-local URLs keep their existing
 behavior unless a future slice adds a separate retrieval boundary.
 
-The v1 workspace resolver slice only introduces the shared boundary primitive.
-Adding concrete read/write/edit tools, local-job mutation hooks, and prompt
-assembly receipts remains follow-up work under #1761.
+Live MCP, agent, workflow, and local-job mutation surfaces must reuse this
+operator layer or preserve the same resolver-before-filesystem-access invariant
+when they expose file operations. Broader prompt assembly receipts and direct
+surface integrations remain follow-up work under #1761.
 
 The observation metric keys are:
 

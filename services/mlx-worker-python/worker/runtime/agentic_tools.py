@@ -13,7 +13,8 @@ from worker.runtime.tool_observation import (
     normalize_tool_observation,
 )
 from worker.runtime.tool_registry import ToolDescriptor, ToolRegistry, built_in_tool_registry
-from worker.runtime.workspace_paths import WorkspacePathResolution, WorkspacePathResolver
+from worker.runtime.workspace_file_tools import WorkspaceFileTools
+from worker.runtime.workspace_paths import WorkspacePathResolution
 
 
 class AgenticToolRuntimeError(ValueError):
@@ -461,13 +462,21 @@ def _workspace_file_visit_payload(
     if requested_path is None:
         return None
 
-    resolution = WorkspacePathResolver(workspace_root).resolve(requested_path, operation="read")
+    result = WorkspaceFileTools(workspace_root).read_text(requested_path)
+    resolution = result.resolution
     if not resolution.allowed:
         raise _workspace_path_refused(source_id=url, resolution=resolution)
 
-    try:
-        text = resolution.resolved_path.read_text(encoding="utf-8")
-    except FileNotFoundError:
+    if result.status == "completed":
+        return {
+            "url": url,
+            "title": resolution.resolved_path.name,
+            "text": result.content,
+            "found": True,
+            "workspace_path_receipt": resolution.receipt_fields(),
+        }
+
+    if "No such file or directory" in result.error:
         return {
             "url": url,
             "title": resolution.resolved_path.name,
@@ -475,16 +484,11 @@ def _workspace_file_visit_payload(
             "found": False,
             "workspace_path_receipt": resolution.receipt_fields(),
         }
-    except (OSError, UnicodeDecodeError) as exc:
-        raise _workspace_file_unavailable(source_id=url, resolution=resolution, error=str(exc)) from exc
-
-    return {
-        "url": url,
-        "title": resolution.resolved_path.name,
-        "text": text,
-        "found": True,
-        "workspace_path_receipt": resolution.receipt_fields(),
-    }
+    raise _workspace_file_unavailable(
+        source_id=url,
+        resolution=resolution,
+        error=result.error or "workspace file read failed",
+    )
 
 
 def _workspace_root_text(fixture_context: dict[str, Any]) -> str:
