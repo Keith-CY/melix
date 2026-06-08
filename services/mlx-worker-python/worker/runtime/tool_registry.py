@@ -34,6 +34,16 @@ _OpenAIToolTemplate = tuple[
 
 _TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _SELECTION_CACHE_MAX_SIZE = 32
+_KEYWORD_LITERAL_HINT_CHARACTERS = ":/_"
+_KEYWORD_TOKEN_CHARACTERS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_")
+_KEYWORD_BOUNDARY_TRANSLATION = str.maketrans(
+    {
+        chr(codepoint): " "
+        for codepoint in range(128)
+        if chr(codepoint) not in _KEYWORD_TOKEN_CHARACTERS
+    }
+)
+_KeywordHintRule = tuple[str, bool]
 
 TOOL_REGISTRY_SCHEMA_VERSION = "melix.agentic_tool_registry.v1"
 BUILTIN_TOOLSET_VERSION = "melix.agentic_tools.builtin.v1"
@@ -495,17 +505,67 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
 
 
 def _keyword_tool_matches(text: str) -> tuple[str, ...]:
-    normalized_text = f" {text.casefold()} "
+    normalized_text = text.casefold()
     if not normalized_text.strip():
         return ()
+    boundary_text = ""
     matches: list[str] = []
     for tool_name in BUILTIN_AGENTIC_TOOL_NAMES:
         if tool_name in ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES:
             continue
-        hints = _BUILTIN_TOOL_KEYWORD_HINTS.get(tool_name, ())
-        if any(hint in normalized_text for hint in hints):
-            matches.append(tool_name)
+        rules = _BUILTIN_TOOL_KEYWORD_HINT_RULES.get(tool_name, ())
+        for hint, literal in rules:
+            if literal:
+                if hint in normalized_text:
+                    matches.append(tool_name)
+                    break
+                continue
+            if not boundary_text:
+                boundary_text = _keyword_boundary_text(normalized_text)
+            if hint in boundary_text:
+                matches.append(tool_name)
+                break
     return tuple(matches)
+
+
+def _keyword_hint_matches(
+    text: str,
+    hint: str,
+    *,
+    literal: bool | None = None,
+    boundary_text: str | None = None,
+) -> bool:
+    if not hint:
+        return False
+    normalized_text = text.casefold()
+    if literal is None:
+        literal = any(character in hint for character in _KEYWORD_LITERAL_HINT_CHARACTERS)
+        if not literal:
+            hint = _keyword_boundary_text(hint.casefold())
+    if literal:
+        return hint.casefold() in normalized_text
+    if boundary_text is None:
+        boundary_text = _keyword_boundary_text(normalized_text)
+    return hint in boundary_text
+
+
+def _keyword_boundary_text(text: str) -> str:
+    return f" {text.translate(_KEYWORD_BOUNDARY_TRANSLATION)} "
+
+
+def _compile_keyword_hint_rules(
+    hints_by_tool: dict[str, tuple[str, ...]],
+) -> dict[str, tuple[_KeywordHintRule, ...]]:
+    return {
+        tool_name: tuple(
+            (hint.casefold(), any(character in hint for character in _KEYWORD_LITERAL_HINT_CHARACTERS))
+            if any(character in hint for character in _KEYWORD_LITERAL_HINT_CHARACTERS)
+            else (_keyword_boundary_text(hint.casefold()), False)
+            for hint in hints
+            if hint
+        )
+        for tool_name, hints in hints_by_tool.items()
+    }
 
 
 def _arg(
@@ -591,47 +651,48 @@ _BUILTIN_AGENTIC_TOOLS = (
 
 _BUILTIN_TOOL_KEYWORD_HINTS = {
     "image_crop": (
-        " crop ",
-        " cropped ",
-        " crop_",
-        " region ",
-        " image region ",
-        " inspect image ",
+        "crop",
+        "cropped",
+        "crop_",
+        "region",
+        "image region",
+        "inspect image",
     ),
     "layout_parse": (
-        " layout ",
-        " table ",
-        " tables ",
-        " ocr ",
-        " document layout ",
-        " page layout ",
+        "layout",
+        "table",
+        "tables",
+        "ocr",
+        "document layout",
+        "page layout",
     ),
     "text_search": (
-        " search ",
-        " text evidence ",
-        " local corpus ",
-        " corpus ",
-        " documents ",
-        " retrieve ",
-        " retrieval ",
+        "search",
+        "text evidence",
+        "local corpus",
+        "corpus",
+        "documents",
+        "retrieve",
+        "retrieval",
     ),
     "image_search": (
-        " image search ",
-        " search images ",
-        " visual search ",
-        " find images ",
-        " image evidence ",
+        "image search",
+        "search images",
+        "visual search",
+        "find images",
+        "image evidence",
     ),
     "visit": (
-        " visit ",
-        " open ",
-        " read fixture://",
-        " fixture://",
-        " page ",
-        " url ",
-        " fetch ",
+        "visit",
+        "open",
+        "read fixture://",
+        "fixture://",
+        "page",
+        "url",
+        "fetch",
     ),
 }
+_BUILTIN_TOOL_KEYWORD_HINT_RULES = _compile_keyword_hint_rules(_BUILTIN_TOOL_KEYWORD_HINTS)
 
 
 _BUILTIN_TOOL_CONFIG_REGISTRY = ToolRegistry(_BUILTIN_AGENTIC_TOOLS)

@@ -614,6 +614,95 @@ def test_agentic_tool_selection_uses_keyword_fallback_when_vector_unavailable() 
     ]
 
 
+@pytest.mark.parametrize(
+    ("current_user_turn", "expected_tool"),
+    [
+        ("Search, then summarize the local evidence.", "text_search"),
+        ("Open: fixture://docs/provider-contract.", "visit"),
+        ("Crop-region from img-1 so the sign is readable.", "image_crop"),
+    ],
+)
+def test_agentic_tool_selection_keyword_fallback_handles_adjacent_punctuation(
+    current_user_turn: str,
+    expected_tool: str,
+) -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn=current_user_turn,
+            vector_available=False,
+            max_selected_tools=4,
+        )
+    )
+
+    assert expected_tool in result.registry.names()
+    assert result.receipt["selection_mode"] == "keyword"
+
+
+def test_agentic_tool_selection_keyword_fallback_ignores_embedded_words() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Answer the researcher briefly about cropland.",
+            vector_available=False,
+            max_selected_tools=4,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt["selection_mode"] == "fallback"
+
+
+def test_agentic_tool_selection_keyword_fallback_keeps_multiple_punctuated_tools() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Search, then crop-region from img-1.",
+            vector_available=False,
+            max_selected_tools=4,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "image_crop", "text_search")
+    assert result.receipt["selection_mode"] == "keyword"
+
+
+def test_agentic_tool_selection_keyword_matcher_ignores_empty_hints() -> None:
+    assert tool_registry_module._keyword_hint_matches("search local evidence", "") is False
+
+
+def test_agentic_tool_selection_keyword_matcher_covers_literal_and_boundary_branches() -> None:
+    assert tool_registry_module._keyword_hint_matches(
+        "open fixture://docs/provider-contract",
+        "fixture://",
+    )
+    assert not tool_registry_module._keyword_hint_matches(
+        "open local documentation",
+        "fixture://",
+    )
+    assert tool_registry_module._keyword_hint_matches(
+        "Search, then crop-region.",
+        "crop",
+    )
+    assert tool_registry_module._keyword_hint_matches(
+        "search local evidence",
+        " search ",
+        literal=False,
+        boundary_text=" search local evidence ",
+    )
+
+
+def test_agentic_tool_selection_keyword_rule_compiler_filters_empty_hints() -> None:
+    rules = tool_registry_module._compile_keyword_hint_rules(
+        {
+            "visit": ("fixture://", ""),
+            "text_search": ("Search",),
+        }
+    )
+
+    assert rules == {
+        "visit": (("fixture://", True),),
+        "text_search": ((" search ", False),),
+    }
+
+
 def test_agentic_tool_selection_uses_recent_context_for_short_followup() -> None:
     result = select_agentic_tools_for_turn(
         ToolSelectionInput(
