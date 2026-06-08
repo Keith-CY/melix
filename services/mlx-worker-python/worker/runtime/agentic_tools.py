@@ -4,7 +4,8 @@ import ast
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 from worker.runtime.tool_observation import (
     ToolObservationPolicy,
@@ -474,7 +475,7 @@ def _workspace_file_visit_payload(
             "found": False,
             "workspace_path_receipt": resolution.receipt_fields(),
         }
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise _workspace_file_unavailable(source_id=url, resolution=resolution, error=str(exc)) from exc
 
     return {
@@ -496,8 +497,7 @@ def _local_visit_requested_path(url: str) -> str | None:
     if parsed.scheme == "file":
         if parsed.netloc not in ("", "localhost"):
             return None
-        path = parsed.path
-        return path if "%" not in path else unquote(path)
+        return url2pathname(parsed.path)
     if parsed.scheme:
         return None
     return url

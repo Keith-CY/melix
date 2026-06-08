@@ -628,6 +628,23 @@ def test_agentic_tool_runtime_visit_reads_workspace_local_file_with_receipt(tmp_
     }
 
 
+def test_agentic_tool_runtime_visit_reads_percent_encoded_workspace_file_uri(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    note_path = workspace / "space note.md"
+    note_path.write_text("encoded uri note\n", encoding="utf-8")
+
+    run = execute_agentic_tool_calls(
+        [{"id": "visit-encoded-local", "name": "visit", "arguments": {"url": note_path.as_uri()}}],
+        fixture_context={"workspace_root": str(workspace)},
+    )
+
+    observation = run.observations[0]
+    assert observation["status"] == "completed"
+    assert observation["payload"]["text"] == "encoded uri note\n"
+    assert observation["payload"]["workspace_path_receipt"]["requested_path"] == str(note_path)
+
+
 @pytest.mark.parametrize(
     ("requested_path", "expected_reason"),
     [
@@ -703,6 +720,28 @@ def test_agentic_tool_runtime_visit_reports_workspace_file_unavailable_with_rece
     assert observation["payload"]["workspace_path_receipt"]["resolved_path"] == str(
         (workspace / "notes-dir").resolve()
     )
+
+
+def test_agentic_tool_runtime_visit_reports_non_utf8_workspace_file_unavailable(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    binary_path = workspace / "binary.bin"
+    binary_path.write_bytes(b"\xff\xfe\x00")
+
+    run = execute_agentic_tool_calls(
+        [{"id": "visit-binary", "name": "visit", "arguments": {"url": "binary.bin"}}],
+        fixture_context={"workspace_root": str(workspace)},
+    )
+
+    observation = run.observations[0]
+    assert observation["status"] == "failed"
+    assert observation["payload"]["reason"] == "workspace_file_unavailable"
+    assert observation["payload"]["source_type"] == "workspace_file"
+    assert observation["payload"]["source_id"] == "binary.bin"
+    assert observation["payload"]["workspace_path_receipt"]["allowed"] is True
+    assert observation["payload"]["workspace_path_receipt"]["resolved_path"] == str(binary_path.resolve())
 
 
 def test_agentic_tool_runtime_visit_ignores_remote_file_uri_for_workspace_reads(tmp_path: Path) -> None:
