@@ -12,7 +12,13 @@ from worker.runtime.tool_observation import (
     ToolObservationRecord,
     normalize_tool_observation,
 )
-from worker.runtime.tool_registry import ToolDescriptor, ToolRegistry, built_in_tool_registry
+from worker.runtime.tool_registry import (
+    ToolDescriptor,
+    ToolRegistry,
+    ToolSelectionInput,
+    built_in_tool_registry,
+    select_agentic_tools_for_turn,
+)
 from worker.runtime.workspace_file_tools import WorkspaceFileTools
 from worker.runtime.workspace_paths import WorkspacePathResolution
 
@@ -73,11 +79,18 @@ class DeterministicAgenticToolRuntime:
         registry: ToolRegistry | None = None,
         fixture_context: dict[str, Any] | None = None,
         observation_policy: ToolObservationPolicy | None = None,
+        tool_selection: ToolSelectionInput | None = None,
     ) -> None:
+        selection_receipt: dict[str, Any] | None = None
+        if tool_selection is not None:
+            selection_result = select_agentic_tools_for_turn(tool_selection)
+            registry = selection_result.registry
+            selection_receipt = selection_result.receipt
         self._registry = registry or built_in_tool_registry()
         self._tool_by_name = {tool.name: tool for tool in self._registry.tools}
         self._fixture_context = dict(fixture_context or {})
         self._observation_policy = observation_policy or ToolObservationPolicy()
+        self._tool_selection_receipt = selection_receipt
 
     def run_tool_calls(self, tool_calls: list[object] | tuple[object, ...] | None) -> AgenticToolRun:
         normalized_calls = _normalize_tool_calls(tool_calls)
@@ -157,7 +170,7 @@ class DeterministicAgenticToolRuntime:
 
     def registry_receipt(self) -> dict[str, Any]:
         metrics = self._registry.metrics()
-        return {
+        receipt = {
             "schema_version": "melix.agentic_tool_run.v1",
             "registry_schema_version": self._registry.as_worker_tool_config().schema_version,
             "toolset_version": self._registry.as_worker_tool_config().toolset_version,
@@ -168,6 +181,9 @@ class DeterministicAgenticToolRuntime:
             "schema_bytes": metrics.schema_bytes,
             "required_argument_count": metrics.required_argument_count,
         }
+        if self._tool_selection_receipt is not None:
+            receipt["tool_selection_receipt"] = dict(self._tool_selection_receipt)
+        return receipt
 
     def _execute_payload(
         self,
@@ -223,10 +239,12 @@ def execute_agentic_tool_calls(
     *,
     fixture_context: dict[str, Any] | None = None,
     observation_policy: ToolObservationPolicy | None = None,
+    tool_selection: ToolSelectionInput | None = None,
 ) -> AgenticToolRun:
     runtime = DeterministicAgenticToolRuntime(
         fixture_context=fixture_context,
         observation_policy=observation_policy,
+        tool_selection=tool_selection,
     )
     return runtime.run_tool_calls(tool_calls)
 

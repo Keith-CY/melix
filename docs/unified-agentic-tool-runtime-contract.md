@@ -114,6 +114,34 @@ The worker-facing registry must be serializable to a deterministic `ToolConfig`
 receipt. Any request that selects a subset of tools must preserve request order,
 deduplicate repeated names, and fail before execution on unknown names.
 
+## Tool Selection Receipt Contract
+
+Agentic prompt assembly may select a bounded subset of the built-in registry
+instead of exposing every tool schema to every local model request. Selection is
+advisory and must not remove tools that are marked always available for local
+diagnostics or deterministic compute. Semantic retrieval may provide candidate
+tool IDs, but unavailable or empty retrieval must degrade to deterministic
+keyword matching over the current user turn and recent user-turn context.
+
+The v1 selector receipt is `melix.agentic_tool_selection.v1` and records:
+
+- `toolset_version`
+- `selection_mode = vector|keyword|fallback`
+- `vector_available`
+- `fallback_reason`
+- `selected_tools[]` with `tool_id` and source label:
+  `always`, `vector`, `keyword`, or `keyword_context`
+- `dropped_tool_count`
+- `full_schema_bytes`
+- `selected_schema_bytes`
+
+Receipts must not include raw prompt text, private context, or tool arguments.
+They exist to explain why a schema was included or dropped and to measure prompt
+schema overhead. The deterministic agentic runtime records the selector receipt
+inside its `melix.agentic_tool_run.v1` registry receipt when a caller provides a
+selection input, and the selected registry is the execution allowlist for that
+run.
+
 ## Observation Contract
 
 Every emitted observation must include:
