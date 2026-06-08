@@ -332,6 +332,13 @@ def _text_search_payload(
     results: list[dict[str, str]] = []
     for index, item in enumerate(corpus, start=1):
         source_id = _source_id(item.get("id"), default=f"doc-{index}")
+        _enforce_owner_scope(
+            fixture_context=fixture_context,
+            source=item,
+            source_type="retrieved_document",
+            source_id=source_id,
+            field_prefix="text_corpus",
+        )
         text = _optional_untrusted_text(
             item.get("text", ""),
             field="text_corpus.text",
@@ -360,6 +367,13 @@ def _image_search_payload(
     results: list[dict[str, str]] = []
     for index, item in enumerate(corpus, start=1):
         source_id = _source_id(item.get("id"), default=f"image-{index}")
+        _enforce_owner_scope(
+            fixture_context=fixture_context,
+            source=item,
+            source_type="retrieved_image",
+            source_id=source_id,
+            field_prefix="image_corpus",
+        )
         caption = _optional_untrusted_text(
             item.get("caption", ""),
             field="image_corpus.caption",
@@ -390,6 +404,13 @@ def _visit_payload(
     pages = _context_mapping(fixture_context, "pages")
     page = pages.get(url)
     if isinstance(page, dict):
+        _enforce_owner_scope(
+            fixture_context=fixture_context,
+            source=page,
+            source_type="retrieved_page",
+            source_id=url,
+            field_prefix="pages",
+        )
         return {
             "url": url,
             "title": _optional_untrusted_text(
@@ -431,6 +452,15 @@ def _layout_parse_payload(
     media_ref = _tool_argument_text(arguments, "media_ref", tool_call_id=tool_call_id)
     layouts = _context_mapping(fixture_context, "layouts")
     layout = layouts.get(media_ref, [])
+    if isinstance(layout, dict) and "elements" in layout:
+        _enforce_owner_scope(
+            fixture_context=fixture_context,
+            source=layout,
+            source_type="retrieved_layout",
+            source_id=media_ref,
+            field_prefix="layouts",
+        )
+        layout = layout.get("elements", [])
     if not isinstance(layout, list):
         raise _invalid_untrusted_value_type(
             field="layouts",
@@ -462,15 +492,23 @@ def _image_crop_payload(
     crops = _context_mapping(fixture_context, "crops")
     crop_key = f"{media_ref}#{region}"
     crop = crops.get(crop_key, crops.get(media_ref, {}))
+    crop_source_id = crop_key if crop_key in crops else media_ref
     if isinstance(crop, dict):
-        payload = dict(crop)
+        _enforce_owner_scope(
+            fixture_context=fixture_context,
+            source=crop,
+            source_type="retrieved_crop",
+            source_id=crop_source_id,
+            field_prefix="crops",
+        )
+        payload = {key: value for key, value in crop.items() if key not in {"owner_id", "privilege"}}
     else:
         payload = {
             "text": _optional_untrusted_text(
                 crop,
                 field="crops.text",
                 source_type="retrieved_crop",
-                source_id=crop_key if crop_key in crops else media_ref,
+                source_id=crop_source_id,
                 strip=False,
             )
         }
@@ -556,6 +594,60 @@ def _context_list(fixture_context: dict[str, Any], key: str, corpus_ref: str) ->
     return context_items
 
 
+def _owner_scope_context(fixture_context: dict[str, Any]) -> dict[str, str]:
+    raw_scope = fixture_context.get("owner_scope", {})
+    if not isinstance(raw_scope, dict):
+        return {}
+    expected_owner_id = _optional_untrusted_text(
+        raw_scope.get("expected_owner_id", raw_scope.get("owner_id", "")),
+        field="owner_scope.expected_owner_id",
+        source_type="owner_scope",
+        source_id="fixture_context",
+    )
+    privilege = _optional_untrusted_text(
+        raw_scope.get("privilege", ""),
+        field="owner_scope.privilege",
+        source_type="owner_scope",
+        source_id="fixture_context",
+    )
+    return {"expected_owner_id": expected_owner_id, "privilege": privilege}
+
+
+def _enforce_owner_scope(
+    *,
+    fixture_context: dict[str, Any],
+    source: dict[str, Any],
+    source_type: str,
+    source_id: str,
+    field_prefix: str,
+) -> None:
+    owner_scope = _owner_scope_context(fixture_context)
+    expected_owner_id = owner_scope.get("expected_owner_id", "")
+    if not expected_owner_id:
+        return
+    actual_owner_id = _optional_untrusted_text(
+        source.get("owner_id", ""),
+        field=f"{field_prefix}.owner_id",
+        source_type=source_type,
+        source_id=source_id,
+    )
+    if actual_owner_id == expected_owner_id:
+        return
+    privilege = _optional_untrusted_text(
+        source.get("privilege", ""),
+        field=f"{field_prefix}.privilege",
+        source_type=source_type,
+        source_id=source_id,
+    ) or owner_scope.get("privilege", "unspecified")
+    raise _owner_scope_mismatch(
+        source_type=source_type,
+        source_id=source_id,
+        expected_owner_id=expected_owner_id,
+        actual_owner_id=actual_owner_id,
+        privilege=privilege,
+    )
+
+
 def _tool_argument_text(arguments: dict[str, Any], name: str, *, tool_call_id: str) -> str:
     return _optional_untrusted_text(
         arguments.get(name, ""),
@@ -613,6 +705,29 @@ def _invalid_untrusted_value_type(
             "expected_type": expected_type,
             "actual_type": actual_type,
             "corrective_action": "Provide this untrusted value as a JSON string.",
+        },
+    )
+
+
+def _owner_scope_mismatch(
+    *,
+    source_type: str,
+    source_id: str,
+    expected_owner_id: str,
+    actual_owner_id: str,
+    privilege: str,
+) -> AgenticToolRuntimeError:
+    return AgenticToolRuntimeError(
+        f"Owner scope mismatch for {source_type} {source_id}.",
+        details={
+            "reason": "owner_scope_mismatch",
+            "source_type": source_type,
+            "source_id": source_id,
+            "expected_owner_id": expected_owner_id,
+            "actual_owner_id": actual_owner_id,
+            "owner_scope_checked": True,
+            "privilege": privilege,
+            "corrective_action": "Do not project cross-owner untrusted content into tool observations.",
         },
     )
 
