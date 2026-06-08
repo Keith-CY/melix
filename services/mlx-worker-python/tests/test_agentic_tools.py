@@ -396,3 +396,205 @@ def test_agentic_tool_runtime_fails_closed_for_invalid_corpus_containers_and_row
 def test_agentic_tool_runtime_rejects_unknown_corpus_keys_before_defaulting_source_metadata() -> None:
     with pytest.raises(AgenticToolRuntimeError, match="Unsupported retrieved corpus key: audio_corpus"):
         _context_list({"audio_corpus": [{"id": "clip-1"}]}, "audio_corpus", "default")
+
+
+@pytest.mark.parametrize(
+    (
+        "tool_call",
+        "fixture_context",
+        "expected_source_type",
+        "expected_source_id",
+        "expected_privilege",
+    ),
+    [
+        (
+            {"id": "text-owner", "name": "text_search", "arguments": {"query": "melix"}},
+            {
+                "owner_scope": {"expected_owner_id": "operator-a"},
+                "text_corpus": [
+                    {
+                        "id": "doc-owner-b",
+                        "owner_id": "operator-b",
+                        "privilege": "read",
+                        "text": "Melix private note.",
+                    }
+                ],
+            },
+            "retrieved_document",
+            "doc-owner-b",
+            "read",
+        ),
+        (
+            {"id": "image-owner", "name": "image_search", "arguments": {"query": "receipt"}},
+            {
+                "owner_scope": {"expected_owner_id": "operator-a", "privilege": "viewer"},
+                "image_corpus": [
+                    {
+                        "id": "image-owner-b",
+                        "owner_id": "operator-b",
+                        "media_ref": "img-private",
+                        "caption": "receipt",
+                    }
+                ],
+            },
+            "retrieved_image",
+            "image-owner-b",
+            "viewer",
+        ),
+        (
+            {"id": "visit-owner", "name": "visit", "arguments": {"url": "fixture://private-page"}},
+            {
+                "owner_scope": {"expected_owner_id": "operator-a"},
+                "pages": {
+                    "fixture://private-page": {
+                        "owner_id": "operator-b",
+                        "privilege": "read",
+                        "title": "Private Page",
+                        "text": "Cross owner page.",
+                    }
+                },
+            },
+            "retrieved_page",
+            "fixture://private-page",
+            "read",
+        ),
+        (
+            {"id": "layout-owner", "name": "layout_parse", "arguments": {"media_ref": "img-private"}},
+            {
+                "owner_scope": {"expected_owner_id": "operator-a"},
+                "layouts": {
+                    "img-private": {
+                        "owner_id": "operator-b",
+                        "privilege": "inspect",
+                        "elements": [{"kind": "text", "text": "private"}],
+                    }
+                },
+            },
+            "retrieved_layout",
+            "img-private",
+            "inspect",
+        ),
+        (
+            {
+                "id": "crop-owner",
+                "name": "image_crop",
+                "arguments": {"media_ref": "img-private", "region": "label"},
+            },
+            {
+                "owner_scope": {"expected_owner_id": "operator-a"},
+                "crops": {
+                    "img-private#label": {
+                        "owner_id": "operator-b",
+                        "privilege": "inspect",
+                        "text": "private label",
+                    }
+                },
+            },
+            "retrieved_crop",
+            "img-private#label",
+            "inspect",
+        ),
+    ],
+)
+def test_agentic_tool_runtime_fails_closed_for_owner_scope_mismatch(
+    tool_call: dict[str, object],
+    fixture_context: dict[str, object],
+    expected_source_type: str,
+    expected_source_id: str,
+    expected_privilege: str,
+) -> None:
+    run = execute_agentic_tool_calls([tool_call], fixture_context=fixture_context)
+
+    observation = run.observations[0]
+    assert observation["status"] == "failed"
+    assert observation["payload"]["reason"] == "owner_scope_mismatch"
+    assert observation["payload"]["source_type"] == expected_source_type
+    assert observation["payload"]["source_id"] == expected_source_id
+    assert observation["payload"]["owner_scope_checked"] is True
+    assert observation["payload"]["expected_owner_id"] == "operator-a"
+    assert observation["payload"]["actual_owner_id"] == "operator-b"
+    assert observation["payload"]["privilege"] == expected_privilege
+    assert "cross-owner" in observation["payload"]["corrective_action"]
+    assert run.metrics["agentic_tool.failed_count"] == 1.0
+
+
+def test_agentic_tool_runtime_allows_matching_owner_scope_payloads() -> None:
+    run = execute_agentic_tool_calls(
+        [
+            {"id": "text-owner-ok", "name": "text_search", "arguments": {"query": "melix"}},
+            {"id": "visit-owner-ok", "name": "visit", "arguments": {"url": "fixture://owned-page"}},
+            {"id": "layout-owner-ok", "name": "layout_parse", "arguments": {"media_ref": "img-owned"}},
+        ],
+        fixture_context={
+            "owner_scope": {"expected_owner_id": "operator-a", "privilege": "read"},
+            "text_corpus": [
+                {
+                    "id": "doc-owned",
+                    "owner_id": "operator-a",
+                    "text": "Melix owned note.",
+                }
+            ],
+            "pages": {
+                "fixture://owned-page": {
+                    "owner_id": "operator-a",
+                    "title": "Owned Page",
+                    "text": "Owned page.",
+                }
+            },
+            "layouts": {
+                "img-owned": {
+                    "owner_id": "operator-a",
+                    "elements": [{"kind": "text", "text": "owned"}],
+                }
+            },
+        },
+    )
+
+    assert [observation["status"] for observation in run.observations] == [
+        "completed",
+        "completed",
+        "completed",
+    ]
+    assert run.observations[0]["payload"]["results"][0]["id"] == "doc-owned"
+    assert run.observations[1]["payload"]["text"] == "Owned page."
+    assert run.observations[2]["payload"]["elements"][0]["text"] == "owned"
+
+
+def test_agentic_tool_runtime_ignores_non_object_owner_scope_for_compatibility() -> None:
+    run = execute_agentic_tool_calls(
+        [{"id": "visit-owner-compat", "name": "visit", "arguments": {"url": "fixture://legacy-page"}}],
+        fixture_context={
+            "owner_scope": "legacy fixture",
+            "pages": {
+                "fixture://legacy-page": {
+                    "owner_id": "operator-b",
+                    "title": "Legacy Page",
+                    "text": "Legacy fixture page.",
+                }
+            },
+        },
+    )
+
+    observation = run.observations[0]
+    assert observation["status"] == "completed"
+    assert observation["payload"]["text"] == "Legacy fixture page."
+
+
+def test_agentic_tool_runtime_fails_closed_when_owner_scope_metadata_is_missing() -> None:
+    run = execute_agentic_tool_calls(
+        [{"id": "text-owner-missing", "name": "text_search", "arguments": {"query": "melix"}}],
+        fixture_context={
+            "owner_scope": {"expected_owner_id": "operator-a", "privilege": "read"},
+            "text_corpus": [{"id": "doc-without-owner", "text": "Melix private note."}],
+        },
+    )
+
+    observation = run.observations[0]
+    assert observation["status"] == "failed"
+    assert observation["payload"]["reason"] == "owner_scope_mismatch"
+    assert observation["payload"]["source_type"] == "retrieved_document"
+    assert observation["payload"]["source_id"] == "doc-without-owner"
+    assert observation["payload"]["expected_owner_id"] == "operator-a"
+    assert observation["payload"]["actual_owner_id"] == ""
+    assert observation["payload"]["owner_scope_checked"] is True
+    assert observation["payload"]["privilege"] == "read"
