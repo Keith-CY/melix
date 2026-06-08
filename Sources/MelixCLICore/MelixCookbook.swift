@@ -68,7 +68,7 @@ private enum MelixCookbookRecommendationPlanner {
         let host = selectHost(options)
         let backend = recommendBackend(for: host)
         let state = makeStateReceipt(melixHome: melixHome)
-        let evidence = makeEvidenceReceipt()
+        let evidence = makeEvidenceReceipt(options: options, host: host, melixHome: melixHome)
         return [
             "schema_version": "melix.cookbook.recommendation.v1",
             "model_id": trimmedString(options.modelID),
@@ -96,7 +96,7 @@ private enum MelixCookbookRecommendationPlanner {
         let host = selectHost(options)
         let backend = recommendBackend(for: host)
         let state = makeStateReceipt(melixHome: melixHome)
-        let evidence = makeEvidenceReceipt()
+        let evidence = makeEvidenceReceipt(options: options, host: host, melixHome: melixHome)
         let hostDisplay = host.platform.isEmpty
             ? "unavailable (\(host.source.rawValue))"
             : "\(host.platform)/\(host.arch) (\(host.source.rawValue))"
@@ -112,6 +112,7 @@ private enum MelixCookbookRecommendationPlanner {
             "Cache enabled: \(state.cacheEnabled)",
             "Fit evidence: \(evidence.fitReceiptSource) (\(evidence.fitReceiptSchemaVersion))",
             "Profile evidence: \(evidence.profileReceiptSource) (\(evidence.profileReceiptSchemaVersion))",
+            "Effective config: \(displayPath(evidence.effectiveConfigPath))",
             "Benchmark receipts: \(displayList(evidence.benchmarkReceipts))",
             "Missing receipts: \(displayList(evidence.missingReceipts))",
         ]
@@ -157,16 +158,80 @@ private enum MelixCookbookRecommendationPlanner {
         )
     }
 
-    private static func makeEvidenceReceipt() -> MelixCookbookEvidenceReceipt {
-        MelixCookbookEvidenceReceipt(
+    private static func makeEvidenceReceipt(
+        options: CookbookRecommendOptions,
+        host: MelixCookbookHostSelection,
+        melixHome: MelixHome
+    ) -> MelixCookbookEvidenceReceipt {
+        let effectiveConfigPath = matchingEffectiveConfigURL(
+            options: options,
+            host: host,
+            melixHome: melixHome
+        )?.path ?? ""
+        var missingReceipts = ["effective_config", "benchmark_receipt", "model_fit_receipt"]
+        if effectiveConfigPath.isEmpty == false {
+            missingReceipts.removeAll { $0 == "effective_config" }
+        }
+        return MelixCookbookEvidenceReceipt(
             fitReceiptSchemaVersion: "melix.memory_fit_receipt.v1",
             fitReceiptSource: "cookbook.host_selection",
             profileReceiptSchemaVersion: "melix.cookbook.profile_receipt.v1",
             profileReceiptSource: "cookbook.backend_selection",
             benchmarkReceipts: [],
-            missingReceipts: ["effective_config", "benchmark_receipt", "model_fit_receipt"],
-            effectiveConfigPath: ""
+            missingReceipts: missingReceipts,
+            effectiveConfigPath: effectiveConfigPath
         )
+    }
+
+    private static func matchingEffectiveConfigURL(
+        options: CookbookRecommendOptions,
+        host: MelixCookbookHostSelection,
+        melixHome: MelixHome
+    ) -> URL? {
+        let root = melixHome.stateDirectoryURL
+            .appendingPathComponent("cookbook", isDirectory: true)
+            .appendingPathComponent("evidence", isDirectory: true)
+            .appendingPathComponent("effective-configs", isDirectory: true)
+        let urls = (try? FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        return urls
+            .filter { $0.pathExtension.lowercased() == "json" }
+            .sorted { $0.path < $1.path }
+            .first { effectiveConfig(at: $0, matches: options, host: host) }
+            // Preserve MELIX_HOME spelling instead of FileManager's resolved /private/var paths.
+            .map { root.appendingPathComponent($0.lastPathComponent) }
+    }
+
+    private static func effectiveConfig(
+        at url: URL,
+        matches options: CookbookRecommendOptions,
+        host: MelixCookbookHostSelection
+    ) -> Bool {
+        guard let resourceValues = try? url.resourceValues(forKeys: [.isRegularFileKey]),
+              resourceValues.isRegularFile == true,
+              let data = try? Data(contentsOf: url)
+        else {
+            return false
+        }
+        let jsonObject = try? JSONSerialization.jsonObject(with: data)
+        guard let payload = jsonObject as? [String: Any],
+              nonEmpty(payload["schema_version"] as? String ?? "") != nil,
+              let modelID = payload["model_id"] as? String,
+              !trimmedString(modelID).isEmpty,
+              trimmedString(modelID) == trimmedString(options.modelID),
+              let workload = payload["workload"] as? String,
+              !trimmedString(workload).isEmpty,
+              trimmedString(workload) == trimmedString(options.workload),
+              let hostPayload = payload["host"] as? [String: Any]
+        else {
+            return false
+        }
+        return trimmedString(hostPayload["platform"] as? String ?? "") == host.platform
+            && trimmedString(hostPayload["arch"] as? String ?? "") == host.arch
+            && trimmedString(hostPayload["host_platform_source"] as? String ?? "") == host.source.rawValue
     }
 
     private static func selectHost(_ options: CookbookRecommendOptions) -> MelixCookbookHostSelection {
@@ -256,6 +321,10 @@ private enum MelixCookbookRecommendationPlanner {
 
     private static func displayList(_ values: [String]) -> String {
         values.isEmpty ? "none" : values.joined(separator: ", ")
+    }
+
+    private static func displayPath(_ value: String) -> String {
+        value.isEmpty ? "none" : value
     }
 }
 
