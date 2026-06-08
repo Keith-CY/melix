@@ -32,6 +32,8 @@ _CODE_SOURCE_SUFFIXES = frozenset(
     (".py", ".swift", ".js", ".ts", ".java", ".go", ".rs", ".cpp", ".c", ".h")
 )
 _STRUCTURED_DATA_SOURCE_SUFFIXES = frozenset((".jsonl", ".json", ".csv", ".tsv"))
+_SOURCE_KIND_NAME_CACHE_MAX = 4096
+_SOURCE_KIND_BY_NAME: dict[str, str | None] = {}
 
 
 @dataclass(frozen=True)
@@ -588,8 +590,7 @@ def _iter_source_file_paths(input_path: Path) -> list[Path]:
     return [path_cls(file_path) for file_path in file_paths]
 
 
-def _source_kind(path: Path) -> str | None:
-    name = path.name
+def _classify_source_kind_name(name: str) -> str | None:
     if name[-4:] == ".txt":
         if len(name) >= 8 and name[-8] == "." and name[-7:-4].lower() == "pdf":
             return "pdf"
@@ -621,6 +622,21 @@ def _source_kind(path: Path) -> str | None:
     if dotted_suffix in _STRUCTURED_DATA_SOURCE_SUFFIXES:
         return "structured_data"
     return None
+
+
+def _source_kind_for_name(name: str) -> str | None:
+    cached = _SOURCE_KIND_BY_NAME.get(name, ...)
+    if cached is not ...:
+        return cached
+    source_kind = _classify_source_kind_name(name)
+    if len(_SOURCE_KIND_BY_NAME) >= _SOURCE_KIND_NAME_CACHE_MAX:
+        _SOURCE_KIND_BY_NAME.clear()
+    _SOURCE_KIND_BY_NAME[name] = source_kind
+    return source_kind
+
+
+def _source_kind(path: Path) -> str | None:
+    return _source_kind_for_name(path.name)
 
 
 def _workspace_preflight_failures(receipt: dict[str, Any]) -> list[dict[str, Any]]:
