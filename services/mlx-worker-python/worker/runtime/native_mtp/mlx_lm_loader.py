@@ -85,12 +85,12 @@ def extra_mtp_safetensor_files(model_path: Path) -> list[Path]:
             file_name_text = to_text(file_name)
         if not file_name_text.endswith(".safetensors"):
             continue
+        if file_name_text in seen:
+            continue
         file_basename = file_name_text
         if path_sep in file_name_text:
             file_basename = file_name_text.rsplit(path_sep, 1)[-1]
         if file_basename.startswith("model"):
-            continue
-        if file_name_text in seen:
             continue
         seen_add(file_name_text)
         path_text = path_join(model_path_text, file_name_text)
