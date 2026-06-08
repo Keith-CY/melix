@@ -4434,8 +4434,158 @@ struct MelixCLIRunnerTests {
         )))
         #expect(textOutput.contains("Fit evidence: cookbook.host_selection (melix.memory_fit_receipt.v1)"))
         #expect(textOutput.contains("Profile evidence: cookbook.backend_selection (melix.cookbook.profile_receipt.v1)"))
+        #expect(textOutput.contains("Effective config: none"))
         #expect(textOutput.contains("Benchmark receipts: none"))
         #expect(textOutput.contains("Missing receipts: effective_config, benchmark_receipt, model_fit_receipt"))
+    }
+
+    @Test("cookbook recommendation joins matching effective config receipt")
+    func cookbookRecommendationJoinsMatchingEffectiveConfigReceipt() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let evidenceRoot = root
+            .appendingPathComponent("state", isDirectory: true)
+            .appendingPathComponent("cookbook", isDirectory: true)
+            .appendingPathComponent("evidence", isDirectory: true)
+            .appendingPathComponent("effective-configs", isDirectory: true)
+        try FileManager.default.createDirectory(at: evidenceRoot, withIntermediateDirectories: true)
+        let effectiveConfigURL = evidenceRoot.appendingPathComponent("qwen-chat.json")
+        try Data("""
+        {
+          "schema_version": "melix.diagnostics.effective_config.v1",
+          "model_id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+          "workload": "chat",
+          "host": {
+            "platform": "macos",
+            "arch": "arm64",
+            "host_platform_source": "hardware_probe"
+          },
+          "serving_profile": {
+            "selected_backend": "mlx-native"
+          }
+        }
+        """.utf8).write(to: effectiveConfigURL)
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": root.path]
+        )
+
+        let output = try await runner.run(.cookbookRecommend(.init(
+            modelID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+            workload: "chat",
+            serverPlatform: "macos",
+            serverArch: "arm64",
+            json: true
+        )))
+        let payload = try #require(parseJSONObject(output))
+        let evidence = try #require(payload["evidence"] as? [String: Any])
+        let missingReceipts = try #require(evidence["missing_receipts"] as? [String])
+
+        #expect(evidence["effective_config_path"] as? String == effectiveConfigURL.path)
+        #expect(missingReceipts == ["benchmark_receipt", "model_fit_receipt"])
+
+        let textOutput = try await runner.run(.cookbookRecommend(.init(
+            modelID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+            workload: "chat",
+            serverPlatform: "macos",
+            serverArch: "arm64"
+        )))
+        #expect(textOutput.contains("Effective config: \(effectiveConfigURL.path)"))
+        #expect(textOutput.contains("Missing receipts: benchmark_receipt, model_fit_receipt"))
+    }
+
+    @Test("cookbook recommendation keeps mismatched effective config receipt missing")
+    func cookbookRecommendationKeepsMismatchedEffectiveConfigReceiptMissing() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let evidenceRoot = root
+            .appendingPathComponent("state", isDirectory: true)
+            .appendingPathComponent("cookbook", isDirectory: true)
+            .appendingPathComponent("evidence", isDirectory: true)
+            .appendingPathComponent("effective-configs", isDirectory: true)
+        try FileManager.default.createDirectory(at: evidenceRoot, withIntermediateDirectories: true)
+        try Data("""
+        {
+          "schema_version": "melix.diagnostics.effective_config.v1",
+          "model_id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+          "workload": "chat",
+          "host": {
+            "platform": "linux",
+            "arch": "arm64",
+            "host_platform_source": "hardware_probe"
+          }
+        }
+        """.utf8).write(to: evidenceRoot.appendingPathComponent("linux-host.json"))
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": root.path]
+        )
+
+        let output = try await runner.run(.cookbookRecommend(.init(
+            modelID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+            workload: "chat",
+            serverPlatform: "macos",
+            serverArch: "arm64",
+            json: true
+        )))
+        let payload = try #require(parseJSONObject(output))
+        let evidence = try #require(payload["evidence"] as? [String: Any])
+        let missingReceipts = try #require(evidence["missing_receipts"] as? [String])
+
+        #expect(evidence["effective_config_path"] as? String == "")
+        #expect(missingReceipts == ["effective_config", "benchmark_receipt", "model_fit_receipt"])
+    }
+
+    @Test("cookbook recommendation ignores effective config receipts with empty identity")
+    func cookbookRecommendationIgnoresEffectiveConfigReceiptsWithEmptyIdentity() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let evidenceRoot = root
+            .appendingPathComponent("state", isDirectory: true)
+            .appendingPathComponent("cookbook", isDirectory: true)
+            .appendingPathComponent("evidence", isDirectory: true)
+            .appendingPathComponent("effective-configs", isDirectory: true)
+        try FileManager.default.createDirectory(at: evidenceRoot, withIntermediateDirectories: true)
+        try Data("""
+        {
+          "schema_version": "melix.diagnostics.effective_config.v1",
+          "host": {
+            "platform": "macos",
+            "arch": "arm64",
+            "host_platform_source": "hardware_probe"
+          }
+        }
+        """.utf8).write(to: evidenceRoot.appendingPathComponent("missing-identity.json"))
+        try Data("""
+        {
+          "schema_version": "melix.diagnostics.effective_config.v1",
+          "model_id": "  ",
+          "workload": "",
+          "host": {
+            "platform": "macos",
+            "arch": "arm64",
+            "host_platform_source": "hardware_probe"
+          }
+        }
+        """.utf8).write(to: evidenceRoot.appendingPathComponent("empty-identity.json"))
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": root.path]
+        )
+
+        let output = try await runner.run(.cookbookRecommend(.init(
+            modelID: "",
+            workload: "",
+            serverPlatform: "macos",
+            serverArch: "arm64",
+            json: true
+        )))
+        let payload = try #require(parseJSONObject(output))
+        let evidence = try #require(payload["evidence"] as? [String: Any])
+        let missingReceipts = try #require(evidence["missing_receipts"] as? [String])
+
+        #expect(evidence["effective_config_path"] as? String == "")
+        #expect(missingReceipts == ["effective_config", "benchmark_receipt", "model_fit_receipt"])
     }
 
     @Test("cookbook recommendation disables cache when data root state is missing")
