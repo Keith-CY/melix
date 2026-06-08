@@ -691,6 +691,23 @@ def test_iter_python_native_binary_candidates_tolerates_scandir_metadata_errors(
     assert _iter_python_native_binary_candidates(runtime, site_packages) == []
 
 
+def test_path_size_bytes_tolerates_scandir_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory = tmp_path / "tree"
+    directory.mkdir()
+
+    def fail_scandir(path: Path):
+        if path == directory:
+            raise OSError("synthetic scandir failure")
+        return macos_app_bundle_module.os.scandir(path)
+
+    monkeypatch.setattr(macos_app_bundle_module.os, "scandir", fail_scandir)
+
+    assert _path_size_bytes(directory) == 0
+
+
 def test_path_size_bytes_tolerates_metadata_errors(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -704,23 +721,72 @@ def test_path_size_bytes_tolerates_metadata_errors(
     skipped = directory / "skipped.txt"
     skipped.write_text("skipped\n", encoding="utf-8")
     original_is_symlink = Path.is_symlink
-    original_lstat = Path.lstat
+    original_scandir = macos_app_bundle_module.os.scandir
+
+    class FakeScandir:
+        def __init__(self, entries: list[object]) -> None:
+            self.entries = entries
+
+        def __iter__(self):
+            return iter(self.entries)
+
+        def __enter__(self) -> "FakeScandir":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    class FakeFileEntry:
+        def __init__(self, path: Path, *, fail_stat: bool = False) -> None:
+            self.path = str(path)
+            self._path = path
+            self._fail_stat = fail_stat
+
+        def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+            return False
+
+        def stat(self, *, follow_symlinks: bool = True):
+            if self._fail_stat:
+                raise OSError("synthetic file metadata failure")
+            return self._path.lstat()
 
     def fail_is_symlink(self: Path) -> bool:
         if self == broken:
             raise OSError("synthetic symlink metadata failure")
         return original_is_symlink(self)
 
-    def fail_lstat(self: Path):
-        if self == skipped:
-            raise OSError("synthetic file metadata failure")
-        return original_lstat(self)
+    def fake_scandir(path: Path):
+        if path == directory:
+            return FakeScandir([FakeFileEntry(retained), FakeFileEntry(skipped, fail_stat=True)])
+        return original_scandir(path)
 
     monkeypatch.setattr(Path, "is_symlink", fail_is_symlink)
-    monkeypatch.setattr(Path, "lstat", fail_lstat)
+    monkeypatch.setattr(macos_app_bundle_module.os, "scandir", fake_scandir)
 
     assert _path_size_bytes(broken) == 0
     assert _path_size_bytes(directory) == retained.lstat().st_size
+
+
+def test_path_size_bytes_uses_scandir_without_os_walk(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory = tmp_path / "tree"
+    nested = directory / "nested"
+    nested.mkdir(parents=True)
+    retained = nested / "retained.txt"
+    retained.write_text("kept\n", encoding="utf-8")
+    symlink_target = tmp_path / "linked-target"
+    symlink_target.mkdir()
+    directory_link = directory / "linked"
+    directory_link.symlink_to(symlink_target, target_is_directory=True)
+
+    def fail_os_walk(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("_path_size_bytes should use os.scandir directly")
+
+    monkeypatch.setattr(macos_app_bundle_module.os, "walk", fail_os_walk)
+
+    assert _path_size_bytes(directory) == retained.lstat().st_size + directory_link.lstat().st_size
 
 
 def test_path_size_bytes_tolerates_directory_symlink_metadata_errors(
@@ -735,14 +801,41 @@ def test_path_size_bytes_tolerates_directory_symlink_metadata_errors(
     symlink_target.mkdir()
     broken_link = directory / "linked"
     broken_link.symlink_to(symlink_target, target_is_directory=True)
-    original_lstat = Path.lstat
+    original_scandir = macos_app_bundle_module.os.scandir
 
-    def fail_lstat(self: Path):
-        if self == broken_link:
-            raise OSError("synthetic directory symlink metadata failure")
-        return original_lstat(self)
+    class FakeScandir:
+        def __init__(self, entries: list[object]) -> None:
+            self.entries = entries
 
-    monkeypatch.setattr(Path, "lstat", fail_lstat)
+        def __iter__(self):
+            return iter(self.entries)
+
+        def __enter__(self) -> "FakeScandir":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    class FakeFileEntry:
+        def __init__(self, path: Path, *, fail_stat: bool = False) -> None:
+            self.path = str(path)
+            self._path = path
+            self._fail_stat = fail_stat
+
+        def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+            return False
+
+        def stat(self, *, follow_symlinks: bool = True):
+            if self._fail_stat:
+                raise OSError("synthetic directory symlink metadata failure")
+            return self._path.lstat()
+
+    def fake_scandir(path: Path):
+        if path == directory:
+            return FakeScandir([FakeFileEntry(retained), FakeFileEntry(broken_link, fail_stat=True)])
+        return original_scandir(path)
+
+    monkeypatch.setattr(macos_app_bundle_module.os, "scandir", fake_scandir)
 
     assert _path_size_bytes(directory) == retained.lstat().st_size
 
