@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -598,3 +599,122 @@ def test_agentic_tool_runtime_fails_closed_when_owner_scope_metadata_is_missing(
     assert observation["payload"]["actual_owner_id"] == ""
     assert observation["payload"]["owner_scope_checked"] is True
     assert observation["payload"]["privilege"] == "read"
+
+
+def test_agentic_tool_runtime_visit_reads_workspace_local_file_with_receipt(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    note_path = workspace / "notes.md"
+    note_path.write_text("# Melix\n\nWorkspace note.\n", encoding="utf-8")
+
+    run = execute_agentic_tool_calls(
+        [{"id": "visit-local", "name": "visit", "arguments": {"url": note_path.as_uri()}}],
+        fixture_context={"workspace_root": str(workspace)},
+    )
+
+    observation = run.observations[0]
+    assert observation["status"] == "completed"
+    assert observation["payload"]["url"] == note_path.as_uri()
+    assert observation["payload"]["title"] == "notes.md"
+    assert observation["payload"]["text"] == "# Melix\n\nWorkspace note.\n"
+    assert observation["payload"]["found"] is True
+    assert observation["payload"]["workspace_path_receipt"] == {
+        "operation": "read",
+        "workspace_root": str(workspace.resolve()),
+        "requested_path": str(note_path),
+        "resolved_path": str(note_path.resolve()),
+        "allowed": True,
+        "refusal_reason": "",
+    }
+
+
+@pytest.mark.parametrize(
+    ("requested_path", "expected_reason"),
+    [
+        ("../outside/secret.md", "path_escapes_workspace"),
+        ("config/.env", "sensitive_path"),
+    ],
+)
+def test_agentic_tool_runtime_visit_refuses_workspace_path_before_reading(
+    tmp_path: Path,
+    requested_path: str,
+    expected_reason: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    (outside / "secret.md").write_text("outside secret\n", encoding="utf-8")
+    (workspace / "config").mkdir()
+    (workspace / "config" / ".env").write_text("TOKEN=secret\n", encoding="utf-8")
+
+    run = execute_agentic_tool_calls(
+        [{"id": "visit-blocked", "name": "visit", "arguments": {"url": requested_path}}],
+        fixture_context={"workspace_root": str(workspace)},
+    )
+
+    observation = run.observations[0]
+    assert observation["status"] == "failed"
+    assert observation["payload"]["reason"] == "workspace_path_refused"
+    assert observation["payload"]["source_type"] == "workspace_file"
+    assert observation["payload"]["source_id"] == requested_path
+    assert observation["payload"]["workspace_path_receipt"]["allowed"] is False
+    assert observation["payload"]["workspace_path_receipt"]["refusal_reason"] == expected_reason
+    assert "Workspace path resolver" in observation["payload"]["corrective_action"]
+
+
+def test_agentic_tool_runtime_visit_reports_missing_workspace_file_with_receipt(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    run = execute_agentic_tool_calls(
+        [{"id": "visit-missing", "name": "visit", "arguments": {"url": "missing.md"}}],
+        fixture_context={"workspace_root": str(workspace)},
+    )
+
+    observation = run.observations[0]
+    assert observation["status"] == "completed"
+    assert observation["payload"]["found"] is False
+    assert observation["payload"]["title"] == "missing.md"
+    assert observation["payload"]["workspace_path_receipt"]["allowed"] is True
+    assert observation["payload"]["workspace_path_receipt"]["resolved_path"] == str(
+        workspace.resolve() / "missing.md"
+    )
+
+
+def test_agentic_tool_runtime_visit_reports_workspace_file_unavailable_with_receipt(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "notes-dir").mkdir()
+
+    run = execute_agentic_tool_calls(
+        [{"id": "visit-dir", "name": "visit", "arguments": {"url": "notes-dir"}}],
+        fixture_context={"workspace_root": str(workspace)},
+    )
+
+    observation = run.observations[0]
+    assert observation["status"] == "failed"
+    assert observation["payload"]["reason"] == "workspace_file_unavailable"
+    assert observation["payload"]["source_type"] == "workspace_file"
+    assert observation["payload"]["source_id"] == "notes-dir"
+    assert observation["payload"]["workspace_path_receipt"]["allowed"] is True
+    assert observation["payload"]["workspace_path_receipt"]["resolved_path"] == str(
+        (workspace / "notes-dir").resolve()
+    )
+
+
+def test_agentic_tool_runtime_visit_ignores_remote_file_uri_for_workspace_reads(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    remote_url = "file://remote-host/private/note.md"
+
+    run = execute_agentic_tool_calls(
+        [{"id": "visit-remote-file", "name": "visit", "arguments": {"url": remote_url}}],
+        fixture_context={"workspace_root": str(workspace)},
+    )
+
+    observation = run.observations[0]
+    assert observation["status"] == "completed"
+    assert observation["payload"] == {"url": remote_url, "text": "", "found": False}

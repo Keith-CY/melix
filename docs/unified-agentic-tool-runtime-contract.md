@@ -259,6 +259,16 @@ Workspace path receipts must include:
 - `allowed`
 - `refusal_reason`
 
+The deterministic `visit` tool is the first concrete consumer of this boundary.
+When a caller provides an explicit workspace root and asks `visit` to read a
+relative path, absolute path, or `file://` URI, the runtime must resolve the
+target through `WorkspacePathResolver` before reading. Successful local reads
+must attach a `workspace_path_receipt` to the page extraction payload. Refused
+paths must emit a failed observation with `reason = workspace_path_refused`,
+`source_type = workspace_file`, `source_id`, `workspace_path_receipt`, and a
+corrective action. Fixture-backed pages and non-local URLs keep their existing
+behavior unless a future slice adds a separate retrieval boundary.
+
 The v1 workspace resolver slice only introduces the shared boundary primitive.
 Adding concrete read/write/edit tools, local-job mutation hooks, and prompt
 assembly receipts remains follow-up work under #1761.
