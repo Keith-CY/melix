@@ -2586,6 +2586,7 @@ public final class RuntimeViewModel {
     public var remoteServerAPIKeyDraft = ""
     public var remoteServerTimeoutSecondsDraft: UInt32 = 120
     public var remoteServerRateLimitPerMinuteDraft: UInt32 = 0
+    public var remoteServerToolSupportModeDraft: RemoteServerToolSupportMode = .auto
     public private(set) var isRefreshingServerModelOptions = false
     public var chatComposerText = ""
     public var selectedChatModelID = "melix-dev-text"
@@ -3639,6 +3640,7 @@ public final class RuntimeViewModel {
         remoteServerAPIKeyDraft = ""
         remoteServerTimeoutSecondsDraft = 120
         remoteServerRateLimitPerMinuteDraft = 0
+        remoteServerToolSupportModeDraft = .auto
     }
 
     public var isRemoteServerBaseURLEditable: Bool {
@@ -3710,6 +3712,7 @@ public final class RuntimeViewModel {
                     defaultModelID: defaultModelID,
                     timeoutSeconds: remoteServerTimeoutSecondsDraft,
                     rateLimitPerMinute: remoteServerRateLimitPerMinuteDraft,
+                    toolSupportMode: remoteServerToolSupportModeDraft,
                     apiKey: remoteServerAPIKeyDraft
                 )
             )
@@ -3775,6 +3778,7 @@ public final class RuntimeViewModel {
         remoteServerAPIKeyDraft = ""
         remoteServerTimeoutSecondsDraft = server.timeoutSeconds
         remoteServerRateLimitPerMinuteDraft = server.rateLimitPerMinute
+        remoteServerToolSupportModeDraft = server.toolSupportMode
     }
 
     public var selectedEvaluationPrompt: EvaluationPrompt? {

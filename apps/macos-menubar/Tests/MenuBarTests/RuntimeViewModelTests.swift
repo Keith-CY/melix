@@ -115,6 +115,7 @@ struct RuntimeViewModelTests {
         viewModel.remoteServerAPIKeyDraft = "sk-test-1234567890"
         viewModel.remoteServerTimeoutSecondsDraft = 180
         viewModel.remoteServerRateLimitPerMinuteDraft = 60
+        viewModel.remoteServerToolSupportModeDraft = .forceOn
 
         viewModel.saveRemoteServerDraft()
 
@@ -122,10 +123,12 @@ struct RuntimeViewModelTests {
         #expect(saved.id == "sub2api")
         #expect(saved.baseURL == "https://sub2api.example/v1/")
         #expect(saved.defaultModelID == "gemini-2.5-flash")
+        #expect(saved.toolSupportMode == .forceOn)
         #expect(saved.apiKeyHint == "sk-t...7890")
         #expect(viewModel.selectedRemoteServerID == "sub2api")
         #expect(viewModel.remoteServerAPIKeyDraft.isEmpty)
         #expect(store.savedMutations.first?.apiKey == "sk-test-1234567890")
+        #expect(store.savedMutations.first?.toolSupportMode == .forceOn)
     }
 
     @Test("remote server provider presets lock base URL and save resolved execution kind")
@@ -176,6 +179,7 @@ struct RuntimeViewModelTests {
                 defaultModelID: "deepseek-v4",
                 timeoutSeconds: 120,
                 rateLimitPerMinute: 0,
+                toolSupportMode: .forceOff,
                 credentialRef: RemoteServerStore.credentialRef(for: "sub2api"),
                 apiKeyHint: "sk-t...7890"
             ),
@@ -190,6 +194,7 @@ struct RuntimeViewModelTests {
         #expect(viewModel.remoteServerIDDraft == "sub2api")
         #expect(viewModel.remoteServerBaseURLDraft == "https://sub2api.example/v1")
         #expect(viewModel.remoteServerDefaultModelIDDraft == "deepseek-v4")
+        #expect(viewModel.remoteServerToolSupportModeDraft == .forceOff)
         #expect(viewModel.remoteServerAPIKeyDraft.isEmpty)
     }
 
@@ -328,6 +333,7 @@ struct RuntimeViewModelTests {
                 defaultModelID: "gemini-2.5-flash",
                 timeoutSeconds: 75,
                 rateLimitPerMinute: 12,
+                toolSupportMode: .forceOn,
                 apiKey: "AIza-secret"
             )
         )
@@ -336,6 +342,7 @@ struct RuntimeViewModelTests {
         #expect(server.providerKind == "gemini-generative-language")
         #expect(server.baseURL == "https://generativelanguage.googleapis.com/v1beta")
         #expect(server.defaultModelID == "gemini-2.5-flash")
+        #expect(server.toolSupportMode == .forceOn)
         #expect(server.apiKeyHint == "AIza...cret")
         #expect(try NullRemoteServerStore().loadAPIKey(remoteServerID: "gemini") == nil)
         try NullRemoteServerStore().remove(id: "gemini")

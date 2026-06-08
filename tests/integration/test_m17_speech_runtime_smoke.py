@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 
@@ -15,7 +16,7 @@ MODULE_SPEC.loader.exec_module(m17_speech_runtime_smoke)
 def test_m17_speech_runtime_smoke_records_live_audio_operator_evidence() -> None:
     payload = m17_speech_runtime_smoke.run_smoke(Path(__file__).resolve().parents[2])
 
-    assert payload["ok"] is True
+    assert payload["ok"] is True, json.dumps(payload, indent=2, sort_keys=True)
     checks = payload["checks"]
     assert checks["speech.transcription.whisper_success"] is True
     assert checks["speech.transcription.parakeet_success"] is True

@@ -6,20 +6,29 @@ public struct ProviderEndpointProbeRequest: Equatable, Sendable {
     public let baseURL: String
     public let apiKey: String
     public let timeoutSeconds: UInt32
+    public let toolSupportMode: ProviderEndpointToolSupportMode
 
     public init(
         endpointID: String,
         providerKind: String,
         baseURL: String,
         apiKey: String,
-        timeoutSeconds: UInt32 = 30
+        timeoutSeconds: UInt32 = 30,
+        toolSupportMode: ProviderEndpointToolSupportMode = .auto
     ) {
         self.endpointID = endpointID
         self.providerKind = providerKind
         self.baseURL = baseURL
         self.apiKey = apiKey
         self.timeoutSeconds = timeoutSeconds
+        self.toolSupportMode = toolSupportMode
     }
+}
+
+public enum ProviderEndpointToolSupportMode: String, Codable, Equatable, Sendable, CaseIterable {
+    case auto
+    case forceOn = "force_on"
+    case forceOff = "force_off"
 }
 
 public struct ProviderEndpointCapabilities: Codable, Equatable, Sendable {
@@ -59,6 +68,10 @@ public struct ProviderEndpointHealthReceipt: Codable, Equatable, Sendable, Custo
     public let baseURLRedacted: String
     public let modelCount: Int
     public let capabilities: ProviderEndpointCapabilities
+    public let toolSupportMode: ProviderEndpointToolSupportMode
+    public let detectedToolSupport: Bool
+    public let overrideSource: String
+    public let lastProbeStatus: String
     public let latencyMS: UInt32
     public let failureReason: String
 
@@ -69,6 +82,10 @@ public struct ProviderEndpointHealthReceipt: Codable, Equatable, Sendable, Custo
         baseURLRedacted: String,
         modelCount: Int,
         capabilities: ProviderEndpointCapabilities,
+        toolSupportMode: ProviderEndpointToolSupportMode = .auto,
+        detectedToolSupport: Bool = false,
+        overrideSource: String = "probe_detection",
+        lastProbeStatus: String = "ok",
         latencyMS: UInt32,
         failureReason: String = ""
     ) {
@@ -78,6 +95,10 @@ public struct ProviderEndpointHealthReceipt: Codable, Equatable, Sendable, Custo
         self.baseURLRedacted = baseURLRedacted
         self.modelCount = modelCount
         self.capabilities = capabilities
+        self.toolSupportMode = toolSupportMode
+        self.detectedToolSupport = detectedToolSupport
+        self.overrideSource = overrideSource
+        self.lastProbeStatus = lastProbeStatus
         self.latencyMS = latencyMS
         self.failureReason = failureReason
     }
@@ -89,12 +110,16 @@ public struct ProviderEndpointHealthReceipt: Codable, Equatable, Sendable, Custo
         case baseURLRedacted = "base_url_redacted"
         case modelCount = "model_count"
         case capabilities
+        case toolSupportMode = "tool_support_mode"
+        case detectedToolSupport = "detected_tool_support"
+        case overrideSource = "override_source"
+        case lastProbeStatus = "last_probe_status"
         case latencyMS = "latency_ms"
         case failureReason = "failure_reason"
     }
 
     public var description: String {
-        "ProviderEndpointHealthReceipt(schemaVersion: \(schemaVersion), endpointID: \(endpointID), providerKind: \(providerKind), baseURLRedacted: \(baseURLRedacted), modelCount: \(modelCount), capabilities: \(capabilities), latencyMS: \(latencyMS), failureReason: \(failureReason))"
+        "ProviderEndpointHealthReceipt(schemaVersion: \(schemaVersion), endpointID: \(endpointID), providerKind: \(providerKind), baseURLRedacted: \(baseURLRedacted), modelCount: \(modelCount), capabilities: \(capabilities), toolSupportMode: \(toolSupportMode.rawValue), detectedToolSupport: \(detectedToolSupport), overrideSource: \(overrideSource), lastProbeStatus: \(lastProbeStatus), latencyMS: \(latencyMS), failureReason: \(failureReason))"
     }
 
     public func jsonObject(encoder: JSONEncoder) throws -> [String: Any] {
@@ -173,7 +198,14 @@ public struct ProviderEndpointHealthProbe: Sendable {
             providerKind: providerKind,
             baseURLRedacted: normalizedBase.absoluteString,
             modelCount: summary.chatModelCount,
-            capabilities: summary.capabilities,
+            capabilities: effectiveCapabilities(
+                summary.capabilities,
+                toolSupportMode: request.toolSupportMode
+            ),
+            toolSupportMode: request.toolSupportMode,
+            detectedToolSupport: summary.capabilities.tools,
+            overrideSource: overrideSource(for: request.toolSupportMode),
+            lastProbeStatus: "ok",
             latencyMS: elapsedMilliseconds(since: startedAtMS)
         )
     }
@@ -197,9 +229,44 @@ public struct ProviderEndpointHealthProbe: Sendable {
             baseURLRedacted: baseURL.absoluteString,
             modelCount: 0,
             capabilities: ProviderEndpointCapabilities(),
+            toolSupportMode: request.toolSupportMode,
+            detectedToolSupport: false,
+            overrideSource: overrideSource(for: request.toolSupportMode),
+            lastProbeStatus: reason,
             latencyMS: latencyMS,
             failureReason: reason
         )
+    }
+
+    private func effectiveCapabilities(
+        _ capabilities: ProviderEndpointCapabilities,
+        toolSupportMode: ProviderEndpointToolSupportMode
+    ) -> ProviderEndpointCapabilities {
+        let effectiveToolSupport: Bool
+        switch toolSupportMode {
+        case .auto:
+            effectiveToolSupport = capabilities.tools
+        case .forceOn:
+            effectiveToolSupport = true
+        case .forceOff:
+            effectiveToolSupport = false
+        }
+        return ProviderEndpointCapabilities(
+            chat: capabilities.chat,
+            streaming: capabilities.streaming,
+            tools: effectiveToolSupport,
+            structuredOutput: capabilities.structuredOutput,
+            embeddings: capabilities.embeddings
+        )
+    }
+
+    private func overrideSource(for toolSupportMode: ProviderEndpointToolSupportMode) -> String {
+        switch toolSupportMode {
+        case .auto:
+            return "probe_detection"
+        case .forceOn, .forceOff:
+            return "endpoint_config"
+        }
     }
 
     private func normalizedBaseURL(from rawValue: String) throws -> URL {

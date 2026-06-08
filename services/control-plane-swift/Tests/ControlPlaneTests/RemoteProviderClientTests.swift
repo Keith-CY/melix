@@ -240,6 +240,74 @@ struct RemoteProviderClientTests {
         #expect(receipt.capabilities.embeddings == true)
     }
 
+    @Test("endpoint probe applies explicit tool support mode while preserving detection")
+    func endpointProbeAppliesExplicitToolSupportModeWhilePreservingDetection() async throws {
+        let responseBody = #"{ "data": [{ "id": "local-model", "object": "model", "capabilities": ["chat"] }] }"#
+        let cases: [
+            (
+                mode: ProviderEndpointToolSupportMode,
+                expectedEffectiveToolSupport: Bool,
+                expectedDetectedToolSupport: Bool,
+                expectedOverrideSource: String
+            )
+        ] = [
+            (.auto, false, false, "probe_detection"),
+            (.forceOn, true, false, "endpoint_config"),
+            (.forceOff, false, false, "endpoint_config"),
+        ]
+
+        for testCase in cases {
+            let transport = RecordingRemoteProviderTransport(response: .init(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: Data(responseBody.utf8)
+            ))
+            let probe = ProviderEndpointHealthProbe(transport: transport, latencyClock: { 1 })
+
+            let receipt = try await probe.probe(
+                ProviderEndpointProbeRequest(
+                    endpointID: "local-tools",
+                    providerKind: "openai-compatible",
+                    baseURL: "http://127.0.0.1:12436/v1",
+                    apiKey: "",
+                    toolSupportMode: testCase.mode
+                )
+            )
+
+            #expect(receipt.toolSupportMode == testCase.mode)
+            #expect(receipt.detectedToolSupport == testCase.expectedDetectedToolSupport)
+            #expect(receipt.overrideSource == testCase.expectedOverrideSource)
+            #expect(receipt.lastProbeStatus == "ok")
+            #expect(receipt.capabilities.tools == testCase.expectedEffectiveToolSupport)
+        }
+    }
+
+    @Test("endpoint probe force off suppresses detected tool support")
+    func endpointProbeForceOffSuppressesDetectedToolSupport() async throws {
+        let transport = RecordingRemoteProviderTransport(response: .init(
+            statusCode: 200,
+            headers: ["content-type": "application/json"],
+            body: Data(#"{ "data": [{ "id": "tool-model", "object": "model", "capabilities": ["chat", "tools"] }] }"#.utf8)
+        ))
+        let probe = ProviderEndpointHealthProbe(transport: transport, latencyClock: { 1 })
+
+        let receipt = try await probe.probe(
+            ProviderEndpointProbeRequest(
+                endpointID: "local-tools",
+                providerKind: "openai-compatible",
+                baseURL: "http://127.0.0.1:12436/v1",
+                apiKey: "",
+                toolSupportMode: .forceOff
+            )
+        )
+
+        #expect(receipt.toolSupportMode == .forceOff)
+        #expect(receipt.detectedToolSupport == true)
+        #expect(receipt.capabilities.tools == false)
+        #expect(receipt.overrideSource == "endpoint_config")
+        #expect(receipt.lastProbeStatus == "ok")
+    }
+
     @Test("endpoint probe returns typed redacted failure receipts")
     func endpointProbeReturnsTypedRedactedFailureReceipts() async throws {
         let failureCases: [(statusCode: Int, body: String, expectedReason: String)] = [
@@ -269,6 +337,10 @@ struct RemoteProviderClientTests {
             #expect(receipt.capabilities == ProviderEndpointCapabilities())
             #expect(receipt.latencyMS == 9)
             #expect(receipt.failureReason == testCase.expectedReason)
+            #expect(receipt.toolSupportMode == .auto)
+            #expect(receipt.detectedToolSupport == false)
+            #expect(receipt.overrideSource == "probe_detection")
+            #expect(receipt.lastProbeStatus == testCase.expectedReason)
             #expect(String(describing: receipt).contains("sk-secret") == false)
             #expect(String(describing: receipt).contains(testCase.body) == false)
         }
@@ -347,6 +419,10 @@ struct RemoteProviderClientTests {
                 structuredOutput: true,
                 embeddings: false
             ),
+            toolSupportMode: .forceOn,
+            detectedToolSupport: false,
+            overrideSource: "endpoint_config",
+            lastProbeStatus: "ok",
             latencyMS: 42,
             failureReason: ""
         )
@@ -359,6 +435,10 @@ struct RemoteProviderClientTests {
         #expect(object["provider_kind"] as? String == "openai-compatible")
         #expect(object["base_url_redacted"] as? String == "https://api.example.test/v1")
         #expect(object["model_count"] as? Int == 2)
+        #expect(object["tool_support_mode"] as? String == "force_on")
+        #expect(object["detected_tool_support"] as? Bool == false)
+        #expect(object["override_source"] as? String == "endpoint_config")
+        #expect(object["last_probe_status"] as? String == "ok")
         #expect(object["latency_ms"] as? Int == 42)
         #expect(object["failure_reason"] as? String == "")
         #expect(capabilities["chat"] as? Bool == true)
