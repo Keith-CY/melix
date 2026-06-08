@@ -49,6 +49,7 @@ from worker.runtime.mlx_vlm_runtime import (
 )
 from worker.runtime.mlx_executor import MLXRuntimeExecutor
 from worker.runtime.native_mtp.mlx_lm_loader import (
+    _extra_mtp_safetensor_file_paths,
     _is_mtp_weight_key,
     _load_json_payload,
     _load_weight_shards,
@@ -1654,8 +1655,18 @@ def test_native_mtp_extra_safetensor_files_filters_names_before_path_join(
     monkeypatch.setattr(native_mtp_loader_module.os.path, "exists", tracked_exists)
 
     assert extra_mtp_safetensor_files(model_dir) == [sidecar_path, nested_sidecar_path]
-    assert joined_path_names == ["model.safetensors.index.json"]
+    assert _extra_mtp_safetensor_file_paths(model_dir) == [
+        str(sidecar_path),
+        str(nested_sidecar_path),
+    ]
+    assert joined_path_names == [
+        "model.safetensors.index.json",
+        "model.safetensors.index.json",
+    ]
     assert exists_names == [
+        "mtp-00001.safetensors",
+        "mtp-missing.safetensors",
+        "mtp-00002.safetensors",
         "mtp-00001.safetensors",
         "mtp-missing.safetensors",
         "mtp-00002.safetensors",
@@ -1665,7 +1676,7 @@ def test_native_mtp_extra_safetensor_files_filters_names_before_path_join(
 
 def test_native_mtp_load_weight_shards_streams_base_and_extra_paths() -> None:
     base_paths = ["model-a.safetensors", "model-b.safetensors"]
-    extra_paths = [Path("mtp-a.safetensors"), Path("nested/mtp-b.safetensors")]
+    extra_paths = ["mtp-a.safetensors", "nested/mtp-b.safetensors"]
     loaded_paths: list[str] = []
 
     def load(path: str) -> dict[str, str]:
@@ -1674,7 +1685,7 @@ def test_native_mtp_load_weight_shards_streams_base_and_extra_paths() -> None:
 
     weights = _load_weight_shards(load, base_paths, extra_paths)
 
-    assert loaded_paths == [*base_paths, *(str(path) for path in extra_paths)]
+    assert loaded_paths == [*base_paths, *extra_paths]
     assert weights == {path: path for path in loaded_paths}
 
 

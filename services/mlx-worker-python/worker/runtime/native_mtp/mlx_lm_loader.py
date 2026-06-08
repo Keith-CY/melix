@@ -46,26 +46,25 @@ def _model_safetensor_files(model_path: Path) -> list[str]:
     return weight_files
 
 
-def _load_weight_shards(load: Callable[[str], dict], weight_files: list[str], extra_files: list[Path]) -> dict:
+def _load_weight_shards(load: Callable[[str], dict], weight_files: list[str], extra_files: list[str]) -> dict:
     """Load base and native-MTP sidecar shards without combining path lists."""
 
     weights = {}
     weights_update = weights.update
-    to_text = str
     for path in weight_files:
         weights_update(load(path))
     for path in extra_files:
-        weights_update(load(to_text(path)))
+        weights_update(load(path))
     return weights
 
 
-def extra_mtp_safetensor_files(model_path: Path) -> list[Path]:
+def _extra_mtp_safetensor_file_paths(model_path: Path) -> list[str]:
     index_payload = _load_json_payload(model_path / "model.safetensors.index.json")
     weight_map = index_payload.get("weight_map")
     if not isinstance(weight_map, dict):
         return []
 
-    extra_files: list[Path] = []
+    extra_files: list[str] = []
     append_extra_file = extra_files.append
     seen: set[str] = set()
     seen_add = seen.add
@@ -75,7 +74,6 @@ def extra_mtp_safetensor_files(model_path: Path) -> list[Path]:
     path_sep = os.sep
     is_mtp_weight_key = _is_mtp_weight_key
     to_text = str
-    to_path = Path
     for key, file_name in weight_map.items():
         if not is_mtp_weight_key(key):
             continue
@@ -97,8 +95,12 @@ def extra_mtp_safetensor_files(model_path: Path) -> list[Path]:
         if not path_exists(path_text):
             logger.warning("MTP shard listed in index is missing: %s", path_text)
             continue
-        append_extra_file(to_path(path_text))
+        append_extra_file(path_text)
     return extra_files
+
+
+def extra_mtp_safetensor_files(model_path: Path) -> list[Path]:
+    return [Path(path) for path in _extra_mtp_safetensor_file_paths(model_path)]
 
 
 def apply() -> bool:
@@ -130,7 +132,7 @@ def apply() -> bool:
         get_model_classes: Callable[[dict], tuple[Type[nn.Module], Type]] = _get_classes,
     ) -> tuple[nn.Module, dict]:
         model_path = Path(model_path)
-        extra_files = extra_mtp_safetensor_files(model_path)
+        extra_files = _extra_mtp_safetensor_file_paths(model_path)
         if not extra_files:
             return original_load_model(
                 model_path,
