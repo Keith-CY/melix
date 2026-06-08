@@ -31,5 +31,9 @@ def test_app_packaging_badge_reports_scheduled_main_artifact_status() -> None:
 def test_release_gates_main_push_runs_are_not_cancelled_by_later_main_pushes() -> None:
     workflow = RELEASE_GATES_WORKFLOW.read_text(encoding="utf-8")
 
-    assert "release-gates-${{ github.event_name }}-${{ github.ref }}" in workflow
+    assert (
+        "release-gates-${{ github.event_name }}-${{ github.ref }}-"
+        "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && "
+        "github.run_id || 'shared' }}"
+    ) in workflow
     assert "github.event_name != 'push' || github.ref != 'refs/heads/main'" in workflow
