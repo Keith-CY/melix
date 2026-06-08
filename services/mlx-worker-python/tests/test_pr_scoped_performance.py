@@ -1547,8 +1547,11 @@ def test_scope_report_selects_model_registry_catalog_probe() -> None:
         changed_files=["services/mlx-worker-python/worker/model_registry/catalog.py"],
     )
 
-    assert scope["selected_count"] == 1
-    assert scope["selected_probes"][0]["id"] == "model-registry-plain-local-manifest-stat-elision"
+    assert scope["selected_count"] == 2
+    assert [probe["id"] for probe in scope["selected_probes"]] == [
+        "model-registry-plain-local-manifest-stat-elision",
+        "model-registry-readme-source-fastpath",
+    ]
 
 
 def test_scope_report_selects_deterministic_rerank_probe() -> None:
@@ -3271,6 +3274,7 @@ def test_registered_probes_expose_focused_commands() -> None:
         "mlx-vlm-family-config-cache",
         "mlx-vlm-gemma4-weight-presence-single-pass",
         "model-registry-plain-local-manifest-stat-elision",
+        "model-registry-readme-source-fastpath",
         "multimodal-fast-path-signature-top-level-key-cache",
         "multimodal-preprocessing-local-uri-parse-elision",
         "multimodal-preprocessing-image-uri-single-parse",
@@ -5101,6 +5105,25 @@ def test_model_registry_catalog_probe_command_emits_metrics() -> None:
     assert metrics["manifest_parse_calls_mean"] == 0.0
     assert metrics["discovered_model_count_mean"] == metrics["model_count"] == 400.0
     assert metrics["sample_count"] == 2.0
+
+
+def test_model_registry_readme_source_probe_command_emits_metrics() -> None:
+    probe = next(
+        probe
+        for probe in load_probe_registry(REGISTRY_PATH)
+        if probe.probe_id == "model-registry-readme-source-fastpath"
+    )
+
+    metrics = _probe_command_json(probe=probe, repo_root=REPO_ROOT)
+
+    assert metrics["old_elapsed_ms_mean"] > 0
+    assert metrics["new_elapsed_ms_mean"] > 0
+    assert metrics["delta_ms"] < 0
+    assert metrics["speedup"] > 1
+    assert metrics["old_peak_bytes_mean"] > metrics["new_peak_bytes_mean"]
+    assert metrics["line_count"] == 5000.0
+    assert metrics["iterations"] == 250.0
+    assert metrics["samples"] == 5.0
 
 
 def test_mlx_lm_result_tail_probe_script_emits_metrics() -> None:
