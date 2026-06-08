@@ -264,7 +264,12 @@ v1 Python worker file-tool slice adds `worker.runtime.workspace_file_tools` as
 the first concrete read/write/edit operator set. Those operators call
 `WorkspacePathResolver` before any file open, parent-directory creation, write,
 or exact-replacement edit mutation, and failed resolver decisions return a
-receipt instead of touching the target path.
+receipt instead of touching the target path. Filesystem and text-decoding
+failures after resolver admission must also stay inside this boundary as
+`status = failed` receipts rather than escaping into the worker or agent loop.
+Receipt byte counters describe completed tool effects only; failed receipts keep
+byte counters at zero even if a preflight read occurred before the operation was
+rejected.
 
 Live MCP, agent, workflow, and local-job mutation surfaces must reuse this
 operator layer or preserve the same resolver-before-filesystem-access invariant

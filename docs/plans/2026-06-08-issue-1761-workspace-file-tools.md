@@ -16,6 +16,9 @@ workflow file surfaces:
 - edit UTF-8 workspace files by exact text replacement only after resolver
   admission
 - return a machine-readable receipt for allowed and refused operations
+- return `status = failed` receipts for admitted paths when filesystem or
+  decoding errors occur instead of letting those exceptions escape the tool
+  boundary
 - prove refused paths do not reach the final read or mutation path
 - document the concrete operator boundary in the unified agentic tool runtime
   contract
@@ -36,7 +39,10 @@ The operator lives in `worker.runtime.workspace_file_tools` because it is
 runtime safety infrastructure, not productization schema validation. Receipts
 reuse the resolver fields and add `schema_version`, `tool_name`, `status`,
 byte counts, and edit replacement counts so future tool observations can attach
-the decision without reconstructing filesystem state.
+the decision without reconstructing filesystem state. Byte counters describe
+completed tool effects only: failed receipts keep `bytes_read = 0` and
+`bytes_written = 0` even when a preflight read happened before a replacement
+count mismatch.
 
 ## Performance Probes And Metrics
 
@@ -62,6 +68,7 @@ Verification will include:
    - symlink escapes being refused before read/write/edit mutation
    - sensitive filenames being refused before parent-directory creation or file
      mutation
+   - admitted missing-file and write parent errors returning failed receipts
 2. Implement `WorkspaceFileTools` and `WorkspaceFileToolResult` in
    `services/mlx-worker-python/worker/runtime/workspace_file_tools.py`.
 3. Update `docs/unified-agentic-tool-runtime-contract.md` so the workspace path
@@ -78,6 +85,8 @@ Verification will include:
   receipts with resolver refusal reasons.
 - Refused write/edit calls leave outside files and sensitive-path parent
   directories unchanged.
+- Filesystem and text decoding failures after resolver admission produce
+  `status = failed` receipts without escaping exceptions to the caller.
 - Successful calls include workspace resolver receipt fields and operation
   metrics.
 - Focused tests, changed-line coverage, full pre-commit, CI, and remote

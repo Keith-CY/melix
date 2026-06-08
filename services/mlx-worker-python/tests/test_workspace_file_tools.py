@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from worker.runtime.workspace_file_tools import WorkspaceFileTools
 
 
@@ -23,6 +25,7 @@ def test_workspace_file_tools_read_write_and_edit_allowed_paths_emit_receipts(tm
     assert read_result.bytes_read == len("alpha\n".encode("utf-8"))
     assert edit_result.status == "completed"
     assert edit_result.replacement_count == 1
+    assert edit_result.bytes_read == len("alpha\n".encode("utf-8"))
     assert edit_result.bytes_written == len("beta\n".encode("utf-8"))
     assert read_result.receipt == {
         "schema_version": "melix.workspace_file_tool_receipt.v1",
@@ -110,3 +113,106 @@ def test_workspace_file_tools_edit_rejects_empty_old_text_without_mutating_file(
     assert result.status == "failed"
     assert result.receipt["allowed"] is True
     assert result.receipt["error"] == "workspace edit requires non-empty old_text"
+
+
+def test_workspace_file_tools_read_missing_file_returns_failed_receipt(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    tools = WorkspaceFileTools(workspace)
+
+    result = tools.read_text("missing.txt")
+
+    assert result.status == "failed"
+    assert result.content == ""
+    assert result.bytes_read == 0
+    assert result.receipt["allowed"] is True
+    assert "No such file or directory" in result.receipt["error"]
+
+
+def test_workspace_file_tools_write_parent_creation_failure_returns_failed_receipt(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    blocker = workspace / "blocker"
+    blocker.write_text("not a directory\n", encoding="utf-8")
+    tools = WorkspaceFileTools(workspace)
+
+    result = tools.write_text("blocker/output.txt", "content\n", create_parent_dirs=True)
+
+    assert result.status == "failed"
+    assert result.bytes_written == 0
+    assert result.receipt["allowed"] is True
+    assert result.receipt["error"]
+    assert blocker.read_text(encoding="utf-8") == "not a directory\n"
+
+
+def test_workspace_file_tools_edit_missing_file_returns_failed_receipt(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    tools = WorkspaceFileTools(workspace)
+
+    result = tools.edit_text("missing.txt", old_text="alpha", new_text="beta")
+
+    assert result.status == "failed"
+    assert result.bytes_read == 0
+    assert result.bytes_written == 0
+    assert result.replacement_count == 0
+    assert result.receipt["allowed"] is True
+    assert "No such file or directory" in result.receipt["error"]
+
+
+def test_workspace_file_tools_read_decoding_failure_returns_failed_receipt(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "binary.txt"
+    target.write_bytes(b"\xff")
+    tools = WorkspaceFileTools(workspace)
+
+    result = tools.read_text("binary.txt", encoding="utf-8")
+
+    assert result.status == "failed"
+    assert result.bytes_read == 0
+    assert result.receipt["allowed"] is True
+    assert "codec" in result.receipt["error"]
+
+
+def test_workspace_file_tools_write_encoding_failure_returns_failed_receipt_without_file(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    tools = WorkspaceFileTools(workspace)
+
+    result = tools.write_text("latin1.txt", "snowman \u2603", encoding="latin-1")
+
+    assert result.status == "failed"
+    assert result.bytes_written == 0
+    assert result.receipt["allowed"] is True
+    assert "codec" in result.receipt["error"]
+    assert not (workspace / "latin1.txt").exists()
+
+
+def test_workspace_file_tools_edit_write_failure_returns_failed_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "draft.txt"
+    target.write_text("alpha\n", encoding="utf-8")
+    tools = WorkspaceFileTools(workspace)
+
+    def fail_write_bytes(self: Path, data: bytes) -> int:
+        if self == target:
+            raise OSError("simulated write failure")
+        return original_write_bytes(self, data)
+
+    original_write_bytes = Path.write_bytes
+    monkeypatch.setattr(Path, "write_bytes", fail_write_bytes)
+
+    result = tools.edit_text("draft.txt", old_text="alpha", new_text="beta", expected_replacements=1)
+
+    assert result.status == "failed"
+    assert result.bytes_read == 0
+    assert result.bytes_written == 0
+    assert result.replacement_count == 0
+    assert result.receipt["allowed"] is True
+    assert result.receipt["error"] == "simulated write failure"
+    assert target.read_text(encoding="utf-8") == "alpha\n"

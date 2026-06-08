@@ -49,7 +49,12 @@ class WorkspaceFileTools:
         if not resolution.allowed:
             return _refused_result(tool_name="workspace_file.read", resolution=resolution)
 
-        content = resolution.resolved_path.read_text(encoding=encoding)
+        try:
+            content = resolution.resolved_path.read_text(encoding=encoding)
+        except OSError as exc:
+            return _failed_result(tool_name="workspace_file.read", resolution=resolution, error=str(exc))
+        except UnicodeError as exc:
+            return _failed_result(tool_name="workspace_file.read", resolution=resolution, error=str(exc))
         return WorkspaceFileToolResult(
             tool_name="workspace_file.read",
             status="completed",
@@ -70,14 +75,20 @@ class WorkspaceFileTools:
         if not resolution.allowed:
             return _refused_result(tool_name="workspace_file.write", resolution=resolution)
 
-        if create_parent_dirs:
-            resolution.resolved_path.parent.mkdir(parents=True, exist_ok=True)
-        resolution.resolved_path.write_text(content, encoding=encoding)
+        try:
+            if create_parent_dirs:
+                resolution.resolved_path.parent.mkdir(parents=True, exist_ok=True)
+            encoded_content = content.encode(encoding)
+            resolution.resolved_path.write_bytes(encoded_content)
+        except OSError as exc:
+            return _failed_result(tool_name="workspace_file.write", resolution=resolution, error=str(exc))
+        except UnicodeError as exc:
+            return _failed_result(tool_name="workspace_file.write", resolution=resolution, error=str(exc))
         return WorkspaceFileToolResult(
             tool_name="workspace_file.write",
             status="completed",
             resolution=resolution,
-            bytes_written=len(content.encode(encoding)),
+            bytes_written=len(encoded_content),
         )
 
     def edit_text(
@@ -100,7 +111,12 @@ class WorkspaceFileTools:
                 error="workspace edit requires non-empty old_text",
             )
 
-        original = resolution.resolved_path.read_text(encoding=encoding)
+        try:
+            original = resolution.resolved_path.read_text(encoding=encoding)
+        except OSError as exc:
+            return _failed_result(tool_name="workspace_file.edit", resolution=resolution, error=str(exc))
+        except UnicodeError as exc:
+            return _failed_result(tool_name="workspace_file.edit", resolution=resolution, error=str(exc))
         replacement_count = original.count(old_text)
         if expected_replacements is not None and replacement_count != expected_replacements:
             return WorkspaceFileToolResult(
@@ -113,13 +129,19 @@ class WorkspaceFileTools:
                 ),
             )
         updated = original.replace(old_text, new_text)
-        resolution.resolved_path.write_text(updated, encoding=encoding)
+        try:
+            encoded_updated = updated.encode(encoding)
+            resolution.resolved_path.write_bytes(encoded_updated)
+        except OSError as exc:
+            return _failed_result(tool_name="workspace_file.edit", resolution=resolution, error=str(exc))
+        except UnicodeError as exc:
+            return _failed_result(tool_name="workspace_file.edit", resolution=resolution, error=str(exc))
         return WorkspaceFileToolResult(
             tool_name="workspace_file.edit",
             status="completed",
             resolution=resolution,
             bytes_read=len(original.encode(encoding)),
-            bytes_written=len(updated.encode(encoding)),
+            bytes_written=len(encoded_updated),
             replacement_count=replacement_count,
         )
 
@@ -129,4 +151,13 @@ def _refused_result(*, tool_name: str, resolution: WorkspacePathResolution) -> W
         tool_name=tool_name,
         status="failed",
         resolution=resolution,
+    )
+
+
+def _failed_result(*, tool_name: str, resolution: WorkspacePathResolution, error: str) -> WorkspaceFileToolResult:
+    return WorkspaceFileToolResult(
+        tool_name=tool_name,
+        status="failed",
+        resolution=resolution,
+        error=error,
     )
