@@ -315,6 +315,9 @@ def test_dataset_catalog_path_match_checks_filename_before_parent_parts() -> Non
         catalog._path_matches_split(Path("Custom/Validation-00000.jsonl"), "validation")
         is True
     )
+    assert catalog._ascii_char_matches_lowercase("V", "v") is True
+    assert catalog._ascii_char_matches_lowercase("v", "v") is True
+    assert catalog._ascii_char_matches_lowercase("T", "v") is False
     assert catalog._path_part_matches_split("", "validation", "validation-", "validation_") is False
 
 
