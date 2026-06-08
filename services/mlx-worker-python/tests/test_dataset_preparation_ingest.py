@@ -7,6 +7,7 @@ import sys
 
 import pytest
 
+import worker.productization.dataset_preparation as dataset_preparation_module
 from worker.productization.dataset_preparation import (
     DatasetIngestRequest,
     _SOURCE_KIND_BY_NAME,
@@ -16,8 +17,8 @@ from worker.productization.dataset_preparation import (
     prepare_dataset_ingest,
 )
 
-
 ROOT = Path(__file__).resolve().parents[3]
+
 SCRIPTS_DIR = ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
@@ -76,6 +77,20 @@ def test_dataset_ingest_source_kind_reuses_cached_basename_classification() -> N
     assert _source_kind(Path("other/sample-0001.txt")) == "text"
 
     assert len(_SOURCE_KIND_BY_NAME) == 1
+
+
+def test_dataset_ingest_source_kind_returns_cached_none_without_reclassifying(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _SOURCE_KIND_BY_NAME.clear()
+    _SOURCE_KIND_BY_NAME["README"] = None
+
+    def fail_classify(name: str) -> str | None:  # pragma: no cover - failure path only
+        raise AssertionError(f"cached source kind should avoid reclassifying {name!r}")
+
+    monkeypatch.setattr(dataset_preparation_module, "_classify_source_kind_name", fail_classify)
+
+    assert _source_kind(Path("nested/README")) is None
 
 
 def test_dataset_ingest_source_kind_name_cache_clears_at_bound() -> None:
