@@ -20,15 +20,32 @@ private struct MelixCookbookBackendRecommendation {
     let commandFamily: String
 }
 
+private struct MelixCookbookStateReceipt {
+    let dataRoot: String
+    let statePath: String
+    let cacheEnabled: Bool
+    let disabledReason: String
+
+    var payload: [String: Any] {
+        [
+            "data_root": dataRoot,
+            "state_path": statePath,
+            "cache_enabled": cacheEnabled,
+            "disabled_reason": disabledReason,
+        ]
+    }
+}
+
 private enum MelixCookbookRecommendationPlanner {
     static let browserFallbackWarning =
         "Browser platform hints may describe the UI client rather than the Melix serving host."
     static let unavailableWarning =
         "No host platform source was available; run a Melix hardware probe before relying on this recommendation."
 
-    static func makePayload(options: CookbookRecommendOptions, planMS: Double) -> [String: Any] {
+    static func makePayload(options: CookbookRecommendOptions, melixHome: MelixHome, planMS: Double) -> [String: Any] {
         let host = selectHost(options)
         let backend = recommendBackend(for: host)
+        let state = makeStateReceipt(melixHome: melixHome)
         return [
             "schema_version": "melix.cookbook.recommendation.v1",
             "model_id": trimmedString(options.modelID),
@@ -42,6 +59,7 @@ private enum MelixCookbookRecommendationPlanner {
                 "selected_backend": backend.selectedBackend,
                 "command_family": backend.commandFamily,
             ],
+            "state": state.payload,
             "warnings": host.warnings,
             "probe": [
                 "name": "cookbook.host_source_selection",
@@ -50,9 +68,10 @@ private enum MelixCookbookRecommendationPlanner {
         ]
     }
 
-    static func makeText(options: CookbookRecommendOptions, planMS: Double) -> String {
+    static func makeText(options: CookbookRecommendOptions, melixHome: MelixHome, planMS: Double) -> String {
         let host = selectHost(options)
         let backend = recommendBackend(for: host)
+        let state = makeStateReceipt(melixHome: melixHome)
         let hostDisplay = host.platform.isEmpty
             ? "unavailable (\(host.source.rawValue))"
             : "\(host.platform)/\(host.arch) (\(host.source.rawValue))"
@@ -63,11 +82,41 @@ private enum MelixCookbookRecommendationPlanner {
             "Host: \(hostDisplay)",
             "Backend: \(backend.selectedBackend)",
             "Command family: \(backend.commandFamily)",
+            "Data root: \(state.dataRoot)",
+            "State path: \(state.statePath)",
+            "Cache enabled: \(state.cacheEnabled)",
         ]
+        if state.disabledReason.isEmpty == false {
+            lines.append("Cache disabled reason: \(state.disabledReason)")
+        }
         for warning in host.warnings {
             lines.append("Warning: \(warning)")
         }
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    private static func makeStateReceipt(melixHome: MelixHome) -> MelixCookbookStateReceipt {
+        let statePath = melixHome.stateDirectoryURL
+            .appendingPathComponent("cookbook", isDirectory: true)
+            .appendingPathComponent("recommendations.json")
+        var isDirectory = ObjCBool(false)
+        let exists = FileManager.default.fileExists(atPath: melixHome.stateDirectoryURL.path, isDirectory: &isDirectory)
+        let disabledReason: String
+        if exists == false {
+            disabledReason = "state_root_missing"
+        } else if isDirectory.boolValue == false {
+            disabledReason = "state_root_not_directory"
+        } else if FileManager.default.isWritableFile(atPath: melixHome.stateDirectoryURL.path) == false {
+            disabledReason = "state_root_not_writable"
+        } else {
+            disabledReason = ""
+        }
+        return MelixCookbookStateReceipt(
+            dataRoot: melixHome.rootURL.path,
+            statePath: statePath.path,
+            cacheEnabled: disabledReason.isEmpty,
+            disabledReason: disabledReason
+        )
     }
 
     private static func selectHost(_ options: CookbookRecommendOptions) -> MelixCookbookHostSelection {
@@ -159,11 +208,16 @@ private enum MelixCookbookRecommendationPlanner {
 extension MelixCLIRunner {
     func runCookbookRecommend(_ options: CookbookRecommendOptions) throws -> String {
         let startedAt = DispatchTime.now()
+        let melixHome = MelixHome(environment: environment)
         let planMS = elapsedMilliseconds(since: startedAt)
         if options.json {
-            let payload = MelixCookbookRecommendationPlanner.makePayload(options: options, planMS: planMS)
+            let payload = MelixCookbookRecommendationPlanner.makePayload(
+                options: options,
+                melixHome: melixHome,
+                planMS: planMS
+            )
             return try MelixCLIJSON.prettyString(payload)
         }
-        return MelixCookbookRecommendationPlanner.makeText(options: options, planMS: planMS)
+        return MelixCookbookRecommendationPlanner.makeText(options: options, melixHome: melixHome, planMS: planMS)
     }
 }

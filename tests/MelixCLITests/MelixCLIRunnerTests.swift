@@ -4365,9 +4365,71 @@ struct MelixCLIRunnerTests {
         #expect((payload["warnings"] as? [String])?.isEmpty == true)
     }
 
+    @Test("cookbook recommendation records writable data root state receipt")
+    func cookbookRecommendationRecordsWritableDataRootStateReceipt() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let stateRoot = root.appendingPathComponent("state", isDirectory: true)
+        try FileManager.default.createDirectory(at: stateRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": root.path]
+        )
+
+        let output = try await runner.run(.cookbookRecommend(.init(
+            modelID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+            workload: "chat",
+            serverPlatform: "macos",
+            serverArch: "arm64",
+            json: true
+        )))
+        let payload = try #require(parseJSONObject(output))
+        let state = try #require(payload["state"] as? [String: Any])
+
+        #expect(state["data_root"] as? String == root.path)
+        #expect(state["state_path"] as? String == stateRoot
+            .appendingPathComponent("cookbook", isDirectory: true)
+            .appendingPathComponent("recommendations.json")
+            .path)
+        #expect(state["cache_enabled"] as? Bool == true)
+        #expect(state["disabled_reason"] as? String == "")
+    }
+
+    @Test("cookbook recommendation disables cache when data root state is missing")
+    func cookbookRecommendationDisablesCacheWhenDataRootStateIsMissing() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": root.path]
+        )
+
+        let output = try await runner.run(.cookbookRecommend(.init(
+            modelID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+            workload: "chat",
+            serverPlatform: "macos",
+            serverArch: "arm64",
+            json: true
+        )))
+        let payload = try #require(parseJSONObject(output))
+        let state = try #require(payload["state"] as? [String: Any])
+
+        #expect(state["data_root"] as? String == root.path)
+        #expect(state["cache_enabled"] as? Bool == false)
+        #expect(state["disabled_reason"] as? String == "state_root_missing")
+    }
+
     @Test("cookbook recommendation normalizes host aliases and renders text")
     func cookbookRecommendationNormalizesHostAliasesAndRendersText() async throws {
-        let runner = MelixCLIRunner(client: StubControlPlaneXPCClient())
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let stateRoot = root.appendingPathComponent("state", isDirectory: true)
+        try FileManager.default.createDirectory(at: stateRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": root.path]
+        )
 
         let output = try await runner.run(.cookbookRecommend(.init(
             modelID: "mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -4381,6 +4443,9 @@ struct MelixCLIRunnerTests {
         #expect(output.contains("Host: macos/arm64 (hardware_probe)"))
         #expect(output.contains("Backend: mlx-native"))
         #expect(output.contains("Command family: melix server start"))
+        #expect(output.contains("Data root: \(root.path)"))
+        #expect(output.contains("State path: \(stateRoot.path)/cookbook/recommendations.json"))
+        #expect(output.contains("Cache enabled: true"))
     }
 
     @Test("cookbook recommendation records unavailable host source")
