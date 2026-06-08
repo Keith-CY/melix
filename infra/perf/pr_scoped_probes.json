@@ -548,6 +548,12 @@
         "warn_pct": 5.0
       },
       {
+        "key": "peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
         "key": "embed_text_calls_mean",
         "unit": "calls",
         "direction": "lower_is_better",

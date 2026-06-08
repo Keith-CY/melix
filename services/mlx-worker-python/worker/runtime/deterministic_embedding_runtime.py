@@ -69,10 +69,9 @@ class DeterministicEmbeddingRuntime:
                 vector = embed_text(backend, text, dimensions)
                 append_vector(vector)
             cycle_vectors = tuple(vectors)
-            repeat_count = len(inputs) // cycle_length - 1
-            vectors.extend(
-                [vector.copy() for _ in range(repeat_count) for vector in cycle_vectors]
-            )
+            for _ in range(len(inputs) // cycle_length - 1):
+                for vector in cycle_vectors:
+                    append_vector(vector.copy())
             return vectors
 
         vector_cache: dict[str, list[float]] = {}
