@@ -4368,9 +4368,9 @@ struct MelixCLIRunnerTests {
     @Test("cookbook recommendation records writable data root state receipt")
     func cookbookRecommendationRecordsWritableDataRootStateReceipt() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
         let stateRoot = root.appendingPathComponent("state", isDirectory: true)
         try FileManager.default.createDirectory(at: stateRoot, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
         let runner = MelixCLIRunner(
             client: StubControlPlaneXPCClient(),
             environment: ["MELIX_HOME": root.path]
@@ -4398,8 +4398,8 @@ struct MelixCLIRunnerTests {
     @Test("cookbook recommendation disables cache when data root state is missing")
     func cookbookRecommendationDisablesCacheWhenDataRootStateIsMissing() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let runner = MelixCLIRunner(
             client: StubControlPlaneXPCClient(),
             environment: ["MELIX_HOME": root.path]
@@ -4418,14 +4418,50 @@ struct MelixCLIRunnerTests {
         #expect(state["data_root"] as? String == root.path)
         #expect(state["cache_enabled"] as? Bool == false)
         #expect(state["disabled_reason"] as? String == "state_root_missing")
+
+        let textOutput = try await runner.run(.cookbookRecommend(.init(
+            modelID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+            workload: "chat",
+            serverPlatform: "macos",
+            serverArch: "arm64"
+        )))
+        #expect(textOutput.contains("Cache enabled: false"))
+        #expect(textOutput.contains("Cache disabled reason: state_root_missing"))
+    }
+
+    @Test("cookbook recommendation disables cache when cookbook state path is not a directory")
+    func cookbookRecommendationDisablesCacheWhenCookbookStatePathIsNotDirectory() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateRoot = root.appendingPathComponent("state", isDirectory: true)
+        try FileManager.default.createDirectory(at: stateRoot, withIntermediateDirectories: true)
+        let cookbookPath = stateRoot.appendingPathComponent("cookbook", isDirectory: true)
+        try Data("not-a-directory".utf8).write(to: cookbookPath)
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": root.path]
+        )
+
+        let output = try await runner.run(.cookbookRecommend(.init(
+            modelID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+            workload: "chat",
+            serverPlatform: "macos",
+            serverArch: "arm64",
+            json: true
+        )))
+        let payload = try #require(parseJSONObject(output))
+        let state = try #require(payload["state"] as? [String: Any])
+
+        #expect(state["cache_enabled"] as? Bool == false)
+        #expect(state["disabled_reason"] as? String == "state_path_not_directory")
     }
 
     @Test("cookbook recommendation normalizes host aliases and renders text")
     func cookbookRecommendationNormalizesHostAliasesAndRendersText() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
         let stateRoot = root.appendingPathComponent("state", isDirectory: true)
         try FileManager.default.createDirectory(at: stateRoot, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
         let runner = MelixCLIRunner(
             client: StubControlPlaneXPCClient(),
             environment: ["MELIX_HOME": root.path]

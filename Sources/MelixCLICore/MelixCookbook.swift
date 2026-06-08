@@ -96,9 +96,8 @@ private enum MelixCookbookRecommendationPlanner {
     }
 
     private static func makeStateReceipt(melixHome: MelixHome) -> MelixCookbookStateReceipt {
-        let statePath = melixHome.stateDirectoryURL
-            .appendingPathComponent("cookbook", isDirectory: true)
-            .appendingPathComponent("recommendations.json")
+        let cookbookURL = melixHome.stateDirectoryURL.appendingPathComponent("cookbook", isDirectory: true)
+        let statePath = cookbookURL.appendingPathComponent("recommendations.json")
         var isDirectory = ObjCBool(false)
         let exists = FileManager.default.fileExists(atPath: melixHome.stateDirectoryURL.path, isDirectory: &isDirectory)
         let disabledReason: String
@@ -109,7 +108,17 @@ private enum MelixCookbookRecommendationPlanner {
         } else if FileManager.default.isWritableFile(atPath: melixHome.stateDirectoryURL.path) == false {
             disabledReason = "state_root_not_writable"
         } else {
-            disabledReason = ""
+            var cookbookIsDirectory = ObjCBool(false)
+            let cookbookExists = FileManager.default.fileExists(atPath: cookbookURL.path, isDirectory: &cookbookIsDirectory)
+            if cookbookExists == false {
+                disabledReason = ""
+            } else if cookbookIsDirectory.boolValue == false {
+                disabledReason = "state_path_not_directory"
+            } else if FileManager.default.isWritableFile(atPath: cookbookURL.path) == false {
+                disabledReason = "state_path_not_writable"
+            } else {
+                disabledReason = ""
+            }
         }
         return MelixCookbookStateReceipt(
             dataRoot: melixHome.rootURL.path,

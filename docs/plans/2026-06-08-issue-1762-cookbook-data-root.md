@@ -14,7 +14,8 @@ runs.
   - `state_path`: absolute cookbook state path under the Melix state directory.
   - `cache_enabled`: whether cookbook cache/state paths are usable.
   - `disabled_reason`: empty when enabled; a stable reason when the state root is
-    missing, not a directory, or not writable.
+    missing, not a directory, or not writable, or when an existing cookbook state
+    path is not a directory or not writable.
 - Render the same state/cache status in text output.
 - Keep this slice read-only. The recommendation command probes path usability
   but does not create directories or write state.
@@ -35,9 +36,10 @@ derives a `state` receipt with:
 - `data_root = melixHome.rootURL.path`
 - `state_path = melixHome.stateDirectoryURL/cookbook/recommendations.json`
 - `cache_enabled = true` only when the state directory exists, is a directory,
-  and is writable
+  is writable, and any existing `state/cookbook` path is a writable directory
 - `disabled_reason = state_root_missing | state_root_not_directory |
-  state_root_not_writable | ""`
+  state_root_not_writable | state_path_not_directory | state_path_not_writable |
+  ""`
 
 The command remains fail-soft because this receipt is advisory. If the path is
 unusable, the recommendation still emits host/backend guidance and records why
@@ -51,6 +53,9 @@ Focused Swift tests cover:
   empty `disabled_reason` when `MELIX_HOME/state` is writable.
 - JSON output records `cache_enabled = false` and
   `disabled_reason = state_root_missing` when the state directory is absent.
+- JSON output records `cache_enabled = false` and
+  `disabled_reason = state_path_not_directory` when `state/cookbook` already
+  exists as a non-directory path.
 - Text output renders the data root and cache status.
 
 Commands:
@@ -74,8 +79,9 @@ scripts/swift_changed_line_coverage.py \
 ## Metrics
 
 - `cookbook.plan_ms` remains the command planning duration.
-- This slice adds no background sampling loop. Probe overhead is one
-  filesystem metadata check against the Melix state directory per recommendation.
+- This slice adds no background sampling loop. Probe overhead is bounded to
+  filesystem metadata checks against the Melix state directory and an existing
+  cookbook state path per recommendation.
 
 ## Known Gaps
 
