@@ -8,13 +8,14 @@ Restore the root README action badges so they report meaningful release and app 
 
 - The `release-gates` workflow was manually disabled in GitHub Actions, leaving the README badge stuck on the latest historical failed or cancelled main run.
 - Main push-triggered `release-gates` runs also cancelled earlier main runs, so a fast merge sequence could leave the branch badge red even when no release gate failed.
+- GitHub Actions concurrency keeps at most one running and one pending run per concurrency group. Even with `cancel-in-progress: false` for `main` pushes, later `main` pushes can cancel older pending `release-gates` runs in the same group before they start; GitHub and Shields badges then report that cancelled run as failing.
 - The `package-self-contained-app` workflow is healthy, but the README badge queries all `main` workflow runs. Frequent push-triggered packaging runs can be cancelled by concurrency when newer main commits land, so the badge can briefly report failure even when the scheduled app artifact path is healthy.
 
 ## Scope
 
 - Re-enable the `release-gates` workflow in GitHub Actions and trigger a fresh `main` run.
 - Keep the release-gates README badge on `main` so real gate failures remain visible.
-- Keep main push-triggered `release-gates` runs from cancelling each other, while preserving cancellation for repeated non-main/manual/scheduled runs.
+- Keep main push-triggered `release-gates` runs from cancelling each other by assigning each `main` push run a unique concurrency group, while preserving cancellation for repeated non-main/manual/scheduled runs.
 - Scope the app packaging README badge to the scheduled packaging event, which is the durable public app artifact signal.
 - Add a focused README regression test for the badge URLs.
 
