@@ -9,7 +9,7 @@ import tempfile
 import time
 import tracemalloc
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 repo_root_env = os.environ.get("MELIX_NATIVE_MTP_LOADER_REPO_ROOT")
 repo_root = Path(repo_root_env) if repo_root_env else Path(__file__).resolve().parents[1]
@@ -18,6 +18,7 @@ sys.path.insert(0, str(repo_root / "services/mlx-worker-python"))
 
 try:
     from worker.runtime.native_mtp.mlx_lm_loader import (
+        _extra_mtp_safetensor_file_paths,
         _is_mtp_weight_key,
         _load_json_payload,
         _load_weight_shards,
@@ -26,6 +27,7 @@ try:
     )
 except ImportError:  # Base revisions before this slice do not expose the helpers.
     extra_mtp_safetensor_files = None
+    _extra_mtp_safetensor_file_paths = None  # pragma: no cover - exercised on base refs in CI probe comparisons.
     _is_mtp_weight_key = None
     _load_json_payload = None
     _load_weight_shards = None
@@ -161,10 +163,10 @@ def _baseline_load_weight_shards(
 def _candidate_load_weight_shards(
     load: Callable[[str], dict[str, str]],
     weight_files: list[str],
-    extra_files: list[Path],
+    extra_files: list[str],
 ) -> dict[str, str]:
     if _load_weight_shards is None:
-        return _baseline_load_weight_shards(load, weight_files, extra_files)
+        return _baseline_load_weight_shards(load, weight_files, [Path(path) for path in extra_files])  # pragma: no cover - base-ref fallback.
     return _load_weight_shards(load, weight_files, extra_files)
 
 
@@ -173,9 +175,9 @@ def _fake_weight_load(path: str) -> dict[str, str]:
 
 
 def _measure_weight_loading(
-    callback: Callable[[Callable[[str], dict[str, str]], list[str], list[Path]], dict[str, str]],
+    callback: Callable[..., dict[str, str]],
     weight_files: list[str],
-    extra_files: list[Path],
+    extra_files: Sequence[object],
     *,
     samples: int,
     iterations: int,
@@ -243,6 +245,12 @@ def run_probe() -> dict[str, float | int | str]:
         candidate_extra = extra_callback(model_dir)
         if baseline_extra != candidate_extra:
             raise SystemExit("candidate native-MTP sidecar shard listing differs from baseline")
+        extra_path_callback = _extra_mtp_safetensor_file_paths or (
+            lambda path: [str(extra_path) for extra_path in _baseline_extra_mtp_safetensor_files(path)]
+        )
+        candidate_extra_paths = extra_path_callback(model_dir)
+        if candidate_extra_paths != [str(path) for path in baseline_extra]:
+            raise SystemExit("candidate native-MTP sidecar shard string listing differs from baseline")  # pragma: no cover - parity guard.
 
         old_ms, old_peaks, result_count = _measure(
             _read_text_json_payload,
@@ -294,7 +302,7 @@ def run_probe() -> dict[str, float | int | str]:
         weight_load_new_ms, weight_load_new_peaks, _ = _measure_weight_loading(
             _candidate_load_weight_shards,
             list(candidate),
-            candidate_extra,
+            candidate_extra_paths,
             samples=samples,
             iterations=weight_load_iterations,
         )
