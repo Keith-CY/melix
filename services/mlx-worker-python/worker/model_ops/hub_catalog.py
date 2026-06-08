@@ -771,6 +771,12 @@ def _size_hint_bytes(payload: dict[str, Any], *, card_data: dict[str, Any] | Non
         or _may_contain_model_marker(card_description_text)
     ):
         return 0
+    for text in (description_text, readme_text, card_description_text):
+        if not text or not _may_contain_model_marker(text):
+            continue
+        hint = _size_hint_from_text(text, allow_bare=False)
+        if hint > 0:
+            return hint
     text = "\n".join(
         text
         for text in (description_text, readme_text, card_description_text)
