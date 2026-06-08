@@ -11,6 +11,12 @@ _PATH_READ_BYTES = Path.read_bytes
 _STR = str
 
 
+def _strip_manifest_text(value: Any) -> str:
+    if type(value) is str:
+        return value.strip()
+    return _STR(value).strip()
+
+
 TRAJECTORY_PROVENANCE_FIELDS = (
     "trajectory_dataset_id",
     "trajectory_dataset_version",
@@ -110,31 +116,31 @@ def _trajectory_provenance_from_snapshot_manifest(
     copy_nested: bool,
 ) -> dict[str, Any]:
     manifest_get = manifest.get
-    to_str = _STR
+    strip_text = _strip_manifest_text
     if (
-        to_str(manifest_get("format", "")).strip() != "agentic_tool_trace"
-        and not to_str(manifest_get("trajectory_trace_digest", "")).strip()
+        strip_text(manifest_get("format", "")) != "agentic_tool_trace"
+        and not strip_text(manifest_get("trajectory_trace_digest", ""))
     ):
         return {}
 
     provenance: dict[str, Any] = {}
-    dataset_id = to_str(
+    dataset_id = strip_text(
         manifest_get("source_dataset_id") or manifest_get("dataset_id") or ""
-    ).strip()
+    )
     if dataset_id:
         provenance["trajectory_dataset_id"] = dataset_id
-    dataset_version = to_str(manifest_get("version") or "").strip()
+    dataset_version = strip_text(manifest_get("version") or "")
     if dataset_version:
         provenance["trajectory_dataset_version"] = dataset_version
-    schema_version = to_str(
+    schema_version = strip_text(
         manifest_get("trajectory_schema_version") or "melix.agentic_tool_trace.v1"
-    ).strip()
+    )
     if schema_version:
         provenance["trajectory_schema_version"] = schema_version
-    split = to_str(manifest_get("trajectory_split") or "train").strip()
+    split = strip_text(manifest_get("trajectory_split") or "train")
     if split:
         provenance["trajectory_split"] = split
-    trace_digest = to_str(manifest_get("trajectory_trace_digest") or "").strip()
+    trace_digest = strip_text(manifest_get("trajectory_trace_digest") or "")
     if trace_digest:
         provenance["trajectory_trace_digest"] = trace_digest
     if snapshot_manifest_path is not None:
