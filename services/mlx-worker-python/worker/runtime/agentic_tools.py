@@ -4,6 +4,8 @@ import ast
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 from worker.runtime.tool_observation import (
     ToolObservationPolicy,
@@ -11,6 +13,8 @@ from worker.runtime.tool_observation import (
     normalize_tool_observation,
 )
 from worker.runtime.tool_registry import ToolDescriptor, ToolRegistry, built_in_tool_registry
+from worker.runtime.workspace_file_tools import WorkspaceFileTools
+from worker.runtime.workspace_paths import WorkspacePathResolution
 
 
 class AgenticToolRuntimeError(ValueError):
@@ -429,6 +433,9 @@ def _visit_payload(
             ),
         }
     if page is None:
+        local_payload = _workspace_file_visit_payload(url=url, fixture_context=fixture_context)
+        if local_payload is not None:
+            return local_payload
         return {"url": url, "text": "", "found": False}
     return {
         "url": url,
@@ -441,6 +448,63 @@ def _visit_payload(
         ),
         "found": True,
     }
+
+
+def _workspace_file_visit_payload(
+    *,
+    url: str,
+    fixture_context: dict[str, Any],
+) -> dict[str, Any] | None:
+    workspace_root = _workspace_root_text(fixture_context)
+    if not workspace_root:
+        return None
+    requested_path = _local_visit_requested_path(url)
+    if requested_path is None:
+        return None
+
+    result = WorkspaceFileTools(workspace_root).read_text(requested_path)
+    resolution = result.resolution
+    if not resolution.allowed:
+        raise _workspace_path_refused(source_id=url, resolution=resolution)
+
+    if result.status == "completed":
+        return {
+            "url": url,
+            "title": resolution.resolved_path.name,
+            "text": result.content,
+            "found": True,
+            "workspace_path_receipt": resolution.receipt_fields(),
+        }
+
+    if "No such file or directory" in result.error:
+        return {
+            "url": url,
+            "title": resolution.resolved_path.name,
+            "text": "",
+            "found": False,
+            "workspace_path_receipt": resolution.receipt_fields(),
+        }
+    raise _workspace_file_unavailable(
+        source_id=url,
+        resolution=resolution,
+        error=result.error or "workspace file read failed",
+    )
+
+
+def _workspace_root_text(fixture_context: dict[str, Any]) -> str:
+    raw_root = fixture_context.get("workspace_root", "")
+    return raw_root.strip() if isinstance(raw_root, str) else ""
+
+
+def _local_visit_requested_path(url: str) -> str | None:
+    parsed = urlparse(url)
+    if parsed.scheme == "file":
+        if parsed.netloc not in ("", "localhost"):
+            return None
+        return url2pathname(parsed.path)
+    if parsed.scheme:
+        return None
+    return url
 
 
 def _layout_parse_payload(
@@ -728,6 +792,42 @@ def _owner_scope_mismatch(
             "owner_scope_checked": True,
             "privilege": privilege,
             "corrective_action": "Do not project cross-owner untrusted content into tool observations.",
+        },
+    )
+
+
+def _workspace_path_refused(
+    *,
+    source_id: str,
+    resolution: WorkspacePathResolution,
+) -> AgenticToolRuntimeError:
+    return AgenticToolRuntimeError(
+        f"Workspace path resolver refused local visit path: {source_id}.",
+        details={
+            "reason": "workspace_path_refused",
+            "source_type": "workspace_file",
+            "source_id": source_id,
+            "workspace_path_receipt": resolution.receipt_fields(),
+            "corrective_action": "Use a path accepted by the Workspace path resolver before reading local files.",
+        },
+    )
+
+
+def _workspace_file_unavailable(
+    *,
+    source_id: str,
+    resolution: WorkspacePathResolution,
+    error: str,
+) -> AgenticToolRuntimeError:
+    return AgenticToolRuntimeError(
+        f"Workspace file was unavailable for local visit path: {source_id}.",
+        details={
+            "reason": "workspace_file_unavailable",
+            "source_type": "workspace_file",
+            "source_id": source_id,
+            "error": error,
+            "workspace_path_receipt": resolution.receipt_fields(),
+            "corrective_action": "Verify the workspace file exists and is readable before visiting it.",
         },
     )
 
