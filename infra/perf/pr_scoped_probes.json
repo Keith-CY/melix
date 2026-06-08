@@ -2537,6 +2537,49 @@
     ]
   },
   {
+    "id": "model-registry-readme-source-fastpath",
+    "name": "Model registry README base_model source fast path",
+    "runner": "ubuntu-latest",
+    "watch_globs": [
+      "services/mlx-worker-python/worker/model_registry/catalog.py",
+      "services/mlx-worker-python/tests/test_model_registry_catalog.py",
+      "services/mlx-worker-python/tests/test_pr_scoped_performance.py",
+      "scripts/model_registry_readme_source_probe.py",
+      "infra/perf/pr_scoped_probes.json"
+    ],
+    "test_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python pytest -q services/mlx-worker-python/tests/test_model_registry_catalog.py::test_raw_model_spec_loads_config_payload_when_not_supplied services/mlx-worker-python/tests/test_model_registry_catalog.py::test_registry_snapshot_keeps_gemma4_qat_target_when_readme_mentions_assistant services/mlx-worker-python/tests/test_model_registry_catalog.py::test_registry_snapshot_marks_gemma4_qat_assistant_as_draft_companion services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_model_registry_catalog_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_model_registry_readme_source_probe_command_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs",
+    "coverage_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage run -m pytest -q services/mlx-worker-python/tests/test_model_registry_catalog.py::test_raw_model_spec_loads_config_payload_when_not_supplied services/mlx-worker-python/tests/test_model_registry_catalog.py::test_registry_snapshot_keeps_gemma4_qat_target_when_readme_mentions_assistant services/mlx-worker-python/tests/test_model_registry_catalog.py::test_registry_snapshot_marks_gemma4_qat_assistant_as_draft_companion services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_scope_report_selects_model_registry_catalog_probe services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_model_registry_readme_source_probe_command_emits_metrics services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probes_expose_focused_commands services/mlx-worker-python/tests/test_pr_scoped_performance.py::test_registered_probe_registry_entries_validate_commands_and_watch_globs && PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python coverage json -o coverage.json && python3 scripts/changed_scope_coverage.py --coverage-json coverage.json services/mlx-worker-python/worker/model_registry/catalog.py services/mlx-worker-python/tests/test_model_registry_catalog.py services/mlx-worker-python/tests/test_pr_scoped_performance.py scripts/model_registry_readme_source_probe.py",
+    "probe_command": "PYTHONPATH=\"$PWD:$PWD/services/mlx-worker-python\" uv run --project services/mlx-worker-python bash -c 'if [ -f scripts/model_registry_readme_source_probe.py ]; then python3 scripts/model_registry_readme_source_probe.py; else for PREFIX in \"${MELIX_MODEL_REGISTRY_README_SOURCE_HEAD_REPO:-}\" \"${GITHUB_WORKSPACE:-}/head\" \"../head\"; do CANDIDATE=\"$PREFIX/scripts/model_registry_readme_source_probe.py\"; if [ -f \"$CANDIDATE\" ]; then python3 \"$CANDIDATE\"; exit $?; fi; done; echo \"missing probe script fallback for scripts/model_registry_readme_source_probe.py\" >&2; exit 2; fi'",
+    "probe_impl": "command_json",
+    "coverage_replays_tests": true,
+    "metrics": [
+      {
+        "key": "new_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      },
+      {
+        "key": "delta_ms",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "speedup",
+        "unit": "ratio",
+        "direction": "higher_is_better",
+        "warn_pct": 0.0
+      },
+      {
+        "key": "new_peak_bytes_mean",
+        "unit": "bytes",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
+      }
+    ]
+  },
+  {
     "id": "real-model-support-hf-cache-latest-snapshot",
     "name": "Real model support HF cache latest snapshot",
     "runner": "ubuntu-latest",

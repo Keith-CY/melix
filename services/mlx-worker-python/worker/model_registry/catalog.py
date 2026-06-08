@@ -1457,12 +1457,22 @@ def _gemma4_qat_source_model(
     model_size: str,
     companion: bool,
 ) -> str:
-    for line in readme_text.splitlines():
-        stripped = line.strip().strip("'\"")
-        if stripped.startswith("base_model:"):
-            value = stripped.split(":", 1)[1].strip().strip("'\"[] ")
-            if value:
-                return value
+    search_start = 0
+    while True:
+        marker_index = readme_text.find("base_model:", search_start)
+        if marker_index < 0:
+            break
+        line_start = readme_text.rfind("\n", 0, marker_index) + 1
+        if readme_text[line_start:marker_index].strip(" \t\r'\""):
+            search_start = marker_index + 1
+            continue
+        line_end = readme_text.find("\n", marker_index)
+        if line_end < 0:
+            line_end = len(readme_text)
+        value = readme_text[marker_index + len("base_model:") : line_end].strip().strip("'\"[] ")
+        if value:
+            return value
+        search_start = marker_index + 1
 
     size_name = {
         "e2b": "E2B",
