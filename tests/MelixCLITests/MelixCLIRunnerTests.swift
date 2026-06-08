@@ -4287,6 +4287,130 @@ struct MelixCLIRunnerTests {
         #expect(runDirectories.map(\.lastPathComponent).contains(latestRunRoot.lastPathComponent))
     }
 
+    @Test("cookbook recommendation trusts server hardware probe over browser hint")
+    func cookbookRecommendationTrustsServerHardwareProbeOverBrowserHint() async throws {
+        let runner = MelixCLIRunner(client: StubControlPlaneXPCClient())
+
+        let output = try await runner.run(.cookbookRecommend(.init(
+            modelID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+            workload: "chat",
+            serverPlatform: "macOS",
+            serverArch: "arm64e",
+            operatorPlatform: "linux",
+            operatorArch: "x86_64",
+            browserPlatform: "windows",
+            browserArch: "x86_64",
+            json: true
+        )))
+        let payload = try #require(parseJSONObject(output))
+        let host = try #require(payload["host"] as? [String: Any])
+        let recommendation = try #require(payload["recommendation"] as? [String: Any])
+        let probe = try #require(payload["probe"] as? [String: Any])
+
+        #expect(payload["schema_version"] as? String == "melix.cookbook.recommendation.v1")
+        #expect(payload["model_id"] as? String == "mlx-community/Qwen3.5-9B-MLX-4bit")
+        #expect(payload["workload"] as? String == "chat")
+        #expect(host["platform"] as? String == "macos")
+        #expect(host["arch"] as? String == "arm64e")
+        #expect(host["host_platform_source"] as? String == "hardware_probe")
+        #expect(recommendation["selected_backend"] as? String == "mlx-native")
+        #expect(recommendation["command_family"] as? String == "melix server start")
+        #expect((payload["warnings"] as? [String])?.isEmpty == true)
+        #expect(probe["name"] as? String == "cookbook.host_source_selection")
+        #expect((probe["cookbook.plan_ms"] as? NSNumber)?.doubleValue ?? -1 >= 0)
+    }
+
+    @Test("cookbook recommendation marks browser platform fallback with warning")
+    func cookbookRecommendationMarksBrowserPlatformFallbackWithWarning() async throws {
+        let runner = MelixCLIRunner(client: StubControlPlaneXPCClient())
+
+        let output = try await runner.run(.cookbookRecommend(.init(
+            modelID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+            workload: "coding",
+            browserPlatform: "windows",
+            browserArch: "x86_64",
+            json: true
+        )))
+        let payload = try #require(parseJSONObject(output))
+        let host = try #require(payload["host"] as? [String: Any])
+        let warnings = try #require(payload["warnings"] as? [String])
+
+        #expect(host["platform"] as? String == "windows")
+        #expect(host["arch"] as? String == "x86_64")
+        #expect(host["host_platform_source"] as? String == "browser_fallback")
+        #expect(warnings.contains("Browser platform hints may describe the UI client rather than the Melix serving host."))
+    }
+
+    @Test("cookbook recommendation uses explicit operator host when server probe is absent")
+    func cookbookRecommendationUsesExplicitOperatorHostWhenServerProbeIsAbsent() async throws {
+        let runner = MelixCLIRunner(client: StubControlPlaneXPCClient())
+
+        let output = try await runner.run(.cookbookRecommend(.init(
+            modelID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+            workload: "evaluation",
+            operatorPlatform: "linux",
+            operatorArch: "x86_64",
+            browserPlatform: "windows",
+            browserArch: "x86_64",
+            json: true
+        )))
+        let payload = try #require(parseJSONObject(output))
+        let host = try #require(payload["host"] as? [String: Any])
+        let recommendation = try #require(payload["recommendation"] as? [String: Any])
+
+        #expect(host["platform"] as? String == "linux")
+        #expect(host["arch"] as? String == "x86_64")
+        #expect(host["host_platform_source"] as? String == "explicit_operator_setting")
+        #expect(recommendation["selected_backend"] as? String == "python-worker")
+        #expect((payload["warnings"] as? [String])?.isEmpty == true)
+    }
+
+    @Test("cookbook recommendation normalizes host aliases and renders text")
+    func cookbookRecommendationNormalizesHostAliasesAndRendersText() async throws {
+        let runner = MelixCLIRunner(client: StubControlPlaneXPCClient())
+
+        let output = try await runner.run(.cookbookRecommend(.init(
+            modelID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+            workload: "chat",
+            serverPlatform: "darwin",
+            serverArch: "aarch64"
+        )))
+
+        #expect(output.contains("Melix cookbook recommendation"))
+        #expect(output.contains("Model: mlx-community/Qwen3.5-9B-MLX-4bit"))
+        #expect(output.contains("Host: macos/arm64 (hardware_probe)"))
+        #expect(output.contains("Backend: mlx-native"))
+        #expect(output.contains("Command family: melix server start"))
+    }
+
+    @Test("cookbook recommendation records unavailable host source")
+    func cookbookRecommendationRecordsUnavailableHostSource() async throws {
+        let runner = MelixCLIRunner(client: StubControlPlaneXPCClient())
+
+        let output = try await runner.run(.cookbookRecommend(.init(
+            modelID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+            workload: "reasoning",
+            json: true
+        )))
+        let payload = try #require(parseJSONObject(output))
+        let host = try #require(payload["host"] as? [String: Any])
+        let recommendation = try #require(payload["recommendation"] as? [String: Any])
+        let warnings = try #require(payload["warnings"] as? [String])
+
+        #expect(host["platform"] as? String == "")
+        #expect(host["arch"] as? String == "")
+        #expect(host["host_platform_source"] as? String == "unavailable")
+        #expect(recommendation["selected_backend"] as? String == "generic-local-runtime")
+        #expect(warnings.contains("No host platform source was available; run a Melix hardware probe before relying on this recommendation."))
+
+        let textOutput = try await runner.run(.cookbookRecommend(.init(
+            modelID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+            workload: "reasoning"
+        )))
+        #expect(textOutput.contains("Host: unavailable (unavailable)"))
+        #expect(textOutput.contains("Warning: No host platform source was available; run a Melix hardware probe before relying on this recommendation."))
+    }
+
     @Test("workflow recipe init rejects unmatched tasks")
     func workflowRecipeInitRejectsUnmatchedTasks() async throws {
         let runner = MelixCLIRunner(client: StubControlPlaneXPCClient())

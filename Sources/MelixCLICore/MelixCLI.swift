@@ -2270,6 +2270,40 @@ public struct RecipeInitOptions: Equatable, Sendable {
     }
 }
 
+public struct CookbookRecommendOptions: Equatable, Sendable {
+    public let modelID: String
+    public let workload: String
+    public let serverPlatform: String
+    public let serverArch: String
+    public let operatorPlatform: String
+    public let operatorArch: String
+    public let browserPlatform: String
+    public let browserArch: String
+    public let json: Bool
+
+    public init(
+        modelID: String,
+        workload: String,
+        serverPlatform: String = "",
+        serverArch: String = "",
+        operatorPlatform: String = "",
+        operatorArch: String = "",
+        browserPlatform: String = "",
+        browserArch: String = "",
+        json: Bool = false
+    ) {
+        self.modelID = modelID
+        self.workload = workload
+        self.serverPlatform = serverPlatform
+        self.serverArch = serverArch
+        self.operatorPlatform = operatorPlatform
+        self.operatorArch = operatorArch
+        self.browserPlatform = browserPlatform
+        self.browserArch = browserArch
+        self.json = json
+    }
+}
+
 public enum MelixCLIOutputFormat: String, Equatable, Sendable {
     case legacy
     case jsonV1 = "json-v1"
@@ -2344,6 +2378,7 @@ public enum MelixCLICommand: Equatable, Sendable {
     case recipesPlan(RecipePlanOptions)
     case recipesApply(RecipeApplyOptions)
     case recipesInit(RecipeInitOptions)
+    case cookbookRecommend(CookbookRecommendOptions)
     case modelRootsList(ModelRootsListOptions)
     case modelRootsAdd(ModelRootsMutateOptions)
     case modelRootsRemove(ModelRootsMutateOptions)
@@ -2515,6 +2550,8 @@ public enum MelixCLIParser {
             return try parseURI(tail)
         case "recipes":
             return try parseRecipes(tail)
+        case "cookbook":
+            return try parseCookbook(tail)
         case "server":
             return try parseServer(tail)
         case "remote-server":
@@ -2599,6 +2636,7 @@ public enum MelixCLIParser {
       melix recipes plan RECIPE_ID [--version VERSION] [--set KEY=VALUE ...] [--output PATH] [--json]
       melix recipes apply RECIPE_ID [--version VERSION] [--set KEY=VALUE ...] [--dry-run] [--resume] [--from-step STEP_ID] [--json]
       melix recipes init --from URI --task TASK [--output PATH] [--json]
+      melix cookbook recommend MODEL_ID --workload WORKLOAD [--server-platform PLATFORM] [--server-arch ARCH] [--operator-platform PLATFORM] [--operator-arch ARCH] [--browser-platform PLATFORM] [--browser-arch ARCH] [--json]
       melix model roots list [--json]
       melix model roots add --path PATH [--json]
       melix model roots remove --path PATH [--json]
@@ -3661,6 +3699,42 @@ public enum MelixCLIParser {
                     sourceURI: sourceURI,
                     task: task,
                     outputPath: values.single["--output"] ?? "",
+                    json: values.flags.contains("--json")
+                )
+            )
+        default:
+            throw MelixCLIError.usage(usageText)
+        }
+    }
+
+    private static func parseCookbook(_ arguments: [String]) throws -> MelixCLICommand {
+        guard let action = arguments.first else {
+            throw MelixCLIError.usage(usageText)
+        }
+        var optionArguments = Array(arguments.dropFirst())
+        switch action {
+        case "recommend":
+            let modelID = try extractPositionalValue(
+                from: &optionArguments,
+                label: "MODEL_ID",
+                command: "melix cookbook recommend"
+            )
+            let values = try ArgumentCursor(arguments: optionArguments).parse()
+            guard let workload = values.single["--workload"],
+                  workload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            else {
+                throw MelixCLIError.missingRequired("--workload is required for melix cookbook recommend.")
+            }
+            return .cookbookRecommend(
+                .init(
+                    modelID: modelID,
+                    workload: workload,
+                    serverPlatform: values.single["--server-platform"] ?? "",
+                    serverArch: values.single["--server-arch"] ?? "",
+                    operatorPlatform: values.single["--operator-platform"] ?? "",
+                    operatorArch: values.single["--operator-arch"] ?? "",
+                    browserPlatform: values.single["--browser-platform"] ?? "",
+                    browserArch: values.single["--browser-arch"] ?? "",
                     json: values.flags.contains("--json")
                 )
             )
@@ -7743,6 +7817,8 @@ public actor MelixCLIRunner {
             return try await runRecipesApply(options)
         case .recipesInit(let options):
             return try runRecipesInit(options)
+        case .cookbookRecommend(let options):
+            return try runCookbookRecommend(options)
         case .pipelineRun(let options):
             return try await runPipeline(options)
         case .batchRun(let options):
