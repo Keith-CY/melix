@@ -12046,6 +12046,7 @@ struct RuntimeViewModelTests {
         ] + tokenFragments.map(ControlPlaneChatStreamEvent.tokenDelta) + [
             .completed(finishReason: "stop", assistantText: assistantText, reasoningText: ""),
         ]
+        let coalescedRenderBudget = tokenFragments.count / 10
         await client.configureChatEvents(streamEvents)
         let metrics = MenuBarMetricsStore()
         let viewModel = RuntimeViewModel(client: client, metrics: metrics)
@@ -12071,14 +12072,17 @@ struct RuntimeViewModelTests {
 
         let finalAssistantEntry = try #require(viewModel.chatTranscript.first { $0.kind == .assistant })
         let metricsSnapshot = await metrics.snapshot()
+        let presentationFlushCount = try #require(metricsSnapshot["menu.chat_presentation_flush_count"])
         #expect(finalAssistantEntry.body == assistantText)
         #expect(completedCallbackAssistantBody == assistantText)
-        #expect(visibleAssistantBodies.count <= 8)
+        #expect(visibleAssistantBodies.count < tokenFragments.count)
+        #expect(visibleAssistantBodies.count <= coalescedRenderBudget)
         #expect(metricsSnapshot["menu.chat_stream_event_count"] == Double(streamEvents.count))
         #expect(metricsSnapshot["menu.chat_token_delta_count"] == Double(tokenFragments.count))
         #expect(metricsSnapshot["menu.chat_stream_transcript_bytes"] == Double(assistantText.utf8.count))
         #expect(metricsSnapshot["menu.chat_transcript_parity_mismatch_count"] == 0)
-        #expect((metricsSnapshot["menu.chat_presentation_flush_count"] ?? 0) <= 8)
+        #expect(presentationFlushCount < Double(tokenFragments.count))
+        #expect(presentationFlushCount <= Double(coalescedRenderBudget))
     }
 
     @Test("chat prompt creates a transient assistant pending row before the first token")

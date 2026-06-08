@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping
+from functools import lru_cache
 import json
 import os
 from pathlib import Path
@@ -115,8 +116,8 @@ def _changed_lines_by_path(repo_root: Path, rel_paths: list[str]) -> dict[str, s
     return {rel_path: changed_by_path.get(rel_path, set()) for rel_path in rel_paths}
 
 
-def _coverage_path_allowlist(env: Mapping[str, str]) -> frozenset[str] | None:
-    raw_value = env.get("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON", "").strip()
+@lru_cache(maxsize=16)
+def _coverage_path_allowlist_from_raw(raw_value: str) -> frozenset[str] | None:
     if not raw_value:
         return None
     if (
@@ -136,6 +137,11 @@ def _coverage_path_allowlist(env: Mapping[str, str]) -> frozenset[str] | None:
     if not isinstance(payload, list):
         raise SystemExit("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON must be a JSON list")
     return frozenset(str(path) for path in payload if str(path))
+
+
+def _coverage_path_allowlist(env: Mapping[str, str]) -> frozenset[str] | None:
+    raw_value = env.get("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON", "").strip()
+    return _coverage_path_allowlist_from_raw(raw_value)
 
 
 def _filter_coverage_paths(paths: list[str], allowlist: frozenset[str] | None) -> list[str]:

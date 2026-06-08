@@ -4,6 +4,7 @@ import json
 import statistics
 import sys
 import time
+import tracemalloc
 from pathlib import Path
 
 repo_root = Path.cwd()
@@ -87,6 +88,7 @@ def run_probe() -> dict[str, float]:
     sample_count = 5
     elapsed_samples: list[float] = []
     call_samples: list[float] = []
+    peak_samples: list[float] = []
     checksum = 0.0
 
     for _ in range(sample_count):
@@ -98,9 +100,13 @@ def run_probe() -> dict[str, float]:
             "embedding_backend": backend,
             "embedding_family_adapter": CountingEmbeddingFamilyAdapter(),
         }
+        tracemalloc.start()
         started = time.perf_counter()
         vectors = runtime.embed_inputs(loaded_model, inputs)
         elapsed_samples.append((time.perf_counter() - started) * 1000.0)
+        _, peak_bytes = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        peak_samples.append(float(peak_bytes))
         call_samples.append(float(backend.calls))
         checksum = sum(vector[0] for vector in vectors)
 
@@ -109,6 +115,7 @@ def run_probe() -> dict[str, float]:
     assert vectors[0] is not vectors[len(unique_inputs)]
     return {
         "elapsed_ms_mean": round(statistics.fmean(elapsed_samples), 6),
+        "peak_bytes_mean": round(statistics.fmean(peak_samples), 6),
         "embed_text_calls_mean": round(statistics.fmean(call_samples), 6),
         "input_count": float(len(inputs)),
         "unique_input_count": float(expected_unique_count),
