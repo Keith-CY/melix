@@ -336,11 +336,13 @@ def _processor_resume_mode(base_model_dir: Path) -> str:
 
 
 def _aux_modules_restored(base_model_dir: Path) -> bool:
+    auxiliary_prefixes = _AUXILIARY_MODULE_PREFIXES
+    scandir = os.scandir
     try:
-        with os.scandir(base_model_dir) as entries:
+        with scandir(base_model_dir) as entries:
             for entry in entries:
                 name = entry.name
-                if name.endswith(".py") and name.startswith(_AUXILIARY_MODULE_PREFIXES):
+                if name.endswith(".py") and name.startswith(auxiliary_prefixes):
                     return True
     except OSError:
         return False
