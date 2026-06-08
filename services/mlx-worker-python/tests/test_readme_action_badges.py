@@ -6,6 +6,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 README = REPO_ROOT / "README.md"
 RELEASE_GATES_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release-gates.yml"
+PACKAGE_SELF_CONTAINED_APP_WORKFLOW = (
+    REPO_ROOT / ".github" / "workflows" / "package-self-contained-app.yml"
+)
 
 
 def test_release_gates_badge_reports_main_branch_status() -> None:
@@ -33,6 +36,18 @@ def test_release_gates_main_push_runs_are_not_cancelled_by_later_main_pushes() -
 
     assert (
         "release-gates-${{ github.event_name }}-${{ github.ref }}-"
+        "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && "
+        "github.run_id || 'shared' }}"
+    ) in workflow
+    assert "github.event_name != 'push' || github.ref != 'refs/heads/main'" in workflow
+
+
+def test_app_packaging_main_push_runs_are_not_cancelled_by_later_main_pushes() -> None:
+    workflow = PACKAGE_SELF_CONTAINED_APP_WORKFLOW.read_text(encoding="utf-8")
+
+    assert (
+        "package-self-contained-app-${{ github.event_name == 'schedule' && 'schedule-' || '' }}"
+        "${{ github.ref }}-"
         "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && "
         "github.run_id || 'shared' }}"
     ) in workflow
