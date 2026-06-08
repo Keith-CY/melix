@@ -143,6 +143,27 @@ def compare_versions(left: str, right: str) -> int:
         return 0
     if right_length == left_length + 1 and right[0] == "v" and right.startswith(left, 1):
         return 0
+    if (
+        left
+        and right
+        and not left[0].isspace()
+        and not left[-1].isspace()
+        and not right[0].isspace()
+        and not right[-1].isspace()
+    ):
+        left_index = 1 if left[0] == "v" else 0
+        right_index = 1 if right[0] == "v" else 0
+        next_normalized_version_part = _next_normalized_version_part
+        while True:
+            left_value, left_index, left_done = next_normalized_version_part(left, left_index)
+            right_value, right_index, right_done = next_normalized_version_part(right, right_index)
+            if left_done and right_done:
+                return 0
+            if left_value < right_value:
+                return -1
+            if left_value > right_value:
+                return 1
+
     left_cleaned = left.strip()
     right_cleaned = right.strip()
     if left_cleaned == right_cleaned:
