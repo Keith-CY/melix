@@ -210,6 +210,8 @@ def test_coverage_path_allowlist_accepts_single_string_payload() -> None:
 
 
 def test_coverage_path_allowlist_parses_simple_string_without_json_decoder(monkeypatch) -> None:
+    changed_scope_coverage._coverage_path_allowlist_from_raw.cache_clear()
+
     def fail_loads(*args: object, **kwargs: object) -> object:  # pragma: no cover
         raise AssertionError("simple single-string allowlists should avoid json.loads")
 
@@ -218,6 +220,28 @@ def test_coverage_path_allowlist_parses_simple_string_without_json_decoder(monke
     assert changed_scope_coverage._coverage_path_allowlist(
         {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": '"pkg/direct.py"'}
     ) == {"pkg/direct.py"}
+
+
+def test_coverage_path_allowlist_reuses_cached_raw_payload_parse(monkeypatch) -> None:
+    changed_scope_coverage._coverage_path_allowlist_from_raw.cache_clear()
+    calls = 0
+    original_loads = changed_scope_coverage.json.loads
+
+    def counted_loads(*args: object, **kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        return original_loads(*args, **kwargs)
+
+    monkeypatch.setattr(changed_scope_coverage.json, "loads", counted_loads)
+    payload = '["direct.py", "context.py"]'
+
+    assert changed_scope_coverage._coverage_path_allowlist(
+        {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": payload}
+    ) == {"direct.py", "context.py"}
+    assert changed_scope_coverage._coverage_path_allowlist(
+        {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": payload}
+    ) == {"direct.py", "context.py"}
+    assert calls == 1
 
 
 def test_coverage_path_allowlist_escaped_string_uses_json_decoder() -> None:
