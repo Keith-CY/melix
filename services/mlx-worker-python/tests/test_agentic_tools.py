@@ -7,6 +7,7 @@ import pytest
 
 from worker.runtime.agentic_tools import AgenticToolRuntimeError, _context_list, execute_agentic_tool_calls
 from worker.runtime.tool_observation import ToolObservationPolicy
+from worker.runtime.tool_registry import ToolSelectionInput
 
 
 _BUILT_IN_TOOL_CALLS = (
@@ -60,6 +61,42 @@ def test_agentic_tool_runtime_records_timeout_and_failed_statuses() -> None:
     assert run.metrics["agentic_tool.timeout_count"] == 1.0
     assert run.metrics["agentic_tool.failed_count"] == 1.0
     assert "only supports deterministic arithmetic" in run.observations[1]["payload"]["error"]
+
+
+def test_agentic_tool_runtime_records_selection_receipt_for_selected_registry() -> None:
+    run = execute_agentic_tool_calls(
+        [{"id": "text-1", "name": "text_search", "arguments": {"query": "melix"}}],
+        fixture_context={"text_corpus": [{"id": "doc-1", "text": "Melix local runtime."}]},
+        tool_selection=ToolSelectionInput(
+            vector_available=True,
+            vector_selected_tool_ids=("text_search",),
+            max_selected_tools=2,
+        ),
+    )
+
+    assert run.registry_receipt["tools"] == ["local_compute", "text_search"]
+    selection_receipt = run.registry_receipt["tool_selection_receipt"]
+    assert selection_receipt["selection_mode"] == "vector"
+    assert selection_receipt["fallback_reason"] == ""
+    assert selection_receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+        {"tool_id": "text_search", "source": "vector"},
+    ]
+    assert selection_receipt["dropped_tool_count"] == 4
+    assert selection_receipt["selected_schema_bytes"] < selection_receipt["full_schema_bytes"]
+    assert "Melix local runtime" not in json.dumps(selection_receipt)
+    assert run.metrics["agentic_tool.completed_count"] == 1.0
+
+
+def test_agentic_tool_runtime_rejects_tool_dropped_by_selection() -> None:
+    with pytest.raises(AgenticToolRuntimeError, match="Unknown agentic tool requested: visit"):
+        execute_agentic_tool_calls(
+            [{"id": "visit-1", "name": "visit", "arguments": {"url": "fixture://page-1"}}],
+            tool_selection=ToolSelectionInput(
+                current_user_turn="Search local text evidence.",
+                vector_available=False,
+            ),
+        )
 
 
 @pytest.mark.parametrize(("tool_name", "arguments"), _BUILT_IN_TOOL_CALLS)

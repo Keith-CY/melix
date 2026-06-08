@@ -137,8 +137,10 @@ The v1 selector receipt is `melix.agentic_tool_selection.v1` and records:
 
 Receipts must not include raw prompt text, private context, or tool arguments.
 They exist to explain why a schema was included or dropped and to measure prompt
-schema overhead before a future prompt-assembly integration exposes selected
-tools to model requests.
+schema overhead. The deterministic agentic runtime records the selector receipt
+inside its `melix.agentic_tool_run.v1` registry receipt when a caller provides a
+selection input, and the selected registry is the execution allowlist for that
+run.
 
 ## Observation Contract
 
