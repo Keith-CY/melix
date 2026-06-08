@@ -395,6 +395,31 @@ def test_size_hint_model_marker_scan_preserves_case_insensitive_pairs() -> None:
         assert hub_catalog_module._may_contain_model_marker(text) is False
 
 
+def test_size_hint_scans_multiple_text_fields_before_joining(monkeypatch: pytest.MonkeyPatch) -> None:
+    scanned_texts: list[str] = []
+    original_size_hint = hub_catalog_module._size_hint_from_text
+
+    def tracking_size_hint(text: str, *, allow_bare: bool) -> int:
+        scanned_texts.append(text)
+        return original_size_hint(text, allow_bare=allow_bare)
+
+    monkeypatch.setattr(hub_catalog_module, "_size_hint_from_text", tracking_size_hint)
+
+    assert (
+        hub_catalog_module._size_hint_bytes(
+            {
+                "description": "adapter summary without size",
+                "readme": "README\nModel size: 12 GB\nother metadata",
+                "cardData": {"description": "card metadata without size"},
+            }
+        )
+        == 12 * GB
+    )
+    assert scanned_texts == [
+        "README\nModel size: 12 GB\nother metadata",
+    ]
+
+
 def test_weight_or_config_file_preserves_case_insensitive_matches() -> None:
     assert hub_catalog_module._is_weight_or_config_file("config.json") is True
     assert hub_catalog_module._is_weight_or_config_file("model.safetensors") is True
@@ -1136,10 +1161,11 @@ def test_size_hint_bytes_preserves_combined_marker_parsing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, bool]] = []
+    original_size_hint = hub_catalog_module._size_hint_from_text
 
     def tracked(text: str, *, allow_bare: bool) -> int:
         calls.append((text, allow_bare))
-        return 5 * MB
+        return original_size_hint(text, allow_bare=allow_bare)
 
     monkeypatch.setattr(hub_catalog_module, "_size_hint_from_text", tracked)
 
@@ -1153,7 +1179,10 @@ def test_size_hint_bytes_preserves_combined_marker_parsing(
         )
         == 5 * MB
     )
-    assert calls == [("Model size:\n5 MB\noperator note", False)]
+    assert calls == [
+        ("Model size:", False),
+        ("Model size:\n5 MB\noperator note", False),
+    ]
 
 
 def test_size_hint_bytes_uses_direct_card_model_size_without_regex(
