@@ -329,6 +329,16 @@ def test_ocr_single_image_token_count_reuses_same_request_cache(
 
     assert runtime.prompt_token_count(request) == len(prompt_text.split()) + 16
     assert runtime.prompt_token_count(request) == len(prompt_text.split()) + 16
+
+    class ExplodingMediaList(list):
+        def __bool__(self) -> bool:  # pragma: no cover - exercised only on regression
+            raise AssertionError("identity cache hits should not re-read request videos")
+
+        def __len__(self) -> int:  # pragma: no cover - exercised only on regression
+            raise AssertionError("identity cache hits should not re-read request images")
+
+    object.__setattr__(request, "images", ExplodingMediaList(request.images))
+    object.__setattr__(request, "videos", ExplodingMediaList(request.videos))
     assert runtime.prompt_token_count(request) == len(prompt_text.split()) + 16
 
     equivalent_request = PreparedVisionRequest(

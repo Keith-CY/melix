@@ -28,7 +28,7 @@ def _build_snapshot(root: Path, *, row_count: int, sidecar_count: int) -> Path:
     snapshot_root = root / "snapshot"
     snapshot_root.mkdir(parents=True)
     for index in range(sidecar_count, 0, -1):
-        (snapshot_root / f"sidecar-{index:05d}.txt").write_text("ignored\n", encoding="utf-8")
+        (snapshot_root / f"000-sidecar-{index:05d}.txt").write_text("ignored\n", encoding="utf-8")
     snapshot_dir = snapshot_root / "data"
     snapshot_dir.mkdir()
     rows = [{"prompt": f"prompt-{index}", "answer": f"answer-{index}"} for index in range(row_count)]
