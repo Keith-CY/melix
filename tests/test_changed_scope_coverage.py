@@ -209,6 +209,23 @@ def test_coverage_path_allowlist_accepts_single_string_payload() -> None:
     ) == {"direct.py"}
 
 
+def test_coverage_path_allowlist_parses_simple_string_without_json_decoder(monkeypatch) -> None:
+    def fail_loads(*args: object, **kwargs: object) -> object:  # pragma: no cover
+        raise AssertionError("simple single-string allowlists should avoid json.loads")
+
+    monkeypatch.setattr(changed_scope_coverage.json, "loads", fail_loads)
+
+    assert changed_scope_coverage._coverage_path_allowlist(
+        {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": '"pkg/direct.py"'}
+    ) == {"pkg/direct.py"}
+
+
+def test_coverage_path_allowlist_escaped_string_uses_json_decoder() -> None:
+    assert changed_scope_coverage._coverage_path_allowlist(
+        {"MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON": '"pkg/\\u0064irect.py"'}
+    ) == {"pkg/direct.py"}
+
+
 def test_parse_changed_lines_ignores_no_newline_marker_and_keeps_line_numbers() -> None:
     diff_text = "\n".join(
         [
