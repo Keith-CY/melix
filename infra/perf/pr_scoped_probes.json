@@ -4418,6 +4418,12 @@
         "unit": "ms",
         "direction": "lower_is_better",
         "warn_pct": 5.0
+      },
+      {
+        "key": "descriptor_build_elapsed_ms_mean",
+        "unit": "ms",
+        "direction": "lower_is_better",
+        "warn_pct": 5.0
       }
     ]
   },

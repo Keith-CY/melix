@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass, field
+from json.encoder import encode_basestring_ascii
 from typing import Any, cast
 
 from packages.protocol.python.worker.v1 import common_pb2
@@ -10,7 +10,7 @@ from packages.protocol.python.worker.v1 import common_pb2
 
 _TOOL_CONFIG = common_pb2.ToolConfig
 _TOOL_CONFIG_FROM_BYTES = _TOOL_CONFIG.FromString
-_COMPACT_SORTED_JSON_ENCODER = json.JSONEncoder(separators=(",", ":"), sort_keys=True)
+_JSON_STRING = encode_basestring_ascii
 _COPY_DICT = dict.copy
 _COPY_LIST = list.copy
 _MISSING_TOOL_SENTINEL = object()
@@ -20,6 +20,26 @@ def _copy_tool_config(template: common_pb2.ToolConfig) -> common_pb2.ToolConfig:
     config = _TOOL_CONFIG()
     config.CopyFrom(template)
     return config
+
+
+def _schema_json_from_components(
+    schema_properties: tuple[tuple[str, dict[str, Any]], ...],
+    required_arguments: tuple[str, ...],
+) -> str:
+    quote = _JSON_STRING
+    properties = ",".join(
+        f"{quote(name)}:{{\"description\":{quote(cast(str, schema['description']))},"
+        f"\"type\":{quote(cast(str, schema['type']))}}}"
+        for name, schema in sorted(schema_properties)
+    )
+    required = ",".join(quote(name) for name in required_arguments)
+    return (
+        '{"additionalProperties":false,"properties":{'
+        f"{properties}"
+        '},"required":['
+        f"{required}"
+        '],"type":"object"}'
+    )
 
 
 _OpenAIToolTemplate = tuple[
@@ -126,7 +146,7 @@ class ToolDescriptor:
             (argument.name, argument.json_schema()) for argument in self.arguments
         )
         object.__setattr__(self, "_cached_schema_properties", schema_properties)
-        cached_schema = _COMPACT_SORTED_JSON_ENCODER.encode(self.schema_payload())
+        cached_schema = _schema_json_from_components(schema_properties, required_arguments)
         object.__setattr__(self, "_cached_schema", cached_schema)
         # The registry encoder keeps ensure_ascii=True, so the compact schema
         # string is ASCII-only and its character length matches UTF-8 bytes.

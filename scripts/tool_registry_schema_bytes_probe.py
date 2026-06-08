@@ -35,6 +35,7 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
     full_selection_config_elapsed_samples: list[float] = []
     full_selection_config_distinct_objects: list[float] = []
     partial_selection_config_elapsed_samples: list[float] = []
+    descriptor_build_elapsed_samples: list[float] = []
     checksum = 0
     original_schema_byte_count = getattr(ToolDescriptor, "schema_byte_count", None)
 
@@ -113,6 +114,30 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
             partial_selection_config_elapsed_samples.append(
                 (time.perf_counter() - partial_selection_started) * 1000.0
             )
+
+            descriptor_build_started = time.perf_counter()
+            for index in range(iterations):
+                descriptor = ToolDescriptor(
+                    name=f"probe_tool_{index}",
+                    description="Synthetic probe tool.",
+                    tool_kind="probe.synthetic",
+                    observation_kind="probe_result",
+                    arguments=(
+                        tool_registry_module.ToolArgumentDescriptor(
+                            "query", "string", "Probe query."
+                        ),
+                        tool_registry_module.ToolArgumentDescriptor(
+                            "max_results",
+                            "integer",
+                            "Maximum result count.",
+                            required=False,
+                        ),
+                    ),
+                )
+                checksum += descriptor.schema_byte_count()
+            descriptor_build_elapsed_samples.append(
+                (time.perf_counter() - descriptor_build_started) * 1000.0
+            )
     finally:
         tool_registry_module.ToolDescriptor.json_schema = original_json_schema
         if original_schema_byte_count is None:
@@ -139,6 +164,9 @@ def _measure(iterations: int, sample_count: int) -> dict[str, float]:
         ),
         "partial_selection_tool_config_elapsed_ms_mean": statistics.fmean(
             partial_selection_config_elapsed_samples
+        ),
+        "descriptor_build_elapsed_ms_mean": statistics.fmean(
+            descriptor_build_elapsed_samples
         ),
         "schema_bytes": float(expected_schema_bytes),
         "checksum": float(checksum),

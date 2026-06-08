@@ -615,6 +615,9 @@ def test_tool_descriptor_normalizes_exported_fields_and_caches_schema() -> None:
     assert tool.tool_kind == "vision.image_crop"
     assert tool.observation_kind == "image_region"
     assert tool.json_schema() is tool.json_schema()
+    assert tool.json_schema() == json.dumps(
+        tool.schema_payload(), separators=(",", ":"), sort_keys=True
+    )
     assert tool.schema_byte_count() == len(tool.json_schema().encode("utf-8"))
     assert tool.as_openai_tool()["function"]["parameters"] == {
         "type": "object",
