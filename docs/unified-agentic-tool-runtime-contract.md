@@ -271,6 +271,16 @@ Receipt byte counters describe completed tool effects only; failed receipts keep
 byte counters at zero even if a preflight read occurred before the operation was
 rejected.
 
+The deterministic `visit` adapter must reuse that same boundary for local
+workspace reads. When a caller provides an explicit workspace root and asks
+`visit` to read a relative path, absolute path, or local `file://` URI, the
+runtime must resolve the target before reading. Successful local reads must
+attach a `workspace_path_receipt` to the page extraction payload. Refused paths
+must emit a failed observation with `reason = workspace_path_refused`,
+`source_type = workspace_file`, `source_id`, `workspace_path_receipt`, and a
+corrective action. Fixture-backed pages and non-local URLs keep their existing
+behavior unless a future slice adds a separate retrieval boundary.
+
 Live MCP, agent, workflow, and local-job mutation surfaces must reuse this
 operator layer or preserve the same resolver-before-filesystem-access invariant
 when they expose file operations. Broader prompt assembly receipts and direct
