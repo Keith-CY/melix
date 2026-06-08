@@ -173,6 +173,20 @@ def test_compare_versions_raw_v_prefix_equivalent_values_skip_stripping() -> Non
     assert compare_versions("2.10.0", StripForbiddenVersion("v2.10.0")) == 0
 
 
+def test_compare_versions_clean_differing_values_skip_stripping() -> None:
+    class StripForbiddenVersion(str):
+        def strip(self, chars: str | None = None) -> str:  # pragma: no cover - sentinel
+            raise AssertionError("compare_versions stripped clean differing values")
+
+    assert compare_versions(StripForbiddenVersion("v3.2.1+build"), "v3.2.0+build") == 1
+    assert compare_versions("2.9.99", StripForbiddenVersion("2.10.0")) == -1
+
+
+def test_compare_versions_whitespace_differing_values_still_normalize() -> None:
+    assert compare_versions(" v3.2.1+build ", "v3.2.0+build") == 1
+    assert compare_versions("2.9.99", " 2.10.0 ") == -1
+
+
 def test_resolve_http_port_can_pick_an_available_port_when_requested_is_busy() -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
