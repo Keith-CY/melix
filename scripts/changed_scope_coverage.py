@@ -119,6 +119,14 @@ def _coverage_path_allowlist(env: Mapping[str, str]) -> frozenset[str] | None:
     raw_value = env.get("MELIX_CHANGED_SCOPE_COVERAGE_PATHS_JSON", "").strip()
     if not raw_value:
         return None
+    if (
+        len(raw_value) >= 2
+        and raw_value[0] == '"'
+        and raw_value[-1] == '"'
+        and "\\" not in raw_value
+        and '"' not in raw_value[1:-1]
+    ):
+        return frozenset([raw_value[1:-1]] if raw_value[1:-1] else [])
     try:
         payload = json.loads(raw_value)
     except json.JSONDecodeError as exc:
