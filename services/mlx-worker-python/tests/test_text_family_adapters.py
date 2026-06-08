@@ -117,6 +117,40 @@ def test_detect_text_family_identity_prefers_explicit_supported_override() -> No
     assert detected.source == "explicit_override"
 
 
+def test_detect_text_family_identity_uses_exact_explicit_family_fast_path() -> None:
+    class NoNormalizeFamily(str):
+        def strip(self, *args: object, **kwargs: object) -> str:  # pragma: no cover
+            raise AssertionError("exact explicit family ids should avoid strip allocation")
+
+        def lower(self) -> str:  # pragma: no cover
+            raise AssertionError("exact explicit family ids should avoid lower allocation")
+
+    detected = detect_text_family_identity(
+        model_path="models/unknown-text-model",
+        config_payload={"model_type": "llama"},
+        explicit_family_id=NoNormalizeFamily("qwen3moe"),
+    )
+
+    assert detected.family_id == "qwen3moe"
+    assert detected.architecture == "llama"
+    assert detected.source == "explicit_override"
+
+
+def test_detect_text_family_identity_uses_lowercase_model_type_fast_path() -> None:
+    class NoLowerModelType(str):
+        def lower(self) -> str:  # pragma: no cover
+            raise AssertionError("lowercase model_type should avoid lower allocation")
+
+    detected = detect_text_family_identity(
+        model_path="models/unknown-text-model",
+        config_payload={"model_type": NoLowerModelType("qwen3_moe")},
+        explicit_family_id="qwen3moe",
+    )
+
+    assert detected.architecture == "qwen3_moe"
+    assert detected.family_id == "qwen3moe"
+
+
 def test_detect_text_family_identity_rejects_unsupported_explicit_override() -> None:
     with pytest.raises(ValueError, match="Unsupported text family adapter"):
         detect_text_family_identity(
