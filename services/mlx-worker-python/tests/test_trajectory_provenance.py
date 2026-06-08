@@ -298,6 +298,20 @@ def test_trajectory_provenance_helpers_ignore_empty_or_unrelated_inputs(
         "trajectory_split": "train",
         "trajectory_trace_digest": "abc123",
     }
+    assert trajectory_provenance_from_snapshot_manifest(
+        {
+            "format": "agentic_tool_trace",
+            "source_dataset_id": 123,
+            "version": " 2026-06-08 ",
+            "trajectory_trace_digest": 456,
+        }
+    ) == {
+        "trajectory_dataset_id": "123",
+        "trajectory_dataset_version": "2026-06-08",
+        "trajectory_schema_version": "melix.agentic_tool_trace.v1",
+        "trajectory_split": "train",
+        "trajectory_trace_digest": "456",
+    }
     assert (
         load_trajectory_provenance_from_normalized_snapshot(
             format_name="text",
