@@ -1404,6 +1404,22 @@ def test_raw_model_spec_loads_config_payload_when_not_supplied(
         )
         == "google/gemma-4-E4B-it-qat-q4_0-unquantized"
     )
+    assert (
+        catalog_module._gemma4_qat_source_model(
+            "noise base_model: ignored\n  'base_model: google/gemma-4-E2B-it-qat-q4_0-unquantized'\n",
+            model_size="e2b",
+            companion=False,
+        )
+        == "google/gemma-4-E2B-it-qat-q4_0-unquantized"
+    )
+    assert (
+        catalog_module._gemma4_qat_source_model(
+            "base_model:\nbase_model: google/gemma-4-E2B-it-qat-q4_0-unquantized",
+            model_size="e2b",
+            companion=False,
+        )
+        == "google/gemma-4-E2B-it-qat-q4_0-unquantized"
+    )
 
 
 def test_registry_snapshot_does_not_stat_plain_local_manifest_after_tree_scan(
