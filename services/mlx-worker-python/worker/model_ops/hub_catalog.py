@@ -510,7 +510,7 @@ def _is_mlx_compatible(
     lowered_tags = _normalized_lowered_tags(tags, lowered_tags)
     if "mlx" in lowered_tags:
         return True
-    if library_name.lower() == "mlx":
+    if _is_mlx_atom(library_name):
         return True
     lowered_repo_id = repo_id.lower()
     if "mlx" in lowered_repo_id:
