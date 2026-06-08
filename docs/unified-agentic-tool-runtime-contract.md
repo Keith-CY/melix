@@ -226,6 +226,14 @@ assembly, RAG stores, skill entrypoints, memory entrypoints, and background-job
 continuations must reuse this receipt shape when they add their prompt-context
 boundary evidence under #1761.
 
+Rejected prompt-context segments should use the same receipt schema with
+`included = false`. For the agentic judge prompt boundary, unsupported
+top-level user-payload fields emit `reason =
+unsupported_user_payload_field`, and forbidden nested no-leak keys emit
+`reason = forbidden_user_payload_key`. These refusal receipts are attached to
+the validation error before prompt snapshot persistence so refused segments
+cannot appear in the final prompt messages.
+
 ### Workspace Path Boundary
 
 Agent and workflow tools that read, write, or edit local files must resolve

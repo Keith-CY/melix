@@ -203,6 +203,12 @@ _AGENTIC_JUDGE_FORBIDDEN_CONTEXT_KEYS = frozenset(
 )
 
 
+class AgenticJudgeContextValidationError(ValueError):
+    def __init__(self, message: str, *, refusal_receipts: list[dict[str, object]]) -> None:
+        super().__init__(message)
+        self.refusal_receipts = refusal_receipts
+
+
 @dataclass(frozen=True)
 class EvaluationRun:
     job: EvaluationJob | EvaluationCompareJob
@@ -2515,6 +2521,30 @@ class EvaluationCore:
         }
 
     @staticmethod
+    def _agentic_judge_refusal_receipt(
+        *,
+        source_field: str,
+        reason: str,
+    ) -> dict[str, object]:
+        return {
+            "schema_version": _UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION,
+            "segment_id": f"agentic_judge_user_payload:{source_field}",
+            "source_type": "agentic_judge_user_payload",
+            "source_field": source_field,
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": False,
+            "reason": reason,
+            "corrective_action": (
+                "Remove this field before projecting the sample-derived context "
+                "into the judge user payload."
+            ),
+        }
+
+    @staticmethod
     def _agentic_judge_audit_row(
         *,
         job_id: str,
@@ -2554,13 +2584,28 @@ class EvaluationCore:
     def _validate_agentic_judge_user_payload(user_payload: dict[str, object]) -> None:
         unsupported_fields = sorted(set(user_payload) - _AGENTIC_JUDGE_USER_PAYLOAD_FIELDS)
         if unsupported_fields:
-            raise ValueError(
+            raise AgenticJudgeContextValidationError(
                 "agentic judge context contains unsupported user payload fields: "
-                + ", ".join(unsupported_fields)
+                + ", ".join(unsupported_fields),
+                refusal_receipts=[
+                    EvaluationCore._agentic_judge_refusal_receipt(
+                        source_field=source_field,
+                        reason="unsupported_user_payload_field",
+                    )
+                    for source_field in unsupported_fields
+                ],
             )
         for field_path, field_name in EvaluationCore._iter_json_field_paths(user_payload):
             if EvaluationCore._agentic_judge_context_key_is_forbidden(field_name):
-                raise ValueError(f"agentic judge context contains forbidden field {field_path}")
+                raise AgenticJudgeContextValidationError(
+                    f"agentic judge context contains forbidden field {field_path}",
+                    refusal_receipts=[
+                        EvaluationCore._agentic_judge_refusal_receipt(
+                            source_field=field_path,
+                            reason="forbidden_user_payload_key",
+                        )
+                    ],
+                )
 
     @staticmethod
     def _iter_json_field_paths(

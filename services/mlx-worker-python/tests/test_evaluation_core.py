@@ -1289,6 +1289,22 @@ def test_agentic_judge_payload_no_leak_validator_rejects_forbidden_keys(
     with pytest.raises(ValueError) as exc_info:
         EvaluationCore._validate_agentic_judge_user_payload(user_payload)
     assert str(exc_info.value) == f"agentic judge context contains forbidden field {expected_path}"
+    assert exc_info.value.refusal_receipts == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": f"agentic_judge_user_payload:{expected_path}",
+            "source_type": "agentic_judge_user_payload",
+            "source_field": expected_path,
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": False,
+            "reason": "forbidden_user_payload_key",
+            "corrective_action": "Remove this field before projecting the sample-derived context into the judge user payload.",
+        }
+    ]
 
 
 def test_agentic_judge_payload_no_leak_validator_allows_explicit_answer_values() -> None:
@@ -1320,10 +1336,7 @@ def test_agentic_judge_payload_no_leak_validator_allows_explicit_answer_values()
 
 
 def test_agentic_judge_payload_no_leak_validator_rejects_extra_payload_fields() -> None:
-    with pytest.raises(
-        ValueError,
-        match="agentic judge context contains unsupported user payload fields: hidden_gold",
-    ):
+    with pytest.raises(ValueError) as exc_info:
         EvaluationCore._validate_agentic_judge_user_payload(
             {
                 "question": "What text is visible?",
@@ -1338,6 +1351,23 @@ def test_agentic_judge_payload_no_leak_validator_rejects_extra_payload_fields() 
                 "hidden_gold": "MELIX",
             }
         )
+    assert str(exc_info.value) == "agentic judge context contains unsupported user payload fields: hidden_gold"
+    assert exc_info.value.refusal_receipts == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": "agentic_judge_user_payload:hidden_gold",
+            "source_type": "agentic_judge_user_payload",
+            "source_field": "hidden_gold",
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": False,
+            "reason": "unsupported_user_payload_field",
+            "corrective_action": "Remove this field before projecting the sample-derived context into the judge user payload.",
+        }
+    ]
 
 
 def test_run_local_suite_returns_agentic_judge_artifacts_without_jobs_root(

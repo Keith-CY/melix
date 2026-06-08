@@ -1441,6 +1441,15 @@ prompt data only; they must not be projected into system or developer
 instructions. The receipt count must match the number of admitted user-payload
 fields.
 
+When the judge user-payload validator rejects context before prompt snapshot
+persistence, the validation error must expose `refusal_receipts` using the same
+`melix.untrusted_context_receipt.v1` schema. Refusal receipts mark the refused
+segment as `included = false`, `boundary_checked = true`, `policy =
+data_only`, and `message_role = user`. Unsupported top-level user-payload
+fields use `reason = unsupported_user_payload_field`; forbidden nested no-leak
+keys use `reason = forbidden_user_payload_key`. Rejected segments must not be
+included in the persisted `messages` payload.
+
 `agentic-judge-audit.jsonl` is one JSON object per selected sample. Each row
 must include:
 
