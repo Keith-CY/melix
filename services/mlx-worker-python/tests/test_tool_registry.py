@@ -13,8 +13,10 @@ from worker.runtime.tool_registry import (
     ToolDescriptor,
     ToolRegistry,
     ToolRegistryError,
+    ToolSelectionInput,
     built_in_tool_config,
     built_in_tool_registry,
+    select_agentic_tools_for_turn,
 )
 
 
@@ -563,6 +565,88 @@ def test_tool_registry_worker_tool_config_reuses_cached_serialized_snapshot(
     assert config is not expected_config
     config.tools[0].name = "mutated"
     assert registry.as_worker_tool_config().tools[0].name == "image_crop"
+
+
+def test_agentic_tool_selection_preserves_always_available_tools_with_vector_hits() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Search the local corpus, then calculate the answer.",
+            vector_selected_tool_ids=("text_search",),
+            vector_available=True,
+            max_selected_tools=3,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "text_search")
+    assert result.receipt == {
+        "schema_version": "melix.agentic_tool_selection.v1",
+        "toolset_version": "melix.agentic_tools.builtin.v1",
+        "selection_mode": "vector",
+        "vector_available": True,
+        "fallback_reason": "",
+        "selected_tools": [
+            {"tool_id": "local_compute", "source": "always"},
+            {"tool_id": "text_search", "source": "vector"},
+        ],
+        "dropped_tool_count": 4,
+        "full_schema_bytes": built_in_tool_registry().metrics().schema_bytes,
+        "selected_schema_bytes": result.registry.metrics().schema_bytes,
+    }
+    assert result.registry.metrics().schema_bytes < built_in_tool_registry().metrics().schema_bytes
+
+
+def test_agentic_tool_selection_uses_keyword_fallback_when_vector_unavailable() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Open fixture://docs/provider-contract and summarize the page.",
+            vector_available=False,
+            max_selected_tools=4,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "visit")
+    assert result.receipt["selection_mode"] == "keyword"
+    assert result.receipt["vector_available"] is False
+    assert result.receipt["fallback_reason"] == "vector_unavailable"
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+        {"tool_id": "visit", "source": "keyword"},
+    ]
+
+
+def test_agentic_tool_selection_uses_recent_context_for_short_followup() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Use two results this time.",
+            recent_user_turns=("Search the local text evidence for runtime startup receipts.",),
+            vector_available=False,
+            max_selected_tools=4,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute", "text_search")
+    assert result.receipt["selection_mode"] == "keyword"
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+        {"tool_id": "text_search", "source": "keyword_context"},
+    ]
+
+
+def test_agentic_tool_selection_records_fallback_when_no_keyword_matches() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Answer briefly.",
+            vector_available=False,
+            max_selected_tools=4,
+        )
+    )
+
+    assert result.registry.names() == ("local_compute",)
+    assert result.receipt["selection_mode"] == "fallback"
+    assert result.receipt["fallback_reason"] == "no_keyword_match"
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"}
+    ]
 
 
 def test_tool_registry_exports_worker_tool_config_metadata() -> None:
