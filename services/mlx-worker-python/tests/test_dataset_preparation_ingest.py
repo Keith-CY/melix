@@ -9,6 +9,8 @@ import pytest
 
 from worker.productization.dataset_preparation import (
     DatasetIngestRequest,
+    _SOURCE_KIND_BY_NAME,
+    _SOURCE_KIND_NAME_CACHE_MAX,
     _iter_source_file_paths,
     _source_kind,
     prepare_dataset_ingest,
@@ -49,6 +51,8 @@ def test_dataset_ingest_source_file_paths_use_scandir_without_rglob(
 
 
 def test_dataset_ingest_source_kind_uses_single_suffix_fast_path() -> None:
+    _SOURCE_KIND_BY_NAME.clear()
+
     assert _source_kind(Path("paper.pdf.txt")) == "pdf"
     assert _source_kind(Path("paper.PdF.txt")) == "pdf"
     assert _source_kind(Path("paper.PDF.TXT")) == "pdf"
@@ -62,6 +66,25 @@ def test_dataset_ingest_source_kind_uses_single_suffix_fast_path() -> None:
     assert _source_kind(Path("records.JSONL")) == "structured_data"
     assert _source_kind(Path("README")) is None
     assert _source_kind(Path("archive.tar.gz")) is None
+
+
+def test_dataset_ingest_source_kind_reuses_cached_basename_classification() -> None:
+    _SOURCE_KIND_BY_NAME.clear()
+
+    assert _source_kind(Path("source/sample-0001.txt")) == "text"
+    assert len(_SOURCE_KIND_BY_NAME) == 1
+    assert _source_kind(Path("other/sample-0001.txt")) == "text"
+
+    assert len(_SOURCE_KIND_BY_NAME) == 1
+
+
+def test_dataset_ingest_source_kind_name_cache_clears_at_bound() -> None:
+    _SOURCE_KIND_BY_NAME.clear()
+    _SOURCE_KIND_BY_NAME.update({f"cached-{index}.txt": "text" for index in range(_SOURCE_KIND_NAME_CACHE_MAX)})
+
+    assert _source_kind(Path("next.txt")) == "text"
+
+    assert _SOURCE_KIND_BY_NAME == {"next.txt": "text"}
 
 
 def test_dataset_ingest_source_file_paths_skips_scandir_errors(
