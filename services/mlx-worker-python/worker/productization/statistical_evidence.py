@@ -311,17 +311,16 @@ def _ordered_percentile(ordered: list[float], percentile: float) -> float:
     if not ordered:
         return 0.0
     bounded_percentile = min(max(percentile, 0.0), 1.0)
-    if len(ordered) == 1:
+    last_index = len(ordered) - 1
+    if last_index == 0:
         return ordered[0]
-    position = bounded_percentile * (len(ordered) - 1)
-    lower_index = int(math.floor(position))
-    upper_index = int(math.ceil(position))
+    position = bounded_percentile * last_index
+    lower_index = int(position)
     lower_value = ordered[lower_index]
-    upper_value = ordered[upper_index]
-    if lower_index == upper_index:
+    if position == lower_index:
         return lower_value
-    fraction = position - lower_index
-    return lower_value + (upper_value - lower_value) * fraction
+    upper_value = ordered[lower_index + 1]
+    return lower_value + (upper_value - lower_value) * (position - lower_index)
 
 
 def _percentile_ordered(ordered: list[float], percentile: float) -> float:
