@@ -2612,6 +2612,7 @@ def test_deterministic_embedding_duplicate_probe_script_emits_metrics(
     assert 0 < metrics["unique_input_count"] < metrics["input_count"]
     assert metrics["embed_text_calls_mean"] == metrics["unique_input_count"]
     assert metrics["elapsed_ms_mean"] >= 0
+    assert metrics["peak_bytes_mean"] > 0
     assert metrics["checksum"] > 0
 
 
