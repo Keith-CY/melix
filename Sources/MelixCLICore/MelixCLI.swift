@@ -2057,6 +2057,7 @@ public struct RemoteServerMutationOptions: Equatable, Sendable {
     public let apiKey: String
     public let timeoutSeconds: UInt32
     public let rateLimitPerMinute: UInt32
+    public let toolSupportMode: RemoteServerToolSupportMode?
     public let json: Bool
 
     public init(
@@ -2069,6 +2070,7 @@ public struct RemoteServerMutationOptions: Equatable, Sendable {
         apiKey: String = "",
         timeoutSeconds: UInt32 = 60,
         rateLimitPerMinute: UInt32 = 0,
+        toolSupportMode: RemoteServerToolSupportMode? = nil,
         json: Bool = false
     ) {
         self.remoteServerID = remoteServerID
@@ -2080,6 +2082,7 @@ public struct RemoteServerMutationOptions: Equatable, Sendable {
         self.apiKey = apiKey
         self.timeoutSeconds = timeoutSeconds
         self.rateLimitPerMinute = rateLimitPerMinute
+        self.toolSupportMode = toolSupportMode
         self.json = json
     }
 }
@@ -2655,8 +2658,8 @@ public enum MelixCLIParser {
       melix server stop [--server-session-id ID] [--json]
       melix server set-idle-policy [--server-session-id ID] --auto-sleep (true|false) --light-sleep-after N --deep-sleep-after N [--json]
       melix remote-server list [--json]
-      melix remote-server add --remote-server-id ID --title TITLE --provider kimi|gemini|deepseek|glm|custom [--base-url URL] --model MODEL [--api-key KEY] [--timeout-seconds N] [--rate-limit-per-minute N] [--json]
-      melix remote-server update --remote-server-id ID [--title TITLE] [--provider PROVIDER] [--base-url URL] [--model MODEL] [--api-key KEY] [--timeout-seconds N] [--rate-limit-per-minute N] [--json]
+      melix remote-server add --remote-server-id ID --title TITLE --provider kimi|gemini|deepseek|glm|custom [--base-url URL] --model MODEL [--api-key KEY] [--timeout-seconds N] [--rate-limit-per-minute N] [--tool-support-mode auto|force-on|force-off] [--json]
+      melix remote-server update --remote-server-id ID [--title TITLE] [--provider PROVIDER] [--base-url URL] [--model MODEL] [--api-key KEY] [--timeout-seconds N] [--rate-limit-per-minute N] [--tool-support-mode auto|force-on|force-off] [--json]
       melix remote-server remove --remote-server-id ID [--json]
       melix remote-server test --remote-server-id ID [--model MODEL] [--json]
       melix chat run (--model-id MODEL_ID | --remote-server-id ID --model MODEL) --message TEXT [--system TEXT] [--server-session-id ID] [--json]
@@ -4189,6 +4192,7 @@ public enum MelixCLIParser {
                         option: "--rate-limit-per-minute",
                         defaultValue: 0
                     ) ?? 0,
+                    toolSupportMode: try parseRemoteServerToolSupportMode(values.single["--tool-support-mode"]) ?? .auto,
                     json: json
                 )
             )
@@ -4227,6 +4231,7 @@ public enum MelixCLIParser {
                         option: "--rate-limit-per-minute",
                         defaultValue: 0
                     ) ?? 0,
+                    toolSupportMode: try parseRemoteServerToolSupportMode(values.single["--tool-support-mode"]),
                     json: json
                 )
             )
@@ -4257,6 +4262,20 @@ public enum MelixCLIParser {
         }
         throw MelixCLIError.usage(
             "--provider must be one of kimi, gemini, deepseek, glm, or custom."
+        )
+    }
+
+    private static func parseRemoteServerToolSupportMode(
+        _ rawValue: String?
+    ) throws -> RemoteServerToolSupportMode? {
+        guard let rawValue, rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            return nil
+        }
+        if let mode = RemoteServerToolSupportMode.normalized(rawValue) {
+            return mode
+        }
+        throw MelixCLIError.usage(
+            "--tool-support-mode must be one of auto, force-on, or force-off."
         )
     }
 
@@ -8392,6 +8411,7 @@ public actor MelixCLIRunner {
                     defaultModelID: options.defaultModelID,
                     timeoutSeconds: options.timeoutSeconds,
                     rateLimitPerMinute: options.rateLimitPerMinute,
+                    toolSupportMode: options.toolSupportMode ?? .auto,
                     apiKey: options.apiKey
                 )
             )
@@ -8422,6 +8442,7 @@ public actor MelixCLIRunner {
                     defaultModelID: options.defaultModelID.isEmpty ? existing.defaultModelID : options.defaultModelID,
                     timeoutSeconds: options.timeoutSeconds == 0 ? existing.timeoutSeconds : options.timeoutSeconds,
                     rateLimitPerMinute: options.rateLimitPerMinute == 0 ? existing.rateLimitPerMinute : options.rateLimitPerMinute,
+                    toolSupportMode: options.toolSupportMode ?? existing.toolSupportMode,
                     apiKey: options.apiKey
                 )
             )
@@ -10456,9 +10477,9 @@ public actor MelixCLIRunner {
             return "No remote servers configured.\n"
         }
         let rows = servers.map { server in
-            "\(server.id)\t\(server.title)\t\(server.providerPreset.rawValue)\t\(server.providerKind)\t\(server.defaultModelID)\t\(server.healthStatus)\t\(server.apiKeyHint)"
+            "\(server.id)\t\(server.title)\t\(server.providerPreset.rawValue)\t\(server.providerKind)\t\(server.defaultModelID)\t\(server.toolSupportMode.rawValue)\t\(server.healthStatus)\t\(server.apiKeyHint)"
         }
-        return (["remote_server_id\ttitle\tprovider\tprovider_kind\tdefault_model_id\thealth\tapi_key"] + rows).joined(separator: "\n") + "\n"
+        return (["remote_server_id\ttitle\tprovider\tprovider_kind\tdefault_model_id\ttool_support_mode\thealth\tapi_key"] + rows).joined(separator: "\n") + "\n"
     }
 
     private func renderEvaluationPrompts(_ prompts: [EvaluationPrompt]) -> String {

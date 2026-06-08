@@ -1134,6 +1134,7 @@ public enum MelixCLICommandCodec {
         appendOption("--api-key", value: options.apiKey, into: &arguments)
         appendPositiveUInt32("--timeout-seconds", value: options.timeoutSeconds, into: &arguments)
         appendPositiveUInt32("--rate-limit-per-minute", value: options.rateLimitPerMinute, into: &arguments)
+        appendOption("--tool-support-mode", value: options.toolSupportMode?.commandValue, into: &arguments)
     }
 
     private static func appendExportOptions(_ jobID: String, _ outputPath: String, into arguments: inout [String]) {

@@ -22,6 +22,16 @@ struct RemoteServerStoreTests {
         #expect(RemoteServerProviderPreset.normalized(" sub2api ") == .custom)
         #expect(RemoteServerProviderPreset.normalized("openai-compatible") == .custom)
         #expect(RemoteServerProviderPreset.normalized("unknown") == nil)
+        #expect(RemoteServerToolSupportMode.normalized("auto") == .auto)
+        #expect(RemoteServerToolSupportMode.normalized("force-on") == .forceOn)
+        #expect(RemoteServerToolSupportMode.normalized("force_on") == .forceOn)
+        #expect(RemoteServerToolSupportMode.normalized("force-off") == .forceOff)
+        #expect(RemoteServerToolSupportMode.normalized("force_off") == .forceOff)
+        #expect(RemoteServerToolSupportMode.normalized("unknown") == nil)
+        #expect(RemoteServerToolSupportMode.forceOn.id == "force_on")
+        #expect(RemoteServerToolSupportMode.auto.commandValue == "auto")
+        #expect(RemoteServerToolSupportMode.forceOn.commandValue == "force-on")
+        #expect(RemoteServerToolSupportMode.forceOff.commandValue == "force-off")
         #expect(RemoteServerAPIKeyStore.maskedHint(for: "") == "")
         #expect(RemoteServerAPIKeyStore.maskedHint(for: "short") == "saved")
     }
@@ -45,6 +55,7 @@ struct RemoteServerStoreTests {
                 defaultModelID: "gemini-2.5-flash",
                 timeoutSeconds: 90,
                 rateLimitPerMinute: 30,
+                toolSupportMode: .forceOn,
                 apiKey: "sk-live-secret-value"
             )
         )
@@ -54,10 +65,12 @@ struct RemoteServerStoreTests {
         #expect(created.credentialRef == "remote-server-api-key:sub2api")
         #expect(created.apiKeyHint.hasPrefix("sk-l"))
         #expect(created.apiKeyHint.hasSuffix("alue"))
+        #expect(created.toolSupportMode == .forceOn)
 
         let visibleState = try String(contentsOf: home.remoteServersFileURL, encoding: .utf8)
         #expect(visibleState.contains("sub2api"))
         #expect(visibleState.contains("gemini-2.5-flash"))
+        #expect(visibleState.contains(#""tool_support_mode" : "force_on""#))
         #expect(visibleState.contains("sk-live-secret-value") == false)
 
         let secretState = try String(contentsOf: home.remoteServerAPIKeysFileURL, encoding: .utf8)
@@ -80,6 +93,7 @@ struct RemoteServerStoreTests {
 
         #expect(updated.title == "sub2api prod")
         #expect(updated.defaultModelID == "kimi-2.6")
+        #expect(updated.toolSupportMode == .auto)
         #expect(try secretStore.loadAPIKey(remoteServerID: "sub2api")?.apiKey == "sk-live-secret-value")
 
         try store.remove(id: "sub2api")
@@ -182,5 +196,33 @@ struct RemoteServerStoreTests {
         #expect(legacy.providerPreset == .custom)
         #expect(legacy.providerKind == "openai-compatible")
         #expect(legacy.baseURL == "https://sub2api.example/v1")
+        #expect(legacy.toolSupportMode == .auto)
+
+        try """
+        {
+          "schema_version": 1,
+          "servers": [
+            {
+              "id": "unknown-mode",
+              "title": "Unknown Mode",
+              "provider_preset": "custom",
+              "provider_kind": "openai-compatible",
+              "base_url": "https://sub2api.example/v1",
+              "default_model_id": "gemini-2.5-flash",
+              "timeout_seconds": 60,
+              "rate_limit_per_minute": 0,
+              "tool_support_mode": "force-sideways",
+              "credential_ref": "remote-server-api-key:unknown-mode",
+              "api_key_hint": "",
+              "health_status": "unknown",
+              "created_at": "2026-04-27T00:00:00Z",
+              "updated_at": "2026-04-27T00:00:00Z"
+            }
+          ]
+        }
+        """.write(to: home.remoteServersFileURL, atomically: true, encoding: .utf8)
+
+        let unknownMode = try #require(try store.get(id: "unknown-mode"))
+        #expect(unknownMode.toolSupportMode == .auto)
     }
 }

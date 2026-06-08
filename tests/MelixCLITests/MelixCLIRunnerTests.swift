@@ -4882,6 +4882,7 @@ struct MelixCLIRunnerTests {
                     apiKey: "sk-kimi-secret-value",
                     timeoutSeconds: 42,
                     rateLimitPerMinute: 9,
+                    toolSupportMode: .forceOn,
                     json: true
                 )
             )
@@ -4889,12 +4890,13 @@ struct MelixCLIRunnerTests {
         let added = try #require(parseJSONObject(addOutput))
         #expect(added["id"] as? String == "kimi")
         #expect(added["provider_preset"] as? String == "kimi")
+        #expect(added["tool_support_mode"] as? String == "force_on")
         #expect(addOutput.contains("sk-kimi-secret-value") == false)
         #expect(try RemoteServerAPIKeyStore(melixHome: melixHome).loadAPIKey(remoteServerID: "kimi")?.apiKey == "sk-kimi-secret-value")
 
         let listOutput = try await runner.run(.remoteServerList(.init()))
-        #expect(listOutput.contains("remote_server_id\ttitle\tprovider\tprovider_kind\tdefault_model_id\thealth\tapi_key"))
-        #expect(listOutput.contains("kimi\tKimi\tkimi\topenai-compatible\tkimi-2.6"))
+        #expect(listOutput.contains("remote_server_id\ttitle\tprovider\tprovider_kind\tdefault_model_id\ttool_support_mode\thealth\tapi_key"))
+        #expect(listOutput.contains("kimi\tKimi\tkimi\topenai-compatible\tkimi-2.6\tforce_on"))
         let listJSONOutput = try await runner.run(.remoteServerList(.init(json: true)))
         let listed = try #require(parseJSONArray(listJSONOutput))
         #expect(listed.count == 1)
@@ -4926,7 +4928,21 @@ struct MelixCLIRunnerTests {
         let updated = try #require(parseJSONObject(updateOutput))
         #expect(updated["title"] as? String == "Kimi Updated")
         #expect(updated["default_model_id"] as? String == "kimi-2.6-chat")
+        #expect(updated["tool_support_mode"] as? String == "force_on")
         #expect(try RemoteServerAPIKeyStore(melixHome: melixHome).loadAPIKey(remoteServerID: "kimi")?.apiKey == "sk-new-secret-value")
+
+        let toolModeUpdateOutput = try await runner.run(
+            .remoteServerUpdate(
+                .init(
+                    remoteServerID: "kimi",
+                    timeoutSeconds: 0,
+                    toolSupportMode: .forceOff,
+                    json: true
+                )
+            )
+        )
+        let toolModeUpdated = try #require(parseJSONObject(toolModeUpdateOutput))
+        #expect(toolModeUpdated["tool_support_mode"] as? String == "force_off")
 
         let testOutput = try await runner.run(.remoteServerTest(.init(remoteServerID: "kimi", remoteModelID: "kimi-2.6", json: true)))
         let testPayload = try #require(parseJSONObject(testOutput))

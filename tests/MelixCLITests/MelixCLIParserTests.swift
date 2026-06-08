@@ -360,6 +360,7 @@ struct MelixCLIParserTests {
             "--api-key", "sk-secret",
             "--timeout-seconds", "90",
             "--rate-limit-per-minute", "30",
+            "--tool-support-mode", "force-on",
             "--json",
         ])
         let test = try MelixCLIParser.parse([
@@ -382,6 +383,7 @@ struct MelixCLIParserTests {
             "--api-key", "sk-updated",
             "--timeout-seconds", "91",
             "--rate-limit-per-minute", "31",
+            "--tool-support-mode", "force-off",
             "--json",
         ])
         let remove = try MelixCLIParser.parse([
@@ -469,6 +471,7 @@ struct MelixCLIParserTests {
         #expect(addOptions.apiKey == "sk-secret")
         #expect(addOptions.timeoutSeconds == 90)
         #expect(addOptions.rateLimitPerMinute == 30)
+        #expect(addOptions.toolSupportMode == .forceOn)
         #expect(addOptions.json)
 
         #expect(testOptions.remoteServerID == "sub2api")
@@ -485,6 +488,7 @@ struct MelixCLIParserTests {
         #expect(updateOptions.apiKey == "sk-updated")
         #expect(updateOptions.timeoutSeconds == 91)
         #expect(updateOptions.rateLimitPerMinute == 31)
+        #expect(updateOptions.toolSupportMode == .forceOff)
         #expect(updateOptions.json)
         #expect(removeOptions.remoteServerID == "sub2api")
         #expect(removeOptions.json)
@@ -1189,7 +1193,7 @@ struct MelixCLIParserTests {
             (.serverSetIdlePolicy(.init(serverSessionID: "server-session-1", autoSleepEnabled: true, lightSleepAfterSeconds: 30, deepSleepAfterSeconds: 60, json: true)), "server.set-idle-policy"),
             (.remoteServerList(.init(json: true)), "remote-server.list"),
             (.remoteServerAdd(.init(remoteServerID: "custom", title: "Custom", providerPreset: .custom, providerKind: "openai-compatible", baseURL: "https://sub2api.example/v1", defaultModelID: "remote-model", apiKey: "sk-secret", timeoutSeconds: 60, rateLimitPerMinute: 10, json: true)), "remote-server.add"),
-            (.remoteServerUpdate(.init(remoteServerID: "custom", title: "Custom Updated", providerPreset: .custom, providerKind: "openai-compatible", baseURL: "https://sub2api.example/updated/v1", defaultModelID: "remote-model-2", apiKey: "sk-new", timeoutSeconds: 90, rateLimitPerMinute: 20, json: true)), "remote-server.update"),
+            (.remoteServerUpdate(.init(remoteServerID: "custom", title: "Custom Updated", providerPreset: .custom, providerKind: "openai-compatible", baseURL: "https://sub2api.example/updated/v1", defaultModelID: "remote-model-2", apiKey: "sk-new", timeoutSeconds: 90, rateLimitPerMinute: 20, toolSupportMode: .forceOff, json: true)), "remote-server.update"),
             (.remoteServerRemove(.init(remoteServerID: "custom", json: true)), "remote-server.remove"),
             (.remoteServerTest(.init(remoteServerID: "custom", remoteModelID: "remote-model", json: true)), "remote-server.test"),
             (.chatRun(.init(modelID: "model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)), "chat.run"),
@@ -1284,7 +1288,7 @@ struct MelixCLIParserTests {
             .serverSetIdlePolicy(.init(serverSessionID: "server-session-1", autoSleepEnabled: false, lightSleepAfterSeconds: 30, deepSleepAfterSeconds: 60, json: true)),
             .remoteServerList(.init(json: true)),
             .remoteServerAdd(.init(remoteServerID: "custom", title: "Custom", providerPreset: .custom, providerKind: "openai-compatible", baseURL: "https://sub2api.example/v1", defaultModelID: "remote-model", apiKey: "sk-secret", timeoutSeconds: 60, rateLimitPerMinute: 10, json: true)),
-            .remoteServerUpdate(.init(remoteServerID: "custom", title: "Custom Updated", providerPreset: .custom, providerKind: "openai-compatible", baseURL: "https://sub2api.example/updated/v1", defaultModelID: "remote-model-2", apiKey: "sk-new", timeoutSeconds: 90, rateLimitPerMinute: 20, json: true)),
+            .remoteServerUpdate(.init(remoteServerID: "custom", title: "Custom Updated", providerPreset: .custom, providerKind: "openai-compatible", baseURL: "https://sub2api.example/updated/v1", defaultModelID: "remote-model-2", apiKey: "sk-new", timeoutSeconds: 90, rateLimitPerMinute: 20, toolSupportMode: .forceOff, json: true)),
             .remoteServerRemove(.init(remoteServerID: "custom", json: true)),
             .remoteServerTest(.init(remoteServerID: "custom", remoteModelID: "remote-model", json: true)),
             .chatRun(.init(modelID: "model", message: "hello", systemPrompt: "system", serverSessionID: "server-session-1", json: true)),
@@ -4899,6 +4903,18 @@ struct MelixCLIParserTests {
         try assertError(
             for: ["server", "set-idle-policy", "--auto-sleep", "true", "--light-sleep-after", "60"],
             equals: .missingRequired("--deep-sleep-after is required for melix server set-idle-policy.")
+        )
+        try assertError(
+            for: [
+                "remote-server", "add",
+                "--remote-server-id", "custom",
+                "--title", "Custom",
+                "--provider", "custom",
+                "--base-url", "https://sub2api.example/v1",
+                "--model", "remote-model",
+                "--tool-support-mode", "maybe",
+            ],
+            equals: .usage("--tool-support-mode must be one of auto, force-on, or force-off.")
         )
         try assertError(for: ["bench", "run", "oops"], equals: .usage(MelixCLIParser.usageText))
         try assertError(for: ["bench", "run", "--model-id"], equals: .missingValue("--model-id"))

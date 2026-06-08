@@ -89,6 +89,7 @@ final class FakeRemoteServerStore: RemoteServerStoring, @unchecked Sendable {
             defaultModelID: mutation.defaultModelID,
             timeoutSeconds: mutation.timeoutSeconds,
             rateLimitPerMinute: mutation.rateLimitPerMinute,
+            toolSupportMode: mutation.toolSupportMode,
             credentialRef: RemoteServerStore.credentialRef(for: mutation.id),
             apiKeyHint: mutation.apiKey.isEmpty
                 ? (existing?.apiKeyHint ?? "")
