@@ -167,6 +167,34 @@ tool runtime. Later retrieval, skill, memory, workspace, and background-job
 entrypoints must reuse the same receipt shape when they introduce their own
 source-specific validators.
 
+### Owner Scope Boundary
+
+Retrieved documents, retrieved images, page extracts, layout payloads, crop
+payloads, future skill payloads, future memory payloads, and background-job
+continuation artifacts must fail closed when their effective owner does not
+match the active request or workflow owner. Owner checks run before the segment
+is projected into a tool observation, prompt context, tool action, or
+continuation chain.
+
+For deterministic fixture-backed agentic tools, callers may provide an expected
+owner through fixture context. Retrieved fixture segments that declare a
+different `owner_id` must emit a failed observation instead of prompt-visible
+content. When owner checks fail, the failed observation payload must include:
+
+- `reason = owner_scope_mismatch`
+- `source_type`
+- `source_id`
+- `expected_owner_id`
+- `actual_owner_id`
+- `owner_scope_checked = true`
+- `privilege`
+- `corrective_action`
+
+The v1 deterministic adapter slice applies this boundary to fixture-backed text
+search rows, image search rows, pages, layouts, and crops. Broader RAG stores,
+skill entrypoints, memory entrypoints, and background-job continuations must
+reuse the same receipt shape when they add owner-aware payloads under #1761.
+
 ### Workspace Path Boundary
 
 Agent and workflow tools that read, write, or edit local files must resolve
