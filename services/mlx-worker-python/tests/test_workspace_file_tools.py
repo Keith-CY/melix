@@ -223,6 +223,63 @@ def test_workspace_file_tools_write_encoding_failure_returns_failed_receipt_with
     assert not (workspace / "nested").exists()
 
 
+def test_workspace_file_tools_write_failure_cleans_up_created_parent_dirs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "nested" / "deep" / "output.txt"
+    tools = WorkspaceFileTools(workspace)
+
+    def fail_write_bytes(self: Path, data: bytes) -> int:
+        if self == target:
+            self.touch()
+            raise OSError("simulated write failure")
+        return original_write_bytes(self, data)
+
+    original_write_bytes = Path.write_bytes
+    monkeypatch.setattr(Path, "write_bytes", fail_write_bytes)
+
+    result = tools.write_text("nested/deep/output.txt", "content\n", create_parent_dirs=True)
+
+    assert result.status == "failed"
+    assert result.bytes_written == 0
+    assert result.receipt["allowed"] is True
+    assert result.receipt["error"] == "simulated write failure"
+    assert not (workspace / "nested").exists()
+    assert not target.exists()
+
+
+def test_workspace_file_tools_write_failure_preserves_existing_parent_dirs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    existing_parent = workspace / "existing"
+    existing_parent.mkdir(parents=True)
+    target = existing_parent / "output.txt"
+    tools = WorkspaceFileTools(workspace)
+
+    def fail_write_bytes(self: Path, data: bytes) -> int:
+        if self == target:
+            self.touch()
+            raise OSError("simulated write failure")
+        return original_write_bytes(self, data)
+
+    original_write_bytes = Path.write_bytes
+    monkeypatch.setattr(Path, "write_bytes", fail_write_bytes)
+
+    result = tools.write_text("existing/output.txt", "content\n", create_parent_dirs=True)
+
+    assert result.status == "failed"
+    assert result.bytes_written == 0
+    assert result.receipt["allowed"] is True
+    assert result.receipt["error"] == "simulated write failure"
+    assert existing_parent.exists()
+    assert not target.exists()
+
+
 def test_workspace_file_tools_edit_write_failure_returns_failed_receipt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -249,4 +306,24 @@ def test_workspace_file_tools_edit_write_failure_returns_failed_receipt(
     assert result.replacement_count == 0
     assert result.receipt["allowed"] is True
     assert result.receipt["error"] == "simulated write failure"
+    assert target.read_text(encoding="utf-8") == "alpha\n"
+
+
+def test_workspace_file_tools_edit_encoding_failure_returns_failed_receipt_without_mutating_file(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "draft.txt"
+    target.write_text("alpha\n", encoding="utf-8")
+    tools = WorkspaceFileTools(workspace)
+
+    result = tools.edit_text("draft.txt", old_text="alpha", new_text="snowman \u2603", encoding="latin-1")
+
+    assert result.status == "failed"
+    assert result.bytes_read == 0
+    assert result.bytes_written == 0
+    assert result.replacement_count == 0
+    assert result.receipt["allowed"] is True
+    assert "codec" in result.receipt["error"]
     assert target.read_text(encoding="utf-8") == "alpha\n"

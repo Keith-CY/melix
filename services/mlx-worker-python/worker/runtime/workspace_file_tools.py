@@ -80,11 +80,16 @@ class WorkspaceFileTools:
         except UnicodeError as exc:
             return _failed_result(tool_name="workspace_file.write", resolution=resolution, error=str(exc))
 
+        created_parent_dirs: list[Path] = []
+        target_existed = resolution.resolved_path.exists()
         try:
             if create_parent_dirs:
-                resolution.resolved_path.parent.mkdir(parents=True, exist_ok=True)
+                created_parent_dirs = _create_parent_dirs_for_file(resolution.resolved_path)
             resolution.resolved_path.write_bytes(encoded_content)
         except OSError as exc:
+            if not target_existed:
+                _remove_file_if_present(resolution.resolved_path)
+            _remove_empty_dirs(created_parent_dirs)
             return _failed_result(tool_name="workspace_file.write", resolution=resolution, error=str(exc))
         return WorkspaceFileToolResult(
             tool_name="workspace_file.write",
@@ -170,3 +175,29 @@ def _failed_result(*, tool_name: str, resolution: WorkspacePathResolution, error
         resolution=resolution,
         error=error,
     )
+
+
+def _create_parent_dirs_for_file(path: Path) -> list[Path]:
+    missing_dirs: list[Path] = []
+    current = path.parent
+    while not current.exists():
+        missing_dirs.append(current)
+        current = current.parent
+    if missing_dirs:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    return missing_dirs
+
+
+def _remove_empty_dirs(paths: list[Path]) -> None:
+    for path in paths:
+        try:
+            path.rmdir()
+        except OSError:
+            continue
+
+
+def _remove_file_if_present(path: Path) -> None:
+    try:
+        path.unlink()
+    except OSError:
+        pass
