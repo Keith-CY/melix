@@ -167,6 +167,35 @@ tool runtime. Later retrieval, skill, memory, workspace, and background-job
 entrypoints must reuse the same receipt shape when they introduce their own
 source-specific validators.
 
+### Workspace Path Boundary
+
+Agent and workflow tools that read, write, or edit local files must resolve
+operator-provided paths through the shared Python worker
+`WorkspacePathResolver` before any filesystem access. Relative paths resolve
+inside the active workspace root. Absolute paths are allowed only when their
+realpath-normalized target remains inside that root. Parent traversal and
+symlink escapes must fail closed before a caller opens, writes, renames, or
+deletes the target.
+
+Sensitive filenames remain blocked even when they are physically inside the
+workspace root. The default sensitive set includes common credential files such
+as `.env`, `.npmrc`, `.netrc`, `.pypirc`, and private-key filenames. Callers may
+extend the sensitive filename set for narrower product surfaces, but they must
+not remove the default credential guards.
+
+Workspace path receipts must include:
+
+- `operation`
+- `workspace_root`
+- `requested_path`
+- `resolved_path`
+- `allowed`
+- `refusal_reason`
+
+The v1 workspace resolver slice only introduces the shared boundary primitive.
+Adding concrete read/write/edit tools, local-job mutation hooks, and prompt
+assembly receipts remains follow-up work under #1761.
+
 The observation metric keys are:
 
 - `tool_observation.record_count`
