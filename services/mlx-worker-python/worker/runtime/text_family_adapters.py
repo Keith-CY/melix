@@ -164,9 +164,11 @@ def detect_text_family_identity(
     config_payload: Mapping[str, Any] | None = None,
     explicit_family_id: str = "",
 ) -> TextFamilyDetection:
-    explicit_family_id = explicit_family_id.strip().lower()
     if explicit_family_id:
         descriptor = _TEXT_FAMILY_ADAPTERS.get(explicit_family_id)
+        if descriptor is None:
+            explicit_family_id = explicit_family_id.strip().lower()
+            descriptor = _TEXT_FAMILY_ADAPTERS.get(explicit_family_id)
         if descriptor is None:
             raise ValueError(f"Unsupported text family adapter: {explicit_family_id}")
         architecture = _detected_architecture(config_payload) or descriptor.default_architecture
@@ -302,17 +304,17 @@ def _detected_architecture(config_payload: Mapping[str, Any] | None) -> str:
     config_payload = _config_mapping(config_payload)
     model_type = _string(config_payload.get("model_type"))
     if model_type:
-        return model_type.lower()
+        return _lowercase_model_name(model_type)
     architectures = config_payload.get("architectures")
     if isinstance(architectures, list):
         for item in architectures:
             if isinstance(item, str) and item.strip():
-                return item.strip().lower()
+                return _lowercase_model_name(item.strip())
     text_config = config_payload.get("text_config")
     if isinstance(text_config, Mapping):
         nested_model_type = _string(text_config.get("model_type"))
         if nested_model_type:
-            return nested_model_type.lower()
+            return _lowercase_model_name(nested_model_type)
     return ""
 
 
@@ -320,8 +322,14 @@ def _model_type(config_payload: Mapping[str, Any] | None) -> str:
     config_payload = _config_mapping(config_payload)
     model_type = _string(config_payload.get("model_type"))
     if model_type:
-        return model_type.lower()
+        return _lowercase_model_name(model_type)
     return ""
+
+
+def _lowercase_model_name(value: str) -> str:
+    if value.islower():
+        return value
+    return value.lower()
 
 
 def _inferred_attention_profile(config_payload: Mapping[str, Any] | None, *, default: str) -> str:
