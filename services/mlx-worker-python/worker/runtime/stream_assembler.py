@@ -1272,10 +1272,7 @@ class RequestStreamAssembler:
         stripped = header.strip()
         if not stripped:
             return ""
-        for index, character in enumerate(stripped):
-            if character.isspace():
-                return stripped[:index].lower()
-        return stripped.lower()
+        return stripped.split(None, 1)[0].lower()
 
     @classmethod
     def _legacy_pipe_channel_header_body(cls, header: str, channel_name: str) -> str | None:
