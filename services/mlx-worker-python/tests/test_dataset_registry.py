@@ -381,6 +381,25 @@ def test_dataset_catalog_first_preview_scan_defers_path_construction(
     assert constructor_calls == 1
 
 
+def test_dataset_catalog_first_preview_scan_skips_unsupported_files_before_best(
+    tmp_path: Path,
+) -> None:
+    snapshot_dir = tmp_path / "snapshot"
+    data_dir = snapshot_dir / "data"
+    data_dir.mkdir(parents=True)
+    (snapshot_dir / "000-sidecar.txt").write_text("ignored\n", encoding="utf-8")
+    (snapshot_dir / "001-sidecar").write_text("ignored\n", encoding="utf-8")
+    winner = data_dir / "train.jsonl"
+    winner.write_text('{"prompt":"first"}\n', encoding="utf-8")
+
+    first_entry = catalog._next_supported_scan_entry(snapshot_dir, after="")
+
+    assert first_entry is not None
+    assert first_entry[0] == "data"
+    assert first_entry[1] == data_dir
+    assert catalog._first_supported_dataset_file(snapshot_dir) == winner
+
+
 def test_dataset_catalog_json_row_reader_limit_uses_incremental_decode(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
