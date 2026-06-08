@@ -10477,9 +10477,9 @@ public actor MelixCLIRunner {
             return "No remote servers configured.\n"
         }
         let rows = servers.map { server in
-            "\(server.id)\t\(server.title)\t\(server.providerPreset.rawValue)\t\(server.providerKind)\t\(server.defaultModelID)\t\(server.toolSupportMode.rawValue)\t\(server.healthStatus)\t\(server.apiKeyHint)"
+            "\(server.id)\t\(server.title)\t\(server.providerPreset.rawValue)\t\(server.providerKind)\t\(server.defaultModelID)\t\(server.healthStatus)\t\(server.apiKeyHint)\t\(server.toolSupportMode.rawValue)"
         }
-        return (["remote_server_id\ttitle\tprovider\tprovider_kind\tdefault_model_id\ttool_support_mode\thealth\tapi_key"] + rows).joined(separator: "\n") + "\n"
+        return (["remote_server_id\ttitle\tprovider\tprovider_kind\tdefault_model_id\thealth\tapi_key\ttool_support_mode"] + rows).joined(separator: "\n") + "\n"
     }
 
     private func renderEvaluationPrompts(_ prompts: [EvaluationPrompt]) -> String {

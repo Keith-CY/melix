@@ -4895,8 +4895,8 @@ struct MelixCLIRunnerTests {
         #expect(try RemoteServerAPIKeyStore(melixHome: melixHome).loadAPIKey(remoteServerID: "kimi")?.apiKey == "sk-kimi-secret-value")
 
         let listOutput = try await runner.run(.remoteServerList(.init()))
-        #expect(listOutput.contains("remote_server_id\ttitle\tprovider\tprovider_kind\tdefault_model_id\ttool_support_mode\thealth\tapi_key"))
-        #expect(listOutput.contains("kimi\tKimi\tkimi\topenai-compatible\tkimi-2.6\tforce_on"))
+        #expect(listOutput.contains("remote_server_id\ttitle\tprovider\tprovider_kind\tdefault_model_id\thealth\tapi_key\ttool_support_mode"))
+        #expect(listOutput.contains("kimi\tKimi\tkimi\topenai-compatible\tkimi-2.6\tunknown\tsk-k...alue\tforce_on"))
         let listJSONOutput = try await runner.run(.remoteServerList(.init(json: true)))
         let listed = try #require(parseJSONArray(listJSONOutput))
         #expect(listed.count == 1)
