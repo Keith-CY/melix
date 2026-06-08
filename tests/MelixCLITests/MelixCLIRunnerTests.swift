@@ -4588,6 +4588,156 @@ struct MelixCLIRunnerTests {
         #expect(missingReceipts == ["effective_config", "benchmark_receipt", "model_fit_receipt"])
     }
 
+    @Test("cookbook recommendation joins matching model-fit receipt")
+    func cookbookRecommendationJoinsMatchingModelFitReceipt() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let evidenceRoot = root
+            .appendingPathComponent("state", isDirectory: true)
+            .appendingPathComponent("cookbook", isDirectory: true)
+            .appendingPathComponent("evidence", isDirectory: true)
+            .appendingPathComponent("model-fit", isDirectory: true)
+        try FileManager.default.createDirectory(at: evidenceRoot, withIntermediateDirectories: true)
+        let modelFitURL = evidenceRoot.appendingPathComponent("qwen-chat-fit.json")
+        try Data("""
+        {
+          "schema_version": "melix.memory_fit_receipt.v1",
+          "model_id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+          "workload": "chat",
+          "host": {
+            "platform": "macos",
+            "arch": "arm64",
+            "host_platform_source": "hardware_probe"
+          },
+          "fit": {
+            "status": "fits",
+            "estimated_memory_gib": 8.75
+          }
+        }
+        """.utf8).write(to: modelFitURL)
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": root.path]
+        )
+
+        let output = try await runner.run(.cookbookRecommend(.init(
+            modelID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+            workload: "chat",
+            serverPlatform: "macos",
+            serverArch: "arm64",
+            json: true
+        )))
+        let payload = try #require(parseJSONObject(output))
+        let evidence = try #require(payload["evidence"] as? [String: Any])
+        let missingReceipts = try #require(evidence["missing_receipts"] as? [String])
+
+        #expect(evidence["model_fit_receipt_path"] as? String == modelFitURL.path)
+        #expect(missingReceipts == ["effective_config", "benchmark_receipt"])
+
+        let textOutput = try await runner.run(.cookbookRecommend(.init(
+            modelID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+            workload: "chat",
+            serverPlatform: "macos",
+            serverArch: "arm64"
+        )))
+        #expect(textOutput.contains("Model-fit receipt: \(modelFitURL.path)"))
+        #expect(textOutput.contains("Missing receipts: effective_config, benchmark_receipt"))
+    }
+
+    @Test("cookbook recommendation keeps mismatched model-fit receipt missing")
+    func cookbookRecommendationKeepsMismatchedModelFitReceiptMissing() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let evidenceRoot = root
+            .appendingPathComponent("state", isDirectory: true)
+            .appendingPathComponent("cookbook", isDirectory: true)
+            .appendingPathComponent("evidence", isDirectory: true)
+            .appendingPathComponent("model-fit", isDirectory: true)
+        try FileManager.default.createDirectory(at: evidenceRoot, withIntermediateDirectories: true)
+        try Data("""
+        {
+          "schema_version": "melix.memory_fit_receipt.v1",
+          "model_id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+          "workload": "chat",
+          "host": {
+            "platform": "linux",
+            "arch": "arm64",
+            "host_platform_source": "hardware_probe"
+          }
+        }
+        """.utf8).write(to: evidenceRoot.appendingPathComponent("linux-fit.json"))
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": root.path]
+        )
+
+        let output = try await runner.run(.cookbookRecommend(.init(
+            modelID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+            workload: "chat",
+            serverPlatform: "macos",
+            serverArch: "arm64",
+            json: true
+        )))
+        let payload = try #require(parseJSONObject(output))
+        let evidence = try #require(payload["evidence"] as? [String: Any])
+        let missingReceipts = try #require(evidence["missing_receipts"] as? [String])
+
+        #expect(evidence["model_fit_receipt_path"] as? String == "")
+        #expect(missingReceipts == ["effective_config", "benchmark_receipt", "model_fit_receipt"])
+    }
+
+    @Test("cookbook recommendation ignores model-fit receipts with empty identity")
+    func cookbookRecommendationIgnoresModelFitReceiptsWithEmptyIdentity() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let evidenceRoot = root
+            .appendingPathComponent("state", isDirectory: true)
+            .appendingPathComponent("cookbook", isDirectory: true)
+            .appendingPathComponent("evidence", isDirectory: true)
+            .appendingPathComponent("model-fit", isDirectory: true)
+        try FileManager.default.createDirectory(at: evidenceRoot, withIntermediateDirectories: true)
+        try Data("""
+        {
+          "schema_version": "melix.memory_fit_receipt.v1",
+          "host": {
+            "platform": "macos",
+            "arch": "arm64",
+            "host_platform_source": "hardware_probe"
+          }
+        }
+        """.utf8).write(to: evidenceRoot.appendingPathComponent("missing-identity.json"))
+        try Data("""
+        {
+          "schema_version": "melix.memory_fit_receipt.v1",
+          "model_id": "  ",
+          "workload": "",
+          "host": {
+            "platform": "macos",
+            "arch": "arm64",
+            "host_platform_source": "hardware_probe"
+          }
+        }
+        """.utf8).write(to: evidenceRoot.appendingPathComponent("empty-identity.json"))
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": root.path]
+        )
+
+        let output = try await runner.run(.cookbookRecommend(.init(
+            modelID: "",
+            workload: "",
+            serverPlatform: "macos",
+            serverArch: "arm64",
+            json: true
+        )))
+        let payload = try #require(parseJSONObject(output))
+        let evidence = try #require(payload["evidence"] as? [String: Any])
+        let missingReceipts = try #require(evidence["missing_receipts"] as? [String])
+
+        #expect(evidence["model_fit_receipt_path"] as? String == "")
+        #expect(missingReceipts == ["effective_config", "benchmark_receipt", "model_fit_receipt"])
+    }
+
     @Test("cookbook recommendation disables cache when data root state is missing")
     func cookbookRecommendationDisablesCacheWhenDataRootStateIsMissing() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
