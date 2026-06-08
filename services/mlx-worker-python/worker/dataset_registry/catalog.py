@@ -989,6 +989,13 @@ def _split_match_tokens(split: str) -> tuple[str, str, str]:
     return normalized_split, f"{normalized_split}-", f"{normalized_split}_"
 
 
+def _ascii_char_matches_lowercase(character: str, lowercase_character: str) -> bool:
+    character_code = ord(character)
+    if 65 <= character_code <= 90:
+        character_code += 32
+    return character_code == ord(lowercase_character)
+
+
 def _path_part_matches_split(
     part: str,
     normalized_split: str,
@@ -999,7 +1006,7 @@ def _path_part_matches_split(
         return False
     first_char = part[0]
     split_first_char = normalized_split[0]
-    if first_char != split_first_char and first_char.lower() != split_first_char:
+    if first_char != split_first_char and not _ascii_char_matches_lowercase(first_char, split_first_char):
         return False
     if (
         part == normalized_split
