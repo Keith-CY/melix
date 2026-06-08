@@ -564,23 +564,28 @@ def _iter_source_records(
 
 def _iter_source_file_paths(input_path: Path) -> list[Path]:
     file_paths: list[str] = []
+    file_paths_append = file_paths.append
     stack = [os.fspath(input_path)]
+    stack_append = stack.append
+    stack_pop = stack.pop
+    scandir = os.scandir
+    path_cls = Path
     while stack:
-        directory = stack.pop()
+        directory = stack_pop()
         try:
-            with os.scandir(directory) as entries:
+            with scandir(directory) as entries:
                 for entry in entries:
                     try:
                         if entry.is_dir(follow_symlinks=False):
-                            stack.append(entry.path)
+                            stack_append(entry.path)
                         elif entry.is_file(follow_symlinks=False):
-                            file_paths.append(entry.path)
+                            file_paths_append(entry.path)
                     except OSError:
                         continue
         except OSError:
             continue
     file_paths.sort()
-    return [Path(file_path) for file_path in file_paths]
+    return [path_cls(file_path) for file_path in file_paths]
 
 
 def _source_kind(path: Path) -> str | None:
