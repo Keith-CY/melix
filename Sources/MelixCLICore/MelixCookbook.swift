@@ -177,10 +177,10 @@ private enum MelixCookbookRecommendationPlanner {
             melixHome: melixHome
         )?.path ?? ""
         var missingReceipts = ["effective_config", "benchmark_receipt", "model_fit_receipt"]
-        if effectiveConfigPath.isEmpty == false {
+        if !effectiveConfigPath.isEmpty {
             missingReceipts.removeAll { $0 == "effective_config" }
         }
-        if modelFitReceiptPath.isEmpty == false {
+        if !modelFitReceiptPath.isEmpty {
             missingReceipts.removeAll { $0 == "model_fit_receipt" }
         }
         return MelixCookbookEvidenceReceipt(
@@ -241,7 +241,7 @@ private enum MelixCookbookRecommendationPlanner {
             .sorted { $0.path < $1.path }
             .first { evidenceReceipt(at: $0, matches: options, host: host) }
             // Preserve MELIX_HOME spelling instead of FileManager's resolved /private/var paths.
-            .map { root.appendingPathComponent($0.lastPathComponent) }
+            .map { root.appendingPathComponent($0.lastPathComponent, isDirectory: false) }
     }
 
     private static func evidenceReceipt(
