@@ -76,13 +76,15 @@ class WorkspaceFileTools:
             return _refused_result(tool_name="workspace_file.write", resolution=resolution)
 
         try:
+            encoded_content = content.encode(encoding)
+        except UnicodeError as exc:
+            return _failed_result(tool_name="workspace_file.write", resolution=resolution, error=str(exc))
+
+        try:
             if create_parent_dirs:
                 resolution.resolved_path.parent.mkdir(parents=True, exist_ok=True)
-            encoded_content = content.encode(encoding)
             resolution.resolved_path.write_bytes(encoded_content)
         except OSError as exc:
-            return _failed_result(tool_name="workspace_file.write", resolution=resolution, error=str(exc))
-        except UnicodeError as exc:
             return _failed_result(tool_name="workspace_file.write", resolution=resolution, error=str(exc))
         return WorkspaceFileToolResult(
             tool_name="workspace_file.write",
@@ -118,6 +120,13 @@ class WorkspaceFileTools:
         except UnicodeError as exc:
             return _failed_result(tool_name="workspace_file.edit", resolution=resolution, error=str(exc))
         replacement_count = original.count(old_text)
+        if replacement_count == 0:
+            return WorkspaceFileToolResult(
+                tool_name="workspace_file.edit",
+                status="failed",
+                resolution=resolution,
+                error="workspace edit found no occurrences of old_text",
+            )
         if expected_replacements is not None and replacement_count != expected_replacements:
             return WorkspaceFileToolResult(
                 tool_name="workspace_file.edit",

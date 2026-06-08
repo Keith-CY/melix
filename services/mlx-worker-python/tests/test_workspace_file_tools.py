@@ -100,6 +100,24 @@ def test_workspace_file_tools_edit_replacement_mismatch_fails_without_mutating_f
     assert result.receipt["error"] == "workspace edit replacement count mismatch: expected 1, found 2"
 
 
+def test_workspace_file_tools_edit_zero_matches_fails_without_mutating_file(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "draft.txt"
+    target.write_text("alpha\n", encoding="utf-8")
+    tools = WorkspaceFileTools(workspace)
+
+    result = tools.edit_text("draft.txt", old_text="gamma", new_text="delta")
+
+    assert target.read_text(encoding="utf-8") == "alpha\n"
+    assert result.status == "failed"
+    assert result.bytes_read == 0
+    assert result.bytes_written == 0
+    assert result.replacement_count == 0
+    assert result.receipt["allowed"] is True
+    assert result.receipt["error"] == "workspace edit found no occurrences of old_text"
+
+
 def test_workspace_file_tools_edit_rejects_empty_old_text_without_mutating_file(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -187,6 +205,22 @@ def test_workspace_file_tools_write_encoding_failure_returns_failed_receipt_with
     assert result.receipt["allowed"] is True
     assert "codec" in result.receipt["error"]
     assert not (workspace / "latin1.txt").exists()
+
+
+def test_workspace_file_tools_write_encoding_failure_returns_failed_receipt_without_parent_dir(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    tools = WorkspaceFileTools(workspace)
+
+    result = tools.write_text("nested/latin1.txt", "snowman \u2603", encoding="latin-1", create_parent_dirs=True)
+
+    assert result.status == "failed"
+    assert result.bytes_written == 0
+    assert result.receipt["allowed"] is True
+    assert "codec" in result.receipt["error"]
+    assert not (workspace / "nested").exists()
 
 
 def test_workspace_file_tools_edit_write_failure_returns_failed_receipt(
