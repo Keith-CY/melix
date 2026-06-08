@@ -610,8 +610,12 @@ def test_bundle_slimming_helpers_cover_runtime_edge_cases(
     def fail_splitext(path: str):  # pragma: no cover - regression guard
         raise AssertionError("_iter_python_native_binary_candidates() should use direct suffix checks")
 
+    def fail_sorted(iterable, *args: object, **kwargs: object):  # pragma: no cover - regression guard
+        raise AssertionError("_iter_python_native_binary_candidates() should stream scandir entries")
+
     monkeypatch.setattr(Path, "rglob", fail_rglob)
     monkeypatch.setattr(macos_app_bundle_module.os.path, "splitext", fail_splitext)
+    monkeypatch.setattr(macos_app_bundle_module, "sorted", fail_sorted, raising=False)
     assert set(_iter_python_native_binary_candidates(runtime, site_packages)) == {
         python_versioned,
         runtime_so,
