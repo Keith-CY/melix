@@ -1344,6 +1344,25 @@ struct MelixCLIParserTests {
             #expect(try MelixCLIParser.parse(arguments) == command)
         }
 
+        let defaultRemoteAddArguments = try MelixCLICommandCodec.arguments(for: MelixCLICommand.remoteServerAdd(.init(
+            remoteServerID: "custom",
+            title: "Custom",
+            providerPreset: .custom,
+            providerKind: "openai-compatible",
+            baseURL: "https://sub2api.example/v1",
+            defaultModelID: "remote-model",
+            apiKey: "sk-secret",
+            timeoutSeconds: 60,
+            rateLimitPerMinute: 10,
+            json: true
+        )))
+        guard case .remoteServerAdd(let defaultRemoteAdd) = try MelixCLIParser.parse(defaultRemoteAddArguments) else {
+            Issue.record("Expected remote-server add command")
+            return
+        }
+        #expect(defaultRemoteAdd.toolSupportMode == nil)
+        #expect(defaultRemoteAddArguments.contains("--tool-support-mode") == false)
+
         let unsupported: [MelixCLICommand] = [
             .modelList(.init()),
             .loraDatasetInspect(.init(modelID: "model", datasetURI: "/tmp/data.jsonl")),

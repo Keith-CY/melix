@@ -4192,7 +4192,7 @@ public enum MelixCLIParser {
                         option: "--rate-limit-per-minute",
                         defaultValue: 0
                     ) ?? 0,
-                    toolSupportMode: try parseRemoteServerToolSupportMode(values.single["--tool-support-mode"]) ?? .auto,
+                    toolSupportMode: try parseRemoteServerToolSupportMode(values.single["--tool-support-mode"]),
                     json: json
                 )
             )
