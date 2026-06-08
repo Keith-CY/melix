@@ -382,6 +382,19 @@ def test_direct_card_size_hint_preserves_case_insensitive_label_prefix() -> None
     assert hub_catalog_module._direct_card_size_hint_from_text("model-size: 2 GB") == 0
 
 
+def test_size_hint_model_marker_scan_preserves_case_insensitive_pairs() -> None:
+    for text in (
+        "model size",
+        "mOdel size",
+        "Model size",
+        "MOdel size",
+        "prefix MO suffix",
+    ):
+        assert hub_catalog_module._may_contain_model_marker(text) is True
+    for text in ("", "m", "M", "metadata only", "adapter notes"):
+        assert hub_catalog_module._may_contain_model_marker(text) is False
+
+
 def test_weight_or_config_file_preserves_case_insensitive_matches() -> None:
     assert hub_catalog_module._is_weight_or_config_file("config.json") is True
     assert hub_catalog_module._is_weight_or_config_file("model.safetensors") is True

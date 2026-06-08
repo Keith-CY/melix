@@ -880,7 +880,7 @@ def _size_hint_from_text(text: str, *, allow_bare: bool) -> int:
 
 
 def _may_contain_model_marker(text: str) -> bool:
-    return "mo" in text or "mO" in text or "Mo" in text or "MO" in text
+    return "MO" in text or "Mo" in text or "mo" in text or "mO" in text
 
 
 def _parameter_count(value: Any) -> int:
