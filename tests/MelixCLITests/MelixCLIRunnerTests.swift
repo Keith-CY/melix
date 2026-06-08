@@ -4395,6 +4395,49 @@ struct MelixCLIRunnerTests {
         #expect(state["disabled_reason"] as? String == "")
     }
 
+    @Test("cookbook recommendation records evidence receipt sources and gaps")
+    func cookbookRecommendationRecordsEvidenceReceiptSourcesAndGaps() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateRoot = root.appendingPathComponent("state", isDirectory: true)
+        try FileManager.default.createDirectory(at: stateRoot, withIntermediateDirectories: true)
+        let runner = MelixCLIRunner(
+            client: StubControlPlaneXPCClient(),
+            environment: ["MELIX_HOME": root.path]
+        )
+
+        let output = try await runner.run(.cookbookRecommend(.init(
+            modelID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+            workload: "chat",
+            serverPlatform: "macos",
+            serverArch: "arm64",
+            json: true
+        )))
+        let payload = try #require(parseJSONObject(output))
+        let evidence = try #require(payload["evidence"] as? [String: Any])
+        let benchmarkReceipts = try #require(evidence["benchmark_receipts"] as? [String])
+        let missingReceipts = try #require(evidence["missing_receipts"] as? [String])
+
+        #expect(evidence["fit_receipt_schema_version"] as? String == "melix.memory_fit_receipt.v1")
+        #expect(evidence["fit_receipt_source"] as? String == "cookbook.host_selection")
+        #expect(evidence["profile_receipt_schema_version"] as? String == "melix.cookbook.profile_receipt.v1")
+        #expect(evidence["profile_receipt_source"] as? String == "cookbook.backend_selection")
+        #expect(benchmarkReceipts.isEmpty)
+        #expect(evidence["effective_config_path"] as? String == "")
+        #expect(missingReceipts == ["effective_config", "benchmark_receipt", "model_fit_receipt"])
+
+        let textOutput = try await runner.run(.cookbookRecommend(.init(
+            modelID: "mlx-community/Qwen3.5-9B-MLX-4bit",
+            workload: "chat",
+            serverPlatform: "macos",
+            serverArch: "arm64"
+        )))
+        #expect(textOutput.contains("Fit evidence: cookbook.host_selection (melix.memory_fit_receipt.v1)"))
+        #expect(textOutput.contains("Profile evidence: cookbook.backend_selection (melix.cookbook.profile_receipt.v1)"))
+        #expect(textOutput.contains("Benchmark receipts: none"))
+        #expect(textOutput.contains("Missing receipts: effective_config, benchmark_receipt, model_fit_receipt"))
+    }
+
     @Test("cookbook recommendation disables cache when data root state is missing")
     func cookbookRecommendationDisablesCacheWhenDataRootStateIsMissing() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
