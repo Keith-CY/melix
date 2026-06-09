@@ -352,6 +352,19 @@ through `refused_prompt_context_receipt`. This keeps the concrete prompt
 snapshot path aligned with the shared admission primitive while preserving the
 stable receipt JSON and persisted prompt payload.
 
+The Python worker background-continuation admission primitive is
+`worker.runtime.background_continuation.admit_background_continuation`. Future
+durable local-job monitors and session follow-up paths must pass already
+redacted background-job evidence through this helper before projecting it into
+user-role prompt context. The helper records one
+`source_type = background_continuation` receipt with `source_field =
+background_job` and `source_id` set to the redacted job identifier. Malformed
+continuation fields produce `included = false` refusal receipts with `reason =
+invalid_background_continuation_field` and no user payload. The helper does not
+implement durable job storage, process monitoring, or session resume; it is only
+the prompt-context boundary for follow-up data admitted by those later
+surfaces.
+
 The agentic judge prompt snapshot must also surface receipt evidence that is
 already attached to executed `agentic_tool_observations`. Snapshot-level
 `untrusted_context_receipts` are ordered as the admitted judge user-payload
