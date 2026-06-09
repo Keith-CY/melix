@@ -263,6 +263,24 @@ tool-output, and background-continuation admission points must use the same
 helper or preserve its exact receipt shape, including the optional `source_id`
 field for retrieved segments, when they record prompt-boundary evidence.
 
+The shared Python worker prompt-context admission primitive is
+`worker.runtime.prompt_context`. A `PromptContextSegment` represents one
+untrusted source field that a caller intends to project into a user-role prompt
+payload. `admit_prompt_context_segments` returns the prompt payload fields plus
+matching untrusted-context receipts, rejects duplicate source fields before
+overwrite, and rejects non-user roles for untrusted context. Receipts contain
+source metadata and boundary decisions only; they must not copy the raw segment
+value. `refused_prompt_context_receipt` provides the same receipt shape with
+`included = false` for source-specific validators that reject malformed,
+cross-owner, or otherwise inadmissible segments before prompt assembly.
+
+The v1 prompt-context primitive slice migrates the agentic judge prompt snapshot
+receipt generation onto `worker.runtime.prompt_context` without changing
+persisted prompt messages, receipt shape, scorer behavior, or judge prompt
+wording. Later RAG, skill, memory, chat prompt-assembly, and background
+continuation slices should use this primitive when they decide which untrusted
+segments are admitted into user-role prompt context.
+
 Rejected prompt-context segments should use the same receipt schema with
 `included = false`. For the agentic judge prompt boundary, unsupported
 top-level user-payload fields emit `reason =
