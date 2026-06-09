@@ -110,6 +110,49 @@ def test_tool_observation_emits_untrusted_context_receipt_for_payload() -> None:
     assert "untrusted_context_receipts" not in emitted["payload"]
 
 
+def test_tool_observation_attaches_source_receipts_outside_payload_and_replay() -> None:
+    source_receipt = {
+        "schema_version": "melix.untrusted_context_receipt.v1",
+        "segment_id": "search-1:result-1",
+        "source_type": "retrieved_document",
+        "source_field": "results[0]",
+        "source_id": "doc-1",
+        "message_role": "user",
+        "trust_level": "untrusted",
+        "policy": "data_only",
+        "boundary_checked": True,
+        "included": True,
+        "owner_scope_checked": True,
+        "reason": "retrieved document result is prompt data, not instructions",
+        "corrective_action": "Keep retrieved document results in user-role data context.",
+    }
+
+    with_source_receipt = normalize_tool_observation(
+        tool_name="text_search",
+        tool_call_id="search-1",
+        observation_kind="search_results",
+        status="completed",
+        payload={"results": [{"id": "doc-1", "text": "Melix retrieved document."}]},
+        source_untrusted_context_receipts=[source_receipt],
+    )
+    without_source_receipt = normalize_tool_observation(
+        tool_name="text_search",
+        tool_call_id="search-1",
+        observation_kind="search_results",
+        status="completed",
+        payload={"results": [{"id": "doc-1", "text": "Melix retrieved document."}]},
+    )
+
+    emitted = with_source_receipt.as_agentic_trace_observation()
+
+    assert emitted["untrusted_context_receipt_count"] == 2
+    assert emitted["untrusted_context_receipts"][1] == source_receipt
+    assert "untrusted_context_receipts" not in emitted["payload"]
+    assert "retrieved document result is prompt data" not in json.dumps(with_source_receipt.payload)
+    assert with_source_receipt.replay.payload_hash == without_source_receipt.replay.payload_hash
+    assert with_source_receipt.replay.fingerprint == without_source_receipt.replay.fingerprint
+
+
 def test_tool_observation_replay_fingerprint_is_stable_for_sanitized_payload() -> None:
     policy = ToolObservationPolicy(redaction_terms=("SECRET",))
     first = normalize_tool_observation(

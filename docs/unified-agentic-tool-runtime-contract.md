@@ -379,6 +379,18 @@ RAG, chat prompt assembly, and background-job continuation surfaces must still
 add their own admission or refusal receipts when they decide whether to
 include, reject, or re-scope a tool observation in a final prompt.
 
+The v1 deterministic retrieval source slice lets callers attach
+source-specific untrusted-context receipts beside the generic tool-observation
+receipt without adding those receipts to the sanitized payload or replay hash.
+For `text_search`, each selected result emits a `retrieved_document` receipt.
+For `image_search`, each selected result emits a `retrieved_image` receipt.
+Those receipts use `segment_id = <tool_call_id>:result-<index>`,
+`source_field = results[<index>]`, and `source_id` from the selected corpus row
+identifier or its deterministic fallback. `owner_scope_checked` records whether
+the deterministic run had an expected owner scope configured before result
+projection. Source-specific retrieval receipts must omit retrieved text,
+captions, media refs, query strings, tool arguments, and private prompt text.
+
 ### Workspace Path Boundary
 
 Agent and workflow tools that read, write, or edit local files must resolve
