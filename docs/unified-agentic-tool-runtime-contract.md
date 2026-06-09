@@ -282,6 +282,9 @@ record `source_type = retrieved_document`; `skill` and `agent_skill` record
 `background-continuation`, `background_job`, and `background-job` record
 `source_type = background_continuation`. Other non-system/developer messages
 continue to record `source_type = chat_prompt_message`.
+The reserved prefix may be the full normalized message name or may be followed
+by `:`, `.`, `-`, or `_`, so Melix-internal names and OpenAI-compatible message
+names can use the same receipt classification rules.
 
 When the normalized message name is present, the prompt receipt records it as
 `source_id`. `source_id` is source metadata only; the receipt must still omit

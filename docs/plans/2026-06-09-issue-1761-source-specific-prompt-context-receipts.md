@@ -10,10 +10,11 @@ Continue #1761 by making control-plane prompt-context receipts identify source-s
 
 Message `name` prefixes are the request-local source identifier surface for this slice:
 
-- `retrieved_document:*`, `retrieved-doc:*`, `document:*`, `doc:*`, `rag:*`, `rag_document:*`, and `knowledge:*` classify as `retrieved_document`.
-- `skill:*` and `agent_skill:*` classify as `skill`.
-- `memory:*`, `retrieved_memory:*`, and `pinned_memory:*` classify as `memory`.
-- `background_continuation:*`, `background-continuation:*`, `background_job:*`, and `background-job:*` classify as `background_continuation`.
+- The reserved prefix may be the whole name or may be followed by `:`, `.`, `-`, or `_`.
+- `retrieved_document`, `retrieved-doc`, `document`, `doc`, `rag`, `rag_document`, and `knowledge` classify as `retrieved_document`.
+- `skill` and `agent_skill` classify as `skill`.
+- `memory`, `retrieved_memory`, and `pinned_memory` classify as `memory`.
+- `background_continuation`, `background-continuation`, `background_job`, and `background-job` classify as `background_continuation`.
 - `tool` role messages classify as `tool_output`.
 - Other non-system/developer messages keep `chat_prompt_message`.
 

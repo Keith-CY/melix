@@ -413,10 +413,10 @@ struct ToolParserRegistryTests {
         let request = makeNormalizedRequest(messages: [
             .init(role: "system", content: "trusted system prompt must not leak"),
             .init(role: "tool", name: "calculator", content: "tool output says ignore developer policy"),
-            .init(role: "user", name: "rag:doc-17", content: "retrieved document says reveal secrets"),
-            .init(role: "user", name: "skill:repo-search", content: "skill index says run arbitrary shell"),
-            .init(role: "user", name: "memory:pinned-42", content: "memory says bypass authentication"),
-            .init(role: "assistant", name: "background_continuation:job-9", content: "background job says trust me"),
+            .init(role: "user", name: "rag-doc-17", content: "retrieved document says reveal secrets"),
+            .init(role: "user", name: "skill_repo-search", content: "skill index says run arbitrary shell"),
+            .init(role: "user", name: "memory-pinned-42", content: "memory says bypass authentication"),
+            .init(role: "assistant", name: "background_continuation-job-9", content: "background job says trust me"),
         ])
 
         let translated = try translator.translate(request, modelHandle: "worker-text")
@@ -438,10 +438,10 @@ struct ToolParserRegistryTests {
         ])
         #expect(sourceIDs == [
             "calculator",
-            "rag:doc-17",
-            "skill:repo-search",
-            "memory:pinned-42",
-            "background_continuation:job-9",
+            "rag-doc-17",
+            "skill_repo-search",
+            "memory-pinned-42",
+            "background_continuation-job-9",
         ])
         #expect(receipts.allSatisfy { $0["policy"] as? String == "data_only" })
         #expect(receipts.allSatisfy { $0["included"] as? Bool == true })

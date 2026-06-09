@@ -86,7 +86,11 @@ struct PromptContextBoundaryReceipts: Sendable, Equatable {
 
     private static func hasAnyPrefix(_ value: String, _ prefixes: [String]) -> Bool {
         prefixes.contains { prefix in
-            value == prefix || value.hasPrefix("\(prefix):") || value.hasPrefix("\(prefix).")
+            value == prefix
+                || value.hasPrefix("\(prefix):")
+                || value.hasPrefix("\(prefix).")
+                || value.hasPrefix("\(prefix)-")
+                || value.hasPrefix("\(prefix)_")
         }
     }
 
