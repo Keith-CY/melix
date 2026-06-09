@@ -61,6 +61,33 @@ def test_text_native_mtp_parser_metrics_fast_paths_empty_events() -> None:
     assert engine_core_module._text_native_mtp_parser_metrics(None) == {}
     assert engine_core_module._text_native_mtp_parser_metrics(RuntimeTokenEvent(text="plain")) == {}
 
+    metrics: dict[str, str] = {}
+
+    engine_core_module._apply_prompt_context_receipt_metrics(
+        metrics,
+        {
+            "melix.prompt_context.receipt_schema": "melix.untrusted_context_receipt.v1",
+            "melix.prompt_context.receipt_count": "1",
+            "melix.prompt_context.receipts_json": '[{"segment_id":"req:user:0:text:0"}]',
+        },
+    )
+
+    assert metrics == {
+        "prompt_context_receipt_schema": "melix.untrusted_context_receipt.v1",
+        "prompt_context_receipt_count": "1",
+        "prompt_context_receipts_json": '[{"segment_id":"req:user:0:text:0"}]',
+    }
+
+    metrics = {}
+    engine_core_module._apply_prompt_context_receipt_metrics(
+        metrics,
+        {"melix.prompt_context.receipt_schema": None},
+    )
+    assert metrics == {}
+
+    engine_core_module._apply_prompt_context_receipt_metrics(metrics, object())
+    assert metrics == {}
+
 
 def test_text_native_mtp_parser_metrics_preserves_speculative_and_timing_values() -> None:
     metrics = engine_core_module._text_native_mtp_parser_metrics(
