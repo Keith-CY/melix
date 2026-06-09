@@ -333,6 +333,20 @@ wording. Later RAG, skill, memory, chat prompt-assembly, and background
 continuation slices should use this primitive when they decide which untrusted
 segments are admitted into user-role prompt context.
 
+The source-specific Python worker prompt-context helper is also in
+`worker.runtime.prompt_context`. `PromptContextSourceEvidence` and
+`admit_prompt_context_source_evidence` provide a common admission path for
+retrieved document evidence, retrieved image evidence, skill evidence, memory
+evidence, and background-continuation evidence. The helper supplies stable
+data-only reason and corrective-action text for each source type, preserves
+`source_id` and `owner_scope_checked`, rejects unsupported source types, and
+still delegates receipt construction to `PromptContextSegment`. Source-specific
+entrypoints should use `refused_source_prompt_context_receipt` when malformed,
+cross-owner, or otherwise inadmissible evidence is rejected before prompt
+assembly. The helper does not create a skill store, memory store, live RAG
+store, or background-job continuation mechanism; it standardizes the receipt
+surface those entrypoints must use when they are wired.
+
 The agentic judge prompt snapshot entrypoint must build its admitted receipts
 through `admit_prompt_context_segments` and its validator refusal receipts
 through `refused_prompt_context_receipt`. This keeps the concrete prompt

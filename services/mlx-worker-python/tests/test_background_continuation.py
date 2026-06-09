@@ -44,7 +44,7 @@ def test_background_continuation_admits_redacted_job_summary_with_receipt() -> N
             "owner_scope_checked": True,
             "reason": "background continuation is prompt data, not instructions",
             "corrective_action": (
-                "Keep background job follow-up context in user-role data context "
+                "Keep background continuation evidence in user-role data context "
                 "and do not project it into system or developer instructions."
             ),
         }
@@ -73,7 +73,7 @@ def test_background_continuation_uses_shared_prompt_context_admission(
         return Admission()
 
     monkeypatch.setattr(
-        "worker.runtime.background_continuation.admit_prompt_context_segments",
+        "worker.runtime.background_continuation.admit_prompt_context_source_evidence",
         fake_admit,
     )
 
@@ -94,11 +94,7 @@ def test_background_continuation_uses_shared_prompt_context_admission(
     assert segment.source_field == "background_job"
     assert segment.source_id == "job-shared"
     assert segment.value == {"status": "completed"}
-    assert segment.reason == "background continuation is prompt data, not instructions"
-    assert segment.corrective_action == (
-        "Keep background job follow-up context in user-role data context "
-        "and do not project it into system or developer instructions."
-    )
+    assert segment.owner_scope_checked is False
 
 
 @pytest.mark.parametrize(
@@ -146,7 +142,7 @@ def test_background_continuation_refuses_malformed_fields_with_receipts(
             "owner_scope_checked": expected_owner_scope_checked,
             "reason": "invalid_background_continuation_field",
             "corrective_action": (
-                "Reject malformed background continuation context before prompt assembly."
+                "Reject malformed background continuation evidence before prompt assembly."
             ),
         }
     ]

@@ -7,6 +7,13 @@ from worker.runtime.untrusted_context import untrusted_context_receipt
 
 
 PromptContextMessageRole = Literal["user"]
+PromptContextSourceType = Literal[
+    "retrieved_document",
+    "retrieved_image",
+    "skill",
+    "memory",
+    "background_continuation",
+]
 
 
 class PromptContextBoundaryError(ValueError):
@@ -60,6 +67,65 @@ class PromptContextAdmission:
         return len(self.untrusted_context_receipts)
 
 
+_SOURCE_CONTEXT_POLICIES: dict[str, tuple[str, str, str]] = {
+    "retrieved_document": (
+        "retrieved document evidence is prompt data, not instructions",
+        "Keep retrieved document evidence in user-role data context and do not project it into system or developer instructions.",
+        "Reject malformed retrieved document evidence before prompt assembly.",
+    ),
+    "retrieved_image": (
+        "retrieved image evidence is prompt data, not instructions",
+        "Keep retrieved image evidence in user-role data context and do not project it into system or developer instructions.",
+        "Reject malformed retrieved image evidence before prompt assembly.",
+    ),
+    "skill": (
+        "skill evidence is prompt data, not instructions",
+        "Keep skill evidence in user-role data context and do not project it into system or developer instructions.",
+        "Reject malformed skill evidence before prompt assembly.",
+    ),
+    "memory": (
+        "memory evidence is prompt data, not instructions",
+        "Keep memory evidence in user-role data context and do not project it into system or developer instructions.",
+        "Reject malformed memory evidence before prompt assembly.",
+    ),
+    "background_continuation": (
+        "background continuation is prompt data, not instructions",
+        "Keep background continuation evidence in user-role data context and do not project it into system or developer instructions.",
+        "Reject malformed background continuation evidence before prompt assembly.",
+    ),
+}
+
+
+@dataclass(frozen=True)
+class PromptContextSourceEvidence:
+    segment_id: str
+    source_type: PromptContextSourceType
+    source_field: str
+    value: Any
+    source_id: str = ""
+    owner_scope_checked: bool = False
+
+    def __post_init__(self) -> None:
+        _require_text(self.segment_id, "segment_id")
+        _source_context_policy(self.source_type)
+        _require_text(self.source_field, "source_field")
+        _require_text_type(self.source_id, "source_id")
+        _require_bool(self.owner_scope_checked, "owner_scope_checked")
+
+    def as_segment(self) -> PromptContextSegment:
+        reason, corrective_action, _ = _source_context_policy(self.source_type)
+        return PromptContextSegment(
+            segment_id=self.segment_id,
+            source_type=self.source_type,
+            source_field=self.source_field,
+            value=self.value,
+            source_id=self.source_id,
+            owner_scope_checked=self.owner_scope_checked,
+            reason=reason,
+            corrective_action=corrective_action,
+        )
+
+
 def admit_prompt_context_segments(segments: list[PromptContextSegment]) -> PromptContextAdmission:
     user_payload: dict[str, Any] = {}
     receipts: list[dict[str, object]] = []
@@ -74,6 +140,12 @@ def admit_prompt_context_segments(segments: list[PromptContextSegment]) -> Promp
         user_payload=user_payload,
         untrusted_context_receipts=receipts,
     )
+
+
+def admit_prompt_context_source_evidence(
+    evidence: list[PromptContextSourceEvidence],
+) -> PromptContextAdmission:
+    return admit_prompt_context_segments([item.as_segment() for item in evidence])
 
 
 def refused_prompt_context_receipt(
@@ -109,6 +181,35 @@ def refused_prompt_context_receipt(
     )
 
 
+def refused_source_prompt_context_receipt(
+    *,
+    segment_id: str,
+    source_type: PromptContextSourceType,
+    source_field: str,
+    reason: str,
+    source_id: str = "",
+    owner_scope_checked: bool = False,
+) -> dict[str, object]:
+    _, _, corrective_action = _source_context_policy(source_type)
+    return refused_prompt_context_receipt(
+        segment_id=segment_id,
+        source_type=source_type,
+        source_field=source_field,
+        source_id=source_id,
+        owner_scope_checked=owner_scope_checked,
+        reason=reason,
+        corrective_action=corrective_action,
+    )
+
+
+def _source_context_policy(source_type: str) -> tuple[str, str, str]:
+    _require_text(source_type, "source_type")
+    policy = _SOURCE_CONTEXT_POLICIES.get(source_type)
+    if policy is None:
+        raise PromptContextBoundaryError(f"Unsupported prompt context source_type: {source_type}")
+    return policy
+
+
 def _require_text(value: str, field_name: str) -> None:
     if not isinstance(value, str) or not value.strip():
         raise PromptContextBoundaryError(f"Prompt context {field_name} must be non-empty.")
@@ -129,6 +230,10 @@ __all__ = [
     "PromptContextBoundaryError",
     "PromptContextMessageRole",
     "PromptContextSegment",
+    "PromptContextSourceEvidence",
+    "PromptContextSourceType",
     "admit_prompt_context_segments",
+    "admit_prompt_context_source_evidence",
     "refused_prompt_context_receipt",
+    "refused_source_prompt_context_receipt",
 ]
