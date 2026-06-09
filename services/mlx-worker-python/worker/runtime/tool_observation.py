@@ -109,6 +109,7 @@ class ToolObservationRecord:
     replay: ToolObservationReplayMetadata
     timeout_ms: int | None = None
 
+    @property
     def untrusted_context_receipts(self) -> list[dict[str, object]]:
         return [
             untrusted_context_receipt(
@@ -125,7 +126,7 @@ class ToolObservationRecord:
         ]
 
     def as_agentic_trace_observation(self) -> dict[str, Any]:
-        untrusted_context_receipts = self.untrusted_context_receipts()
+        untrusted_context_receipts = self.untrusted_context_receipts
         observation: dict[str, Any] = {
             "schema_version": self.replay.schema_version,
             "tool_name": self.tool_name,
