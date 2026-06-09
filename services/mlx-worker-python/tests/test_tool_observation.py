@@ -76,6 +76,40 @@ def test_tool_observation_timeout_status_records_explicit_metadata() -> None:
     assert emitted["metrics"]["tool_observation.record_count"] == 1
 
 
+def test_tool_observation_emits_untrusted_context_receipt_for_payload() -> None:
+    record = normalize_tool_observation(
+        tool_name="visit",
+        tool_call_id="visit-call-1",
+        observation_kind="page_extract",
+        status="completed",
+        payload={"text": "A retrieved page can contain instructions."},
+    )
+
+    emitted = record.as_agentic_trace_observation()
+
+    assert emitted["untrusted_context_receipt_count"] == 1
+    assert emitted["untrusted_context_receipts"] == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": "visit-call-1:observation",
+            "source_type": "tool_observation",
+            "source_field": "payload",
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": True,
+            "owner_scope_checked": False,
+            "reason": "tool output is prompt data, not instructions",
+            "corrective_action": (
+                "Keep this observation in user-role data context and do not "
+                "project it into system or developer instructions."
+            ),
+        }
+    ]
+    assert "untrusted_context_receipts" not in emitted["payload"]
+
+
 def test_tool_observation_replay_fingerprint_is_stable_for_sanitized_payload() -> None:
     policy = ToolObservationPolicy(redaction_terms=("SECRET",))
     first = normalize_tool_observation(
