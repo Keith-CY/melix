@@ -372,9 +372,10 @@ and byte metrics focused on the emitted tool output while still making the
 prompt boundary visible to downstream prompt assemblers.
 
 The v1 generic tool-output slice adds this receipt in the shared Python worker
-tool observation normalizer by reusing
-`worker.runtime.untrusted_context.untrusted_context_receipt`. It does not
-replace source-specific owner checks or prompt admission checks. Skill, memory,
+tool observation normalizer. The follow-up prompt-context admission slice
+generates the receipt through `worker.runtime.prompt_context` by admitting one
+`PromptContextSegment` for the sanitized observation payload. It does not
+replace source-specific owner checks or final projection checks. Skill, memory,
 RAG, chat prompt assembly, and background-job continuation surfaces must still
 add their own admission or refusal receipts when they decide whether to
 include, reject, or re-scope a tool observation in a final prompt.

@@ -5,7 +5,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from worker.runtime.untrusted_context import untrusted_context_receipt
+from worker.runtime.prompt_context import PromptContextSegment, admit_prompt_context_segments
 
 
 TOOL_OBSERVATION_SCHEMA_VERSION = "melix.agentic_tool_observation.v1"
@@ -111,19 +111,22 @@ class ToolObservationRecord:
 
     @property
     def untrusted_context_receipts(self) -> list[dict[str, object]]:
-        return [
-            untrusted_context_receipt(
-                segment_id=f"{self.tool_call_id}:observation",
-                source_type="tool_observation",
-                source_field="payload",
-                included=True,
-                reason="tool output is prompt data, not instructions",
-                corrective_action=(
-                    "Keep this observation in user-role data context and do not "
-                    "project it into system or developer instructions."
-                ),
-            )
-        ]
+        admission = admit_prompt_context_segments(
+            [
+                PromptContextSegment(
+                    segment_id=f"{self.tool_call_id}:observation",
+                    source_type="tool_observation",
+                    source_field="payload",
+                    value=self.payload,
+                    reason="tool output is prompt data, not instructions",
+                    corrective_action=(
+                        "Keep this observation in user-role data context and do not "
+                        "project it into system or developer instructions."
+                    ),
+                )
+            ]
+        )
+        return admission.untrusted_context_receipts
 
     def as_agentic_trace_observation(self) -> dict[str, Any]:
         untrusted_context_receipts = self.untrusted_context_receipts
