@@ -329,6 +329,12 @@ wording. Later RAG, skill, memory, chat prompt-assembly, and background
 continuation slices should use this primitive when they decide which untrusted
 segments are admitted into user-role prompt context.
 
+The agentic judge prompt snapshot entrypoint must build its admitted receipts
+through `admit_prompt_context_segments` and its validator refusal receipts
+through `refused_prompt_context_receipt`. This keeps the concrete prompt
+snapshot path aligned with the shared admission primitive while preserving the
+stable receipt JSON and persisted prompt payload.
+
 Rejected prompt-context segments should use the same receipt schema with
 `included = false`. For the agentic judge prompt boundary, unsupported
 top-level user-payload fields emit `reason =
