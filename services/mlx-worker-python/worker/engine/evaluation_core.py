@@ -84,7 +84,11 @@ from worker.productization.evaluation_schemas import (
 from worker.productization.evaluation_store import EvaluationStore
 from worker.productization.probe_policy import ProbePolicy
 from worker.runtime.agentic_tools import execute_agentic_tool_calls
-from worker.runtime.untrusted_context import untrusted_context_receipt
+from worker.runtime.prompt_context import (
+    PromptContextSegment,
+    admit_prompt_context_segments,
+    refused_prompt_context_receipt,
+)
 
 
 _SUITE_SCORE_MODES = {
@@ -2488,31 +2492,23 @@ class EvaluationCore:
         sample_id: str,
         user_payload: dict[str, object],
     ) -> list[dict[str, object]]:
-        return [
-            EvaluationCore._agentic_judge_untrusted_context_receipt(
-                sample_id=sample_id,
-                source_field=source_field,
-            )
-            for source_field in user_payload
-        ]
-
-    @staticmethod
-    def _agentic_judge_untrusted_context_receipt(
-        *,
-        sample_id: str,
-        source_field: str,
-    ) -> dict[str, object]:
-        return untrusted_context_receipt(
-            segment_id=f"{sample_id}:{source_field}",
-            source_type="agentic_judge_user_payload",
-            source_field=source_field,
-            included=True,
-            reason="sample-derived context is prompt data, not instructions",
-            corrective_action=(
-                "Keep this segment in the user payload and do not project it into "
-                "system or developer instructions."
-            ),
+        admission = admit_prompt_context_segments(
+            [
+                PromptContextSegment(
+                    segment_id=f"{sample_id}:{source_field}",
+                    source_type="agentic_judge_user_payload",
+                    source_field=source_field,
+                    value=value,
+                    reason="sample-derived context is prompt data, not instructions",
+                    corrective_action=(
+                        "Keep this segment in the user payload and do not project it into "
+                        "system or developer instructions."
+                    ),
+                )
+                for source_field, value in user_payload.items()
+            ]
         )
+        return admission.untrusted_context_receipts
 
     @staticmethod
     def _agentic_judge_refusal_receipt(
@@ -2520,11 +2516,10 @@ class EvaluationCore:
         source_field: str,
         reason: str,
     ) -> dict[str, object]:
-        return untrusted_context_receipt(
+        return refused_prompt_context_receipt(
             segment_id=f"agentic_judge_user_payload:{source_field}",
             source_type="agentic_judge_user_payload",
             source_field=source_field,
-            included=False,
             reason=reason,
             corrective_action=(
                 "Remove this field before projecting the sample-derived context "
