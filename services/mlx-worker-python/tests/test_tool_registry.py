@@ -595,6 +595,26 @@ def test_agentic_tool_selection_preserves_always_available_tools_with_vector_hit
     assert result.registry.metrics().schema_bytes < built_in_tool_registry().metrics().schema_bytes
 
 
+def test_agentic_tool_selection_uses_builtin_name_set_for_membership() -> None:
+    result = select_agentic_tools_for_turn(
+        ToolSelectionInput(
+            current_user_turn="Search local evidence, then visit the cited page.",
+            vector_selected_tool_ids=("unknown_tool", "text_search"),
+            vector_available=True,
+            max_selected_tools=4,
+        )
+    )
+
+    assert tool_registry_module._BUILTIN_AGENTIC_TOOL_NAME_SET == frozenset(
+        BUILTIN_AGENTIC_TOOL_NAMES
+    )
+    assert result.registry.names() == ("local_compute", "text_search")
+    assert result.receipt["selected_tools"] == [
+        {"tool_id": "local_compute", "source": "always"},
+        {"tool_id": "text_search", "source": "vector"},
+    ]
+
+
 def test_agentic_tool_selection_uses_keyword_fallback_when_vector_unavailable() -> None:
     result = select_agentic_tools_for_turn(
         ToolSelectionInput(
