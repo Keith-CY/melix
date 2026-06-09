@@ -280,8 +280,11 @@ record `source_type = retrieved_document`; `skill` and `agent_skill` record
 `source_type = skill`; `memory`, `retrieved_memory`, and `pinned_memory` record
 `source_type = memory`; `background_continuation`,
 `background-continuation`, `background_job`, and `background-job` record
-`source_type = background_continuation`. Other non-system/developer messages
-continue to record `source_type = chat_prompt_message`.
+`source_type = background_continuation`. Non-tool assistant messages record
+`source_type = model_final_answer` because prior model output remains
+untrusted data when it is projected back into a later prompt. Other
+non-system/developer messages continue to record `source_type =
+chat_prompt_message`.
 
 A reserved prefix matches either the exact normalized message name or the prefix
 followed by `:`, `.`, `_`, or `-`. The `_` and `-` separators preserve
@@ -388,6 +391,9 @@ replace source-specific owner checks or final projection checks. Skill, memory,
 RAG, chat prompt assembly, and background-job continuation surfaces must still
 add their own admission or refusal receipts when they decide whether to
 include, reject, or re-scope a tool observation in a final prompt.
+The `model_final_answer` classification records the projection boundary for
+prior assistant output only; it does not mark generated text as trusted
+instructions and does not change assistant transcript storage.
 
 The v1 deterministic retrieval source slice lets callers attach
 source-specific untrusted-context receipts beside the generic tool-observation

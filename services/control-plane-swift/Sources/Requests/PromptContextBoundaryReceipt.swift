@@ -62,24 +62,26 @@ struct PromptContextBoundaryReceipts: Sendable, Equatable {
             return "tool_output"
         }
 
-        guard let name = message.name else {
-            return "chat_prompt_message"
+        if let name = message.name {
+            let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if hasAnyPrefix(
+                normalizedName,
+                ["retrieved_document", "retrieved-doc", "document", "doc", "rag", "rag_document", "knowledge"]
+            ) {
+                return "retrieved_document"
+            }
+            if hasAnyPrefix(normalizedName, ["skill", "agent_skill"]) {
+                return "skill"
+            }
+            if hasAnyPrefix(normalizedName, ["memory", "retrieved_memory", "pinned_memory"]) {
+                return "memory"
+            }
+            if hasAnyPrefix(normalizedName, ["background_continuation", "background-continuation", "background_job", "background-job"]) {
+                return "background_continuation"
+            }
         }
-        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if hasAnyPrefix(
-            normalizedName,
-            ["retrieved_document", "retrieved-doc", "document", "doc", "rag", "rag_document", "knowledge"]
-        ) {
-            return "retrieved_document"
-        }
-        if hasAnyPrefix(normalizedName, ["skill", "agent_skill"]) {
-            return "skill"
-        }
-        if hasAnyPrefix(normalizedName, ["memory", "retrieved_memory", "pinned_memory"]) {
-            return "memory"
-        }
-        if hasAnyPrefix(normalizedName, ["background_continuation", "background-continuation", "background_job", "background-job"]) {
-            return "background_continuation"
+        if normalizedRole == "assistant" {
+            return "model_final_answer"
         }
         return "chat_prompt_message"
     }
