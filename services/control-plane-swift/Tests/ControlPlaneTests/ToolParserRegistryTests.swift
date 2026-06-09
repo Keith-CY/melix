@@ -367,6 +367,7 @@ struct ToolParserRegistryTests {
             try JSONSerialization.jsonObject(with: Data(receiptsJSON.utf8)) as? [[String: Any]]
         )
         let sourceFields = receipts.compactMap { $0["source_field"] as? String }
+        let sourceTypes = receipts.compactMap { $0["source_type"] as? String }
         let segmentIDs = receipts.compactMap { $0["segment_id"] as? String }
         let roles = receipts.compactMap { $0["message_role"] as? String }
 
@@ -382,6 +383,16 @@ struct ToolParserRegistryTests {
             "messages[2].parts[5].video_uri",
             "messages[2].parts[6].video_bytes",
             "messages[3].parts[0].text",
+        ])
+        #expect(sourceTypes == [
+            "chat_prompt_message",
+            "chat_prompt_message",
+            "chat_prompt_message",
+            "chat_prompt_message",
+            "chat_prompt_message",
+            "chat_prompt_message",
+            "chat_prompt_message",
+            "model_final_answer",
         ])
         #expect(segmentIDs == [
             "req-prompt-media:message-2:part-0",
@@ -451,6 +462,34 @@ struct ToolParserRegistryTests {
         #expect(receiptsJSON.contains("arbitrary shell") == false)
         #expect(receiptsJSON.contains("bypass authentication") == false)
         #expect(receiptsJSON.contains("trust me") == false)
+    }
+
+    @Test("prompt context boundary receipts classify assistant history as model final answer")
+    func promptContextBoundaryReceiptsClassifyAssistantHistoryAsModelFinalAnswer() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-prompt-final" })
+        let request = makeNormalizedRequest(messages: [
+            .init(role: "user", content: "Continue from the previous answer."),
+            .init(role: "assistant", name: "previous_answer_7", content: "assistant final text must stay data"),
+        ])
+
+        let translated = try translator.translate(request, modelHandle: "worker-text")
+        let ext = translated.workerRequest.execution.ext
+        let receiptsJSON = try #require(ext["melix.prompt_context.receipts_json"])
+        let receipts = try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptsJSON.utf8)) as? [[String: Any]]
+        )
+        let finalReceipt = try #require(
+            receipts.first { $0["source_field"] as? String == "messages[1].parts[0].text" }
+        )
+
+        #expect(ext["melix.prompt_context.receipt_count"] == "2")
+        #expect(finalReceipt["source_type"] as? String == "model_final_answer")
+        #expect(finalReceipt["source_id"] as? String == "previous_answer_7")
+        #expect(finalReceipt["message_role"] as? String == "assistant")
+        #expect(finalReceipt["included"] as? Bool == true)
+        #expect(finalReceipt["policy"] as? String == "data_only")
+        #expect(receiptsJSON.contains("assistant final text") == false)
+        #expect(receiptsJSON.contains("Continue from the previous answer.") == false)
     }
 
     @Test("request-local compatibility policy receipt overrides do not mutate default requests")
