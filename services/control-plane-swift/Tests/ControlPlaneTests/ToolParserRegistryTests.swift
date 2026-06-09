@@ -3,6 +3,7 @@ import Testing
 
 @testable import MelixControlPlaneCore
 import MelixControlPlaneProtocol
+import MelixWorkerProtocol
 
 struct ToolParserRegistryTests {
     @Test("registered parsers declare audit receipts for wire formats and selector surfaces")
@@ -267,6 +268,143 @@ struct ToolParserRegistryTests {
         #expect(receipt.contains(#""tool_namespaces":["tools.search"]"#))
         #expect(receipt.contains(#""effective_config_hash":"\#(ext["melix.compat.effective_config_hash"] ?? "")""#))
         #expect(Set(receiptObject.keys) == compatReceiptFieldNames())
+    }
+
+    @Test("translated text requests attach prompt context boundary receipts")
+    func translatedTextRequestsAttachPromptContextBoundaryReceipts() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-prompt-context" })
+        let request = OpenAIChatCompletionsRequest(
+            model: "melix-dev-text",
+            messages: [
+                .init(role: "system", content: "Answer with repository rules."),
+                .init(role: "user", content: "Summarize this untrusted page."),
+            ],
+            stream: false
+        )
+
+        let translated = try translator.translate(request, modelHandle: "worker-text")
+        let ext = translated.workerRequest.execution.ext
+        let receiptsJSON = try #require(ext["melix.prompt_context.receipts_json"])
+        let receipts = try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptsJSON.utf8)) as? [[String: Any]]
+        )
+        let receipt = try #require(receipts.first)
+
+        #expect(ext["melix.prompt_context.receipt_schema"] == "melix.untrusted_context_receipt.v1")
+        #expect(ext["melix.prompt_context.receipt_count"] == "1")
+        #expect(receipts.count == 1)
+        #expect(receipt["schema_version"] as? String == "melix.untrusted_context_receipt.v1")
+        #expect(receipt["segment_id"] as? String == "req-prompt-context:message-1:part-0")
+        #expect(receipt["source_type"] as? String == "chat_prompt_message")
+        #expect(receipt["source_field"] as? String == "messages[1].parts[0].text")
+        #expect(receipt["message_role"] as? String == "user")
+        #expect(receipt["trust_level"] as? String == "untrusted")
+        #expect(receipt["policy"] as? String == "data_only")
+        #expect(receipt["boundary_checked"] as? Bool == true)
+        #expect(receipt["included"] as? Bool == true)
+        #expect(receipt["owner_scope_checked"] as? Bool == false)
+        #expect(receipt["reason"] as? String == "chat message content is prompt data, not instructions")
+        #expect(
+            receipt["corrective_action"] as? String ==
+                "Keep this message part in its original role and do not promote it into system or developer instructions."
+        )
+        #expect(receiptsJSON.contains("Summarize this untrusted page.") == false)
+        #expect(receiptsJSON.contains("Answer with repository rules.") == false)
+    }
+
+    @Test("trusted-only prompt messages do not attach prompt context boundary receipts")
+    func trustedOnlyPromptMessagesDoNotAttachPromptContextBoundaryReceipts() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-prompt-trusted" })
+        let request = makeNormalizedRequest(messages: [
+            .init(role: "system", content: "Use repository policy."),
+            .init(role: "developer", content: "Prefer concise answers."),
+        ])
+
+        let translated = try translator.translate(request, modelHandle: "worker-text")
+        let ext = translated.workerRequest.execution.ext
+
+        #expect(ext["melix.prompt_context.receipt_schema"] == nil)
+        #expect(ext["melix.prompt_context.receipt_count"] == nil)
+        #expect(ext["melix.prompt_context.receipts_json"] == nil)
+    }
+
+    @Test("prompt context boundary receipts cover multimodal message parts without raw payloads")
+    func promptContextBoundaryReceiptsCoverMultimodalMessagePartsWithoutRawPayloads() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-prompt-media" })
+        let request = makeNormalizedRequest(messages: [
+            .init(role: "system", parts: [
+                Self.messagePart(text: "system rules stay trusted"),
+            ]),
+            .init(role: "developer", parts: [
+                Self.messagePart(text: "developer rules stay trusted"),
+            ]),
+            .init(role: "user", parts: [
+                Self.messagePart(text: "inspect media"),
+                Self.messagePart(imageURI: "file:///tmp/untrusted-image.png"),
+                Self.messagePart(imageBytes: Data("image-bytes".utf8)),
+                Self.messagePart(audioURI: "file:///tmp/untrusted-audio.wav"),
+                Self.messagePart(audioBytes: Data("audio-bytes".utf8)),
+                Self.messagePart(videoURI: "file:///tmp/untrusted-video.mp4"),
+                Self.messagePart(videoBytes: Data("video-bytes".utf8)),
+                Self.messagePart(text: "   "),
+                Self.messagePart(imageURI: "   "),
+                Self.messagePart(imageBytes: Data()),
+                Self.messagePart(audioURI: "   "),
+                Self.messagePart(audioBytes: Data()),
+                Self.messagePart(videoURI: "   "),
+                Self.messagePart(videoBytes: Data()),
+                Melix_Worker_V1_MessagePart(),
+            ]),
+            .init(role: "assistant", parts: [
+                Self.messagePart(text: "assistant transcript data"),
+            ]),
+        ])
+
+        let translated = try translator.translate(request, modelHandle: "worker-vlm")
+        let ext = translated.workerRequest.execution.ext
+        let receiptsJSON = try #require(ext["melix.prompt_context.receipts_json"])
+        let receipts = try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptsJSON.utf8)) as? [[String: Any]]
+        )
+        let sourceFields = receipts.compactMap { $0["source_field"] as? String }
+        let segmentIDs = receipts.compactMap { $0["segment_id"] as? String }
+        let roles = receipts.compactMap { $0["message_role"] as? String }
+
+        #expect(ext["melix.prompt_context.receipt_schema"] == "melix.untrusted_context_receipt.v1")
+        #expect(ext["melix.prompt_context.receipt_count"] == "8")
+        #expect(receipts.count == 8)
+        #expect(sourceFields == [
+            "messages[2].parts[0].text",
+            "messages[2].parts[1].image_uri",
+            "messages[2].parts[2].image_bytes",
+            "messages[2].parts[3].audio_uri",
+            "messages[2].parts[4].audio_bytes",
+            "messages[2].parts[5].video_uri",
+            "messages[2].parts[6].video_bytes",
+            "messages[3].parts[0].text",
+        ])
+        #expect(segmentIDs == [
+            "req-prompt-media:message-2:part-0",
+            "req-prompt-media:message-2:part-1",
+            "req-prompt-media:message-2:part-2",
+            "req-prompt-media:message-2:part-3",
+            "req-prompt-media:message-2:part-4",
+            "req-prompt-media:message-2:part-5",
+            "req-prompt-media:message-2:part-6",
+            "req-prompt-media:message-3:part-0",
+        ])
+        #expect(roles == ["user", "user", "user", "user", "user", "user", "user", "assistant"])
+        #expect(receipts.allSatisfy { $0["policy"] as? String == "data_only" })
+        #expect(receiptsJSON.contains("system rules stay trusted") == false)
+        #expect(receiptsJSON.contains("developer rules stay trusted") == false)
+        #expect(receiptsJSON.contains("inspect media") == false)
+        #expect(receiptsJSON.contains("assistant transcript data") == false)
+        #expect(receiptsJSON.contains("file:///tmp/untrusted-image.png") == false)
+        #expect(receiptsJSON.contains("file:///tmp/untrusted-audio.wav") == false)
+        #expect(receiptsJSON.contains("file:///tmp/untrusted-video.mp4") == false)
+        #expect(receiptsJSON.contains("image-bytes") == false)
+        #expect(receiptsJSON.contains("audio-bytes") == false)
+        #expect(receiptsJSON.contains("video-bytes") == false)
     }
 
     @Test("request-local compatibility policy receipt overrides do not mutate default requests")
@@ -557,14 +695,15 @@ struct ToolParserRegistryTests {
     }
 
     private func makeNormalizedRequest(
+        messages: [NormalizedTextMessage] = [
+            .init(role: "user", content: "Call a tool."),
+        ],
         toolParser: ToolParserSelection? = nil
     ) -> NormalizedTextRequest {
         NormalizedTextRequest(
             endpoint: .responses,
             model: "melix-dev-text",
-            messages: [
-                .init(role: "user", content: "Call a tool."),
-            ],
+            messages: messages,
             stream: true,
             temperature: nil,
             topP: nil,
@@ -576,6 +715,48 @@ struct ToolParserRegistryTests {
             saveBoundarySnapshot: nil,
             toolParser: toolParser
         )
+    }
+
+    private static func messagePart(text: String) -> Melix_Worker_V1_MessagePart {
+        var part = Melix_Worker_V1_MessagePart()
+        part.text = text
+        return part
+    }
+
+    private static func messagePart(imageURI: String) -> Melix_Worker_V1_MessagePart {
+        var part = Melix_Worker_V1_MessagePart()
+        part.imageUri = imageURI
+        return part
+    }
+
+    private static func messagePart(imageBytes: Data) -> Melix_Worker_V1_MessagePart {
+        var part = Melix_Worker_V1_MessagePart()
+        part.imageBytes = imageBytes
+        return part
+    }
+
+    private static func messagePart(audioURI: String) -> Melix_Worker_V1_MessagePart {
+        var part = Melix_Worker_V1_MessagePart()
+        part.audioUri = audioURI
+        return part
+    }
+
+    private static func messagePart(audioBytes: Data) -> Melix_Worker_V1_MessagePart {
+        var part = Melix_Worker_V1_MessagePart()
+        part.audioBytes = audioBytes
+        return part
+    }
+
+    private static func messagePart(videoURI: String) -> Melix_Worker_V1_MessagePart {
+        var part = Melix_Worker_V1_MessagePart()
+        part.videoUri = videoURI
+        return part
+    }
+
+    private static func messagePart(videoBytes: Data) -> Melix_Worker_V1_MessagePart {
+        var part = Melix_Worker_V1_MessagePart()
+        part.videoBytes = videoBytes
+        return part
     }
 
     private func compatReceiptFieldNames() -> Set<String> {

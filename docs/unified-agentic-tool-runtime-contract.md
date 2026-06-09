@@ -249,10 +249,23 @@ admitted untrusted segment. The receipt shape is:
 
 The v1 agentic judge prompt snapshot slice records this receipt for every
 sample-derived user-payload field admitted into the judge user message. It does
-not change judge prompt wording or scorer behavior. Broader chat prompt
-assembly, RAG stores, skill entrypoints, memory entrypoints, and background-job
-continuations must reuse this receipt shape when they add their prompt-context
-boundary evidence under #1761.
+not change judge prompt wording or scorer behavior.
+
+The v1 control-plane chat prompt assembly slice records the same receipt shape
+for non-empty non-system/developer message parts after request shaping and
+before `Melix_Worker_V1_GenerateRequest.messages` is sent to the worker.
+Receipts are stored in `ExecutionMetadata.ext` as:
+
+- `melix.prompt_context.receipt_schema`
+- `melix.prompt_context.receipt_count`
+- `melix.prompt_context.receipts_json`
+
+The chat prompt receipt must not include raw message content, media URLs, media
+bytes, tool arguments, or private prompt text. It records only segment IDs,
+source fields, roles, data-only policy, and corrective guidance. RAG stores,
+skill entrypoints, memory entrypoints, and background-job continuations must
+reuse this receipt shape when they add their prompt-context boundary evidence
+under #1761.
 
 The v1 Python worker prompt-context primitive is
 `worker.runtime.untrusted_context.untrusted_context_receipt`. It constructs the
