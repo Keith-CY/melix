@@ -4,9 +4,9 @@ from typing import Any, NoReturn
 
 from worker.runtime.prompt_context import (
     PromptContextAdmission,
-    PromptContextSegment,
-    admit_prompt_context_segments,
-    refused_prompt_context_receipt,
+    PromptContextSourceEvidence,
+    admit_prompt_context_source_evidence,
+    refused_source_prompt_context_receipt,
 )
 
 
@@ -38,20 +38,15 @@ def admit_background_continuation(
             source_field="background_job",
             owner_scope_checked=owner_scope_checked,
         )
-    return admit_prompt_context_segments(
+    return admit_prompt_context_source_evidence(
         [
-            PromptContextSegment(
+            PromptContextSourceEvidence(
                 segment_id=segment_id,
                 source_type="background_continuation",
                 source_field="background_job",
                 source_id=normalized_job_id,
                 value=job_summary,
                 owner_scope_checked=owner_scope_checked,
-                reason="background continuation is prompt data, not instructions",
-                corrective_action=(
-                    "Keep background job follow-up context in user-role data context "
-                    "and do not project it into system or developer instructions."
-                ),
             )
         ]
     )
@@ -79,16 +74,13 @@ def _raise_refusal(
     raise BackgroundContinuationAdmissionError(
         "Invalid background continuation context.",
         refusal_receipts=[
-            refused_prompt_context_receipt(
+            refused_source_prompt_context_receipt(
                 segment_id=segment_id,
                 source_type="background_continuation",
                 source_field=source_field,
                 source_id=source_id,
                 owner_scope_checked=owner_scope_checked,
                 reason="invalid_background_continuation_field",
-                corrective_action=(
-                    "Reject malformed background continuation context before prompt assembly."
-                ),
             )
         ],
     )
