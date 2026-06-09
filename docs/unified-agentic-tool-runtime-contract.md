@@ -260,8 +260,8 @@ stable `melix.untrusted_context_receipt.v1` dictionary for both admitted and
 refused untrusted user-message segments. Existing agentic judge prompt
 snapshots use this helper, and later retrieved-document, skill, memory,
 tool-output, and background-continuation admission points must use the same
-helper or preserve its exact receipt shape when they record prompt-boundary
-evidence.
+helper or preserve its exact receipt shape, including the optional `source_id`
+field for retrieved segments, when they record prompt-boundary evidence.
 
 Rejected prompt-context segments should use the same receipt schema with
 `included = false`. For the agentic judge prompt boundary, unsupported

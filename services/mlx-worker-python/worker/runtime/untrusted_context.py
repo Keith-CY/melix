@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
-
 UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION = "melix.untrusted_context_receipt.v1"
 
 
@@ -17,8 +14,8 @@ def untrusted_context_receipt(
     source_id: str = "",
     message_role: str = "user",
     owner_scope_checked: bool = False,
-) -> dict[str, Any]:
-    receipt: dict[str, Any] = {
+) -> dict[str, object]:
+    receipt: dict[str, object] = {
         "schema_version": UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION,
         "segment_id": segment_id,
         "source_type": source_type,
