@@ -51,6 +51,11 @@ _DEFAULT_OMITTED_ALLOWED_TOOLS_RECEIPT_JSON = _COMPACT_SORTED_JSON_ENCODER.encod
         "tool_source_ids": [],
     }
 )
+_PROMPT_CONTEXT_RECEIPT_METRIC_KEYS = {
+    "melix.prompt_context.receipt_schema": "prompt_context_receipt_schema",
+    "melix.prompt_context.receipt_count": "prompt_context_receipt_count",
+    "melix.prompt_context.receipts_json": "prompt_context_receipts_json",
+}
 
 
 def _canonical_json_schema_key(schema: str) -> str:
@@ -68,6 +73,21 @@ def _parser_metric_text(value: int | str) -> str:
     if value == 0:
         return _METRIC_ZERO_TEXT
     return str(value)
+
+
+def _apply_prompt_context_receipt_metrics(parser_metrics: dict[str, str], execution_ext: object) -> None:
+    if not execution_ext:
+        return
+    get_value = getattr(execution_ext, "get", None)
+    if not callable(get_value):
+        return
+    for ext_key, metric_key in _PROMPT_CONTEXT_RECEIPT_METRIC_KEYS.items():
+        raw_value = get_value(ext_key, None)
+        if raw_value is None:
+            continue
+        value = str(raw_value)
+        if value:
+            parser_metrics[metric_key] = value
 
 
 def _text_native_mtp_parser_metrics(event: RuntimeTokenEvent | None) -> dict[str, str]:
@@ -540,6 +560,7 @@ class EngineCore:
                     token_route_receipt_json = token_route_receipt.to_json()
                 parser_metrics["token_route_receipt_json"] = token_route_receipt_json
                 parser_metrics["allowed_tools_receipt_json"] = allowed_tools_receipt_json
+            _apply_prompt_context_receipt_metrics(parser_metrics, execution_ext)
             finalization_receipt = finalize_text_response(
                 response_id=request_id,
                 created=created,

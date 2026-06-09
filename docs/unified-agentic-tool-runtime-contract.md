@@ -260,6 +260,17 @@ Receipts are stored in `ExecutionMetadata.ext` as:
 - `melix.prompt_context.receipt_count`
 - `melix.prompt_context.receipts_json`
 
+The Python worker completion evidence slice forwards those three request-local
+ext values into `Completed.parser_metrics` as:
+
+- `prompt_context_receipt_schema`
+- `prompt_context_receipt_count`
+- `prompt_context_receipts_json`
+
+The worker treats the receipt JSON as opaque evidence and does not parse or
+mutate it. Source-specific RAG, skill, memory, and background-continuation
+admission points still need their own admission/refusal receipts.
+
 The chat prompt receipt must not include raw message content, media URLs, media
 bytes, tool arguments, or private prompt text. It records only segment IDs,
 source fields, roles, data-only policy, and corrective guidance. RAG stores,

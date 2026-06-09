@@ -547,6 +547,61 @@ def test_generate_records_request_local_allowed_tools_receipt() -> None:
     }
 
 
+def test_generate_completed_event_preserves_prompt_context_boundary_receipts() -> None:
+    inference_service, model_handle = _build_services(TokenRoutedVisibleBackend())
+    receipts = [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": "req-prompt-context:user:0:text:0",
+            "source_type": "chat_message",
+            "source_field": "text",
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": True,
+            "owner_scope_checked": False,
+            "reason": "chat message part is prompt data, not instructions",
+            "corrective_action": "keep segment in user-role data context",
+        }
+    ]
+    receipts_json = json.dumps(receipts, separators=(",", ":"), sort_keys=True)
+    request = inference_pb2.GenerateRequest(
+        execution=inference_pb2.ExecutionMetadata(
+            id=common_pb2.RequestIdentity(request_id="req-prompt-context-receipt"),
+            model_handle=model_handle,
+            ext={
+                "melix.prompt_context.receipt_schema": "melix.untrusted_context_receipt.v1",
+                "melix.prompt_context.receipt_count": "1",
+                "melix.prompt_context.receipts_json": receipts_json,
+            },
+        ),
+        messages=[
+            common_pb2.ChatMessage(
+                role="user",
+                parts=[common_pb2.MessagePart(text="private prompt text")],
+            )
+        ],
+        sampling=common_pb2.SamplingConfig(max_output_tokens=16),
+        stream=True,
+    )
+
+    completed = next(
+        event.completed
+        for event in inference_service.Generate(request, context=None)
+        if event.HasField("completed")
+    )
+
+    assert (
+        completed.parser_metrics["prompt_context_receipt_schema"]
+        == "melix.untrusted_context_receipt.v1"
+    )
+    assert completed.parser_metrics["prompt_context_receipt_count"] == "1"
+    assert completed.parser_metrics["prompt_context_receipts_json"] == receipts_json
+    assert json.loads(completed.parser_metrics["prompt_context_receipts_json"]) == receipts
+    assert "private prompt text" not in completed.parser_metrics["prompt_context_receipts_json"]
+
+
 def test_generate_treats_equivalent_duplicate_tool_schemas_as_same() -> None:
     inference_service, model_handle = _build_services(TokenRoutedVisibleBackend())
     request = inference_pb2.GenerateRequest(
