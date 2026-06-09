@@ -151,3 +151,61 @@ def test_prompt_context_requires_non_empty_segment_metadata() -> None:
             reason="memory is prompt data, not instructions",
             corrective_action="Keep memory text in user data context only.",
         )
+
+
+def test_prompt_context_validates_admitted_receipt_metadata_types() -> None:
+    with pytest.raises(
+        PromptContextBoundaryError,
+        match="Prompt context source_id must be a string.",
+    ):
+        PromptContextSegment(
+            segment_id="memory-1:text",
+            source_type="memory",
+            source_field="text",
+            value="remembered note",
+            reason="memory is prompt data, not instructions",
+            corrective_action="Keep memory text in user data context only.",
+            source_id=123,
+        )
+
+    with pytest.raises(
+        PromptContextBoundaryError,
+        match="Prompt context owner_scope_checked must be a boolean.",
+    ):
+        PromptContextSegment(
+            segment_id="memory-1:text",
+            source_type="memory",
+            source_field="text",
+            value="remembered note",
+            reason="memory is prompt data, not instructions",
+            corrective_action="Keep memory text in user data context only.",
+            owner_scope_checked="not-a-bool",
+        )
+
+
+def test_prompt_context_validates_refusal_receipt_metadata_types() -> None:
+    with pytest.raises(
+        PromptContextBoundaryError,
+        match="Prompt context source_id must be a string.",
+    ):
+        refused_prompt_context_receipt(
+            segment_id="skill:malformed:payload",
+            source_type="skill",
+            source_field="payload",
+            source_id=123,
+            reason="invalid_untrusted_input_type",
+            corrective_action="Reject malformed skill payload before prompt assembly.",
+        )
+
+    with pytest.raises(
+        PromptContextBoundaryError,
+        match="Prompt context owner_scope_checked must be a boolean.",
+    ):
+        refused_prompt_context_receipt(
+            segment_id="skill:malformed:payload",
+            source_type="skill",
+            source_field="payload",
+            owner_scope_checked="not-a-bool",
+            reason="invalid_untrusted_input_type",
+            corrective_action="Reject malformed skill payload before prompt assembly.",
+        )

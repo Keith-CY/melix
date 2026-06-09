@@ -31,6 +31,8 @@ class PromptContextSegment:
         _require_text(self.source_field, "source_field")
         _require_text(self.reason, "reason")
         _require_text(self.corrective_action, "corrective_action")
+        _require_text_type(self.source_id, "source_id")
+        _require_bool(self.owner_scope_checked, "owner_scope_checked")
         if self.message_role != "user":
             raise PromptContextBoundaryError("Untrusted prompt context message_role must be user.")
 
@@ -90,6 +92,8 @@ def refused_prompt_context_receipt(
     _require_text(source_field, "source_field")
     _require_text(reason, "reason")
     _require_text(corrective_action, "corrective_action")
+    _require_text_type(source_id, "source_id")
+    _require_bool(owner_scope_checked, "owner_scope_checked")
     if message_role != "user":
         raise PromptContextBoundaryError("Untrusted prompt context message_role must be user.")
     return untrusted_context_receipt(
@@ -108,6 +112,16 @@ def refused_prompt_context_receipt(
 def _require_text(value: str, field_name: str) -> None:
     if not isinstance(value, str) or not value.strip():
         raise PromptContextBoundaryError(f"Prompt context {field_name} must be non-empty.")
+
+
+def _require_text_type(value: str, field_name: str) -> None:
+    if not isinstance(value, str):
+        raise PromptContextBoundaryError(f"Prompt context {field_name} must be a string.")
+
+
+def _require_bool(value: bool, field_name: str) -> None:
+    if not isinstance(value, bool):
+        raise PromptContextBoundaryError(f"Prompt context {field_name} must be a boolean.")
 
 
 __all__ = [
