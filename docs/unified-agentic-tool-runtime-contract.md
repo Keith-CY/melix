@@ -365,6 +365,18 @@ implement durable job storage, process monitoring, or session resume; it is only
 the prompt-context boundary for follow-up data admitted by those later
 surfaces.
 
+The Python worker skill and memory evidence admission primitive is
+`worker.runtime.source_evidence_context`. `admit_skill_evidence` and
+`admit_memory_evidence` validate the source identifier, payload container, and
+owner-scope flag before projecting skill or memory evidence into user-role
+prompt context through `PromptContextSourceEvidence`. Malformed source
+identifiers, non-object payloads, and invalid `owner_scope_checked` values
+produce `included = false` refusal receipts with source-specific
+`invalid_skill_evidence_field` or `invalid_memory_evidence_field` reasons. The
+helper does not implement a durable skill store, memory store, live RAG store,
+or owner lookup. Those later entrypoints must pass already redacted and
+owner-evaluated evidence through this helper before prompt assembly.
+
 The agentic judge prompt snapshot must also surface receipt evidence that is
 already attached to executed `agentic_tool_observations`. Snapshot-level
 `untrusted_context_receipts` are ordered as the admitted judge user-payload
