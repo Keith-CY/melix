@@ -254,6 +254,15 @@ assembly, RAG stores, skill entrypoints, memory entrypoints, and background-job
 continuations must reuse this receipt shape when they add their prompt-context
 boundary evidence under #1761.
 
+The v1 Python worker prompt-context primitive is
+`worker.runtime.untrusted_context.untrusted_context_receipt`. It constructs the
+stable `melix.untrusted_context_receipt.v1` dictionary for both admitted and
+refused untrusted user-message segments. Existing agentic judge prompt
+snapshots use this helper, and later retrieved-document, skill, memory,
+tool-output, and background-continuation admission points must use the same
+helper or preserve its exact receipt shape when they record prompt-boundary
+evidence.
+
 Rejected prompt-context segments should use the same receipt schema with
 `included = false`. For the agentic judge prompt boundary, unsupported
 top-level user-payload fields emit `reason =

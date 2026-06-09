@@ -84,6 +84,7 @@ from worker.productization.evaluation_schemas import (
 from worker.productization.evaluation_store import EvaluationStore
 from worker.productization.probe_policy import ProbePolicy
 from worker.runtime.agentic_tools import execute_agentic_tool_calls
+from worker.runtime.untrusted_context import untrusted_context_receipt
 
 
 _SUITE_SCORE_MODES = {
@@ -139,7 +140,6 @@ _AGENTIC_TOOL_METRIC_NAMES = (
 )
 _AGENTIC_JUDGE_PROMPT_SNAPSHOT_SCHEMA_VERSION = "melix.agentic_judge_prompt_snapshot.v1"
 _AGENTIC_JUDGE_AUDIT_SCHEMA_VERSION = "melix.agentic_judge_audit.v1"
-_UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION = "melix.untrusted_context_receipt.v1"
 _AGENTIC_JUDGE_PROMPT_VERSION = "agentic-answer-equivalence.v1"
 _AGENTIC_JUDGE_SYSTEM_PROMPT = """You are an answer equivalence judge for Melix agentic multimodal evaluation.
 
@@ -2502,23 +2502,17 @@ class EvaluationCore:
         sample_id: str,
         source_field: str,
     ) -> dict[str, object]:
-        return {
-            "schema_version": _UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION,
-            "segment_id": f"{sample_id}:{source_field}",
-            "source_type": "agentic_judge_user_payload",
-            "source_field": source_field,
-            "message_role": "user",
-            "trust_level": "untrusted",
-            "policy": "data_only",
-            "boundary_checked": True,
-            "included": True,
-            "owner_scope_checked": False,
-            "reason": "sample-derived context is prompt data, not instructions",
-            "corrective_action": (
+        return untrusted_context_receipt(
+            segment_id=f"{sample_id}:{source_field}",
+            source_type="agentic_judge_user_payload",
+            source_field=source_field,
+            included=True,
+            reason="sample-derived context is prompt data, not instructions",
+            corrective_action=(
                 "Keep this segment in the user payload and do not project it into "
                 "system or developer instructions."
             ),
-        }
+        )
 
     @staticmethod
     def _agentic_judge_refusal_receipt(
@@ -2526,23 +2520,17 @@ class EvaluationCore:
         source_field: str,
         reason: str,
     ) -> dict[str, object]:
-        return {
-            "schema_version": _UNTRUSTED_CONTEXT_RECEIPT_SCHEMA_VERSION,
-            "segment_id": f"agentic_judge_user_payload:{source_field}",
-            "source_type": "agentic_judge_user_payload",
-            "source_field": source_field,
-            "message_role": "user",
-            "trust_level": "untrusted",
-            "policy": "data_only",
-            "boundary_checked": True,
-            "included": False,
-            "owner_scope_checked": False,
-            "reason": reason,
-            "corrective_action": (
+        return untrusted_context_receipt(
+            segment_id=f"agentic_judge_user_payload:{source_field}",
+            source_type="agentic_judge_user_payload",
+            source_field=source_field,
+            included=False,
+            reason=reason,
+            corrective_action=(
                 "Remove this field before projecting the sample-derived context "
                 "into the judge user payload."
             ),
-        }
+        )
 
     @staticmethod
     def _agentic_judge_audit_row(
