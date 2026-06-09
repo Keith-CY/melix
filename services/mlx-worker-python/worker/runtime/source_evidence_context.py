@@ -50,9 +50,9 @@ def admit_memory_evidence(
 def _admit_source_evidence(
     *,
     source_type: SourceEvidenceKind,
-    source_id: str,
-    payload: dict[str, Any],
-    owner_scope_checked: bool,
+    source_id: Any,
+    payload: Any,
+    owner_scope_checked: Any,
 ) -> PromptContextAdmission:
     fallback_source_id = f"unknown-{source_type}"
     source_field = f"{source_type}_evidence"
@@ -95,7 +95,7 @@ def _admit_source_evidence(
 def _source_id_or_refusal(
     *,
     source_type: SourceEvidenceKind,
-    source_id: str,
+    source_id: Any,
     fallback_source_id: str,
 ) -> str:
     if isinstance(source_id, str) and source_id.strip():

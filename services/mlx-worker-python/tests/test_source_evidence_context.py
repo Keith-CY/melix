@@ -89,7 +89,7 @@ def test_skill_evidence_refuses_malformed_fields_before_admission() -> None:
     with pytest.raises(SourceEvidenceAdmissionError) as exc_info:
         admit_skill_evidence(
             skill_id="skill:malformed",
-            payload="not-an-object",
+            payload="not-an-object",  # type: ignore[arg-type]
             owner_scope_checked=True,
         )
 
@@ -115,7 +115,7 @@ def test_skill_evidence_refuses_malformed_fields_before_admission() -> None:
 def test_memory_evidence_refuses_invalid_identifier_and_owner_scope_flag() -> None:
     with pytest.raises(SourceEvidenceAdmissionError) as id_exc:
         admit_memory_evidence(
-            memory_id=123,
+            memory_id=123,  # type: ignore[arg-type]
             payload={"text": "remembered note"},
             owner_scope_checked=True,
         )
@@ -133,7 +133,7 @@ def test_memory_evidence_refuses_invalid_identifier_and_owner_scope_flag() -> No
         admit_memory_evidence(
             memory_id="memory:pinned-42",
             payload={"text": "remembered note"},
-            owner_scope_checked="yes",
+            owner_scope_checked="yes",  # type: ignore[arg-type]
         )
 
     assert owner_exc.value.refusal_receipts[0]["segment_id"] == (
