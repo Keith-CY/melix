@@ -108,6 +108,7 @@ class ToolObservationRecord:
     metrics: ToolObservationMetrics
     replay: ToolObservationReplayMetadata
     timeout_ms: int | None = None
+    source_untrusted_context_receipts: tuple[dict[str, object], ...] = ()
 
     @property
     def untrusted_context_receipts(self) -> list[dict[str, object]]:
@@ -126,7 +127,9 @@ class ToolObservationRecord:
                 )
             ]
         )
-        return admission.untrusted_context_receipts
+        return admission.untrusted_context_receipts + [
+            dict(receipt) for receipt in self.source_untrusted_context_receipts
+        ]
 
     def as_agentic_trace_observation(self) -> dict[str, Any]:
         untrusted_context_receipts = self.untrusted_context_receipts
@@ -165,6 +168,9 @@ def normalize_tool_observation(
     payload: Any,
     policy: ToolObservationPolicy | None = None,
     schema_version: str = TOOL_OBSERVATION_SCHEMA_VERSION,
+    source_untrusted_context_receipts: list[dict[str, object]] | tuple[
+        dict[str, object], ...
+    ] = (),
 ) -> ToolObservationRecord:
     normalized_tool_name = _required_text(tool_name, "tool_name")
     normalized_tool_call_id = _required_text(tool_call_id, "tool_call_id")
@@ -202,6 +208,7 @@ def normalize_tool_observation(
         metrics=metrics,
         replay=replay,
         timeout_ms=timeout_ms,
+        source_untrusted_context_receipts=tuple(dict(receipt) for receipt in source_untrusted_context_receipts),
     )
 
 
