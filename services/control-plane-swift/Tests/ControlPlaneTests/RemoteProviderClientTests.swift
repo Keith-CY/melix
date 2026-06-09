@@ -129,6 +129,136 @@ struct RemoteProviderClientTests {
         }
     }
 
+    @Test("endpoint probe records redacted model list URL classification receipts")
+    func endpointProbeRecordsRedactedModelListURLClassificationReceipts() async throws {
+        let cases: [
+            (
+                providerKind: String,
+                baseURL: String,
+                apiKey: String,
+                responseBody: String,
+                expectedRequestURL: String,
+                expectedBaseURLRedacted: String,
+                expectedNormalizedBaseKind: String,
+                expectedModelsEndpointKind: String,
+                expectedAuthRedacted: Bool,
+                expectedFallbackAttempted: Bool
+            )
+        ] = [
+            (
+                providerKind: "openai-compatible",
+                baseURL: "https://api.example.test",
+                apiKey: "",
+                responseBody: #"{ "data": [{ "id": "gpt-4.1", "object": "model" }] }"#,
+                expectedRequestURL: "https://api.example.test/models",
+                expectedBaseURLRedacted: "https://api.example.test",
+                expectedNormalizedBaseKind: "base_url",
+                expectedModelsEndpointKind: "openai_models",
+                expectedAuthRedacted: false,
+                expectedFallbackAttempted: true
+            ),
+            (
+                providerKind: "openai-compatible",
+                baseURL: "https://api.example.test/v1?api_key=sk-secret",
+                apiKey: "sk-secret",
+                responseBody: #"{ "data": [{ "id": "gpt-4.1", "object": "model" }] }"#,
+                expectedRequestURL: "https://api.example.test/v1/models",
+                expectedBaseURLRedacted: "https://api.example.test/v1",
+                expectedNormalizedBaseKind: "versioned_base",
+                expectedModelsEndpointKind: "openai_models",
+                expectedAuthRedacted: true,
+                expectedFallbackAttempted: true
+            ),
+            (
+                providerKind: "openai-compatible",
+                baseURL: "https://api.example.test/v1/chat/completions#secret",
+                apiKey: "",
+                responseBody: #"{ "data": [{ "id": "gpt-4.1", "object": "model" }] }"#,
+                expectedRequestURL: "https://api.example.test/v1/models",
+                expectedBaseURLRedacted: "https://api.example.test/v1",
+                expectedNormalizedBaseKind: "chat_completions_endpoint",
+                expectedModelsEndpointKind: "openai_models",
+                expectedAuthRedacted: true,
+                expectedFallbackAttempted: true
+            ),
+            (
+                providerKind: "ollama-native",
+                baseURL: "http://127.0.0.1:11434/api/chat",
+                apiKey: "",
+                responseBody: #"{ "models": [{ "name": "llama3.2" }] }"#,
+                expectedRequestURL: "http://127.0.0.1:11434/api/tags",
+                expectedBaseURLRedacted: "http://127.0.0.1:11434/api",
+                expectedNormalizedBaseKind: "ollama_chat_endpoint",
+                expectedModelsEndpointKind: "ollama_tags",
+                expectedAuthRedacted: false,
+                expectedFallbackAttempted: true
+            ),
+            (
+                providerKind: "ollama-native",
+                baseURL: "http://127.0.0.1:11434/api/generate",
+                apiKey: "",
+                responseBody: #"{ "models": [{ "name": "llama3.2" }] }"#,
+                expectedRequestURL: "http://127.0.0.1:11434/api/tags",
+                expectedBaseURLRedacted: "http://127.0.0.1:11434/api",
+                expectedNormalizedBaseKind: "ollama_generate_endpoint",
+                expectedModelsEndpointKind: "ollama_tags",
+                expectedAuthRedacted: false,
+                expectedFallbackAttempted: true
+            ),
+            (
+                providerKind: "ollama-native",
+                baseURL: "http://127.0.0.1:11434/api/tags",
+                apiKey: "",
+                responseBody: #"{ "models": [{ "name": "llama3.2" }] }"#,
+                expectedRequestURL: "http://127.0.0.1:11434/api/tags",
+                expectedBaseURLRedacted: "http://127.0.0.1:11434/api",
+                expectedNormalizedBaseKind: "ollama_tags_endpoint",
+                expectedModelsEndpointKind: "ollama_tags",
+                expectedAuthRedacted: false,
+                expectedFallbackAttempted: false
+            ),
+            (
+                providerKind: "local-runtime",
+                baseURL: "http://127.0.0.1:12436/v1/models",
+                apiKey: "",
+                responseBody: #"{ "data": [{ "id": "melix-dev-text", "object": "model" }] }"#,
+                expectedRequestURL: "http://127.0.0.1:12436/v1/models",
+                expectedBaseURLRedacted: "http://127.0.0.1:12436/v1",
+                expectedNormalizedBaseKind: "models_endpoint",
+                expectedModelsEndpointKind: "local_runtime_models",
+                expectedAuthRedacted: false,
+                expectedFallbackAttempted: false
+            ),
+        ]
+
+        for testCase in cases {
+            let transport = RecordingRemoteProviderTransport(response: .init(
+                statusCode: 200,
+                headers: ["content-type": "application/json"],
+                body: Data(testCase.responseBody.utf8)
+            ))
+            let probe = ProviderEndpointHealthProbe(transport: transport, latencyClock: { 1 })
+
+            let receipt = try await probe.probe(
+                ProviderEndpointProbeRequest(
+                    endpointID: "\(testCase.providerKind)-url-classification",
+                    providerKind: testCase.providerKind,
+                    baseURL: testCase.baseURL,
+                    apiKey: testCase.apiKey
+                )
+            )
+
+            #expect(await transport.lastRequest?.url?.absoluteString == testCase.expectedRequestURL)
+            #expect(receipt.baseURLRedacted == testCase.expectedBaseURLRedacted)
+            #expect(receipt.normalizedBaseKind == testCase.expectedNormalizedBaseKind)
+            #expect(receipt.modelsEndpointKind == testCase.expectedModelsEndpointKind)
+            #expect(receipt.probeStatus == "ok")
+            #expect(receipt.authRedacted == testCase.expectedAuthRedacted)
+            #expect(receipt.fallbackAttempted == testCase.expectedFallbackAttempted)
+            #expect(String(describing: receipt).contains("sk-secret") == false)
+        }
+    }
+
     @Test("endpoint probe normalizes provider kind casing for routing and receipts")
     func endpointProbeNormalizesProviderKindCasingForRoutingAndReceipts() async throws {
         let transport = RecordingRemoteProviderTransport(response: .init(
@@ -411,6 +541,11 @@ struct RemoteProviderClientTests {
             endpointID: "openai-main",
             providerKind: "openai-compatible",
             baseURLRedacted: "https://api.example.test/v1",
+            normalizedBaseKind: "versioned_base",
+            modelsEndpointKind: "openai_models",
+            probeStatus: "ok",
+            authRedacted: true,
+            fallbackAttempted: true,
             modelCount: 2,
             capabilities: ProviderEndpointCapabilities(
                 chat: true,
@@ -434,6 +569,11 @@ struct RemoteProviderClientTests {
         #expect(object["endpoint_id"] as? String == "openai-main")
         #expect(object["provider_kind"] as? String == "openai-compatible")
         #expect(object["base_url_redacted"] as? String == "https://api.example.test/v1")
+        #expect(object["normalized_base_kind"] as? String == "versioned_base")
+        #expect(object["models_endpoint_kind"] as? String == "openai_models")
+        #expect(object["probe_status"] as? String == "ok")
+        #expect(object["auth_redacted"] as? Bool == true)
+        #expect(object["fallback_attempted"] as? Bool == true)
         #expect(object["model_count"] as? Int == 2)
         #expect(object["tool_support_mode"] as? String == "force_on")
         #expect(object["detected_tool_support"] as? Bool == false)
