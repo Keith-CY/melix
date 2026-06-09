@@ -335,6 +335,15 @@ through `refused_prompt_context_receipt`. This keeps the concrete prompt
 snapshot path aligned with the shared admission primitive while preserving the
 stable receipt JSON and persisted prompt payload.
 
+The agentic judge prompt snapshot must also surface receipt evidence that is
+already attached to executed `agentic_tool_observations`. Snapshot-level
+`untrusted_context_receipts` are ordered as the admitted judge user-payload
+field receipts followed by defensive copies of each observation's
+`untrusted_context_receipts`. This preserves the judge prompt message JSON and
+tool-observation replay scope while making generic tool output and
+retrieval-source prompt boundaries visible to snapshot readers without parsing
+the untrusted payload.
+
 Rejected prompt-context segments should use the same receipt schema with
 `included = false`. For the agentic judge prompt boundary, unsupported
 top-level user-payload fields emit `reason =

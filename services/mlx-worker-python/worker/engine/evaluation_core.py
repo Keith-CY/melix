@@ -125,6 +125,7 @@ _NUMERIC_RESULT_PATTERN = re.compile(r"=\s*([-+]?\d+(?:\.\d+)?)")
 _OPTION_TOKEN_PATTERN = re.compile(r"\b([A-Z])\b")
 _DIGIT_TOKEN_PATTERN = re.compile(r"\b(\d+)\b")
 _MULTIMODAL_TASK_KINDS = {"image-to-text", "image-text-to-text"}
+# Keep this field list in sync with _sample_probe_mean_known_fields.
 _SAMPLE_PROBE_MEAN_FIELDS = (
     ("sample_render_ms_mean", "sample_render_ms"),
     ("inference_ms_mean", "inference_ms"),
@@ -133,6 +134,9 @@ _SAMPLE_PROBE_MEAN_FIELDS = (
     ("scoring_ms_mean", "scoring_ms"),
     ("raw_response_chars_mean", "raw_response_chars"),
     ("extracted_result_chars_mean", "extracted_result_chars"),
+)
+_SAMPLE_PROBE_MEAN_FIELD_NAMES = tuple(
+    field_name for _, field_name in _SAMPLE_PROBE_MEAN_FIELDS
 )
 _AGENTIC_TOOL_METRIC_NAMES = (
     "agentic_tool.call_count",
@@ -2508,7 +2512,28 @@ class EvaluationCore:
                 for source_field, value in user_payload.items()
             ]
         )
-        return admission.untrusted_context_receipts
+        tool_receipts = EvaluationCore._tool_observation_untrusted_context_receipts(
+            user_payload.get("tool_observations")
+        )
+        return admission.untrusted_context_receipts + tool_receipts
+
+    @staticmethod
+    def _tool_observation_untrusted_context_receipts(
+        tool_observations: object,
+    ) -> list[dict[str, object]]:
+        if not isinstance(tool_observations, list):
+            return []
+        receipts: list[dict[str, object]] = []
+        for observation in tool_observations:
+            if isinstance(observation, dict):
+                observation_receipts = observation.get("untrusted_context_receipts")
+                if isinstance(observation_receipts, list):
+                    receipts.extend(
+                        dict(receipt)
+                        for receipt in observation_receipts
+                        if isinstance(receipt, dict)
+                    )
+        return receipts
 
     @staticmethod
     def _agentic_judge_refusal_receipt(
@@ -2770,11 +2795,11 @@ class EvaluationCore:
                 runs_root.mkdir(parents=True, exist_ok=True)
                 self._runs_root_initialized = True
             next_index = self._prime_next_job_index(runs_root)
+            runs_root_path = os.fspath(runs_root)
             while True:
                 job_id = f"eval-{next_index:04d}"
-                run_root = runs_root / job_id
                 try:
-                    run_root.mkdir(parents=False, exist_ok=False)
+                    os.mkdir(os.path.join(runs_root_path, job_id))
                     self._next_job_index = next_index + 1
                     return job_id
                 except FileExistsError:
@@ -3021,6 +3046,8 @@ class EvaluationCore:
     def _sample_probe_means(samples: Any, field_names: tuple[str, ...]) -> dict[str, float]:
         if not field_names:
             return {}
+        if field_names == _SAMPLE_PROBE_MEAN_FIELD_NAMES:
+            return EvaluationCore._sample_probe_mean_known_fields(samples)
         field_count = len(field_names)
         totals = [0.0] * field_count
         field_indexes = range(field_count)
@@ -3038,6 +3065,53 @@ class EvaluationCore:
         return {
             field_names[index]: round(totals[index] / sample_count, 4)
             for index in field_indexes
+        }
+
+    @staticmethod
+    def _sample_probe_mean_known_fields(samples: Any) -> dict[str, float]:
+        sample_render_total = 0.0
+        inference_total = 0.0
+        extraction_total = 0.0
+        validation_total = 0.0
+        scoring_total = 0.0
+        raw_response_total = 0.0
+        extracted_result_total = 0.0
+        sample_count = 0
+        get_field = getattr
+        to_float = float
+        for sample in samples:
+            sample_count += 1
+            value = get_field(sample, "sample_render_ms", 0.0)
+            if value:
+                sample_render_total += to_float(value)
+            value = get_field(sample, "inference_ms", 0.0)
+            if value:
+                inference_total += to_float(value)
+            value = get_field(sample, "extraction_ms", 0.0)
+            if value:
+                extraction_total += to_float(value)
+            value = get_field(sample, "validation_ms", 0.0)
+            if value:
+                validation_total += to_float(value)
+            value = get_field(sample, "scoring_ms", 0.0)
+            if value:
+                scoring_total += to_float(value)
+            value = get_field(sample, "raw_response_chars", 0.0)
+            if value:
+                raw_response_total += to_float(value)
+            value = get_field(sample, "extracted_result_chars", 0.0)
+            if value:
+                extracted_result_total += to_float(value)
+        if sample_count == 0:
+            return {field_name: 0.0 for field_name in _SAMPLE_PROBE_MEAN_FIELD_NAMES}
+        return {
+            "sample_render_ms": round(sample_render_total / sample_count, 4),
+            "inference_ms": round(inference_total / sample_count, 4),
+            "extraction_ms": round(extraction_total / sample_count, 4),
+            "validation_ms": round(validation_total / sample_count, 4),
+            "scoring_ms": round(scoring_total / sample_count, 4),
+            "raw_response_chars": round(raw_response_total / sample_count, 4),
+            "extracted_result_chars": round(extracted_result_total / sample_count, 4),
         }
 
     @staticmethod
