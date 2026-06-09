@@ -2696,6 +2696,14 @@ public struct ChatRequestTranslator: Sendable {
             compatibilityPolicyReceipt.extFields,
             uniquingKeysWith: { _, new in new }
         )
+        let promptContextReceipts = PromptContextBoundaryReceipts(
+            requestID: requestID,
+            messages: shapedRequest.messages
+        )
+        generateRequest.execution.ext.merge(
+            promptContextReceipts.extFields,
+            uniquingKeysWith: { _, receiptValue in receiptValue }
+        )
         if !(shapedRequest.sessionID ?? "").isEmpty {
             generateRequest.execution.cacheHints.allowL1 = true
             generateRequest.execution.cacheHints.allowL2 = true
