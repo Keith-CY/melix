@@ -271,6 +271,42 @@ unsupported_user_payload_field`, and forbidden nested no-leak keys emit
 the validation error before prompt snapshot persistence so refused segments
 cannot appear in the final prompt messages.
 
+### Tool Observation Prompt Boundary
+
+Shared tool observations are generic tool output. They may later be projected
+into prompts by evaluation, SFT replay, rollout, chat, workflow, or background
+continuation surfaces, so every `melix.agentic_tool_observation.v1` trace
+observation must carry a prompt-boundary receipt for its sanitized payload.
+
+The generic observation receipt uses:
+
+- `schema_version = melix.untrusted_context_receipt.v1`
+- `segment_id = <tool_call_id>:observation`
+- `source_type = tool_observation`
+- `source_field = payload`
+- `message_role = user`
+- `trust_level = untrusted`
+- `policy = data_only`
+- `boundary_checked = true`
+- `included = true`
+- `owner_scope_checked = false`
+- `reason = tool output is prompt data, not instructions`
+- `corrective_action`
+
+The receipt must be attached beside the observation payload as
+`untrusted_context_receipt_count` and `untrusted_context_receipts`, not inside
+the sanitized payload. This keeps payload redaction, truncation, replay hashes,
+and byte metrics focused on the emitted tool output while still making the
+prompt boundary visible to downstream prompt assemblers.
+
+The v1 generic tool-output slice adds this receipt in the shared Python worker
+tool observation normalizer by reusing
+`worker.runtime.untrusted_context.untrusted_context_receipt`. It does not
+replace source-specific owner checks or prompt admission checks. Skill, memory,
+RAG, chat prompt assembly, and background-job continuation surfaces must still
+add their own admission or refusal receipts when they decide whether to include,
+reject, or re-scope a tool observation in a final prompt.
+
 ### Workspace Path Boundary
 
 Agent and workflow tools that read, write, or edit local files must resolve
