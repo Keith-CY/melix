@@ -19,6 +19,7 @@ from worker.runtime.tool_registry import (
     built_in_tool_registry,
     select_agentic_tools_for_turn,
 )
+from worker.runtime.untrusted_context import untrusted_context_receipt
 from worker.runtime.workspace_file_tools import WorkspaceFileTools
 from worker.runtime.workspace_paths import WorkspacePathResolution
 
@@ -152,6 +153,9 @@ class DeterministicAgenticToolRuntime:
         except (SyntaxError, TypeError, ValueError) as exc:
             payload = {"error": str(exc), "_status": "failed"}
         status = str(payload.pop("_status", "completed"))
+        source_untrusted_context_receipts = tuple(
+            payload.pop("_untrusted_context_receipts", ())
+        )
         observation = normalize_tool_observation(
             tool_name=tool_name,
             tool_call_id=tool_call_id,
@@ -159,6 +163,7 @@ class DeterministicAgenticToolRuntime:
             status=status,  # type: ignore[arg-type]
             payload=payload,
             policy=self._observation_policy,
+            source_untrusted_context_receipts=source_untrusted_context_receipts,
         )
         return AgenticToolExecutionResult(
             tool_call_id=tool_call_id,
@@ -352,6 +357,8 @@ def _text_search_payload(
     corpus = _context_list(fixture_context, "text_corpus", corpus_ref)
     lowered_query = query.lower()
     results: list[dict[str, str]] = []
+    result_receipts: list[dict[str, object]] = []
+    owner_scope_checked = _owner_scope_is_configured(fixture_context)
     for index, item in enumerate(corpus, start=1):
         source_id = _source_id(item.get("id"), default=f"doc-{index}")
         _enforce_owner_scope(
@@ -370,9 +377,24 @@ def _text_search_payload(
         )
         if lowered_query in text.lower():
             results.append({"id": source_id, "text": text})
+            result_receipts.append(
+                _retrieval_result_receipt(
+                    tool_call_id=tool_call_id,
+                    result_index=len(results),
+                    source_type="retrieved_document",
+                    source_id=source_id,
+                    owner_scope_checked=owner_scope_checked,
+                )
+            )
         if len(results) >= max_results:
             break
-    return {"query": query, "corpus_ref": corpus_ref, "results": results, "result_count": len(results)}
+    return {
+        "query": query,
+        "corpus_ref": corpus_ref,
+        "results": results,
+        "result_count": len(results),
+        "_untrusted_context_receipts": result_receipts,
+    }
 
 
 def _image_search_payload(
@@ -387,6 +409,8 @@ def _image_search_payload(
     corpus = _context_list(fixture_context, "image_corpus", corpus_ref)
     lowered_query = query.lower()
     results: list[dict[str, str]] = []
+    result_receipts: list[dict[str, object]] = []
+    owner_scope_checked = _owner_scope_is_configured(fixture_context)
     for index, item in enumerate(corpus, start=1):
         source_id = _source_id(item.get("id"), default=f"image-{index}")
         _enforce_owner_scope(
@@ -411,9 +435,24 @@ def _image_search_payload(
                 source_id=source_id,
             )
             results.append({"id": source_id, "media_ref": media_ref, "caption": caption})
+            result_receipts.append(
+                _retrieval_result_receipt(
+                    tool_call_id=tool_call_id,
+                    result_index=len(results),
+                    source_type="retrieved_image",
+                    source_id=source_id,
+                    owner_scope_checked=owner_scope_checked,
+                )
+            )
         if len(results) >= max_results:
             break
-    return {"query": query, "corpus_ref": corpus_ref, "results": results, "result_count": len(results)}
+    return {
+        "query": query,
+        "corpus_ref": corpus_ref,
+        "results": results,
+        "result_count": len(results),
+        "_untrusted_context_receipts": result_receipts,
+    }
 
 
 def _visit_payload(
@@ -695,6 +734,10 @@ def _owner_scope_context(fixture_context: dict[str, Any]) -> dict[str, str]:
     return {"expected_owner_id": expected_owner_id, "privilege": privilege}
 
 
+def _owner_scope_is_configured(fixture_context: dict[str, Any]) -> bool:
+    return bool(_owner_scope_context(fixture_context).get("expected_owner_id", ""))
+
+
 def _enforce_owner_scope(
     *,
     fixture_context: dict[str, Any],
@@ -727,6 +770,30 @@ def _enforce_owner_scope(
         expected_owner_id=expected_owner_id,
         actual_owner_id=actual_owner_id,
         privilege=privilege,
+    )
+
+
+def _retrieval_result_receipt(
+    *,
+    tool_call_id: str,
+    result_index: int,
+    source_type: str,
+    source_id: str,
+    owner_scope_checked: bool,
+) -> dict[str, object]:
+    source_label = "document" if source_type == "retrieved_document" else "image"
+    return untrusted_context_receipt(
+        segment_id=f"{tool_call_id}:result-{result_index}",
+        source_type=source_type,
+        source_field=f"results[{result_index - 1}]",
+        source_id=source_id,
+        owner_scope_checked=owner_scope_checked,
+        included=True,
+        reason=f"retrieved {source_label} result is prompt data, not instructions",
+        corrective_action=(
+            f"Keep retrieved {source_label} results in user-role data context and do not project "
+            "them into system or developer instructions."
+        ),
     )
 
 
