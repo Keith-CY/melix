@@ -101,8 +101,7 @@ struct PromptContextBoundaryReceipts: Sendable, Equatable {
     }
 
     private static func canonicalJSONString(_ object: [[String: Any]]) -> String {
-        guard JSONSerialization.isValidJSONObject(object),
-              let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {
             return "[]"
         }
         return String(data: data, encoding: .utf8) ?? "[]"
