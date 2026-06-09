@@ -24,19 +24,19 @@ def admit_background_continuation(
 ) -> PromptContextAdmission:
     normalized_job_id = _job_id_or_refusal(job_id)
     segment_id = f"{normalized_job_id}:background-continuation"
-    if not isinstance(job_summary, dict):
-        _raise_refusal(
-            segment_id=segment_id,
-            source_id=normalized_job_id,
-            source_field="background_job",
-            owner_scope_checked=False,
-        )
     if not isinstance(owner_scope_checked, bool):
         _raise_refusal(
             segment_id=segment_id,
             source_id=normalized_job_id,
             source_field="owner_scope_checked",
             owner_scope_checked=False,
+        )
+    if not isinstance(job_summary, dict):
+        _raise_refusal(
+            segment_id=segment_id,
+            source_id=normalized_job_id,
+            source_field="background_job",
+            owner_scope_checked=owner_scope_checked,
         )
     return admit_prompt_context_segments(
         [

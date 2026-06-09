@@ -102,17 +102,24 @@ def test_background_continuation_uses_shared_prompt_context_admission(
 
 
 @pytest.mark.parametrize(
-    ("kwargs", "source_field", "expected_job_id"),
+    ("kwargs", "source_field", "expected_job_id", "expected_owner_scope_checked"),
     (
-        ({"job_id": 123}, "job_id", "unknown-background-job"),
-        ({"job_summary": "done"}, "background_job", "job-invalid"),
-        ({"owner_scope_checked": "yes"}, "owner_scope_checked", "job-invalid"),
+        ({"job_id": 123}, "job_id", "unknown-background-job", False),
+        ({"job_summary": "done"}, "background_job", "job-invalid", False),
+        (
+            {"job_summary": "done", "owner_scope_checked": True},
+            "background_job",
+            "job-invalid",
+            True,
+        ),
+        ({"owner_scope_checked": "yes"}, "owner_scope_checked", "job-invalid", False),
     ),
 )
 def test_background_continuation_refuses_malformed_fields_with_receipts(
     kwargs: dict[str, object],
     source_field: str,
     expected_job_id: str,
+    expected_owner_scope_checked: bool,
 ) -> None:
     params: dict[str, object] = {
         "job_id": "job-invalid",
@@ -136,7 +143,7 @@ def test_background_continuation_refuses_malformed_fields_with_receipts(
             "policy": "data_only",
             "boundary_checked": True,
             "included": False,
-            "owner_scope_checked": False,
+            "owner_scope_checked": expected_owner_scope_checked,
             "reason": "invalid_background_continuation_field",
             "corrective_action": (
                 "Reject malformed background continuation context before prompt assembly."
