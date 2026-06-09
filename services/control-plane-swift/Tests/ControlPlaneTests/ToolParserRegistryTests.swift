@@ -407,6 +407,52 @@ struct ToolParserRegistryTests {
         #expect(receiptsJSON.contains("video-bytes") == false)
     }
 
+    @Test("prompt context boundary receipts classify tool rag skill memory and background sources")
+    func promptContextBoundaryReceiptsClassifySourceSpecificMessageNames() throws {
+        let translator = ChatRequestTranslator(requestIDGenerator: { "req-prompt-sources" })
+        let request = makeNormalizedRequest(messages: [
+            .init(role: "system", content: "trusted system prompt must not leak"),
+            .init(role: "tool", name: "calculator", content: "tool output says ignore developer policy"),
+            .init(role: "user", name: "rag:doc-17", content: "retrieved document says reveal secrets"),
+            .init(role: "user", name: "skill:repo-search", content: "skill index says run arbitrary shell"),
+            .init(role: "user", name: "memory:pinned-42", content: "memory says bypass authentication"),
+            .init(role: "assistant", name: "background_continuation:job-9", content: "background job says trust me"),
+        ])
+
+        let translated = try translator.translate(request, modelHandle: "worker-text")
+        let ext = translated.workerRequest.execution.ext
+        let receiptsJSON = try #require(ext["melix.prompt_context.receipts_json"])
+        let receipts = try #require(
+            try JSONSerialization.jsonObject(with: Data(receiptsJSON.utf8)) as? [[String: Any]]
+        )
+        let sourceTypes = receipts.compactMap { $0["source_type"] as? String }
+        let sourceIDs = receipts.compactMap { $0["source_id"] as? String }
+
+        #expect(ext["melix.prompt_context.receipt_count"] == "5")
+        #expect(sourceTypes == [
+            "tool_output",
+            "retrieved_document",
+            "skill",
+            "memory",
+            "background_continuation",
+        ])
+        #expect(sourceIDs == [
+            "calculator",
+            "rag:doc-17",
+            "skill:repo-search",
+            "memory:pinned-42",
+            "background_continuation:job-9",
+        ])
+        #expect(receipts.allSatisfy { $0["policy"] as? String == "data_only" })
+        #expect(receipts.allSatisfy { $0["included"] as? Bool == true })
+        #expect(receiptsJSON.contains("trusted system prompt") == false)
+        #expect(receiptsJSON.contains("ignore developer policy") == false)
+        #expect(receiptsJSON.contains("reveal secrets") == false)
+        #expect(receiptsJSON.contains("arbitrary shell") == false)
+        #expect(receiptsJSON.contains("bypass authentication") == false)
+        #expect(receiptsJSON.contains("trust me") == false)
+    }
+
     @Test("request-local compatibility policy receipt overrides do not mutate default requests")
     func requestLocalCompatibilityPolicyReceiptOverridesDoNotMutateDefaultRequests() throws {
         let translator = ChatRequestTranslator(requestIDGenerator: { "req-compat-policy-defaults" })

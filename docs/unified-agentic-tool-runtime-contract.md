@@ -271,6 +271,25 @@ The worker treats the receipt JSON as opaque evidence and does not parse or
 mutate it. Source-specific RAG, skill, memory, and background-continuation
 admission points still need their own admission/refusal receipts.
 
+The v1 source-specific control-plane classification slice refines those chat
+prompt receipts using request-local message metadata already present at prompt
+assembly time. Tool-role messages record `source_type = tool_output`. Non-tool
+messages whose normalized `name` uses the reserved prefixes `retrieved_document`,
+`retrieved-doc`, `document`, `doc`, `rag`, `rag_document`, or `knowledge`
+record `source_type = retrieved_document`; `skill` and `agent_skill` record
+`source_type = skill`; `memory`, `retrieved_memory`, and `pinned_memory` record
+`source_type = memory`; `background_continuation`,
+`background-continuation`, `background_job`, and `background-job` record
+`source_type = background_continuation`. Other non-system/developer messages
+continue to record `source_type = chat_prompt_message`.
+
+When the normalized message name is present, the prompt receipt records it as
+`source_id`. `source_id` is source metadata only; the receipt must still omit
+message text, media URIs, media bytes, tool arguments, private prompt text, and
+other raw source payloads. The classification is evidentiary and does not
+replace source-specific owner-scope checks, admission/refusal checks, or
+background-continuation link validation.
+
 The chat prompt receipt must not include raw message content, media URLs, media
 bytes, tool arguments, or private prompt text. It records only segment IDs,
 source fields, roles, data-only policy, and corrective guidance. RAG stores,
