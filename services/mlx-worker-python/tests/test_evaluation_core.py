@@ -1011,7 +1011,7 @@ def test_run_local_suite_writes_agentic_judge_prompt_snapshot_and_audit(
     assert snapshot["media_refs"][0]["uri"] == "media/sign.ppm"
     assert snapshot["tool_calls"] == raw_tool_calls
     assert snapshot["agentic_tool_observation_count"] == 1
-    assert snapshot["untrusted_context_receipt_count"] == 9
+    assert snapshot["untrusted_context_receipt_count"] == 10
     receipt_by_field = {
         receipt["source_field"]: receipt
         for receipt in snapshot["untrusted_context_receipts"]
@@ -1026,6 +1026,7 @@ def test_run_local_suite_writes_agentic_judge_prompt_snapshot_and_audit(
         "media_refs",
         "tool_calls",
         "tool_observations",
+        "payload",
     }
     tool_observation_receipt = receipt_by_field["tool_observations"]
     assert tool_observation_receipt == {
@@ -1051,6 +1052,28 @@ def test_run_local_suite_writes_agentic_judge_prompt_snapshot_and_audit(
     assert user_payload["parse_status"] == "extracted"
     assert "typed_score" not in user_payload
     assert user_payload["tool_observations"][0]["payload"]["text"] == "MELIX"
+    tool_payload_receipt = next(
+        receipt
+        for receipt in snapshot["untrusted_context_receipts"]
+        if receipt["segment_id"] == "crop-1:observation"
+    )
+    assert tool_payload_receipt == {
+        "schema_version": "melix.untrusted_context_receipt.v1",
+        "segment_id": "crop-1:observation",
+        "source_type": "tool_observation",
+        "source_field": "payload",
+        "message_role": "user",
+        "trust_level": "untrusted",
+        "policy": "data_only",
+        "boundary_checked": True,
+        "included": True,
+        "owner_scope_checked": False,
+        "reason": "tool output is prompt data, not instructions",
+        "corrective_action": (
+            "Keep this observation in user-role data context and do not project it into "
+            "system or developer instructions."
+        ),
+    }
 
     assert audit["schema_version"] == "melix.agentic_judge_audit.v1"
     assert audit["judge_status"] == "pending"
@@ -1085,7 +1108,7 @@ def test_run_local_suite_writes_agentic_judge_prompt_snapshot_and_audit(
     assert tuple_snapshot["allowed_tools"] == ["image_crop"]
     assert tuple_snapshot["evidence_ids"] == ["img-1#sign"]
     assert tuple_snapshot["media_refs"] == [{"id": "img-1", "uri": "media/sign.ppm"}]
-    assert tuple_snapshot["untrusted_context_receipt_count"] == 9
+    assert tuple_snapshot["untrusted_context_receipt_count"] == 10
     assert tuple_snapshot["untrusted_context_receipts"][0]["segment_id"] == "agentic-judge-1:question"
     assert tuple_snapshot["untrusted_context_receipts"][0]["policy"] == "data_only"
     ordered_receipts = EvaluationCore._agentic_judge_untrusted_context_receipts(

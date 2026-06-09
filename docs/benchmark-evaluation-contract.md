@@ -1438,8 +1438,10 @@ untrusted`, `policy = data_only`, `message_role = user`, and
 questions, expected answers, final answers, parse status, scoring mode,
 evidence ids, media refs, raw tool calls, and executed tool observations are
 prompt data only; they must not be projected into system or developer
-instructions. The receipt count must match the number of admitted user-payload
-fields.
+instructions. If executed tool observations already carry
+`untrusted_context_receipts`, the snapshot must append defensive copies of those
+observation receipts after the admitted user-payload field receipts. The
+receipt count must match the complete snapshot-level receipt list.
 
 When the judge user-payload validator rejects context before prompt snapshot
 persistence, the validation error must expose `refusal_receipts` using the same
