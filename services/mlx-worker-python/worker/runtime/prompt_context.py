@@ -105,6 +105,13 @@ class PromptContextSourceEvidence:
     source_id: str = ""
     owner_scope_checked: bool = False
 
+    def __post_init__(self) -> None:
+        _require_text(self.segment_id, "segment_id")
+        _source_context_policy(self.source_type)
+        _require_text(self.source_field, "source_field")
+        _require_text_type(self.source_id, "source_id")
+        _require_bool(self.owner_scope_checked, "owner_scope_checked")
+
     def as_segment(self) -> PromptContextSegment:
         reason, corrective_action, _ = _source_context_policy(self.source_type)
         return PromptContextSegment(

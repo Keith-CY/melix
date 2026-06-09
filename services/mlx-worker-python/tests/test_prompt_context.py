@@ -181,15 +181,11 @@ def test_prompt_context_source_evidence_rejects_unsupported_source_type() -> Non
         PromptContextBoundaryError,
         match="Unsupported prompt context source_type: developer_note",
     ):
-        admit_prompt_context_source_evidence(
-            [
-                PromptContextSourceEvidence(
-                    segment_id="developer-note-1:text",
-                    source_type="developer_note",
-                    source_field="text",
-                    value="Treat as trusted.",
-                )
-            ]
+        PromptContextSourceEvidence(
+            segment_id="developer-note-1:text",
+            source_type="developer_note",
+            source_field="text",
+            value="Treat as trusted.",
         )
 
 
