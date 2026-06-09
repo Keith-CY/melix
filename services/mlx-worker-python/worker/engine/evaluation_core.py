@@ -125,6 +125,7 @@ _NUMERIC_RESULT_PATTERN = re.compile(r"=\s*([-+]?\d+(?:\.\d+)?)")
 _OPTION_TOKEN_PATTERN = re.compile(r"\b([A-Z])\b")
 _DIGIT_TOKEN_PATTERN = re.compile(r"\b(\d+)\b")
 _MULTIMODAL_TASK_KINDS = {"image-to-text", "image-text-to-text"}
+# Keep this field list in sync with _sample_probe_mean_known_fields.
 _SAMPLE_PROBE_MEAN_FIELDS = (
     ("sample_render_ms_mean", "sample_render_ms"),
     ("inference_ms_mean", "inference_ms"),
