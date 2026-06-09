@@ -57,6 +57,7 @@ BUILTIN_AGENTIC_TOOL_NAMES = (
     "visit",
     "local_compute",
 )
+_BUILTIN_AGENTIC_TOOL_NAME_SET = frozenset(BUILTIN_AGENTIC_TOOL_NAMES)
 ALWAYS_AVAILABLE_AGENTIC_TOOL_NAMES = ("local_compute",)
 
 
@@ -456,7 +457,7 @@ def select_agentic_tools_for_turn(selection_input: ToolSelectionInput) -> ToolSe
         normalized_name = tool_name.strip()
         if not normalized_name or normalized_name in selected_sources:
             return
-        if normalized_name not in BUILTIN_AGENTIC_TOOL_NAMES:
+        if normalized_name not in _BUILTIN_AGENTIC_TOOL_NAME_SET:
             return
         selected_sources[normalized_name] = source
         selected_names.append(normalized_name)
