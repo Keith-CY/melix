@@ -400,6 +400,10 @@ identifier or its deterministic fallback. `owner_scope_checked` records whether
 the deterministic run had an expected owner scope configured before result
 projection. Source-specific retrieval receipts must omit retrieved text,
 captions, media refs, query strings, tool arguments, and private prompt text.
+The follow-up retrieval source prompt-context admission slice generates each
+selected-result receipt through `worker.runtime.prompt_context` by admitting one
+`PromptContextSegment` for the sanitized selected result value while preserving
+the same emitted receipt fields and observation payload.
 
 ### Workspace Path Boundary
 

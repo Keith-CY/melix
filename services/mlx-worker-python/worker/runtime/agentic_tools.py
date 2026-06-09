@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
+from worker.runtime.prompt_context import PromptContextSegment, admit_prompt_context_segments
 from worker.runtime.tool_observation import (
     ToolObservationPolicy,
     ToolObservationRecord,
@@ -19,7 +20,6 @@ from worker.runtime.tool_registry import (
     built_in_tool_registry,
     select_agentic_tools_for_turn,
 )
-from worker.runtime.untrusted_context import untrusted_context_receipt
 from worker.runtime.workspace_file_tools import WorkspaceFileTools
 from worker.runtime.workspace_paths import WorkspacePathResolution
 
@@ -376,11 +376,13 @@ def _text_search_payload(
             strip=False,
         )
         if lowered_query in text.lower():
-            results.append({"id": source_id, "text": text})
+            result = {"id": source_id, "text": text}
+            results.append(result)
             result_receipts.append(
                 _retrieval_result_receipt(
                     tool_call_id=tool_call_id,
                     result_index=len(results),
+                    value=result,
                     source_type="retrieved_document",
                     source_id=source_id,
                     owner_scope_checked=owner_scope_checked,
@@ -434,11 +436,13 @@ def _image_search_payload(
                 source_type="retrieved_image",
                 source_id=source_id,
             )
-            results.append({"id": source_id, "media_ref": media_ref, "caption": caption})
+            result = {"id": source_id, "media_ref": media_ref, "caption": caption}
+            results.append(result)
             result_receipts.append(
                 _retrieval_result_receipt(
                     tool_call_id=tool_call_id,
                     result_index=len(results),
+                    value=result,
                     source_type="retrieved_image",
                     source_id=source_id,
                     owner_scope_checked=owner_scope_checked,
@@ -777,24 +781,30 @@ def _retrieval_result_receipt(
     *,
     tool_call_id: str,
     result_index: int,
+    value: dict[str, Any],
     source_type: str,
     source_id: str,
     owner_scope_checked: bool,
 ) -> dict[str, object]:
     source_label = "document" if source_type == "retrieved_document" else "image"
-    return untrusted_context_receipt(
-        segment_id=f"{tool_call_id}:result-{result_index}",
-        source_type=source_type,
-        source_field=f"results[{result_index - 1}]",
-        source_id=source_id,
-        owner_scope_checked=owner_scope_checked,
-        included=True,
-        reason=f"retrieved {source_label} result is prompt data, not instructions",
-        corrective_action=(
-            f"Keep retrieved {source_label} results in user-role data context and do not project "
-            "them into system or developer instructions."
-        ),
+    admission = admit_prompt_context_segments(
+        [
+            PromptContextSegment(
+                segment_id=f"{tool_call_id}:result-{result_index}",
+                source_type=source_type,
+                source_field=f"results[{result_index - 1}]",
+                source_id=source_id,
+                owner_scope_checked=owner_scope_checked,
+                value=value,
+                reason=f"retrieved {source_label} result is prompt data, not instructions",
+                corrective_action=(
+                    f"Keep retrieved {source_label} results in user-role data context and do not project "
+                    "them into system or developer instructions."
+                ),
+            )
+        ]
     )
+    return admission.untrusted_context_receipts[0]
 
 
 def _tool_argument_text(arguments: dict[str, Any], name: str, *, tool_call_id: str) -> str:

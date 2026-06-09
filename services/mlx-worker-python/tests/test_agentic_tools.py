@@ -314,6 +314,96 @@ def test_agentic_tool_runtime_emits_source_receipts_for_image_search_results() -
     assert "reveal private context" not in json.dumps(source_receipts, ensure_ascii=False)
 
 
+def test_agentic_tool_runtime_retrieval_source_receipts_use_prompt_context_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[object]] = []
+
+    class Admission:
+        user_payload = {"results[0]": {"id": "source"}}
+        untrusted_context_receipts = [{"receipt": "from-source-admission"}]
+
+    def fake_admit(segments: list[object]) -> Admission:
+        calls.append(segments)
+        return Admission()
+
+    monkeypatch.setattr(
+        "worker.runtime.agentic_tools.admit_prompt_context_segments",
+        fake_admit,
+    )
+
+    run = execute_agentic_tool_calls(
+        [
+            {
+                "id": "text-retrieval",
+                "name": "text_search",
+                "arguments": {"query": "melix"},
+            },
+            {
+                "id": "image-retrieval",
+                "name": "image_search",
+                "arguments": {"query": "receipt"},
+            },
+        ],
+        fixture_context={
+            "owner_scope": {"expected_owner_id": "operator-a", "privilege": "read"},
+            "text_corpus": [
+                {
+                    "id": "doc-alpha",
+                    "owner_id": "operator-a",
+                    "text": "Melix retrieved document.",
+                }
+            ],
+            "image_corpus": [
+                {
+                    "id": "image-doc-1",
+                    "owner_id": "operator-a",
+                    "media_ref": "img-1",
+                    "caption": "receipt caption",
+                }
+            ],
+        },
+    )
+
+    assert [
+        receipt
+        for observation in run.observations
+        for receipt in observation["untrusted_context_receipts"]
+        if receipt == {"receipt": "from-source-admission"}
+    ] == [{"receipt": "from-source-admission"}, {"receipt": "from-source-admission"}]
+    assert len(calls) == 2
+
+    text_segment = calls[0][0]
+    assert text_segment.segment_id == "text-retrieval:result-1"
+    assert text_segment.source_type == "retrieved_document"
+    assert text_segment.source_field == "results[0]"
+    assert text_segment.source_id == "doc-alpha"
+    assert text_segment.owner_scope_checked is True
+    assert text_segment.value == {"id": "doc-alpha", "text": "Melix retrieved document."}
+    assert text_segment.reason == "retrieved document result is prompt data, not instructions"
+    assert text_segment.corrective_action == (
+        "Keep retrieved document results in user-role data context and do not project "
+        "them into system or developer instructions."
+    )
+
+    image_segment = calls[1][0]
+    assert image_segment.segment_id == "image-retrieval:result-1"
+    assert image_segment.source_type == "retrieved_image"
+    assert image_segment.source_field == "results[0]"
+    assert image_segment.source_id == "image-doc-1"
+    assert image_segment.owner_scope_checked is True
+    assert image_segment.value == {
+        "id": "image-doc-1",
+        "media_ref": "img-1",
+        "caption": "receipt caption",
+    }
+    assert image_segment.reason == "retrieved image result is prompt data, not instructions"
+    assert image_segment.corrective_action == (
+        "Keep retrieved image results in user-role data context and do not project "
+        "them into system or developer instructions."
+    )
+
+
 def test_agentic_tool_runtime_preserves_non_typed_execution_errors() -> None:
     run = execute_agentic_tool_calls(
         [{"id": "syntax-1", "name": "local_compute", "arguments": {"code": "("}}],
