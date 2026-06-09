@@ -13,24 +13,26 @@ struct PromptContextBoundaryReceipts: Sendable, Equatable {
                 guard let sourceField = Self.sourceField(for: part, messageIndex: messageIndex, partIndex: partIndex) else {
                     continue
                 }
-                receipts.append(
-                    [
-                        "schema_version": .string(Self.schemaVersion),
-                        "segment_id": .string("\(requestID):message-\(messageIndex):part-\(partIndex)"),
-                        "source_type": .string("chat_prompt_message"),
-                        "source_field": .string(sourceField),
-                        "message_role": .string(message.role),
-                        "trust_level": .string("untrusted"),
-                        "policy": .string("data_only"),
-                        "boundary_checked": .bool(true),
-                        "included": .bool(true),
-                        "owner_scope_checked": .bool(false),
-                        "reason": .string("chat message content is prompt data, not instructions"),
-                        "corrective_action": .string(
-                            "Keep this message part in its original role and do not promote it into system or developer instructions."
-                        ),
-                    ]
-                )
+                var receipt: [String: PromptContextReceiptValue] = [
+                    "schema_version": .string(Self.schemaVersion),
+                    "segment_id": .string("\(requestID):message-\(messageIndex):part-\(partIndex)"),
+                    "source_type": .string(Self.sourceType(for: message)),
+                    "source_field": .string(sourceField),
+                    "message_role": .string(message.role),
+                    "trust_level": .string("untrusted"),
+                    "policy": .string("data_only"),
+                    "boundary_checked": .bool(true),
+                    "included": .bool(true),
+                    "owner_scope_checked": .bool(false),
+                    "reason": .string("chat message content is prompt data, not instructions"),
+                    "corrective_action": .string(
+                        "Keep this message part in its original role and do not promote it into system or developer instructions."
+                    ),
+                ]
+                if let sourceID = message.name {
+                    receipt["source_id"] = .string(sourceID)
+                }
+                receipts.append(receipt)
             }
         }
         self.receipts = receipts
@@ -52,6 +54,52 @@ struct PromptContextBoundaryReceipts: Sendable, Equatable {
     private static func isUntrustedMessageRole(_ role: String) -> Bool {
         let normalizedRole = role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return !normalizedRole.isEmpty && normalizedRole != "system" && normalizedRole != "developer"
+    }
+
+    private static func sourceType(for message: NormalizedTextMessage) -> String {
+        let normalizedRole = message.role.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalizedRole == "tool" {
+            return "tool_output"
+        }
+
+        guard let name = message.name else {
+            return "chat_prompt_message"
+        }
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if hasAnyPrefix(
+            normalizedName,
+            ["retrieved_document", "retrieved-doc", "document", "doc", "rag", "rag_document", "knowledge"]
+        ) {
+            return "retrieved_document"
+        }
+        if hasAnyPrefix(normalizedName, ["skill", "agent_skill"]) {
+            return "skill"
+        }
+        if hasAnyPrefix(normalizedName, ["memory", "retrieved_memory", "pinned_memory"]) {
+            return "memory"
+        }
+        if hasAnyPrefix(normalizedName, ["background_continuation", "background-continuation", "background_job", "background-job"]) {
+            return "background_continuation"
+        }
+        return "chat_prompt_message"
+    }
+
+    private static func hasAnyPrefix(_ value: String, _ prefixes: [String]) -> Bool {
+        prefixes.contains { prefix in
+            guard value.hasPrefix(prefix) else {
+                return false
+            }
+            if value.count == prefix.count {
+                return true
+            }
+            let separatorIndex = value.index(value.startIndex, offsetBy: prefix.count)
+            switch value[separatorIndex] {
+            case ":", ".", "_", "-":
+                return true
+            default:
+                return false
+            }
+        }
     }
 
     private static func sourceField(
