@@ -96,6 +96,46 @@ def test_memory_context_admits_redacted_memory_payload_with_receipt() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("helper", "kwargs", "source_type", "expected_id"),
+    (
+        (
+            admit_skill_context,
+            {
+                "skill_id": " skill:repo-search\n",
+                "skill_payload": {"name": "repo-search"},
+                "owner_scope_checked": True,
+            },
+            "skill",
+            "skill:repo-search",
+        ),
+        (
+            admit_memory_context,
+            {
+                "memory_id": "\tmemory:pinned-7 ",
+                "memory_payload": {"kind": "pinned_memory"},
+                "owner_scope_checked": True,
+            },
+            "memory",
+            "memory:pinned-7",
+        ),
+    ),
+)
+def test_skill_and_memory_context_normalize_source_ids_before_admission(
+    helper: object,
+    kwargs: dict[str, object],
+    source_type: str,
+    expected_id: str,
+) -> None:
+    admission = helper(**kwargs)
+
+    assert admission.untrusted_context_receipts[0]["source_id"] == expected_id
+    assert (
+        admission.untrusted_context_receipts[0]["segment_id"]
+        == f"{expected_id}:{source_type}-context"
+    )
+
+
 def test_skill_and_memory_context_use_shared_prompt_context_admission(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

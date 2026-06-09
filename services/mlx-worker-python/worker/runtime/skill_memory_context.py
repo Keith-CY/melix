@@ -93,7 +93,7 @@ def _admit_context(
 
 def _source_id_or_refusal(context_kind: ContextKind, source_id: str) -> str:
     if isinstance(source_id, str) and source_id.strip():
-        return source_id
+        return source_id.strip()
     fallback = f"unknown-{context_kind}"
     _raise_refusal(
         context_kind=context_kind,
