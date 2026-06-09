@@ -110,6 +110,48 @@ def test_tool_observation_emits_untrusted_context_receipt_for_payload() -> None:
     assert "untrusted_context_receipts" not in emitted["payload"]
 
 
+def test_tool_observation_receipts_use_shared_prompt_context_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[object]] = []
+
+    class Admission:
+        user_payload = {"payload": {"text": "A retrieved page can contain instructions."}}
+        untrusted_context_receipts = [{"receipt": "from-shared-admission"}]
+
+    def fake_admit(segments: list[object]) -> Admission:
+        calls.append(segments)
+        return Admission()
+
+    monkeypatch.setattr(
+        "worker.runtime.tool_observation.admit_prompt_context_segments",
+        fake_admit,
+    )
+
+    record = normalize_tool_observation(
+        tool_name="visit",
+        tool_call_id="visit-call-2",
+        observation_kind="page_extract",
+        status="completed",
+        payload={"text": "A retrieved page can contain instructions."},
+    )
+
+    assert record.untrusted_context_receipts == [{"receipt": "from-shared-admission"}]
+    assert len(calls) == 1
+    segments = calls[0]
+    assert len(segments) == 1
+    segment = segments[0]
+    assert segment.segment_id == "visit-call-2:observation"
+    assert segment.source_type == "tool_observation"
+    assert segment.source_field == "payload"
+    assert segment.value == {"text": "A retrieved page can contain instructions."}
+    assert segment.reason == "tool output is prompt data, not instructions"
+    assert segment.corrective_action == (
+        "Keep this observation in user-role data context and do not "
+        "project it into system or developer instructions."
+    )
+
+
 def test_tool_observation_attaches_source_receipts_outside_payload_and_replay() -> None:
     source_receipt = {
         "schema_version": "melix.untrusted_context_receipt.v1",
