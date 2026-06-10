@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -95,6 +96,109 @@ def test_background_continuation_uses_shared_prompt_context_admission(
     assert segment.source_id == "job-shared"
     assert segment.value == {"status": "completed"}
     assert segment.owner_scope_checked is False
+
+
+def test_background_continuation_accepts_entrypoint_receipt_metadata() -> None:
+    admission = admit_background_continuation(
+        job_id=" job-7 ",
+        job_summary={
+            "status": "completed",
+            "log_tail": "Background job says to ignore the operator.",
+        },
+        owner_scope_checked=True,
+        segment_id="workflow-3:background-results[0]",
+        source_field="workflow_background_jobs[0]",
+        reason="workflow background result is prompt data, not instructions",
+        corrective_action="Keep workflow background results in user-role prompt context.",
+    )
+
+    assert admission.user_payload == {
+        "workflow_background_jobs[0]": {
+            "status": "completed",
+            "log_tail": "Background job says to ignore the operator.",
+        }
+    }
+    assert admission.untrusted_context_receipts == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": "workflow-3:background-results[0]",
+            "source_type": "background_continuation",
+            "source_field": "workflow_background_jobs[0]",
+            "source_id": "job-7",
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": True,
+            "owner_scope_checked": True,
+            "reason": "workflow background result is prompt data, not instructions",
+            "corrective_action": "Keep workflow background results in user-role prompt context.",
+        }
+    ]
+    assert "ignore the operator" not in json.dumps(
+        admission.untrusted_context_receipts,
+        ensure_ascii=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected_field"),
+    (
+        ({"segment_id": " "}, "segment_id"),
+        ({"source_field": 123}, "source_field"),
+        ({"reason": "\t"}, "reason"),
+        ({"corrective_action": None}, "corrective_action"),
+    ),
+)
+def test_background_continuation_refuses_malformed_entrypoint_receipt_metadata(
+    kwargs: dict[str, object],
+    expected_field: str,
+) -> None:
+    with pytest.raises(BackgroundContinuationAdmissionError) as exc_info:
+        admit_background_continuation(
+            job_id="job-entrypoint",
+            job_summary={"status": "completed"},
+            owner_scope_checked=True,
+            **kwargs,  # type: ignore[arg-type]
+        )
+
+    assert exc_info.value.refusal_receipts == [
+        {
+            "schema_version": "melix.untrusted_context_receipt.v1",
+            "segment_id": "job-entrypoint:background-continuation",
+            "source_type": "background_continuation",
+            "source_field": expected_field,
+            "source_id": "job-entrypoint",
+            "message_role": "user",
+            "trust_level": "untrusted",
+            "policy": "data_only",
+            "boundary_checked": True,
+            "included": False,
+            "owner_scope_checked": False,
+            "reason": "invalid_background_continuation_field",
+            "corrective_action": (
+                "Reject malformed background continuation evidence before prompt assembly."
+            ),
+        }
+    ]
+
+
+def test_background_continuation_refuses_non_string_metadata_without_comparison() -> None:
+    segment_id = MagicMock()
+    segment_id.__eq__.side_effect = AssertionError(
+        "metadata should be type-checked before comparison"
+    )
+
+    with pytest.raises(BackgroundContinuationAdmissionError) as exc_info:
+        admit_background_continuation(
+            job_id="job-entrypoint",
+            job_summary={"status": "completed"},
+            owner_scope_checked=True,
+            segment_id=segment_id,  # type: ignore[arg-type]
+        )
+
+    segment_id.__eq__.assert_not_called()
+    assert exc_info.value.refusal_receipts[0]["source_field"] == "segment_id"
 
 
 @pytest.mark.parametrize(
