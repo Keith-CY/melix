@@ -418,6 +418,15 @@ implement durable job storage, process monitoring, or session resume; it is only
 the prompt-context boundary for follow-up data admitted by those later
 surfaces.
 
+Concrete local-job, workflow, and continuation entrypoints may override the
+default `segment_id`, `source_field`, `reason`, and `corrective_action` when
+they need to identify the specific redacted result slot they are admitting. The
+default remains `segment_id = <job_id>:background-continuation` and
+`source_field = background_job`. Malformed entrypoint-local metadata must fail
+closed before prompt admission with the same `invalid_background_continuation_field`
+refusal receipt and must not include raw logs, command text, session contents,
+or workflow payloads.
+
 The Python worker skill and memory admission primitives are
 `worker.runtime.skill_memory_context.admit_skill_context` and
 `worker.runtime.skill_memory_context.admit_memory_context`. Future skill,
