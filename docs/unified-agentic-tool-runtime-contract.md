@@ -381,6 +381,22 @@ payload. These helpers do not implement skill lookup, memory persistence,
 retrieval ranking, or chat/session wiring; they are only the prompt-context
 boundary for evidence admitted by those later surfaces.
 
+The Python worker retrieval admission primitives are
+`worker.runtime.retrieval_context.admit_retrieved_document_context` and
+`worker.runtime.retrieval_context.admit_retrieved_image_context`. Future live
+RAG stores, document retrieval, image retrieval, and local source integration
+entrypoints must pass already-redacted evidence dictionaries through these
+helpers before projecting that evidence into user-role prompt context. Each
+helper records one `source_type = retrieved_document` or `source_type =
+retrieved_image` receipt with `source_field` matching the source type and
+`source_id` set to the redacted retrieved source identifier. Malformed source
+IDs, payload objects, or owner-scope metadata produce `included = false`
+refusal receipts with `reason = invalid_retrieved_document_context_field` or
+`invalid_retrieved_image_context_field` and no user payload. These helpers do
+not implement retrieval storage, ranking, indexing, ingestion, or chat/session
+wiring; they are only the prompt-context boundary for evidence admitted by
+those later surfaces.
+
 The agentic judge prompt snapshot must also surface receipt evidence that is
 already attached to executed `agentic_tool_observations`. Snapshot-level
 `untrusted_context_receipts` are ordered as the admitted judge user-payload
