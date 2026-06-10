@@ -4,9 +4,14 @@ import json
 import os
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from worker.runtime.background_continuation import (
+    admit_background_continuation as original_admit_background_continuation,
+)
+from worker.runtime import local_job_continuation as local_job_continuation_module
 from worker.runtime.local_job_continuation import (
     RECEIPT_SCHEMA_VERSION,
     RECORD_SCHEMA_VERSION,
@@ -16,6 +21,7 @@ from worker.runtime.local_job_continuation import (
     LocalJobLiveEvidence,
     reconcile_local_job_continuation,
 )
+from worker.runtime.prompt_context import PromptContextAdmission
 
 
 def _record(**overrides: object) -> LocalJobContinuationRecord:
@@ -284,7 +290,21 @@ def test_store_claim_followup_marks_completed_job_in_progress_once(tmp_path: Pat
 
 def test_store_claim_followup_emits_redacted_background_prompt_receipt(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    captured_admissions: list[PromptContextAdmission] = []
+
+    def capture_admit_background_continuation(**kwargs: Any) -> PromptContextAdmission:
+        admission = original_admit_background_continuation(**kwargs)
+        captured_admissions.append(admission)
+        return admission
+
+    monkeypatch.setattr(
+        local_job_continuation_module,
+        "admit_background_continuation",
+        capture_admit_background_continuation,
+    )
+
     store = LocalJobContinuationStore(tmp_path)
     store.save_record(
         _record(
@@ -326,6 +346,10 @@ def test_store_claim_followup_emits_redacted_background_prompt_receipt(
             ),
         }
     ]
+    assert len(captured_admissions) == 1
+    assert captured_admissions[0].user_payload["local_job_followup"][
+        "followup_status"
+    ] == "in_progress"
     prompt_receipt_json = json.dumps(
         claimed.receipt["prompt_context_receipts"],
         ensure_ascii=False,
