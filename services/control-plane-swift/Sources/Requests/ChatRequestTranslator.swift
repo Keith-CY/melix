@@ -2575,6 +2575,13 @@ public struct ChatRequestTranslator: Sendable {
             }
             if !toolParser.mcpSourceIDs.isEmpty {
                 generateRequest.execution.ext["melix.mcp.source_ids"] = toolParser.mcpSourceIDs.joined(separator: ",")
+                generateRequest.execution.ext.merge(
+                    MCPPromptContextBoundaryReceipts(
+                        requestID: requestID,
+                        sourceIDs: toolParser.mcpSourceIDs
+                    ).extFields,
+                    uniquingKeysWith: { _, new in new }
+                )
             }
         }
         if !shapedRequest.tools.isEmpty {
