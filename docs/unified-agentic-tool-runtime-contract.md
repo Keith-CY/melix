@@ -447,7 +447,9 @@ before deletion. Windows process IDs are treated as active because
 `os.kill(pid, 0)` is not a portable liveness probe there. Malformed lock files,
 permission-protected active processes, active recovery guards, concurrent lock
 reacquisition, and failed lock cleanup all preserve the lock or refuse the write
-instead of deleting a possibly active writer lock.
+instead of deleting a possibly active writer lock. If the stale candidate
+disappears before its writer PID can be read, the store treats the lock as
+already cleared and retries acquisition instead of reporting a blocked write.
 
 Persisted local-job state is advisory. A record marked `completed` is accepted
 as final only when a success marker path or artifact path is present on the

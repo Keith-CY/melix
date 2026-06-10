@@ -414,6 +414,29 @@ def test_stale_lock_cleanup_tolerates_concurrent_lock_removal(tmp_path: Path) ->
     assert not lock_path.exists()
 
 
+def test_stale_lock_cleanup_retries_when_lock_disappears_before_pid_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = LocalJobContinuationStore(tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    lock_path = tmp_path / "job-7.json.lock"
+    lock_path.write_text("999999\n", encoding="utf-8")
+    original_read_text = Path.read_text
+
+    def remove_before_pid_read(path: Path, *args: object, **kwargs: object) -> str:
+        if path == lock_path and lock_path.exists():
+            lock_path.unlink()
+            raise FileNotFoundError(path)
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", remove_before_pid_read)
+
+    saved = store.save_record(_record(status="running"))
+
+    assert saved.status == "running"
+    assert not lock_path.exists()
+
+
 def test_stale_lock_recovery_blocks_when_guard_is_active(tmp_path: Path) -> None:
     store = LocalJobContinuationStore(tmp_path)
     tmp_path.mkdir(parents=True, exist_ok=True)
