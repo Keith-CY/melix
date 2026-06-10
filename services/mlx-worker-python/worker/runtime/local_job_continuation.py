@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from errno import EPERM
 from pathlib import Path
 from typing import Any, Iterator, Sequence
+from uuid import uuid4
 
 
 RECORD_SCHEMA_VERSION = "melix.local_job_continuation_record.v1"
@@ -13,6 +16,7 @@ RECEIPT_SCHEMA_VERSION = "melix.local_job_continuation_receipt.v1"
 
 JOB_STATUSES = frozenset({"pending", "running", "completed", "failed", "timeout", "blocked"})
 FOLLOWUP_STATUSES = frozenset({"not_started", "pending", "in_progress", "completed", "blocked"})
+JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 class LocalJobContinuationStoreError(RuntimeError):
@@ -85,7 +89,9 @@ class LocalJobContinuationRecord:
         parsed_revision = _optional_int(revision, "revision")
         if parsed_revision is None:
             raise ValueError("revision must be an integer")
-        return replace(self, revision=max(0, parsed_revision))
+        if parsed_revision < 0:
+            raise ValueError("local job continuation revision must be non-negative")
+        return replace(self, revision=parsed_revision)
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,9 +116,11 @@ class LocalJobContinuationStore:
 
     def load_record(self, job_id: str) -> LocalJobContinuationRecord | None:
         path = self._record_path(job_id)
-        if not path.exists():
+        try:
+            content = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
             return None
-        return LocalJobContinuationRecord.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        return LocalJobContinuationRecord.from_dict(json.loads(content))
 
     def save_record(
         self,
@@ -162,7 +170,7 @@ class LocalJobContinuationStore:
         lock_path = path.with_suffix(path.suffix + ".lock")
         fd: int | None = None
         try:
-            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            fd = self._open_record_lock(lock_path)
             os.write(fd, f"{os.getpid()}\n".encode("utf-8"))
             yield
         except FileExistsError as exc:
@@ -185,8 +193,105 @@ class LocalJobContinuationStore:
                 os.close(fd)
                 try:
                     lock_path.unlink()
-                except FileNotFoundError:
+                except OSError:
                     pass
+
+    def _open_record_lock(self, lock_path: Path) -> int:
+        try:
+            return os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            if self._remove_stale_record_lock(lock_path):
+                try:
+                    return os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                except FileExistsError:
+                    pass
+            raise
+
+    def _remove_stale_record_lock(self, lock_path: Path) -> bool:
+        guard_path = lock_path.with_name(f"{lock_path.name}.recovery")
+        guard_fd = self._open_record_lock_recovery_guard(guard_path)
+        if guard_fd is None:
+            return False
+        try:
+            try:
+                raw_pid = lock_path.read_text(encoding="utf-8").strip()
+                pid = int(raw_pid)
+            except (OSError, ValueError):
+                return False
+            if pid <= 0 or _process_is_active(pid):
+                return False
+
+            temp_path = lock_path.with_name(f"{lock_path.name}.stale.{os.getpid()}.{uuid4().hex}")
+            try:
+                os.rename(lock_path, temp_path)
+            except FileNotFoundError:
+                return True
+            except OSError:
+                return False
+
+            try:
+                current_pid = int(temp_path.read_text(encoding="utf-8").strip())
+            except (OSError, ValueError):
+                self._restore_renamed_record_lock(temp_path, lock_path)
+                return False
+            if current_pid != pid or _process_is_active(current_pid):
+                self._restore_renamed_record_lock(temp_path, lock_path)
+                return False
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                return True
+            except OSError:
+                self._restore_renamed_record_lock(temp_path, lock_path)
+                return False
+            return True
+        finally:
+            os.close(guard_fd)
+            try:
+                guard_path.unlink()
+            except OSError:
+                pass
+
+    def _open_record_lock_recovery_guard(self, guard_path: Path) -> int | None:
+        try:
+            fd = os.open(guard_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            if not self._remove_stale_record_lock_recovery_guard(guard_path):
+                return None
+            try:
+                fd = os.open(guard_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            except FileExistsError:
+                return None
+        os.write(fd, f"{os.getpid()}\n".encode("utf-8"))
+        return fd
+
+    def _remove_stale_record_lock_recovery_guard(self, guard_path: Path) -> bool:
+        try:
+            raw_pid = guard_path.read_text(encoding="utf-8").strip()
+            pid = int(raw_pid)
+        except (OSError, ValueError):
+            return False
+        if pid <= 0 or _process_is_active(pid):
+            return False
+        try:
+            guard_path.unlink()
+        except FileNotFoundError:
+            return True
+        except OSError:
+            return False
+        return True
+
+    def _restore_renamed_record_lock(self, temp_path: Path, lock_path: Path) -> None:
+        try:
+            os.link(temp_path, lock_path)
+        except FileExistsError:
+            pass
+        except OSError:
+            return
+        try:
+            temp_path.unlink()
+        except OSError:
+            pass
 
 
 def reconcile_local_job_continuation(
@@ -415,9 +520,25 @@ def _safe_job_id(job_id: str) -> str:
     if not isinstance(job_id, str) or not job_id.strip():
         raise ValueError("local job continuation job_id is required")
     normalized = job_id.strip()
-    if normalized in {".", ".."} or any(character in normalized for character in ("/", "\\")):
+    if normalized in {".", ".."} or JOB_ID_PATTERN.fullmatch(normalized) is None:
         raise ValueError("local job continuation job_id must be path-safe")
     return normalized
+
+
+def _process_is_active(pid: int) -> bool:
+    if os.name == "nt":
+        return True
+    try:
+        os.kill(pid, 0)
+    except ValueError:
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError as exc:
+        return exc.errno == EPERM
+    return True
 
 
 __all__ = [
